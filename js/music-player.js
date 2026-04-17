@@ -128,10 +128,10 @@ class MusicPlayer {
                     this._prefetchCache.delete(this.currentTrack.id);
                     this.audio.src = this._blobUrl;
                 } else {
-                    // Touch the audio element synchronously before the async fetch so iOS
-                    // preserves the user-gesture activation across the await gap.
-                    this.audio.src = SILENT_WAV;
-                    this.audio.play().catch(() => {});
+                    // Unlock iOS audio via a throw-away element so the page-level
+                    // user-activation is preserved across the async fetch, without
+                    // firing ended/pause/play events on the main audio element.
+                    new Audio(SILENT_WAV).play().catch(() => {});
 
                     this.playPauseBtn.textContent = '⏳';
                     this.playPauseBtn.disabled = true;

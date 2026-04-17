@@ -44,7 +44,7 @@ class MusicPlayer {
         this.audio.addEventListener('ended', () => this.onTrackEnded());
         this.audio.addEventListener('play', () => this.onPlay());
         this.audio.addEventListener('pause', () => this.onPause());
-        this.audio.addEventListener('error', (e) => this.onError(e));
+        this.audio.addEventListener('error', (e) => console.warn('Audio element error:', this.audio.error?.code, this.audio.error?.message));
 
         // Keyboard controls
         document.addEventListener('keydown', (e) => this.handleKeyboardControls(e));

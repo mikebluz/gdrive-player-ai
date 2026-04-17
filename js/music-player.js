@@ -55,14 +55,12 @@ class MusicPlayer {
 
         this.audio.pause();
 
-        // Clear src before revoking; flag suppresses the error event mobile fires on empty src
-        this._switching = true;
+        // Clear src before revoking; _blobUrl being null suppresses spurious error events
         this.audio.src = '';
         if (this._blobUrl) {
             URL.revokeObjectURL(this._blobUrl);
             this._blobUrl = null;
         }
-        setTimeout(() => { this._switching = false; }, 200);
 
         this.currentTrack = track;
         this.isPlaying = false;
@@ -188,7 +186,7 @@ class MusicPlayer {
     }
 
     onError(error = null) {
-        if (this._switching) return;
+        if (!this._blobUrl) return; // ignore errors while no audio is loaded (e.g. src cleared during track switch)
         console.error('Audio error:', error);
         this.isPlaying = false;
         this.playPauseBtn.textContent = '▶️';

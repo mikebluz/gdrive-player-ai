@@ -1,20 +1,20 @@
 PRE-DEPLOYMENT SETUP
 ====================
 
-1. Install lftp (if not already installed)
+1. Install lftp (if not already installed):
    brew install lftp
 
-2. Fill in the config block at the top of deploy.sh:
-   - FTP_HOST      — found in cPanel under FTP Accounts
-   - FTP_USER      — your cPanel username
-   - FTP_PASS      — your cPanel password
-   - REMOTE_DIR    — path on the server (e.g. /home/username/player)
-   - CPANEL_TOKEN  — generate in cPanel > Manage API Tokens (needed for auto-restart)
+2. Create js/config.js from the template (this file is gitignored and never committed):
+   cp js/config.example.js js/config.js
+   — then fill in your real CLIENT_ID and API_KEY
 
-3. Set up Node.js in cPanel:
-   - Go to cPanel > Setup Node.js App
-   - Create a new app pointing at REMOTE_DIR
-   - Set startup file to server.js
+3. Fill in the config block at the top of deploy.sh:
+   - FTP_HOST     — found in cPanel under FTP Accounts
+   - FTP_USER     — your cPanel username
+   - FTP_PASS     — your cPanel password
+   - REMOTE_DIR   — path on the server (e.g. /home/username/public_html/player)
 
 4. Run the deployment script:
    ./deploy.sh
+
+Only index.html, css/, and js/ are uploaded. No Node.js or npm required on the server.

@@ -11,6 +11,21 @@ body {
     color: #e2e8f0;
 }
 
+.info-box {
+    background: #1a1a2e;
+    border-left: 4px solid #5a67d8;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    color: #a0aec0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+.info-box strong {
+    color: #e2e8f0;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;

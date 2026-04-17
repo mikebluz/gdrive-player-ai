@@ -39,7 +39,7 @@ STAGE_DIR=$(mktemp -d)
 trap "rm -rf $STAGE_DIR" EXIT
 
 echo "📦 Staging files..."
-cp -r index.html css js "$STAGE_DIR/"
+cp -r index.html player.html css js "$STAGE_DIR/"
 
 # -----------------------------------------------
 # Upload via SFTP using lftp

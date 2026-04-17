@@ -186,7 +186,8 @@ class MusicPlayer {
     }
 
     onError(error = null) {
-        if (!this._blobUrl) return; // ignore errors while no audio is loaded (e.g. src cleared during track switch)
+        if (!this._blobUrl) return;
+        if (!this.audio.paused) return; // audio still playing — ghost error from iOS, ignore
         console.error('Audio error:', error);
         this.isPlaying = false;
         this.playPauseBtn.textContent = '▶️';

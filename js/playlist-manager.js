@@ -56,7 +56,7 @@ class PlaylistManager {
         this.updatePlaylistInfo();
     }
 
-    playTrack(index) {
+    playTrack(index, resetCache = false) {
         if (index < 0 || index >= this.tracks.length) return;
 
         this.currentIndex = index;
@@ -65,7 +65,9 @@ class PlaylistManager {
         this.musicPlayer.play();
         this.updateActiveTrack();
 
-        // Maintain a sliding window of 5 loaded tracks (current + next 4)
+        // Full reset on explicit user selection; sliding evict for autoplay
+        if (resetCache) this.musicPlayer.clearPrefetchCache();
+
         const windowIds = new Set();
         for (let i = 1; i <= 4; i++) {
             const nextIndex = (index + i) % this.tracks.length;
@@ -74,7 +76,7 @@ class PlaylistManager {
                 this.musicPlayer.prefetchTrack(this.tracks[nextIndex]);
             }
         }
-        this.musicPlayer.evictPrefetchExcept(windowIds);
+        if (!resetCache) this.musicPlayer.evictPrefetchExcept(windowIds);
     }
 
     playNext() {
@@ -197,7 +199,7 @@ class PlaylistManager {
         items.forEach((item, index) => {
             item.addEventListener('click', (e) => {
                 if (!e.target.classList.contains('drag-handle')) {
-                    this.playTrack(index);
+                    this.playTrack(index, true);
                 }
             });
 

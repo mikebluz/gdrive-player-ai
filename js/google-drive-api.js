@@ -151,7 +151,9 @@ class GoogleDriveAPI {
       const file = files[0];
 
       let text;
-      if (file.mimeType.startsWith('application/vnd.google-apps.')) {
+      if (file.mimeType === 'application/vnd.google-apps.document') {
+        text = await this.fetchGoogleDocText(file.id);
+      } else if (file.mimeType.startsWith('application/vnd.google-apps.')) {
         const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/html' });
         text = this.htmlToText(res2.body);
       } else {
@@ -184,12 +186,11 @@ class GoogleDriveAPI {
     console.log(`📄 Found "${file.name}" — mimeType: ${file.mimeType}`);
 
     let text;
-    if (file.mimeType.startsWith('application/vnd.google-apps.')) {
-      const exportMime = file.mimeType === 'application/vnd.google-apps.spreadsheet'
-        ? 'text/csv'
-        : 'text/html';
-      const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: exportMime });
-      text = exportMime === 'text/html' ? this.htmlToText(res2.body) : res2.body;
+    if (file.mimeType === 'application/vnd.google-apps.document') {
+      text = await this.fetchGoogleDocText(file.id);
+    } else if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+      const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/csv' });
+      text = res2.body;
     } else {
       const response = await fetch(
         `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
@@ -200,6 +201,22 @@ class GoogleDriveAPI {
     }
 
     return text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  }
+
+  async fetchGoogleDocText(fileId) {
+    const res = await gapi.client.request({
+      path: `https://docs.googleapis.com/v1/documents/${fileId}`,
+      params: { fields: 'body.content' },
+    });
+    const lines = [];
+    for (const elem of res.result.body?.content || []) {
+      if (elem.paragraph) {
+        for (const pe of elem.paragraph.elements || []) {
+          if (pe.textRun?.content) lines.push(pe.textRun.content);
+        }
+      }
+    }
+    return lines.join('');
   }
 
   htmlToText(html) {

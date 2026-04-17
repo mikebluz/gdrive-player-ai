@@ -64,6 +64,7 @@ class MusicPlayer {
 
         this.currentTrack = track;
         this.isPlaying = false;
+        this._hasPlayed = false;
 
         this.trackTitle.textContent = track.name || 'Unknown Track';
         this.trackArtist.textContent = this.defaultArtist || this.extractArtistFromName(track.name) || 'Unknown Artist';
@@ -171,6 +172,7 @@ class MusicPlayer {
 
     onPlay() {
         this.isPlaying = true;
+        this._hasPlayed = true;
         this.playPauseBtn.textContent = '⏸';
     }
 
@@ -187,7 +189,7 @@ class MusicPlayer {
 
     onError(error = null) {
         if (!this._blobUrl) return;
-        if (!this.audio.paused) return; // audio still playing — ghost error from iOS, ignore
+        if (this._hasPlayed) return; // track already played successfully — ghost error from iOS, ignore
         console.error('Audio error:', error);
         this.isPlaying = false;
         this.playPauseBtn.textContent = '▶️';

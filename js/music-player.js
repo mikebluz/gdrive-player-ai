@@ -1,3 +1,7 @@
+// Minimal silent WAV — used to activate the iOS audio element synchronously
+// within a user gesture before an async fetch breaks the gesture chain.
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
 class MusicPlayer {
     constructor(gDrive) {
         this.gDrive = gDrive;
@@ -124,6 +128,11 @@ class MusicPlayer {
                     this._prefetchCache.delete(this.currentTrack.id);
                     this.audio.src = this._blobUrl;
                 } else {
+                    // Touch the audio element synchronously before the async fetch so iOS
+                    // preserves the user-gesture activation across the await gap.
+                    this.audio.src = SILENT_WAV;
+                    this.audio.play().catch(() => {});
+
                     this.playPauseBtn.textContent = '⏳';
                     this.playPauseBtn.disabled = true;
 

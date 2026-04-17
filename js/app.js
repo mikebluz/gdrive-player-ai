@@ -128,7 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateUIAuthState(isSignedIn) {
     if (isSignedIn) {
       authorizeBtn.style.display = "none";
-      signoutBtn.style.display = "inline-block";
+      signoutBtn.style.display = "none";
       playlistSelect.disabled = false;
       mainContent.style.display = "";
       footer.style.display = "";
@@ -154,6 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelector(".player-section").style.display = "";
     document.querySelector(".playlist-section").style.display = "";
     document.querySelector(".search-section").style.display = "";
+    signoutBtn.style.display = "inline-block";
   }
 
   // --- LOADING / FEEDBACK UTILITIES ---

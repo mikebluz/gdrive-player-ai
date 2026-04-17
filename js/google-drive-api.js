@@ -174,21 +174,22 @@ class GoogleDriveAPI {
     const file = files[0];
     console.log(`📄 Found "${file.name}" — mimeType: ${file.mimeType}`);
 
-    let fetchUrl;
-    if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
-      fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/csv`;
-    } else if (file.mimeType.startsWith('application/vnd.google-apps.')) {
-      fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`;
+    let text;
+    if (file.mimeType.startsWith('application/vnd.google-apps.')) {
+      const exportMime = file.mimeType === 'application/vnd.google-apps.spreadsheet'
+        ? 'text/csv'
+        : 'text/plain';
+      const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: exportMime });
+      text = res2.body;
     } else {
-      fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      );
+      if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`);
+      text = await response.text();
     }
 
-    const response = await fetch(fetchUrl, {
-      headers: { Authorization: `Bearer ${this.accessToken}` }
-    });
-    if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`);
-
-    const text = await response.text();
     return text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   }
 

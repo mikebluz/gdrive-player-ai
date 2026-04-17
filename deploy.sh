@@ -10,12 +10,13 @@
 set -e
 
 # -----------------------------------------------
-# CONFIGURATION — fill these in
+# CONFIGURATION — loaded from deploy.env
 # -----------------------------------------------
-FTP_HOST=""      # e.g. ftp.yourdomain.com
-FTP_USER=""      # your cPanel username
-FTP_PASS=""      # your cPanel password
-REMOTE_DIR=""    # e.g. /home/username/public_html/player
+if [[ ! -f "deploy.env" ]]; then
+  echo "❌ Error: deploy.env not found. Copy deploy.example.env and fill in your FTP credentials."
+  exit 1
+fi
+source deploy.env
 # -----------------------------------------------
 
 # Validate config

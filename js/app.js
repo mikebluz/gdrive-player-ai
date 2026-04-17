@@ -69,7 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Hide loading banner when first track is ready to play
-  document.addEventListener("trackLoaded", () => hideLoading());
+  document.addEventListener("trackLoaded", () => { hideLoading(); unfreezeUI(); });
 
   async function loadQuickLoadOptions() {
     try {
@@ -94,12 +94,14 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    freezeUI();
     try {
       showLoading(`Searching for "${folderName}"...`);
 
       const folders = await driveAPI.searchFolders(folderName);
       if (folders.length === 0) {
         hideLoading();
+        unfreezeUI();
         showError(`No folders found named "${folderName}".`);
         return;
       }
@@ -112,6 +114,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (musicFiles.length === 0) {
         hideLoading();
+        unfreezeUI();
         showError(`No music files found in folders named "${folderName}".`);
         return;
       }
@@ -124,8 +127,25 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (error) {
       console.error("Error loading music:", error);
       hideLoading();
+      unfreezeUI();
       showError("Failed to load music files from Google Drive.");
     }
+  }
+
+  function freezeUI() {
+    playlistSelect.disabled = true;
+    player.disableControls();
+    const shuffleBtn = document.getElementById("shuffle-btn");
+    if (shuffleBtn) shuffleBtn.disabled = true;
+    signoutBtn.disabled = true;
+  }
+
+  function unfreezeUI() {
+    playlistSelect.disabled = false;
+    player.enableControls();
+    const shuffleBtn = document.getElementById("shuffle-btn");
+    if (shuffleBtn) shuffleBtn.disabled = false;
+    signoutBtn.disabled = false;
   }
 
   // --- UI STATE MANAGEMENT ---

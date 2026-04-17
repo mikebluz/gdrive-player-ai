@@ -5,6 +5,7 @@ class MusicPlayer {
         this.currentTrack = null;
         this.isPlaying = false;
         this.volume = 0.7;
+        this._prefetchCache = new Map(); // trackId -> blobUrl
 
         this.initializeElements();
         this.bindEvents();
@@ -83,29 +84,56 @@ class MusicPlayer {
         return null;
     }
 
+    async prefetchTrack(track) {
+        if (!track || this._prefetchCache.has(track.id)) return;
+        try {
+            const token = this.gDrive.accessToken;
+            const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
+            const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!response.ok) return;
+            const blob = await response.blob();
+            this._prefetchCache.set(track.id, URL.createObjectURL(blob));
+        } catch (e) {
+            // prefetch failure is non-fatal
+        }
+    }
+
+    clearPrefetchCache() {
+        for (const url of this._prefetchCache.values()) URL.revokeObjectURL(url);
+        this._prefetchCache.clear();
+    }
+
     async play() {
         if (!this.currentTrack) return;
         try {
             // If we don't have a blob URL yet, fetch the file with the auth header
             if (!this._blobUrl) {
-                this.playPauseBtn.textContent = '⏳';
-                this.playPauseBtn.disabled = true;
+                // Use prefetched blob if available — avoids async gap on iOS so play() fires synchronously
+                const prefetched = this._prefetchCache.get(this.currentTrack.id);
+                if (prefetched) {
+                    this._blobUrl = prefetched;
+                    this._prefetchCache.delete(this.currentTrack.id);
+                    this.audio.src = this._blobUrl;
+                } else {
+                    this.playPauseBtn.textContent = '⏳';
+                    this.playPauseBtn.disabled = true;
 
-                const token = this.gDrive.accessToken;
-                const url = `https://www.googleapis.com/drive/v3/files/${this.currentTrack.id}?alt=media`;
-                const response = await fetch(url, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
+                    const token = this.gDrive.accessToken;
+                    const url = `https://www.googleapis.com/drive/v3/files/${this.currentTrack.id}?alt=media`;
+                    const response = await fetch(url, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
 
-                if (!response.ok) {
-                    throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
+                    if (!response.ok) {
+                        throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
+                    }
+
+                    const blob = await response.blob();
+                    this._blobUrl = URL.createObjectURL(blob);
+                    this.audio.src = this._blobUrl;
+
+                    this.playPauseBtn.disabled = false;
                 }
-
-                const blob = await response.blob();
-                this._blobUrl = URL.createObjectURL(blob);
-                this.audio.src = this._blobUrl;
-
-                this.playPauseBtn.disabled = false;
             }
 
             await this.audio.play();

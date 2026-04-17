@@ -23,6 +23,7 @@ class PlaylistManager {
     }
 
     setTracks(tracks) {
+        this.musicPlayer.clearPrefetchCache();
         this.tracks = [...tracks];
         this.originalOrder = [...tracks];
         this.currentIndex = -1;
@@ -63,6 +64,12 @@ class PlaylistManager {
         this.musicPlayer.loadTrack(track);
         this.musicPlayer.play();
         this.updateActiveTrack();
+
+        // Prefetch next track so iOS can play it without an async fetch gap
+        const nextIndex = (index + 1) % this.tracks.length;
+        if (nextIndex !== index) {
+            this.musicPlayer.prefetchTrack(this.tracks[nextIndex]);
+        }
     }
 
     playNext() {

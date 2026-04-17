@@ -65,11 +65,16 @@ class PlaylistManager {
         this.musicPlayer.play();
         this.updateActiveTrack();
 
-        // Prefetch next track so iOS can play it without an async fetch gap
-        const nextIndex = (index + 1) % this.tracks.length;
-        if (nextIndex !== index) {
-            this.musicPlayer.prefetchTrack(this.tracks[nextIndex]);
+        // Maintain a sliding window of 5 loaded tracks (current + next 4)
+        const windowIds = new Set();
+        for (let i = 1; i <= 4; i++) {
+            const nextIndex = (index + i) % this.tracks.length;
+            if (nextIndex !== index) {
+                windowIds.add(this.tracks[nextIndex].id);
+                this.musicPlayer.prefetchTrack(this.tracks[nextIndex]);
+            }
         }
+        this.musicPlayer.evictPrefetchExcept(windowIds);
     }
 
     playNext() {

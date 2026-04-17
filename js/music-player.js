@@ -103,6 +103,15 @@ class MusicPlayer {
         this._prefetchCache.clear();
     }
 
+    evictPrefetchExcept(keepIds) {
+        for (const [id, url] of this._prefetchCache) {
+            if (!keepIds.has(id)) {
+                URL.revokeObjectURL(url);
+                this._prefetchCache.delete(id);
+            }
+        }
+    }
+
     async play() {
         if (!this.currentTrack) return;
         try {

@@ -62,8 +62,14 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("authStatusChanged", async (e) => {
     const { isSignedIn } = e.detail;
     updateUIAuthState(isSignedIn);
-    if (isSignedIn) await loadQuickLoadOptions();
+    if (isSignedIn) {
+      showLoading("Loading your playlists...");
+      await loadQuickLoadOptions();
+    }
   });
+
+  // Hide loading banner when first track is ready to play
+  document.addEventListener("trackLoaded", () => hideLoading(), { once: true });
 
   async function loadQuickLoadOptions() {
     try {
@@ -98,26 +104,23 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      console.log(`Found ${folders.length} matching folder(s).`);
-
       showLoading("Loading music files...");
       const [musicFiles, artistName] = await Promise.all([
         driveAPI.getMusicFilesFromFolders(folders),
         driveAPI.fetchArtistName(folders[0].id),
       ]);
 
-      hideLoading();
-
       if (musicFiles.length === 0) {
+        hideLoading();
         showError(`No music files found in folders named "${folderName}".`);
         return;
       }
 
+      showLoading("Preparing first track...");
       player.defaultArtist = artistName || null;
       document.getElementById("playlist-heading").textContent = folderName;
       playlist.setTracks(musicFiles);
       showPlayerSections();
-      hideLoading();
     } catch (error) {
       console.error("Error loading music:", error);
       hideLoading();

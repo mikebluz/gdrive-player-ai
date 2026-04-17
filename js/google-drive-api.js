@@ -152,8 +152,8 @@ class GoogleDriveAPI {
 
       let text;
       if (file.mimeType.startsWith('application/vnd.google-apps.')) {
-        const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/plain' });
-        text = res2.body;
+        const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/html' });
+        text = this.htmlToText(res2.body);
       } else {
         const response = await fetch(
           `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
@@ -187,9 +187,9 @@ class GoogleDriveAPI {
     if (file.mimeType.startsWith('application/vnd.google-apps.')) {
       const exportMime = file.mimeType === 'application/vnd.google-apps.spreadsheet'
         ? 'text/csv'
-        : 'text/plain';
+        : 'text/html';
       const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: exportMime });
-      text = res2.body;
+      text = exportMime === 'text/html' ? this.htmlToText(res2.body) : res2.body;
     } else {
       const response = await fetch(
         `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
@@ -200,6 +200,12 @@ class GoogleDriveAPI {
     }
 
     return text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  }
+
+  htmlToText(html) {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    return div.textContent || div.innerText || '';
   }
 
   ensureSignedIn() {

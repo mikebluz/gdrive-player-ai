@@ -138,31 +138,36 @@ class GoogleDriveAPI {
   }
 
   async fetchArtistName(folderId) {
-    await this.ensureSignedIn();
+    try {
+      await this.ensureSignedIn();
 
-    const res = await gapi.client.drive.files.list({
-      q: `name = 'Artist name' and '${folderId}' in parents and trashed=false`,
-      fields: "files(id, name, mimeType)",
-    });
-    const files = res.result.files || [];
-    if (files.length === 0) return null;
+      const res = await gapi.client.drive.files.list({
+        q: `name = 'Artist name' and '${folderId}' in parents and trashed=false`,
+        fields: "files(id, name, mimeType)",
+      });
+      const files = res.result.files || [];
+      if (files.length === 0) return null;
 
-    const file = files[0];
+      const file = files[0];
 
-    let text;
-    if (file.mimeType.startsWith('application/vnd.google-apps.')) {
-      const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/plain' });
-      text = res2.body;
-    } else {
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
-        { headers: { Authorization: `Bearer ${this.accessToken}` } }
-      );
-      if (!response.ok) return null;
-      text = await response.text();
+      let text;
+      if (file.mimeType.startsWith('application/vnd.google-apps.')) {
+        const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/plain' });
+        text = res2.body;
+      } else {
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+          { headers: { Authorization: `Bearer ${this.accessToken}` } }
+        );
+        if (!response.ok) return null;
+        text = await response.text();
+      }
+
+      return text.split('\n').map(l => l.trim()).find(l => l.length > 0) || null;
+    } catch (e) {
+      console.warn('fetchArtistName failed:', e);
+      return null;
     }
-
-    return text.split('\n').map(l => l.trim()).find(l => l.length > 0) || null;
   }
 
   async fetchPlaylistOptions(fileName) {

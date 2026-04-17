@@ -134,6 +134,7 @@ document.addEventListener("DOMContentLoaded", () => {
       footer.style.display = "";
       document.querySelector(".player-section").style.display = "none";
       document.querySelector(".playlist-section").style.display = "none";
+      document.querySelector(".search-section").style.display = "none";
     } else {
       authorizeBtn.style.display = "";
       signoutBtn.style.display = "none";
@@ -152,6 +153,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function showPlayerSections() {
     document.querySelector(".player-section").style.display = "";
     document.querySelector(".playlist-section").style.display = "";
+    document.querySelector(".search-section").style.display = "";
   }
 
   // --- LOADING / FEEDBACK UTILITIES ---

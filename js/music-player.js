@@ -112,6 +112,7 @@ class MusicPlayer {
         } catch (error) {
             console.error('Error playing audio:', error);
             this.playPauseBtn.disabled = false;
+            if (error.name === 'AbortError' || error.name === 'NotAllowedError') return;
             this.onError(error);
         }
     }

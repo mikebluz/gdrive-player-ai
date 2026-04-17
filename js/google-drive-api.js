@@ -4,7 +4,7 @@ class GoogleDriveAPI {
     this.CLIENT_ID = clientId;
     this.API_KEY = apiKey;
     this.DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest";
-    this.SCOPES = "https://www.googleapis.com/auth/drive.readonly";
+    this.SCOPES = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly";
 
     this.gapiLoaded = false;
     this.gisTokenClient = null;

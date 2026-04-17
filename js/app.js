@@ -16,9 +16,7 @@ document.addEventListener("DOMContentLoaded", () => {
   (async function initApp() {
     try {
       showLoading("Initializing Google Drive API...");
-      const res = await fetch("/config");
-      const config = await res.json();
-      driveAPI = new GoogleDriveAPI(config);
+      driveAPI = new GoogleDriveAPI(window.APP_CONFIG);
       player = new MusicPlayer(driveAPI);
       playlist = new PlaylistManager(player);
       await driveAPI.initialize();

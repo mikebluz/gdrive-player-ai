@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const authorizeBtn = document.getElementById("authorize-btn");
   const signoutBtn = document.getElementById("signout-btn");
   const userStatus = document.getElementById("user-status");
+  const infoBox = document.querySelector(".info-box");
   const loadingEl = document.getElementById("loading");
   const playlistSelect = document.getElementById("playlist-select");
   const mainContent = document.getElementById("main-content");
@@ -128,6 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateUIAuthState(isSignedIn) {
     if (isSignedIn) {
       authorizeBtn.style.display = "none";
+      if (infoBox) infoBox.style.display = "none";
       signoutBtn.style.display = "none";
       playlistSelect.disabled = false;
       mainContent.style.display = "";
@@ -137,6 +139,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelector(".search-section").style.display = "none";
     } else {
       authorizeBtn.style.display = "";
+      if (infoBox) infoBox.style.display = "";
       signoutBtn.style.display = "none";
       userStatus.style.display = "";
       userStatus.textContent = "❌ Not signed in";

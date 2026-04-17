@@ -10,14 +10,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const footer = document.getElementById("footer");
 
   // --- Core Objects (classes come from separate files) ---
-  const driveAPI = new GoogleDriveAPI();
-  const player = new MusicPlayer(driveAPI);
-  const playlist = new PlaylistManager(player);
+  let driveAPI, player, playlist;
 
   // --- Initialization ---
   (async function initApp() {
     try {
       showLoading("Initializing Google Drive API...");
+      const res = await fetch("/config");
+      const config = await res.json();
+      driveAPI = new GoogleDriveAPI(config);
+      player = new MusicPlayer(driveAPI);
+      playlist = new PlaylistManager(player);
       await driveAPI.initialize();
 
       hideLoading();

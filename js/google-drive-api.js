@@ -1,8 +1,8 @@
 // js/google-drive-api.js
 class GoogleDriveAPI {
-  constructor() {
-	this.CLIENT_ID = 'YOUR_CLIENT_ID';
-	this.API_KEY = 'YOUR_API_KEY';
+  constructor({ clientId, apiKey }) {
+    this.CLIENT_ID = clientId;
+    this.API_KEY = apiKey;
     this.DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest";
     this.SCOPES = "https://www.googleapis.com/auth/drive.readonly";
 

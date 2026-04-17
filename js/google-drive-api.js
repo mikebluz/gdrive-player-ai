@@ -175,15 +175,12 @@ class GoogleDriveAPI {
     console.log(`📄 Found "${file.name}" — mimeType: ${file.mimeType}`);
 
     let fetchUrl;
-    switch (file.mimeType) {
-      case 'application/vnd.google-apps.document':
-        fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`;
-        break;
-      case 'application/vnd.google-apps.spreadsheet':
-        fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/csv`;
-        break;
-      default:
-        fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+    if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+      fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/csv`;
+    } else if (file.mimeType.startsWith('application/vnd.google-apps.')) {
+      fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`;
+    } else {
+      fetchUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
     }
 
     const response = await fetch(fetchUrl, {

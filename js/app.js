@@ -115,6 +115,7 @@ document.addEventListener("DOMContentLoaded", () => {
       player.defaultArtist = artistName || null;
       document.getElementById("playlist-heading").textContent = folderName;
       playlist.setTracks(musicFiles);
+      showPlayerSections();
       hideLoading();
     } catch (error) {
       console.error("Error loading music:", error);
@@ -125,13 +126,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- UI STATE MANAGEMENT ---
   function updateUIAuthState(isSignedIn) {
-    const connectLabel = authorizeBtn.querySelector('span:first-child');
     if (isSignedIn) {
       authorizeBtn.style.display = "none";
       signoutBtn.style.display = "inline-block";
       playlistSelect.disabled = false;
       mainContent.style.display = "";
       footer.style.display = "";
+      document.querySelector(".player-section").style.display = "none";
+      document.querySelector(".playlist-section").style.display = "none";
     } else {
       authorizeBtn.style.display = "";
       signoutBtn.style.display = "none";
@@ -145,6 +147,11 @@ document.addEventListener("DOMContentLoaded", () => {
       player.disableControls();
       playlist.clear();
     }
+  }
+
+  function showPlayerSections() {
+    document.querySelector(".player-section").style.display = "";
+    document.querySelector(".playlist-section").style.display = "";
   }
 
   // --- LOADING / FEEDBACK UTILITIES ---

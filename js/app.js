@@ -69,7 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Hide loading banner when first track is ready to play
-  document.addEventListener("trackLoaded", () => hideLoading(), { once: true });
+  document.addEventListener("trackLoaded", () => hideLoading());
 
   async function loadQuickLoadOptions() {
     try {

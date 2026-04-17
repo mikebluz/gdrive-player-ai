@@ -55,7 +55,9 @@ class MusicPlayer {
 
         this.audio.pause();
 
-        // Revoke previous blob URL to free memory
+        // Clear src before revoking to prevent spurious error events on the old URL
+        this.audio.src = '';
+        this.audio.load();
         if (this._blobUrl) {
             URL.revokeObjectURL(this._blobUrl);
             this._blobUrl = null;

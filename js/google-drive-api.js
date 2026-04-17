@@ -148,17 +148,20 @@ class GoogleDriveAPI {
     if (files.length === 0) return null;
 
     const file = files[0];
-    const isGoogleDoc = file.mimeType === 'application/vnd.google-apps.document';
-    const fetchUrl = isGoogleDoc
-      ? `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`
-      : `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
 
-    const response = await fetch(fetchUrl, {
-      headers: { Authorization: `Bearer ${this.accessToken}` }
-    });
-    if (!response.ok) return null;
+    let text;
+    if (file.mimeType.startsWith('application/vnd.google-apps.')) {
+      const res2 = await gapi.client.drive.files.export({ fileId: file.id, mimeType: 'text/plain' });
+      text = res2.body;
+    } else {
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      );
+      if (!response.ok) return null;
+      text = await response.text();
+    }
 
-    const text = await response.text();
     return text.split('\n').map(l => l.trim()).find(l => l.length > 0) || null;
   }
 

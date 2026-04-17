@@ -86,6 +86,7 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Could not load Quick Load options:", err);
       hideLoading();
       unfreezeUI();
+      showError(`Could not load Quick Load options: ${err?.message || err}`);
     }
   }
 

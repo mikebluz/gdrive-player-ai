@@ -67,6 +67,7 @@ class GoogleDriveAPI {
           return;
         }
         this.accessToken = response.access_token;
+        gapi.client.setToken({ access_token: response.access_token });
         console.log("🔑 Access token acquired");
         document.dispatchEvent(
           new CustomEvent("authStatusChanged", { detail: { isSignedIn: true } })

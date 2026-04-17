@@ -83,7 +83,9 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       if (options.length > 0) await loadMusicFromDrive(options[0]);
     } catch (err) {
-      console.warn("Could not load Quick Load options:", err.message);
+      console.error("Could not load Quick Load options:", err);
+      hideLoading();
+      unfreezeUI();
     }
   }
 

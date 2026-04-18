@@ -136,11 +136,17 @@ class MusicPlayer {
                     this.playPauseBtn.textContent = '⏳';
                     this.playPauseBtn.disabled = true;
 
-                    const token = this.gDrive.accessToken;
                     const url = `https://www.googleapis.com/drive/v3/files/${this.currentTrack.id}?alt=media`;
-                    const response = await fetch(url, {
-                        headers: { Authorization: `Bearer ${token}` }
+                    let response = await fetch(url, {
+                        headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
                     });
+
+                    if (response.status === 401) {
+                        await this.gDrive.refreshTokenSilently();
+                        response = await fetch(url, {
+                            headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
+                        });
+                    }
 
                     if (!response.ok) {
                         throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
@@ -158,10 +164,8 @@ class MusicPlayer {
         } catch (error) {
             console.error('Error playing audio:', error);
             this.playPauseBtn.disabled = false;
-            if (error.name === 'AbortError' || error.name === 'NotAllowedError') {
-                this.playPauseBtn.textContent = '▶️';
-                return;
-            }
+            this.playPauseBtn.textContent = '▶️';
+            if (error.name === 'AbortError' || error.name === 'NotAllowedError') return;
             this.onError(error);
         }
     }

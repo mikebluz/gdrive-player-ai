@@ -63,15 +63,28 @@ class GoogleDriveAPI {
       callback: (response) => {
         if (response.error) {
           console.error("OAuth error:", response);
-          alert("Google sign-in failed.");
+          if (this._refreshResolve) {
+            this._refreshReject(new Error(response.error));
+            this._refreshResolve = this._refreshReject = null;
+          } else {
+            alert("Google sign-in failed.");
+          }
           return;
         }
         this.accessToken = response.access_token;
+        this._tokenExpiry = Date.now() + (response.expires_in || 3600) * 1000;
         gapi.client.setToken({ access_token: response.access_token });
-        console.log("🔑 Access token acquired");
-        document.dispatchEvent(
-          new CustomEvent("authStatusChanged", { detail: { isSignedIn: true } })
-        );
+
+        if (this._refreshResolve) {
+          console.log("🔑 Access token refreshed");
+          this._refreshResolve();
+          this._refreshResolve = this._refreshReject = null;
+        } else {
+          console.log("🔑 Access token acquired");
+          document.dispatchEvent(
+            new CustomEvent("authStatusChanged", { detail: { isSignedIn: true } })
+          );
+        }
       },
     });
   }
@@ -79,6 +92,20 @@ class GoogleDriveAPI {
   async signIn() {
     if (!this.gisTokenClient) throw new Error("Token client not initialized");
     this.gisTokenClient.requestAccessToken({ prompt: "consent" });
+  }
+
+  refreshTokenSilently() {
+    return new Promise((resolve, reject) => {
+      this._refreshResolve = resolve;
+      this._refreshReject = reject;
+      this.gisTokenClient.requestAccessToken({ prompt: '' });
+      setTimeout(() => {
+        if (this._refreshResolve) {
+          this._refreshResolve = this._refreshReject = null;
+          reject(new Error('Token refresh timed out'));
+        }
+      }, 10000);
+    });
   }
 
   signOut() {

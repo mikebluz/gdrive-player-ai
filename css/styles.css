@@ -426,7 +426,7 @@ body {
     align-items: center;
     justify-content: center;
     font-weight: bold;
-    font-size: 0.45rem;
+    font-size: 0.5625rem;
     margin-right: 15px;
     color: #a0aec0;
 }
@@ -438,11 +438,11 @@ body {
 .track-name {
     font-weight: 600;
     margin-bottom: 2px;
-    font-size: 0.5rem;
+    font-size: 0.625rem;
 }
 
 .track-duration {
-    font-size: 0.45rem;
+    font-size: 0.5625rem;
     opacity: 0.7;
 }
 

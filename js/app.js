@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let driveAPI, player, playlist;
   const userCache = new UserSongCache();
   const cacheBtn = document.getElementById("cache-btn");
+  const cachePlaylistBtn = document.getElementById("cache-playlist-btn");
   const cacheBtnContainer = cacheBtn?.closest(".cache-btn-container");
 
   // --- Initialization ---
@@ -91,6 +92,26 @@ document.addEventListener("DOMContentLoaded", () => {
     cacheBtnContainer.style.display = "";
     cacheBtn.textContent = userCache.isCached(track.id) ? "Remove from cache" : "Save to cache";
   }
+
+  cachePlaylistBtn?.addEventListener("click", () => {
+    const cached = userCache.getAll();
+    if (cached.length === 0) {
+      showError("No songs in your cache yet.");
+      return;
+    }
+    const name = prompt("Name this playlist:", "My Cache");
+    if (!name?.trim()) return;
+    const tracks = cached.map(t => ({
+      id: t.id,
+      name: t.name,
+      size: null,
+      downloadUrl: `https://www.googleapis.com/drive/v3/files/${t.id}?alt=media`,
+    }));
+    player.defaultArtist = null;
+    document.getElementById("playlist-heading").textContent = name.trim();
+    playlist.setTracks(tracks);
+    showPlayerSections();
+  });
 
   async function loadQuickLoadOptions() {
     try {

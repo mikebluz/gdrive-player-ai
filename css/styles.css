@@ -468,6 +468,14 @@ body {
     opacity: 0.7;
 }
 
+.track-name--prefetched {
+    color: #68d391;
+}
+
+.track-name--user-cached {
+    color: #90cdf4;
+}
+
 .empty-playlist {
     text-align: center;
     padding: 60px 20px;

@@ -21,6 +21,7 @@ class PlaylistManager {
         document.addEventListener('trackEnded', () => this.playNext());
         document.addEventListener('requestNextTrack', () => this.playNext());
         document.addEventListener('requestPreviousTrack', () => this.playPrevious());
+        document.addEventListener('prefetchCacheUpdated', () => this.refreshCacheIndicators());
     }
 
     setTracks(tracks) {
@@ -172,6 +173,23 @@ class PlaylistManager {
         this.renderPlaylist();
     }
 
+    _trackNameClass(track) {
+        if (this.userCache?.isCached(track.id)) return 'track-name--user-cached';
+        if (this.musicPlayer.isPrefetched(track.id)) return 'track-name--prefetched';
+        return '';
+    }
+
+    refreshCacheIndicators() {
+        const items = this.playlistContainer.querySelectorAll('.playlist-item');
+        items.forEach((item, index) => {
+            const track = this.tracks[index];
+            if (!track) return;
+            const nameEl = item.querySelector('.track-name');
+            if (!nameEl) return;
+            nameEl.className = `track-name ${this._trackNameClass(track)}`.trim();
+        });
+    }
+
     renderPlaylist() {
         if (this.tracks.length === 0) {
             this.playlistContainer.innerHTML = `
@@ -188,7 +206,7 @@ class PlaylistManager {
                 <div class="drag-handle">⋮⋮</div>
                 <div class="track-number">${index + 1}</div>
                 <div class="track-details">
-                    <div class="track-name">${track.name}</div>
+                    <div class="track-name ${this._trackNameClass(track)}">${track.name}</div>
                     <div class="track-duration">${this.formatFileSize(track.size)}</div>
                 </div>
             </div>

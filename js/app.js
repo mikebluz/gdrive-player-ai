@@ -83,6 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!track) return;
     userCache.toggle(track);
     updateCacheBtn(track);
+    playlist?.refreshCacheIndicators();
   });
 
   function updateCacheBtn(track) {

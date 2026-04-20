@@ -22,7 +22,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showLoading("Initializing Google Drive API...");
       driveAPI = new GoogleDriveAPI(window.APP_CONFIG);
       player = new MusicPlayer(driveAPI);
-      playlist = new PlaylistManager(player);
+      playlist = new PlaylistManager(player, userCache);
       await driveAPI.initialize();
 
       hideLoading();

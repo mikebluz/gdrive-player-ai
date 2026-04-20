@@ -1,6 +1,7 @@
 class PlaylistManager {
-    constructor(musicPlayer) {
+    constructor(musicPlayer, userCache = null) {
         this.musicPlayer = musicPlayer;
+        this.userCache = userCache;
         this.tracks = [];
         this.currentIndex = -1;
         this.shuffled = false;
@@ -68,6 +69,11 @@ class PlaylistManager {
         // Full reset on explicit user selection; sliding evict for autoplay
         if (resetCache) this.musicPlayer.clearPrefetchCache();
 
+        const windowIds = this._buildPrefetchWindow(index);
+        if (!resetCache) this.musicPlayer.evictPrefetchExcept(windowIds);
+    }
+
+    _buildPrefetchWindow(index) {
         const windowIds = new Set();
         for (let i = 1; i <= 4; i++) {
             const nextIndex = (index + i) % this.tracks.length;
@@ -76,7 +82,7 @@ class PlaylistManager {
                 this.musicPlayer.prefetchTrack(this.tracks[nextIndex]);
             }
         }
-        if (!resetCache) this.musicPlayer.evictPrefetchExcept(windowIds);
+        return windowIds;
     }
 
     playNext() {
@@ -199,7 +205,16 @@ class PlaylistManager {
         items.forEach((item, index) => {
             item.addEventListener('click', (e) => {
                 if (!e.target.classList.contains('drag-handle')) {
-                    this.playTrack(index, true);
+                    const track = this.tracks[index];
+                    if (this.userCache?.isCached(track.id)) {
+                        this.playTrack(index, false);
+                        setTimeout(() => {
+                            this.musicPlayer.clearPrefetchCache();
+                            this._buildPrefetchWindow(index);
+                        }, 0);
+                    } else {
+                        this.playTrack(index, true);
+                    }
                 }
             });
 

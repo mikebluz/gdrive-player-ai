@@ -344,6 +344,28 @@ body {
     color: #a0aec0;
 }
 
+.cache-btn-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 10px;
+}
+
+.btn-cache {
+    background: transparent;
+    border: 1px solid #4a4a6a;
+    color: #a0aec0;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-cache:hover {
+    border-color: #667eea;
+    color: #667eea;
+}
+
 #volume-slider {
     width: 100px;
 }

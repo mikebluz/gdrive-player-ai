@@ -12,6 +12,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Core Objects (classes come from separate files) ---
   let driveAPI, player, playlist;
+  const userCache = new UserSongCache();
+  const cacheBtn = document.getElementById("cache-btn");
+  const cacheBtnContainer = cacheBtn?.closest(".cache-btn-container");
 
   // --- Initialization ---
   (async function initApp() {
@@ -69,7 +72,24 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Hide loading banner when first track is ready to play
-  document.addEventListener("trackLoaded", () => { hideLoading(); unfreezeUI(); });
+  document.addEventListener("trackLoaded", (e) => {
+    hideLoading();
+    unfreezeUI();
+    updateCacheBtn(e.detail?.track);
+  });
+
+  cacheBtn?.addEventListener("click", () => {
+    const track = player?.currentTrack;
+    if (!track) return;
+    userCache.toggle(track);
+    updateCacheBtn(track);
+  });
+
+  function updateCacheBtn(track) {
+    if (!track || !cacheBtn || !cacheBtnContainer) return;
+    cacheBtnContainer.style.display = "";
+    cacheBtn.textContent = userCache.isCached(track.id) ? "Remove from cache" : "Save to cache";
+  }
 
   async function loadQuickLoadOptions() {
     try {

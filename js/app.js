@@ -12,6 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Core Objects (classes come from separate files) ---
   let driveAPI, player, playlist;
+  let lastDriveFolderName = null;
   const userCache = new UserSongCache();
   const cacheBtn = document.getElementById("cache-btn");
   const cachePlaylistBtn = document.getElementById("cache-playlist-btn");
@@ -94,6 +95,16 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   cachePlaylistBtn?.addEventListener("click", () => {
+    if (cachePlaylistBtn.dataset.mode === "clear") {
+      userCache.clear();
+      cachePlaylistBtn.textContent = "Playlist from cache";
+      delete cachePlaylistBtn.dataset.mode;
+      updateCacheBtn(player?.currentTrack);
+      playlist?.refreshCacheIndicators();
+      if (lastDriveFolderName) loadMusicFromDrive(lastDriveFolderName);
+      return;
+    }
+
     const cached = userCache.getAll();
     if (cached.length === 0) {
       showError("No songs in your cache yet.");
@@ -111,6 +122,8 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("playlist-heading").textContent = name.trim();
     playlist.setTracks(tracks);
     showPlayerSections();
+    cachePlaylistBtn.textContent = "Clear cache";
+    cachePlaylistBtn.dataset.mode = "clear";
   });
 
   async function loadQuickLoadOptions() {
@@ -169,6 +182,9 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("playlist-heading").textContent = folderName;
       playlist.setTracks(musicFiles);
       showPlayerSections();
+      lastDriveFolderName = folderName;
+      cachePlaylistBtn.textContent = "Playlist from cache";
+      delete cachePlaylistBtn.dataset.mode;
     } catch (error) {
       console.error("Error loading music:", error);
       hideLoading();

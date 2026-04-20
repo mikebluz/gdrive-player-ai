@@ -36,4 +36,8 @@ class UserSongCache {
         this.save(track);
         return true;
     }
+
+    clear() {
+        localStorage.removeItem(this.STORAGE_KEY);
+    }
 }

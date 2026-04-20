@@ -502,6 +502,23 @@ body {
     margin-top: -2px;
 }
 
+/* Loop button states */
+.loop-btn.loop-off {
+    opacity: 0.4;
+}
+
+.loop-btn.loop-track {
+    opacity: 1;
+    background: linear-gradient(135deg, #5a67d8, #667eea);
+    color: white;
+}
+
+.loop-btn.loop-playlist {
+    opacity: 1;
+    background: linear-gradient(135deg, #38a169, #48bb78);
+    color: white;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .header {

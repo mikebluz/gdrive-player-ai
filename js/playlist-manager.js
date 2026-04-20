@@ -10,15 +10,18 @@ class PlaylistManager {
         this.playlistContainer = document.getElementById('playlist-container');
         this.playlistCount = document.getElementById('playlist-count');
         this.shuffleBtn = document.getElementById('shuffle-btn');
+        this.loopBtn = document.getElementById('loop-btn');
+        this.loopMode = 'off'; // 'off' | 'track' | 'playlist'
 
         this.bindEvents();
     }
 
     bindEvents() {
         this.shuffleBtn.addEventListener('click', () => this.toggleShuffle());
-        
+        this.loopBtn?.addEventListener('click', () => this.cycleLoopMode());
+
         // Listen for player events
-        document.addEventListener('trackEnded', () => this.playNext());
+        document.addEventListener('trackEnded', () => this.onTrackEnded());
         document.addEventListener('requestNextTrack', () => this.playNext());
         document.addEventListener('requestPreviousTrack', () => this.playPrevious());
         document.addEventListener('prefetchCacheUpdated', () => this.refreshCacheIndicators());
@@ -91,10 +94,37 @@ class PlaylistManager {
 
         let nextIndex = this.currentIndex + 1;
         if (nextIndex >= this.tracks.length) {
-            nextIndex = 0; // Loop to beginning
+            nextIndex = 0;
         }
 
         this.playTrack(nextIndex);
+    }
+
+    onTrackEnded() {
+        if (this.loopMode === 'track') {
+            if (this.currentIndex >= 0) this.playTrack(this.currentIndex);
+        } else if (this.loopMode === 'playlist') {
+            this.playNext();
+        }
+        // 'off': stop at end of playlist
+    }
+
+    cycleLoopMode() {
+        const modes = ['off', 'track', 'playlist'];
+        this.loopMode = modes[(modes.indexOf(this.loopMode) + 1) % modes.length];
+        this._updateLoopBtn();
+    }
+
+    _updateLoopBtn() {
+        if (!this.loopBtn) return;
+        const config = {
+            off:      { icon: '🔁', cls: 'loop-off' },
+            track:    { icon: '🔂', cls: 'loop-track' },
+            playlist: { icon: '🔁', cls: 'loop-playlist' },
+        };
+        const { icon, cls } = config[this.loopMode];
+        this.loopBtn.textContent = icon;
+        this.loopBtn.className = `control-btn loop-btn ${cls}`;
     }
 
     playPrevious() {

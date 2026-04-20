@@ -206,7 +206,9 @@ class PlaylistManager {
             item.addEventListener('click', (e) => {
                 if (!e.target.classList.contains('drag-handle')) {
                     const track = this.tracks[index];
-                    if (this.userCache?.isCached(track.id)) {
+                    const fastPath = this.userCache?.isCached(track.id)
+                        || this.musicPlayer.isPrefetched(track.id);
+                    if (fastPath) {
                         this.playTrack(index, false);
                         setTimeout(() => {
                             this.musicPlayer.clearPrefetchCache();

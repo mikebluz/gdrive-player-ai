@@ -107,6 +107,10 @@ class MusicPlayer {
         this._prefetchCache.clear();
     }
 
+    isPrefetched(trackId) {
+        return this._prefetchCache.has(trackId);
+    }
+
     evictPrefetchExcept(keepIds) {
         for (const [id, url] of this._prefetchCache) {
             if (!keepIds.has(id)) {

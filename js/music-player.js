@@ -167,28 +167,30 @@ class MusicPlayer {
     async play() {
         if (!this.currentTrack) return;
         try {
-            // If we don't have a blob URL yet, fetch the file with the auth header
             if (!this._blobUrl) {
-                // Use prefetched blob if available — avoids async gap on iOS so play() fires synchronously
                 const prefetched = this._prefetchCache.get(this.currentTrack.id);
+                const persisted = !prefetched && this.blobCache
+                    ? await this.blobCache.getBlobUrl(this.currentTrack.id)
+                    : null;
+
                 if (prefetched) {
+                    // 1. In-memory prefetch — synchronous, preserves iOS gesture chain
                     this._blobUrl = prefetched;
                     this._prefetchCache.delete(this.currentTrack.id);
                     this.audio.src = this._blobUrl;
+
+                } else if (persisted) {
+                    // 2. Persistent blob cache — user-saved tracks, works offline
+                    this._blobUrl = persisted;
+                    this.audio.src = this._blobUrl;
+
+                } else if (!this.gDrive.accessToken) {
+                    // 3. No cached blob and no token — can't play offline
+                    this.playPauseBtn.textContent = '▶️';
+                    return;
+
                 } else {
-                    // Check persistent blob cache before going to network
-                    const persisted = this.blobCache
-                        ? await this.blobCache.getBlobUrl(this.currentTrack.id)
-                        : null;
-                    if (persisted) {
-                        this._blobUrl = persisted;
-                        this.audio.src = this._blobUrl;
-                    } else {
-                    // No cached blob and no auth token — can't play offline
-                    if (!this.gDrive.accessToken) {
-                        this.playPauseBtn.textContent = '▶️';
-                        return;
-                    }
+                    // 4. Fetch from Drive
                     // Unlock iOS audio via a throw-away element so the page-level
                     // user-activation is preserved across the async fetch, without
                     // firing ended/pause/play events on the main audio element.
@@ -216,10 +218,8 @@ class MusicPlayer {
                     const blob = await response.blob();
                     this._blobUrl = URL.createObjectURL(blob);
                     this.audio.src = this._blobUrl;
-
                     this.playPauseBtn.disabled = false;
-                    } // end network fetch else
-                } // end blobCache else
+                }
             }
 
             await this.audio.play();

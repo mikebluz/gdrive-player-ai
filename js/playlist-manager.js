@@ -79,13 +79,16 @@ class PlaylistManager {
 
     _buildPrefetchWindow(index) {
         const windowIds = new Set();
+        const toFetch = [];
         for (let i = 1; i <= 4; i++) {
             const nextIndex = (index + i) % this.tracks.length;
             if (nextIndex !== index) {
-                windowIds.add(this.tracks[nextIndex].id);
-                this.musicPlayer.prefetchTrack(this.tracks[nextIndex]);
+                const track = this.tracks[nextIndex];
+                windowIds.add(track.id);
+                toFetch.push(track);
             }
         }
+        Promise.all(toFetch.map(t => this.musicPlayer.prefetchTrack(t)));
         return windowIds;
     }
 

@@ -3,8 +3,9 @@
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
 
 class MusicPlayer {
-    constructor(gDrive) {
+    constructor(gDrive, blobCache = null) {
         this.gDrive = gDrive;
+        this.blobCache = blobCache;
         this.audio = document.getElementById('audio-player');
         this.currentTrack = null;
         this.isPlaying = false;
@@ -88,15 +89,27 @@ class MusicPlayer {
         return null;
     }
 
-    async prefetchTrack(track) {
+    async prefetchTrack(track, persist = false) {
         if (!track || this._prefetchCache.has(track.id)) return;
         try {
+            // Load from persistent blob cache if available — avoids network round-trip
+            if (this.blobCache) {
+                const blobUrl = await this.blobCache.getBlobUrl(track.id);
+                if (blobUrl) {
+                    this._prefetchCache.set(track.id, blobUrl);
+                    document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
+                    return;
+                }
+            }
+
             const token = this.gDrive.accessToken;
+            if (!token) return;
             const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
             const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
             if (!response.ok) return;
             const blob = await response.blob();
             this._prefetchCache.set(track.id, URL.createObjectURL(blob));
+            if (persist && this.blobCache) await this.blobCache.store(track.id, blob);
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
         } catch (e) {
             // prefetch failure is non-fatal
@@ -133,6 +146,14 @@ class MusicPlayer {
                     this._prefetchCache.delete(this.currentTrack.id);
                     this.audio.src = this._blobUrl;
                 } else {
+                    // Check persistent blob cache before going to network
+                    const persisted = this.blobCache
+                        ? await this.blobCache.getBlobUrl(this.currentTrack.id)
+                        : null;
+                    if (persisted) {
+                        this._blobUrl = persisted;
+                        this.audio.src = this._blobUrl;
+                    } else {
                     // Unlock iOS audio via a throw-away element so the page-level
                     // user-activation is preserved across the async fetch, without
                     // firing ended/pause/play events on the main audio element.
@@ -162,7 +183,8 @@ class MusicPlayer {
                     this.audio.src = this._blobUrl;
 
                     this.playPauseBtn.disabled = false;
-                }
+                    } // end network fetch else
+                } // end blobCache else
             }
 
             await this.audio.play();

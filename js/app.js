@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let driveAPI, player, playlist;
   let lastDriveFolderName = null;
   const userCache = new UserSongCache();
+  const blobCache = new BlobCache();
   const cacheBtn = document.getElementById("cache-btn");
   const cachePlaylistBtn = document.getElementById("cache-playlist-btn");
   const cacheBtnContainer = cacheBtn?.closest(".cache-btn-container");
@@ -23,7 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       showLoading("Initializing Google Drive API...");
       driveAPI = new GoogleDriveAPI(window.APP_CONFIG);
-      player = new MusicPlayer(driveAPI);
+      player = new MusicPlayer(driveAPI, blobCache);
       playlist = new PlaylistManager(player, userCache);
       await driveAPI.initialize();
 
@@ -83,7 +84,13 @@ document.addEventListener("DOMContentLoaded", () => {
   cacheBtn?.addEventListener("click", () => {
     const track = player?.currentTrack;
     if (!track) return;
+    const wasCached = userCache.isCached(track.id);
     userCache.toggle(track);
+    if (!wasCached) {
+      player.prefetchTrack(track, true); // persist blob for offline use
+    } else {
+      blobCache.remove(track.id);
+    }
     updateCacheBtn(track);
     playlist?.refreshCacheIndicators();
   });
@@ -97,6 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
   cachePlaylistBtn?.addEventListener("click", () => {
     if (cachePlaylistBtn.dataset.mode === "clear") {
       userCache.clear();
+      blobCache.clear();
       cachePlaylistBtn.textContent = "Playlist from cache";
       delete cachePlaylistBtn.dataset.mode;
       updateCacheBtn(player?.currentTrack);

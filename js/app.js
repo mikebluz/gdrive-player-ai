@@ -259,8 +259,8 @@ document.addEventListener("DOMContentLoaded", () => {
         player.defaultArtist = null;
         document.getElementById("playlist-heading").textContent = "In Cache";
         playlist.setTracks(tracks);
-        cachePlaylistBtn.textContent = "Playlist from cache";
-        delete cachePlaylistBtn.dataset.mode;
+        cachePlaylistBtn.textContent = "Clear cache";
+        cachePlaylistBtn.dataset.mode = "clear";
       } else {
         mainContent.style.display = "none";
         footer.style.display = "none";

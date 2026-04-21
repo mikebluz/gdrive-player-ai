@@ -105,8 +105,12 @@ class PlaylistManager {
             if (this.currentIndex >= 0) this.playTrack(this.currentIndex);
         } else if (this.loopMode === 'playlist') {
             this.playNext();
+        } else {
+            // 'off': advance through playlist, stop at end without looping
+            if (this.currentIndex < this.tracks.length - 1) {
+                this.playTrack(this.currentIndex + 1);
+            }
         }
-        // 'off': stop at end of playlist
     }
 
     cycleLoopMode() {

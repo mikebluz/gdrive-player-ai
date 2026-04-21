@@ -13,6 +13,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Core Objects (classes come from separate files) ---
   let driveAPI, player, playlist;
   let lastDriveFolderName = null;
+  let _artworkBlobUrl = null;
+  const albumArtImg = document.getElementById("album-art-img");
+  const albumPlaceholder = document.getElementById("album-placeholder");
   const userCache = new UserSongCache();
   const blobCache = new BlobCache();
   const cacheBtn = document.getElementById("cache-btn");
@@ -132,6 +135,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }));
     player.defaultArtist = null;
     document.getElementById("playlist-heading").textContent = name.trim();
+    setAlbumArt(null);
     playlist.setTracks(tracks);
     showPlayerSections();
     cachePlaylistBtn.textContent = "Clear cache";
@@ -177,9 +181,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       showLoading("Loading music files...");
-      const [musicFiles, artistName] = await Promise.all([
+      const [musicFiles, artistName, artworkBlobUrl] = await Promise.all([
         driveAPI.getMusicFilesFromFolders(folders),
         driveAPI.fetchArtistName(folders[0].id),
+        driveAPI.fetchArtworkBlobUrl(folders[0].id),
       ]);
 
       if (musicFiles.length === 0) {
@@ -192,6 +197,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showLoading("Preparing first track...");
       player.defaultArtist = artistName || null;
       document.getElementById("playlist-heading").textContent = folderName;
+      setAlbumArt(artworkBlobUrl);
       playlist.setTracks(musicFiles);
       showPlayerSections();
       lastDriveFolderName = folderName;
@@ -260,6 +266,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }));
         player.defaultArtist = null;
         document.getElementById("playlist-heading").textContent = "In Cache";
+        setAlbumArt(null);
         playlist.setTracks(tracks);
         cachePlaylistBtn.textContent = "Clear cache";
         cachePlaylistBtn.dataset.mode = "clear";
@@ -268,6 +275,22 @@ document.addEventListener("DOMContentLoaded", () => {
         footer.style.display = "none";
         playlist.clear();
       }
+    }
+  }
+
+  function setAlbumArt(blobUrl) {
+    if (_artworkBlobUrl) {
+      URL.revokeObjectURL(_artworkBlobUrl);
+      _artworkBlobUrl = null;
+    }
+    if (blobUrl && albumArtImg) {
+      _artworkBlobUrl = blobUrl;
+      albumArtImg.src = blobUrl;
+      albumArtImg.style.display = "";
+      if (albumPlaceholder) albumPlaceholder.style.display = "none";
+    } else {
+      if (albumArtImg) albumArtImg.style.display = "none";
+      if (albumPlaceholder) albumPlaceholder.style.display = "";
     }
   }
 

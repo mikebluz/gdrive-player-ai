@@ -199,6 +199,23 @@ class GoogleDriveAPI {
     }
   }
 
+  async fetchArtworkBlobUrl(folderId) {
+    try {
+      const res = await gapi.client.drive.files.list({
+        q: `name contains 'Artwork' and '${folderId}' in parents and trashed=false`,
+        fields: "files(id, mimeType)",
+      });
+      const file = (res.result.files || []).find(f => f.mimeType.startsWith('image/'));
+      if (!file) return null;
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      );
+      if (!response.ok) return null;
+      return URL.createObjectURL(await response.blob());
+    } catch { return null; }
+  }
+
   async fetchPlaylistOptions(fileName) {
     await this.ensureSignedIn();
 

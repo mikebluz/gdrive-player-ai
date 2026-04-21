@@ -266,6 +266,13 @@ body {
     justify-content: center;
     font-size: 5rem;
     color: white;
+    overflow: hidden;
+}
+
+.album-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .player-controls {

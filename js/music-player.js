@@ -89,7 +89,7 @@ class MusicPlayer {
         return null;
     }
 
-    async prefetchTrack(track, persist = false) {
+    async prefetchTrack(track) {
         if (!track || this._prefetchCache.has(track.id)) return;
         try {
             // Load from persistent blob cache if available — avoids network round-trip
@@ -109,11 +109,41 @@ class MusicPlayer {
             if (!response.ok) return;
             const blob = await response.blob();
             this._prefetchCache.set(track.id, URL.createObjectURL(blob));
-            if (persist && this.blobCache) await this.blobCache.store(track.id, blob);
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
         } catch (e) {
             // prefetch failure is non-fatal
         }
+    }
+
+    // Persist a track's blob to blobCache for offline playback.
+    // Reuses the already-loaded blob if the track is currently playing or prefetched,
+    // avoiding a redundant network fetch.
+    async persistTrack(track) {
+        if (!track || !this.blobCache) return;
+        if (await this.blobCache.has(track.id)) return;
+
+        let sourceBlobUrl = null;
+        if (this.currentTrack?.id === track.id && this._blobUrl) {
+            sourceBlobUrl = this._blobUrl;
+        } else if (this._prefetchCache.has(track.id)) {
+            sourceBlobUrl = this._prefetchCache.get(track.id);
+        }
+
+        try {
+            if (sourceBlobUrl) {
+                const blob = await (await fetch(sourceBlobUrl)).blob();
+                await this.blobCache.store(track.id, blob);
+            } else {
+                // Not in memory — fetch from Drive
+                const token = this.gDrive.accessToken;
+                if (!token) return;
+                const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
+                const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+                if (!response.ok) return;
+                const blob = await response.blob();
+                await this.blobCache.store(track.id, blob);
+            }
+        } catch {}
     }
 
     clearPrefetchCache() {

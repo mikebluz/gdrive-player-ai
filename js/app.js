@@ -87,7 +87,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const wasCached = userCache.isCached(track.id);
     userCache.toggle(track);
     if (!wasCached) {
-      player.prefetchTrack(track, true); // persist blob for offline use
+      player.persistTrack(track);
     } else {
       blobCache.remove(track.id);
     }

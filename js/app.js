@@ -235,7 +235,6 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelector(".search-section").style.display = "none";
     } else {
       authorizeBtn.style.display = "";
-      if (infoBox) infoBox.style.display = "";
       signoutBtn.style.display = "none";
       userStatus.style.display = "";
       userStatus.textContent = "❌ Not signed in";
@@ -245,6 +244,7 @@ document.addEventListener("DOMContentLoaded", () => {
       player.disableControls();
 
       const cachedTracks = userCache.getAll();
+      if (infoBox) infoBox.style.display = cachedTracks.length > 0 ? "none" : "";
       if (cachedTracks.length > 0) {
         mainContent.style.display = "";
         footer.style.display = "";

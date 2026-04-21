@@ -101,7 +101,11 @@ document.addEventListener("DOMContentLoaded", () => {
       delete cachePlaylistBtn.dataset.mode;
       updateCacheBtn(player?.currentTrack);
       playlist?.refreshCacheIndicators();
-      if (lastDriveFolderName) loadMusicFromDrive(lastDriveFolderName);
+      if (lastDriveFolderName && driveAPI?.accessToken) {
+        loadMusicFromDrive(lastDriveFolderName);
+      } else {
+        playlist.clear();
+      }
       return;
     }
 
@@ -228,12 +232,32 @@ document.addEventListener("DOMContentLoaded", () => {
       userStatus.style.display = "";
       userStatus.textContent = "❌ Not signed in";
       playlistSelect.disabled = true;
-      mainContent.style.display = "none";
-      footer.style.display = "none";
 
       player.stop();
       player.disableControls();
-      playlist.clear();
+
+      const cachedTracks = userCache.getAll();
+      if (cachedTracks.length > 0) {
+        mainContent.style.display = "";
+        footer.style.display = "";
+        document.querySelector(".player-section").style.display = "";
+        document.querySelector(".playlist-section").style.display = "";
+        document.querySelector(".search-section").style.display = "none";
+        const tracks = cachedTracks.map(t => ({
+          id: t.id,
+          name: t.name,
+          size: null,
+        }));
+        player.defaultArtist = null;
+        document.getElementById("playlist-heading").textContent = "In Cache";
+        playlist.setTracks(tracks);
+        cachePlaylistBtn.textContent = "Playlist from cache";
+        delete cachePlaylistBtn.dataset.mode;
+      } else {
+        mainContent.style.display = "none";
+        footer.style.display = "none";
+        playlist.clear();
+      }
     }
   }
 

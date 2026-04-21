@@ -32,18 +32,21 @@ class BlobCache {
         } catch {}
     }
 
-    async getBlobUrl(trackId) {
+    async getBlob(trackId) {
         try {
             const db = await this._open();
-            const blob = await new Promise((resolve, reject) => {
+            return await new Promise((resolve, reject) => {
                 const tx = db.transaction(this._storeName, 'readonly');
                 const req = tx.objectStore(this._storeName).get(trackId);
-                req.onsuccess = () => resolve(req.result);
+                req.onsuccess = () => resolve(req.result || null);
                 req.onerror = () => reject(req.error);
             });
-            if (!blob) return null;
-            return URL.createObjectURL(blob);
         } catch { return null; }
+    }
+
+    async getBlobUrl(trackId) {
+        const blob = await this.getBlob(trackId);
+        return blob ? URL.createObjectURL(blob) : null;
     }
 
     async has(trackId) {

@@ -10,7 +10,9 @@ class MusicPlayer {
         this.currentTrack = null;
         this.isPlaying = false;
         this.volume = 0.7;
-        this._prefetchCache = new Map(); // trackId -> blobUrl
+        this._prefetchCache = new Map(); // trackId -> Blob
+        this._blob = null;    // raw Blob for the currently loaded track
+        this._blobUrl = null; // object URL for _blob, set as audio.src
 
         this.initializeElements();
         this.bindEvents();
@@ -67,6 +69,7 @@ class MusicPlayer {
             URL.revokeObjectURL(this._blobUrl);
             this._blobUrl = null;
         }
+        this._blob = null;
 
         this.currentTrack = track;
         this.isPlaying = false;
@@ -94,9 +97,9 @@ class MusicPlayer {
         try {
             // Load from persistent blob cache if available — avoids network round-trip
             if (this.blobCache) {
-                const blobUrl = await this.blobCache.getBlobUrl(track.id);
-                if (blobUrl) {
-                    this._prefetchCache.set(track.id, blobUrl);
+                const blob = await this.blobCache.getBlob(track.id);
+                if (blob) {
+                    this._prefetchCache.set(track.id, blob);
                     document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
                     return;
                 }
@@ -108,7 +111,7 @@ class MusicPlayer {
             const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
             if (!response.ok) return;
             const blob = await response.blob();
-            this._prefetchCache.set(track.id, URL.createObjectURL(blob));
+            this._prefetchCache.set(track.id, blob);
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
         } catch (e) {
             // prefetch failure is non-fatal
@@ -116,22 +119,20 @@ class MusicPlayer {
     }
 
     // Persist a track's blob to blobCache for offline playback.
-    // Reuses the already-loaded blob if the track is currently playing or prefetched,
-    // avoiding a redundant network fetch.
+    // Uses the in-memory blob directly — no fetch() needed.
     async persistTrack(track) {
         if (!track || !this.blobCache) return;
         if (await this.blobCache.has(track.id)) return;
 
-        let sourceBlobUrl = null;
-        if (this.currentTrack?.id === track.id && this._blobUrl) {
-            sourceBlobUrl = this._blobUrl;
+        let blob = null;
+        if (this.currentTrack?.id === track.id && this._blob) {
+            blob = this._blob;
         } else if (this._prefetchCache.has(track.id)) {
-            sourceBlobUrl = this._prefetchCache.get(track.id);
+            blob = this._prefetchCache.get(track.id);
         }
 
         try {
-            if (sourceBlobUrl) {
-                const blob = await (await fetch(sourceBlobUrl)).blob();
+            if (blob) {
                 await this.blobCache.store(track.id, blob);
             } else {
                 // Not in memory — fetch from Drive
@@ -140,15 +141,13 @@ class MusicPlayer {
                 const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
                 const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
                 if (!response.ok) return;
-                const blob = await response.blob();
-                await this.blobCache.store(track.id, blob);
+                await this.blobCache.store(track.id, await response.blob());
             }
         } catch {}
     }
 
     clearPrefetchCache() {
-        for (const url of this._prefetchCache.values()) URL.revokeObjectURL(url);
-        this._prefetchCache.clear();
+        this._prefetchCache.clear(); // blobs are GC'd automatically, no URLs to revoke
     }
 
     isPrefetched(trackId) {
@@ -156,11 +155,8 @@ class MusicPlayer {
     }
 
     evictPrefetchExcept(keepIds) {
-        for (const [id, url] of this._prefetchCache) {
-            if (!keepIds.has(id)) {
-                URL.revokeObjectURL(url);
-                this._prefetchCache.delete(id);
-            }
+        for (const id of this._prefetchCache.keys()) {
+            if (!keepIds.has(id)) this._prefetchCache.delete(id);
         }
     }
 
@@ -168,20 +164,22 @@ class MusicPlayer {
         if (!this.currentTrack) return;
         try {
             if (!this._blobUrl) {
-                const prefetched = this._prefetchCache.get(this.currentTrack.id);
-                const persisted = !prefetched && this.blobCache
-                    ? await this.blobCache.getBlobUrl(this.currentTrack.id)
+                const prefetchedBlob = this._prefetchCache.get(this.currentTrack.id);
+                const persistedBlob = !prefetchedBlob && this.blobCache
+                    ? await this.blobCache.getBlob(this.currentTrack.id)
                     : null;
 
-                if (prefetched) {
+                if (prefetchedBlob) {
                     // 1. In-memory prefetch — synchronous, preserves iOS gesture chain
-                    this._blobUrl = prefetched;
+                    this._blob = prefetchedBlob;
                     this._prefetchCache.delete(this.currentTrack.id);
+                    this._blobUrl = URL.createObjectURL(this._blob);
                     this.audio.src = this._blobUrl;
 
-                } else if (persisted) {
+                } else if (persistedBlob) {
                     // 2. Persistent blob cache — user-saved tracks, works offline
-                    this._blobUrl = persisted;
+                    this._blob = persistedBlob;
+                    this._blobUrl = URL.createObjectURL(this._blob);
                     this.audio.src = this._blobUrl;
 
                 } else if (!this.gDrive.accessToken) {
@@ -215,8 +213,8 @@ class MusicPlayer {
                         throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
                     }
 
-                    const blob = await response.blob();
-                    this._blobUrl = URL.createObjectURL(blob);
+                    this._blob = await response.blob();
+                    this._blobUrl = URL.createObjectURL(this._blob);
                     this.audio.src = this._blobUrl;
                     this.playPauseBtn.disabled = false;
                 }

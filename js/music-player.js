@@ -184,6 +184,11 @@ class MusicPlayer {
                         this._blobUrl = persisted;
                         this.audio.src = this._blobUrl;
                     } else {
+                    // No cached blob and no auth token — can't play offline
+                    if (!this.gDrive.accessToken) {
+                        this.playPauseBtn.textContent = '▶️';
+                        return;
+                    }
                     // Unlock iOS audio via a throw-away element so the page-level
                     // user-activation is preserved across the async fetch, without
                     // firing ended/pause/play events on the main audio element.

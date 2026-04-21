@@ -231,6 +231,7 @@ document.addEventListener("DOMContentLoaded", () => {
       mainContent.style.display = "";
       footer.style.display = "";
       document.querySelector(".player-section").style.display = "none";
+      document.querySelector(".album-art-section").style.display = "none";
       document.querySelector(".playlist-section").style.display = "none";
       document.querySelector(".search-section").style.display = "none";
     } else {
@@ -249,6 +250,7 @@ document.addEventListener("DOMContentLoaded", () => {
         mainContent.style.display = "";
         footer.style.display = "";
         document.querySelector(".player-section").style.display = "";
+        document.querySelector(".album-art-section").style.display = "";
         document.querySelector(".playlist-section").style.display = "";
         document.querySelector(".search-section").style.display = "none";
         const tracks = cachedTracks.map(t => ({
@@ -271,6 +273,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function showPlayerSections() {
     document.querySelector(".player-section").style.display = "";
+    document.querySelector(".album-art-section").style.display = "";
     document.querySelector(".playlist-section").style.display = "";
     document.querySelector(".search-section").style.display = "";
     signoutBtn.style.display = "inline-block";

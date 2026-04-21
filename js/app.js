@@ -104,7 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (lastDriveFolderName && driveAPI?.accessToken) {
         loadMusicFromDrive(lastDriveFolderName);
       } else {
-        playlist.clear();
+        updateUIAuthState(false);
       }
       return;
     }

@@ -77,6 +77,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Proactively refresh the access token when user returns to the tab so that
+  // auto-advance after a long idle doesn't fail silently due to an expired token.
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState === "visible" && driveAPI?.accessToken) {
+      const timeLeft = (driveAPI._tokenExpiry || 0) - Date.now();
+      if (timeLeft < 5 * 60 * 1000) {
+        try { await driveAPI.refreshTokenSilently(); } catch {}
+      }
+    }
+  });
+
   // Hide loading banner when first track is ready to play
   document.addEventListener("trackLoaded", (e) => {
     hideLoading();

@@ -165,58 +165,61 @@ class MusicPlayer {
         try {
             if (!this._blobUrl) {
                 const prefetchedBlob = this._prefetchCache.get(this.currentTrack.id);
-                const persistedBlob = !prefetchedBlob && this.blobCache
-                    ? await this.blobCache.getBlob(this.currentTrack.id)
-                    : null;
 
                 if (prefetchedBlob) {
-                    // 1. In-memory prefetch — synchronous, preserves iOS gesture chain
+                    // 1. In-memory prefetch — fully synchronous, preserves iOS gesture chain
                     this._blob = prefetchedBlob;
                     this._prefetchCache.delete(this.currentTrack.id);
                     this._blobUrl = URL.createObjectURL(this._blob);
                     this.audio.src = this._blobUrl;
 
-                } else if (persistedBlob) {
-                    // 2. Persistent blob cache — user-saved tracks, works offline
-                    this._blob = persistedBlob;
-                    this._blobUrl = URL.createObjectURL(this._blob);
-                    this.audio.src = this._blobUrl;
-
-                } else if (!this.gDrive.accessToken) {
-                    // 3. No cached blob and no token — can't play offline
-                    this.playPauseBtn.textContent = '▶️';
-                    return;
-
                 } else {
-                    // 4. Fetch from Drive
-                    // Unlock iOS audio via a throw-away element so the page-level
-                    // user-activation is preserved across the async fetch, without
-                    // firing ended/pause/play events on the main audio element.
+                    // All other paths require at least one await. Unlock iOS audio NOW,
+                    // synchronously while the gesture chain is still intact, before any
+                    // await breaks it (blobCache.getBlob, fetch, refreshToken, etc.).
                     new Audio(SILENT_WAV).play().catch(() => {});
 
-                    this.playPauseBtn.textContent = '⏳';
-                    this.playPauseBtn.disabled = true;
+                    const persistedBlob = this.blobCache
+                        ? await this.blobCache.getBlob(this.currentTrack.id)
+                        : null;
 
-                    const url = `https://www.googleapis.com/drive/v3/files/${this.currentTrack.id}?alt=media`;
-                    let response = await fetch(url, {
-                        headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
-                    });
+                    if (persistedBlob) {
+                        // 2. Persistent blob cache — user-saved tracks, works offline
+                        this._blob = persistedBlob;
+                        this._blobUrl = URL.createObjectURL(this._blob);
+                        this.audio.src = this._blobUrl;
 
-                    if (response.status === 401) {
-                        await this.gDrive.refreshTokenSilently();
-                        response = await fetch(url, {
+                    } else if (!this.gDrive.accessToken) {
+                        // 3. No cached blob and no token — can't play offline
+                        this.playPauseBtn.textContent = '▶️';
+                        return;
+
+                    } else {
+                        // 4. Fetch from Drive
+                        this.playPauseBtn.textContent = '⏳';
+                        this.playPauseBtn.disabled = true;
+
+                        const url = `https://www.googleapis.com/drive/v3/files/${this.currentTrack.id}?alt=media`;
+                        let response = await fetch(url, {
                             headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
                         });
-                    }
 
-                    if (!response.ok) {
-                        throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
-                    }
+                        if (response.status === 401) {
+                            await this.gDrive.refreshTokenSilently();
+                            response = await fetch(url, {
+                                headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
+                            });
+                        }
 
-                    this._blob = await response.blob();
-                    this._blobUrl = URL.createObjectURL(this._blob);
-                    this.audio.src = this._blobUrl;
-                    this.playPauseBtn.disabled = false;
+                        if (!response.ok) {
+                            throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
+                        }
+
+                        this._blob = await response.blob();
+                        this._blobUrl = URL.createObjectURL(this._blob);
+                        this.audio.src = this._blobUrl;
+                        this.playPauseBtn.disabled = false;
+                    }
                 }
             }
 

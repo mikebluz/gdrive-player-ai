@@ -70,39 +70,6 @@
       color: var(--text);
     }
 
-    /* SERIALBOX BAR */
-    .serialbox-bar {
-      position: fixed;
-      top: 60px;
-      left: 0;
-      right: 0;
-      z-index: 99;
-      display: flex;
-      justify-content: center;
-      padding: 8px 40px;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .serialbox-bar a {
-      display: inline-block;
-      padding: 7px 28px;
-      background: linear-gradient(135deg, #2b6cb0, #4299e1);
-      color: white;
-      text-decoration: none;
-      border-radius: 20px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      transition: all 0.25s ease;
-      box-shadow: 0 2px 12px rgba(66, 153, 225, 0.175);
-    }
-
-    .serialbox-bar a:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 18px rgba(66, 153, 225, 0.275);
-    }
-
     /* HERO */
     .hero {
       min-height: 100vh;
@@ -159,6 +126,18 @@
     .btn-primary:hover {
       transform: translateY(-2px);
       box-shadow: 0 8px 28px rgba(66, 153, 225, 0.275);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: #4299e1;
+      border: 1px solid #4299e1;
+    }
+
+    .btn-secondary:hover {
+      transform: translateY(-2px);
+      background: rgba(66, 153, 225, 0.1);
+      box-shadow: 0 8px 28px rgba(66, 153, 225, 0.175);
     }
 
     .btn-ghost {
@@ -242,6 +221,14 @@
       margin-bottom: 24px;
     }
 
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+      margin-top: 40px;
+    }
+    .card-grid .card { margin-top: 0; }
+
     /* FOOTER */
     footer {
       border-top: 1px solid var(--border);
@@ -266,23 +253,20 @@
     <a href="#" class="nav-logo">Mike Luz</a>
     <ul class="nav-links">
       <li><a href="#about">About</a></li>
-      <li><a href="#music">Music</a></li>
-      <li><a href="#poetry">Poetry</a></li>
+      <li><a href="#sounds">Sounds</a></li>
+      <li><a href="#words">Words</a></li>
       <li><a href="#ideas">Ideas</a></li>
     </ul>
   </nav>
 
-  <div class="serialbox-bar">
-    <a href="player.html">Serialbox</a>
-    <a href="sounds.html">Sounds</a>
-  </div>
-
   <div class="hero">
     <div class="hero-inner">
       <h1>Mike Luz</h1>
-      <p>Music, words, and things worth listening to.</p>
+      <p>Hear we are!</p>
       <div class="hero-cta">
         <a href="#about" class="btn btn-primary">Learn More</a>
+        <a href="player.html" class="btn btn-secondary">Serialbox</a>
+        <a href="sounds.html" class="btn btn-secondary">Sounds</a>
       </div>
     </div>
   </div>
@@ -301,22 +285,39 @@
 
   <hr class="divider" />
 
-  <section id="music">
+  <section id="sounds">
     <div class="section-inner">
-      <div class="section-label">Music</div>
-      <h2 class="section-title">Music</h2>
+      <div class="section-label">Sounds</div>
+      <h2 class="section-title">Sounds</h2>
       <div class="section-body">
-        <p>Coming soon.</p>
+        <p>Listen, play, and make.</p>
+      </div>
+      <div class="card-grid">
+        <div class="card">
+          <h3>Recordings</h3>
+          <p>My music on Linktree.</p>
+          <a href="https://linktr.ee/mercywizard" class="btn btn-primary" target="_blank" rel="noopener">Open Linktree</a>
+        </div>
+        <div class="card">
+          <h3>Serialbox</h3>
+          <p>A music player that streams directly from Google Drive.</p>
+          <a href="player.html" class="btn btn-primary">Open Serialbox</a>
+        </div>
+        <div class="card">
+          <h3>Sounds</h3>
+          <p>Browser-based synth and step sequencer with multi-track export.</p>
+          <a href="sounds.html" class="btn btn-primary">Open Sounds</a>
+        </div>
       </div>
     </div>
   </section>
 
   <hr class="divider" />
 
-  <section id="poetry">
+  <section id="words">
     <div class="section-inner">
-      <div class="section-label">Poetry</div>
-      <h2 class="section-title">Poetry</h2>
+      <div class="section-label">Words</div>
+      <h2 class="section-title">Words</h2>
       <div class="section-body">
         <p>Coming soon.</p>
       </div>
@@ -331,24 +332,6 @@
       <h2 class="section-title">Ideas</h2>
       <div class="section-body">
         <p>Coming soon.</p>
-      </div>
-    </div>
-  </section>
-
-  <hr class="divider" />
-
-  <section id="serialbox">
-    <div class="section-inner">
-      <div class="section-label">Serialbox</div>
-      <h2 class="section-title">Serialbox</h2>
-      <div class="section-body">
-        <p>A music player that streams directly from Google Drive.</p>
-      </div>
-      <div class="card">
-        <div class="card-icon">🎵</div>
-        <h3>Open Serialbox</h3>
-        <p>Connect your Google Drive and start listening to your playlists instantly.</p>
-        <a href="player.html" class="btn btn-primary">Launch Player</a>
       </div>
     </div>
   </section>

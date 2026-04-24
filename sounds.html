@@ -382,7 +382,8 @@
     #save-btn:hover { border-color: #4299e1; color: #4299e1; }
     #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    #chord-btn {
+    #chord-btn,
+    #rec-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -399,6 +400,33 @@
       border-color: #9f7aea;
       background: rgba(159,122,234,0.15);
       color: #d6bcfa;
+    }
+    #rec-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    #rec-btn.recording {
+      border-color: #e53e3e;
+      color: #fff;
+      background: rgba(229,62,62,0.4);
+      animation: rec-pulse 1s ease-in-out infinite;
+    }
+    @keyframes rec-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.6); }
+      50%      { box-shadow: 0 0 0 6px rgba(229,62,62,0); }
+    }
+
+    .saved-block.audio-item {
+      border-color: #e53e3e;
+    }
+    .saved-block.audio-item.active-seq {
+      background: linear-gradient(135deg, #3a1a2a, #5a1e3a);
+      border-color: #fc8181;
+    }
+    .track-item.audio-item {
+      background: linear-gradient(135deg, #4a1a2a, #5a2a3a);
+      border-color: #e53e3e;
+    }
+    .track-item.audio-item.active {
+      background: linear-gradient(135deg, #b13a50, #e53e3e);
+      border-color: #fc8181;
     }
 
     .note-length-label {
@@ -915,6 +943,7 @@
     </label>
     <button id="clear-btn">Clear</button>
     <button id="save-btn" disabled>Save</button>
+    <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
     <button id="chord-btn">Chord</button>
     <button id="loop-btn" title="Loop the current sequence">Loop</button>
     <label class="note-length-label" title="How many steps each new note should be held for">Length
@@ -1005,14 +1034,24 @@
       }
       grid.innerHTML = '';
       savedSequences.forEach((saved, i) => {
+        const isAudio = saved.type === 'audio';
         const block = document.createElement('div');
-        block.className = 'saved-block' + (i === activeSeqIndex ? ' active-seq' : '');
+        block.className = 'saved-block'
+          + (i === activeSeqIndex ? ' active-seq' : '')
+          + (isAudio ? ' audio-item' : '');
         block.dataset.seqIndex = i;
+        const countLabel = isAudio
+          ? `audio · ${(saved.durationSec || 0).toFixed(1)}s`
+          : `${(saved.steps || []).length} steps${saved.bpm ? ` · ${saved.bpm}` : ''}`;
         block.innerHTML = `
           <span class="saved-block-name">${saved.name}</span>
-          <span class="saved-block-count">${saved.steps.length} steps${saved.bpm ? ` · ${saved.bpm}` : ''}</span>
+          <span class="saved-block-count">${countLabel}</span>
         `;
         block.addEventListener('click', () => {
+          if (isAudio) {
+            previewSavedAudio(saved);
+            return;
+          }
           if (saved.rootIdx != null)     rootIdx     = saved.rootIdx;
           if (saved.baseOctave != null)  baseOctave  = saved.baseOctave;
           if (saved.octaveCount != null) octaveCount = saved.octaveCount;
@@ -1365,6 +1404,10 @@
     function resetUIToDefault() {
       stopSequence();
       stopAllTracks();
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      if (_previewAudio) { try { _previewAudio.pause(); } catch (e) {} _previewAudio = null; }
       sequence = [];
       pendingChord = [];
       chordMode = false;
@@ -1450,6 +1493,88 @@
       showPostSaveDialog();
     });
 
+    // ---- Audio recording (mic → saved as an 'audio' sequence) ----
+
+    let mediaRecorder = null;
+    let recordingStream = null;
+    let recordingStartMs = 0;
+    let recordingChunks = [];
+
+    async function toggleRecording() {
+      const btn = document.getElementById('rec-btn');
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+        alert('This browser does not support audio recording.');
+        return;
+      }
+      try {
+        recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        alert('Microphone access was denied or unavailable.');
+        return;
+      }
+      const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+      const mimeType = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+      mediaRecorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
+      recordingChunks = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordingChunks.push(e.data); };
+      mediaRecorder.onstop = () => {
+        const durationSec = (performance.now() - recordingStartMs) / 1000;
+        recordingStream.getTracks().forEach(t => t.stop());
+        recordingStream = null;
+        const type = mediaRecorder.mimeType || mimeType || 'audio/webm';
+        const blob = new Blob(recordingChunks, { type });
+        mediaRecorder = null;
+        recordingChunks = [];
+        btn.classList.remove('recording');
+        btn.textContent = '● Rec';
+        const reader = new FileReader();
+        reader.onload = () => saveRecordingToLibrary(reader.result, durationSec);
+        reader.readAsDataURL(blob);
+      };
+      mediaRecorder.start();
+      recordingStartMs = performance.now();
+      btn.classList.add('recording');
+      btn.textContent = '■ Stop';
+    }
+
+    function saveRecordingToLibrary(dataUrl, durationSec) {
+      const name = seqName(savedSequences.length);
+      const entry = {
+        name,
+        type: 'audio',
+        audioDataUrl: dataUrl,
+        durationSec,
+        bpm: parseInt(tempoInput.value) || 120,
+        subdivision: stepSubdivision,
+        steps: [], // keep for compatibility with anything that iterates
+      };
+      savedSequences.push(entry);
+      activeSeqIndex = savedSequences.length - 1;
+      try {
+        persistSaved();
+      } catch (e) {
+        savedSequences.pop();
+        activeSeqIndex = null;
+        alert('Recording is too large to save in browser storage. Delete some sequences and try again, or shorten the clip.');
+        return;
+      }
+      renderSavedSequences();
+    }
+
+    document.getElementById('rec-btn').addEventListener('click', toggleRecording);
+
+    // Preview a bank audio entry through an HTMLAudioElement (no Tone graph needed).
+    let _previewAudio = null;
+    function previewSavedAudio(saved) {
+      if (_previewAudio) { _previewAudio.pause(); _previewAudio = null; }
+      _previewAudio = new Audio(saved.audioDataUrl);
+      _previewAudio.play().catch(() => {});
+    }
+
     document.getElementById('loop-btn').addEventListener('click', () => {
       loopMode = !loopMode;
       document.getElementById('loop-btn').classList.toggle('active', loopMode);
@@ -1529,8 +1654,15 @@
         name: saved.name,
         bpm: saved.bpm,
         subdivision: saved.subdivision || 1,
-        steps: (saved.steps || []).map(cloneStep),
       };
+      if (saved.type === 'audio') {
+        snapshot.type = 'audio';
+        snapshot.audioDataUrl = saved.audioDataUrl;
+        snapshot.durationSec = saved.durationSec || 0;
+        snapshot.steps = [];
+      } else {
+        snapshot.steps = (saved.steps || []).map(cloneStep);
+      }
       tracks[trackIdx].items.push(snapshot);
       persistTracks();
       renderTracks();
@@ -1548,6 +1680,10 @@
     }
 
     function itemStepCount(item) {
+      if (item.type === 'audio') {
+        const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
+        return Math.max(1, Math.ceil((item.durationSec || 0) * 1000 / Math.max(1, stepMs)));
+      }
       return (item.steps || []).reduce((sum, s) => sum + (s.duration || 1), 0);
     }
 
@@ -1585,6 +1721,33 @@
       }
     }
 
+    function playAudioItem(trackIdx, itemIdx, item) {
+      const track = tracks[trackIdx];
+      if (!track || !track.playing) return;
+      if (track.currentItemIdx !== itemIdx) {
+        track.currentItemIdx = itemIdx;
+        renderTracks();
+      }
+      const player = new Tone.Player({
+        url: item.audioDataUrl,
+        autostart: false,
+        onload: () => { try { player.start(); } catch (e) {} },
+      }).connect(masterBus);
+      const advanceMs = Math.max(50, (item.durationSec || 0) * 1000);
+      track.timer = setTimeout(() => {
+        try { player.stop(); } catch (e) {}
+        setTimeout(() => { try { player.dispose(); } catch (e) {} }, 200);
+        const nextItem = itemIdx + 1;
+        if (nextItem < track.items.length) {
+          playTrackItem(trackIdx, nextItem, 0);
+        } else if (track.loopMode && track.items.length > 0) {
+          playTrackItem(trackIdx, 0, 0);
+        } else {
+          stopTrack(trackIdx, true);
+        }
+      }, advanceMs);
+    }
+
     function playTrackItem(trackIdx, itemIdx, stepIdx) {
       const track = tracks[trackIdx];
       if (!track || !track.playing) return;
@@ -1597,6 +1760,10 @@
         return;
       }
       const item = track.items[itemIdx];
+      if (item && item.type === 'audio') {
+        playAudioItem(trackIdx, itemIdx, item);
+        return;
+      }
       if (!item || !item.steps || item.steps.length === 0) {
         playTrackItem(trackIdx, itemIdx + 1, 0);
         return;
@@ -1710,11 +1877,16 @@
         } else {
           track.items.forEach((item, itemIdx) => {
             const span = Math.max(1, itemStepCount(item));
+            const isAudio = item.type === 'audio';
             const block = document.createElement('div');
-            block.className = 'track-item' + (track.playing && track.currentItemIdx === itemIdx ? ' active' : '');
+            block.className = 'track-item'
+              + (isAudio ? ' audio-item' : '')
+              + (track.playing && track.currentItemIdx === itemIdx ? ' active' : '');
             block.style.gridColumn = `span ${span}`;
-            block.textContent = item.name || `#${itemIdx + 1}`;
-            block.title = `${item.name} · ${span} step${span !== 1 ? 's' : ''} @ ${item.bpm || 120} BPM`;
+            block.textContent = (item.name || `#${itemIdx + 1}`) + (isAudio ? ` · ${(item.durationSec || 0).toFixed(1)}s` : '');
+            block.title = isAudio
+              ? `${item.name} · audio · ${(item.durationSec || 0).toFixed(1)}s (≈${span} step${span !== 1 ? 's' : ''} @ ${item.bpm || 120} BPM)`
+              : `${item.name} · ${span} step${span !== 1 ? 's' : ''} @ ${item.bpm || 120} BPM`;
             // Click to remove (simple for now)
             block.addEventListener('contextmenu', (e) => { e.preventDefault(); removeTrackItem(trackIdx, itemIdx); });
             // Long-press to remove on mobile
@@ -1780,6 +1952,10 @@
       const durationsMs = tracks.map(track => {
         let ms = 0;
         (track.items || []).forEach(item => {
+          if (item.type === 'audio') {
+            ms += (item.durationSec || 0) * 1000;
+            return;
+          }
           const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
           (item.steps || []).forEach(s => { ms += stepMs * (s.duration || 1); });
         });
@@ -1791,9 +1967,16 @@
       return await Tone.Offline(async () => {
         const limiter = new Tone.Limiter(-1).toDestination();
         const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(limiter);
+        const players = [];
         tracks.forEach(track => {
           let time = 0;
           (track.items || []).forEach(item => {
+            if (item.type === 'audio') {
+              const player = new Tone.Player({ url: item.audioDataUrl }).connect(bus);
+              players.push({ player, startTime: time });
+              time += (item.durationSec || 0);
+              return;
+            }
             const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
             (item.steps || []).forEach(step => {
               const durMs  = stepMs * (step.duration || 1);
@@ -1807,6 +1990,11 @@
               time += durSec;
             });
           });
+        });
+        // Wait for audio buffers to decode before scheduling their starts.
+        if (players.length > 0) await Tone.loaded();
+        players.forEach(({ player, startTime }) => {
+          try { player.start(startTime); } catch (e) {}
         });
       }, totalSec);
     }

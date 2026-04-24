@@ -22,7 +22,7 @@ body {
 
 .info-box {
     background: #1a1a2e;
-    border-left: 4px solid #5a67d8;
+    border-left: 4px solid #2b6cb0;
     border-radius: 10px;
     padding: 16px 20px;
     margin-bottom: 20px;
@@ -48,7 +48,7 @@ body {
     flex-direction: column;
     width: 100%;
     margin-bottom: 25px;
-    background: linear-gradient(135deg, #5a67d8, #667eea);
+    background: linear-gradient(135deg, #2b6cb0, #4299e1);
     color: white;
     padding: 20px;
     border-radius: 15px;
@@ -62,7 +62,7 @@ body {
 
 .header:hover {
     transform: translateY(-2px);
-    box-shadow: 0 12px 30px rgba(90, 103, 216, 0.5);
+    box-shadow: 0 12px 30px rgba(90, 103, 216, 0.25);
 }
 
 .header.connected {
@@ -99,13 +99,13 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #5a67d8, #667eea);
+    background: linear-gradient(135deg, #2b6cb0, #4299e1);
     color: white;
 }
 
 .btn-primary:hover {
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(90, 103, 216, 0.4);
+    box-shadow: 0 5px 15px rgba(90, 103, 216, 0.2);
 }
 
 .btn-secondary {
@@ -153,7 +153,7 @@ body {
 
 .search-input:focus {
     outline: none;
-    border-color: #5a67d8;
+    border-color: #2b6cb0;
 }
 
 .playlist-select-container {
@@ -177,7 +177,7 @@ body {
 
 .playlist-select:focus {
     outline: none;
-    border-color: #5a67d8;
+    border-color: #2b6cb0;
 }
 
 .playlist-select:disabled {
@@ -202,7 +202,7 @@ body {
     padding: 20px;
     border-radius: 15px;
     box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
-    color: #667eea;
+    color: #4299e1;
     font-weight: 600;
     font-size: 1rem;
 }
@@ -211,7 +211,7 @@ body {
     width: 20px;
     height: 20px;
     border: 2px solid #2d2d3f;
-    border-top: 2px solid #667eea;
+    border-top: 2px solid #4299e1;
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
@@ -260,7 +260,7 @@ body {
     width: 220px;
     height: 220px;
     border-radius: 15px;
-    background: linear-gradient(135deg, #667eea, #764ba2);
+    background: linear-gradient(135deg, #4299e1, #764ba2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -310,7 +310,7 @@ body {
 .control-btn-main {
     width: 60px;
     height: 60px;
-    background: linear-gradient(135deg, #5a67d8, #667eea);
+    background: linear-gradient(135deg, #2b6cb0, #4299e1);
     color: white;
     font-size: 1.4rem;
 }
@@ -334,7 +334,7 @@ body {
 
 #progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #5a67d8, #667eea);
+    background: linear-gradient(90deg, #2b6cb0, #4299e1);
     width: 0%;
     transition: width 0.1s ease;
 }
@@ -376,8 +376,8 @@ body {
 }
 
 .btn-cache:hover {
-    border-color: #667eea;
-    color: #667eea;
+    border-color: #4299e1;
+    color: #4299e1;
 }
 
 #volume-slider {
@@ -433,7 +433,7 @@ body {
 }
 
 .playlist-item.active {
-    background: linear-gradient(135deg, #5a67d8, #667eea);
+    background: linear-gradient(135deg, #2b6cb0, #4299e1);
     color: white;
 }
 
@@ -511,7 +511,7 @@ body {
 }
 
 .playlist-item.drag-over {
-    border-top: 2px solid #5a67d8;
+    border-top: 2px solid #2b6cb0;
     margin-top: -2px;
 }
 
@@ -522,7 +522,7 @@ body {
 
 .loop-btn.loop-track {
     opacity: 1;
-    background: linear-gradient(135deg, #5a67d8, #667eea);
+    background: linear-gradient(135deg, #2b6cb0, #4299e1);
     color: white;
 }
 

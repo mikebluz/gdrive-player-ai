@@ -3,87 +3,358 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Drive Music Player</title>
-  <link rel="stylesheet" href="css/styles.css" />
+  <title>Mike Luz</title>
   <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #000000;
+      --surface: #1a1a2e;
+      --surface2: #0f0f1a;
+      --accent: #4299e1;
+      --accent2: #2b6cb0;
+      --text: #e2e8f0;
+      --muted: #a0aec0;
+      --border: #2d2d3f;
+    }
+
+    html { scroll-behavior: smooth; }
+
     body {
-      background: #0f0f1a;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* NAV */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      justify-content: center;
+      justify-content: space-between;
+      padding: 0 40px;
+      height: 60px;
     }
 
-    .welcome {
-      text-align: center;
-      padding: 60px 40px;
-      background: #1a1a2e;
-      border-radius: 20px;
-      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
-      max-width: 480px;
-      width: 100%;
-    }
-
-    .welcome-icon {
-      font-size: 4rem;
-      margin-bottom: 20px;
-    }
-
-    .welcome h1 {
-      font-size: 2rem;
-      color: #f0f4ff;
-      margin-bottom: 12px;
-    }
-
-    .welcome p {
-      color: #a0aec0;
-      font-size: 1rem;
-      line-height: 1.6;
-      margin-bottom: 36px;
-    }
-
-    .launch-btn {
-      display: inline-block;
-      padding: 16px 40px;
-      background: linear-gradient(135deg, #5a67d8, #667eea);
-      color: white;
-      text-decoration: none;
-      border-radius: 30px;
+    .nav-logo {
       font-size: 1.1rem;
-      font-weight: 600;
-      transition: all 0.3s ease;
-      box-shadow: 0 4px 20px rgba(90, 103, 216, 0.4);
-    }
-
-    .launch-btn:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 8px 30px rgba(90, 103, 216, 0.6);
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+      letter-spacing: -0.3px;
     }
 
     .nav-links {
-      margin-top: 28px;
       display: flex;
-      justify-content: center;
-      gap: 24px;
+      gap: 36px;
+      list-style: none;
     }
 
     .nav-links a {
-      color: #a0aec0;
-      font-size: 0.95rem;
+      color: var(--muted);
       text-decoration: none;
-      transition: color 0.2s ease;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.2s;
     }
 
     .nav-links a:hover {
-      color: #667eea;
+      color: var(--text);
+    }
+
+    /* SERIALBOX BAR */
+    .serialbox-bar {
+      position: fixed;
+      top: 60px;
+      left: 0;
+      right: 0;
+      z-index: 99;
+      display: flex;
+      justify-content: center;
+      padding: 8px 40px;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .serialbox-bar a {
+      display: inline-block;
+      padding: 7px 28px;
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      color: white;
+      text-decoration: none;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: all 0.25s ease;
+      box-shadow: 0 2px 12px rgba(66, 153, 225, 0.175);
+    }
+
+    .serialbox-bar a:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 18px rgba(66, 153, 225, 0.275);
+    }
+
+    /* HERO */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 145px 24px 60px;
+    }
+
+    .hero-inner {
+      max-width: 640px;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.4rem, 6vw, 4rem);
+      font-weight: 700;
+      color: #f0f4ff;
+      letter-spacing: -1px;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+
+    .hero p {
+      color: var(--muted);
+      font-size: 1.15rem;
+      line-height: 1.7;
+      margin-bottom: 40px;
+    }
+
+    .hero-cta {
+      display: inline-flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 13px 32px;
+      border-radius: 30px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.25s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      color: white;
+      box-shadow: 0 4px 20px rgba(66, 153, 225, 0.175);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(66, 153, 225, 0.275);
+    }
+
+    .btn-ghost {
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .btn-ghost:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* SECTIONS */
+    section {
+      padding: 100px 24px;
+    }
+
+    .section-inner {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(1.8rem, 4vw, 2.6rem);
+      font-weight: 700;
+      color: #f0f4ff;
+      letter-spacing: -0.5px;
+      margin-bottom: 24px;
+    }
+
+    .section-body {
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1.8;
+    }
+
+    .section-body p + p {
+      margin-top: 16px;
+    }
+
+    /* DIVIDER */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* CARD */
+    .card {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 36px;
+      margin-top: 40px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-icon {
+      font-size: 2.5rem;
+      margin-bottom: 16px;
+    }
+
+    .card h3 {
+      font-size: 1.4rem;
+      color: #f0f4ff;
+      margin-bottom: 10px;
+    }
+
+    .card p {
+      color: var(--muted);
+      line-height: 1.7;
+      margin-bottom: 24px;
+    }
+
+    /* FOOTER */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 40px;
+      text-align: center;
+      color: var(--border);
+      font-size: 0.85rem;
+    }
+
+    /* MOBILE */
+    @media (max-width: 600px) {
+      nav { padding: 0 20px; }
+      .nav-links { gap: 20px; }
+      section { padding: 80px 20px; }
+      .card { padding: 24px; }
     }
   </style>
 </head>
 <body>
-  <div class="welcome">
-    <div class="welcome-icon">🎵</div>
-    <h1>Google Drive Music Player</h1>
-    <p>Stream your music directly from Google Drive. Connect your account and start listening instantly.</p>
-    <a href="player.html" class="launch-btn">Open Player</a>
+
+  <nav>
+    <a href="#" class="nav-logo">Mike Luz</a>
+    <ul class="nav-links">
+      <li><a href="#about">About</a></li>
+      <li><a href="#music">Music</a></li>
+      <li><a href="#poetry">Poetry</a></li>
+      <li><a href="#ideas">Ideas</a></li>
+    </ul>
+  </nav>
+
+  <div class="serialbox-bar">
+    <a href="player.html">Serialbox</a>
   </div>
+
+  <div class="hero">
+    <div class="hero-inner">
+      <h1>Mike Luz</h1>
+      <p>Music, words, and things worth listening to.</p>
+      <div class="hero-cta">
+        <a href="#about" class="btn btn-primary">Learn More</a>
+      </div>
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <section id="about">
+    <div class="section-inner">
+      <div class="section-label">About</div>
+      <h2 class="section-title">Who I am</h2>
+      <div class="section-body">
+        <p>Coming soon.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <section id="music">
+    <div class="section-inner">
+      <div class="section-label">Music</div>
+      <h2 class="section-title">Music</h2>
+      <div class="section-body">
+        <p>Coming soon.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <section id="poetry">
+    <div class="section-inner">
+      <div class="section-label">Poetry</div>
+      <h2 class="section-title">Poetry</h2>
+      <div class="section-body">
+        <p>Coming soon.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <section id="ideas">
+    <div class="section-inner">
+      <div class="section-label">Ideas</div>
+      <h2 class="section-title">Ideas</h2>
+      <div class="section-body">
+        <p>Coming soon.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <section id="serialbox">
+    <div class="section-inner">
+      <div class="section-label">Serialbox</div>
+      <h2 class="section-title">Serialbox</h2>
+      <div class="section-body">
+        <p>A music player that streams directly from Google Drive.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎵</div>
+        <h3>Open Serialbox</h3>
+        <p>Connect your Google Drive and start listening to your playlists instantly.</p>
+        <a href="player.html" class="btn btn-primary">Launch Player</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    &copy; 2026 Mike Luz
+  </footer>
+
 </body>
 </html>

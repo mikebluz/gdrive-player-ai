@@ -5,6 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Google Drive Music Player</title>
   <link rel="stylesheet" href="css/styles.css" />
+  <style>
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid #2d2d3f;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 40px;
+      height: 60px;
+    }
+
+    .nav-logo {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      text-decoration: none;
+      letter-spacing: -0.3px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 36px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: #a0aec0;
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: #e2e8f0; }
+
+    .container { padding-top: 80px; }
+
+    @media (max-width: 600px) {
+      nav { padding: 0 20px; }
+      .nav-links { gap: 20px; }
+    }
+  </style>
 
   <!-- Google APIs -->
   <script src="https://apis.google.com/js/api.js"></script>
@@ -12,8 +60,18 @@
 </head>
 
 <body>
+  <nav>
+    <a href="index.html" class="nav-logo">Mike Luz</a>
+    <ul class="nav-links">
+      <li><a href="index.html#about">About</a></li>
+      <li><a href="index.html#music">Music</a></li>
+      <li><a href="index.html#poetry">Poetry</a></li>
+      <li><a href="index.html#ideas">Ideas</a></li>
+    </ul>
+  </nav>
+
   <div class="container">
-    <h1 class="page-title">What's it gonna be?</h1>
+    <h1 class="page-title">Serialbox</h1>
 
     <div class="info-box">
       <p>This player will read a file in the root of your Google Drive called <strong>Serialbox Playlists</strong>. In this file, list the folder names which you want the player to treat as playlists, i.e., contain audio files. You can also create a Google Doc in that folder called <strong>Artist name</strong> containing the name of the artist and it will populate in the player. You can also add an image to the folder called <strong>Artwork</strong> and it will be used as the artwork.</p>

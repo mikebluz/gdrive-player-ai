@@ -77,13 +77,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Proactively refresh the access token when user returns to the tab so that
-  // auto-advance after a long idle doesn't fail silently due to an expired token.
+  // When the user returns to the tab after an idle period:
+  // 1. Refresh the token if it's near expiry
+  // 2. Rebuild the prefetch window so the next tracks are cached before the
+  //    current track ends — prevents iOS from blocking audio.play() after awaits
+  //    in the 'ended' event handler chain.
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState === "visible" && driveAPI?.accessToken) {
       const timeLeft = (driveAPI._tokenExpiry || 0) - Date.now();
       if (timeLeft < 5 * 60 * 1000) {
         try { await driveAPI.refreshTokenSilently(); } catch {}
+      }
+      if (playlist?.currentIndex >= 0) {
+        playlist._buildPrefetchWindow(playlist.currentIndex);
       }
     }
   });

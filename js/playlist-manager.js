@@ -79,17 +79,31 @@ class PlaylistManager {
 
     _buildPrefetchWindow(index) {
         const windowIds = new Set();
-        const toFetch = [];
+        const candidates = [];
         for (let i = 1; i <= 4; i++) {
             const nextIndex = (index + i) % this.tracks.length;
             if (nextIndex !== index) {
                 const track = this.tracks[nextIndex];
                 windowIds.add(track.id);
-                toFetch.push(track);
+                candidates.push(track);
             }
         }
-        Promise.all(toFetch.map(t => this.musicPlayer.prefetchTrack(t)));
+        this._fetchUncachedInWindow(candidates);
         return windowIds;
+    }
+
+    async _fetchUncachedInWindow(candidates) {
+        const toFetch = [];
+        for (const track of candidates) {
+            if (this.musicPlayer._prefetchCache.has(track.id)) continue;
+            const inBlobCache = this.musicPlayer.blobCache
+                ? await this.musicPlayer.blobCache.has(track.id)
+                : false;
+            if (!inBlobCache) toFetch.push(track);
+        }
+        if (toFetch.length > 0) {
+            await Promise.all(toFetch.map(t => this.musicPlayer.prefetchTrack(t)));
+        }
     }
 
     playNext() {

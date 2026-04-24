@@ -112,6 +112,7 @@ class MusicPlayer {
             if (!response.ok) return;
             const blob = await response.blob();
             this._prefetchCache.set(track.id, blob);
+            if (this.blobCache) this.blobCache.store(track.id, blob);
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
         } catch (e) {
             // prefetch failure is non-fatal

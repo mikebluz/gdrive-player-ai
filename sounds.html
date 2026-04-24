@@ -1125,9 +1125,21 @@
       tempoSlider.value = v;
     });
 
-    // Tone.js handles iOS audio unlock — just call Tone.start() on first gesture.
+    // iOS audio unlock: Tone.start() alone is async and often hasn't finished
+    // resuming by the time the first tap fires playNote. Playing a silent buffer
+    // synchronously inside the gesture forces the context to transition to
+    // running immediately, and Tone.start() keeps the Tone-level state in sync.
     ['pointerdown','touchstart','keydown'].forEach(ev => {
-      document.addEventListener(ev, () => Tone.start(), { once: true, capture: true });
+      document.addEventListener(ev, () => {
+        try {
+          const ac = Tone.getContext().rawContext;
+          const src = ac.createBufferSource();
+          src.buffer = ac.createBuffer(1, 1, 22050);
+          src.connect(ac.destination);
+          src.start(0);
+        } catch (e) {}
+        Tone.start();
+      }, { once: true, capture: true });
     });
     document.addEventListener('visibilitychange', () => {
       const tctx = Tone.getContext().rawContext;
@@ -1506,8 +1518,14 @@
         mediaRecorder.stop();
         return;
       }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      if (typeof MediaRecorder === 'undefined') {
         alert('This browser does not support audio recording.');
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert(location.protocol !== 'https:' && location.hostname !== 'localhost'
+          ? 'Audio recording requires HTTPS. Open this page over https:// to enable the microphone.'
+          : 'This browser does not support microphone access.');
         return;
       }
       try {

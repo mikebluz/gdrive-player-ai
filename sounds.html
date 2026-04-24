@@ -293,20 +293,21 @@
 
     /* SEQUENCE DISPLAY */
     .sequence-display {
-      height: 62px;
       min-height: 62px;
+      max-height: 140px;
       background: #0a0a14;
       border-bottom: 3px solid #000;
       display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
       align-items: center;
-      padding: 0 14px;
-      overflow-x: auto;
-      overflow-y: hidden;
+      padding: 8px 14px;
       gap: 6px;
+      overflow-y: auto;
       scrollbar-width: thin;
       scrollbar-color: #2d2d3f #0a0a14;
     }
-    .sequence-display::-webkit-scrollbar { height: 4px; }
+    .sequence-display::-webkit-scrollbar { width: 4px; }
     .sequence-display::-webkit-scrollbar-track { background: #0a0a14; }
     .sequence-display::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
 
@@ -331,6 +332,8 @@
       font-size: 0.75rem;
       font-weight: 700;
       color: #a0aec0;
+      user-select: none;
+      cursor: grab;
       flex-shrink: 0;
       transition: all 0.1s ease;
     }
@@ -383,7 +386,8 @@
     #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
     #chord-btn,
-    #rec-btn {
+    #rec-btn,
+    #random-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -402,6 +406,7 @@
       color: #d6bcfa;
     }
     #rec-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    #random-btn:hover { border-color: #ed8936; color: #fbd38d; }
     #rec-btn.recording {
       border-color: #e53e3e;
       color: #fff;
@@ -520,6 +525,8 @@
     .saved-block:hover { border-color: #4299e1; background: #1e2a3a; }
     .saved-block.dragging { opacity: 0.35; }
     .saved-block.drag-over { outline: 2px solid #4299e1; }
+    .seq-step.dragging { opacity: 0.35; cursor: grabbing; }
+    .seq-step.drag-over { outline: 2px solid #4299e1; outline-offset: -1px; }
     .saved-block.active-seq { border-color: #4299e1; background: linear-gradient(135deg, #1a2a4a, #1e3a5a); }
 
     .saved-block-name {
@@ -944,6 +951,7 @@
     <button id="clear-btn">Clear</button>
     <button id="save-btn" disabled>Save</button>
     <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
+    <button id="random-btn" title="Generate a random sequence">Random</button>
     <button id="chord-btn">Chord</button>
     <button id="loop-btn" title="Loop the current sequence">Loop</button>
     <label class="note-length-label" title="How many steps each new note should be held for">Length
@@ -1306,6 +1314,8 @@
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
         }
         bindStepLongPress(chip, i);
+        bindStepDrag(chip, i);
+        bindStepDragTouch(chip, i);
         display.appendChild(chip);
       });
 
@@ -1315,14 +1325,14 @@
         chip.className = 'seq-step chord-pending';
         chip.textContent = pendingChord.map(n => n.label).join('·') + '…';
         display.appendChild(chip);
-        chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'end' });
+        chip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 
       count.textContent = `${sequence.length} step${sequence.length !== 1 ? 's' : ''}`;
 
       if (activeIndex >= 0) {
         const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
-        chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
     }
 
@@ -1356,7 +1366,9 @@
 
       const step = sequence[index];
       const stepDur = step.duration || 1;
-      const waitMs = getStepMs() * stepDur;
+      const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+      const bpm = parseInt(tempoInput.value) || 120;
+      const waitMs = Math.round(60000 / bpm * stepSub) * stepDur;
       clearHighlights();
       renderSequence(index);
 
@@ -1453,6 +1465,132 @@
       rebuildGrid();
       renderSequence();
       renderSavedSequences();
+    }
+
+    // ---- Random sequence generator ----
+
+    function randomFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    const _RAND_SUBS = [4, 2, 1, 1, 0.5, 0.5, 0.5, 0.25, 0.25, 0.125];
+    const _RAND_DURS = [1, 1, 1, 1, 2, 2, 3, 4, 8];
+
+    function sampleWithoutReplacement(sourceLen, k) {
+      const pool = [];
+      for (let i = 0; i < sourceLen; i++) pool.push(i);
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      return pool.slice(0, Math.min(k, sourceLen));
+    }
+
+    function randomStepParams(type) {
+      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
+    }
+
+    function generateRandomSequence(numSteps, maxChordSize, maxStepLength) {
+      const poolSize = notes.length;
+      if (poolSize === 0) return [];
+      const out = [];
+      const chordAllowed = maxChordSize > 1 && poolSize > 1;
+      const maxLen = Math.max(1, maxStepLength || 1);
+      const durPool = _RAND_DURS.filter(d => d <= maxLen);
+      if (durPool.length === 0) durPool.push(1);
+      for (let s = 0; s < numSteps; s++) {
+        const roll = Math.random();
+        const subdivision = randomFrom(_RAND_SUBS);
+        const duration    = randomFrom(durPool);
+        if (roll < 0.18) {
+          out.push({ freq: null, label: '—', cellIndex: null, duration, subdivision });
+          continue;
+        }
+        if (chordAllowed && roll < 0.45) {
+          const size = 2 + Math.floor(Math.random() * (maxChordSize - 1));
+          const picked = sampleWithoutReplacement(poolSize, size);
+          const chord = picked.map(idx => {
+            const sound = randomFrom(SOUNDS);
+            return {
+              freq: notes[idx].freq,
+              label: notes[idx].label,
+              cellIndex: idx,
+              sound,
+              params: randomStepParams(sound),
+            };
+          });
+          out.push({
+            chord,
+            label: chord.map(n => n.label).join('·'),
+            duration, subdivision,
+          });
+          continue;
+        }
+        const idx = Math.floor(Math.random() * poolSize);
+        const sound = randomFrom(SOUNDS);
+        out.push({
+          freq: notes[idx].freq,
+          label: notes[idx].label,
+          cellIndex: idx,
+          sound,
+          params: randomStepParams(sound),
+          duration, subdivision,
+        });
+      }
+      return out;
+    }
+
+    function showRandomDialog() {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Random sequence</div>
+        <div class="sm-param">
+          <div class="sm-param-row">Number of steps <span class="sm-val" id="rand-steps-v">16</span></div>
+          <input type="range" id="rand-steps" min="1" max="64" value="16" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Max chord size <span class="sm-val" id="rand-chord-v">3</span></div>
+          <input type="range" id="rand-chord" min="1" max="8" value="3" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Max step length <span class="sm-val" id="rand-len-v">4</span></div>
+          <input type="range" id="rand-len" min="1" max="8" value="4" />
+        </div>
+        <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.72rem;padding:4px 0 10px;">
+          Replaces the current in-progress sequence. Save first to keep the existing one.
+        </div>
+        <div class="sm-footer">
+          <button class="sm-preview">Cancel</button>
+          <button class="sm-apply">Generate</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const stepsIn = modal.querySelector('#rand-steps');
+      const stepsOut = modal.querySelector('#rand-steps-v');
+      const chordIn = modal.querySelector('#rand-chord');
+      const chordOut = modal.querySelector('#rand-chord-v');
+      const lenIn = modal.querySelector('#rand-len');
+      const lenOut = modal.querySelector('#rand-len-v');
+      stepsIn.addEventListener('input', () => stepsOut.textContent = stepsIn.value);
+      chordIn.addEventListener('input', () => chordOut.textContent = chordIn.value);
+      lenIn.addEventListener('input', () => lenOut.textContent = lenIn.value);
+
+      modal.querySelector('.sm-preview').addEventListener('click', () => overlay.remove());
+      modal.querySelector('.sm-apply').addEventListener('click', () => {
+        const n = Math.max(1, Math.min(64, parseInt(stepsIn.value) || 16));
+        const c = Math.max(1, Math.min(8,  parseInt(chordIn.value) || 3));
+        const l = Math.max(1, Math.min(8,  parseInt(lenIn.value)   || 4));
+        stopSequence();
+        sequence = generateRandomSequence(n, c, l);
+        pendingChord = [];
+        renderSequence();
+        document.getElementById('save-btn').disabled = sequence.length === 0;
+        overlay.remove();
+      });
     }
 
     function showPostSaveDialog() {
@@ -1584,6 +1722,7 @@
     }
 
     document.getElementById('rec-btn').addEventListener('click', toggleRecording);
+    document.getElementById('random-btn').addEventListener('click', showRandomDialog);
 
     // Preview a bank audio entry through an HTMLAudioElement (no Tone graph needed).
     let _previewAudio = null;
@@ -1604,7 +1743,7 @@
       if (!chordMode && pendingChord.length > 0) {
         // Commit the accumulated chord as one step
         const label = pendingChord.map(n => n.label).join('·');
-        addToSequence({ chord: [...pendingChord], label, duration: noteLength });
+        addToSequence({ chord: [...pendingChord], label, duration: noteLength, subdivision: stepSubdivision });
         pendingChord = [];
       } else if (!chordMode) {
         pendingChord = [];
@@ -1702,7 +1841,13 @@
         const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
         return Math.max(1, Math.ceil((item.durationSec || 0) * 1000 / Math.max(1, stepMs)));
       }
-      return (item.steps || []).reduce((sum, s) => sum + (s.duration || 1), 0);
+      const itemSub = item.subdivision || 1;
+      let total = 0;
+      (item.steps || []).forEach(s => {
+        const sSub = (s.subdivision != null) ? s.subdivision : itemSub;
+        total += (s.duration || 1) * (sSub / itemSub);
+      });
+      return Math.max(1, Math.ceil(total));
     }
 
     function togglePlayTrack(trackIdx) {
@@ -1787,7 +1932,8 @@
         return;
       }
       const step = item.steps[stepIdx];
-      const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
+      const stepSub = (step.subdivision != null) ? step.subdivision : (item.subdivision || 1);
+      const stepMs = Math.round(60000 / (item.bpm || 120) * stepSub);
       const waitMs = stepMs * (step.duration || 1);
 
       if (track.currentItemIdx !== itemIdx) {
@@ -1974,8 +2120,13 @@
             ms += (item.durationSec || 0) * 1000;
             return;
           }
-          const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
-          (item.steps || []).forEach(s => { ms += stepMs * (s.duration || 1); });
+          const itemBpm = item.bpm || 120;
+          const itemSub = item.subdivision || 1;
+          (item.steps || []).forEach(s => {
+            const sSub = (s.subdivision != null) ? s.subdivision : itemSub;
+            const sMs = Math.round(60000 / itemBpm * sSub);
+            ms += sMs * (s.duration || 1);
+          });
         });
         return ms;
       });
@@ -1995,8 +2146,11 @@
               time += (item.durationSec || 0);
               return;
             }
-            const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
+            const itemBpm = item.bpm || 120;
+            const itemSub = item.subdivision || 1;
             (item.steps || []).forEach(step => {
+              const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
+              const stepMs = Math.round(60000 / itemBpm * stepSub);
               const durMs  = stepMs * (step.duration || 1);
               const durSec = durMs / 1000;
               if (step.chord) {
@@ -2557,6 +2711,163 @@
 
     // ---- Step long-press + editor ----
 
+    // ---- Drag-to-reorder sequence steps (desktop HTML5 drag) ----
+    let _stepDragIdx = null;
+
+    function clearStepDragOver() {
+      document.querySelectorAll('.seq-step.drag-over').forEach(c => c.classList.remove('drag-over'));
+    }
+
+    function moveSequenceStep(from, to) {
+      if (from === to || from < 0 || to < 0 || from >= sequence.length) return;
+      const [item] = sequence.splice(from, 1);
+      // Clamp target into the new (post-removal) array range and insert exactly
+      // at the hovered slot — items at/after shift right by one, items between
+      // the original source and the target shift left by one to close the gap.
+      const insertAt = Math.max(0, Math.min(to, sequence.length));
+      sequence.splice(insertAt, 0, item);
+      renderSequence();
+    }
+
+    function bindStepDrag(chip, i) {
+      chip.draggable = true;
+      chip.addEventListener('dragstart', (e) => {
+        _stepDragIdx = i;
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        requestAnimationFrame(() => chip.classList.add('dragging'));
+      });
+      chip.addEventListener('dragenter', (e) => {
+        if (_stepDragIdx === null || _stepDragIdx === i) return;
+        e.preventDefault();
+        clearStepDragOver();
+        chip.classList.add('drag-over');
+      });
+      chip.addEventListener('dragover', (e) => {
+        if (_stepDragIdx === null) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      });
+      chip.addEventListener('dragleave', (e) => {
+        if (!chip.contains(e.relatedTarget)) chip.classList.remove('drag-over');
+      });
+      chip.addEventListener('drop', (e) => {
+        e.preventDefault();
+        clearStepDragOver();
+        if (_stepDragIdx !== null && _stepDragIdx !== i) moveSequenceStep(_stepDragIdx, i);
+        _stepDragIdx = null;
+      });
+      chip.addEventListener('dragend', () => {
+        chip.classList.remove('dragging');
+        clearStepDragOver();
+        _stepDragIdx = null;
+      });
+    }
+
+    // Touch drag state machine per chip:
+    //   pending  — touch down, < 280ms or still below move threshold.
+    //              Fast moves cancel pending → native horizontal scroll works.
+    //   ready    — held ≥ 280ms without moving. Drag is "armed" but no clone yet.
+    //              If still held without moving, the 500ms long-press menu fires.
+    //   dragging — any move after ready creates the clone and starts following.
+    function bindStepDragTouch(chip, i) {
+      chip.dataset.stepIdx = String(i);
+      let readyTimer = null;
+      let startX = 0, startY = 0;
+      let readyToDrag = false;
+      let dragging = false;
+      let clone = null;
+      let offX = 0, offY = 0;
+      let dropIdx = null;
+      const READY_DELAY = 280;
+      const MOVE_THRESHOLD = 8;
+
+      const engageDrag = () => {
+        dragging = true;
+        _stepDragIdx = i;
+        navigator.vibrate?.(40);
+        const rect = chip.getBoundingClientRect();
+        offX = startX - rect.left;
+        offY = startY - rect.top;
+        clone = chip.cloneNode(true);
+        Object.assign(clone.style, {
+          position: 'fixed', left: rect.left + 'px', top: rect.top + 'px',
+          width: rect.width + 'px', height: rect.height + 'px',
+          opacity: '0.85', pointerEvents: 'none', zIndex: '9999',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        });
+        document.body.appendChild(clone);
+        chip.classList.add('dragging');
+      };
+
+      chip.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+        readyToDrag = false;
+        dragging = false;
+        dropIdx = null;
+        readyTimer = setTimeout(() => { readyTimer = null; readyToDrag = true; }, READY_DELAY);
+      }, { passive: true });
+
+      chip.addEventListener('touchmove', (e) => {
+        const t = e.touches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const moved = Math.abs(dx) > MOVE_THRESHOLD || Math.abs(dy) > MOVE_THRESHOLD;
+
+        if (readyTimer) {
+          // Moved before the hold threshold — cancel the ready timer so
+          // the browser can do native scroll, and let the long-press
+          // pointermove cancel the menu timer as usual.
+          if (moved) {
+            clearTimeout(readyTimer);
+            readyTimer = null;
+            readyToDrag = false;
+          }
+          return;
+        }
+
+        if (readyToDrag && !dragging && moved) engageDrag();
+
+        if (dragging) {
+          e.preventDefault();
+          clone.style.left = (t.clientX - offX) + 'px';
+          clone.style.top  = (t.clientY - offY) + 'px';
+          clone.style.visibility = 'hidden';
+          const el = document.elementFromPoint(t.clientX, t.clientY);
+          clone.style.visibility = '';
+          clearStepDragOver();
+          dropIdx = null;
+          const target = el?.closest('.seq-step');
+          if (target && target !== chip) {
+            const idx = parseInt(target.dataset.stepIdx);
+            if (!isNaN(idx) && idx !== i) {
+              target.classList.add('drag-over');
+              dropIdx = idx;
+            }
+          }
+        }
+      }, { passive: false });
+
+      const onTouchEnd = () => {
+        if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+        readyToDrag = false;
+        if (dragging) {
+          clone?.remove();
+          clone = null;
+          chip.classList.remove('dragging');
+          clearStepDragOver();
+          if (dropIdx !== null) moveSequenceStep(_stepDragIdx, dropIdx);
+        }
+        dragging = false;
+        dropIdx = null;
+        _stepDragIdx = null;
+      };
+      chip.addEventListener('touchend', onTouchEnd);
+      chip.addEventListener('touchcancel', onTouchEnd);
+    }
+
     function bindStepLongPress(chip, stepIndex) {
       let lpt = null;
       chip.addEventListener('pointerdown', (e) => {
@@ -2653,6 +2964,7 @@
         label:   step.label,
         cellIndex: step.cellIndex,
         duration: step.duration ?? 1,
+        subdivision: (step.subdivision != null) ? step.subdivision : stepSubdivision,
         type:    step.params?.type    ?? step.sound ?? 'sine',
         attack:  step.params?.attack  ?? 10,
         decay:   step.params?.decay   ?? 100,
@@ -2664,6 +2976,8 @@
 
       modal.innerHTML = `
         <div class="sm-title">Edit Step ${stepIndex + 1}</div>
+        <div class="sm-section-label">Step subdivision</div>
+        <div class="sm-waves" id="se-sub-row"></div>
         <div class="sm-section-label">Length (steps)</div>
         <div class="sm-waves" id="se-len-row"></div>
         <div class="sm-section-label">Note</div>
@@ -2700,6 +3014,21 @@
           <button class="sm-apply">Apply</button>
         </div>
       `;
+
+      // Subdivision picker
+      const subRow = modal.querySelector('#se-sub-row');
+      const SUBS = [[4,'1/1'],[2,'1/2'],[1,'1/4'],[0.5,'1/8'],[0.25,'1/16'],[0.125,'1/32']];
+      SUBS.forEach(([v, lbl]) => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave' + (v === p.subdivision ? ' active' : '');
+        btn.textContent = lbl;
+        btn.addEventListener('click', () => {
+          p.subdivision = v;
+          subRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+        subRow.appendChild(btn);
+      });
 
       // Length picker
       const lenRow = modal.querySelector('#se-len-row');
@@ -2771,7 +3100,7 @@
 
       modal.querySelector('.sm-apply').addEventListener('click', () => {
         sequence[stepIndex] = { freq: p.freq, label: p.label, cellIndex: p.cellIndex,
-          sound: p.type, duration: p.duration,
+          sound: p.type, duration: p.duration, subdivision: p.subdivision,
           params: { type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain, release: p.release, volume: p.volume, detune: p.detune } };
         renderSequence();
         overlay.remove();
@@ -2786,9 +3115,12 @@
       }));
       let expandedIdx = null;
       let chordDuration = step.duration ?? 1;
+      let chordSubdivision = (step.subdivision != null) ? step.subdivision : stepSubdivision;
 
       modal.innerHTML = `
         <div class="sm-title">Edit Chord — Step ${stepIndex + 1}</div>
+        <div class="sm-section-label">Step subdivision</div>
+        <div class="sm-waves" id="se-chord-sub-row"></div>
         <div class="sm-section-label">Length (steps)</div>
         <div class="sm-waves" id="se-chord-len-row"></div>
         <div class="se-chord-list" id="se-chord-list"></div>
@@ -2800,6 +3132,20 @@
           <button class="sm-apply">Apply</button>
         </div>
       `;
+
+      const chordSubRow = modal.querySelector('#se-chord-sub-row');
+      const SUBS_C = [[4,'1/1'],[2,'1/2'],[1,'1/4'],[0.5,'1/8'],[0.25,'1/16'],[0.125,'1/32']];
+      SUBS_C.forEach(([v, lbl]) => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave' + (v === chordSubdivision ? ' active' : '');
+        btn.textContent = lbl;
+        btn.addEventListener('click', () => {
+          chordSubdivision = v;
+          chordSubRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+        chordSubRow.appendChild(btn);
+      });
 
       const chordLenRow = modal.querySelector('#se-chord-len-row');
       [1,2,3,4,8].forEach(len => {
@@ -2902,10 +3248,10 @@
         } else if (chordNotes.length === 1) {
           const n = chordNotes[0];
           sequence[stepIndex] = { freq: n.freq, label: n.label, cellIndex: n.cellIndex,
-            sound: n.params.type, duration: chordDuration, params: { ...n.params } };
+            sound: n.params.type, duration: chordDuration, subdivision: chordSubdivision, params: { ...n.params } };
         } else {
           sequence[stepIndex] = { chord: chordNotes.map(n => ({ ...n, params: { ...n.params } })),
-            label: chordNotes.map(n => n.label).join('·'), duration: chordDuration };
+            label: chordNotes.map(n => n.label).join('·'), duration: chordDuration, subdivision: chordSubdivision };
         }
         renderSequence();
         overlay.remove();
@@ -3072,7 +3418,7 @@
             renderSequence();
             document.getElementById('save-btn').disabled = false;
           } else {
-            addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: noteLength });
+            addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: noteLength, subdivision: stepSubdivision });
           }
         });
         bindCellLongPress(cell, i);
@@ -3186,7 +3532,7 @@
     restBar.addEventListener('click', () => {
       restBar.classList.add('flash');
       setTimeout(() => restBar.classList.remove('flash'), 80);
-      addToSequence({ freq: null, label: '—', cellIndex: null, duration: noteLength });
+      addToSequence({ freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision });
     });
   </script>
 

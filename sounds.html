@@ -41,7 +41,40 @@
       flex-wrap: wrap;
       padding: 10px 20px;
       gap: 12px;
+      position: relative;
     }
+
+    #grid-settings-btn {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #grid-settings-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #grid-settings-btn.open { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+
+    .grid-settings-panel {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 10px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      padding: 14px;
+      z-index: 900;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      max-width: calc(100vw - 20px);
+    }
+    .grid-settings-panel.open { display: flex; }
 
     .menubar a {
       color: #a0aec0;
@@ -231,27 +264,28 @@
     .cell:nth-child(12n)    { background: #8338ec; }
 
     /* REST BAR */
+    :root { --rest-color: hsl(280, 55%, 78%); }
     .rest-bar {
       height: 56px;
       min-height: 56px;
-      background: #fff;
-      border-top: 3px solid #000;
-      border-bottom: 3px solid #000;
+      background: #000;
+      border-top: 3px solid var(--rest-color);
+      border-bottom: 3px solid var(--rest-color);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
       user-select: none;
-      transition: filter 0.08s ease;
+      transition: background 0.08s ease;
     }
-    .rest-bar:active      { filter: brightness(0.88); }
-    .rest-bar.flash       { filter: brightness(0.85); }
-    .rest-bar.active-loop { filter: brightness(0.82); outline: 3px solid #000 inset; }
+    .rest-bar:active      { background: #1a1a2e; }
+    .rest-bar.flash       { background: #2d2d3f; }
+    .rest-bar.active-loop { background: #1a1a2e; outline: 3px solid var(--rest-color) inset; }
     .rest-bar span {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.85rem;
       font-weight: 700;
-      color: rgba(0,0,0,0.3);
+      color: var(--rest-color);
       letter-spacing: 2px;
       text-transform: uppercase;
       pointer-events: none;
@@ -372,17 +406,18 @@
       color: #a0aec0; font-family: 'Segoe UI', sans-serif;
       font-size: 0.8rem; flex-shrink: 0;
     }
-    #note-length {
-      width: 54px;
+    #note-length,
+    #subdivision-select {
+      width: 60px;
       background: #1a1a2e; border: 1px solid #2d2d3f;
       border-radius: 6px; color: #e2e8f0;
       font-size: 0.8rem; font-family: 'Segoe UI', sans-serif;
       padding: 3px 6px; text-align: center;
     }
-    #note-length:focus { outline: none; border-color: #4299e1; }
+    #note-length:focus,
+    #subdivision-select:focus { outline: none; border-color: #4299e1; }
 
-    #loop-btn,
-    #pl-loop-btn {
+    #loop-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -394,10 +429,8 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #loop-btn:hover,
-    #pl-loop-btn:hover { border-color: #38b2ac; color: #38b2ac; }
-    #loop-btn.active,
-    #pl-loop-btn.active {
+    #loop-btn:hover { border-color: #38b2ac; color: #38b2ac; }
+    #loop-btn.active {
       border-color: #38b2ac;
       background: rgba(56,178,172,0.15);
       color: #81e6d9;
@@ -474,49 +507,134 @@
     }
 
     /* PLAYLIST BAR */
-    .playlist-bar {
-      background: #000;
+    /* TRACKS SECTION */
+    .tracks-section {
+      background: #050510;
       border-top: 3px solid #000;
-      display: flex;
-      align-items: center;
-      padding: 12px 20px;
-      gap: 12px;
+      padding: 10px 16px;
+      overflow-y: auto;
+      max-height: 240px;
     }
-
-    #pl-play-btn {
+    .tracks-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .tracks-title {
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem; font-weight: 700;
+      flex: 1;
+    }
+    #tracks-play-all {
       background: linear-gradient(135deg, #276749, #38a169);
       color: white;
       box-shadow: 0 2px 10px rgba(56, 161, 105, 0.175);
+      width: 34px; height: 34px; min-width: 34px; min-height: 34px;
     }
-    #pl-play-btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 14px rgba(56, 161, 105, 0.275);
-    }
-
-    #pl-clear-btn {
-      padding: 6px 18px;
+    #add-track-btn,
+    #tracks-export-btn,
+    #tracks-loop-all {
+      padding: 5px 12px;
       border: 1px solid #2d2d3f;
-      border-radius: 20px;
+      border-radius: 16px;
       background: transparent;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
+      font-size: 0.78rem; font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #pl-clear-btn:hover { border-color: #e53e3e; color: #e53e3e; }
-
-    .playlist-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      color: #4a4a6a;
-      flex: 1;
+    #add-track-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #tracks-export-btn:hover { border-color: #38a169; color: #38a169; }
+    #tracks-export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #tracks-loop-all:hover { border-color: #38b2ac; color: #38b2ac; }
+    #tracks-loop-all.active {
+      border-color: #38b2ac;
+      background: rgba(56,178,172,0.15);
+      color: #81e6d9;
     }
-
-    .saved-block.playlist-active {
-      border-color: #48bb78;
-      background: linear-gradient(135deg, #1a3a2a, #1e4a30);
+    .track-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      margin-bottom: 8px;
+      align-items: stretch;
+    }
+    .track-controls {
+      display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+    }
+    .track-controls button {
+      padding: 4px 8px;
+      border: 1px solid #2d2d3f;
+      border-radius: 12px;
+      background: transparent;
+      color: #a0aec0;
+      font-size: 0.72rem;
+      font-family: 'Segoe UI', sans-serif;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .track-play { min-width: 30px; font-size: 0.8rem; }
+    .track-play.playing { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.1); }
+    .track-loop.active { border-color: #38b2ac; color: #81e6d9; background: rgba(56,178,172,0.15); }
+    .track-remove:hover { border-color: #e53e3e; color: #e53e3e; }
+    .track-clear:hover { border-color: #e53e3e; color: #e53e3e; }
+    .track-name {
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.76rem; font-weight: 600;
+      padding: 0 4px;
+      min-width: 54px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .track-grid {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 30px;
+      grid-template-rows: 44px;
+      gap: 2px;
+      overflow-x: auto;
+      background: #0a0a14;
+      border: 1px solid #1a1a2e;
+      border-radius: 6px;
+      padding: 4px;
+      min-height: 52px;
+      scrollbar-width: thin;
+      scrollbar-color: #2d2d3f #0a0a14;
+    }
+    .track-grid.drag-over {
+      outline: 2px dashed #4299e1;
+      outline-offset: -2px;
+      background: #0e1324;
+    }
+    .track-grid::-webkit-scrollbar { height: 4px; }
+    .track-grid::-webkit-scrollbar-track { background: #0a0a14; }
+    .track-grid::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
+    .track-item {
+      background: linear-gradient(135deg, #1a2a4a, #1e3a5a);
+      border: 1px solid #2b6cb0;
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 4px;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.7rem; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .track-item:hover { border-color: #4299e1; }
+    .track-item.active {
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      border-color: #4299e1;
+    }
+    .track-empty {
+      color: #4a4a6a;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      padding: 10px;
+      grid-column: 1 / -1;
+      white-space: nowrap;
     }
 
     /* LONG-PRESS CONTEXT MENU */
@@ -739,31 +857,35 @@
   </style>
   <script src="https://cdn.jsdelivr.net/npm/tone@14.9.17/build/Tone.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
+  <script src="js/config.js"></script>
 </head>
 <body>
 
   <div class="menubar">
     <a href="index.html">Mike Luz</a>
     <button id="color-shuffle-btn" title="Randomize note block colors">Color shuffle</button>
-    <div class="grid-control">
-      <label title="Starting note of the chromatic grid">Root
-        <select id="root-select"></select>
-      </label>
-      <label title="Octave number of the lowest note (master shift)">Oct
-        <input type="number" id="base-octave-input" min="1" max="7" value="4" />
-      </label>
-      <label title="Number of octaves (1–3)">Octaves
-        <input type="number" id="octaves-input" min="1" max="3" value="1" />
-      </label>
-    </div>
-    <div class="grid-control grid-control-row2">
-      <label title="Highlight a scale — non-scale notes are blacked out">Scale
-        <select id="scale-select"></select>
-      </label>
-      <label title="Master tuning: frequency of A4 (Hz)">A4
-        <input type="range" id="master-freq-slider" min="400" max="480" value="440" step="1" />
-        <input type="number" id="master-freq-input" min="400" max="480" value="440" />
-      </label>
+    <button id="grid-settings-btn" title="Grid settings">Grid ▾</button>
+    <div class="grid-settings-panel" id="grid-settings-panel">
+      <div class="grid-control">
+        <label title="Starting note of the chromatic grid">Root
+          <select id="root-select"></select>
+        </label>
+        <label title="Octave number of the lowest note (master shift)">Oct
+          <input type="number" id="base-octave-input" min="1" max="7" value="4" />
+        </label>
+        <label title="Number of octaves (1–3)">Octaves
+          <input type="number" id="octaves-input" min="1" max="3" value="1" />
+        </label>
+      </div>
+      <div class="grid-control grid-control-row2">
+        <label title="Highlight a scale — non-scale notes are blacked out">Scale
+          <select id="scale-select"></select>
+        </label>
+        <label title="Master tuning: frequency of A4 (Hz)">A4
+          <input type="range" id="master-freq-slider" min="400" max="480" value="440" step="1" />
+          <input type="number" id="master-freq-input" min="400" max="480" value="440" />
+        </label>
+      </div>
     </div>
   </div>
 
@@ -778,9 +900,19 @@
   <div class="footer-bar">
     <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
     <div class="tempo-control">
-      <input type="range" id="tempo-slider" min="60" max="600" value="100" step="10" />
-      <input type="number" id="tempo-input" min="60" max="600" value="100" title="BPM" />
+      <input type="range" id="tempo-slider" min="60" max="600" value="120" step="10" />
+      <input type="number" id="tempo-input" min="60" max="600" value="120" title="BPM" />
     </div>
+    <label class="note-length-label" title="Step subdivision — 1 step = this note value at the current BPM">Step
+      <select id="subdivision-select">
+        <option value="4">1/1</option>
+        <option value="2">1/2</option>
+        <option value="1" selected>1/4</option>
+        <option value="0.5">1/8</option>
+        <option value="0.25">1/16</option>
+        <option value="0.125">1/32</option>
+      </select>
+    </label>
     <button id="clear-btn">Clear</button>
     <button id="save-btn" disabled>Save</button>
     <button id="chord-btn">Chord</button>
@@ -803,11 +935,15 @@
     </div>
   </div>
 
-  <div class="playlist-bar">
-    <button id="pl-play-btn" class="menu-btn" title="Play / stop all saved sequences">▶</button>
-    <button id="pl-loop-btn" title="Loop the full sequencer">Loop</button>
-    <button id="pl-clear-btn">Clear</button>
-    <span class="playlist-label" id="pl-label">Play all saved sequences in order</span>
+  <div class="tracks-section">
+    <div class="tracks-header">
+      <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
+      <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
+      <span class="tracks-title">Tracks</span>
+      <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
+      <button id="add-track-btn">+ Add Track</button>
+    </div>
+    <div id="tracks-container"></div>
   </div>
 
   <script>
@@ -838,6 +974,7 @@
     let chordMode = false;
     let loopMode = false;
     let noteLength = 1;
+    let stepSubdivision = 1; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
     let pendingChord = [];
     const cells = [];
 
@@ -881,6 +1018,8 @@
           if (saved.octaveCount != null) octaveCount = saved.octaveCount;
           if (saved.masterFreqA != null) masterFreqA = saved.masterFreqA;
           if (saved.scale)               currentScale = normalizeScaleName(saved.scale);
+          if (saved.subdivision != null) stepSubdivision = saved.subdivision;
+          if (saved.restColor)           { restColor = saved.restColor; applyRestColor(); }
           if (Array.isArray(saved.palette) && saved.palette.length === 12) {
             palette = [...saved.palette];
           }
@@ -897,6 +1036,8 @@
           if (freqSl)    freqSl.value    = masterFreqA;
           if (freqIn)    freqIn.value    = masterFreqA;
           if (scaleSel)  scaleSel.value  = currentScale;
+          const subSel = document.getElementById('subdivision-select');
+          if (subSel)    subSel.value    = String(stepSubdivision);
 
           rebuildGrid();
 
@@ -955,12 +1096,31 @@
     });
 
     function getStepMs() {
-      return Math.round(60000 / (parseInt(tempoInput.value) || 100));
+      return Math.round(60000 / (parseInt(tempoInput.value) || 120) * stepSubdivision);
     }
 
-    const SOUNDS = ['sine','square','triangle','sawtooth','bell','pluck'];
+    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','bell','pluck','kick','metal'];
 
-    function playNote(freq, params = {}, durationMs) {
+    // Master bus: compressor softens dynamic peaks, limiter is a brick wall at
+    // -1 dB so simultaneous voices (chords, overlapping tracks, long releases)
+    // never clip. Aggressive settings because chord playback can spike well
+    // above 0 dB from the raw sum of multiple synths.
+    const masterLimiter = new Tone.Limiter(-1).toDestination();
+    const masterBus = new Tone.Compressor({
+      threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12,
+    }).connect(masterLimiter);
+
+    // Scale a chord note's params so N simultaneous voices sum to a roughly
+    // single-voice loudness — otherwise the bus hits the compressor / limiter
+    // far above threshold and audibly distorts on the attack.
+    function chordVoiceParams(noteParams, chordSize) {
+      const scale = 1 / Math.sqrt(Math.max(1, chordSize));
+      const base = (noteParams && typeof noteParams === 'object') ? noteParams : (typeof noteParams === 'string' ? { type: noteParams } : {});
+      const baseVol = base.volume ?? 100;
+      return { ...base, volume: baseVol * scale };
+    }
+
+    function playNote(freq, params = {}, durationMs, startTime, destination) {
       if (typeof params === 'string') params = { type: params };
       const {
         type    = 'sine',
@@ -977,51 +1137,94 @@
       const sus = Math.max(sustain / 100,  0.001);
       const rel = Math.max(release / 1000, 0.1);
       const velocity = Math.min(1, Math.max(0, volume / 100));
+      const env = { attack: atk, decay: dec, sustain: sus, release: rel };
 
-      // Target total sound time — if durationMs provided, size the envelope to fit.
       const targetDur = durationMs ? durationMs / 1000 : Math.max(atk + dec, 0.1);
+      const preReleaseDur = durationMs
+        ? Math.max(0.02, targetDur - rel)
+        : atk + dec;
+      const disposeMs = (preReleaseDur + rel + 0.4) * 1000;
+
+      let synth;
 
       if (type === 'bell') {
-        const synth = new Tone.FMSynth({
+        synth = new Tone.FMSynth({
           harmonicity: 2.14,
           modulationIndex: 4,
           oscillator: { type: 'sine' },
           envelope: { attack: 0.001, decay: 2.0, sustain: 0, release: 0.8 },
           modulation: { type: 'sine' },
           modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
-        }).toDestination();
-        synth.detune.value = detune;
-        synth.triggerAttackRelease(freq, Math.max(targetDur, 0.05), undefined, velocity);
-        setTimeout(() => synth.dispose(), (targetDur + 3.0) * 1000);
-        return;
-      }
-
-      if (type === 'pluck') {
-        const synth = new Tone.PluckSynth({
+        }).connect(destination || masterBus);
+      } else if (type === 'pluck') {
+        // PluckSynth has no detune param — fold cents into the frequency.
+        synth = new Tone.PluckSynth({
           attackNoise: 1,
           dampening: 4000,
           resonance: 0.7,
           release: 1,
-        }).toDestination();
-        // PluckSynth has no detune; fold cents into frequency.
+        }).connect(destination || masterBus);
         const tunedFreq = (typeof freq === 'number') ? freq * Math.pow(2, detune / 1200) : freq;
-        synth.triggerAttackRelease(tunedFreq, Math.max(targetDur, 0.1), undefined, velocity);
-        setTimeout(() => synth.dispose(), (targetDur + 1.5) * 1000);
+        synth.triggerAttackRelease(tunedFreq, Math.max(targetDur, 0.1), startTime, velocity);
+        if (startTime === undefined) setTimeout(() => synth.dispose(), (targetDur + 1.5) * 1000);
         return;
+      } else if (type === 'fm') {
+        synth = new Tone.FMSynth({
+          harmonicity: 3,
+          modulationIndex: 10,
+          oscillator: { type: 'sine' },
+          envelope: env,
+          modulation: { type: 'square' },
+          modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
+        }).connect(destination || masterBus);
+      } else if (type === 'am') {
+        synth = new Tone.AMSynth({
+          harmonicity: 2,
+          oscillator: { type: 'sine' },
+          envelope: env,
+          modulation: { type: 'square' },
+          modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
+        }).connect(destination || masterBus);
+      } else if (type === 'mono') {
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'sawtooth' },
+          envelope: env,
+          filterEnvelope: {
+            attack: 0.01, decay: 0.3, sustain: 0.3, release: 2,
+            baseFrequency: 200, octaves: 3,
+          },
+          filter: { Q: 6, type: 'lowpass', rolloff: -24 },
+        }).connect(destination || masterBus);
+      } else if (type === 'kick') {
+        synth = new Tone.MembraneSynth({
+          pitchDecay: 0.05,
+          octaves: 10,
+          envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 },
+        }).connect(destination || masterBus);
+      } else if (type === 'metal') {
+        synth = new Tone.MetalSynth({
+          harmonicity: 5.1,
+          modulationIndex: 32,
+          resonance: 4000,
+          octaves: 1.5,
+          envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
+        }).connect(destination || masterBus);
+      } else {
+        // Sustainable waves: sine / square / triangle / sawtooth / pulse / fat
+        const oscOpts = type === 'fat'
+          ? { type: 'fatsawtooth', count: 3, spread: 30 }
+          : type === 'pulse'
+            ? { type: 'pulse', width: 0.4 }
+            : { type };
+        synth = new Tone.Synth({
+          oscillator: oscOpts,
+          envelope: env,
+        }).connect(destination || masterBus);
       }
 
-      // Sustainable waves: sine/square/triangle/sawtooth
-      const synth = new Tone.Synth({
-        oscillator: { type },
-        envelope: { attack: atk, decay: dec, sustain: sus, release: rel },
-      }).toDestination();
-      synth.detune.value = detune;
-      // Keep total sound (attack + decay + hold + release) within targetDur where possible.
-      const preReleaseDur = durationMs
-        ? Math.max(0.02, targetDur - rel)  // release finishes at targetDur
-        : atk + dec;                        // natural: attack + decay then release
-      synth.triggerAttackRelease(freq, preReleaseDur, undefined, velocity);
-      setTimeout(() => synth.dispose(), (preReleaseDur + rel + 0.3) * 1000);
+      if (synth.detune) synth.detune.value = detune;
+      synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
+      if (startTime === undefined) setTimeout(() => synth.dispose(), disposeMs);
     }
 
     // ---- Sequence display ----
@@ -1107,8 +1310,9 @@
       renderSequence(index);
 
       if (step.chord) {
+        const size = step.chord.length;
         step.chord.forEach(n => {
-          playNote(n.freq, n.params || n.sound || 'sine', waitMs);
+          playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), waitMs);
           if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
         });
       } else if (step.freq !== null) {
@@ -1154,19 +1358,27 @@
       noteLength = parseInt(e.target.value) || 1;
     });
 
+    document.getElementById('subdivision-select').addEventListener('change', (e) => {
+      stepSubdivision = parseFloat(e.target.value) || 1;
+    });
+
     function resetUIToDefault() {
       stopSequence();
+      stopAllTracks();
       sequence = [];
       pendingChord = [];
       chordMode = false;
       loopMode = false;
       noteLength = 1;
+      stepSubdivision = 1;
       rootIdx = 0;
       baseOctave = 4;
       octaveCount = 1;
       masterFreqA = 440;
       currentScale = 'chromatic';
       palette = [...DEFAULT_PALETTE];
+      restColor = DEFAULT_REST_COLOR;
+      applyRestColor();
       activeSeqIndex = null;
 
       document.getElementById('root-select').value       = '0';
@@ -1175,11 +1387,12 @@
       document.getElementById('master-freq-slider').value = '440';
       document.getElementById('master-freq-input').value  = '440';
       document.getElementById('scale-select').value     = 'chromatic';
-      document.getElementById('tempo-slider').value     = '100';
-      document.getElementById('tempo-input').value      = '100';
+      document.getElementById('tempo-slider').value     = '120';
+      document.getElementById('tempo-input').value      = '120';
       document.getElementById('chord-btn').classList.remove('active');
       document.getElementById('loop-btn').classList.remove('active');
       document.getElementById('note-length').value = '1';
+      document.getElementById('subdivision-select').value = '1';
       document.getElementById('save-btn').disabled = true;
 
       rebuildGrid();
@@ -1218,7 +1431,7 @@
       savedSequences.push({
         name,
         steps: [...sequence],
-        bpm: parseInt(tempoInput.value) || 100,
+        bpm: parseInt(tempoInput.value) || 120,
         rootIdx,
         baseOctave,
         octaveCount,
@@ -1228,6 +1441,8 @@
         cellSounds: [...cellSounds],
         cellParams: cellParams.map(p => ({ ...p })),
         loopMode,
+        subdivision: stepSubdivision,
+        restColor,
       });
       activeSeqIndex = savedSequences.length - 1;
       persistSaved();
@@ -1254,80 +1469,470 @@
       }
     });
 
-    // ---- Playlist playback (saved sequences in order) ----
+    // ---- Tracks (multi-track sequencer) ----
 
-    let playlistTimer = null;
-    let playlistLoopMode = false;
+    let tracks = JSON.parse(localStorage.getItem('sounds-tracks') || '[]');
+    // Ensure runtime fields on each track (these aren't persisted)
+    tracks.forEach(t => { t.playing = false; t.currentItemIdx = null; t.timer = null; });
+    let trackIdCounter = Math.max(0, ...tracks.map(t => t.id || 0)) + 1;
 
-    function stopPlaylist() {
-      clearTimeout(playlistTimer);
-      playlistTimer = null;
-      clearHighlights();
-      document.getElementById('pl-play-btn').textContent = '▶';
-      document.getElementById('pl-label').textContent = 'Play all saved sequences in order';
-      renderSavedSequences();
+    function persistTracks() {
+      const serial = tracks.map(t => ({
+        id: t.id, name: t.name, items: t.items, loopMode: !!t.loopMode,
+      }));
+      localStorage.setItem('sounds-tracks', JSON.stringify(serial));
     }
 
-    function playPlaylist(seqIndex, stepIndex) {
-      if (seqIndex >= savedSequences.length) {
-        if (playlistLoopMode && savedSequences.length > 0) {
-          playPlaylist(0, 0);
+    function cloneStep(s) {
+      const copy = { ...s };
+      if (s.chord) copy.chord = s.chord.map(n => ({ ...n, params: n.params ? { ...n.params } : undefined }));
+      if (s.params) copy.params = { ...s.params };
+      return copy;
+    }
+
+    function addTrack() {
+      tracks.push({
+        id: trackIdCounter++,
+        name: `Track ${tracks.length + 1}`,
+        items: [],
+        loopMode: false,
+        playing: false,
+        currentItemIdx: null,
+        timer: null,
+      });
+      persistTracks();
+      renderTracks();
+    }
+
+    function removeTrack(trackIdx) {
+      stopTrack(trackIdx);
+      tracks.splice(trackIdx, 1);
+      persistTracks();
+      renderTracks();
+    }
+
+    function clearTrack(trackIdx) {
+      stopTrack(trackIdx);
+      tracks[trackIdx].items = [];
+      persistTracks();
+      renderTracks();
+    }
+
+    function toggleTrackLoop(trackIdx) {
+      tracks[trackIdx].loopMode = !tracks[trackIdx].loopMode;
+      persistTracks();
+      renderTracks();
+    }
+
+    function addSavedToTrack(trackIdx, saved) {
+      const snapshot = {
+        name: saved.name,
+        bpm: saved.bpm,
+        subdivision: saved.subdivision || 1,
+        steps: (saved.steps || []).map(cloneStep),
+      };
+      tracks[trackIdx].items.push(snapshot);
+      persistTracks();
+      renderTracks();
+    }
+
+    function removeTrackItem(trackIdx, itemIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      track.items.splice(itemIdx, 1);
+      if (track.playing && track.currentItemIdx === itemIdx) {
+        stopTrack(trackIdx);
+      }
+      persistTracks();
+      renderTracks();
+    }
+
+    function itemStepCount(item) {
+      return (item.steps || []).reduce((sum, s) => sum + (s.duration || 1), 0);
+    }
+
+    function togglePlayTrack(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      if (track.playing) stopTrack(trackIdx);
+      else startTrack(trackIdx);
+    }
+
+    async function startTrack(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track || track.items.length === 0) return;
+      await Tone.start();
+      track.playing = true;
+      track.currentItemIdx = 0;
+      renderTracks();
+      playTrackItem(trackIdx, 0, 0);
+    }
+
+    let tracksMasterLoop = false;
+
+    function stopTrack(trackIdx, natural = false) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      if (track.timer) clearTimeout(track.timer);
+      track.timer = null;
+      track.playing = false;
+      track.currentItemIdx = null;
+      renderTracks();
+      // Master loop: if this track finished on its own AND it was the last
+      // one still playing AND the master-loop toggle is on, restart everything.
+      if (natural && tracksMasterLoop && tracks.length > 0 && tracks.every(t => !t.playing)) {
+        setTimeout(() => { if (tracksMasterLoop) playAllTracks(); }, 30);
+      }
+    }
+
+    function playTrackItem(trackIdx, itemIdx, stepIdx) {
+      const track = tracks[trackIdx];
+      if (!track || !track.playing) return;
+      if (itemIdx >= track.items.length) {
+        if (track.loopMode && track.items.length > 0) {
+          playTrackItem(trackIdx, 0, 0);
         } else {
-          stopPlaylist();
+          stopTrack(trackIdx, true);
         }
         return;
       }
-
-      const saved = savedSequences[seqIndex];
-      const step  = saved.steps[stepIndex];
-      const stepMs = Math.round(60000 / (saved.bpm || 100));
+      const item = track.items[itemIdx];
+      if (!item || !item.steps || item.steps.length === 0) {
+        playTrackItem(trackIdx, itemIdx + 1, 0);
+        return;
+      }
+      const step = item.steps[stepIdx];
+      const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
       const waitMs = stepMs * (step.duration || 1);
 
-      const blocks = document.getElementById('saved-grid').querySelectorAll('.saved-block');
-      blocks.forEach((b, i) => {
-        b.classList.toggle('playlist-active', i === seqIndex);
-        b.classList.remove('active-seq');
-      });
-      document.getElementById('pl-label').textContent = `Playing ${saved.name} — step ${stepIndex + 1}/${saved.steps.length}`;
-
-      clearHighlights();
-      if (step.chord) {
-        step.chord.forEach(n => {
-          playNote(n.freq, n.params || n.sound || 'sine', waitMs);
-          if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
-        });
-      } else if (step.freq !== null) {
-        playNote(step.freq, step.params || step.sound || 'sine', waitMs);
-        if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
-      } else {
-        document.getElementById('rest-bar').classList.add('active-loop');
+      if (track.currentItemIdx !== itemIdx) {
+        track.currentItemIdx = itemIdx;
+        renderTracks();
       }
 
-      playlistTimer = setTimeout(() => {
-        const nextStep = stepIndex + 1;
-        if (nextStep < saved.steps.length) {
-          playPlaylist(seqIndex, nextStep);
+      if (step.chord) {
+        const size = step.chord.length;
+        step.chord.forEach(n => playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), waitMs));
+      } else if (step.freq !== null && step.freq !== undefined) {
+        playNote(step.freq, step.params || step.sound || 'sine', waitMs);
+      }
+
+      track.timer = setTimeout(() => {
+        const nextStep = stepIdx + 1;
+        if (nextStep < item.steps.length) {
+          playTrackItem(trackIdx, itemIdx, nextStep);
         } else {
-          playPlaylist(seqIndex + 1, 0);
+          playTrackItem(trackIdx, itemIdx + 1, 0);
         }
       }, waitMs);
     }
 
-    document.getElementById('pl-play-btn').addEventListener('click', async () => {
-      if (savedSequences.length === 0) return;
+    function stopAllTracks() {
+      tracks.forEach((_, i) => stopTrack(i));
+    }
+
+    async function playAllTracks() {
       await Tone.start();
-      if (playlistTimer !== null) {
-        stopPlaylist();
-      } else {
-        document.getElementById('pl-play-btn').textContent = '■';
-        playPlaylist(0, 0);
+      tracks.forEach((t, i) => {
+        if (!t.playing && t.items.length > 0) startTrack(i);
+      });
+    }
+
+    function renderTracks() {
+      const container = document.getElementById('tracks-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      const playAllBtn = document.getElementById('tracks-play-all');
+      const anyPlaying = tracks.some(t => t.playing);
+      if (playAllBtn) playAllBtn.textContent = anyPlaying ? '■' : '▶';
+
+      if (tracks.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'track-empty';
+        empty.textContent = 'No tracks yet. Click "+ Add Track" to start.';
+        container.appendChild(empty);
+        return;
       }
+
+      tracks.forEach((track, trackIdx) => {
+        const row = document.createElement('div');
+        row.className = 'track-row';
+
+        const controls = document.createElement('div');
+        controls.className = 'track-controls';
+        controls.innerHTML = `
+          <button class="track-play${track.playing ? ' playing' : ''}" title="Play / stop this track">${track.playing ? '■' : '▶'}</button>
+          <button class="track-loop${track.loopMode ? ' active' : ''}" title="Loop this track">Loop</button>
+          <span class="track-name" title="Double-click to rename">${track.name}</span>
+          <button class="track-clear" title="Remove all items">Clear</button>
+          <button class="track-remove" title="Remove track">×</button>
+        `;
+        controls.querySelector('.track-play').addEventListener('click', () => togglePlayTrack(trackIdx));
+        controls.querySelector('.track-loop').addEventListener('click', () => toggleTrackLoop(trackIdx));
+        controls.querySelector('.track-clear').addEventListener('click', () => clearTrack(trackIdx));
+        controls.querySelector('.track-remove').addEventListener('click', () => {
+          if (track.items.length === 0 || confirm(`Remove ${track.name}?`)) removeTrack(trackIdx);
+        });
+        const nameEl = controls.querySelector('.track-name');
+        nameEl.addEventListener('dblclick', () => {
+          const name = prompt('Rename track:', track.name);
+          if (name && name.trim()) { track.name = name.trim(); persistTracks(); renderTracks(); }
+        });
+        row.appendChild(controls);
+
+        const gridEl = document.createElement('div');
+        gridEl.className = 'track-grid';
+        gridEl.dataset.trackIdx = String(trackIdx);
+        gridEl.addEventListener('dragover', (e) => {
+          if (_dragIdx !== null) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            gridEl.classList.add('drag-over');
+          }
+        });
+        gridEl.addEventListener('dragleave', (e) => {
+          if (!gridEl.contains(e.relatedTarget)) gridEl.classList.remove('drag-over');
+        });
+        gridEl.addEventListener('drop', (e) => {
+          e.preventDefault();
+          gridEl.classList.remove('drag-over');
+          if (_dragIdx !== null && savedSequences[_dragIdx]) {
+            addSavedToTrack(trackIdx, savedSequences[_dragIdx]);
+            _dragIdx = null;
+          }
+        });
+        if (track.items.length === 0) {
+          const emptyItem = document.createElement('div');
+          emptyItem.className = 'track-empty';
+          emptyItem.textContent = 'Long-press a saved sequence to add it →';
+          gridEl.appendChild(emptyItem);
+        } else {
+          track.items.forEach((item, itemIdx) => {
+            const span = Math.max(1, itemStepCount(item));
+            const block = document.createElement('div');
+            block.className = 'track-item' + (track.playing && track.currentItemIdx === itemIdx ? ' active' : '');
+            block.style.gridColumn = `span ${span}`;
+            block.textContent = item.name || `#${itemIdx + 1}`;
+            block.title = `${item.name} · ${span} step${span !== 1 ? 's' : ''} @ ${item.bpm || 120} BPM`;
+            // Click to remove (simple for now)
+            block.addEventListener('contextmenu', (e) => { e.preventDefault(); removeTrackItem(trackIdx, itemIdx); });
+            // Long-press to remove on mobile
+            let lpt = null;
+            block.addEventListener('pointerdown', (e) => {
+              lpt = setTimeout(() => { lpt = null; navigator.vibrate?.(40); removeTrackItem(trackIdx, itemIdx); }, 500);
+            });
+            const cancelLp = () => { clearTimeout(lpt); lpt = null; };
+            block.addEventListener('pointerup', cancelLp);
+            block.addEventListener('pointercancel', cancelLp);
+            block.addEventListener('pointermove', cancelLp);
+            gridEl.appendChild(block);
+          });
+        }
+        row.appendChild(gridEl);
+
+        container.appendChild(row);
+      });
+    }
+
+    document.getElementById('add-track-btn').addEventListener('click', addTrack);
+    document.getElementById('tracks-play-all').addEventListener('click', () => {
+      if (tracks.some(t => t.playing)) stopAllTracks();
+      else playAllTracks();
+    });
+    const tracksLoopBtn = document.getElementById('tracks-loop-all');
+    tracksLoopBtn.addEventListener('click', () => {
+      tracksMasterLoop = !tracksMasterLoop;
+      tracksLoopBtn.classList.toggle('active', tracksMasterLoop);
     });
 
-    document.getElementById('pl-loop-btn').addEventListener('click', () => {
-      playlistLoopMode = !playlistLoopMode;
-      document.getElementById('pl-loop-btn').classList.toggle('active', playlistLoopMode);
-    });
+    // ---- Export: render tracks offline to WAV and upload to Google Drive ----
+
+    function audioBufferToWav(buffer) {
+      const numCh = buffer.numberOfChannels;
+      const sampleRate = buffer.sampleRate;
+      const bytesPerSample = 2;
+      const blockAlign = numCh * bytesPerSample;
+      const samples = buffer.length;
+      const dataLen = samples * blockAlign;
+      const ab = new ArrayBuffer(44 + dataLen);
+      const v = new DataView(ab);
+      const ws = (o, s) => { for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+      ws(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true); ws(8, 'WAVE');
+      ws(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, numCh, true);
+      v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * blockAlign, true);
+      v.setUint16(32, blockAlign, true); v.setUint16(34, 16, true);
+      ws(36, 'data'); v.setUint32(40, dataLen, true);
+      let off = 44;
+      const chans = [];
+      for (let c = 0; c < numCh; c++) chans.push(buffer.getChannelData(c));
+      for (let i = 0; i < samples; i++) {
+        for (let c = 0; c < numCh; c++) {
+          let s = Math.max(-1, Math.min(1, chans[c][i]));
+          v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+          off += 2;
+        }
+      }
+      return new Blob([ab], { type: 'audio/wav' });
+    }
+
+    async function renderTracksToBuffer() {
+      const durationsMs = tracks.map(track => {
+        let ms = 0;
+        (track.items || []).forEach(item => {
+          const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
+          (item.steps || []).forEach(s => { ms += stepMs * (s.duration || 1); });
+        });
+        return ms;
+      });
+      const totalMs = Math.max(...durationsMs, 1000);
+      const totalSec = (totalMs + 3000) / 1000; // tail for envelope releases
+
+      return await Tone.Offline(async () => {
+        const limiter = new Tone.Limiter(-1).toDestination();
+        const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(limiter);
+        tracks.forEach(track => {
+          let time = 0;
+          (track.items || []).forEach(item => {
+            const stepMs = Math.round(60000 / (item.bpm || 120) * (item.subdivision || 1));
+            (item.steps || []).forEach(step => {
+              const durMs  = stepMs * (step.duration || 1);
+              const durSec = durMs / 1000;
+              if (step.chord) {
+                const size = step.chord.length;
+                step.chord.forEach(n => playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), durMs, time, bus));
+              } else if (step.freq !== null && step.freq !== undefined) {
+                playNote(step.freq, step.params || step.sound || 'sine', durMs, time, bus);
+              }
+              time += durSec;
+            });
+          });
+        });
+      }, totalSec);
+    }
+
+    // Google Drive auth + upload (lazy-loads gapi/GIS via <script> on demand)
+    let googleAccessToken = null;
+    let googleTokenClient = null;
+
+    function loadExternalScript(src) {
+      return new Promise((resolve, reject) => {
+        if (document.querySelector(`script[src="${src}"]`)) return resolve();
+        const s = document.createElement('script');
+        s.src = src; s.onload = resolve; s.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function googleSignInForDrive() {
+      if (!window.APP_CONFIG || !window.APP_CONFIG.clientId || !window.APP_CONFIG.apiKey) {
+        throw new Error('Missing Google API config (js/config.js).');
+      }
+      await loadExternalScript('https://apis.google.com/js/api.js');
+      await loadExternalScript('https://accounts.google.com/gsi/client');
+      if (!gapi.client) await new Promise(res => gapi.load('client', res));
+      if (!gapi.client.drive) {
+        await gapi.client.init({
+          apiKey: window.APP_CONFIG.apiKey,
+          discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+        });
+      }
+      if (googleAccessToken) {
+        gapi.client.setToken({ access_token: googleAccessToken });
+        return googleAccessToken;
+      }
+      return new Promise((resolve, reject) => {
+        googleTokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: window.APP_CONFIG.clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (resp) => {
+            if (resp.error) return reject(new Error(resp.error));
+            googleAccessToken = resp.access_token;
+            gapi.client.setToken({ access_token: googleAccessToken });
+            resolve(googleAccessToken);
+          },
+        });
+        googleTokenClient.requestAccessToken();
+      });
+    }
+
+    async function findOrCreateDriveFolder(name) {
+      const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      const list = await gapi.client.drive.files.list({
+        q, fields: 'files(id, name)', spaces: 'drive',
+      });
+      if (list.result.files && list.result.files.length > 0) return list.result.files[0].id;
+      const create = await gapi.client.drive.files.create({
+        resource: { name, mimeType: 'application/vnd.google-apps.folder' },
+        fields: 'id',
+      });
+      return create.result.id;
+    }
+
+    async function uploadWavToDrive(name, blob, folderId) {
+      const initResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${googleAccessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': 'audio/wav',
+        },
+        body: JSON.stringify({ name, parents: [folderId], mimeType: 'audio/wav' }),
+      });
+      if (!initResp.ok) throw new Error(`Drive init failed: ${initResp.status} ${await initResp.text()}`);
+      const uploadUrl = initResp.headers.get('Location');
+      if (!uploadUrl) throw new Error('Drive did not return an upload URL.');
+      const putResp = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'audio/wav' },
+        body: blob,
+      });
+      if (!putResp.ok) throw new Error(`Drive upload failed: ${putResp.status} ${await putResp.text()}`);
+      return putResp.json();
+    }
+
+    async function exportTracksToDrive() {
+      const btn = document.getElementById('tracks-export-btn');
+      const anyItems = tracks.some(t => (t.items || []).length > 0);
+      if (!anyItems) { alert('Add at least one saved sequence to a track before exporting.'); return; }
+      const defaultName = `sounds-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
+      const filename = prompt('File name for the export (no extension):', defaultName);
+      if (!filename) return;
+      const folderName = prompt('Google Drive folder to save in:', 'Sounds exports');
+      if (!folderName) return;
+
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Rendering…';
+        const buffer = await renderTracksToBuffer();
+        const blob = audioBufferToWav(buffer);
+
+        btn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+
+        btn.textContent = 'Uploading…';
+        const folderId = await findOrCreateDriveFolder(folderName);
+        const file = await uploadWavToDrive(`${filename}.wav`, blob, folderId);
+
+        btn.textContent = 'Saved';
+        alert(`Saved "${file.name || filename + '.wav'}" to Drive folder "${folderName}".`);
+      } catch (e) {
+        console.error(e);
+        alert(`Export failed: ${e.message || e}`);
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
+      }
+    }
+
+    document.getElementById('tracks-export-btn').addEventListener('click', exportTracksToDrive);
+
+    // Seed one default track on first run.
+    if (tracks.length === 0) {
+      addTrack();
+    } else {
+      renderTracks();
+    }
 
     // ---- Long-press context menu for saved blocks ----
 
@@ -1404,12 +2009,19 @@
     }
 
     function savedBlockActions(seqIndex) {
-      return [
+      const actions = [
         { label: 'Rename…',     fn: () => showRenameDialog(seqIndex) },
         { label: '⧉ Duplicate',  fn: () => { const base = savedSequences[seqIndex].name.replace(/\.\d+$/, ''); let n = 1; while (savedSequences.some(s => s.name === `${base}.${n}`)) n++; const copy = { ...savedSequences[seqIndex], name: `${base}.${n}`, steps: [...savedSequences[seqIndex].steps] }; savedSequences.splice(seqIndex+1, 0, copy); persistSaved(); renderSavedSequences(); } },
-        'hr',
-        { label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } persistSaved(); renderSavedSequences(); } },
       ];
+      if (tracks.length > 0) {
+        actions.push('hr');
+        tracks.forEach((track, tIdx) => {
+          actions.push({ label: `⊕ Add to ${track.name}`, fn: () => addSavedToTrack(tIdx, savedSequences[seqIndex]) });
+        });
+      }
+      actions.push('hr');
+      actions.push({ label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } persistSaved(); renderSavedSequences(); } });
+      return actions;
     }
 
     // ---- Drag-and-drop reorder ----
@@ -1493,6 +2105,11 @@
         _touchClone = clone;
         block.classList.add('dragging');
 
+        const clearAllDragOver = () => {
+          clearDragOver();
+          document.querySelectorAll('.track-grid.drag-over').forEach(g => g.classList.remove('drag-over'));
+        };
+
         const onMove = (e) => {
           e.preventDefault();
           const t = e.touches[0];
@@ -1501,23 +2118,35 @@
           _touchClone.style.visibility = 'hidden';
           const el = document.elementFromPoint(t.clientX, t.clientY);
           _touchClone.style.visibility = '';
-          const target = el?.closest('.saved-block');
-          clearDragOver();
-          if (target) {
-            const idx = parseInt(target.dataset.seqIndex);
+          clearAllDragOver();
+          _touchDropTarget = null;
+          const savedTarget = el?.closest('.saved-block');
+          const trackGrid   = el?.closest('.track-grid');
+          if (savedTarget) {
+            const idx = parseInt(savedTarget.dataset.seqIndex);
             if (!isNaN(idx) && idx !== _dragIdx) {
-              target.classList.add('drag-over');
-              _touchDropTarget = idx;
-            } else { _touchDropTarget = null; }
-          } else { _touchDropTarget = null; }
+              savedTarget.classList.add('drag-over');
+              _touchDropTarget = { kind: 'reorder', idx };
+            }
+          } else if (trackGrid) {
+            const tIdx = parseInt(trackGrid.dataset.trackIdx);
+            if (!isNaN(tIdx)) {
+              trackGrid.classList.add('drag-over');
+              _touchDropTarget = { kind: 'track', idx: tIdx };
+            }
+          }
         };
 
         const onEnd = () => {
           _touchClone?.remove(); _touchClone = null;
           block.classList.remove('dragging');
-          clearDragOver();
-          if (_touchDropTarget !== null && _touchDropTarget !== _dragIdx) {
-            moveSequence(_dragIdx, _touchDropTarget);
+          clearAllDragOver();
+          if (_touchDropTarget) {
+            if (_touchDropTarget.kind === 'reorder' && _touchDropTarget.idx !== _dragIdx) {
+              moveSequence(_dragIdx, _touchDropTarget.idx);
+            } else if (_touchDropTarget.kind === 'track' && savedSequences[_dragIdx]) {
+              addSavedToTrack(_touchDropTarget.idx, savedSequences[_dragIdx]);
+            }
           }
           _dragIdx = null; _touchDropTarget = null;
           document.removeEventListener('touchmove', onMove);
@@ -2094,13 +2723,6 @@
       cell.addEventListener('contextmenu',   (e) => e.preventDefault());
     }
 
-    document.getElementById('pl-clear-btn').addEventListener('click', () => {
-      stopPlaylist();
-      savedSequences = [];
-      activeSeqIndex = null;
-      persistSaved();
-      renderSavedSequences();
-    });
 
     renderSavedSequences();
 
@@ -2185,7 +2807,23 @@
         const j = Math.floor(Math.random() * (i + 1));
         [palette[i], palette[j]] = [palette[j], palette[i]];
       }
+      // Pick a rest color that's distinct from the palette: put its hue in the
+      // middle of the gap between two adjacent palette hues (each gap is 15°
+      // wide with 12 hues equally spaced around the wheel), and use a pastel
+      // saturation/lightness so it doesn't blend in even if hues happen close.
+      const restHue = (offset + 15) % 360;
+      const restSat = 50 + Math.floor(Math.random() * 20);
+      const restLight = 72 + Math.floor(Math.random() * 13);
+      restColor = `hsl(${restHue.toFixed(0)}, ${restSat}%, ${restLight}%)`;
+      applyRestColor();
       applyPalette();
+    }
+
+    const DEFAULT_REST_COLOR = 'hsl(280, 55%, 78%)';
+    let restColor = DEFAULT_REST_COLOR;
+
+    function applyRestColor() {
+      document.documentElement.style.setProperty('--rest-color', restColor);
     }
 
     function rebuildGrid() {
@@ -2310,6 +2948,30 @@
       freqSlider.addEventListener('input', () => { freqInput.value = freqSlider.value; });
       freqSlider.addEventListener('change', () => applyMasterFreq(parseInt(freqSlider.value)));
       freqInput.addEventListener('change', () => applyMasterFreq(parseInt(freqInput.value)));
+    })();
+
+    // ---- Grid settings dropdown toggle ----
+    (function initGridSettingsToggle() {
+      const btn = document.getElementById('grid-settings-btn');
+      const panel = document.getElementById('grid-settings-panel');
+      if (!btn || !panel) return;
+      const setOpen = (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.textContent = open ? 'Grid ▴' : 'Grid ▾';
+      };
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(!panel.classList.contains('open'));
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
     })();
 
     // ---- Rest bar ----

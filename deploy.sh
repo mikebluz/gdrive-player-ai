@@ -40,17 +40,25 @@ STAGE_DIR=$(mktemp -d)
 trap "rm -rf $STAGE_DIR" EXIT
 
 echo "📦 Staging files..."
-cp -r index.html player.html css js "$STAGE_DIR/"
+cp -r index.html player.html sounds.html css js "$STAGE_DIR/"
 
 # -----------------------------------------------
 # Upload via SFTP using lftp
 # -----------------------------------------------
+echo "🔌 Testing connection to $FTP_HOST on port 21..."
+if ! nc -zw5 "$FTP_HOST" 21 2>&1; then
+  echo "❌ Cannot reach $FTP_HOST on port 21 (FTP). Check the IP and that FTP is enabled."
+  exit 1
+fi
+echo "✅ Port 21 reachable."
+
 echo "⬆️  Uploading to $REMOTE_DIR..."
 
-lftp -u "$FTP_USER","$FTP_PASS" sftp://"$FTP_HOST" <<EOF
-set sftp:auto-confirm yes
-set net:max-retries 3
-mirror --reverse --delete --verbose "$STAGE_DIR/" "$REMOTE_DIR/"
+lftp -d -u "$FTP_USER","$FTP_PASS" ftp://"$FTP_HOST" <<EOF
+set ftp:ssl-allow no
+set net:max-retries 1
+set net:timeout 15
+mirror --reverse --verbose "$STAGE_DIR/" "$REMOTE_DIR/"
 bye
 EOF
 

@@ -1,0 +1,1799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sounds</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* MENU BAR */
+    .menubar {
+      background: #000;
+      border-bottom: 3px solid #000;
+      display: flex;
+      align-items: center;
+
+      padding: 10px 20px;
+      gap: 12px;
+    }
+
+    .menubar a {
+      color: #a0aec0;
+      text-decoration: none;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: color 0.2s;
+      margin-right: 4px;
+    }
+    .menubar a:hover { color: #fff; }
+
+    .menu-btn {
+      width: 38px;
+      height: 38px;
+      min-width: 38px;
+      min-height: 38px;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    #play-btn {
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      color: white;
+      box-shadow: 0 2px 10px rgba(66, 153, 225, 0.175);
+    }
+    #play-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(66, 153, 225, 0.275);
+    }
+
+    #stop-btn {
+      background: #1a1a2e;
+      color: #a0aec0;
+      border: 1px solid #2d2d3f;
+    }
+    #stop-btn:hover { background: #2d2d3f; color: #fff; }
+    #stop-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .tempo-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    #tempo-slider { width: 90px; min-width: 60px; accent-color: #4299e1; flex-shrink: 1; }
+    #tempo-input {
+      width: 52px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      font-family: 'Segoe UI', sans-serif;
+      padding: 3px 6px;
+      text-align: center;
+    }
+    #tempo-input:focus { outline: none; border-color: #4299e1; }
+    .tempo-unit {
+      color: #a0aec0;
+      font-size: 0.8rem;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    /* NOTE GRID */
+    .grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      min-height: 0;
+    }
+
+    .cell {
+      border: 3px solid #000;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: filter 0.08s ease;
+      user-select: none;
+      position: relative;
+    }
+
+    .cell-sound-select {
+      position: absolute;
+      bottom: 5px;
+      left: 5px;
+      background: rgba(0,0,0,0.35);
+      border: none;
+      border-radius: 4px;
+      color: rgba(255,255,255,0.8);
+      font-size: 0.6rem;
+      font-family: 'Segoe UI', sans-serif;
+      font-weight: 600;
+      padding: 2px 4px;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      z-index: 1;
+      outline: none;
+    }
+    .cell-sound-select:focus { background: rgba(0,0,0,0.6); }
+    .cell:active        { filter: brightness(0.75); }
+    .cell.flash         { filter: brightness(1.35); }
+    .cell.active-loop   { filter: brightness(1.25); outline: 4px solid #fff inset; }
+
+    .cell span {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: clamp(2.25rem, 6vw, 3.3rem);
+      font-weight: 900;
+      color: rgba(0,0,0,0.35);
+      letter-spacing: 1px;
+      pointer-events: none;
+    }
+
+    .cell:nth-child(1)  { background: #e63946; }
+    .cell:nth-child(2)  { background: #f4a261; }
+    .cell:nth-child(3)  { background: #e9c46a; }
+    .cell:nth-child(4)  { background: #2a9d8f; }
+    .cell:nth-child(5)  { background: #457b9d; }
+    .cell:nth-child(6)  { background: #9b5de5; }
+    .cell:nth-child(7)  { background: #f15bb5; }
+    .cell:nth-child(8)  { background: #00bbf9; }
+    .cell:nth-child(9)  { background: #06d6a0; }
+    .cell:nth-child(10) { background: #ffbe0b; }
+    .cell:nth-child(11) { background: #fb5607; }
+    .cell:nth-child(12) { background: #8338ec; }
+
+    /* REST BAR */
+    .rest-bar {
+      height: 56px;
+      min-height: 56px;
+      background: #fff;
+      border-top: 3px solid #000;
+      border-bottom: 3px solid #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      transition: filter 0.08s ease;
+    }
+    .rest-bar:active      { filter: brightness(0.88); }
+    .rest-bar.flash       { filter: brightness(0.85); }
+    .rest-bar.active-loop { filter: brightness(0.82); outline: 3px solid #000 inset; }
+    .rest-bar span {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: rgba(0,0,0,0.3);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    /* SEQUENCE DISPLAY */
+    .sequence-display {
+      height: 62px;
+      min-height: 62px;
+      background: #0a0a14;
+      border-bottom: 3px solid #000;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      gap: 6px;
+      scrollbar-width: thin;
+      scrollbar-color: #2d2d3f #0a0a14;
+    }
+    .sequence-display::-webkit-scrollbar { height: 4px; }
+    .sequence-display::-webkit-scrollbar-track { background: #0a0a14; }
+    .sequence-display::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
+
+    .seq-empty {
+      color: #2d2d3f;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .seq-step {
+      min-width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #a0aec0;
+      flex-shrink: 0;
+      transition: all 0.1s ease;
+    }
+    .seq-step.rest { color: #4a4a6a; }
+    .seq-step.active {
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      border-color: #4299e1;
+      color: #fff;
+      transform: scale(1.1);
+    }
+
+    /* FOOTER */
+    .footer-bar {
+      height: 48px;
+      min-height: 48px;
+      background: #000;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 10px;
+    }
+
+    #clear-btn {
+      padding: 6px 18px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #clear-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+
+    #save-btn {
+      padding: 6px 18px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #save-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    #chord-btn {
+      padding: 6px 18px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #chord-btn:hover { border-color: #9f7aea; color: #9f7aea; }
+    #chord-btn.active {
+      border-color: #9f7aea;
+      background: rgba(159,122,234,0.15);
+      color: #d6bcfa;
+    }
+
+    .seq-step.chord {
+      background: rgba(159,122,234,0.18);
+      border-color: #9f7aea;
+      color: #d6bcfa;
+      min-width: 48px;
+    }
+    .seq-step.chord.active {
+      background: linear-gradient(135deg, #553c9a, #9f7aea);
+      border-color: #9f7aea;
+      color: #fff;
+    }
+    .seq-step.chord-pending {
+      background: rgba(159,122,234,0.08);
+      border: 1px dashed #9f7aea;
+      color: #9f7aea;
+      min-width: 48px;
+    }
+
+    .seq-count {
+      color: #4a4a6a;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+    }
+
+    /* SAVED SEQUENCES VIEWER */
+    .saved-viewer {
+      background: #050510;
+      border-top: 3px solid #000;
+      padding: 14px 20px;
+      overflow-y: auto;
+      max-height: 160px;
+    }
+
+    .saved-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+    }
+
+    .saved-block {
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      padding: 8px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      gap: 3px;
+    }
+    .saved-block:hover { border-color: #4299e1; background: #1e2a3a; }
+    .saved-block.dragging { opacity: 0.35; }
+    .saved-block.drag-over { outline: 2px solid #4299e1; }
+    .saved-block.active-seq { border-color: #4299e1; background: linear-gradient(135deg, #1a2a4a, #1e3a5a); }
+
+    .saved-block-name {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .saved-block-count {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.65rem;
+      color: #4a4a6a;
+    }
+
+    /* PLAYLIST BAR */
+    .playlist-bar {
+      background: #000;
+      border-top: 3px solid #000;
+      display: flex;
+      align-items: center;
+      padding: 12px 20px;
+      gap: 12px;
+    }
+
+    #pl-play-btn {
+      background: linear-gradient(135deg, #276749, #38a169);
+      color: white;
+      box-shadow: 0 2px 10px rgba(56, 161, 105, 0.175);
+    }
+    #pl-play-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(56, 161, 105, 0.275);
+    }
+    #pl-stop-btn {
+      background: #1a1a2e;
+      color: #a0aec0;
+      border: 1px solid #2d2d3f;
+    }
+    #pl-stop-btn:hover { background: #2d2d3f; color: #fff; }
+    #pl-stop-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    #pl-clear-btn {
+      padding: 6px 18px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #pl-clear-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+
+    .playlist-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      color: #4a4a6a;
+      flex: 1;
+    }
+
+    .saved-block.playlist-active {
+      border-color: #48bb78;
+      background: linear-gradient(135deg, #1a3a2a, #1e4a30);
+    }
+
+    /* LONG-PRESS CONTEXT MENU */
+    .ctx-menu {
+      position: fixed;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      z-index: 999;
+      overflow: hidden;
+      min-width: 140px;
+    }
+
+    .ctx-menu button {
+      display: block;
+      width: 100%;
+      padding: 12px 16px;
+      background: none;
+      border: none;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .ctx-menu button:hover { background: #2d2d3f; }
+    .ctx-menu button.danger { color: #fc8181; }
+    .ctx-menu button.danger:hover { background: #2d1a1a; }
+    .ctx-menu hr { border: none; border-top: 1px solid #2d2d3f; margin: 0; }
+
+    .saved-empty {
+      color: #2d2d3f;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      grid-column: 1 / -1;
+    }
+
+    /* SOUND EDITOR MODAL */
+    .sm-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 1100;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .sm-modal {
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 16px;
+      padding: 24px;
+      width: min(360px, 92vw);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.65);
+    }
+
+    .sm-title {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
+      color: #f0f4ff; margin-bottom: 18px;
+    }
+
+    .sm-waves {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px;
+    }
+
+    .sm-wave {
+      padding: 4px 12px; border-radius: 14px;
+      border: 1px solid #2d2d3f; background: transparent;
+      color: #a0aec0; font-size: 0.73rem; font-weight: 600;
+      font-family: 'Segoe UI', sans-serif;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .sm-wave:hover { border-color: #4299e1; color: #4299e1; }
+    .sm-wave.active { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+
+    .sm-param { margin-bottom: 12px; }
+    .sm-param-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.73rem;
+      color: #a0aec0; margin-bottom: 4px;
+    }
+    .sm-param-row .sm-val { color: #e2e8f0; font-weight: 600; }
+    .sm-param input[type=range] { width: 100%; accent-color: #4299e1; }
+
+    .sm-footer {
+      display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end;
+    }
+
+    .sm-preview {
+      padding: 6px 14px; border-radius: 18px;
+      background: transparent; border: 1px solid #2d2d3f;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
+    }
+    .sm-preview:hover { border-color: #4299e1; color: #4299e1; }
+
+    .sm-apply {
+      padding: 6px 18px; border-radius: 18px;
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      border: none; color: white;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .sm-apply:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(66,153,225,0.275); }
+
+    .sm-modal { max-height: 85vh; overflow-y: auto; }
+
+    .sm-remove-step {
+      padding: 6px 14px; border-radius: 18px;
+      background: transparent; border: 1px solid #2d2d3f;
+      color: #fc8181; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
+      margin-right: auto;
+    }
+    .sm-remove-step:hover { border-color: #fc8181; background: rgba(252,129,129,0.08); }
+
+    .sm-section-label {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem;
+      font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      color: #4a4a6a; margin: 14px 0 8px;
+    }
+
+    .se-chord-list { margin-bottom: 4px; }
+    .se-chord-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 0; border-bottom: 1px solid #2d2d3f;
+    }
+    .se-chord-note-label {
+      flex: 1; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem; font-weight: 700; color: #e2e8f0;
+    }
+    .se-wave-badge {
+      font-size: 0.63rem; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+      background: #0f0f1a; border: 1px solid #2d2d3f;
+      border-radius: 4px; padding: 2px 5px;
+    }
+    .se-edit-btn {
+      background: none; border: none; cursor: pointer;
+      font-size: 0.72rem; font-family: 'Segoe UI', sans-serif;
+      color: #4299e1; padding: 3px 7px; border-radius: 8px; transition: all 0.15s;
+    }
+    .se-edit-btn:hover { background: rgba(66,153,225,0.12); }
+    .se-remove-btn {
+      background: none; border: none; cursor: pointer;
+      font-size: 0.95rem; color: #fc8181; padding: 3px 6px;
+      border-radius: 8px; transition: all 0.15s; line-height: 1;
+    }
+    .se-remove-btn:hover { background: rgba(252,129,129,0.1); }
+    .se-inline-sound {
+      padding: 10px 4px 4px;
+      border-bottom: 1px solid #2d2d3f;
+      background: #0f0f1a; border-radius: 0 0 6px 6px;
+      margin-bottom: 2px;
+    }
+
+    .sm-copy {
+      padding: 6px 14px; border-radius: 18px;
+      background: transparent; border: 1px solid #2d2d3f;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
+      margin-right: auto;
+    }
+    .sm-copy:hover { border-color: #a0aec0; color: #e2e8f0; }
+    .sm-copy.open  { border-color: #4299e1; color: #4299e1; }
+
+    .sm-copy-panel {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #2d2d3f;
+    }
+    .sm-copy-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.73rem; color: #a0aec0;
+      margin-bottom: 10px;
+    }
+    .sm-copy-notes {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-bottom: 12px;
+    }
+    .sm-copy-note {
+      padding: 4px 10px; border-radius: 14px;
+      border: 1px solid #2d2d3f; background: transparent;
+      color: #a0aec0; font-size: 0.73rem; font-weight: 600;
+      font-family: 'Segoe UI', sans-serif;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .sm-copy-note:hover   { border-color: #4299e1; color: #4299e1; }
+    .sm-copy-note.picked  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.15); }
+    .sm-copy-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .sm-copy-all {
+      padding: 5px 14px; border-radius: 18px;
+      background: transparent; border: 1px solid #2d2d3f;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.15s;
+    }
+    .sm-copy-all:hover { border-color: #e2e8f0; color: #e2e8f0; }
+    .sm-copy-sel {
+      padding: 5px 14px; border-radius: 18px;
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      border: none; color: white;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.75rem;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .sm-copy-sel:disabled { opacity: 0.35; cursor: not-allowed; }
+    .sm-copy-sel:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(66,153,225,0.275); }
+  </style>
+</head>
+<body>
+
+  <div class="menubar">
+    <a href="index.html">Mike Luz</a>
+    <button id="play-btn" class="menu-btn" title="Play sequence">▶</button>
+    <button id="stop-btn" class="menu-btn" title="Stop" disabled>■</button>
+    <div class="tempo-control">
+      <input type="range" id="tempo-slider" min="60" max="600" value="100" step="10" />
+      <input type="number" id="tempo-input" min="60" max="600" value="100" title="BPM" />
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="rest-bar" id="rest-bar"><span>REST</span></div>
+
+  <div class="sequence-display" id="sequence-display">
+    <span class="seq-empty">Click notes or REST to build a sequence…</span>
+  </div>
+
+  <div class="footer-bar">
+    <button id="clear-btn">Clear</button>
+    <button id="save-btn" disabled>Save</button>
+    <button id="chord-btn">Chord</button>
+    <span class="seq-count" id="seq-count"></span>
+  </div>
+
+  <div class="saved-viewer">
+    <div class="saved-grid" id="saved-grid">
+      <span class="saved-empty">No saved sequences yet.</span>
+    </div>
+  </div>
+
+  <div class="playlist-bar">
+    <button id="pl-play-btn" class="menu-btn" title="Play all saved sequences in order">▶</button>
+    <button id="pl-stop-btn" class="menu-btn" title="Stop" disabled>■</button>
+    <button id="pl-clear-btn">Clear</button>
+    <span class="playlist-label" id="pl-label">Play all saved sequences in order</span>
+  </div>
+
+  <script>
+    const notes = [
+      { freq: 261.63, label: 'C4'  },
+      { freq: 277.18, label: 'C#4' },
+      { freq: 293.66, label: 'D4'  },
+      { freq: 311.13, label: 'D#4' },
+      { freq: 329.63, label: 'E4'  },
+      { freq: 349.23, label: 'F4'  },
+      { freq: 369.99, label: 'F#4' },
+      { freq: 392.00, label: 'G4'  },
+      { freq: 415.30, label: 'G#4' },
+      { freq: 440.00, label: 'A4'  },
+      { freq: 466.16, label: 'A#4' },
+      { freq: 493.88, label: 'B4'  },
+    ];
+
+    let ctx = null;
+    let sequenceTimer = null;
+    let sequence = []; // [{ freq, label, cellIndex }] — freq null = rest; chord: [{...}]
+    let chordMode = false;
+    let pendingChord = [];
+    const cells = [];
+
+    // Saved sequences — persisted to localStorage
+    let savedSequences = JSON.parse(localStorage.getItem('sounds-saved') || '[]');
+    let activeSeqIndex = null;
+
+    function seqName(index) {
+      let name = '';
+      let n = index;
+      while (true) {
+        name = String.fromCharCode(65 + (n % 26)) + name;
+        if (n < 26) break;
+        n = Math.floor(n / 26) - 1;
+      }
+      return name;
+    }
+
+    function persistSaved() {
+      localStorage.setItem('sounds-saved', JSON.stringify(savedSequences));
+    }
+
+    function renderSavedSequences() {
+      const grid = document.getElementById('saved-grid');
+      if (savedSequences.length === 0) {
+        grid.innerHTML = '<span class="saved-empty">No saved sequences yet.</span>';
+        return;
+      }
+      grid.innerHTML = '';
+      savedSequences.forEach((saved, i) => {
+        const block = document.createElement('div');
+        block.className = 'saved-block' + (i === activeSeqIndex ? ' active-seq' : '');
+        block.dataset.seqIndex = i;
+        block.innerHTML = `
+          <span class="saved-block-name">${saved.name}</span>
+          <span class="saved-block-count">${saved.steps.length} steps${saved.bpm ? ` · ${saved.bpm}` : ''}</span>
+        `;
+        block.addEventListener('click', () => {
+          sequence = [...saved.steps];
+          if (saved.bpm) {
+            tempoInput.value = saved.bpm;
+            tempoSlider.value = saved.bpm;
+          }
+          activeSeqIndex = i;
+          renderSequence();
+          renderSavedSequences();
+          document.getElementById('save-btn').disabled = false;
+        });
+        bindDrag(block, i);
+        bindLongPress(block, i);
+        grid.appendChild(block);
+      });
+    }
+
+    document.addEventListener('pointerdown', () => getCtx(), { once: true });
+
+    const tempoSlider = document.getElementById('tempo-slider');
+    const tempoInput  = document.getElementById('tempo-input');
+
+    tempoSlider.addEventListener('input', () => {
+      tempoInput.value = tempoSlider.value;
+    });
+
+    tempoInput.addEventListener('input', () => {
+      const v = Math.min(600, Math.max(60, parseInt(tempoInput.value) || 60));
+      tempoSlider.value = v;
+    });
+
+    function getCtx() {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    function getStepMs() {
+      return Math.round(60000 / (parseInt(tempoInput.value) || 100));
+    }
+
+    const SOUNDS = ['sine','square','triangle','sawtooth','bell','pluck'];
+
+    function playNote(freq, params = {}) {
+      if (typeof params === 'string') params = { type: params };
+      const {
+        type    = 'sine',
+        attack  = 10,
+        decay   = 100,
+        sustain = 50,
+        release = 1400,
+        volume  = 100,
+      } = params;
+
+      const ac  = getCtx();
+      const t   = ac.currentTime;
+      const vol = volume / 100;
+      const atk = Math.max(attack  / 1000, 0.005);
+      const dec = Math.max(decay   / 1000, 0.01);
+      const sus = Math.max(sustain / 100,  0.001);
+      const rel = Math.max(release / 1000, 0.1);
+
+      if (type === 'bell') {
+        [1, 2.756, 5.404, 8.933].forEach((mult, i) => {
+          const osc = ac.createOscillator(), g = ac.createGain();
+          osc.connect(g); g.connect(ac.destination);
+          osc.type = 'sine'; osc.frequency.value = freq * mult;
+          g.gain.setValueAtTime((vol * 0.35) / (i + 1), t);
+          g.gain.exponentialRampToValueAtTime(0.001, t + 2.5);
+          osc.start(t); osc.stop(t + 2.5);
+        });
+        return;
+      }
+
+      if (type === 'pluck') {
+        const osc = ac.createOscillator(), g = ac.createGain();
+        osc.connect(g); g.connect(ac.destination);
+        osc.type = 'sawtooth'; osc.frequency.value = freq;
+        g.gain.setValueAtTime(vol * 0.6, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        osc.start(t); osc.stop(t + 0.25);
+        return;
+      }
+
+      const peak  = vol * (type === 'sine' ? 0.7 : 0.4);
+      const susLv = Math.max(peak * sus, 0.001);
+      const total = atk + dec + rel;
+
+      const osc = ac.createOscillator(), gain = ac.createGain();
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(peak,  t + atk);
+      gain.gain.exponentialRampToValueAtTime(susLv, t + atk + dec);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + total);
+      osc.start(t); osc.stop(t + total + 0.05);
+
+      if (type === 'sine') {
+        const osc2 = ac.createOscillator(), g2 = ac.createGain();
+        osc2.connect(g2); g2.connect(ac.destination);
+        osc2.type = 'sine'; osc2.frequency.value = freq * 2;
+        g2.gain.setValueAtTime(vol * 0.15, t);
+        g2.gain.exponentialRampToValueAtTime(0.001, t + Math.min(total, 1.5));
+        osc2.start(t); osc2.stop(t + total + 0.05);
+      }
+    }
+
+    // ---- Sequence display ----
+
+    function renderSequence(activeIndex = -1) {
+      const display = document.getElementById('sequence-display');
+      const count   = document.getElementById('seq-count');
+
+      const isEmpty = sequence.length === 0 && pendingChord.length === 0;
+      if (isEmpty) {
+        display.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
+        count.textContent = '';
+        return;
+      }
+
+      display.innerHTML = '';
+      sequence.forEach((step, i) => {
+        const chip = document.createElement('div');
+        if (step.chord) {
+          chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '');
+          chip.textContent = step.chord.map(n => n.label).join('·');
+        } else {
+          chip.className = 'seq-step' + (step.freq === null ? ' rest' : '') + (i === activeIndex ? ' active' : '');
+          chip.textContent = step.freq !== null
+            ? `${step.label}${step.sound && step.sound !== 'sine' ? '\n' + step.sound.slice(0,3) : ''}`
+            : step.label;
+        }
+        bindStepLongPress(chip, i);
+        display.appendChild(chip);
+      });
+
+      // Show in-progress chord as a dashed pending chip
+      if (chordMode && pendingChord.length > 0) {
+        const chip = document.createElement('div');
+        chip.className = 'seq-step chord-pending';
+        chip.textContent = pendingChord.map(n => n.label).join('·') + '…';
+        display.appendChild(chip);
+        chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'end' });
+      }
+
+      count.textContent = `${sequence.length} step${sequence.length !== 1 ? 's' : ''}`;
+
+      if (activeIndex >= 0) {
+        const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
+        chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+
+    function addToSequence(step) {
+      sequence.push(step);
+      renderSequence();
+      document.getElementById('save-btn').disabled = false;
+    }
+
+    // ---- Playback ----
+
+    function clearHighlights() {
+      cells.forEach(c => c.classList.remove('active-loop'));
+      document.getElementById('rest-bar').classList.remove('active-loop');
+    }
+
+    function stopSequence() {
+      clearTimeout(sequenceTimer);
+      sequenceTimer = null;
+      clearHighlights();
+      renderSequence();
+      document.getElementById('play-btn').textContent = '▶';
+      document.getElementById('stop-btn').disabled = true;
+    }
+
+    function playSequence(index = 0) {
+      if (index === 0) {
+        document.getElementById('play-btn').textContent = '⏸';
+        document.getElementById('stop-btn').disabled = false;
+      }
+
+      if (sequence.length === 0) { stopSequence(); return; }
+
+      const step = sequence[index];
+      clearHighlights();
+      renderSequence(index);
+
+      if (step.chord) {
+        step.chord.forEach(n => {
+          playNote(n.freq, n.params || n.sound || 'sine');
+          if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
+        });
+      } else if (step.freq !== null) {
+        playNote(step.freq, step.params || step.sound || 'sine');
+        if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
+      } else {
+        document.getElementById('rest-bar').classList.add('active-loop');
+      }
+
+      sequenceTimer = setTimeout(() => {
+        const next = index + 1;
+        if (next < sequence.length) {
+          playSequence(next);
+        } else {
+          stopSequence();
+        }
+      }, getStepMs());
+    }
+
+    document.getElementById('play-btn').addEventListener('click', async () => {
+      if (sequence.length === 0) return;
+      const ac = getCtx();
+      if (ac.state !== 'running') await ac.resume();
+      if (sequenceTimer !== null) {
+        stopSequence();
+      } else {
+        playSequence(0);
+      }
+    });
+
+    document.getElementById('stop-btn').addEventListener('click', stopSequence);
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      stopSequence();
+      sequence = [];
+      pendingChord = [];
+      activeSeqIndex = null;
+      renderSequence();
+      renderSavedSequences();
+      document.getElementById('save-btn').disabled = true;
+    });
+
+    document.getElementById('save-btn').addEventListener('click', () => {
+      if (sequence.length === 0) return;
+      const name = seqName(savedSequences.length);
+      savedSequences.push({ name, steps: [...sequence], bpm: parseInt(tempoInput.value) || 100 });
+      activeSeqIndex = savedSequences.length - 1;
+      persistSaved();
+      renderSavedSequences();
+    });
+
+    document.getElementById('chord-btn').addEventListener('click', () => {
+      chordMode = !chordMode;
+      document.getElementById('chord-btn').classList.toggle('active', chordMode);
+      if (!chordMode && pendingChord.length > 0) {
+        // Commit the accumulated chord as one step
+        const label = pendingChord.map(n => n.label).join('·');
+        addToSequence({ chord: [...pendingChord], label });
+        pendingChord = [];
+      } else if (!chordMode) {
+        pendingChord = [];
+        renderSequence();
+      }
+    });
+
+    // ---- Playlist playback (saved sequences in order) ----
+
+    let playlistTimer = null;
+
+    function stopPlaylist() {
+      clearTimeout(playlistTimer);
+      playlistTimer = null;
+      clearHighlights();
+      document.getElementById('pl-play-btn').textContent = '▶';
+      document.getElementById('pl-stop-btn').disabled = true;
+      document.getElementById('pl-label').textContent = 'Play all saved sequences in order';
+      renderSavedSequences();
+    }
+
+    function playPlaylist(seqIndex, stepIndex) {
+      if (seqIndex >= savedSequences.length) { stopPlaylist(); return; }
+
+      const saved = savedSequences[seqIndex];
+      const step  = saved.steps[stepIndex];
+      const stepMs = Math.round(60000 / (saved.bpm || 100));
+
+      const blocks = document.getElementById('saved-grid').querySelectorAll('.saved-block');
+      blocks.forEach((b, i) => {
+        b.classList.toggle('playlist-active', i === seqIndex);
+        b.classList.remove('active-seq');
+      });
+      document.getElementById('pl-label').textContent = `Playing ${saved.name} — step ${stepIndex + 1}/${saved.steps.length}`;
+
+      clearHighlights();
+      if (step.chord) {
+        step.chord.forEach(n => {
+          playNote(n.freq, n.params || n.sound || 'sine');
+          if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
+        });
+      } else if (step.freq !== null) {
+        playNote(step.freq, step.params || step.sound || 'sine');
+        if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
+      } else {
+        document.getElementById('rest-bar').classList.add('active-loop');
+      }
+
+      playlistTimer = setTimeout(() => {
+        const nextStep = stepIndex + 1;
+        if (nextStep < saved.steps.length) {
+          playPlaylist(seqIndex, nextStep);
+        } else {
+          playPlaylist(seqIndex + 1, 0);
+        }
+      }, stepMs);
+    }
+
+    document.getElementById('pl-play-btn').addEventListener('click', async () => {
+      if (savedSequences.length === 0) return;
+      const ac = getCtx();
+      if (ac.state !== 'running') await ac.resume();
+      if (playlistTimer !== null) {
+        stopPlaylist();
+      } else {
+        document.getElementById('pl-play-btn').textContent = '⏸';
+        document.getElementById('pl-stop-btn').disabled = false;
+        playPlaylist(0, 0);
+      }
+    });
+
+    document.getElementById('pl-stop-btn').addEventListener('click', stopPlaylist);
+
+    // ---- Long-press context menu for saved blocks ----
+
+    let ctxMenu = null;
+    let longPressTimer = null;
+
+    function dismissCtxMenu() {
+      if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; }
+    }
+
+    document.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('.ctx-menu')) dismissCtxMenu();
+    });
+
+    function showCtxMenu(x, y, actions) {
+      dismissCtxMenu();
+      ctxMenu = document.createElement('div');
+      ctxMenu.className = 'ctx-menu';
+
+      actions.forEach(a => {
+        if (a === 'hr') { const hr = document.createElement('hr'); ctxMenu.appendChild(hr); return; }
+        const btn = document.createElement('button');
+        btn.textContent = a.label;
+        if (a.danger) btn.classList.add('danger');
+        btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+        btn.addEventListener('click', () => { a.fn(); dismissCtxMenu(); });
+        ctxMenu.appendChild(btn);
+      });
+
+      document.body.appendChild(ctxMenu);
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const mw = 160, mh = ctxMenu.offsetHeight || 180;
+      ctxMenu.style.left = Math.min(x, vw - mw - 8) + 'px';
+      ctxMenu.style.top  = Math.min(y, vh - mh - 8) + 'px';
+    }
+
+    function savedBlockActions(seqIndex) {
+      return [
+        { label: '▲ Move Up',   fn: () => { if (seqIndex > 0) { [savedSequences[seqIndex-1], savedSequences[seqIndex]] = [savedSequences[seqIndex], savedSequences[seqIndex-1]]; persistSaved(); renderSavedSequences(); } } },
+        { label: '▼ Move Down', fn: () => { if (seqIndex < savedSequences.length-1) { [savedSequences[seqIndex], savedSequences[seqIndex+1]] = [savedSequences[seqIndex+1], savedSequences[seqIndex]]; persistSaved(); renderSavedSequences(); } } },
+        { label: '⧉ Duplicate',  fn: () => { const base = savedSequences[seqIndex].name.replace(/\.\d+$/, ''); let n = 1; while (savedSequences.some(s => s.name === `${base}.${n}`)) n++; const copy = { ...savedSequences[seqIndex], name: `${base}.${n}`, steps: [...savedSequences[seqIndex].steps] }; savedSequences.splice(seqIndex+1, 0, copy); persistSaved(); renderSavedSequences(); } },
+        'hr',
+        { label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } persistSaved(); renderSavedSequences(); } },
+      ];
+    }
+
+    // ---- Drag-and-drop reorder ----
+
+    let _dragIdx = null;
+    let _touchClone = null;
+    let _touchOffsetX = 0, _touchOffsetY = 0;
+    let _touchDropTarget = null;
+
+    function moveSequence(from, to) {
+      if (from === to) return;
+      const [item] = savedSequences.splice(from, 1);
+      savedSequences.splice(to, 0, item);
+      if (activeSeqIndex === from) activeSeqIndex = to;
+      else if (from < activeSeqIndex && to >= activeSeqIndex) activeSeqIndex--;
+      else if (from > activeSeqIndex && to <= activeSeqIndex) activeSeqIndex++;
+      persistSaved();
+      renderSavedSequences();
+    }
+
+    function clearDragOver() {
+      document.getElementById('saved-grid').querySelectorAll('.drag-over')
+        .forEach(el => el.classList.remove('drag-over'));
+    }
+
+    function bindDrag(block, i) {
+      block.draggable = true;
+
+      block.addEventListener('dragstart', (e) => {
+        _dragIdx = i;
+        e.dataTransfer.effectAllowed = 'move';
+        requestAnimationFrame(() => block.classList.add('dragging'));
+      });
+
+      block.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        if (_dragIdx === i) return;
+        clearDragOver();
+        block.classList.add('drag-over');
+      });
+
+      block.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+
+      block.addEventListener('dragleave', (e) => {
+        if (!block.contains(e.relatedTarget)) block.classList.remove('drag-over');
+      });
+
+      block.addEventListener('drop', (e) => {
+        e.preventDefault();
+        clearDragOver();
+        if (_dragIdx !== null && _dragIdx !== i) moveSequence(_dragIdx, i);
+        _dragIdx = null;
+      });
+
+      block.addEventListener('dragend', () => {
+        block.classList.remove('dragging');
+        clearDragOver();
+        _dragIdx = null;
+      });
+
+      // Touch drag
+      block.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        _dragIdx = i;
+        const touch = e.touches[0];
+        const rect = block.getBoundingClientRect();
+        _touchOffsetX = touch.clientX - rect.left;
+        _touchOffsetY = touch.clientY - rect.top;
+
+        const clone = block.cloneNode(true);
+        Object.assign(clone.style, {
+          position: 'fixed', left: rect.left + 'px', top: rect.top + 'px',
+          width: rect.width + 'px', height: rect.height + 'px',
+          opacity: '0.85', pointerEvents: 'none', zIndex: '9999',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)', borderRadius: '8px',
+        });
+        document.body.appendChild(clone);
+        _touchClone = clone;
+        block.classList.add('dragging');
+
+        const onMove = (e) => {
+          e.preventDefault();
+          const t = e.touches[0];
+          _touchClone.style.left = (t.clientX - _touchOffsetX) + 'px';
+          _touchClone.style.top  = (t.clientY - _touchOffsetY) + 'px';
+          _touchClone.style.visibility = 'hidden';
+          const el = document.elementFromPoint(t.clientX, t.clientY);
+          _touchClone.style.visibility = '';
+          const target = el?.closest('.saved-block');
+          clearDragOver();
+          if (target) {
+            const idx = parseInt(target.dataset.seqIndex);
+            if (!isNaN(idx) && idx !== _dragIdx) {
+              target.classList.add('drag-over');
+              _touchDropTarget = idx;
+            } else { _touchDropTarget = null; }
+          } else { _touchDropTarget = null; }
+        };
+
+        const onEnd = () => {
+          _touchClone?.remove(); _touchClone = null;
+          block.classList.remove('dragging');
+          clearDragOver();
+          if (_touchDropTarget !== null && _touchDropTarget !== _dragIdx) {
+            moveSequence(_dragIdx, _touchDropTarget);
+          }
+          _dragIdx = null; _touchDropTarget = null;
+          document.removeEventListener('touchmove', onMove);
+          document.removeEventListener('touchend', onEnd);
+        };
+
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+      }, { passive: false });
+    }
+
+    function bindLongPress(block, seqIndex) {
+      block.addEventListener('pointerdown', (e) => {
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          navigator.vibrate?.(40);
+          showCtxMenu(e.clientX, e.clientY, savedBlockActions(seqIndex));
+        }, 500);
+      });
+      const cancel = () => { clearTimeout(longPressTimer); longPressTimer = null; };
+      block.addEventListener('pointerup',    cancel);
+      block.addEventListener('pointercancel', cancel);
+      block.addEventListener('pointermove',  cancel);
+      // Prevent native context menu on mobile
+      block.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    function cellActions(noteIndex) {
+      const note = notes[noteIndex];
+      return [
+        { label: 'Sound editor…', fn: () => showSoundEditor(noteIndex) },
+        'hr',
+        { label: `Remove last ${note.label}`, fn: () => {
+            const idx = [...sequence].map((s,i) => [s,i]).reverse().find(([s]) => s.cellIndex === noteIndex)?.[1];
+            if (idx != null) { sequence.splice(idx, 1); renderSequence(); document.getElementById('save-btn').disabled = sequence.length === 0; }
+        }},
+        { label: `Remove all ${note.label}`, fn: () => {
+            sequence = sequence.filter(s => s.cellIndex !== noteIndex);
+            renderSequence();
+            document.getElementById('save-btn').disabled = sequence.length === 0;
+        }},
+        'hr',
+        { label: 'Reset sound → Sine', fn: () => {
+            cellSounds[noteIndex] = 'sine';
+            cellParams[noteIndex] = { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100 };
+            const sel = cells[noteIndex].querySelector('.cell-sound-select');
+            if (sel) sel.value = 'sine';
+        }},
+      ];
+    }
+
+    function showSoundEditor(noteIndex) {
+      const note = notes[noteIndex];
+      const p = { ...cellParams[noteIndex] };
+
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Sound Editor — ${note.label}</div>
+        <div class="sm-waves" id="sm-waves"></div>
+        <div class="sm-param">
+          <div class="sm-param-row">Attack <span class="sm-val" id="sm-atk-v">${p.attack} ms</span></div>
+          <input type="range" id="sm-atk" min="1" max="500" value="${p.attack}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Decay <span class="sm-val" id="sm-dec-v">${p.decay} ms</span></div>
+          <input type="range" id="sm-dec" min="10" max="1000" value="${p.decay}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Sustain <span class="sm-val" id="sm-sus-v">${p.sustain}%</span></div>
+          <input type="range" id="sm-sus" min="0" max="100" value="${p.sustain}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Release <span class="sm-val" id="sm-rel-v">${p.release} ms</span></div>
+          <input type="range" id="sm-rel" min="100" max="3000" value="${p.release}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Volume <span class="sm-val" id="sm-vol-v">${p.volume}%</span></div>
+          <input type="range" id="sm-vol" min="0" max="100" value="${p.volume}" />
+        </div>
+        <div class="sm-footer">
+          <button class="sm-copy" id="sm-copy">Copy to…</button>
+          <button class="sm-preview" id="sm-preview">▶ Preview</button>
+          <button class="sm-apply" id="sm-apply">Apply</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      // Wave type buttons
+      const waveRow = modal.querySelector('#sm-waves');
+      SOUNDS.forEach(s => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
+        btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        btn.addEventListener('click', () => {
+          p.type = s;
+          waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+        waveRow.appendChild(btn);
+      });
+
+      // Slider bindings
+      [
+        ['sm-atk', 'sm-atk-v', 'attack',  ' ms'],
+        ['sm-dec', 'sm-dec-v', 'decay',   ' ms'],
+        ['sm-sus', 'sm-sus-v', 'sustain', '%'],
+        ['sm-rel', 'sm-rel-v', 'release', ' ms'],
+        ['sm-vol', 'sm-vol-v', 'volume',  '%'],
+      ].forEach(([id, valId, key, unit]) => {
+        const input = modal.querySelector(`#${id}`);
+        const label = modal.querySelector(`#${valId}`);
+        input.addEventListener('input', () => {
+          p[key] = parseInt(input.value);
+          label.textContent = p[key] + unit;
+        });
+      });
+
+      modal.querySelector('#sm-preview').addEventListener('click', () => playNote(note.freq, p));
+
+      modal.querySelector('#sm-apply').addEventListener('click', () => {
+        cellParams[noteIndex] = { ...p };
+        cellSounds[noteIndex] = p.type;
+        const sel = cells[noteIndex]?.querySelector('.cell-sound-select');
+        if (sel) sel.value = p.type;
+        overlay.remove();
+      });
+
+      // Copy-to panel
+      const copyBtn = modal.querySelector('#sm-copy');
+      const copyPanel = document.createElement('div');
+      copyPanel.className = 'sm-copy-panel';
+      copyPanel.style.display = 'none';
+      copyPanel.innerHTML = `
+        <div class="sm-copy-label">Copy current settings to:</div>
+        <div class="sm-copy-notes" id="sm-copy-notes"></div>
+        <div class="sm-copy-actions">
+          <button class="sm-copy-all">Apply to all</button>
+          <button class="sm-copy-sel" disabled>Apply to selected</button>
+        </div>
+      `;
+      modal.appendChild(copyPanel);
+
+      const picked = new Set();
+      const notesContainer = copyPanel.querySelector('#sm-copy-notes');
+      const selBtn = copyPanel.querySelector('.sm-copy-sel');
+
+      notes.forEach((n, idx) => {
+        if (idx === noteIndex) return;
+        const nb = document.createElement('button');
+        nb.className = 'sm-copy-note';
+        nb.textContent = n.label;
+        nb.addEventListener('click', () => {
+          if (picked.has(idx)) { picked.delete(idx); nb.classList.remove('picked'); }
+          else                 { picked.add(idx);    nb.classList.add('picked'); }
+          selBtn.disabled = picked.size === 0;
+        });
+        notesContainer.appendChild(nb);
+      });
+
+      function applyToIndices(indices) {
+        indices.forEach(idx => {
+          cellParams[idx] = { ...p };
+          cellSounds[idx] = p.type;
+          const sel = cells[idx]?.querySelector('.cell-sound-select');
+          if (sel) sel.value = p.type;
+        });
+      }
+
+      copyPanel.querySelector('.sm-copy-all').addEventListener('click', () => {
+        applyToIndices(notes.map((_, idx) => idx).filter(idx => idx !== noteIndex));
+        copyPanel.style.display = 'none';
+        copyBtn.classList.remove('open');
+      });
+
+      selBtn.addEventListener('click', () => {
+        applyToIndices([...picked]);
+        picked.clear();
+        notesContainer.querySelectorAll('.sm-copy-note').forEach(b => b.classList.remove('picked'));
+        selBtn.disabled = true;
+        copyPanel.style.display = 'none';
+        copyBtn.classList.remove('open');
+      });
+
+      copyBtn.addEventListener('click', () => {
+        const open = copyPanel.style.display === 'none';
+        copyPanel.style.display = open ? 'block' : 'none';
+        copyBtn.classList.toggle('open', open);
+      });
+
+      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+    }
+
+    // ---- Step long-press + editor ----
+
+    function bindStepLongPress(chip, stepIndex) {
+      let lpt = null;
+      chip.addEventListener('pointerdown', (e) => {
+        lpt = setTimeout(() => {
+          lpt = null;
+          navigator.vibrate?.(40);
+          const step = sequence[stepIndex];
+          const actions = [];
+          if (step && (step.chord || step.freq !== null)) {
+            actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
+            actions.push('hr');
+          }
+          actions.push({ label: 'Remove step', danger: true, fn: () => {
+            sequence.splice(stepIndex, 1);
+            renderSequence();
+            document.getElementById('save-btn').disabled = sequence.length === 0;
+          }});
+          showCtxMenu(e.clientX, e.clientY, actions);
+        }, 500);
+      });
+      const cancel = () => { clearTimeout(lpt); lpt = null; };
+      chip.addEventListener('pointerup',     cancel);
+      chip.addEventListener('pointercancel', cancel);
+      chip.addEventListener('pointermove',   cancel);
+      chip.addEventListener('contextmenu',   (e) => e.preventDefault());
+    }
+
+    function buildInlineSoundPanel(params, onChange) {
+      const p = { ...params };
+      const container = document.createElement('div');
+      container.className = 'se-inline-sound';
+
+      const waveRow = document.createElement('div');
+      waveRow.className = 'sm-waves';
+      waveRow.style.marginBottom = '8px';
+      SOUNDS.forEach(s => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
+        btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        btn.addEventListener('click', () => {
+          p.type = s;
+          waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          onChange(p);
+        });
+        waveRow.appendChild(btn);
+      });
+      container.appendChild(waveRow);
+
+      [
+        ['attack',  ' ms', 1,   500,  p.attack],
+        ['decay',   ' ms', 10,  1000, p.decay],
+        ['sustain', '%',   0,   100,  p.sustain],
+        ['release', ' ms', 100, 3000, p.release],
+        ['volume',  '%',   0,   100,  p.volume],
+      ].forEach(([key, unit, min, max, val]) => {
+        const row = document.createElement('div');
+        row.className = 'sm-param';
+        const labelRow = document.createElement('div');
+        labelRow.className = 'sm-param-row';
+        labelRow.innerHTML = `${key.charAt(0).toUpperCase() + key.slice(1)} <span class="sm-val">${val}${unit}</span>`;
+        const valSpan = labelRow.querySelector('.sm-val');
+        const slider = document.createElement('input');
+        slider.type = 'range'; slider.min = min; slider.max = max; slider.value = val;
+        slider.addEventListener('input', () => {
+          p[key] = parseInt(slider.value);
+          valSpan.textContent = p[key] + unit;
+          onChange(p);
+        });
+        row.appendChild(labelRow); row.appendChild(slider);
+        container.appendChild(row);
+      });
+      return container;
+    }
+
+    function showStepEditor(stepIndex) {
+      const step = sequence[stepIndex];
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      if (step.chord) buildChordEditor(modal, stepIndex, overlay);
+      else             buildNoteEditor(modal, stepIndex, overlay);
+    }
+
+    function buildNoteEditor(modal, stepIndex, overlay) {
+      const step = sequence[stepIndex];
+      const p = {
+        freq:    step.freq,
+        label:   step.label,
+        cellIndex: step.cellIndex,
+        type:    step.params?.type    ?? step.sound ?? 'sine',
+        attack:  step.params?.attack  ?? 10,
+        decay:   step.params?.decay   ?? 100,
+        sustain: step.params?.sustain ?? 50,
+        release: step.params?.release ?? 1400,
+        volume:  step.params?.volume  ?? 100,
+      };
+
+      modal.innerHTML = `
+        <div class="sm-title">Edit Step ${stepIndex + 1}</div>
+        <div class="sm-section-label">Note</div>
+        <div class="sm-waves" id="se-note-picker"></div>
+        <div class="sm-section-label">Sound</div>
+        <div class="sm-waves" id="se-wave-row"></div>
+        <div class="sm-param">
+          <div class="sm-param-row">Attack <span class="sm-val" id="se-atk-v">${p.attack} ms</span></div>
+          <input type="range" id="se-atk" min="1" max="500" value="${p.attack}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Decay <span class="sm-val" id="se-dec-v">${p.decay} ms</span></div>
+          <input type="range" id="se-dec" min="10" max="1000" value="${p.decay}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Sustain <span class="sm-val" id="se-sus-v">${p.sustain}%</span></div>
+          <input type="range" id="se-sus" min="0" max="100" value="${p.sustain}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Release <span class="sm-val" id="se-rel-v">${p.release} ms</span></div>
+          <input type="range" id="se-rel" min="100" max="3000" value="${p.release}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Volume <span class="sm-val" id="se-vol-v">${p.volume}%</span></div>
+          <input type="range" id="se-vol" min="0" max="100" value="${p.volume}" />
+        </div>
+        <div class="sm-footer">
+          <button class="sm-remove-step">Remove</button>
+          <button class="sm-preview">▶ Preview</button>
+          <button class="sm-apply">Apply</button>
+        </div>
+      `;
+
+      // Note picker
+      const notePicker = modal.querySelector('#se-note-picker');
+      notes.forEach((n, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave' + (n.freq === p.freq ? ' active' : '');
+        btn.textContent = n.label;
+        btn.addEventListener('click', () => {
+          p.freq = n.freq; p.label = n.label; p.cellIndex = idx;
+          notePicker.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+        notePicker.appendChild(btn);
+      });
+
+      // Wave type
+      const waveRow = modal.querySelector('#se-wave-row');
+      SOUNDS.forEach(s => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
+        btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        btn.addEventListener('click', () => {
+          p.type = s;
+          waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+        waveRow.appendChild(btn);
+      });
+
+      // Sliders
+      [
+        ['se-atk','se-atk-v','attack',' ms'],
+        ['se-dec','se-dec-v','decay',' ms'],
+        ['se-sus','se-sus-v','sustain','%'],
+        ['se-rel','se-rel-v','release',' ms'],
+        ['se-vol','se-vol-v','volume','%'],
+      ].forEach(([id, valId, key, unit]) => {
+        const input = modal.querySelector(`#${id}`);
+        const label = modal.querySelector(`#${valId}`);
+        input.addEventListener('input', () => {
+          p[key] = parseInt(input.value);
+          label.textContent = p[key] + unit;
+        });
+      });
+
+      modal.querySelector('.sm-preview').addEventListener('click', () => playNote(p.freq, p));
+
+      modal.querySelector('.sm-remove-step').addEventListener('click', () => {
+        sequence.splice(stepIndex, 1);
+        renderSequence();
+        document.getElementById('save-btn').disabled = sequence.length === 0;
+        overlay.remove();
+      });
+
+      modal.querySelector('.sm-apply').addEventListener('click', () => {
+        sequence[stepIndex] = { freq: p.freq, label: p.label, cellIndex: p.cellIndex,
+          sound: p.type, params: { type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain, release: p.release, volume: p.volume } };
+        renderSequence();
+        overlay.remove();
+      });
+    }
+
+    function buildChordEditor(modal, stepIndex, overlay) {
+      const step = sequence[stepIndex];
+      let chordNotes = step.chord.map(n => ({
+        ...n,
+        params: n.params ? { ...n.params } : { type: n.sound || 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100 },
+      }));
+      let expandedIdx = null;
+
+      modal.innerHTML = `
+        <div class="sm-title">Edit Chord — Step ${stepIndex + 1}</div>
+        <div class="se-chord-list" id="se-chord-list"></div>
+        <div class="sm-section-label">Add note</div>
+        <div class="sm-waves" id="se-add-picker"></div>
+        <div class="sm-footer">
+          <button class="sm-remove-step">Remove step</button>
+          <button class="sm-preview">▶ Preview</button>
+          <button class="sm-apply">Apply</button>
+        </div>
+      `;
+
+      // Add-note picker
+      const addPicker = modal.querySelector('#se-add-picker');
+      notes.forEach((n, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'sm-wave';
+        btn.textContent = n.label;
+        btn.addEventListener('click', () => {
+          chordNotes.push({ freq: n.freq, label: n.label, cellIndex: idx, sound: cellParams[idx].type,
+            params: { ...cellParams[idx] } });
+          renderList();
+        });
+        addPicker.appendChild(btn);
+      });
+
+      function renderList() {
+        const listEl = modal.querySelector('#se-chord-list');
+        listEl.innerHTML = '';
+        if (chordNotes.length === 0) {
+          const empty = document.createElement('div');
+          Object.assign(empty.style, { color:'#4a4a6a', fontSize:'0.8rem', fontFamily:'Segoe UI,sans-serif', padding:'8px 0' });
+          empty.textContent = 'No notes — add some below.';
+          listEl.appendChild(empty); return;
+        }
+        chordNotes.forEach((n, ni) => {
+          const row = document.createElement('div');
+          row.className = 'se-chord-row';
+
+          const lbl = document.createElement('span');
+          lbl.className = 'se-chord-note-label';
+          lbl.textContent = n.label;
+
+          const badge = document.createElement('span');
+          badge.className = 'se-wave-badge';
+          badge.textContent = (n.params?.type || n.sound || 'sine').slice(0, 3);
+
+          const editBtn = document.createElement('button');
+          editBtn.className = 'se-edit-btn';
+          editBtn.textContent = expandedIdx === ni ? 'Sound ▲' : 'Sound ▾';
+
+          const removeBtn = document.createElement('button');
+          removeBtn.className = 'se-remove-btn';
+          removeBtn.textContent = '×';
+
+          row.appendChild(lbl); row.appendChild(badge);
+          row.appendChild(editBtn); row.appendChild(removeBtn);
+          listEl.appendChild(row);
+
+          if (expandedIdx === ni) {
+            const panel = buildInlineSoundPanel(n.params, (updated) => {
+              chordNotes[ni].params = { ...updated };
+              chordNotes[ni].sound  = updated.type;
+              badge.textContent = updated.type.slice(0, 3);
+            });
+            listEl.appendChild(panel);
+          }
+
+          editBtn.addEventListener('click', () => {
+            expandedIdx = expandedIdx === ni ? null : ni;
+            renderList();
+          });
+          removeBtn.addEventListener('click', () => {
+            chordNotes.splice(ni, 1);
+            if (expandedIdx === ni) expandedIdx = null;
+            else if (expandedIdx > ni) expandedIdx--;
+            renderList();
+          });
+        });
+      }
+
+      renderList();
+
+      modal.querySelector('.sm-preview').addEventListener('click', () => {
+        chordNotes.forEach(n => playNote(n.freq, n.params));
+      });
+
+      modal.querySelector('.sm-remove-step').addEventListener('click', () => {
+        sequence.splice(stepIndex, 1);
+        renderSequence();
+        document.getElementById('save-btn').disabled = sequence.length === 0;
+        overlay.remove();
+      });
+
+      modal.querySelector('.sm-apply').addEventListener('click', () => {
+        if (chordNotes.length === 0) {
+          sequence.splice(stepIndex, 1);
+        } else if (chordNotes.length === 1) {
+          const n = chordNotes[0];
+          sequence[stepIndex] = { freq: n.freq, label: n.label, cellIndex: n.cellIndex,
+            sound: n.params.type, params: { ...n.params } };
+        } else {
+          sequence[stepIndex] = { chord: chordNotes.map(n => ({ ...n, params: { ...n.params } })),
+            label: chordNotes.map(n => n.label).join('·') };
+        }
+        renderSequence();
+        overlay.remove();
+      });
+    }
+
+    function bindCellLongPress(cell, noteIndex) {
+      let lpt = null;
+      cell.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.cell-sound-select')) return;
+        lpt = setTimeout(() => {
+          lpt = null;
+          navigator.vibrate?.(40);
+          showCtxMenu(e.clientX, e.clientY, cellActions(noteIndex));
+        }, 500);
+      });
+      const cancel = () => { clearTimeout(lpt); lpt = null; };
+      cell.addEventListener('pointerup',     cancel);
+      cell.addEventListener('pointercancel', cancel);
+      cell.addEventListener('pointermove',   cancel);
+      cell.addEventListener('contextmenu',   (e) => e.preventDefault());
+    }
+
+    document.getElementById('pl-clear-btn').addEventListener('click', () => {
+      stopPlaylist();
+      savedSequences = [];
+      activeSeqIndex = null;
+      persistSaved();
+      renderSavedSequences();
+    });
+
+    renderSavedSequences();
+
+    // ---- Build grid ----
+
+    const cellSounds = new Array(notes.length).fill('sine');
+    const cellParams = notes.map(() => ({ type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100 }));
+
+    const grid = document.getElementById('grid');
+    notes.forEach((note, i) => {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.innerHTML = `<span>${note.label}</span>`;
+
+      const sel = document.createElement('select');
+      sel.className = 'cell-sound-select';
+      SOUNDS.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        if (s === 'sine') opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', (e) => {
+        cellSounds[i] = e.target.value;
+        cellParams[i].type = e.target.value;
+        e.stopPropagation();
+      });
+      sel.addEventListener('click', (e) => e.stopPropagation());
+      cell.appendChild(sel);
+
+      cell.addEventListener('click', () => {
+        const params = { ...cellParams[i] };
+        playNote(note.freq, params);
+        cell.classList.add('flash');
+        setTimeout(() => cell.classList.remove('flash'), 80);
+        if (chordMode) {
+          pendingChord.push({ freq: note.freq, label: note.label, cellIndex: i, sound: params.type, params });
+          renderSequence();
+          document.getElementById('save-btn').disabled = false;
+        } else {
+          addToSequence({ freq: note.freq, label: note.label, cellIndex: i, sound: params.type, params });
+        }
+      });
+      bindCellLongPress(cell, i);
+      grid.appendChild(cell);
+      cells.push(cell);
+    });
+
+    // ---- Rest bar ----
+
+    const restBar = document.getElementById('rest-bar');
+    restBar.addEventListener('click', () => {
+      restBar.classList.add('flash');
+      setTimeout(() => restBar.classList.remove('flash'), 80);
+      addToSequence({ freq: null, label: '—', cellIndex: null });
+    });
+  </script>
+
+</body>
+</html>

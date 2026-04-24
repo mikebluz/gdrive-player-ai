@@ -1,0 +1,57 @@
+SSL CERTIFICATE INSTALLATION — mercywizard.com (GoDaddy Shared Hosting)
+
+STEP 1 — Install certbot (if not already installed)
+-----------------------------------------------------
+brew install certbot
+
+
+STEP 2 — Run certbot in manual mode
+-----------------------------------------------------
+sudo certbot certonly --manual --preferred-challenges http -d mercywizard.com -d www.mercywizard.com
+
+Certbot will pause and display something like:
+
+    Create a file at:
+    http://mercywizard.com/.well-known/acme-challenge/SOME_TOKEN
+    with contents: SOME_VERIFICATION_STRING
+
+DO NOT press Enter yet.
+
+
+STEP 3 — Create the verification file in cPanel File Manager
+-----------------------------------------------------
+1. Log into cPanel
+2. Open File Manager → navigate to public_html
+3. Create folder:   .well-known
+4. Inside that, create folder:   acme-challenge
+5. Inside that, create a new file named exactly: SOME_TOKEN  (use the token certbot gave you)
+6. Edit the file and paste in SOME_VERIFICATION_STRING as its entire contents
+7. Verify it's reachable: http://mercywizard.com/.well-known/acme-challenge/SOME_TOKEN
+
+
+STEP 4 — Complete cert issuance
+-----------------------------------------------------
+Go back to the terminal and press Enter.
+Certbot will issue the certificate. Output will show file paths like:
+
+    /etc/letsencrypt/live/mercywizard.com/fullchain.pem   ← Certificate + CA Bundle
+    /etc/letsencrypt/live/mercywizard.com/privkey.pem     ← Private Key
+
+
+STEP 5 — Install the cert in cPanel
+-----------------------------------------------------
+1. In cPanel → SSL/TLS → Install and Manage SSL for your site (HTTPS)
+2. Select domain: mercywizard.com
+3. Paste file contents into the fields:
+
+    Certificate:              contents of cert.pem
+    Private Key:              contents of privkey.pem
+    Certificate Authority Bundle: contents of chain.pem
+
+4. Click Install Certificate
+
+
+STEP 6 — Verify
+-----------------------------------------------------
+Visit https://mercywizard.com in your browser.
+Or run: curl -I https://mercywizard.com

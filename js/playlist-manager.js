@@ -88,22 +88,10 @@ class PlaylistManager {
                 candidates.push(track);
             }
         }
-        this._fetchUncachedInWindow(candidates);
+        // prefetchTrack hydrates _prefetchCache from blobCache when available
+        // and only hits the network as a last resort.
+        Promise.all(candidates.map(t => this.musicPlayer.prefetchTrack(t)));
         return windowIds;
-    }
-
-    async _fetchUncachedInWindow(candidates) {
-        const toFetch = [];
-        for (const track of candidates) {
-            if (this.musicPlayer._prefetchCache.has(track.id)) continue;
-            const inBlobCache = this.musicPlayer.blobCache
-                ? await this.musicPlayer.blobCache.has(track.id)
-                : false;
-            if (!inBlobCache) toFetch.push(track);
-        }
-        if (toFetch.length > 0) {
-            await Promise.all(toFetch.map(t => this.musicPlayer.prefetchTrack(t)));
-        }
     }
 
     playNext() {

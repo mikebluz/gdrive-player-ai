@@ -1,0 +1,88 @@
+Custom sample setup for sounds.html
+====================================
+
+The synth grid (sounds.html) can play your own audio files alongside the
+built-in oscillator types (sine, FM, pluck, etc.). Each sample becomes
+a button in the per-cell Sound Editor (long-press a note cell).
+
+Where the files go
+------------------
+Put audio files in the `samples/` folder at the project root, next to
+`sounds.html`:
+
+  samples/
+    manifest.json    <- the index that tells sounds.html which files exist
+    your-piano.mp3
+    your-bass.wav
+    ...
+
+After deploying (./deploy.sh), the same folder structure is uploaded to
+the server, so the browser can fetch from `samples/your-piano.mp3`.
+
+What format
+-----------
+Use formats that browsers play natively:
+
+  - MP3   recommended — small files, supported everywhere including iOS Safari
+  - WAV   uncompressed — biggest files but always works
+  - M4A / AAC   works on Safari and most desktops
+  - OGG / Opus  works in Chrome / Firefox, NOT in iOS Safari
+
+Keep clips short (under ~5 seconds is ideal) and mono if possible — every
+note plays the file pitch-shifted, so long stereo files use a lot of memory.
+
+Mono, 16-bit, 44.1 kHz MP3 around 192 kbps is a sensible default.
+
+The manifest.json file
+----------------------
+This is the index. Each entry tells the app which file to load and what
+pitch the recording was made at (so it can be transposed to other notes).
+
+Example:
+
+  {
+    "samples": [
+      { "id": "piano",       "name": "Piano",      "file": "piano.mp3",      "rootNote": "C4" },
+      { "id": "rhodes-a3",   "name": "Rhodes",     "file": "rhodes-a3.mp3",  "rootNote": "A3" },
+      { "id": "kick-808",    "name": "808 Kick",   "file": "kick.wav",       "rootNote": "C2" }
+    ]
+  }
+
+Field reference:
+
+  id         A short unique slug used internally. Letters, numbers, dashes.
+             Saved sequences reference samples by this id, so don't change it
+             after you've saved sequences using a sample.
+
+  name       Display name shown on the sound-editor button.
+
+  file       Filename inside the samples/ folder. Case-sensitive on the server.
+
+  rootNote   The pitch of the recording, e.g. "C4", "A3", "F#5". The app
+             pitch-shifts from this note when you play other keys. If you
+             don't know the pitch, "C4" is a safe default for one-shot
+             percussive sounds (drums, FX) where pitch doesn't matter much.
+
+How to verify
+-------------
+1. Drop a file (e.g. `piano.mp3`) in `samples/`.
+2. Edit `samples/manifest.json` and add an entry pointing at it.
+3. Reload sounds.html.
+4. Long-press any note cell → Sound Editor → you should see the sample
+   listed alongside Sine, Square, etc. Click it, then close the editor
+   and tap the cell — the sample plays at that pitch.
+
+If the button doesn't appear:
+- Open the browser devtools console. A failed manifest fetch or sampler
+  load will warn there.
+- Check that `samples/manifest.json` is valid JSON (no trailing commas).
+- Confirm the file is actually deployed to the server (open the file URL
+  directly in a browser tab — it should download or play).
+
+Notes
+-----
+- Saved sequences store the type as `sample:<id>`. If you remove a sample
+  from the manifest later, sequences referencing it will go silent on
+  that step but won't crash.
+- Each sample is loaded into memory at app startup. Lots of large files
+  will slow first load and use mobile RAM, so prune what you don't need.

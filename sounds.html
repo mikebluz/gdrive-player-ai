@@ -1260,6 +1260,55 @@
       threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12,
     }).connect(masterLimiter);
 
+    // ---- Custom sample loading (samples/manifest.json) ----
+    // Each entry creates a Tone.Sampler that pitch-shifts the file across
+    // the keyboard. type strings of the form 'sample:<id>' route through these.
+    const sampleSamplers = new Map();
+
+    function isSampleType(type) {
+      return typeof type === 'string' && type.startsWith('sample:');
+    }
+    function getSampleEntry(type) {
+      if (!isSampleType(type)) return null;
+      return sampleSamplers.get(type.slice(7)) || null;
+    }
+    function getAllSoundOptions() {
+      const opts = SOUNDS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));
+      for (const [id, info] of sampleSamplers) {
+        opts.push({ value: 'sample:' + id, label: info.name });
+      }
+      return opts;
+    }
+
+    async function loadSampleManifest() {
+      try {
+        const res = await fetch('samples/manifest.json', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data?.samples) ? data.samples : [];
+        list.forEach(s => {
+          if (!s || !s.id || !s.file) return;
+          const rootNote = s.rootNote || 'C4';
+          try {
+            const sampler = new Tone.Sampler({
+              urls: { [rootNote]: s.file },
+              release: 1,
+              baseUrl: 'samples/',
+            }).connect(masterBus);
+            sampleSamplers.set(s.id, {
+              sampler,
+              name: s.name || s.id,
+              rootNote,
+            });
+          } catch (e) {
+            console.warn('Failed to load sample', s.id, e);
+          }
+        });
+      } catch (e) {
+        // No manifest, malformed JSON, or offline — just skip samples silently.
+      }
+    }
+
     // Scale a chord note's params so N simultaneous voices sum to a roughly
     // single-voice loudness — otherwise the bus hits the compressor / limiter
     // far above threshold and audibly distorts on the attack.
@@ -1294,6 +1343,23 @@
         ? Math.max(0.02, targetDur - rel)
         : atk + dec;
       const disposeMs = (preReleaseDur + rel + 0.4) * 1000;
+
+      // Loaded sample (Tone.Sampler) — pitch-shifts the file to play any note.
+      if (isSampleType(type)) {
+        const entry = getSampleEntry(type);
+        if (entry?.sampler && entry.sampler.loaded) {
+          const tunedFreq = (typeof freq === 'number')
+            ? freq * Math.pow(2, detune / 1200)
+            : freq;
+          const dur = Math.max(targetDur, 0.05);
+          try {
+            entry.sampler.triggerAttackRelease(tunedFreq, dur, startTime, velocity);
+          } catch (e) {
+            console.warn('Sample playback failed', type, e);
+          }
+        }
+        return;
+      }
 
       let synth;
 
@@ -2873,14 +2939,14 @@
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      // Wave type buttons
+      // Wave type buttons (built-in synths + any loaded samples)
       const waveRow = modal.querySelector('#sm-waves');
-      SOUNDS.forEach(s => {
+      getAllSoundOptions().forEach(opt => {
         const btn = document.createElement('button');
-        btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
-        btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        btn.className = 'sm-wave' + (opt.value === p.type ? ' active' : '');
+        btn.textContent = opt.label;
         btn.addEventListener('click', () => {
-          p.type = s;
+          p.type = opt.value;
           waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -3182,12 +3248,12 @@
       const waveRow = document.createElement('div');
       waveRow.className = 'sm-waves';
       waveRow.style.marginBottom = '8px';
-      SOUNDS.forEach(s => {
+      getAllSoundOptions().forEach(opt => {
         const btn = document.createElement('button');
-        btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
-        btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        btn.className = 'sm-wave' + (opt.value === p.type ? ' active' : '');
+        btn.textContent = opt.label;
         btn.addEventListener('click', () => {
-          p.type = s;
+          p.type = opt.value;
           waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           onChange(p);
@@ -3670,23 +3736,6 @@
         cell.className = 'cell';
         cell.innerHTML = `<span>${note.label}</span>`;
 
-        const sel = document.createElement('select');
-        sel.className = 'cell-sound-select';
-        SOUNDS.forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s;
-          opt.textContent = s.charAt(0).toUpperCase() + s.slice(1);
-          if (s === 'sine') opt.selected = true;
-          sel.appendChild(opt);
-        });
-        sel.addEventListener('change', (e) => {
-          cellSounds[i] = e.target.value;
-          cellParams[i].type = e.target.value;
-          e.stopPropagation();
-        });
-        sel.addEventListener('click', (e) => e.stopPropagation());
-        cell.appendChild(sel);
-
         cell.addEventListener('click', () => {
           const params = { ...cellParams[i] };
           playNote(notes[i].freq, params);
@@ -3709,6 +3758,7 @@
     }
 
     rebuildGrid();
+    loadSampleManifest();
 
     document.getElementById('color-shuffle-btn').addEventListener('click', shuffleColors);
 

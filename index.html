@@ -188,6 +188,41 @@
       box-shadow: 0 0 24px rgba(191, 0, 255, 0.65);
     }
 
+    /* Top hero CTAs — outlined in palette colours that complement the warm
+       bottom buttons (green / red / amber) with cool counterparts. */
+    .btn-recordings {
+      background: transparent;
+      color: #4fd1c5;
+      border: 1px solid #4fd1c5;
+    }
+    .btn-recordings:hover {
+      transform: translateY(-2px);
+      background: rgba(79, 209, 197, 0.1);
+      box-shadow: 0 8px 28px rgba(79, 209, 197, 0.22);
+    }
+
+    .btn-serialbox {
+      background: transparent;
+      color: #4299e1;
+      border: 1px solid #4299e1;
+    }
+    .btn-serialbox:hover {
+      transform: translateY(-2px);
+      background: rgba(66, 153, 225, 0.1);
+      box-shadow: 0 8px 28px rgba(66, 153, 225, 0.22);
+    }
+
+    .btn-bloops {
+      background: transparent;
+      color: #9f7aea;
+      border: 1px solid #9f7aea;
+    }
+    .btn-bloops:hover {
+      transform: translateY(-2px);
+      background: rgba(159, 122, 234, 0.1);
+      box-shadow: 0 8px 28px rgba(159, 122, 234, 0.22);
+    }
+
     .btn-secondary {
       background: transparent;
       color: #4299e1;
@@ -221,6 +256,17 @@
       transform: translateY(-2px);
       background: rgba(246, 173, 85, 0.1);
       box-shadow: 0 8px 28px rgba(246, 173, 85, 0.2);
+    }
+
+    .btn-merch {
+      background: transparent;
+      color: #f56565;
+      border: 1px solid #f56565;
+    }
+    .btn-merch:hover {
+      transform: translateY(-2px);
+      background: rgba(245, 101, 101, 0.1);
+      box-shadow: 0 8px 28px rgba(245, 101, 101, 0.2);
     }
 
     .btn-ghost {
@@ -478,10 +524,10 @@
     <div class="hero-inner">
       <img src="me2026.jpg" alt="Mike Luz" class="hero-portrait" />
       <div class="hero-cta hero-cta-top">
-        <a href="https://linktr.ee/mercywizard" class="btn btn-primary" target="_blank" rel="noopener">Recordings</a>
+        <a href="https://linktr.ee/mercywizard" class="btn btn-recordings" target="_blank" rel="noopener">Recordings</a>
         <div class="hero-cta-row">
-          <a href="serialbox.html" class="btn btn-primary">Serialbox</a>
-          <a href="bloops.html" class="btn btn-primary">Bloops</a>
+          <a href="serialbox.html" class="btn btn-serialbox">Serialbox</a>
+          <a href="bloops.html" class="btn btn-bloops">Bloops</a>
         </div>
       </div>
       <div class="hero-banner">
@@ -521,8 +567,11 @@
         </a>
       </div>
       <div class="hero-cta">
+        <div class="hero-cta-row">
+          <a href="#" class="btn btn-merch" target="_blank" rel="noopener" title="TODO: replace # with the Merch URL">Merch</a>
+          <a href="https://linktr.ee/mikebuys" class="btn btn-guitars" target="_blank" rel="noopener">Guitars</a>
+        </div>
         <button type="button" class="btn btn-mailinglist" id="mailing-list-btn">Join Mailing List</button>
-        <a href="https://linktr.ee/mikebuys" class="btn btn-guitars" target="_blank" rel="noopener">Guitars</a>
       </div>
     </div>
   </div>

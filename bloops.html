@@ -931,15 +931,23 @@
       color: #e2e8f0;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.76rem; font-weight: 600;
-      padding: 0 4px;
-      min-width: 54px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid transparent;
       cursor: pointer;
       user-select: none;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .track-name:hover { border-color: #38a169; color: #68d391; }
+    .track-name.soloed {
+      background: rgba(56, 161, 105, 0.18);
+      border-color: #38a169;
+      color: #68d391;
     }
     .track-grid {
       display: grid;
       grid-auto-flow: column;
-      grid-auto-columns: 30px;
+      grid-auto-columns: minmax(30px, 1fr);
       grid-template-rows: 44px;
       gap: 2px;
       overflow-x: auto;
@@ -2655,9 +2663,17 @@
 
     function persistTracks() {
       const serial = tracks.map(t => ({
-        id: t.id, name: t.name, items: t.items, loopMode: !!t.loopMode,
+        id: t.id, name: t.name, items: t.items, loopMode: !!t.loopMode, solo: !!t.solo,
       }));
       localStorage.setItem('sounds-tracks', JSON.stringify(serial));
+    }
+
+    function anySoloed() {
+      return tracks.some(t => t.solo);
+    }
+    function shouldTrackPlay(track) {
+      const soloMode = anySoloed();
+      return soloMode ? !!track.solo : true;
     }
 
     function cloneStep(s) {
@@ -2696,9 +2712,10 @@
     function addTrack() {
       tracks.push({
         id: trackIdCounter++,
-        name: `Track ${tracks.length + 1}`,
+        name: `${tracks.length + 1}`,
         items: [],
         loopMode: false,
+        solo: false,
         playing: false,
         currentItemIdx: null,
         timer: null,
@@ -2723,6 +2740,20 @@
 
     function toggleTrackLoop(trackIdx) {
       tracks[trackIdx].loopMode = !tracks[trackIdx].loopMode;
+      persistTracks();
+      renderTracks();
+    }
+
+    function toggleTrackSolo(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      track.solo = !track.solo;
+      // After flipping the flag, stop any currently-playing track that's now
+      // blocked by the new solo state (e.g., user solos one track while a
+      // different non-soloed track is mid-playback).
+      tracks.forEach((t, i) => {
+        if (t.playing && !shouldTrackPlay(t)) stopTrack(i);
+      });
       persistTracks();
       renderTracks();
     }
@@ -2886,7 +2917,10 @@
     async function playAllTracks() {
       await Tone.start();
       tracks.forEach((t, i) => {
-        if (!t.playing && t.items.length > 0) startTrack(i);
+        if (t.playing) return;
+        if (t.items.length === 0) return;
+        if (!shouldTrackPlay(t)) return;
+        startTrack(i);
       });
     }
 
@@ -2914,15 +2948,12 @@
         const controls = document.createElement('div');
         controls.className = 'track-controls';
         controls.innerHTML = `
-          <button class="track-play${track.playing ? ' playing' : ''}" title="Play / stop this track">${track.playing ? '■' : '▶'}</button>
-          <button class="track-loop${track.loopMode ? ' active' : ''}" title="Loop this track">Loop</button>
-          <span class="track-name" title="Double-click to rename">${track.name}</span>
-          <button class="track-clear" title="Remove all items">Clear</button>
+          <span class="track-name${track.solo ? ' soloed' : ''}" title="Click to solo, double-click to rename">${track.name}</span>
           <button class="track-remove" title="Remove track">×</button>
         `;
-        controls.querySelector('.track-play').addEventListener('click', () => togglePlayTrack(trackIdx));
-        controls.querySelector('.track-loop').addEventListener('click', () => toggleTrackLoop(trackIdx));
-        controls.querySelector('.track-clear').addEventListener('click', () => clearTrack(trackIdx));
+        // Single click toggles solo; double click toggles twice (cancelling
+        // out) and the dblclick handler below opens the rename dialog.
+        controls.querySelector('.track-name').addEventListener('click', () => toggleTrackSolo(trackIdx));
         controls.querySelector('.track-remove').addEventListener('click', () => {
           if (track.items.length === 0 || confirm(`Remove ${track.name}?`)) removeTrack(trackIdx);
         });
@@ -3000,6 +3031,16 @@
 
         container.appendChild(row);
       });
+
+      // Pad every track name to the width of the longest one so the
+      // sequence grids start at the same horizontal offset on every row.
+      const nameEls = container.querySelectorAll('.track-name');
+      if (nameEls.length > 1) {
+        nameEls.forEach(el => { el.style.minWidth = ''; });
+        let maxW = 0;
+        nameEls.forEach(el => { maxW = Math.max(maxW, el.getBoundingClientRect().width); });
+        nameEls.forEach(el => { el.style.minWidth = maxW + 'px'; });
+      }
     }
 
     document.getElementById('add-track-btn').addEventListener('click', addTrack);

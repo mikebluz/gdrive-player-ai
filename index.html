@@ -140,9 +140,12 @@
       display: inline-block;
       padding: 13px 32px;
       border-radius: 30px;
+      font-family: inherit;
       font-size: 1rem;
       font-weight: 600;
+      line-height: 1.2;
       text-decoration: none;
+      cursor: pointer;
       transition: all 0.25s ease;
     }
 
@@ -167,6 +170,18 @@
       transform: translateY(-2px);
       background: rgba(66, 153, 225, 0.1);
       box-shadow: 0 8px 28px rgba(66, 153, 225, 0.175);
+    }
+
+    .btn-mailinglist {
+      background: transparent;
+      color: #68d391;
+      border: 1px solid #68d391;
+    }
+
+    .btn-mailinglist:hover {
+      transform: translateY(-2px);
+      background: rgba(104, 211, 145, 0.1);
+      box-shadow: 0 8px 28px rgba(104, 211, 145, 0.2);
     }
 
     .btn-ghost {
@@ -397,7 +412,7 @@
     <a href="#" class="nav-logo">Mike Luz</a>
     <ul class="nav-links">
       <li><a href="#about">About</a></li>
-      <li><a href="#sounds">Sounds</a></li>
+      <li><a href="#music">Music</a></li>
       <li><a href="#words">Words</a></li>
       <li><a href="#ideas">Ideas</a></li>
     </ul>
@@ -412,7 +427,7 @@
         <a href="#about" class="btn btn-primary">Learn More</a>
         <a href="player.html" class="btn btn-secondary">Serialbox</a>
         <a href="sounds.html" class="btn btn-secondary">Sounds</a>
-        <button type="button" class="btn btn-secondary" id="mailing-list-btn">Join Mailing List</button>
+        <button type="button" class="btn btn-mailinglist" id="mailing-list-btn">Join Mailing List</button>
       </div>
     </div>
   </div>
@@ -431,10 +446,10 @@
 
   <hr class="divider" />
 
-  <section id="sounds">
+  <section id="music">
     <div class="section-inner">
-      <div class="section-label">Sounds</div>
-      <h2 class="section-title">Sounds</h2>
+      <div class="section-label">Music</div>
+      <h2 class="section-title">Music</h2>
       <div class="section-body">
         <p>Listen, play, and make.</p>
       </div>

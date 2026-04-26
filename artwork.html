@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Artwork</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #000;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 8px 20px 60px;
+    }
+
+    .back-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #a0aec0;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 0;
+      transition: color 0.2s;
+    }
+    .back-home:hover { color: #5a67d8; }
+
+    .page-title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #5a67d8;
+      text-align: center;
+      margin: 24px 0 32px;
+      letter-spacing: -0.5px;
+    }
+
+    .artwork-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 20px;
+    }
+
+    .artwork-card {
+      background: #000;
+      border: 1px solid #5a67d8;
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: zoom-in;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .artwork-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(90, 103, 216, 0.25);
+    }
+    .artwork-card img {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+    }
+    .artwork-card-title {
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #a0aec0;
+      border-top: 1px solid #1a1a2e;
+    }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 60px 20px;
+      color: #4a4a6a;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+    .empty-state code {
+      background: #1a1a2e;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      color: #a0aec0;
+    }
+
+    /* Lightbox */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 100;
+      cursor: zoom-out;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="index.html" class="back-home">Mike Luz</a>
+    <h1 class="page-title">Artwork</h1>
+
+    <div class="artwork-grid" id="artwork-grid"></div>
+  </div>
+
+  <div class="lightbox" id="lightbox">
+    <img id="lightbox-img" alt="" />
+  </div>
+
+  <script>
+    (async function loadArtwork() {
+      const grid = document.getElementById('artwork-grid');
+      let images = [];
+      try {
+        const res = await fetch('artwork/manifest.json', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data?.images)) images = data.images;
+        }
+      } catch (e) {
+        // No manifest or invalid — fall through to empty state
+      }
+
+      if (images.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            No artwork yet. Drop image files into the
+            <code>artwork/</code> folder and add them to
+            <code>artwork/manifest.json</code>.
+          </div>
+        `;
+        return;
+      }
+
+      images.forEach(entry => {
+        // Allow both plain string filenames and {file, title, alt} objects.
+        const file  = (typeof entry === 'string') ? entry : entry?.file;
+        const title = (typeof entry === 'object') ? entry?.title : null;
+        const alt   = (typeof entry === 'object') ? (entry?.alt || title || file) : file;
+        if (!file) return;
+
+        const card = document.createElement('div');
+        card.className = 'artwork-card';
+
+        const img = document.createElement('img');
+        img.src = 'artwork/' + file;
+        img.alt = alt || '';
+        img.loading = 'lazy';
+        card.appendChild(img);
+
+        if (title) {
+          const cap = document.createElement('div');
+          cap.className = 'artwork-card-title';
+          cap.textContent = title;
+          card.appendChild(cap);
+        }
+
+        card.addEventListener('click', () => openLightbox(img.src, alt));
+        grid.appendChild(card);
+      });
+    })();
+
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightbox-img');
+    function openLightbox(src, alt) {
+      lightboxImg.src = src;
+      lightboxImg.alt = alt || '';
+      lightbox.classList.add('open');
+    }
+    function closeLightbox() {
+      lightbox.classList.remove('open');
+      lightboxImg.src = '';
+    }
+    lightbox.addEventListener('click', closeLightbox);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && lightbox.classList.contains('open')) closeLightbox();
+    });
+  </script>
+</body>
+</html>

@@ -362,6 +362,21 @@
       transition: all 0.1s ease;
     }
     .seq-step.rest { color: #4a4a6a; }
+
+    .seq-cursor {
+      width: 4px;
+      height: 38px;
+      background: #68d391;
+      border-radius: 2px;
+      cursor: pointer;
+      flex-shrink: 0;
+      box-shadow: 0 0 8px rgba(104, 211, 145, 0.7);
+      animation: seqCursorPulse 1.1s ease-in-out infinite;
+    }
+    @keyframes seqCursorPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
     .seq-step.subseq {
       border-color: #68d391;
       color: #68d391;
@@ -420,6 +435,81 @@
       gap: 10px;
     }
 
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-group + .btn-group {
+      padding-left: 12px;
+      margin-left: 2px;
+      border-left: 1px solid #2d2d3f;
+    }
+    @media (max-width: 700px) {
+      .btn-group + .btn-group {
+        padding-left: 0;
+        margin-left: 0;
+        border-left: none;
+      }
+    }
+
+    /* Step controls cluster — its own row above the play button, framed
+       with a thin teal border so it reads as a coherent group apart from
+       the transport / sequence controls. */
+    .btn-group--step {
+      flex-basis: 100%;
+      padding: 6px 12px;
+      border: 1px solid rgba(79, 209, 197, 0.45);
+      border-radius: 12px;
+      background: rgba(79, 209, 197, 0.05);
+    }
+    .btn-group--step + .btn-group {
+      border-left: none;
+      padding-left: 0;
+      margin-left: 0;
+    }
+    .btn-group-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #4fd1c5;
+      padding-right: 4px;
+    }
+    .btn-group--step #chord-btn {
+      border-color: #4fd1c5;
+      color: #81e6d9;
+    }
+    .btn-group--step #chord-btn:hover {
+      border-color: #81e6d9;
+      color: #b2f5ea;
+    }
+    .btn-group--step #chord-btn.active {
+      border-color: #9f7aea;
+      background: linear-gradient(135deg, #553c9a, #9f7aea);
+      color: #fff;
+      box-shadow: 0 0 14px rgba(159, 122, 234, 0.55);
+    }
+    .btn-group--step.chord-active {
+      border-color: #9f7aea;
+      background: rgba(159, 122, 234, 0.10);
+    }
+    .btn-group--step.chord-active .btn-group-label {
+      color: #d6bcfa;
+    }
+    .btn-group--step .note-length-label { color: #81e6d9; }
+    .btn-group--step #note-length,
+    .btn-group--step #subdivision-select {
+      border-color: #4fd1c5;
+      color: #b2f5ea;
+    }
+    .btn-group--step #note-length:focus,
+    .btn-group--step #subdivision-select:focus {
+      border-color: #81e6d9;
+    }
+
     #clear-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
@@ -467,7 +557,8 @@
 
     #chord-btn,
     #rec-btn,
-    #random-btn {
+    #random-btn,
+    #reverse-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -487,6 +578,8 @@
     }
     #rec-btn:hover { border-color: #e53e3e; color: #e53e3e; }
     #random-btn:hover { border-color: #ed8936; color: #fbd38d; }
+    #reverse-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #reverse-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #rec-btn.recording {
       border-color: #e53e3e;
       color: #fff;
@@ -1022,37 +1115,46 @@
   </div>
 
   <div class="footer-bar">
+    <div class="btn-group btn-group--step" title="Step controls — set how the next note is added">
+      <span class="btn-group-label">Step</span>
+      <button id="chord-btn">Chord</button>
+      <label class="note-length-label" title="How many steps each new note should be held for">Hold
+        <select id="note-length">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label class="note-length-label" title="Step subdivision — 1 step = this note value at the current BPM">Div
+        <select id="subdivision-select">
+          <option value="4">1/1</option>
+          <option value="2">1/2</option>
+          <option value="1" selected>1/4</option>
+          <option value="0.5">1/8</option>
+          <option value="0.25">1/16</option>
+          <option value="0.125">1/32</option>
+        </select>
+      </label>
+    </div>
+
     <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
+    <button id="loop-btn" title="Loop the current sequence">Loop</button>
     <div class="tempo-control">
       <input type="range" id="tempo-slider" min="60" max="320" value="120" step="10" />
       <input type="number" id="tempo-input" min="60" max="320" value="120" title="BPM" />
     </div>
-    <label class="note-length-label" title="Step subdivision — 1 step = this note value at the current BPM">Step
-      <select id="subdivision-select">
-        <option value="4">1/1</option>
-        <option value="2">1/2</option>
-        <option value="1" selected>1/4</option>
-        <option value="0.5">1/8</option>
-        <option value="0.25">1/16</option>
-        <option value="0.125">1/32</option>
-      </select>
-    </label>
-    <button id="clear-btn">Clear</button>
-    <button id="save-btn" disabled>Save</button>
-    <button id="update-btn" title="Save changes to the loaded sequence" disabled style="display:none;">Update</button>
-    <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
-    <button id="random-btn" title="Generate a random sequence">Random</button>
-    <button id="chord-btn">Chord</button>
-    <button id="loop-btn" title="Loop the current sequence">Loop</button>
-    <label class="note-length-label" title="How many steps each new note should be held for">Length
-      <select id="note-length">
-        <option value="1">1</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="8">8</option>
-      </select>
-    </label>
+
+    <div class="btn-group btn-group--seq" title="Sequence controls">
+      <button id="clear-btn">Clear</button>
+      <button id="save-btn" disabled>Save</button>
+      <button id="update-btn" title="Save changes to the loaded sequence" disabled style="display:none;">Update</button>
+      <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
+      <button id="random-btn" title="Generate a random sequence">Random</button>
+      <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
+    </div>
+
     <span class="seq-count" id="seq-count">0 steps</span>
   </div>
 
@@ -1194,6 +1296,7 @@
           }
 
           sequence = [...saved.steps];
+          insertionPoint = null;
           if (saved.bpm) {
             tempoInput.value = saved.bpm;
             tempoSlider.value = saved.bpm;
@@ -1471,11 +1574,14 @@
         display.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
         count.textContent = '0 steps';
         if (typeof syncUpdateButton === 'function') syncUpdateButton();
+        const revBtn = document.getElementById('reverse-btn');
+        if (revBtn) revBtn.disabled = true;
         return;
       }
 
       display.innerHTML = '';
       sequence.forEach((step, i) => {
+        if (insertionPoint === i) display.appendChild(makeInsertCursor());
         const chip = document.createElement('div');
         const durSuffix = (step.duration && step.duration > 1) ? `×${step.duration}` : '';
         if (step.isSub) {
@@ -1498,6 +1604,9 @@
         bindStepDragTouch(chip, i);
         display.appendChild(chip);
       });
+      if (insertionPoint != null && insertionPoint >= sequence.length) {
+        display.appendChild(makeInsertCursor());
+      }
 
       // Show in-progress chord as a dashed pending chip
       if (chordMode && pendingChord.length > 0) {
@@ -1516,12 +1625,35 @@
       }
 
       if (typeof syncUpdateButton === 'function') syncUpdateButton();
+      const revBtn = document.getElementById('reverse-btn');
+      if (revBtn) revBtn.disabled = sequence.length < 2;
     }
 
+    // null = append; otherwise the next note is spliced at this index.
+    // The cursor advances by 1 after each insert so consecutive clicks
+    // build a run of notes at the insertion point.
+    let insertionPoint = null;
+
     function addToSequence(step) {
-      sequence.push(step);
+      if (insertionPoint !== null && insertionPoint >= 0 && insertionPoint <= sequence.length) {
+        sequence.splice(insertionPoint, 0, step);
+        insertionPoint++;
+      } else {
+        sequence.push(step);
+      }
       renderSequence();
       document.getElementById('save-btn').disabled = false;
+    }
+
+    function makeInsertCursor() {
+      const cursor = document.createElement('div');
+      cursor.className = 'seq-cursor';
+      cursor.title = 'Insertion point — click to cancel';
+      cursor.addEventListener('click', () => {
+        insertionPoint = null;
+        renderSequence();
+      });
+      return cursor;
     }
 
     // ---- Playback ----
@@ -1605,9 +1737,19 @@
       sequence = [];
       pendingChord = [];
       activeSeqIndex = null;
+      insertionPoint = null;
       renderSequence();
       renderSavedSequences();
       document.getElementById('save-btn').disabled = true;
+    });
+
+    document.getElementById('reverse-btn').addEventListener('click', () => {
+      if (sequence.length < 2) return;
+      stopSequence();
+      sequence.reverse();
+      pendingChord = [];
+      insertionPoint = null;
+      renderSequence();
     });
 
     document.getElementById('note-length').addEventListener('change', (e) => {
@@ -1627,6 +1769,7 @@
       if (_previewAudio) { try { _previewAudio.pause(); } catch (e) {} _previewAudio = null; }
       sequence = [];
       pendingChord = [];
+      insertionPoint = null;
       chordMode = false;
       loopMode = false;
       noteLength = 1;
@@ -1650,6 +1793,7 @@
       document.getElementById('tempo-slider').value     = '120';
       document.getElementById('tempo-input').value      = '120';
       document.getElementById('chord-btn').classList.remove('active');
+      document.querySelector('.btn-group--step')?.classList.remove('chord-active');
       document.getElementById('loop-btn').classList.remove('active');
       document.getElementById('note-length').value = '1';
       document.getElementById('subdivision-select').value = '1';
@@ -1681,11 +1825,119 @@
       return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
     }
 
-    function generateRandomSequence(numSteps, maxChordSize, maxStepLength) {
-      const poolSize = notes.length;
-      if (poolSize === 0) return [];
+    // Text → sequence translation. Mapping rules:
+    //   letters       → scale-tone note. Letter index (a=0, …, z=25) wraps
+    //                   over the available scale cells of the chosen scale.
+    //   tone          → deterministic by letter (tonePool[letterIdx % len])
+    //                   so every 'a' uses the same sound.
+    //   vowels        → +1 to duration (held longer)
+    //   uppercase     → +1 to duration (combines with vowel rule)
+    //   consonant run → groups of 2+ consecutive consonants flush as one
+    //                   chord (capped at MAX_CHORD voices, deduped by pitch).
+    //                   Vowels and non-letters break the run.
+    //   non-letters   → rest if includeRests, otherwise skipped (also flush
+    //                   any pending chord run first).
+    function generateTextSequence(text, scaleName, tones, includeRests) {
+      const intervals = (scaleName && SCALES[scaleName]) || SCALES['chromatic'];
+      const scaleCells = [];
+      for (let i = 0; i < notes.length; i++) {
+        if (intervals.includes(i % 12)) scaleCells.push(i);
+      }
+      if (scaleCells.length === 0) return [];
+      const tonePool = (Array.isArray(tones) && tones.length > 0) ? tones : SOUNDS;
+      const VOWELS = new Set(['a','e','i','o','u']);
+      const MAX_CHORD = 5;
+      const subdivision = 1;
       const out = [];
-      const chordAllowed = maxChordSize > 1 && poolSize > 1;
+
+      const letterCellIdx = (ch) => {
+        const i = ch.toLowerCase().charCodeAt(0) - 97;
+        return scaleCells[i % scaleCells.length];
+      };
+      const letterTone = (ch) => {
+        const i = ch.toLowerCase().charCodeAt(0) - 97;
+        return tonePool[i % tonePool.length];
+      };
+      const makeVoice = (letter) => {
+        const cellIdx = letterCellIdx(letter);
+        const sound = letterTone(letter);
+        return {
+          freq: notes[cellIdx].freq,
+          label: notes[cellIdx].label,
+          cellIndex: cellIdx,
+          sound,
+          params: randomStepParams(sound),
+        };
+      };
+
+      let run = [];
+      let runHasUpper = false;
+      const flushRun = () => {
+        if (run.length === 0) return;
+        const dur = 1 + (runHasUpper ? 1 : 0);
+        if (run.length === 1) {
+          const v = makeVoice(run[0]);
+          out.push({ ...v, duration: dur, subdivision });
+        } else {
+          const voices = [];
+          const seenCells = new Set();
+          for (const letter of run.slice(0, MAX_CHORD)) {
+            const v = makeVoice(letter);
+            if (seenCells.has(v.cellIndex)) continue;
+            seenCells.add(v.cellIndex);
+            voices.push(v);
+          }
+          if (voices.length === 1) {
+            out.push({ ...voices[0], duration: dur, subdivision });
+          } else {
+            out.push({
+              chord: voices,
+              label: voices.map(n => n.label).join('·'),
+              duration: dur, subdivision,
+            });
+          }
+        }
+        run = [];
+        runHasUpper = false;
+      };
+
+      for (const ch of String(text)) {
+        if (/[a-zA-Z]/.test(ch)) {
+          const lower = ch.toLowerCase();
+          const isUpper = ch !== lower;
+          if (VOWELS.has(lower)) {
+            flushRun();
+            const dur = 2 + (isUpper ? 1 : 0);
+            const v = makeVoice(ch);
+            out.push({ ...v, duration: dur, subdivision });
+          } else {
+            run.push(ch);
+            if (isUpper) runHasUpper = true;
+          }
+        } else {
+          flushRun();
+          if (includeRests) {
+            out.push({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision });
+          }
+        }
+      }
+      flushRun();
+      return out;
+    }
+
+    function generateRandomSequence(numSteps, maxChordSize, maxStepLength, includeRests = true, includeChords = true, scaleName = null, tones = null) {
+      // Filter the chromatic note grid down to scale tones — `pool` holds
+      // the cell indices we're allowed to sample from.
+      const intervals = (scaleName && SCALES[scaleName]) || SCALES['chromatic'];
+      const pool = [];
+      for (let i = 0; i < notes.length; i++) {
+        if (intervals.includes(i % 12)) pool.push(i);
+      }
+      const poolSize = pool.length;
+      if (poolSize === 0) return [];
+      const tonePool = (Array.isArray(tones) && tones.length > 0) ? tones : SOUNDS;
+      const out = [];
+      const chordAllowed = includeChords && maxChordSize > 1 && poolSize > 1;
       const maxLen = Math.max(1, maxStepLength || 1);
       const durPool = _RAND_DURS.filter(d => d <= maxLen);
       if (durPool.length === 0) durPool.push(1);
@@ -1693,15 +1945,16 @@
         const roll = Math.random();
         const subdivision = randomFrom(_RAND_SUBS);
         const duration    = randomFrom(durPool);
-        if (roll < 0.18) {
+        if (includeRests && roll < 0.18) {
           out.push({ freq: null, label: '—', cellIndex: null, duration, subdivision });
           continue;
         }
         if (chordAllowed && roll < 0.45) {
           const size = 2 + Math.floor(Math.random() * (maxChordSize - 1));
           const picked = sampleWithoutReplacement(poolSize, size);
-          const chord = picked.map(idx => {
-            const sound = randomFrom(SOUNDS);
+          const chord = picked.map(p => {
+            const idx = pool[p];
+            const sound = randomFrom(tonePool);
             return {
               freq: notes[idx].freq,
               label: notes[idx].label,
@@ -1717,8 +1970,8 @@
           });
           continue;
         }
-        const idx = Math.floor(Math.random() * poolSize);
-        const sound = randomFrom(SOUNDS);
+        const idx = pool[Math.floor(Math.random() * poolSize)];
+        const sound = randomFrom(tonePool);
         out.push({
           freq: notes[idx].freq,
           label: notes[idx].label,
@@ -1739,6 +1992,11 @@
       modal.innerHTML = `
         <div class="sm-title">Random sequence</div>
         <div class="sm-param">
+          <div class="sm-param-row">Text to sequence <span class="sm-val" style="font-size:0.7rem;font-weight:400;color:#4a4a6a;">optional</span></div>
+          <input type="text" id="rand-text" placeholder="Type here to seed from text…" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;" />
+          <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.7rem;padding-top:4px;line-height:1.5;">Letters → scale tones (each letter uses a fixed tone from your selection). Vowels and uppercase are held longer. Runs of 2+ consonants become chords. Spaces & punctuation are rests when "Include rests" is on. Number of steps is ignored.</div>
+        </div>
+        <div class="sm-param">
           <div class="sm-param-row">Number of steps <span class="sm-val" id="rand-steps-v">16</span></div>
           <input type="range" id="rand-steps" min="1" max="64" value="16" />
         </div>
@@ -1747,9 +2005,23 @@
           <input type="range" id="rand-chord" min="1" max="8" value="3" />
         </div>
         <div class="sm-param">
-          <div class="sm-param-row">Max step length <span class="sm-val" id="rand-len-v">4</span></div>
-          <input type="range" id="rand-len" min="1" max="8" value="4" />
+          <div class="sm-param-row">Scale</div>
+          <select id="rand-scale" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#a0aec0;border-radius:6px;font-family:inherit;font-size:0.85rem;"></select>
         </div>
+        <div class="sm-section-label">Tones to use</div>
+        <div class="sm-waves" id="rand-tones"></div>
+        <div style="display:flex;gap:8px;padding:4px 0 4px;">
+          <button type="button" id="rand-tones-all" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">All</button>
+          <button type="button" id="rand-tones-none" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">None</button>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 0 4px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="rand-rests" />
+          Include rests
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:0 0 4px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="rand-chords" />
+          Include chords
+        </label>
         <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.72rem;padding:4px 0 10px;">
           Replaces the current in-progress sequence. Save first to keep the existing one.
         </div>
@@ -1766,20 +2038,91 @@
       const stepsOut = modal.querySelector('#rand-steps-v');
       const chordIn = modal.querySelector('#rand-chord');
       const chordOut = modal.querySelector('#rand-chord-v');
-      const lenIn = modal.querySelector('#rand-len');
-      const lenOut = modal.querySelector('#rand-len-v');
+      const chordsCheck = modal.querySelector('#rand-chords');
       stepsIn.addEventListener('input', () => stepsOut.textContent = stepsIn.value);
       chordIn.addEventListener('input', () => chordOut.textContent = chordIn.value);
-      lenIn.addEventListener('input', () => lenOut.textContent = lenIn.value);
+
+      // Max-chord-size slider only matters when chords are enabled.
+      const syncChordSlider = () => {
+        const on = chordsCheck.checked;
+        chordIn.disabled = !on;
+        chordIn.style.opacity = on ? '' : '0.4';
+        chordOut.style.opacity = on ? '' : '0.4';
+      };
+      chordsCheck.addEventListener('change', syncChordSlider);
+      syncChordSlider();
+
+      // Populate the scale dropdown to mirror the main grid's scale list,
+      // defaulting to whatever scale is currently active.
+      const randScaleSel = modal.querySelector('#rand-scale');
+      const randScaleKeys = Object.keys(SCALES).filter(n => n !== 'chromatic').sort();
+      ['chromatic', ...randScaleKeys].forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = prettyScaleName(name);
+        randScaleSel.appendChild(opt);
+      });
+      randScaleSel.value = currentScale;
+
+      // Tone selector — every built-in synth + any loaded sample is a toggle.
+      // Default: built-in synths selected, samples (if any) opt-in.
+      const tonesRow = modal.querySelector('#rand-tones');
+      const toneOptions = getAllSoundOptions();
+      const selectedTones = new Set(SOUNDS);
+      const toneButtons = new Map();
+      toneOptions.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sm-wave' + (selectedTones.has(opt.value) ? ' active' : '');
+        btn.textContent = opt.label;
+        btn.addEventListener('click', () => {
+          if (selectedTones.has(opt.value)) {
+            selectedTones.delete(opt.value);
+            btn.classList.remove('active');
+          } else {
+            selectedTones.add(opt.value);
+            btn.classList.add('active');
+          }
+        });
+        tonesRow.appendChild(btn);
+        toneButtons.set(opt.value, btn);
+      });
+      modal.querySelector('#rand-tones-all').addEventListener('click', () => {
+        toneOptions.forEach(opt => {
+          selectedTones.add(opt.value);
+          toneButtons.get(opt.value)?.classList.add('active');
+        });
+      });
+      modal.querySelector('#rand-tones-none').addEventListener('click', () => {
+        selectedTones.clear();
+        toneButtons.forEach(btn => btn.classList.remove('active'));
+      });
 
       modal.querySelector('.sm-preview').addEventListener('click', () => overlay.remove());
       modal.querySelector('.sm-apply').addEventListener('click', () => {
         const n = Math.max(1, Math.min(64, parseInt(stepsIn.value) || 16));
         const c = Math.max(1, Math.min(8,  parseInt(chordIn.value) || 3));
-        const l = Math.max(1, Math.min(8,  parseInt(lenIn.value)   || 4));
+        const includeRests  = !!modal.querySelector('#rand-rests').checked;
+        const includeChords = !!modal.querySelector('#rand-chords').checked;
+        const scaleName     = modal.querySelector('#rand-scale').value;
+        const tones         = Array.from(selectedTones);
+        const text          = modal.querySelector('#rand-text').value.trim();
         stopSequence();
-        sequence = generateRandomSequence(n, c, l);
+        sequence = text
+          ? generateTextSequence(text, scaleName, tones, includeRests)
+          : generateRandomSequence(n, c, 4, includeRests, includeChords, scaleName, tones);
         pendingChord = [];
+        insertionPoint = null;
+
+        // Sync the grid's active scale to whatever the user generated against,
+        // so the visible cells match what the sequence is using.
+        if (scaleName && SCALES[scaleName]) {
+          currentScale = scaleName;
+          const mainScaleSel = document.getElementById('scale-select');
+          if (mainScaleSel) mainScaleSel.value = currentScale;
+          applyScale();
+        }
+
         renderSequence();
         document.getElementById('save-btn').disabled = sequence.length === 0;
         overlay.remove();
@@ -1868,10 +2211,12 @@
         parentStepIndex,
         parentSequence: sequence.map(s => ({ ...s })),
         parentActiveSeqIndex: activeSeqIndex,
+        parentInsertionPoint: insertionPoint,
       };
       sequence = initialSubSteps;
       pendingChord = [];
       activeSeqIndex = null;
+      insertionPoint = null;
       document.getElementById('subedit-banner').classList.add('open');
       document.getElementById('save-btn').textContent = 'Save subseq';
       document.getElementById('save-btn').disabled = sequence.length === 0;
@@ -1883,6 +2228,7 @@
       sequence = parentSequence;
       pendingChord = [];
       activeSeqIndex = subEditState.parentActiveSeqIndex;
+      insertionPoint = subEditState.parentInsertionPoint ?? null;
       subEditState = null;
       document.getElementById('subedit-banner').classList.remove('open');
       document.getElementById('save-btn').textContent = 'Save';
@@ -1932,6 +2278,7 @@
       sequence = [];
       pendingChord = [];
       activeSeqIndex = null;
+      insertionPoint = null;
       document.getElementById('save-btn').disabled = true;
 
       renderSequence();
@@ -2057,6 +2404,7 @@
     document.getElementById('chord-btn').addEventListener('click', () => {
       chordMode = !chordMode;
       document.getElementById('chord-btn').classList.toggle('active', chordMode);
+      document.querySelector('.btn-group--step')?.classList.toggle('chord-active', chordMode);
       if (!chordMode && pendingChord.length > 0) {
         // Commit the accumulated chord as one step
         const label = pendingChord.map(n => n.label).join('·');
@@ -3225,8 +3573,16 @@
             }
             if (actions.length > 0) actions.push('hr');
           }
+          actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
+          actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
+          actions.push('hr');
           actions.push({ label: 'Remove step', danger: true, fn: () => {
             sequence.splice(stepIndex, 1);
+            if (insertionPoint !== null) {
+              if (stepIndex < insertionPoint) insertionPoint--;
+              if (insertionPoint > sequence.length) insertionPoint = sequence.length;
+              if (sequence.length === 0) insertionPoint = null;
+            }
             renderSequence();
             document.getElementById('save-btn').disabled = sequence.length === 0;
           }});

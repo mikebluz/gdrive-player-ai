@@ -341,7 +341,7 @@
     }
 
     .seq-step {
-      min-width: 38px;
+      width: 80px;
       height: 38px;
       border-radius: 8px;
       background: #1a1a2e;
@@ -356,15 +356,58 @@
       user-select: none;
       cursor: grab;
       flex-shrink: 0;
+      overflow: hidden;
+      white-space: pre-line;
+      text-align: center;
       transition: all 0.1s ease;
     }
     .seq-step.rest { color: #4a4a6a; }
+    .seq-step.subseq {
+      border-color: #68d391;
+      color: #68d391;
+      background: rgba(104, 211, 145, 0.08);
+    }
     .seq-step.active {
       background: linear-gradient(135deg, #2b6cb0, #4299e1);
       border-color: #4299e1;
       color: #fff;
       transform: scale(1.1);
     }
+    .seq-step.subseq.active {
+      background: linear-gradient(135deg, #38a169, #68d391);
+      border-color: #68d391;
+      color: #fff;
+    }
+
+    #subedit-banner {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      margin: 6px 8px 0;
+      padding: 6px 12px;
+      background: rgba(104, 211, 145, 0.12);
+      border: 1px solid #68d391;
+      border-radius: 8px;
+      color: #68d391;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    #subedit-banner.open { display: flex; }
+    #subedit-cancel {
+      margin-left: auto;
+      padding: 4px 12px;
+      border: 1px solid #68d391;
+      background: transparent;
+      color: #68d391;
+      border-radius: 14px;
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #subedit-cancel:hover { background: rgba(104, 211, 145, 0.15); }
 
     /* FOOTER */
     .footer-bar {
@@ -405,6 +448,22 @@
     }
     #save-btn:hover { border-color: #4299e1; color: #4299e1; }
     #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    #update-btn {
+      padding: 6px 18px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #update-btn:hover { border-color: #68d391; color: #68d391; }
+    #update-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #update-btn.flash-confirm { border-color: #68d391; color: #68d391; }
 
     #chord-btn,
     #rec-btn,
@@ -953,6 +1012,11 @@
 
   <div class="rest-bar" id="rest-bar"><span>REST</span></div>
 
+  <div id="subedit-banner">
+    <span>Editing subsequence — click <strong>Save</strong> to commit.</span>
+    <button id="subedit-cancel" type="button">Cancel</button>
+  </div>
+
   <div class="sequence-display" id="sequence-display">
     <span class="seq-empty">Click notes or REST to build a sequence…</span>
   </div>
@@ -975,6 +1039,7 @@
     </label>
     <button id="clear-btn">Clear</button>
     <button id="save-btn" disabled>Save</button>
+    <button id="update-btn" title="Save changes to the loaded sequence" disabled style="display:none;">Update</button>
     <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
     <button id="random-btn" title="Generate a random sequence">Random</button>
     <button id="chord-btn">Chord</button>
@@ -1137,6 +1202,7 @@
           renderSequence();
           renderSavedSequences();
           document.getElementById('save-btn').disabled = false;
+          syncUpdateButton();
         });
         bindDrag(block, i);
         bindLongPress(block, i);
@@ -1313,6 +1379,23 @@
 
     // ---- Sequence display ----
 
+    // Visual width of a step chip. The reference unit is "length 1, step 1/1"
+    // (subdivision value 4) → 80 px. Anything shorter shrinks proportionally;
+    // anything longer grows. A subsequence's width is the sum of its subSteps.
+    const STEP_BASE_PX = 80;
+    function stepLengthFactor(step) {
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        if (step.subSteps.length === 0) return 1;
+        return step.subSteps.reduce((sum, s) => sum + stepLengthFactor(s), 0);
+      }
+      const dur = step.duration || 1;
+      const sub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+      return dur * sub / 4;
+    }
+    function stepWidthPx(step) {
+      return STEP_BASE_PX * stepLengthFactor(step);
+    }
+
     function renderSequence(activeIndex = -1) {
       const display = document.getElementById('sequence-display');
       const count   = document.getElementById('seq-count');
@@ -1321,6 +1404,7 @@
       if (isEmpty) {
         display.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
         count.textContent = '0 steps';
+        if (typeof syncUpdateButton === 'function') syncUpdateButton();
         return;
       }
 
@@ -1328,7 +1412,11 @@
       sequence.forEach((step, i) => {
         const chip = document.createElement('div');
         const durSuffix = (step.duration && step.duration > 1) ? `×${step.duration}` : '';
-        if (step.chord) {
+        if (step.isSub) {
+          const count = (step.subSteps || []).length;
+          chip.className = 'seq-step subseq' + (i === activeIndex ? ' active' : '');
+          chip.textContent = count > 0 ? `▤\n×${count}` : '▤';
+        } else if (step.chord) {
           chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '');
           chip.textContent = step.chord.map(n => n.label).join('·') + (durSuffix ? ' ' + durSuffix : '');
         } else {
@@ -1338,6 +1426,7 @@
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
         }
+        chip.style.width = stepWidthPx(step) + 'px';
         bindStepLongPress(chip, i);
         bindStepDrag(chip, i);
         bindStepDragTouch(chip, i);
@@ -1359,6 +1448,8 @@
         const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
         chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
+
+      if (typeof syncUpdateButton === 'function') syncUpdateButton();
     }
 
     function addToSequence(step) {
@@ -1382,44 +1473,55 @@
       document.getElementById('play-btn').textContent = '▶';
     }
 
-    function playSequence(index = 0) {
-      if (index === 0) {
-        document.getElementById('play-btn').textContent = '■';
+    function advanceAfterStep(index) {
+      const next = index + 1;
+      if (next < sequence.length) {
+        playSequence(next);
+      } else if (loopMode && sequence.length > 0) {
+        playSequence(0);
+      } else {
+        stopSequence();
       }
+    }
 
-      if (sequence.length === 0) { stopSequence(); return; }
-
-      const step = sequence[index];
+    function playStepCB(step, onDone) {
+      // Subsequence: recurse through subSteps, then onDone.
+      if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {
+        playSubStepsCB(step.subSteps, 0, onDone);
+        return;
+      }
       const stepDur = step.duration || 1;
       const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       const bpm = parseInt(tempoInput.value) || 120;
       const waitMs = Math.round(60000 / bpm * stepSub) * stepDur;
       clearHighlights();
-      renderSequence(index);
-
       if (step.chord) {
         const size = step.chord.length;
         step.chord.forEach(n => {
           playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), waitMs);
           if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
         });
-      } else if (step.freq !== null) {
+      } else if (step.freq != null) {
         playNote(step.freq, step.params || step.sound || 'sine', waitMs);
         if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
       } else {
         document.getElementById('rest-bar').classList.add('active-loop');
       }
+      sequenceTimer = setTimeout(onDone, waitMs);
+    }
 
-      sequenceTimer = setTimeout(() => {
-        const next = index + 1;
-        if (next < sequence.length) {
-          playSequence(next);
-        } else if (loopMode && sequence.length > 0) {
-          playSequence(0);
-        } else {
-          stopSequence();
-        }
-      }, waitMs);
+    function playSubStepsCB(subSteps, idx, onDone) {
+      if (idx >= subSteps.length) { onDone(); return; }
+      playStepCB(subSteps[idx], () => playSubStepsCB(subSteps, idx + 1, onDone));
+    }
+
+    function playSequence(index = 0) {
+      if (index === 0) {
+        document.getElementById('play-btn').textContent = '■';
+      }
+      if (sequence.length === 0) { stopSequence(); return; }
+      renderSequence(index);
+      playStepCB(sequence[index], () => advanceAfterStep(index));
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {
@@ -1643,11 +1745,8 @@
       });
     }
 
-    document.getElementById('save-btn').addEventListener('click', () => {
-      if (sequence.length === 0) return;
-      const name = seqName(savedSequences.length);
-      savedSequences.push({
-        name,
+    function currentSequenceSnapshot(extra = {}) {
+      return {
         steps: [...sequence],
         bpm: parseInt(tempoInput.value) || 120,
         rootIdx,
@@ -1661,11 +1760,138 @@
         loopMode,
         subdivision: stepSubdivision,
         restColor,
-      });
-      activeSeqIndex = savedSequences.length - 1;
+        ...extra,
+      };
+    }
+
+    function syncUpdateButton() {
+      const updateBtn = document.getElementById('update-btn');
+      if (!updateBtn) return;
+      const editable = !subEditState
+        && activeSeqIndex !== null
+        && savedSequences[activeSeqIndex]
+        && savedSequences[activeSeqIndex].type !== 'audio';
+      if (editable) {
+        updateBtn.style.display = '';
+        updateBtn.disabled = sequence.length === 0;
+      } else {
+        updateBtn.style.display = 'none';
+        updateBtn.disabled = true;
+      }
+    }
+
+    // ---- Subsequence editor mode ----
+
+    let subEditState = null; // { parentStepIndex, parentSequence, parentActiveSeqIndex }
+
+    function enterSubEditMode(parentStepIndex) {
+      if (subEditState) return; // No nesting
+      stopSequence();
+      const parentStep = sequence[parentStepIndex];
+      let initialSubSteps;
+      if (parentStep && parentStep.isSub && Array.isArray(parentStep.subSteps)) {
+        initialSubSteps = parentStep.subSteps.map(s => ({ ...s }));
+      } else if (parentStep) {
+        // Carry the existing step into the subsequence so the user starts
+        // from what was there instead of an empty workspace.
+        initialSubSteps = [{ ...parentStep }];
+      } else {
+        initialSubSteps = [];
+      }
+      subEditState = {
+        parentStepIndex,
+        parentSequence: sequence.map(s => ({ ...s })),
+        parentActiveSeqIndex: activeSeqIndex,
+      };
+      sequence = initialSubSteps;
+      pendingChord = [];
+      activeSeqIndex = null;
+      document.getElementById('subedit-banner').classList.add('open');
+      document.getElementById('save-btn').textContent = 'Save subseq';
+      document.getElementById('save-btn').disabled = sequence.length === 0;
+      renderSequence();
+      syncUpdateButton();
+    }
+
+    function exitSubEditMode(parentSequence) {
+      sequence = parentSequence;
+      pendingChord = [];
+      activeSeqIndex = subEditState.parentActiveSeqIndex;
+      subEditState = null;
+      document.getElementById('subedit-banner').classList.remove('open');
+      document.getElementById('save-btn').textContent = 'Save';
+      document.getElementById('save-btn').disabled = sequence.length === 0;
+      renderSequence();
+      renderSavedSequences();
+      syncUpdateButton();
+    }
+
+    function commitSubEditAndExit() {
+      if (!subEditState) return;
+      const subSteps = sequence.map(s => ({ ...s }));
+      const parent = subEditState.parentSequence;
+      if (subSteps.length > 0) {
+        parent[subEditState.parentStepIndex] = {
+          isSub: true,
+          subSteps,
+          label: '▤',
+          duration: 1,
+        };
+      } else {
+        parent.splice(subEditState.parentStepIndex, 1);
+      }
+      exitSubEditMode(parent);
+    }
+
+    function cancelSubEdit() {
+      if (!subEditState) return;
+      stopSequence();
+      exitSubEditMode(subEditState.parentSequence);
+    }
+
+    document.getElementById('subedit-cancel').addEventListener('click', cancelSubEdit);
+
+    document.getElementById('save-btn').addEventListener('click', () => {
+      if (subEditState) {
+        commitSubEditAndExit();
+        return;
+      }
+      if (sequence.length === 0) return;
+      const name = seqName(savedSequences.length);
+      savedSequences.push({ name, ...currentSequenceSnapshot() });
+      persistSaved();
+
+      // Clear the sequence workspace — the saved entry is in the bank now.
+      stopSequence();
+      sequence = [];
+      pendingChord = [];
+      activeSeqIndex = null;
+      document.getElementById('save-btn').disabled = true;
+
+      renderSequence();
+      renderSavedSequences();
+      syncUpdateButton();
+      showPostSaveDialog();
+    });
+
+    document.getElementById('update-btn').addEventListener('click', () => {
+      if (activeSeqIndex === null || sequence.length === 0) return;
+      const existing = savedSequences[activeSeqIndex];
+      if (!existing || existing.type === 'audio') return;
+      savedSequences[activeSeqIndex] = {
+        ...existing,
+        ...currentSequenceSnapshot({ name: existing.name }),
+      };
       persistSaved();
       renderSavedSequences();
-      showPostSaveDialog();
+      const btn = document.getElementById('update-btn');
+      const original = btn.textContent;
+      btn.textContent = 'Updated ✓';
+      btn.classList.add('flash-confirm');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('flash-confirm');
+      }, 1100);
     });
 
     // ---- Audio recording (mic → saved as an 'audio' sequence) ----
@@ -2405,7 +2631,7 @@
         });
       }
       actions.push('hr');
-      actions.push({ label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } persistSaved(); renderSavedSequences(); } });
+      actions.push({ label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) { activeSeqIndex--; } persistSaved(); renderSavedSequences(); syncUpdateButton(); } });
       return actions;
     }
 
@@ -2470,34 +2696,48 @@
         _dragIdx = null;
       });
 
-      // Touch drag
+      // Touch drag — threshold-based so a quick tap still fires the
+      // native click (loading the saved sequence into the workspace).
       block.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        _dragIdx = i;
-        const touch = e.touches[0];
+        if (e.touches.length !== 1) return;
+        const startTouch = e.touches[0];
+        const startX = startTouch.clientX;
+        const startY = startTouch.clientY;
         const rect = block.getBoundingClientRect();
-        _touchOffsetX = touch.clientX - rect.left;
-        _touchOffsetY = touch.clientY - rect.top;
+        let dragStarted = false;
+        const DRAG_THRESHOLD = 10;
 
-        const clone = block.cloneNode(true);
-        Object.assign(clone.style, {
-          position: 'fixed', left: rect.left + 'px', top: rect.top + 'px',
-          width: rect.width + 'px', height: rect.height + 'px',
-          opacity: '0.85', pointerEvents: 'none', zIndex: '9999',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.4)', borderRadius: '8px',
-        });
-        document.body.appendChild(clone);
-        _touchClone = clone;
-        block.classList.add('dragging');
+        const startDrag = () => {
+          dragStarted = true;
+          _dragIdx = i;
+          _touchOffsetX = startX - rect.left;
+          _touchOffsetY = startY - rect.top;
+          const clone = block.cloneNode(true);
+          Object.assign(clone.style, {
+            position: 'fixed', left: rect.left + 'px', top: rect.top + 'px',
+            width: rect.width + 'px', height: rect.height + 'px',
+            opacity: '0.85', pointerEvents: 'none', zIndex: '9999',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)', borderRadius: '8px',
+          });
+          document.body.appendChild(clone);
+          _touchClone = clone;
+          block.classList.add('dragging');
+        };
 
         const clearAllDragOver = () => {
           clearDragOver();
           document.querySelectorAll('.track-grid.drag-over').forEach(g => g.classList.remove('drag-over'));
         };
 
-        const onMove = (e) => {
-          e.preventDefault();
-          const t = e.touches[0];
+        const onMove = (ev) => {
+          const t = ev.touches[0];
+          if (!dragStarted) {
+            const dx = t.clientX - startX;
+            const dy = t.clientY - startY;
+            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+            startDrag();
+          }
+          ev.preventDefault();
           _touchClone.style.left = (t.clientX - _touchOffsetX) + 'px';
           _touchClone.style.top  = (t.clientY - _touchOffsetY) + 'px';
           _touchClone.style.visibility = 'hidden';
@@ -2523,6 +2763,13 @@
         };
 
         const onEnd = () => {
+          document.removeEventListener('touchmove', onMove);
+          document.removeEventListener('touchend', onEnd);
+          if (!dragStarted) {
+            // No drag occurred — let the native click event fire on the block,
+            // which runs the load-saved-sequence handler.
+            return;
+          }
           _touchClone?.remove(); _touchClone = null;
           block.classList.remove('dragging');
           clearAllDragOver();
@@ -2534,13 +2781,11 @@
             }
           }
           _dragIdx = null; _touchDropTarget = null;
-          document.removeEventListener('touchmove', onMove);
-          document.removeEventListener('touchend', onEnd);
         };
 
         document.addEventListener('touchmove', onMove, { passive: false });
         document.addEventListener('touchend', onEnd);
-      }, { passive: false });
+      }, { passive: true });
     }
 
     function bindLongPress(block, seqIndex) {
@@ -2901,9 +3146,18 @@
           navigator.vibrate?.(40);
           const step = sequence[stepIndex];
           const actions = [];
-          if (step && (step.chord || step.freq !== null)) {
-            actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
+          if (step && step.isSub) {
+            actions.push({ label: 'Edit subsequence…', fn: () => enterSubEditMode(stepIndex) });
             actions.push('hr');
+          } else {
+            if (step && (step.chord || step.freq !== null)) {
+              actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
+            }
+            // No nested subsequences — disallow while already editing one.
+            if (!subEditState) {
+              actions.push({ label: 'Create subsequence…', fn: () => enterSubEditMode(stepIndex) });
+            }
+            if (actions.length > 0) actions.push('hr');
           }
           actions.push({ label: 'Remove step', danger: true, fn: () => {
             sequence.splice(stepIndex, 1);

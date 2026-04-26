@@ -835,16 +835,41 @@
        a phone held lengthwise shows the whole tracks grid edge-to-edge. */
     body.tracks-fullscreen > *:not(.tracks-section) { display: none !important; }
     body.tracks-fullscreen {
-      overflow: auto;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh; /* track the visible viewport on iOS so the URL bar
+                         collapsing in landscape doesn't clip content */
     }
     body.tracks-fullscreen .tracks-section {
       position: fixed;
-      inset: 0;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
       max-height: none;
-      width: 100%;
       z-index: 1000;
       overflow-y: auto;
-      padding: 14px 20px;
+      -webkit-overflow-scrolling: touch;
+      padding:
+        max(14px, env(safe-area-inset-top))
+        max(20px, env(safe-area-inset-right))
+        max(14px, env(safe-area-inset-bottom))
+        max(20px, env(safe-area-inset-left));
+    }
+    /* Pin the header to the top of the scrollable area so Back / Play / Add
+       Track stay reachable in landscape where vertical room is tight. */
+    body.tracks-fullscreen .tracks-header {
+      position: sticky;
+      top: 0;
+      background: #050510;
+      padding: 4px 0 8px;
+      margin-bottom: 8px;
+      z-index: 5;
+      border-bottom: 1px solid #1a1a2e;
     }
     body.tracks-fullscreen #tracks-back-btn { display: inline-block; }
     body.tracks-fullscreen #tracks-title-btn { display: none; }

@@ -1,17 +1,17 @@
-Custom sample setup for sounds.html
+Custom sample setup for bloops.html
 ====================================
 
-The synth grid (sounds.html) can play your own audio files alongside the
+The synth grid (bloops.html) can play your own audio files alongside the
 built-in oscillator types (sine, FM, pluck, etc.). Each sample becomes
 a button in the per-cell Sound Editor (long-press a note cell).
 
 Where the files go
 ------------------
 Put audio files in the `samples/` folder at the project root, next to
-`sounds.html`:
+`bloops.html`:
 
   samples/
-    manifest.json    <- the index that tells sounds.html which files exist
+    manifest.json    <- the index that tells bloops.html which files exist
     your-piano.mp3
     your-bass.wav
     ...
@@ -67,7 +67,7 @@ How to verify
 -------------
 1. Drop a file (e.g. `piano.mp3`) in `samples/`.
 2. Edit `samples/manifest.json` and add an entry pointing at it.
-3. Reload sounds.html.
+3. Reload bloops.html.
 4. Long-press any note cell → Sound Editor → you should see the sample
    listed alongside Sine, Square, etc. Click it, then close the editor
    and tap the cell — the sample plays at that pitch.

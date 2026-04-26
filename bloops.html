@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sounds</title>
+  <title>Bloops</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -32,38 +32,19 @@
       }
     }
 
-    /* SITE BANNER */
-    .site-banner {
-      flex: none;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 4px 8px 0;
-      background: #000;
-    }
-    .site-banner img {
-      display: block;
-      width: 50%;
-      max-height: 35px;
-      height: auto;
-      object-fit: contain;
-      filter: invert(1);
-    }
-    @media (max-width: 700px) {
-      .site-banner img { max-height: 24px; }
-    }
-
     /* MENU BAR */
     .menubar {
       background: #000;
       border-bottom: 3px solid #000;
       display: flex;
       align-items: center;
-      flex-wrap: wrap;
-      padding: 10px 20px;
+      flex-wrap: nowrap;
+      padding: 10px 20px 10px 10px;
       gap: 12px;
       position: relative;
+      overflow-x: auto;
     }
+    .menubar > * { flex-shrink: 0; }
 
     #grid-settings-btn {
       padding: 6px 14px;
@@ -106,7 +87,21 @@
       transition: color 0.2s;
       margin-right: 4px;
     }
-    .menubar a:hover { color: #fff; }
+    .menubar a:hover { color: #4299e1; }
+
+    .menubar-toggle {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+    }
+    .menubar-toggle input { cursor: pointer; }
 
     .menu-btn {
       width: 38px;
@@ -204,7 +199,7 @@
     .cell.out-of-scale span,
     .cell.out-of-scale .cell-sound-select { visibility: hidden; }
 
-    #color-shuffle-btn {
+    #colors-menu-btn {
       padding: 6px 14px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -216,7 +211,72 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #color-shuffle-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #colors-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #colors-menu-btn.open { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+
+    .colors-panel {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 10px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      padding: 10px;
+      z-index: 900;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      min-width: 160px;
+    }
+    .colors-panel.open { display: flex; }
+    .colors-opt {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }
+    .colors-opt:hover { border-color: #4299e1; color: #4299e1; }
+
+    .grid-state-row {
+      display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+      border-top: 1px solid #2d2d3f; padding-top: 10px;
+    }
+    .grid-state-row label { color: #a0aec0; font-size: 0.78rem; }
+    #grid-state-select {
+      width: 100%;
+      padding: 4px 8px;
+      background: #0a0a14;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+    }
+    .grid-state-actions { display: flex; gap: 6px; }
+    .grid-state-actions button {
+      flex: 1;
+      padding: 5px 10px;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .grid-state-actions button:hover { border-color: #4299e1; color: #4299e1; }
+    .grid-state-actions #grid-state-delete-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    .grid-state-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
 
     /* NOTE GRID */
     .grid {
@@ -539,7 +599,9 @@
     #save-btn:hover { border-color: #4299e1; color: #4299e1; }
     #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    #update-btn {
+    #save-btn.flash-confirm { border-color: #68d391; color: #68d391; }
+
+    #append-track-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -551,14 +613,15 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #update-btn:hover { border-color: #68d391; color: #68d391; }
-    #update-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    #update-btn.flash-confirm { border-color: #68d391; color: #68d391; }
+    #append-track-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #append-track-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #append-track-btn.flash-confirm { border-color: #68d391; color: #68d391; }
 
     #chord-btn,
     #rec-btn,
     #random-btn,
-    #reverse-btn {
+    #reverse-btn,
+    #shuffle-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -576,14 +639,26 @@
       background: rgba(159,122,234,0.15);
       color: #d6bcfa;
     }
-    #rec-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    /* Rec: red outline + red text by default. When recording, the colors invert
+       — fill becomes red, border and text adopt the original (transparent) fill —
+       producing a solid red blob that pulses. */
+    #rec-btn {
+      border-color: #e53e3e;
+      color: #e53e3e;
+    }
+    #rec-btn:hover {
+      border-color: #fc8181;
+      color: #fc8181;
+    }
     #random-btn:hover { border-color: #ed8936; color: #fbd38d; }
     #reverse-btn:hover { border-color: #4299e1; color: #4299e1; }
     #reverse-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #shuffle-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #shuffle-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #rec-btn.recording {
+      background: #e53e3e;
       border-color: #e53e3e;
       color: #fff;
-      background: rgba(229,62,62,0.4);
       animation: rec-pulse 1s ease-in-out infinite;
     }
     @keyframes rec-pulse {
@@ -726,12 +801,53 @@
     .tracks-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
     }
-    .tracks-title {
+    #tracks-title-btn {
+      flex: 1;
+      text-align: left;
+      background: transparent;
+      border: none;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem; font-weight: 700;
-      flex: 1;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 4px 0;
+      transition: color 0.15s ease;
     }
+    #tracks-title-btn:hover { color: #4299e1; }
+    #tracks-back-btn {
+      display: none;
+      padding: 5px 12px;
+      border: 1px solid #2d2d3f;
+      border-radius: 16px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #tracks-back-btn:hover { border-color: #4299e1; color: #4299e1; }
+
+    /* Fullscreen tracks view — triggered by tapping the Tracks title.
+       Hides every sibling and pins the tracks section to the viewport so
+       a phone held lengthwise shows the whole tracks grid edge-to-edge. */
+    body.tracks-fullscreen > *:not(.tracks-section) { display: none !important; }
+    body.tracks-fullscreen {
+      overflow: auto;
+    }
+    body.tracks-fullscreen .tracks-section {
+      position: fixed;
+      inset: 0;
+      max-height: none;
+      width: 100%;
+      z-index: 1000;
+      overflow-y: auto;
+      padding: 14px 20px;
+    }
+    body.tracks-fullscreen #tracks-back-btn { display: inline-block; }
+    body.tracks-fullscreen #tracks-title-btn { display: none; }
     #tracks-play-all {
       background: linear-gradient(135deg, #276749, #38a169);
       color: white;
@@ -1069,13 +1185,14 @@
 </head>
 <body>
 
-  <div class="site-banner">
-    <img src="banner.jpg" alt="Mercy Wizard" />
-  </div>
-
   <div class="menubar">
     <a href="index.html">Mike Luz</a>
-    <button id="color-shuffle-btn" title="Randomize note block colors">Color shuffle</button>
+    <button id="colors-menu-btn" title="Note block colors">Colors ▾</button>
+    <div class="colors-panel" id="colors-panel">
+      <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
+      <button type="button" class="colors-opt" data-mode="chess">Chess</button>
+      <button type="button" class="colors-opt" data-mode="checkers">Checkers</button>
+    </div>
     <button id="grid-settings-btn" title="Grid settings">Grid ▾</button>
     <div class="grid-settings-panel" id="grid-settings-panel">
       <div class="grid-control">
@@ -1098,7 +1215,21 @@
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
         </label>
       </div>
+      <div class="grid-state-row" title="Save and recall the whole grid state — root, scale, octaves, palette, and per-cell sounds.">
+        <label for="grid-state-select">Saved states</label>
+        <select id="grid-state-select">
+          <option value="">— Load a saved state —</option>
+        </select>
+        <div class="grid-state-actions">
+          <button type="button" id="grid-state-save-btn">Save current</button>
+          <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
+        </div>
+      </div>
     </div>
+    <label class="menubar-toggle" title="When on, saving a sequence also resets root, octave, scale, palette, and cell sounds back to defaults.">
+      <input type="checkbox" id="clear-after-save" />
+      Clear after save
+    </label>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -1149,10 +1280,11 @@
     <div class="btn-group btn-group--seq" title="Sequence controls">
       <button id="clear-btn">Clear</button>
       <button id="save-btn" disabled>Save</button>
-      <button id="update-btn" title="Save changes to the loaded sequence" disabled style="display:none;">Update</button>
+      <button id="append-track-btn" title="Append the current sequence to a track" disabled>→ Track ▾</button>
       <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
       <button id="random-btn" title="Generate a random sequence">Random</button>
       <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
+      <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
     </div>
 
     <span class="seq-count" id="seq-count">0 steps</span>
@@ -1166,9 +1298,10 @@
 
   <div class="tracks-section">
     <div class="tracks-header">
+      <button id="tracks-back-btn" type="button" title="Return to the full UI">← Back</button>
       <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
       <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
-      <span class="tracks-title">Tracks</span>
+      <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
       <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
       <button id="add-track-btn">+ Add Track</button>
     </div>
@@ -1305,7 +1438,6 @@
           renderSequence();
           renderSavedSequences();
           document.getElementById('save-btn').disabled = false;
-          syncUpdateButton();
         });
         bindDrag(block, i);
         bindLongPress(block, i);
@@ -1573,9 +1705,12 @@
       if (isEmpty) {
         display.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
         count.textContent = '0 steps';
-        if (typeof syncUpdateButton === 'function') syncUpdateButton();
         const revBtn = document.getElementById('reverse-btn');
         if (revBtn) revBtn.disabled = true;
+        const shuffBtn = document.getElementById('shuffle-btn');
+        if (shuffBtn) shuffBtn.disabled = true;
+        const appBtn = document.getElementById('append-track-btn');
+        if (appBtn) appBtn.disabled = true;
         return;
       }
 
@@ -1624,9 +1759,12 @@
         chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 
-      if (typeof syncUpdateButton === 'function') syncUpdateButton();
       const revBtn = document.getElementById('reverse-btn');
       if (revBtn) revBtn.disabled = sequence.length < 2;
+      const shuffBtn = document.getElementById('shuffle-btn');
+      if (shuffBtn) shuffBtn.disabled = sequence.length < 2;
+      const appBtn = document.getElementById('append-track-btn');
+      if (appBtn) appBtn.disabled = sequence.length === 0;
     }
 
     // null = append; otherwise the next note is spliced at this index.
@@ -1752,12 +1890,84 @@
       renderSequence();
     });
 
+    document.getElementById('shuffle-btn').addEventListener('click', () => {
+      if (sequence.length < 2) return;
+      stopSequence();
+      // Fisher-Yates
+      for (let i = sequence.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sequence[i], sequence[j]] = [sequence[j], sequence[i]];
+      }
+      pendingChord = [];
+      insertionPoint = null;
+      renderSequence();
+    });
+
+    function appendWorkspaceToTrack(trackIdx) {
+      if (sequence.length === 0 || !tracks[trackIdx]) return;
+      const name = (activeSeqIndex !== null && savedSequences[activeSeqIndex])
+        ? savedSequences[activeSeqIndex].name
+        : seqName(savedSequences.length);
+      const snapshot = {
+        name,
+        bpm: parseInt(tempoInput.value) || 120,
+        subdivision: stepSubdivision,
+        steps: sequence.map(cloneStep),
+      };
+      tracks[trackIdx].items.push(snapshot);
+      persistTracks();
+      renderTracks();
+      const btn = document.getElementById('append-track-btn');
+      const original = btn.textContent;
+      btn.textContent = 'Appended ✓';
+      btn.classList.add('flash-confirm');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('flash-confirm');
+      }, 1100);
+    }
+
+    document.getElementById('append-track-btn').addEventListener('click', (e) => {
+      if (sequence.length === 0) return;
+      const actions = [
+        { label: '+ New track', fn: () => {
+          addTrack();
+          appendWorkspaceToTrack(tracks.length - 1);
+        } },
+      ];
+      if (tracks.length > 0) {
+        actions.push('hr');
+        tracks.forEach((track, tIdx) => {
+          actions.push({ label: `→ ${track.name}`, fn: () => appendWorkspaceToTrack(tIdx) });
+        });
+      }
+      const rect = e.currentTarget.getBoundingClientRect();
+      showCtxMenu(rect.left, rect.bottom + 4, actions);
+    });
+
     document.getElementById('note-length').addEventListener('change', (e) => {
       noteLength = parseInt(e.target.value) || 1;
     });
 
+    function applyDivToAll(steps, value) {
+      steps.forEach(s => {
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          applyDivToAll(s.subSteps, value);
+        } else {
+          s.subdivision = value;
+        }
+      });
+    }
+
     document.getElementById('subdivision-select').addEventListener('change', (e) => {
       stepSubdivision = parseFloat(e.target.value) || 1;
+      // No per-step selection in the main UI — apply the new division to every
+      // existing step (and recursively to subsequence contents) so the chosen
+      // value affects the whole sequence, not just the next note added.
+      if (sequence.length > 0) {
+        applyDivToAll(sequence, stepSubdivision);
+        renderSequence();
+      }
     });
 
     function resetUIToDefault() {
@@ -2173,22 +2383,6 @@
       };
     }
 
-    function syncUpdateButton() {
-      const updateBtn = document.getElementById('update-btn');
-      if (!updateBtn) return;
-      const editable = !subEditState
-        && activeSeqIndex !== null
-        && savedSequences[activeSeqIndex]
-        && savedSequences[activeSeqIndex].type !== 'audio';
-      if (editable) {
-        updateBtn.style.display = '';
-        updateBtn.disabled = sequence.length === 0;
-      } else {
-        updateBtn.style.display = 'none';
-        updateBtn.disabled = true;
-      }
-    }
-
     // ---- Subsequence editor mode ----
 
     let subEditState = null; // { parentStepIndex, parentSequence, parentActiveSeqIndex }
@@ -2221,7 +2415,6 @@
       document.getElementById('save-btn').textContent = 'Save subseq';
       document.getElementById('save-btn').disabled = sequence.length === 0;
       renderSequence();
-      syncUpdateButton();
     }
 
     function exitSubEditMode(parentSequence) {
@@ -2235,7 +2428,6 @@
       document.getElementById('save-btn').disabled = sequence.length === 0;
       renderSequence();
       renderSavedSequences();
-      syncUpdateButton();
     }
 
     function commitSubEditAndExit() {
@@ -2263,12 +2455,43 @@
 
     document.getElementById('subedit-cancel').addEventListener('click', cancelSubEdit);
 
+    function flashSaveConfirm(label = 'Saved ✓') {
+      const btn = document.getElementById('save-btn');
+      const original = btn.textContent;
+      btn.textContent = label;
+      btn.classList.add('flash-confirm');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('flash-confirm');
+      }, 1100);
+    }
+
     document.getElementById('save-btn').addEventListener('click', () => {
       if (subEditState) {
         commitSubEditAndExit();
         return;
       }
       if (sequence.length === 0) return;
+
+      // Re-save: when a saved sequence is loaded, Save overwrites that entry
+      // in place (preserving its name) and leaves the workspace alone so the
+      // user can keep iterating. New entries get pushed and clear the workspace.
+      const existing = activeSeqIndex !== null ? savedSequences[activeSeqIndex] : null;
+      if (existing && existing.type !== 'audio') {
+        const updated = {
+          ...existing,
+          ...currentSequenceSnapshot({ name: existing.name }),
+        };
+        savedSequences[activeSeqIndex] = updated;
+        persistSaved();
+        // Propagate to any track items that came from this saved sequence so
+        // edits show up everywhere the sequence appears, not just in the bank.
+        propagateSavedToTracks(existing.name, updated);
+        renderSavedSequences();
+        flashSaveConfirm();
+        return;
+      }
+
       const name = seqName(savedSequences.length);
       savedSequences.push({ name, ...currentSequenceSnapshot() });
       persistSaved();
@@ -2283,28 +2506,10 @@
 
       renderSequence();
       renderSavedSequences();
-      syncUpdateButton();
-      showPostSaveDialog();
-    });
 
-    document.getElementById('update-btn').addEventListener('click', () => {
-      if (activeSeqIndex === null || sequence.length === 0) return;
-      const existing = savedSequences[activeSeqIndex];
-      if (!existing || existing.type === 'audio') return;
-      savedSequences[activeSeqIndex] = {
-        ...existing,
-        ...currentSequenceSnapshot({ name: existing.name }),
-      };
-      persistSaved();
-      renderSavedSequences();
-      const btn = document.getElementById('update-btn');
-      const original = btn.textContent;
-      btn.textContent = 'Updated ✓';
-      btn.classList.add('flash-confirm');
-      setTimeout(() => {
-        btn.textContent = original;
-        btn.classList.remove('flash-confirm');
-      }, 1100);
+      if (document.getElementById('clear-after-save')?.checked) {
+        resetGridToDefault();
+      }
     });
 
     // ---- Audio recording (mic → saved as an 'audio' sequence) ----
@@ -2434,7 +2639,33 @@
       const copy = { ...s };
       if (s.chord) copy.chord = s.chord.map(n => ({ ...n, params: n.params ? { ...n.params } : undefined }));
       if (s.params) copy.params = { ...s.params };
+      if (s.subSteps) copy.subSteps = s.subSteps.map(cloneStep);
       return copy;
+    }
+
+    // When a saved sequence is overwritten via Save, sync the new contents into
+    // every track item that was sourced from it (matched by name, since track
+    // items snapshot the name at add-time). Keeps the saved bank and any track
+    // placements consistent so an edit in one place shows up everywhere.
+    function propagateSavedToTracks(prevName, updated) {
+      if (!prevName || updated.type === 'audio') return;
+      let touched = false;
+      tracks.forEach(track => {
+        track.items.forEach(item => {
+          if (item.type === 'audio') return;
+          if (item.name === prevName) {
+            item.steps = (updated.steps || []).map(cloneStep);
+            item.bpm = updated.bpm;
+            item.subdivision = updated.subdivision || 1;
+            item.name = updated.name;
+            touched = true;
+          }
+        });
+      });
+      if (touched) {
+        persistTracks();
+        renderTracks();
+      }
     }
 
     function addTrack() {
@@ -2716,12 +2947,22 @@
             block.title = isAudio
               ? `${item.name} · audio · ${(item.durationSec || 0).toFixed(1)}s (≈${span} step${span !== 1 ? 's' : ''} @ ${item.bpm || 120} BPM)`
               : `${item.name} · ${span} step${span !== 1 ? 's' : ''} @ ${item.bpm || 120} BPM`;
-            // Click to remove (simple for now)
-            block.addEventListener('contextmenu', (e) => { e.preventDefault(); removeTrackItem(trackIdx, itemIdx); });
-            // Long-press to remove on mobile
+            const itemActions = () => [
+              { label: 'Remove from track', danger: true, fn: () => removeTrackItem(trackIdx, itemIdx) },
+            ];
+            // Right-click and long-press both open an explicit menu so the
+            // delete action is discoverable rather than a hidden gesture.
+            block.addEventListener('contextmenu', (e) => {
+              e.preventDefault();
+              showCtxMenu(e.clientX, e.clientY, itemActions());
+            });
             let lpt = null;
             block.addEventListener('pointerdown', (e) => {
-              lpt = setTimeout(() => { lpt = null; navigator.vibrate?.(40); removeTrackItem(trackIdx, itemIdx); }, 500);
+              lpt = setTimeout(() => {
+                lpt = null;
+                navigator.vibrate?.(40);
+                showCtxMenu(e.clientX, e.clientY, itemActions());
+              }, 500);
             });
             const cancelLp = () => { clearTimeout(lpt); lpt = null; };
             block.addEventListener('pointerup', cancelLp);
@@ -2740,6 +2981,22 @@
     document.getElementById('tracks-play-all').addEventListener('click', () => {
       if (tracks.some(t => t.playing)) stopAllTracks();
       else playAllTracks();
+    });
+
+    // Fullscreen Tracks view — hides every sibling so a phone held sideways
+    // shows the whole grid edge-to-edge. Back button restores the layout.
+    document.getElementById('tracks-title-btn').addEventListener('click', () => {
+      document.body.classList.add('tracks-fullscreen');
+      // Make sure tracks scroll into view at the top of the now-pinned section.
+      document.querySelector('.tracks-section')?.scrollTo({ top: 0 });
+    });
+    document.getElementById('tracks-back-btn').addEventListener('click', () => {
+      document.body.classList.remove('tracks-fullscreen');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.classList.contains('tracks-fullscreen')) {
+        document.body.classList.remove('tracks-fullscreen');
+      }
     });
     const tracksLoopBtn = document.getElementById('tracks-loop-all');
     tracksLoopBtn.addEventListener('click', () => {
@@ -2923,7 +3180,7 @@
       const defaultName = `sounds-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
       const filename = prompt('File name for the export (no extension):', defaultName);
       if (!filename) return;
-      const folderName = prompt('Google Drive folder to save in:', 'Sounds exports');
+      const folderName = prompt('Google Drive folder to save in:', 'Bloops exports');
       if (!folderName) return;
 
       const origText = btn.textContent;
@@ -3038,14 +3295,18 @@
         { label: 'Rename…',     fn: () => showRenameDialog(seqIndex) },
         { label: '⧉ Duplicate',  fn: () => { const base = savedSequences[seqIndex].name.replace(/\.\d+$/, ''); let n = 1; while (savedSequences.some(s => s.name === `${base}.${n}`)) n++; const copy = { ...savedSequences[seqIndex], name: `${base}.${n}`, steps: [...savedSequences[seqIndex].steps] }; savedSequences.splice(seqIndex+1, 0, copy); persistSaved(); renderSavedSequences(); } },
       ];
+      actions.push('hr');
+      actions.push({ label: '⊕ Add to new track', fn: () => {
+        addTrack();
+        addSavedToTrack(tracks.length - 1, savedSequences[seqIndex]);
+      } });
       if (tracks.length > 0) {
-        actions.push('hr');
         tracks.forEach((track, tIdx) => {
           actions.push({ label: `⊕ Add to ${track.name}`, fn: () => addSavedToTrack(tIdx, savedSequences[seqIndex]) });
         });
       }
       actions.push('hr');
-      actions.push({ label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) { activeSeqIndex--; } persistSaved(); renderSavedSequences(); syncUpdateButton(); } });
+      actions.push({ label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) { activeSeqIndex--; } persistSaved(); renderSavedSequences(); } });
       return actions;
     }
 
@@ -3214,8 +3475,11 @@
       block.addEventListener('pointerup',    cancel);
       block.addEventListener('pointercancel', cancel);
       block.addEventListener('pointermove',  cancel);
-      // Prevent native context menu on mobile
-      block.addEventListener('contextmenu', (e) => e.preventDefault());
+      // Right-click also opens the same menu (desktop affordance for delete etc.)
+      block.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showCtxMenu(e.clientX, e.clientY, savedBlockActions(seqIndex));
+      });
     }
 
     function cellActions(noteIndex) {
@@ -4116,7 +4380,194 @@
     rebuildGrid();
     loadSampleManifest();
 
-    document.getElementById('color-shuffle-btn').addEventListener('click', shuffleColors);
+    // ---- Color presets ----
+    function applyChessPalette() {
+      // Classic chess: white / dark squares alternating across the 12 pitch
+      // classes. Rest gets a neutral grey so it doesn't fight the duotone.
+      palette = Array.from({ length: 12 }, (_, i) => i % 2 === 0 ? '#f7fafc' : '#1a202c');
+      restColor = 'hsl(0, 0%, 65%)';
+      applyRestColor();
+      applyPalette();
+    }
+    function applyCheckersPalette() {
+      // Classic checkers: red / black alternating; rest tinted amber.
+      palette = Array.from({ length: 12 }, (_, i) => i % 2 === 0 ? '#e53e3e' : '#1a202c');
+      restColor = 'hsl(36, 70%, 70%)';
+      applyRestColor();
+      applyPalette();
+    }
+
+    // ---- Colors dropdown ----
+    (function initColorsMenu() {
+      const btn = document.getElementById('colors-menu-btn');
+      const panel = document.getElementById('colors-panel');
+      if (!btn || !panel) return;
+      const setOpen = (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.textContent = open ? 'Colors ▴' : 'Colors ▾';
+      };
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(!panel.classList.contains('open'));
+      });
+      panel.querySelectorAll('.colors-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+          const mode = opt.dataset.mode;
+          if (mode === 'shuffle') shuffleColors();
+          else if (mode === 'chess') applyChessPalette();
+          else if (mode === 'checkers') applyCheckersPalette();
+          setOpen(false);
+        });
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
+    })();
+
+    // ---- Saved grid states (root, scale, octaves, palette, cell sounds) ----
+    let savedGridStates = JSON.parse(localStorage.getItem('sounds-grid-states') || '[]');
+    function persistGridStates() {
+      localStorage.setItem('sounds-grid-states', JSON.stringify(savedGridStates));
+    }
+    function currentGridStateSnapshot(name) {
+      return {
+        name,
+        rootIdx,
+        baseOctave,
+        octaveCount,
+        masterFreqA,
+        scale: currentScale,
+        palette: [...palette],
+        cellSounds: [...cellSounds],
+        cellParams: cellParams.map(p => ({ ...p })),
+        restColor,
+      };
+    }
+    function applyGridState(state) {
+      if (!state) return;
+      if (state.rootIdx != null)     rootIdx     = state.rootIdx;
+      if (state.baseOctave != null)  baseOctave  = state.baseOctave;
+      if (state.octaveCount != null) octaveCount = state.octaveCount;
+      if (state.masterFreqA != null) masterFreqA = state.masterFreqA;
+      if (state.scale)               currentScale = normalizeScaleName(state.scale);
+      if (Array.isArray(state.palette) && state.palette.length === 12) palette = [...state.palette];
+      if (state.restColor)           { restColor = state.restColor; applyRestColor(); }
+
+      const rootSel   = document.getElementById('root-select');
+      const baseOctIn = document.getElementById('base-octave-input');
+      const octsIn    = document.getElementById('octaves-input');
+      const freqSl    = document.getElementById('master-freq-slider');
+      const freqIn    = document.getElementById('master-freq-input');
+      const scaleSel  = document.getElementById('scale-select');
+      if (rootSel)   rootSel.value   = String(rootIdx);
+      if (baseOctIn) baseOctIn.value = baseOctave;
+      if (octsIn)    octsIn.value    = octaveCount;
+      if (freqSl)    freqSl.value    = masterFreqA;
+      if (freqIn)    freqIn.value    = masterFreqA;
+      if (scaleSel)  scaleSel.value  = currentScale;
+
+      rebuildGrid();
+      // After rebuild, cellSounds/cellParams are reset — restore from the
+      // snapshot when the dimensions match (octaveCount → notes.length).
+      if (Array.isArray(state.cellSounds) && state.cellSounds.length === cellSounds.length
+          && Array.isArray(state.cellParams) && state.cellParams.length === cellParams.length) {
+        cellSounds = [...state.cellSounds];
+        cellParams = state.cellParams.map(p => ({ ...p }));
+      }
+    }
+    function refreshGridStateDropdown(selectedName = '') {
+      const sel = document.getElementById('grid-state-select');
+      const delBtn = document.getElementById('grid-state-delete-btn');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— Load a saved state —</option>';
+      savedGridStates.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.name;
+        opt.textContent = s.name;
+        sel.appendChild(opt);
+      });
+      sel.value = selectedName;
+      if (delBtn) delBtn.disabled = !sel.value;
+    }
+    refreshGridStateDropdown();
+
+    document.getElementById('grid-state-select').addEventListener('change', (e) => {
+      const name = e.target.value;
+      const delBtn = document.getElementById('grid-state-delete-btn');
+      if (!name) { if (delBtn) delBtn.disabled = true; return; }
+      const state = savedGridStates.find(s => s.name === name);
+      if (state) applyGridState(state);
+      if (delBtn) delBtn.disabled = false;
+    });
+
+    document.getElementById('grid-state-save-btn').addEventListener('click', () => {
+      const name = (prompt('Name this grid state:') || '').trim();
+      if (!name) return;
+      const idx = savedGridStates.findIndex(s => s.name === name);
+      const snap = currentGridStateSnapshot(name);
+      if (idx >= 0) {
+        if (!confirm(`A grid state named "${name}" already exists. Overwrite?`)) return;
+        savedGridStates[idx] = snap;
+      } else {
+        savedGridStates.push(snap);
+      }
+      persistGridStates();
+      refreshGridStateDropdown(name);
+    });
+
+    document.getElementById('grid-state-delete-btn').addEventListener('click', () => {
+      const sel = document.getElementById('grid-state-select');
+      if (!sel.value) return;
+      const name = sel.value;
+      if (!confirm(`Delete grid state "${name}"?`)) return;
+      savedGridStates = savedGridStates.filter(s => s.name !== name);
+      persistGridStates();
+      refreshGridStateDropdown('');
+    });
+
+    // Reset only the grid bits (not tracks / recording / preview state) —
+    // used after Save when "Clear after save" is on.
+    function resetGridToDefault() {
+      rootIdx = 0;
+      baseOctave = 4;
+      octaveCount = 1;
+      masterFreqA = 440;
+      currentScale = 'chromatic';
+      palette = [...DEFAULT_PALETTE];
+      restColor = DEFAULT_REST_COLOR;
+      applyRestColor();
+
+      const rootSel   = document.getElementById('root-select');
+      const baseOctIn = document.getElementById('base-octave-input');
+      const octsIn    = document.getElementById('octaves-input');
+      const freqSl    = document.getElementById('master-freq-slider');
+      const freqIn    = document.getElementById('master-freq-input');
+      const scaleSel  = document.getElementById('scale-select');
+      if (rootSel)   rootSel.value   = '0';
+      if (baseOctIn) baseOctIn.value = '4';
+      if (octsIn)    octsIn.value    = '1';
+      if (freqSl)    freqSl.value    = '440';
+      if (freqIn)    freqIn.value    = '440';
+      if (scaleSel)  scaleSel.value  = 'chromatic';
+
+      rebuildGrid();
+    }
+
+    // ---- "Clear after save" toggle (persisted) ----
+    (function initClearAfterSave() {
+      const cb = document.getElementById('clear-after-save');
+      if (!cb) return;
+      cb.checked = localStorage.getItem('sounds-clear-after-save') === '1';
+      cb.addEventListener('change', () => {
+        localStorage.setItem('sounds-clear-after-save', cb.checked ? '1' : '0');
+      });
+    })();
 
     // ---- Grid controls ----
     (function initGridControls() {

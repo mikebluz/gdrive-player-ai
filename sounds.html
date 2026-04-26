@@ -32,6 +32,27 @@
       }
     }
 
+    /* SITE BANNER */
+    .site-banner {
+      flex: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 4px 8px 0;
+      background: #000;
+    }
+    .site-banner img {
+      display: block;
+      width: 50%;
+      max-height: 35px;
+      height: auto;
+      object-fit: contain;
+      filter: invert(1);
+    }
+    @media (max-width: 700px) {
+      .site-banner img { max-height: 24px; }
+    }
+
     /* MENU BAR */
     .menubar {
       background: #000;
@@ -895,6 +916,10 @@
   <script src="js/config.js"></script>
 </head>
 <body>
+
+  <div class="site-banner">
+    <img src="banner.jpg" alt="Mercy Wizard" />
+  </div>
 
   <div class="menubar">
     <a href="index.html">Mike Luz</a>

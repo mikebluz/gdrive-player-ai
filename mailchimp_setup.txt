@@ -1,0 +1,57 @@
+Mailchimp setup for the "Join Mailing List" modal on index.html
+================================================================
+
+The modal already has the form markup wired up. Two placeholder values
+in index.html need to be replaced with real values from your Mailchimp
+account before the form will actually submit anywhere.
+
+1. Get the embed code from Mailchimp
+-------------------------------------
+- Log in to https://admin.mailchimp.com/
+- Go to: Audience -> Signup forms -> Embedded forms
+- Pick the "Naked" (or "Unstyled") option — this gives you raw HTML
+  without Mailchimp's CSS, which is what we want.
+- Click "Continue" / "Copy code" and open the snippet in a text editor.
+
+2. Pull two values out of that snippet
+--------------------------------------
+You're looking for two things in Mailchimp's HTML:
+
+  a) The form action URL. It looks like:
+       https://YOUR_DC.list-manage.com/subscribe/post?u=USER_ID&id=LIST_ID
+     (YOUR_DC is e.g. "us1", "us21" — your data center.
+      USER_ID and LIST_ID are long hex strings.)
+
+  b) The honeypot field name. It's a hidden <input> inside a div that
+     positions itself off-screen, and its `name` attribute looks like:
+       b_USER_ID_LIST_ID
+     (same USER_ID and LIST_ID as above, joined with underscores)
+
+3. Paste them into index.html
+-----------------------------
+Open index.html and find the mailing list modal (search for
+"mailing-list-modal"). Replace:
+
+  - MC_ACTION_URL          -> the form action URL from step 2a
+  - MC_HONEYPOT_NAME       -> the honeypot name attribute from step 2b
+
+That's it. After saving, submitting the form will POST to Mailchimp,
+open Mailchimp's confirmation page in a new tab (target="_blank"),
+and the email will land in your audience.
+
+4. Quick sanity check
+---------------------
+- Open index.html locally, click "Join Mailing List", enter a test email,
+  submit. A new tab should open showing Mailchimp's "Almost finished"
+  confirmation page.
+- Check your audience in Mailchimp — the address should appear as
+  "pending" until the double-opt-in confirmation email is clicked.
+
+Notes
+-----
+- The form uses Mailchimp's classic embedded endpoint (no API key, no
+  backend, no CORS issues). It's the simplest path and it works on a
+  static site.
+- If you ever want inline success/error messages instead of opening
+  Mailchimp's confirmation page in a new tab, you'll need to switch to
+  Mailchimp's AJAX submit pattern or move to a small backend proxy.

@@ -27,9 +27,24 @@
       min-height: 100vh;
     }
 
+    /* SITE BANNER */
+    .site-banner {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 8px 8px 0;
+    }
+    .site-banner img {
+      display: block;
+      width: 50%;
+      max-width: 320px;
+      height: auto;
+      filter: invert(1);
+    }
+
     /* NAV */
     nav {
-      position: fixed;
+      position: sticky;
       top: 0;
       left: 0;
       right: 0;
@@ -72,16 +87,30 @@
 
     /* HERO */
     .hero {
-      min-height: 100vh;
+      min-height: calc(100vh - 60px);
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       text-align: center;
-      padding: 145px 24px 60px;
+      padding: 120px 24px 60px;
     }
 
     .hero-inner {
       max-width: 640px;
+    }
+
+    .hero-portrait {
+      display: block;
+      width: 220px;
+      height: 220px;
+      object-fit: cover;
+      border-radius: 50%;
+      margin: 0 auto 28px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    @media (max-width: 600px) {
+      .hero-portrait { width: 160px; height: 160px; margin-bottom: 20px; }
     }
 
     .hero h1 {
@@ -238,16 +267,131 @@
       font-size: 0.85rem;
     }
 
+    /* MAILING LIST MODAL */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 24px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      position: relative;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: color 0.2s, background 0.2s;
+    }
+
+    .modal-close:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .modal h2 {
+      font-size: 1.5rem;
+      color: #f0f4ff;
+      margin-bottom: 8px;
+    }
+
+    .modal p {
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+
+    .mc-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .mc-form input[type="email"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 1rem;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .mc-form input[type="email"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .mc-form button {
+      background: linear-gradient(135deg, #2b6cb0, #4299e1);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .mc-form button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(66, 153, 225, 0.3);
+    }
+
+    .mc-honeypot {
+      position: absolute;
+      left: -5000px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
     /* MOBILE */
     @media (max-width: 600px) {
       nav { padding: 0 20px; }
       .nav-links { gap: 20px; }
       section { padding: 80px 20px; }
       .card { padding: 24px; }
+      .modal { padding: 28px 22px; }
     }
   </style>
 </head>
 <body>
+
+  <div class="site-banner">
+    <img src="banner.jpg" alt="Mercy Wizard" />
+  </div>
 
   <nav>
     <a href="#" class="nav-logo">Mike Luz</a>
@@ -261,12 +405,14 @@
 
   <div class="hero">
     <div class="hero-inner">
+      <img src="me2026.jpg" alt="Mike Luz" class="hero-portrait" />
       <h1>Mike Luz</h1>
       <p>Hear we are!</p>
       <div class="hero-cta">
         <a href="#about" class="btn btn-primary">Learn More</a>
         <a href="player.html" class="btn btn-secondary">Serialbox</a>
         <a href="sounds.html" class="btn btn-secondary">Sounds</a>
+        <button type="button" class="btn btn-secondary" id="mailing-list-btn">Join Mailing List</button>
       </div>
     </div>
   </div>
@@ -339,6 +485,51 @@
   <footer>
     &copy; 2026 Mike Luz
   </footer>
+
+  <!--
+    Mailing list modal — uses Mailchimp's classic embedded form.
+    Replace the placeholders below with values from your Mailchimp account
+    (Audience → Signup forms → Embedded forms → Naked):
+      MC_ACTION_URL: form action URL, e.g.
+        https://YOUR_DC.list-manage.com/subscribe/post?u=USER_ID&id=LIST_ID
+      MC_HONEYPOT_NAME: the b_USER_ID_LIST_ID name from Mailchimp's hidden bot field
+  -->
+  <div class="modal-backdrop" id="mailing-list-modal" role="dialog" aria-modal="true" aria-labelledby="mailing-list-title">
+    <div class="modal">
+      <button type="button" class="modal-close" id="mailing-list-close" aria-label="Close">&times;</button>
+      <h2 id="mailing-list-title">Join the mailing list</h2>
+      <p>Occasional updates on new music, tools, and writing. No spam.</p>
+      <form
+        action="MC_ACTION_URL"
+        method="post"
+        target="_blank"
+        novalidate
+        class="mc-form"
+      >
+        <input type="email" name="EMAIL" placeholder="you@example.com" required aria-label="Email address" />
+        <div class="mc-honeypot" aria-hidden="true">
+          <input type="text" name="MC_HONEYPOT_NAME" tabindex="-1" value="" />
+        </div>
+        <button type="submit" name="subscribe">Subscribe</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const modal = document.getElementById('mailing-list-modal');
+      const openBtn = document.getElementById('mailing-list-btn');
+      const closeBtn = document.getElementById('mailing-list-close');
+      const open = () => modal.classList.add('open');
+      const close = () => modal.classList.remove('open');
+      openBtn?.addEventListener('click', open);
+      closeBtn?.addEventListener('click', close);
+      modal?.addEventListener('click', (e) => { if (e.target === modal) close(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('open')) close();
+      });
+    })();
+  </script>
 
 </body>
 </html>

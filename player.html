@@ -6,8 +6,22 @@
   <title>Google Drive Music Player</title>
   <link rel="stylesheet" href="css/styles.css" />
   <style>
+    .site-banner {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 8px 8px 0;
+    }
+    .site-banner img {
+      display: block;
+      width: 50%;
+      max-width: 320px;
+      height: auto;
+      filter: invert(1);
+    }
+
     nav {
-      position: fixed;
+      position: sticky;
       top: 0;
       left: 0;
       right: 0;
@@ -46,7 +60,7 @@
 
     .nav-links a:hover { color: #e2e8f0; }
 
-    .container { padding-top: 80px; }
+    .container { padding-top: 20px; }
 
     @media (max-width: 600px) {
       nav { padding: 0 20px; }
@@ -60,6 +74,10 @@
 </head>
 
 <body>
+  <div class="site-banner">
+    <img src="banner.jpg" alt="Mercy Wizard" />
+  </div>
+
   <nav>
     <a href="index.html" class="nav-logo">Mike Luz</a>
     <ul class="nav-links">

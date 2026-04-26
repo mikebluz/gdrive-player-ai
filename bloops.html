@@ -600,6 +600,14 @@
     #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
     #save-btn.flash-confirm { border-color: #68d391; color: #68d391; }
+    /* Save button while editing a subsequence — matches the green of the
+       subedit banner so the action's scope is clear without renaming. */
+    #save-btn.sub-edit {
+      border-color: #38a169;
+      background: rgba(56, 161, 105, 0.18);
+      color: #68d391;
+    }
+    #save-btn.sub-edit:hover { border-color: #68d391; color: #b2f5ea; }
 
     #append-track-btn {
       padding: 6px 18px;
@@ -621,7 +629,9 @@
     #rec-btn,
     #random-btn,
     #reverse-btn,
-    #shuffle-btn {
+    #shuffle-btn,
+    #repeat-btn,
+    #condense-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -655,6 +665,10 @@
     #reverse-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #shuffle-btn:hover { border-color: #4299e1; color: #4299e1; }
     #shuffle-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #repeat-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #repeat-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #condense-btn:hover { border-color: #68d391; color: #68d391; }
+    #condense-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #rec-btn.recording {
       background: #e53e3e;
       border-color: #e53e3e;
@@ -833,6 +847,39 @@
     /* Fullscreen tracks view — triggered by tapping the Tracks title.
        Hides every sibling and pins the tracks section to the viewport so
        a phone held lengthwise shows the whole tracks grid edge-to-edge. */
+    /* Songs bank — preset compositions that populate the workspace. */
+    .songs-bank {
+      background: #050510;
+      border-top: 3px solid #000;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px 20px;
+      flex-shrink: 0;
+    }
+    .songs-bank-label {
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .song-btn {
+      padding: 6px 16px;
+      border: 1px solid #2d2d3f;
+      border-radius: 16px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .song-btn:hover { border-color: #4299e1; color: #4299e1; }
+
     body.tracks-fullscreen > *:not(.tracks-section) { display: none !important; }
     body.tracks-fullscreen {
       overflow: hidden;
@@ -1318,6 +1365,8 @@
       <button id="random-btn" title="Generate a random sequence">Random</button>
       <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
       <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
+      <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+      <button id="condense-btn" title="Wrap the current steps into a single subsequence" disabled>Condense</button>
     </div>
 
     <span class="seq-count" id="seq-count">0 steps</span>
@@ -1339,6 +1388,11 @@
       <button id="add-track-btn">+ Add Track</button>
     </div>
     <div id="tracks-container"></div>
+  </div>
+
+  <div class="songs-bank">
+    <span class="songs-bank-label">Songs</span>
+    <button type="button" class="song-btn" data-song="vivaldi">Vivaldi</button>
   </div>
 
   <script>
@@ -1742,6 +1796,10 @@
         if (revBtn) revBtn.disabled = true;
         const shuffBtn = document.getElementById('shuffle-btn');
         if (shuffBtn) shuffBtn.disabled = true;
+        const repeatBtn = document.getElementById('repeat-btn');
+        if (repeatBtn) repeatBtn.disabled = true;
+        const condenseBtn = document.getElementById('condense-btn');
+        if (condenseBtn) condenseBtn.disabled = true;
         const appBtn = document.getElementById('append-track-btn');
         if (appBtn) appBtn.disabled = true;
         return;
@@ -1796,6 +1854,10 @@
       if (revBtn) revBtn.disabled = sequence.length < 2;
       const shuffBtn = document.getElementById('shuffle-btn');
       if (shuffBtn) shuffBtn.disabled = sequence.length < 2;
+      const repeatBtn = document.getElementById('repeat-btn');
+      if (repeatBtn) repeatBtn.disabled = sequence.length === 0;
+      const condenseBtn = document.getElementById('condense-btn');
+      if (condenseBtn) condenseBtn.disabled = sequence.length === 0;
       const appBtn = document.getElementById('append-track-btn');
       if (appBtn) appBtn.disabled = sequence.length === 0;
     }
@@ -1935,6 +1997,99 @@
       insertionPoint = null;
       renderSequence();
     });
+
+    document.getElementById('repeat-btn').addEventListener('click', () => {
+      if (sequence.length === 0) return;
+      stopSequence();
+      const copy = sequence.map(cloneStep);
+      sequence = sequence.concat(copy);
+      pendingChord = [];
+      insertionPoint = null;
+      renderSequence();
+    });
+
+    document.getElementById('condense-btn').addEventListener('click', showCondenseDialog);
+
+    // Wrap every current step into a single subsequence chip, applying the
+    // user-chosen Hold/Div to each contained step.
+    function showCondenseDialog() {
+      if (sequence.length === 0) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Condense to subsequence</div>
+        <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.8rem;padding:4px 0 12px;">
+          Wrap all ${sequence.length} step${sequence.length === 1 ? '' : 's'} into a single ▤ chip.
+          Hold and Div below will be applied to every step inside the new subsequence.
+        </div>
+        <div class="sm-section-label">Hold (steps held)</div>
+        <select id="cond-hold" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;">
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="8">8</option>
+        </select>
+        <div class="sm-section-label">Div (subdivision)</div>
+        <select id="cond-div" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;">
+          <option value="4">1/1</option>
+          <option value="2">1/2</option>
+          <option value="1" selected>1/4</option>
+          <option value="0.5">1/8</option>
+          <option value="0.25">1/16</option>
+          <option value="0.125">1/32</option>
+        </select>
+        <div style="display:flex;gap:8px;padding:12px 0 0;">
+          <button type="button" class="sm-preview" id="cond-rand" style="flex:1;">🎲 Randomize</button>
+        </div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="cond-cancel">Cancel</button>
+          <button type="button" class="sm-apply" id="cond-apply">Condense</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const holdSel = modal.querySelector('#cond-hold');
+      const divSel  = modal.querySelector('#cond-div');
+      // Reflect the workspace's current Div as a useful default.
+      divSel.value = String(stepSubdivision);
+
+      modal.querySelector('#cond-rand').addEventListener('click', () => {
+        const holds = [1, 2, 3, 4, 8];
+        const divs  = [4, 2, 1, 0.5, 0.25, 0.125];
+        holdSel.value = String(holds[Math.floor(Math.random() * holds.length)]);
+        divSel.value  = String(divs[Math.floor(Math.random() * divs.length)]);
+      });
+
+      modal.querySelector('#cond-cancel').addEventListener('click', () => overlay.remove());
+
+      modal.querySelector('#cond-apply').addEventListener('click', () => {
+        const newHold = parseInt(holdSel.value) || 1;
+        const newDiv  = parseFloat(divSel.value) || 1;
+        stopSequence();
+        const subSteps = sequence.map(s => {
+          const c = cloneStep(s);
+          c.duration = newHold;
+          c.subdivision = newDiv;
+          return c;
+        });
+        sequence = [{
+          isSub: true,
+          subSteps,
+          label: '▤',
+          duration: 1,
+          subdivision: 1,
+        }];
+        pendingChord = [];
+        insertionPoint = null;
+        renderSequence();
+        overlay.remove();
+      });
+    }
 
     function appendWorkspaceToTrack(trackIdx) {
       if (sequence.length === 0 || !tracks[trackIdx]) return;
@@ -2445,7 +2600,7 @@
       activeSeqIndex = null;
       insertionPoint = null;
       document.getElementById('subedit-banner').classList.add('open');
-      document.getElementById('save-btn').textContent = 'Save subseq';
+      document.getElementById('save-btn').classList.add('sub-edit');
       document.getElementById('save-btn').disabled = sequence.length === 0;
       renderSequence();
     }
@@ -2457,7 +2612,7 @@
       insertionPoint = subEditState.parentInsertionPoint ?? null;
       subEditState = null;
       document.getElementById('subedit-banner').classList.remove('open');
-      document.getElementById('save-btn').textContent = 'Save';
+      document.getElementById('save-btn').classList.remove('sub-edit');
       document.getElementById('save-btn').disabled = sequence.length === 0;
       renderSequence();
       renderSavedSequences();
@@ -2625,6 +2780,53 @@
 
     document.getElementById('rec-btn').addEventListener('click', toggleRecording);
     document.getElementById('random-btn').addEventListener('click', showRandomDialog);
+
+    // ---- Song presets ----
+    // Opening of Vivaldi's "Spring" (Four Seasons) — a distilled E-major
+    // statement of the famous ritornello in quarter-note steps. Not a strict
+    // transcription, but the joyful contour reads as Vivaldi at first listen.
+    const VIVALDI_SPRING_NOTES = [
+      'E5', 'E5', null, 'E5',
+      'E5', null, 'F#5', 'E5',
+      'D#5', 'E5', null, 'E5',
+      'F#5', 'E5', 'D#5', 'E5',
+    ];
+    function defaultStepParams(type) {
+      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
+    }
+    function loadSongPreset(name) {
+      let src;
+      if (name === 'vivaldi') src = { notes: VIVALDI_SPRING_NOTES, bpm: 120, sub: 1, sound: 'sawtooth' };
+      else return;
+      stopSequence();
+      const params = defaultStepParams(src.sound);
+      sequence = src.notes.map(n => {
+        if (n == null) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: src.sub };
+        return {
+          freq: Tone.Frequency(n).toFrequency(),
+          label: n,
+          cellIndex: null,
+          sound: src.sound,
+          params: { ...params },
+          duration: 1,
+          subdivision: src.sub,
+        };
+      });
+      pendingChord = [];
+      insertionPoint = null;
+      activeSeqIndex = null;
+      tempoInput.value = src.bpm;
+      tempoSlider.value = src.bpm;
+      stepSubdivision = src.sub;
+      const subSel = document.getElementById('subdivision-select');
+      if (subSel) subSel.value = String(src.sub);
+      renderSequence();
+      renderSavedSequences();
+      document.getElementById('save-btn').disabled = false;
+    }
+    document.querySelectorAll('.song-btn').forEach(btn => {
+      btn.addEventListener('click', () => loadSongPreset(btn.dataset.song));
+    });
 
     // Preview a bank audio entry through an HTMLAudioElement (no Tone graph needed).
     let _previewAudio = null;
@@ -3882,6 +4084,33 @@
       chip.addEventListener('touchcancel', onTouchEnd);
     }
 
+    // Shift every audible note in a step (and any nested subSteps) by `semis`
+    // half-steps. Updates the displayed label via Tone.js's freq→note helper.
+    function modulateStepRec(s, semis) {
+      const factor = Math.pow(2, semis / 12);
+      const retune = (n) => {
+        if (n.freq == null) return;
+        n.freq *= factor;
+        try { n.label = Tone.Frequency(n.freq).toNote(); } catch (e) {}
+      };
+      if (s.chord) {
+        s.chord.forEach(retune);
+        s.label = s.chord.map(n => n.label).join('·');
+      } else if (s.freq != null) {
+        retune(s);
+      }
+      if (s.isSub && Array.isArray(s.subSteps)) {
+        s.subSteps.forEach(child => modulateStepRec(child, semis));
+      }
+    }
+    function stepHasNotes(s) {
+      if (!s) return false;
+      if (s.chord && s.chord.length > 0) return true;
+      if (s.freq != null) return true;
+      if (s.isSub && Array.isArray(s.subSteps)) return s.subSteps.some(stepHasNotes);
+      return false;
+    }
+
     function bindStepLongPress(chip, stepIndex) {
       let lpt = null;
       chip.addEventListener('pointerdown', (e) => {
@@ -3902,6 +4131,11 @@
               actions.push({ label: 'Create subsequence…', fn: () => enterSubEditMode(stepIndex) });
             }
             if (actions.length > 0) actions.push('hr');
+          }
+          if (stepHasNotes(step)) {
+            actions.push({ label: 'Modulate ↑½', fn: () => { modulateStepRec(step, 1);  renderSequence(); } });
+            actions.push({ label: 'Modulate ↓½', fn: () => { modulateStepRec(step, -1); renderSequence(); } });
+            actions.push('hr');
           }
           actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
           actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });

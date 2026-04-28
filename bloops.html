@@ -5565,6 +5565,16 @@
     loadSampleManifest();
     loadImportedSamples();
 
+    // Re-parent the menubar dropdowns to <body> so the menubar's overflow
+    // can't clip them on mobile. position: fixed via pinPanelToButton then
+    // anchors them under their trigger buttons regardless of menubar state.
+    (function detachPanelsFromMenubar() {
+      const colors = document.getElementById('colors-panel');
+      const grid = document.getElementById('grid-settings-panel');
+      if (colors && colors.parentNode !== document.body) document.body.appendChild(colors);
+      if (grid && grid.parentNode !== document.body) document.body.appendChild(grid);
+    })();
+
     // ---- Color presets ----
     function applyChessPalette() {
       // Classic chess: white / dark squares alternating across the 12 pitch

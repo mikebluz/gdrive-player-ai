@@ -111,17 +111,32 @@ body {
 }
 
 .btn-secondary {
-    background: #2d2d3f;
-    color: #e2e8f0;
+    background: #000;
+    color: #ff3366;
+    border: 1px solid #ff3366;
+    box-shadow: 0 0 10px rgba(255, 51, 102, 0.32);
 }
 
 .btn-secondary:hover {
-    background: #3a3a52;
+    transform: translateY(-1px);
+    box-shadow: 0 0 18px rgba(255, 51, 102, 0.55);
 }
 
 .btn-small {
     padding: 5px 15px;
     font-size: 12px;
+}
+
+#shuffle-btn {
+    background: #000;
+    color: #d91e7c;
+    border: 1px solid #d91e7c;
+    box-shadow: 0 0 10px rgba(217, 30, 124, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+#shuffle-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 16px rgba(217, 30, 124, 0.6);
 }
 
 .main-content {
@@ -248,8 +263,9 @@ body {
 }
 
 .track-info p {
-    color: #a0aec0;
+    color: #f472b6;
     font-size: 1rem;
+    text-shadow: 0 0 8px rgba(244, 114, 182, 0.4);
 }
 
 .album-art-section {
@@ -372,19 +388,20 @@ body {
 }
 
 .btn-cache {
-    background: transparent;
-    border: 1px solid #4a4a6a;
-    color: #a0aec0;
+    background: #000;
+    border: 1px solid #d91e7c;
+    color: #d91e7c;
     padding: 6px 16px;
     border-radius: 20px;
     font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s ease;
+    box-shadow: 0 0 8px rgba(217, 30, 124, 0.28);
 }
 
 .btn-cache:hover {
-    border-color: #d91e7c;
-    color: #d91e7c;
+    box-shadow: 0 0 14px rgba(217, 30, 124, 0.55);
+    transform: translateY(-1px);
 }
 
 #volume-slider {
@@ -416,7 +433,8 @@ body {
     display: flex;
     align-items: center;
     gap: 15px;
-    color: #a0aec0;
+    color: #ec4899;
+    text-shadow: 0 0 8px rgba(236, 72, 153, 0.4);
 }
 
 .playlist {

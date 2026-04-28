@@ -125,6 +125,12 @@
       border-radius: 50%;
       margin: 0 auto 28px;
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .hero-portrait:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 36px rgba(217, 30, 124, 0.45), 0 8px 30px rgba(0, 0, 0, 0.4);
     }
 
     @media (max-width: 600px) {
@@ -199,6 +205,19 @@
       transform: translateY(-2px);
       background: rgba(79, 209, 197, 0.1);
       box-shadow: 0 8px 28px rgba(79, 209, 197, 0.22);
+    }
+
+    /* Top "Latest Release!" — yellow-toned neon to call extra attention. */
+    .btn-latest-release {
+      background: transparent;
+      color: #fde047;
+      border: 1px solid #fde047;
+      box-shadow: 0 0 12px rgba(253, 224, 71, 0.35);
+    }
+    .btn-latest-release:hover {
+      transform: translateY(-2px);
+      background: rgba(253, 224, 71, 0.12);
+      box-shadow: 0 0 22px rgba(253, 224, 71, 0.6);
     }
 
     .btn-serialbox {
@@ -535,10 +554,10 @@
     <div class="hero-inner">
       <img src="me2026.jpg" alt="Mike Luz" class="hero-portrait" />
       <div class="hero-cta hero-cta-top">
-        <a href="https://linktr.ee/mercywizard" class="btn btn-recordings" target="_blank" rel="noopener">Recordings</a>
+        <a href="https://mikeluz.bandcamp.com/track/hallelujah" class="btn btn-latest-release" target="_blank" rel="noopener">Latest Release!</a>
         <div class="hero-cta-row">
-          <a href="serialbox.html" class="btn btn-serialbox">Serialbox</a>
           <a href="bloops.html" class="btn btn-bloops">Bloops</a>
+          <a href="serialbox.html" class="btn btn-serialbox">Serialbox</a>
         </div>
       </div>
       <div class="hero-banner">
@@ -568,7 +587,7 @@
           </svg>
           Instagram
         </a>
-        <a href="#" target="_blank" rel="noopener" title="TODO: replace # with the Substack URL" aria-label="Substack (placeholder)">
+        <a href="#" target="_blank" rel="noopener" title="TODO: replace # with the Substack URL" aria-label="Substack (placeholder)" style="display:none;">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <line x1="5" y1="7" x2="19" y2="7"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -579,11 +598,14 @@
       </div>
       <div class="hero-cta">
         <div class="hero-cta-row">
+          <a href="https://linktr.ee/mercywizard" class="btn btn-recordings" target="_blank" rel="noopener">Recordings</a>
           <a href="artwork.html" class="btn btn-artwork">Artwork</a>
+        </div>
+        <div class="hero-cta-row">
           <a href="https://mercywizard.bandcamp.com/merch" class="btn btn-merch" target="_blank" rel="noopener">Merch</a>
           <a href="https://linktr.ee/mikebuys" class="btn btn-guitars" target="_blank" rel="noopener">Guitars</a>
         </div>
-        <button type="button" class="btn btn-mailinglist" id="mailing-list-btn">Join Mailing List</button>
+        <button type="button" class="btn btn-mailinglist" id="mailing-list-btn" style="display:none;">Join Mailing List</button>
       </div>
     </div>
   </div>
@@ -635,6 +657,15 @@
         if (e.key === 'Escape' && modal.classList.contains('open')) close();
       });
     })();
+
+    // Hero portrait → opens "Hallelujah" on Bandcamp in a new tab. Bandcamp's
+    // embed player requires a numeric track ID we can't derive from the slug,
+    // so the simplest reliable behaviour is a direct page open. To swap in an
+    // in-page player later, replace this with a modal hosting the Bandcamp
+    // embed iframe (whose src contains track=NNNNNNNN, the numeric ID).
+    document.querySelector('.hero-portrait')?.addEventListener('click', () => {
+      window.open('https://mikeluz.bandcamp.com/track/hallelujah', '_blank', 'noopener');
+    });
   </script>
 
 </body>

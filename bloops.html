@@ -163,7 +163,51 @@
       flex-shrink: 0;
       flex-wrap: nowrap;
     }
-    #tempo-slider { width: 90px; min-width: 60px; accent-color: #00bfff; flex-shrink: 1; }
+    #tempo-slider {
+      width: 90px;
+      min-width: 60px;
+      accent-color: #00bfff;
+      flex-shrink: 1;
+      touch-action: manipulation;
+    }
+    @media (hover: none) and (pointer: coarse) {
+      /* Bigger thumb + taller hit area so a fingertip can grab and drag the
+         slider on touch devices. iOS in particular makes the native thumb
+         too small to scrub at 90px width. */
+      #tempo-slider {
+        height: 32px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+      }
+      #tempo-slider::-webkit-slider-runnable-track {
+        height: 4px;
+        background: #2d2d3f;
+        border-radius: 2px;
+      }
+      #tempo-slider::-moz-range-track {
+        height: 4px;
+        background: #2d2d3f;
+        border-radius: 2px;
+      }
+      #tempo-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--bpm-thumb, #00bfff);
+        margin-top: -8px;
+        border: none;
+      }
+      #tempo-slider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--bpm-thumb, #00bfff);
+        border: none;
+      }
+    }
     #tempo-input {
       width: 52px;
       background: #1a1a2e;
@@ -353,6 +397,15 @@
       color: rgba(0,0,0,0.35);
       letter-spacing: 1px;
       pointer-events: none;
+    }
+    .cell .cell-freq {
+      position: absolute;
+      bottom: 4px;
+      right: 6px;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      color: rgba(0,0,0,0.45);
     }
 
     .cell:nth-child(12n+1)  { background: #e63946; }
@@ -817,6 +870,47 @@
       0%, 100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.6); }
       50%      { box-shadow: 0 0 0 6px rgba(229,62,62,0); }
     }
+    /* Undo / Redo pill — two adjacent buttons sharing the inner border, with
+       only their outside corners rounded. Red theme matches Rec. */
+    .btn-group--seq > .undo-redo-pair {
+      flex: 2 1 160px;
+      display: flex;
+    }
+    .undo-redo-pair > button {
+      flex: 1;
+      padding: 6px 14px;
+      border: 1px solid #e53e3e;
+      background: transparent;
+      color: #e53e3e;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .undo-redo-pair > #undo-btn {
+      border-radius: 20px 0 0 20px;
+      border-right: none;
+    }
+    .undo-redo-pair > #redo-btn {
+      border-radius: 0 20px 20px 0;
+      border-color: #68d391;
+      color: #68d391;
+    }
+    .undo-redo-pair > button:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+    @media (hover: hover) {
+      .undo-redo-pair > #undo-btn:hover:not(:disabled) {
+        border-color: #fc8181;
+        color: #fc8181;
+      }
+      .undo-redo-pair > #redo-btn:hover:not(:disabled) {
+        border-color: #9ae6b4;
+        color: #9ae6b4;
+      }
+    }
 
     .saved-block.audio-item {
       border-color: #e53e3e;
@@ -1259,7 +1353,9 @@
       font-family: 'Segoe UI', sans-serif;
       cursor: pointer; transition: all 0.15s;
     }
-    .sm-wave:hover { border-color: #4299e1; color: #4299e1; }
+    @media (hover: hover) {
+      .sm-wave:hover { border-color: #4299e1; color: #4299e1; }
+    }
     .sm-wave.active { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
 
     .sm-param { margin-bottom: 12px; }
@@ -1452,11 +1548,12 @@
           <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
         </div>
       </div>
+      <div class="grid-state-row">
+        <div class="grid-state-actions">
+          <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
+        </div>
+      </div>
     </div>
-    <label class="menubar-toggle" title="When on, saving a sequence also resets root, octave, scale, palette, and cell sounds back to defaults.">
-      <input type="checkbox" id="clear-after-save" />
-      Clear after save
-    </label>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -1523,6 +1620,10 @@
     </div>
 
     <div class="btn-group btn-group--seq" title="Sequence controls">
+      <div class="undo-redo-pair">
+        <button id="undo-btn" type="button" title="Undo last action (Ctrl/Cmd+Z)" disabled>↶</button>
+        <button id="redo-btn" type="button" title="Redo last undone action (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
+      </div>
       <button id="save-btn" disabled>Save</button>
       <button id="append-track-btn" title="Append the current sequence to a track" disabled>→ Track ▾</button>
       <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
@@ -1531,17 +1632,6 @@
       <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
       <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
       <button id="condense-btn" title="Wrap the current steps into a single subsequence" disabled>Condense</button>
-      <label class="note-length-label" title="Apply a subdivision to every step in the sequence">All Div
-        <select id="all-div-select">
-          <option value="">—</option>
-          <option value="4">1/1</option>
-          <option value="2">1/2</option>
-          <option value="1">1/4</option>
-          <option value="0.5">1/8</option>
-          <option value="0.25">1/16</option>
-          <option value="0.125">1/32</option>
-        </select>
-      </label>
     </div>
 
     <span class="seq-count" id="seq-count">0 steps</span>
@@ -1568,6 +1658,10 @@
   <div class="songs-bank">
     <span class="songs-bank-label">Songs</span>
     <button type="button" class="song-btn" data-song="vivaldi">Vivaldi</button>
+    <button type="button" class="song-btn" data-song="bach">Bach</button>
+    <button type="button" class="song-btn" data-song="mozart">Mozart</button>
+    <button type="button" class="song-btn" data-song="beethoven">Beethoven</button>
+    <button type="button" class="song-btn" data-song="miles">Miles Davis</button>
   </div>
 
   <script>
@@ -1673,6 +1767,7 @@
           if (scaleSel)  scaleSel.value  = currentScale;
           const subSel = document.getElementById('subdivision-select');
           if (subSel)    subSel.value    = String(stepSubdivision);
+          refreshHoldEnabled();
 
           rebuildGrid();
 
@@ -1724,6 +1819,7 @@
       const hue = 188 * (1 - t); // 188° (cyan) at min → 0° (red) at max
       const color = `hsl(${hue.toFixed(0)}, 80%, 55%)`;
       tempoSlider.style.accentColor = color;
+      tempoSlider.style.setProperty('--bpm-thumb', color);
       tempoInput.style.borderColor = color;
     }
 
@@ -2277,14 +2373,22 @@
     let multiSelectMode = false;
     let selectedStepRefs = [];
 
-    // ---- Undo stack ----------------------------------------------------
+    // ---- Undo / Redo stacks --------------------------------------------
     // Snapshots the chunks of state that user-mutating actions affect so
-    // Cmd/Ctrl+Z (or the Undo() helper) can roll back the most recent one
-    // and surface a toast describing what was undone.
+    // Cmd/Ctrl+Z can roll back the most recent one and Cmd/Ctrl+Shift+Z
+    // can replay it. A new mutation clears redoStack — branching past an
+    // undo abandons the redone-future, matching standard editor behavior.
     const UNDO_LIMIT = 60;
     const undoStack = [];
-    function snapshotForUndo(label) {
-      undoStack.push({
+    const redoStack = [];
+    function refreshHistoryButtons() {
+      const u = document.getElementById('undo-btn');
+      const r = document.getElementById('redo-btn');
+      if (u) u.disabled = undoStack.length === 0;
+      if (r) r.disabled = redoStack.length === 0;
+    }
+    function captureSnapshot(label) {
+      return {
         label,
         sequence: sequence.map(cloneStep),
         selectedStepRefIdxs: selectedStepRefs.map(r => sequence.indexOf(r)),
@@ -2298,14 +2402,11 @@
         noteLength,
         stepSubdivision,
         bpm: parseInt(tempoInput?.value, 10) || 120,
-      });
-      while (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      };
     }
-    function performUndo() {
-      const snap = undoStack.pop();
-      if (!snap) return;
+    function applySnapshot(snap) {
       stopSequence();
-      sequence = snap.sequence;
+      sequence = snap.sequence.map(cloneStep);
       // Restore selection from the indices recorded at snapshot time. After
       // the sequence array has been replaced, those indices point into the
       // newly-restored array, so we read the refs back out.
@@ -2343,40 +2444,65 @@
       syncStepEditorFromSelection();
       renderSequence();
       renderSavedSequences();
-      showUndoToast(snap.label);
     }
-    function showUndoToast(label) {
+    function snapshotForUndo(label) {
+      undoStack.push(captureSnapshot(label));
+      while (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      redoStack.length = 0;
+      refreshHistoryButtons();
+    }
+    function performUndo() {
+      const snap = undoStack.pop();
+      if (!snap) { refreshHistoryButtons(); return; }
+      redoStack.push(captureSnapshot(snap.label));
+      while (redoStack.length > UNDO_LIMIT) redoStack.shift();
+      applySnapshot(snap);
+      showHistoryToast('Undone: ' + (snap.label || 'last action'));
+      refreshHistoryButtons();
+    }
+    function performRedo() {
+      const snap = redoStack.pop();
+      if (!snap) { refreshHistoryButtons(); return; }
+      undoStack.push(captureSnapshot(snap.label));
+      while (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      applySnapshot(snap);
+      showHistoryToast('Redone: ' + (snap.label || 'last action'));
+      refreshHistoryButtons();
+    }
+    function showHistoryToast(text) {
       let toast = document.getElementById('undo-toast');
       if (!toast) {
         toast = document.createElement('div');
         toast.id = 'undo-toast';
         document.body.appendChild(toast);
       }
-      toast.textContent = 'Undone: ' + (label || 'last action');
+      toast.textContent = text;
       toast.classList.remove('hide');
       // Force reflow so the next class change re-triggers the transition.
       // eslint-disable-next-line no-unused-expressions
       toast.offsetWidth;
       toast.classList.add('show');
-      clearTimeout(showUndoToast._t);
-      showUndoToast._t = setTimeout(() => {
+      clearTimeout(showHistoryToast._t);
+      showHistoryToast._t = setTimeout(() => {
         toast.classList.remove('show');
       }, 2200);
     }
     // Wrap a state-mutating user action so it can be undone.
     function withUndo(label, fn) {
       snapshotForUndo(label);
-      try { fn(); } catch (e) { undoStack.pop(); throw e; }
+      try { fn(); } catch (e) { undoStack.pop(); refreshHistoryButtons(); throw e; }
     }
     document.addEventListener('keydown', (e) => {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      const isUndo = (e.key === 'z' || e.key === 'Z') && (e.metaKey || e.ctrlKey) && !e.shiftKey;
-      if (isUndo) {
-        e.preventDefault();
-        performUndo();
-      }
+      const isMeta = e.metaKey || e.ctrlKey;
+      if (!isMeta || (e.key !== 'z' && e.key !== 'Z')) return;
+      e.preventDefault();
+      if (e.shiftKey) performRedo();
+      else            performUndo();
     });
+    document.getElementById('undo-btn').addEventListener('click', performUndo);
+    document.getElementById('redo-btn').addEventListener('click', performRedo);
     function lastSelectedStep() {
       if (selectedStepRefs.length === 0) return null;
       return selectedStepRefs[selectedStepRefs.length - 1];
@@ -2406,6 +2532,20 @@
         if (noteLengthSel) noteLengthSel.value = String(noteLength);
         if (subSel) subSel.value = String(stepSubdivision);
       }
+      refreshHoldEnabled();
+    }
+    // Hold is meaningful only when Step Div is 1/1 (value=4). Below 1/1 the
+    // step is already shorter than a beat, so multiplying its length leads
+    // to mismatched timings — easier to lock the control out than to debug
+    // the resulting groove.
+    function refreshHoldEnabled() {
+      const noteLengthSel = document.getElementById('note-length');
+      const subSel = document.getElementById('subdivision-select');
+      if (!noteLengthSel || !subSel) return;
+      const isWhole = parseFloat(subSel.value) === 4;
+      noteLengthSel.disabled = !isWhole;
+      const label = noteLengthSel.closest('.note-length-label');
+      if (label) label.style.opacity = isWhole ? '' : '0.4';
     }
     function setSelectedStep(idx) {
       // Single-select replacement (multi off) or "set primary" (multi on
@@ -2683,16 +2823,8 @@
         <div class="sm-title">Condense to subsequence</div>
         <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.8rem;padding:4px 0 12px;">
           Wrap all ${sequence.length} step${sequence.length === 1 ? '' : 's'} into a single ▤ chip.
-          Hold and Div below will be applied to every step inside the new subsequence.
+          Div below will be applied to every step inside the new subsequence.
         </div>
-        <div class="sm-section-label">Hold (steps held)</div>
-        <select id="cond-hold" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;">
-          <option value="1" selected>1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="8">8</option>
-        </select>
         <div class="sm-section-label">Div (subdivision)</div>
         <select id="cond-div" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;">
           <option value="4">1/1</option>
@@ -2712,30 +2844,26 @@
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-      const holdSel = modal.querySelector('#cond-hold');
       const divSel  = modal.querySelector('#cond-div');
       // Reflect the workspace's current Div as a useful default.
       divSel.value = String(stepSubdivision);
 
       modal.querySelector('#cond-rand').addEventListener('click', () => {
-        const holds = [1, 2, 3, 4, 8];
         const divs  = [4, 2, 1, 0.5, 0.25, 0.125];
-        holdSel.value = String(holds[Math.floor(Math.random() * holds.length)]);
         divSel.value  = String(divs[Math.floor(Math.random() * divs.length)]);
       });
 
       modal.querySelector('#cond-cancel').addEventListener('click', () => overlay.remove());
 
       modal.querySelector('#cond-apply').addEventListener('click', () => {
-        const newHold = parseInt(holdSel.value) || 1;
         const newDiv  = parseFloat(divSel.value) || 1;
         snapshotForUndo('Condense');
         stopSequence();
         const subSteps = sequence.map(s => {
           const c = cloneStep(s);
-          c.duration = newHold;
+          c.duration = 1;
           c.subdivision = newDiv;
           return c;
         });
@@ -2820,20 +2948,9 @@
       }
     });
 
-    function applyDivToAll(steps, value) {
-      steps.forEach(s => {
-        if (s.isSub && Array.isArray(s.subSteps)) {
-          applyDivToAll(s.subSteps, value);
-        } else {
-          s.subdivision = value;
-        }
-      });
-    }
-
     // Step Div: edits the selected steps' subdivisions (all of them when
     // Multi is on; just the primary otherwise). With no selection, sets
-    // the global next-note default. All Div (below) is the dedicated
-    // whole-sequence override.
+    // the global next-note default.
     document.getElementById('subdivision-select').addEventListener('change', (e) => {
       const v = parseFloat(e.target.value) || 1;
       if (selectedStepRefs.length > 0) {
@@ -2844,23 +2961,7 @@
       } else {
         stepSubdivision = v;
       }
-    });
-
-    document.getElementById('all-div-select').addEventListener('change', (e) => {
-      const raw = e.target.value;
-      if (!raw) return; // placeholder "—" picked
-      const v = parseFloat(raw) || 1;
-      if (sequence.length > 0) snapshotForUndo('All Div');
-      stepSubdivision = v;
-      const subSel = document.getElementById('subdivision-select');
-      if (subSel) subSel.value = String(v);
-      if (sequence.length > 0) {
-        applyDivToAll(sequence, v);
-        renderSequence();
-      }
-      // Reset the "All Div" select back to its placeholder so the same value
-      // can be reapplied later without first picking a different option.
-      e.target.value = '';
+      refreshHoldEnabled();
     });
 
     document.getElementById('multi-select-toggle').addEventListener('change', (e) => {
@@ -2949,6 +3050,7 @@
       document.getElementById('note-length').value = '1';
       document.getElementById('subdivision-select').value = '1';
       document.getElementById('save-btn').disabled = true;
+      refreshHoldEnabled();
 
       rebuildGrid();
       renderSequence();
@@ -2960,7 +3062,6 @@
     function randomFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
     const _RAND_SUBS = [4, 2, 1, 1, 0.5, 0.5, 0.5, 0.25, 0.25, 0.125];
-    const _RAND_DURS = [1, 1, 1, 1, 2, 2, 3, 4, 8];
 
     function sampleWithoutReplacement(sourceLen, k) {
       const pool = [];
@@ -3076,7 +3177,7 @@
       return out;
     }
 
-    function generateRandomSequence(numSteps, maxChordSize, maxStepLength, includeRests = true, includeChords = true, scaleName = null, tones = null) {
+    function generateRandomSequence(numSteps, maxChordSize, includeRests = true, includeChords = true, scaleName = null, tones = null) {
       // Filter the chromatic note grid down to scale tones — `pool` holds
       // the cell indices we're allowed to sample from.
       const intervals = (scaleName && SCALES[scaleName]) || SCALES['chromatic'];
@@ -3089,13 +3190,10 @@
       const tonePool = (Array.isArray(tones) && tones.length > 0) ? tones : SOUNDS;
       const out = [];
       const chordAllowed = includeChords && maxChordSize > 1 && poolSize > 1;
-      const maxLen = Math.max(1, maxStepLength || 1);
-      const durPool = _RAND_DURS.filter(d => d <= maxLen);
-      if (durPool.length === 0) durPool.push(1);
       for (let s = 0; s < numSteps; s++) {
         const roll = Math.random();
         const subdivision = randomFrom(_RAND_SUBS);
-        const duration    = randomFrom(durPool);
+        const duration    = 1;
         if (includeRests && roll < 0.18) {
           out.push({ freq: null, label: '—', cellIndex: null, duration, subdivision });
           continue;
@@ -3160,8 +3258,12 @@
           <select id="rand-scale" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#a0aec0;border-radius:6px;font-family:inherit;font-size:0.85rem;"></select>
         </div>
         <div class="sm-section-label">Tones to use</div>
+        <label style="display:flex;align-items:center;gap:8px;padding:0 0 6px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="rand-tones-useall" />
+          Use all tones
+        </label>
         <div class="sm-waves" id="rand-tones"></div>
-        <div style="display:flex;gap:8px;padding:4px 0 4px;">
+        <div style="display:flex;gap:8px;padding:4px 0 4px;" id="rand-tones-quickrow">
           <button type="button" id="rand-tones-all" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">All</button>
           <button type="button" id="rand-tones-none" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">None</button>
         </div>
@@ -3177,13 +3279,13 @@
           Replaces the current in-progress sequence. Save first to keep the existing one.
         </div>
         <div class="sm-footer">
-          <button class="sm-preview">Cancel</button>
-          <button class="sm-apply">Generate</button>
+          <button type="button" class="sm-preview" id="rand-cancel">Cancel</button>
+          <button type="button" class="sm-apply" id="rand-generate">Generate</button>
         </div>
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
       const stepsIn = modal.querySelector('#rand-steps');
       const stepsOut = modal.querySelector('#rand-steps-v');
@@ -3216,10 +3318,10 @@
       randScaleSel.value = currentScale;
 
       // Tone selector — every built-in synth + any loaded sample is a toggle.
-      // Default: built-in synths selected, samples (if any) opt-in.
+      // Default: only Sine is selected; "Use all tones" overrides the grid.
       const tonesRow = modal.querySelector('#rand-tones');
       const toneOptions = getAllSoundOptions();
-      const selectedTones = new Set(SOUNDS);
+      const selectedTones = new Set(['sine']);
       const toneButtons = new Map();
       toneOptions.forEach(opt => {
         const btn = document.createElement('button');
@@ -3249,20 +3351,36 @@
         toneButtons.forEach(btn => btn.classList.remove('active'));
       });
 
-      modal.querySelector('.sm-preview').addEventListener('click', () => overlay.remove());
-      modal.querySelector('.sm-apply').addEventListener('click', () => {
+      // "Use all tones" overrides the grid — dim it while checked so the
+      // user sees the individual selection is bypassed.
+      const useAllTones = modal.querySelector('#rand-tones-useall');
+      const quickRow    = modal.querySelector('#rand-tones-quickrow');
+      const syncUseAllTones = () => {
+        const on = useAllTones.checked;
+        tonesRow.style.opacity = on ? '0.4' : '';
+        tonesRow.style.pointerEvents = on ? 'none' : '';
+        quickRow.style.opacity = on ? '0.4' : '';
+        quickRow.style.pointerEvents = on ? 'none' : '';
+      };
+      useAllTones.addEventListener('change', syncUseAllTones);
+      syncUseAllTones();
+
+      modal.querySelector('#rand-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('#rand-generate').addEventListener('click', () => {
         const n = Math.max(1, Math.min(64, parseInt(stepsIn.value) || 16));
         const c = Math.max(1, Math.min(8,  parseInt(chordIn.value) || 3));
         const includeRests  = !!modal.querySelector('#rand-rests').checked;
         const includeChords = !!modal.querySelector('#rand-chords').checked;
         const scaleName     = modal.querySelector('#rand-scale').value;
-        const tones         = Array.from(selectedTones);
+        const tones         = useAllTones.checked
+          ? toneOptions.map(o => o.value)
+          : Array.from(selectedTones);
         const text          = modal.querySelector('#rand-text').value.trim();
         snapshotForUndo(text ? 'Text → sequence' : 'Random sequence');
         stopSequence();
         sequence = text
           ? generateTextSequence(text, scaleName, tones, includeRests)
-          : generateRandomSequence(n, c, 4, includeRests, includeChords, scaleName, tones);
+          : generateRandomSequence(n, c, includeRests, includeChords, scaleName, tones);
         pendingChord = [];
         insertionPoint = null;
 
@@ -3292,13 +3410,13 @@
           Reset the UI to default, or keep your current settings?
         </div>
         <div class="sm-footer">
-          <button class="sm-keep">Keep current</button>
-          <button class="sm-reset">Reset to default</button>
+          <button type="button" class="sm-keep">Keep current</button>
+          <button type="button" class="sm-reset">Reset to default</button>
         </div>
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
       modal.querySelector('.sm-keep').addEventListener('click', () => overlay.remove());
       modal.querySelector('.sm-reset').addEventListener('click', () => {
         resetUIToDefault();
@@ -3460,10 +3578,6 @@
 
       renderSequence();
       renderSavedSequences();
-
-      if (document.getElementById('clear-after-save')?.checked) {
-        resetGridToDefault();
-      }
     });
 
     // ---- Audio recording (mic → saved as an 'audio' sequence) ----
@@ -3548,34 +3662,72 @@
     document.getElementById('random-btn').addEventListener('click', showRandomDialog);
 
     // ---- Song presets ----
-    // Opening of Vivaldi's "Spring" (Four Seasons) — a distilled E-major
-    // statement of the famous ritornello in quarter-note steps. Not a strict
-    // transcription, but the joyful contour reads as Vivaldi at first listen.
+    // Each entry is one of:
+    //   null               → rest at the preset's subdivision
+    //   'NoteName'         → note at the preset's subdivision (duration 1)
+    //   { n, d }           → note with custom duration (in subdivision units)
+    // Themes are reductions, not strict transcriptions — the goal is a
+    // contour the listener recognizes within the first few bars.
     const VIVALDI_SPRING_NOTES = [
       'E5', 'E5', null, 'E5',
       'E5', null, 'F#5', 'E5',
       'D#5', 'E5', null, 'E5',
       'F#5', 'E5', 'D#5', 'E5',
     ];
+    // Bach — Toccata and Fugue in D minor (BWV 565), opening flourish:
+    // mordent on A, then the descending D-minor cadence.
+    const BACH_TOCCATA_NOTES = [
+      'A5', 'G5', { n: 'A5', d: 3 }, null,
+      'G5', 'F5', 'E5', 'D5',
+      'C#5', { n: 'D5', d: 3 }, null, null,
+    ];
+    // Mozart — Eine kleine Nachtmusik, K. 525, opening violin theme:
+    // ascending G-major arpeggio + answering descent in D.
+    const MOZART_NACHTMUSIK_NOTES = [
+      'G5', 'D5', 'G5', 'D5',
+      'G5', 'D5', 'G5', 'B5',
+      'A5', 'D5', 'A5', 'D5',
+      'A5', 'D5', 'A5', 'C6',
+    ];
+    // Beethoven — Symphony No. 5, Op. 67, opening "fate motif":
+    // three short notes + one long, transposed down a step on the repeat.
+    // sub=0.5 so the three "shorts" are eighth notes against the half-note hold.
+    const BEETHOVEN_5TH_NOTES = [
+      'G4', 'G4', 'G4', { n: 'Eb4', d: 4 }, null,
+      'F4', 'F4', 'F4', { n: 'D4', d: 4 }, null,
+    ];
+    // Miles Davis — "So What" (Kind of Blue, 1959): D Dorian bass call,
+    // Em7 chord-arpeggio response. Captures the famous two-chord shape
+    // that defines the head.
+    const MILES_SO_WHAT_NOTES = [
+      { n: 'D4', d: 2 }, null, 'A4', 'G4', null, null, null, null,
+      'E4', 'G4', 'A4', { n: 'D5', d: 2 }, null, null, null, null,
+    ];
     function defaultStepParams(type) {
       return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
     }
     function loadSongPreset(name) {
       let src;
-      if (name === 'vivaldi') src = { notes: VIVALDI_SPRING_NOTES, bpm: 120, sub: 1, sound: 'sawtooth' };
+      if      (name === 'vivaldi')   src = { notes: VIVALDI_SPRING_NOTES,       bpm: 120, sub: 1,   sound: 'sawtooth' };
+      else if (name === 'bach')      src = { notes: BACH_TOCCATA_NOTES,         bpm: 100, sub: 1,   sound: 'square'   };
+      else if (name === 'mozart')    src = { notes: MOZART_NACHTMUSIK_NOTES,    bpm: 130, sub: 1,   sound: 'sawtooth' };
+      else if (name === 'beethoven') src = { notes: BEETHOVEN_5TH_NOTES,        bpm: 108, sub: 0.5, sound: 'sawtooth' };
+      else if (name === 'miles')     src = { notes: MILES_SO_WHAT_NOTES,        bpm: 130, sub: 1,   sound: 'sine'     };
       else return;
       snapshotForUndo('Load ' + name);
       stopSequence();
       const params = defaultStepParams(src.sound);
       sequence = src.notes.map(n => {
         if (n == null) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: src.sub };
+        const noteName = (typeof n === 'object') ? n.n : n;
+        const dur      = (typeof n === 'object') ? (n.d || 1) : 1;
         return {
-          freq: Tone.Frequency(n).toFrequency(),
-          label: n,
+          freq: Tone.Frequency(noteName).toFrequency(),
+          label: noteName,
           cellIndex: null,
           sound: src.sound,
           params: { ...params },
-          duration: 1,
+          duration: dur,
           subdivision: src.sub,
         };
       });
@@ -3587,6 +3739,7 @@
       stepSubdivision = src.sub;
       const subSel = document.getElementById('subdivision-select');
       if (subSel) subSel.value = String(src.sub);
+      refreshHoldEnabled();
       renderSequence();
       renderSavedSequences();
       document.getElementById('save-btn').disabled = false;
@@ -3778,6 +3931,21 @@
       (item.steps || []).forEach(s => { totalMs += stepDurationMs(s, bpm, itemSub); });
       return totalMs;
     }
+    // Flatten a step list into leaf steps for track playback/export. Sub
+    // wrappers carry no audio of their own (duration 1, no subdivision), and
+    // their children already fall back to itemSub for subdivision, so the
+    // flattened list plays back identically to walking the tree.
+    function flattenItemSteps(steps) {
+      const out = [];
+      (steps || []).forEach(s => {
+        if (s && s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0) {
+          out.push(...flattenItemSteps(s.subSteps));
+        } else if (s) {
+          out.push(s);
+        }
+      });
+      return out;
+    }
     // 1 grid cell = 500 ms (a quarter note at 120 BPM). Picked so a typical
     // 16-step / 1/4-div / 120-BPM sequence still renders ≈16 cells wide,
     // matching the previous step-count layout.
@@ -3868,7 +4036,12 @@
         playTrackItem(trackIdx, itemIdx + 1, 0);
         return;
       }
-      const step = item.steps[stepIdx];
+      const flatSteps = flattenItemSteps(item.steps);
+      if (flatSteps.length === 0) {
+        playTrackItem(trackIdx, itemIdx + 1, 0);
+        return;
+      }
+      const step = flatSteps[stepIdx];
       const stepSub = (step.subdivision != null) ? step.subdivision : (item.subdivision || 1);
       const stepMs = Math.round(60000 / (item.bpm || 120) * stepSub);
       const waitMs = stepMs * (step.duration || 1);
@@ -3887,7 +4060,7 @@
 
       track.timer = setTimeout(() => {
         const nextStep = stepIdx + 1;
-        if (nextStep < item.steps.length) {
+        if (nextStep < flatSteps.length) {
           playTrackItem(trackIdx, itemIdx, nextStep);
         } else {
           playTrackItem(trackIdx, itemIdx + 1, 0);
@@ -4102,19 +4275,7 @@
     async function renderTracksToBuffer() {
       const durationsMs = tracks.map(track => {
         let ms = 0;
-        (track.items || []).forEach(item => {
-          if (item.type === 'audio') {
-            ms += (item.durationSec || 0) * 1000;
-            return;
-          }
-          const itemBpm = item.bpm || 120;
-          const itemSub = item.subdivision || 1;
-          (item.steps || []).forEach(s => {
-            const sSub = (s.subdivision != null) ? s.subdivision : itemSub;
-            const sMs = Math.round(60000 / itemBpm * sSub);
-            ms += sMs * (s.duration || 1);
-          });
-        });
+        (track.items || []).forEach(item => { ms += itemDurationMs(item); });
         return ms;
       });
       const totalMs = Math.max(...durationsMs, 1000);
@@ -4135,7 +4296,7 @@
             }
             const itemBpm = item.bpm || 120;
             const itemSub = item.subdivision || 1;
-            (item.steps || []).forEach(step => {
+            flattenItemSteps(item.steps).forEach(step => {
               const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
               const stepMs = Math.round(60000 / itemBpm * stepSub);
               const durMs  = stepMs * (step.duration || 1);
@@ -4327,8 +4488,8 @@
         <div class="sm-title">Rename sequence</div>
         <input type="text" class="rename-input" maxlength="40" />
         <div class="sm-footer">
-          <button class="sm-preview sm-cancel">Cancel</button>
-          <button class="sm-apply sm-save">Save</button>
+          <button type="button" class="sm-preview sm-cancel">Cancel</button>
+          <button type="button" class="sm-apply sm-save">Save</button>
         </div>
       `;
       overlay.appendChild(modal);
@@ -4352,7 +4513,7 @@
         if (e.key === 'Enter') commit();
         else if (e.key === 'Escape') overlay.remove();
       });
-      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     }
 
     function savedBlockActions(seqIndex) {
@@ -4735,7 +4896,7 @@
         copyBtn.classList.toggle('open', open);
       });
 
-      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     }
 
     // ---- Step long-press + editor ----
@@ -4926,7 +5087,11 @@
 
     function bindStepLongPress(chip, stepIndex) {
       let lpt = null;
+      let startX = 0, startY = 0;
+      const MOVE_TOLERANCE = 8; // matches the drag system; ignores finger jitter
       chip.addEventListener('pointerdown', (e) => {
+        startX = e.clientX;
+        startY = e.clientY;
         lpt = setTimeout(() => {
           lpt = null;
           navigator.vibrate?.(40);
@@ -4970,7 +5135,12 @@
       const cancel = () => { clearTimeout(lpt); lpt = null; };
       chip.addEventListener('pointerup',     cancel);
       chip.addEventListener('pointercancel', cancel);
-      chip.addEventListener('pointermove',   cancel);
+      chip.addEventListener('pointermove', (e) => {
+        if (!lpt) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.abs(dx) > MOVE_TOLERANCE || Math.abs(dy) > MOVE_TOLERANCE) cancel();
+      });
       chip.addEventListener('contextmenu',   (e) => e.preventDefault());
     }
 
@@ -5031,7 +5201,7 @@
       modal.className = 'sm-modal';
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) overlay.remove(); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
       if (step.chord) buildChordEditor(modal, stepIndex, overlay);
       else             buildNoteEditor(modal, stepIndex, overlay);
     }
@@ -5526,7 +5696,7 @@
       notes.forEach((note, i) => {
         const cell = document.createElement('div');
         cell.className = 'cell';
-        cell.innerHTML = `<span>${note.label}</span>`;
+        cell.innerHTML = `<span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span>`;
 
         cell.addEventListener('click', () => {
           const params = { ...cellParams[i] };
@@ -5562,6 +5732,7 @@
     }
 
     rebuildGrid();
+    refreshHoldEnabled();
     loadSampleManifest();
     loadImportedSamples();
 
@@ -5767,8 +5938,15 @@
       refreshGridStateDropdown('');
     });
 
-    // Reset only the grid bits (not tracks / recording / preview state) —
-    // used after Save when "Clear after save" is on.
+    document.getElementById('grid-reset-btn').addEventListener('click', () => {
+      resetGridToDefault();
+      // Shuffle palette right after — visual confirmation that the reset
+      // happened, since defaults alone often look identical to the prior
+      // state on screens that haven't been heavily customized.
+      shuffleColors();
+    });
+
+    // Reset only the grid bits (not tracks / recording / preview state).
     function resetGridToDefault() {
       rootIdx = 0;
       baseOctave = 4;
@@ -5795,16 +5973,6 @@
 
       rebuildGrid();
     }
-
-    // ---- "Clear after save" toggle (persisted) ----
-    (function initClearAfterSave() {
-      const cb = document.getElementById('clear-after-save');
-      if (!cb) return;
-      cb.checked = localStorage.getItem('sounds-clear-after-save') === '1';
-      cb.addEventListener('change', () => {
-        localStorage.setItem('sounds-clear-after-save', cb.checked ? '1' : '0');
-      });
-    })();
 
     // ---- Grid controls ----
     (function initGridControls() {

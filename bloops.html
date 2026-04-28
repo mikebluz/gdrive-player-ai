@@ -1779,6 +1779,7 @@
               const sel = cell.querySelector('.cell-sound-select');
               if (sel) sel.value = cellSounds[idx];
             });
+            refreshAllCellFreqLabels();
           }
 
           if (saved.loopMode != null) {
@@ -4831,6 +4832,7 @@
         cellSounds[noteIndex] = p.type;
         const sel = cells[noteIndex]?.querySelector('.cell-sound-select');
         if (sel) sel.value = p.type;
+        updateCellFreqLabel(noteIndex);
         overlay.remove();
       });
 
@@ -4872,6 +4874,7 @@
           cellSounds[idx] = p.type;
           const sel = cells[idx]?.querySelector('.cell-sound-select');
           if (sel) sel.value = p.type;
+          updateCellFreqLabel(idx);
         });
       }
 
@@ -5685,6 +5688,27 @@
       document.documentElement.style.setProperty('--rest-color', restColor);
     }
 
+    // Effective frequency for a cell after applying its detune (cents).
+    // Used by the cell-freq label so users see what they'll actually hear,
+    // not the untuned base frequency.
+    function tunedCellFreq(idx) {
+      const base = notes[idx]?.freq;
+      if (base == null) return null;
+      const cents = cellParams[idx]?.detune || 0;
+      return base * Math.pow(2, cents / 1200);
+    }
+    function updateCellFreqLabel(idx) {
+      const cell = cells[idx];
+      if (!cell) return;
+      const freq = tunedCellFreq(idx);
+      if (freq == null) return;
+      const label = cell.querySelector('.cell-freq');
+      if (label) label.textContent = `${Math.round(freq)} Hz`;
+    }
+    function refreshAllCellFreqLabels() {
+      cells.forEach((_, idx) => updateCellFreqLabel(idx));
+    }
+
     function rebuildGrid() {
       notes = computeNotes();
       const grid = document.getElementById('grid');
@@ -5886,6 +5910,7 @@
           && Array.isArray(state.cellParams) && state.cellParams.length === cellParams.length) {
         cellSounds = [...state.cellSounds];
         cellParams = state.cellParams.map(p => ({ ...p }));
+        refreshAllCellFreqLabels();
       }
     }
     function refreshGridStateDropdown(selectedName = '') {

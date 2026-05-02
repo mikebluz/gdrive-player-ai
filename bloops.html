@@ -1321,6 +1321,26 @@
       overflow-y: auto;
       max-height: 240px;
     }
+    /* Mixdown — Export + Share live in their own row below tracks so they
+       don't compete with per-track controls in the tracks header. */
+    .mixdown-section {
+      background: #050510;
+      border-top: 3px solid #000;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .mixdown-label {
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-right: 6px;
+    }
     .tracks-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
       flex-wrap: wrap;
@@ -1343,8 +1363,6 @@
         font-size: 0.85rem;
       }
       .tracks-header #add-track-btn,
-      .tracks-header #tracks-export-btn,
-      .tracks-header #tracks-share-btn,
       .tracks-header #tracks-loop-all,
       .tracks-header #tracks-back-btn {
         padding: 4px 9px;
@@ -1353,7 +1371,7 @@
       }
       .tracks-header #add-track-btn { font-size: 0; }
       .tracks-header #add-track-btn::before {
-        content: '+ Track'; font-size: 0.7rem;
+        content: '+ New'; font-size: 0.7rem;
       }
     }
     #tracks-title-btn {
@@ -2148,11 +2166,15 @@
       <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
       <button id="tracks-countin-btn" type="button" title="When on, recording starts after a 4-beat count-in at the workspace tempo">Count-in</button>
       <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
-      <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
-      <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
-      <button id="add-track-btn">+ Add Track</button>
+      <button id="add-track-btn" title="Create a new track">+ New</button>
     </div>
     <div id="tracks-container"></div>
+  </div>
+
+  <div class="mixdown-section">
+    <span class="mixdown-label">Mixdown</span>
+    <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
+    <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
   </div>
 
   <div class="songs-bank" id="songs-bank">
@@ -3438,9 +3460,35 @@
       document.getElementById('rest-bar').classList.remove('active-loop');
     }
 
+    // Tone.js schedules audio in the future by `Tone.context.lookAhead`
+    // seconds (default ~0.1s) so the audio thread has lead-time to render
+    // without underruns. Visuals run instantly on the JS thread, which
+    // makes them appear ~lookAhead ahead of the audio. We delay every
+    // highlight update by that same lookAhead so the chip + cell flash
+    // line up with the moment the user actually hears the note.
+    let _visualTimers = [];
+    function visualLookAheadMs() {
+      const la = (typeof Tone !== 'undefined' && Tone.context && Tone.context.lookAhead) || 0;
+      return Math.max(0, la * 1000);
+    }
+    function scheduleVisual(fn) {
+      const ms = visualLookAheadMs();
+      if (ms <= 0) { fn(); return; }
+      const t = setTimeout(() => {
+        _visualTimers = _visualTimers.filter(x => x !== t);
+        fn();
+      }, ms);
+      _visualTimers.push(t);
+    }
+    function clearVisualTimers() {
+      _visualTimers.forEach(t => clearTimeout(t));
+      _visualTimers = [];
+    }
+
     function stopSequence() {
       clearTimeout(sequenceTimer);
       sequenceTimer = null;
+      clearVisualTimers();
       clearHighlights();
       renderSequence();
       document.getElementById('play-btn').textContent = '▶';
@@ -3467,19 +3515,30 @@
       const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       const bpm = parseInt(tempoInput.value) || 120;
       const waitMs = Math.round(60000 / bpm * stepSub) * stepDur;
-      clearHighlights();
+      // Audio first — Tone.js schedules at currentTime + lookAhead so the
+      // sound emits a beat ahead. Highlights are deferred by that same
+      // lookAhead via scheduleVisual so chip + cell flashes hit the user's
+      // ears and eyes at the same moment.
       if (step.chord) {
         const size = step.chord.length;
         step.chord.forEach(n => {
           playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs);
-          if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
         });
       } else if (step.freq != null) {
         playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs);
-        if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
-      } else {
-        document.getElementById('rest-bar').classList.add('active-loop');
       }
+      scheduleVisual(() => {
+        clearHighlights();
+        if (step.chord) {
+          step.chord.forEach(n => {
+            if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
+          });
+        } else if (step.freq != null) {
+          if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
+        } else {
+          document.getElementById('rest-bar').classList.add('active-loop');
+        }
+      });
       sequenceTimer = setTimeout(onDone, waitMs);
     }
 
@@ -3558,9 +3617,12 @@
       // rebuild took, which was especially noticeable between the first
       // two notes (no synth caching yet, render runs cold). With audio
       // scheduled first and a cheap class-toggle for the highlight, the
-      // setTimeout-driven gap stays close to the intended waitMs.
+      // setTimeout-driven gap stays close to the intended waitMs. The
+      // chip activation is deferred via scheduleVisual (matches the
+      // cell-highlight delay inside playStepCB) so it lines up with the
+      // moment the audio is actually emitted.
       playStepCB(sequence[index], () => advanceAfterStep(index));
-      setActiveSequenceChip(index);
+      scheduleVisual(() => setActiveSequenceChip(index));
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {
@@ -5359,7 +5421,7 @@
       if (tracks.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'track-empty';
-        empty.textContent = 'No tracks yet. Click "+ Add Track" to start.';
+        empty.textContent = 'No tracks yet. Click "+ New" to start.';
         container.appendChild(empty);
         return;
       }

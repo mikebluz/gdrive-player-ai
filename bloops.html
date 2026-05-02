@@ -55,6 +55,115 @@
     }
     .menubar > * { flex-shrink: 0; }
 
+    /* Right-anchored menubar pills — FX takes the auto-margin so the whole
+       FX→Tone cluster floats to the menubar's far end on desktop, then
+       collapses into the scroll row on narrow viewports. */
+    #fx-menu-btn {
+      margin-left: auto;
+    }
+    #fx-menu-btn,
+    #tone-menu-btn {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #fx-menu-btn:hover,
+    #tone-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #fx-menu-btn.open,
+    #tone-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+    .tone-panel {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 10px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      padding: 10px;
+      z-index: 9000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      min-width: 160px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+    }
+    .tone-panel.open { display: flex; }
+    .tone-opt {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }
+    .tone-opt:hover { border-color: #4299e1; color: #4299e1; }
+
+    /* Global FX panel — three slider rows for reverb / delay / distortion.
+       Same panel chrome as the tone dropdown so the menubar feels uniform. */
+    .fx-panel {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 10px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      padding: 12px 14px;
+      z-index: 9000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      min-width: 220px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+    }
+    .fx-panel.open { display: flex; }
+    .fx-control { display: flex; flex-direction: column; gap: 4px; }
+    .fx-control-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.75rem;
+      color: #a0aec0;
+    }
+    .fx-val { color: #e2e8f0; font-weight: 600; }
+    .fx-control input[type=range] { width: 100%; accent-color: #4299e1; }
+    .fx-group-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #4a4a6a;
+      margin: 4px 0 -2px;
+    }
+    .fx-group-label:first-child { margin-top: 0; }
+    .fx-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+    .fx-reset {
+      padding: 4px 12px;
+      border: 1px solid #2d2d3f;
+      border-radius: 12px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .fx-reset:hover { border-color: #4299e1; color: #4299e1; }
+
     #grid-settings-btn {
       padding: 6px 14px;
       border: 1px solid #2d2d3f;
@@ -516,6 +625,7 @@
       color: #a0aec0;
       user-select: none;
       cursor: grab;
+      position: relative;
       flex-shrink: 0;
       overflow: hidden;
       white-space: pre-line;
@@ -683,6 +793,14 @@
     .btn-group--step.chord-active .btn-group-label {
       color: #d6bcfa;
     }
+    /* Highlight the Step section while a chip is selected — clicking a grid
+       cell will retune the selected step rather than appending a new one,
+       so the pink outline signals "you're editing, not creating". */
+    .btn-group--step.step-selected {
+      border-color: #ed64a6;
+      background: rgba(237, 100, 166, 0.10);
+    }
+    .btn-group--step.step-selected .btn-group-label { color: #fbb6ce; }
     .btn-group--step .note-length-label { color: #81e6d9; }
     .btn-group--step #note-length,
     .btn-group--step #subdivision-select,
@@ -890,7 +1008,6 @@
     }
     .undo-redo-pair > #undo-btn {
       border-radius: 20px 0 0 20px;
-      border-right: none;
     }
     .undo-redo-pair > #redo-btn {
       border-radius: 0 20px 20px 0;
@@ -996,6 +1113,25 @@
       overflow-y: auto;
       max-height: 160px;
     }
+    .saved-header {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+    #saved-clear-btn {
+      padding: 4px 12px;
+      border: 1px solid #2d2d3f;
+      border-radius: 12px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #saved-clear-btn:hover:not(:disabled) { border-color: #e53e3e; color: #fc8181; }
+    #saved-clear-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
     .saved-grid {
       display: grid;
@@ -1021,6 +1157,20 @@
     .saved-block.drag-over { outline: 2px solid #4299e1; }
     .seq-step.dragging { opacity: 0.35; cursor: grabbing; }
     .seq-step.drag-over { outline: 2px solid #4299e1; outline-offset: -1px; }
+    /* Pitch bend indicator — small arrow in the chip's top-right corner so
+       a bending step is recognizable at a glance without crowding the label. */
+    .seq-step.bend-up::after,
+    .seq-step.bend-down::after {
+      position: absolute;
+      top: 2px;
+      right: 4px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #f6ad55;
+      pointer-events: none;
+    }
+    .seq-step.bend-up::after   { content: '↗'; }
+    .seq-step.bend-down::after { content: '↘'; }
     .saved-block.active-seq { border-color: #4299e1; background: linear-gradient(135deg, #1a2a4a, #1e3a5a); }
 
     .saved-block-name {
@@ -1210,6 +1360,9 @@
     .track-loop.active { border-color: #38b2ac; color: #81e6d9; background: rgba(56,178,172,0.15); }
     .track-remove:hover { border-color: #e53e3e; color: #e53e3e; }
     .track-clear:hover { border-color: #e53e3e; color: #e53e3e; }
+    .track-eq { font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px; }
+    .track-eq:hover { border-color: #f6ad55; color: #fbd38d; }
+    .track-eq.active { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.12); }
     .track-name {
       color: #e2e8f0;
       font-family: 'Segoe UI', sans-serif;
@@ -1273,6 +1426,21 @@
       background: linear-gradient(135deg, #2b6cb0, #4299e1);
       border-color: #4299e1;
     }
+    /* Silent placeholder — left behind when a saved sequence is deleted so
+       items after it keep their absolute time position in the track. */
+    .track-item.silent-item {
+      background: repeating-linear-gradient(
+        45deg,
+        #1a1a2e,
+        #1a1a2e 6px,
+        #15151f 6px,
+        #15151f 12px
+      );
+      border: 1px dashed #2d2d3f;
+      color: #4a4a6a;
+      font-style: italic;
+    }
+    .track-item.silent-item:hover { border-color: #4a4a6a; }
     .track-empty {
       color: #4a4a6a;
       font-family: 'Segoe UI', sans-serif;
@@ -1328,12 +1496,12 @@
     }
 
     .sm-modal {
-      background: #1a1a2e;
+      background: #050510;
       border: 1px solid #2d2d3f;
-      border-radius: 16px;
-      padding: 24px;
-      width: min(360px, 92vw);
-      box-shadow: 0 16px 48px rgba(0,0,0,0.65);
+      border-radius: 14px;
+      padding: 18px 18px 16px;
+      width: min(380px, 92vw);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(0, 191, 255, 0.06);
     }
 
     .sm-title {
@@ -1401,7 +1569,67 @@
     }
     .rename-input:focus { outline: none; border-color: #4299e1; }
 
-    .sm-modal { max-height: 85vh; overflow-y: auto; }
+    /* Modal scrolling — touch-action: pan-y tells iOS the content scrolls
+       vertically so a finger drag inside the modal scrolls the modal rather
+       than getting captured by the body. overscroll-behavior keeps scroll
+       chains from leaking out into the page underneath. */
+    .sm-modal {
+      max-height: 85vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    .sm-modal::-webkit-scrollbar { width: 6px; }
+    .sm-modal::-webkit-scrollbar-track { background: transparent; }
+    .sm-modal::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 3px; }
+
+    /* Collapsible "fold" sections — group related controls under a click-to-
+       expand summary header, matching the menubar's panel aesthetic so the
+       editor reads as a stack of compact dropdowns rather than a tall list. */
+    .sm-fold {
+      margin-bottom: 8px;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      background: #0a0a14;
+      overflow: hidden;
+    }
+    .sm-fold[open] { border-color: #4299e1; }
+    .sm-fold > summary {
+      padding: 10px 14px;
+      cursor: pointer;
+      user-select: none;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #a0aec0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      list-style: none;
+    }
+    .sm-fold > summary::-webkit-details-marker { display: none; }
+    .sm-fold > summary::after {
+      content: '▾';
+      font-size: 0.7rem;
+      color: #4a4a6a;
+      transition: transform 0.15s ease;
+    }
+    .sm-fold[open] > summary { color: #e2e8f0; }
+    .sm-fold[open] > summary::after { transform: rotate(180deg); color: #4299e1; }
+    @media (hover: hover) {
+      .sm-fold > summary:hover { color: #4299e1; }
+      .sm-fold > summary:hover::after { color: #4299e1; }
+    }
+    .sm-fold-body {
+      padding: 12px 14px 14px;
+      border-top: 1px solid #2d2d3f;
+    }
+    .sm-fold-body .sm-waves { margin-bottom: 0; }
+    .sm-fold-body .sm-param:last-child { margin-bottom: 0; }
+    .sm-fold-body > .sm-section-label:first-child { margin-top: 0; }
 
     .sm-remove-step {
       padding: 6px 14px; border-radius: 18px;
@@ -1554,6 +1782,45 @@
         </div>
       </div>
     </div>
+    <button id="fx-menu-btn" type="button" title="Global effects (apply to every note)">FX ▾</button>
+    <div class="fx-panel" id="fx-panel">
+      <div class="fx-group-label">Reverb</div>
+      <div class="fx-control">
+        <div class="fx-control-row">Mix <span class="fx-val" id="fx-rev-v">0%</span></div>
+        <input type="range" id="fx-rev" min="0" max="100" value="0" />
+      </div>
+      <div class="fx-control">
+        <div class="fx-control-row">Size <span class="fx-val" id="fx-rev-size-v">70%</span></div>
+        <input type="range" id="fx-rev-size" min="0" max="100" value="70" />
+      </div>
+      <div class="fx-control">
+        <div class="fx-control-row">Tone <span class="fx-val" id="fx-rev-tone-v">50%</span></div>
+        <input type="range" id="fx-rev-tone" min="0" max="100" value="50" />
+      </div>
+      <div class="fx-group-label">Delay</div>
+      <div class="fx-control">
+        <div class="fx-control-row">Mix <span class="fx-val" id="fx-dly-v">0%</span></div>
+        <input type="range" id="fx-dly" min="0" max="100" value="0" />
+      </div>
+      <div class="fx-control">
+        <div class="fx-control-row">Time <span class="fx-val" id="fx-dly-time-v">250 ms</span></div>
+        <input type="range" id="fx-dly-time" min="20" max="1000" step="10" value="250" />
+      </div>
+      <div class="fx-control">
+        <div class="fx-control-row">Feedback <span class="fx-val" id="fx-dly-fb-v">40%</span></div>
+        <input type="range" id="fx-dly-fb" min="0" max="95" value="40" />
+      </div>
+      <div class="fx-group-label">Distortion</div>
+      <div class="fx-control">
+        <div class="fx-control-row">Amount <span class="fx-val" id="fx-dst-v">0%</span></div>
+        <input type="range" id="fx-dst" min="0" max="100" value="0" />
+      </div>
+      <div class="fx-actions">
+        <button type="button" id="fx-reset" class="fx-reset">Bypass</button>
+      </div>
+    </div>
+    <button id="tone-menu-btn" type="button" title="Apply a tone to every note">Tone ▾</button>
+    <div class="tone-panel" id="tone-panel"></div>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -1586,18 +1853,18 @@
         <select id="subdivision-select">
           <option value="4">1/1</option>
           <option value="2">1/2</option>
-          <option value="1" selected>1/4</option>
-          <option value="0.5">1/8</option>
+          <option value="1">1/4</option>
+          <option value="0.5" selected>1/8</option>
           <option value="0.25">1/16</option>
           <option value="0.125">1/32</option>
         </select>
       </label>
       <label class="note-length-label" title="Lay the sequence out as a fixed grid (chips per row)">Grid
         <select id="grid-cols-select">
-          <option value="0" selected>Off</option>
+          <option value="0">Off</option>
           <option value="4">4</option>
           <option value="6">6</option>
-          <option value="8">8</option>
+          <option value="8" selected>8</option>
           <option value="12">12</option>
           <option value="16">16</option>
         </select>
@@ -1638,6 +1905,9 @@
   </div>
 
   <div class="saved-viewer">
+    <div class="saved-header">
+      <button id="saved-clear-btn" type="button" title="Remove every saved sequence (track items become silent gaps)" disabled>Clear</button>
+    </div>
     <div class="saved-grid" id="saved-grid">
       <span class="saved-empty">No saved sequences yet.</span>
     </div>
@@ -1692,7 +1962,7 @@
     let chordMode = false;
     let loopMode = false;
     let noteLength = 1;
-    let stepSubdivision = 1; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
+    let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
     let pendingChord = [];
     const cells = [];
 
@@ -1717,6 +1987,8 @@
 
     function renderSavedSequences() {
       const grid = document.getElementById('saved-grid');
+      const clearBtn = document.getElementById('saved-clear-btn');
+      if (clearBtn) clearBtn.disabled = savedSequences.length === 0;
       if (savedSequences.length === 0) {
         grid.innerHTML = '<span class="saved-empty">No saved sequences yet.</span>';
         return;
@@ -1869,9 +2141,60 @@
     // never clip. Aggressive settings because chord playback can spike well
     // above 0 dB from the raw sum of multiple synths.
     const masterLimiter = new Tone.Limiter(-1).toDestination();
+    // Global FX chain — sits post-compressor / pre-limiter so the dynamics
+    // settle before reverb/delay tails layer on. wet=0 / distortion=0 are
+    // effective pass-throughs; the FX panel UI updates these in place.
+    const masterReverb = new Tone.Freeverb({
+      roomSize: 0.7, dampening: 3000, wet: 0,
+    }).connect(masterLimiter);
+    const masterDelay = new Tone.FeedbackDelay({
+      delayTime: '8n', feedback: 0.4, wet: 0,
+    }).connect(masterReverb);
+    const masterDistortion = new Tone.Distortion({
+      distortion: 0, wet: 1,
+    }).connect(masterDelay);
     const masterBus = new Tone.Compressor({
       threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12,
-    }).connect(masterLimiter);
+    }).connect(masterDistortion);
+
+    // Persisted global effect mix — applied to every voice via the master
+    // chain above. Loaded from localStorage so settings stick across reloads.
+    const GLOBAL_FX_DEFAULTS = {
+      reverb:        0,
+      reverbSize:    70,
+      reverbTone:    50,
+      delay:         0,
+      delayTime:     250,
+      delayFeedback: 40,
+      distortion:    0,
+    };
+    const globalFx = (() => {
+      try {
+        const raw = JSON.parse(localStorage.getItem('sounds-global-fx') || '{}');
+        const out = { ...GLOBAL_FX_DEFAULTS };
+        Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
+          if (Number.isFinite(raw[k])) out[k] = raw[k];
+        });
+        return out;
+      } catch (e) {
+        return { ...GLOBAL_FX_DEFAULTS };
+      }
+    })();
+    function applyGlobalFx() {
+      try {
+        masterReverb.roomSize.value  = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
+        masterReverb.dampening.value = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
+        masterReverb.wet.value       = Math.max(0, Math.min(1, globalFx.reverb / 100));
+        masterDelay.delayTime.value  = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
+        masterDelay.feedback.value   = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
+        masterDelay.wet.value        = Math.max(0, Math.min(1, globalFx.delay / 100));
+        masterDistortion.distortion  = Math.max(0, Math.min(1, globalFx.distortion / 100));
+      } catch (e) {}
+    }
+    function persistGlobalFx() {
+      localStorage.setItem('sounds-global-fx', JSON.stringify(globalFx));
+    }
+    applyGlobalFx();
 
     // ---- Custom sample loading (samples/manifest.json) ----
     // Each entry creates a Tone.Sampler that pitch-shifts the file across
@@ -1891,6 +2214,82 @@
         opts.push({ value: 'sample:' + id, label: info.name });
       }
       return opts;
+    }
+
+    // Open-source sample-based instruments. Each loads as a Tone.Sampler
+    // connected to the master bus, then surfaces as a 'sample:<id>' tone
+    // option alongside any local samples. Ranges are intentionally sparse —
+    // Tone.Sampler pitch-shifts between provided sample points so 4–8 notes
+    // is enough for keyboard coverage without bloating page-load fetches.
+    const REMOTE_INSTRUMENTS = [
+      {
+        // Salamander Grand Piano — Tone.js's official example set, by
+        // Alexander Holm under Creative Commons.
+        id: 'piano',
+        label: 'Piano',
+        baseUrl: 'https://tonejs.github.io/audio/salamander/',
+        urls: {
+          'A0': 'A0.mp3', 'C1': 'C1.mp3', 'A1': 'A1.mp3', 'C2': 'C2.mp3',
+          'A2': 'A2.mp3', 'C3': 'C3.mp3', 'A3': 'A3.mp3', 'C4': 'C4.mp3',
+          'A4': 'A4.mp3', 'C5': 'C5.mp3', 'A5': 'A5.mp3', 'C6': 'C6.mp3',
+          'A6': 'A6.mp3', 'C7': 'C7.mp3', 'A7': 'A7.mp3', 'C8': 'C8.mp3',
+        },
+      },
+      {
+        // tonejs-instruments by Nicholaus Brosowsky — VSCO-derived samples
+        // hosted on GitHub Pages, mostly CC-licensed.
+        id: 'organ',
+        label: 'Organ',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/organ/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'guitar',
+        label: 'Guitar',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/guitar-acoustic/',
+        urls: {
+          'E2': 'E2.mp3', 'A2': 'A2.mp3', 'D3': 'D3.mp3',
+          'G3': 'G3.mp3', 'B3': 'B3.mp3', 'E4': 'E4.mp3',
+        },
+      },
+      {
+        id: 'violin',
+        label: 'Violin',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/violin/',
+        urls: {
+          'G3': 'G3.mp3', 'C4': 'C4.mp3', 'A4': 'A4.mp3',
+          'C5': 'C5.mp3', 'E5': 'E5.mp3',
+        },
+      },
+      {
+        id: 'flute',
+        label: 'Flute',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/flute/',
+        urls: {
+          'C4': 'C4.mp3', 'E4': 'E4.mp3', 'A4': 'A4.mp3',
+          'C5': 'C5.mp3', 'E5': 'E5.mp3', 'A5': 'A5.mp3',
+        },
+      },
+    ];
+    function loadRemoteInstruments() {
+      REMOTE_INSTRUMENTS.forEach(inst => {
+        if (sampleSamplers.has(inst.id)) return;
+        try {
+          const sampler = new Tone.Sampler({
+            urls: inst.urls,
+            baseUrl: inst.baseUrl,
+            release: 1,
+          }).connect(masterBus);
+          sampleSamplers.set(inst.id, {
+            sampler,
+            name: inst.label,
+            rootNote: 'C4',
+            remote: true,
+          });
+        } catch (e) {
+          console.warn('Failed to register remote instrument', inst.id, e);
+        }
+      });
     }
 
     async function loadSampleManifest() {
@@ -2042,6 +2441,19 @@
       return { ...base, volume: baseVol * scale };
     }
 
+    // Fold a step-level bend into the per-note params object that playNote
+    // expects, leaving non-bending steps' params untouched. The bend always
+    // applies as a relative semitone offset so chord notes glide together.
+    function paramsWithBend(noteParams, bend) {
+      const base = (noteParams && typeof noteParams === 'object')
+        ? { ...noteParams }
+        : { type: typeof noteParams === 'string' ? noteParams : 'sine' };
+      if (bend && Number.isFinite(bend.semitones) && bend.semitones !== 0) {
+        base.bend = { semitones: bend.semitones, atFraction: bend.atFraction };
+      }
+      return base;
+    }
+
     function playNote(freq, params = {}, durationMs, startTime, destination) {
       if (typeof params === 'string') params = { type: params };
       const {
@@ -2052,6 +2464,17 @@
         release = 1400,
         volume  = 100,
         detune  = 0,
+        bend    = null,
+        // Effect mix levels (0–100). Underlying params below shape the
+        // sound — defaults match the values that were hard-coded before
+        // these knobs existed, so old steps round-trip identically.
+        reverb     = 0,
+        reverbSize = 70,
+        reverbTone = 50,
+        delay         = 0,
+        delayTime     = 250,
+        delayFeedback = 40,
+        distortion = 0,
       } = params;
 
       const atk = Math.max(attack  / 1000, 0.005);
@@ -2068,6 +2491,8 @@
       const disposeMs = (preReleaseDur + rel + 0.4) * 1000;
 
       // Loaded sample (Tone.Sampler) — pitch-shifts the file to play any note.
+      // Effects are skipped on samples since the sampler is shared and routes
+      // straight to the master bus by construction.
       if (isSampleType(type)) {
         const entry = getSampleEntry(type);
         if (entry?.sampler && entry.sampler.loaded) {
@@ -2084,6 +2509,46 @@
         return;
       }
 
+      // Per-note effect chain — order is synth → distortion → delay → reverb
+      // → destination. Built backward from the destination so each new node's
+      // output is the previous head. `chainHead` becomes the synth's connect
+      // target; effect nodes are disposed alongside the synth so they don't
+      // leak.
+      const finalDest = destination || masterBus;
+      let chainHead = finalDest;
+      const effectNodes = [];
+      if (reverb > 0) {
+        const rev = new Tone.Freeverb({
+          // reverbTone is mapped to dampening (Hz) where higher Tone reads
+          // brighter — 0 → 500 Hz (very damped), 100 → 10000 Hz (open).
+          roomSize:  Math.max(0, Math.min(0.99, reverbSize / 100)),
+          dampening: 500 + Math.max(0, Math.min(100, reverbTone)) * 95,
+          wet:       Math.max(0, Math.min(1, reverb / 100)),
+        }).connect(chainHead);
+        effectNodes.unshift(rev);
+        chainHead = rev;
+      }
+      if (delay > 0) {
+        const dly = new Tone.FeedbackDelay({
+          delayTime: Math.max(0.001, (delayTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, delayFeedback / 100)),
+          wet:       Math.max(0, Math.min(1, delay / 100)),
+        }).connect(chainHead);
+        effectNodes.unshift(dly);
+        chainHead = dly;
+      }
+      if (distortion > 0) {
+        const dist = new Tone.Distortion({
+          distortion: Math.max(0, Math.min(1, distortion / 100)),
+          wet: 1,
+        }).connect(chainHead);
+        effectNodes.unshift(dist);
+        chainHead = dist;
+      }
+      const disposeEffectChain = () => {
+        effectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
+      };
+
       let synth;
 
       if (type === 'bell') {
@@ -2094,7 +2559,7 @@
           envelope: { attack: 0.001, decay: 2.0, sustain: 0, release: 0.8 },
           modulation: { type: 'sine' },
           modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       } else if (type === 'pluck') {
         // PluckSynth has no detune param — fold cents into the frequency.
         synth = new Tone.PluckSynth({
@@ -2102,10 +2567,13 @@
           dampening: 4000,
           resonance: 0.7,
           release: 1,
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
         const tunedFreq = (typeof freq === 'number') ? freq * Math.pow(2, detune / 1200) : freq;
         synth.triggerAttackRelease(tunedFreq, Math.max(targetDur, 0.1), startTime, velocity);
-        if (startTime === undefined) setTimeout(() => synth.dispose(), (targetDur + 1.5) * 1000);
+        if (startTime === undefined) setTimeout(() => {
+          try { synth.dispose(); } catch (e) {}
+          disposeEffectChain();
+        }, (targetDur + 1.5) * 1000);
         return;
       } else if (type === 'fm') {
         synth = new Tone.FMSynth({
@@ -2115,7 +2583,7 @@
           envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       } else if (type === 'am') {
         synth = new Tone.AMSynth({
           harmonicity: 2,
@@ -2123,7 +2591,7 @@
           envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       } else if (type === 'mono') {
         synth = new Tone.MonoSynth({
           oscillator: { type: 'sawtooth' },
@@ -2133,13 +2601,13 @@
             baseFrequency: 200, octaves: 3,
           },
           filter: { Q: 6, type: 'lowpass', rolloff: -24 },
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       } else if (type === 'kick') {
         synth = new Tone.MembraneSynth({
           pitchDecay: 0.05,
           octaves: 10,
           envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 },
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       } else if (type === 'metal') {
         synth = new Tone.MetalSynth({
           harmonicity: 5.1,
@@ -2147,7 +2615,7 @@
           resonance: 4000,
           octaves: 1.5,
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       } else {
         // Sustainable waves: sine / square / triangle / sawtooth / pulse / fat
         const oscOpts = type === 'fat'
@@ -2158,12 +2626,33 @@
         synth = new Tone.Synth({
           oscillator: oscOpts,
           envelope: env,
-        }).connect(destination || masterBus);
+        }).connect(chainHead);
       }
 
       if (synth.detune) synth.detune.value = detune;
       synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
-      if (startTime === undefined) setTimeout(() => synth.dispose(), disposeMs);
+
+      // Pitch bend: ramp the synth's frequency from the start pitch up/down
+      // by `semitones` over the first `atFraction` of the step duration, then
+      // hold. Only attempts the schedule when the synth exposes an
+      // automatable frequency Param — pluck/kick/metal are skipped.
+      if (bend && Number.isFinite(bend.semitones) && bend.semitones !== 0 && synth.frequency
+          && typeof synth.frequency.setValueAtTime === 'function') {
+        const bendStart = (typeof startTime === 'number') ? startTime : Tone.now();
+        const at = Math.max(0, Math.min(1, Number.isFinite(bend.atFraction) ? bend.atFraction : 1));
+        const bendArrive = bendStart + Math.max(0.001, targetDur * at);
+        const endFreq = freq * Math.pow(2, bend.semitones / 12);
+        try {
+          synth.frequency.cancelScheduledValues(bendStart);
+          synth.frequency.setValueAtTime(freq, bendStart);
+          synth.frequency.linearRampToValueAtTime(endFreq, bendArrive);
+        } catch (e) {}
+      }
+
+      if (startTime === undefined) setTimeout(() => {
+        try { synth.dispose(); } catch (e) {}
+        disposeEffectChain();
+      }, disposeMs);
     }
 
     // ---- Sequence display ----
@@ -2223,6 +2712,9 @@
         if (insertionPoint === i) display.appendChild(makeInsertCursor());
         const chip = document.createElement('div');
         const durSuffix = (step.duration && step.duration > 1) ? `×${step.duration}` : '';
+        const bendDir = step.bend && Number.isFinite(step.bend.semitones) && step.bend.semitones !== 0
+          ? (step.bend.semitones > 0 ? 'bend-up' : 'bend-down')
+          : '';
         // In step mode, rests are rendered as dashed empty-slot placeholders
         // that the user can click to drop the armed note into.
         const treatAsEmptySlot = stepMode && isRestStep(step);
@@ -2231,23 +2723,32 @@
           chip.className = 'seq-step subseq' + (i === activeIndex ? ' active' : '');
           chip.textContent = count > 0 ? `▤\n×${count}` : '▤';
         } else if (step.chord) {
-          chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '');
+          chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '') + (bendDir ? ' ' + bendDir : '');
           chip.textContent = step.chord.map(n => n.label).join('·') + (durSuffix ? ' ' + durSuffix : '');
         } else if (treatAsEmptySlot) {
           chip.className = 'seq-step empty-slot' + (i === activeIndex ? ' active' : '');
           chip.textContent = '·';
         } else {
-          chip.className = 'seq-step' + (step.freq === null ? ' rest' : '') + (i === activeIndex ? ' active' : '');
+          chip.className = 'seq-step' + (step.freq === null ? ' rest' : '') + (i === activeIndex ? ' active' : '') + (bendDir ? ' ' + bendDir : '');
           const main = step.freq !== null
             ? `${step.label}${step.sound && step.sound !== 'sine' ? '\n' + step.sound.slice(0,3) : ''}`
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
         }
-        // In grid mode, leave chips to fill their grid column; otherwise
-        // pin the width to the step's length × subdivision factor.
+        // In grid mode, span the chip across as many cells as its duration
+        // calls for so longer notes look longer. Step-mode is the exception
+        // — its grid IS the pattern of fixed slots, so each chip stays in
+        // exactly one cell. Outside grid mode, pin the width directly.
         if (cols > 0) {
           chip.style.width = '';
+          if (stepMode) {
+            chip.style.gridColumn = '';
+          } else {
+            const span = Math.max(1, Math.round(stepLengthFactor(step) * cols));
+            chip.style.gridColumn = `span ${Math.min(span, cols)}`;
+          }
         } else {
+          chip.style.gridColumn = '';
           chip.style.width = stepWidthPx(step) + 'px';
         }
         if (!step.isSub && isSelectedStep(step)) chip.classList.add('selected');
@@ -2269,11 +2770,24 @@
             document.getElementById('save-btn').disabled = sequence.length === 0;
             return;
           }
-          // Select this step so the Hold / Step Div controls edit it; preview
-          // the audio so the user hears what they just selected. With Multi
-          // checked, click adds to the existing selection instead of
-          // replacing it (and a re-click of an already-selected chip
-          // deselects, with the next-most-recently-clicked becoming primary).
+          // Re-click on an already-selected chip toggles it off — in Multi
+          // mode just that chip leaves the selection, otherwise the whole
+          // selection clears. No audio preview on deselect since the user
+          // is dismissing the edit, not auditioning.
+          if (isSelectedStep(step)) {
+            if (multiSelectMode && !step.isSub) {
+              const sIdx = selectedStepRefs.indexOf(step);
+              if (sIdx >= 0) selectedStepRefs.splice(sIdx, 1);
+              syncStepEditorFromSelection();
+            } else {
+              clearSelection();
+            }
+            renderSequence();
+            return;
+          }
+          // First click on this chip — select it so Hold / Step Div retarget
+          // it, and preview the audio so the user hears what they selected.
+          // Multi-mode adds to the selection; otherwise it replaces.
           if (multiSelectMode && !step.isSub) {
             addSelectedStep(i);
           } else {
@@ -2534,6 +3048,11 @@
         if (subSel) subSel.value = String(stepSubdivision);
       }
       refreshHoldEnabled();
+      // Pink outline on the Step section while a chip is selected, so the
+      // user sees that grid clicks now retune the selection instead of
+      // appending fresh steps.
+      const stepGroup = document.querySelector('.btn-group--step');
+      if (stepGroup) stepGroup.classList.toggle('step-selected', selectedStepRefs.length > 0);
     }
     // Hold is meaningful only when Step Div is 1/1 (value=4). Below 1/1 the
     // step is already shorter than a beat, so multiplying its length leads
@@ -2586,7 +3105,7 @@
 
     // Visual layout: 0 = current flex-wrap behavior; 4..16 = grid mode with
     // that many chips per row.
-    let gridColumns = 0;
+    let gridColumns = 8;
     // Step-sequencer mode — when on, the workspace is treated as a fixed
     // pattern of `gridColumns` slots (defaults to 16 if grid isn't set).
     // Cell clicks arm the current note; chip clicks toggle that note in/out.
@@ -2680,11 +3199,11 @@
       if (step.chord) {
         const size = step.chord.length;
         step.chord.forEach(n => {
-          playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), waitMs);
+          playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs);
           if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
         });
       } else if (step.freq != null) {
-        playNote(step.freq, step.params || step.sound || 'sine', waitMs);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs);
         if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
       } else {
         document.getElementById('rest-bar').classList.add('active-loop');
@@ -2714,10 +3233,10 @@
         if (s.chord) {
           const size = s.chord.length;
           s.chord.forEach(n => {
-            if (n.freq != null) playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), waitMs);
+            if (n.freq != null) playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), s.bend), waitMs);
           });
         } else if (s.freq != null) {
-          playNote(s.freq, s.params || s.sound || 'sine', waitMs);
+          playNote(s.freq, paramsWithBend(s.params || s.sound || 'sine', s.bend), waitMs);
         }
         return waitMs;
       };
@@ -2743,13 +3262,33 @@
       }
     }
 
+    // Cheap active-chip update for the playback hot path — toggling a class
+    // on existing nodes instead of rebuilding the whole sequence-display
+    // DOM. The full renderSequence runs only when the sequence structure
+    // actually changes (mutations call renderSequence themselves).
+    function setActiveSequenceChip(index) {
+      const display = document.getElementById('sequence-display');
+      if (!display) return;
+      const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
+      chips.forEach((c, i) => c.classList.toggle('active', i === index));
+      if (index >= 0 && chips[index]) {
+        chips[index].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
     function playSequence(index = 0) {
       if (index === 0) {
         document.getElementById('play-btn').textContent = '■';
       }
       if (sequence.length === 0) { stopSequence(); return; }
-      renderSequence(index);
+      // Audio first — calling renderSequence before playStepCB used to
+      // delay the next note's audio scheduling by however long the DOM
+      // rebuild took, which was especially noticeable between the first
+      // two notes (no synth caching yet, render runs cold). With audio
+      // scheduled first and a cheap class-toggle for the highlight, the
+      // setTimeout-driven gap stays close to the intended waitMs.
       playStepCB(sequence[index], () => advanceAfterStep(index));
+      setActiveSequenceChip(index);
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {
@@ -3025,7 +3564,8 @@
       chordMode = false;
       loopMode = false;
       noteLength = 1;
-      stepSubdivision = 1;
+      stepSubdivision = 0.5;
+      gridColumns = 8;
       rootIdx = 0;
       baseOctave = 4;
       octaveCount = 1;
@@ -3049,7 +3589,8 @@
       document.querySelector('.btn-group--step')?.classList.remove('chord-active');
       document.getElementById('loop-btn').classList.remove('active');
       document.getElementById('note-length').value = '1';
-      document.getElementById('subdivision-select').value = '1';
+      document.getElementById('subdivision-select').value = '0.5';
+      document.getElementById('grid-cols-select').value = '8';
       document.getElementById('save-btn').disabled = true;
       refreshHoldEnabled();
 
@@ -3075,7 +3616,7 @@
     }
 
     function randomStepParams(type) {
-      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
+      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
     }
 
     // Text → sequence translation. Mapping rules:
@@ -3259,12 +3800,8 @@
           <select id="rand-scale" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#a0aec0;border-radius:6px;font-family:inherit;font-size:0.85rem;"></select>
         </div>
         <div class="sm-section-label">Tones to use</div>
-        <label style="display:flex;align-items:center;gap:8px;padding:0 0 6px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
-          <input type="checkbox" id="rand-tones-useall" />
-          Use all tones
-        </label>
         <div class="sm-waves" id="rand-tones"></div>
-        <div style="display:flex;gap:8px;padding:4px 0 4px;" id="rand-tones-quickrow">
+        <div style="display:flex;gap:8px;padding:4px 0 4px;">
           <button type="button" id="rand-tones-all" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">All</button>
           <button type="button" id="rand-tones-none" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">None</button>
         </div>
@@ -3319,7 +3856,7 @@
       randScaleSel.value = currentScale;
 
       // Tone selector — every built-in synth + any loaded sample is a toggle.
-      // Default: only Sine is selected; "Use all tones" overrides the grid.
+      // Default: only Sine is selected; All / None below provide bulk toggles.
       const tonesRow = modal.querySelector('#rand-tones');
       const toneOptions = getAllSoundOptions();
       const selectedTones = new Set(['sine']);
@@ -3352,20 +3889,6 @@
         toneButtons.forEach(btn => btn.classList.remove('active'));
       });
 
-      // "Use all tones" overrides the grid — dim it while checked so the
-      // user sees the individual selection is bypassed.
-      const useAllTones = modal.querySelector('#rand-tones-useall');
-      const quickRow    = modal.querySelector('#rand-tones-quickrow');
-      const syncUseAllTones = () => {
-        const on = useAllTones.checked;
-        tonesRow.style.opacity = on ? '0.4' : '';
-        tonesRow.style.pointerEvents = on ? 'none' : '';
-        quickRow.style.opacity = on ? '0.4' : '';
-        quickRow.style.pointerEvents = on ? 'none' : '';
-      };
-      useAllTones.addEventListener('change', syncUseAllTones);
-      syncUseAllTones();
-
       modal.querySelector('#rand-cancel').addEventListener('click', () => overlay.remove());
       modal.querySelector('#rand-generate').addEventListener('click', () => {
         const n = Math.max(1, Math.min(64, parseInt(stepsIn.value) || 16));
@@ -3373,9 +3896,7 @@
         const includeRests  = !!modal.querySelector('#rand-rests').checked;
         const includeChords = !!modal.querySelector('#rand-chords').checked;
         const scaleName     = modal.querySelector('#rand-scale').value;
-        const tones         = useAllTones.checked
-          ? toneOptions.map(o => o.value)
-          : Array.from(selectedTones);
+        const tones         = Array.from(selectedTones);
         const text          = modal.querySelector('#rand-text').value.trim();
         snapshotForUndo(text ? 'Text → sequence' : 'Random sequence');
         stopSequence();
@@ -3705,7 +4226,7 @@
       'E4', 'G4', 'A4', { n: 'D5', d: 2 }, null, null, null, null,
     ];
     function defaultStepParams(type) {
-      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
+      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
     }
     function loadSongPreset(name) {
       let src;
@@ -3781,12 +4302,18 @@
 
     let tracks = JSON.parse(localStorage.getItem('sounds-tracks') || '[]');
     // Ensure runtime fields on each track (these aren't persisted)
-    tracks.forEach(t => { t.playing = false; t.currentItemIdx = null; t.timer = null; });
+    tracks.forEach(t => {
+      t.playing = false;
+      t.currentItemIdx = null;
+      t.timer = null;
+      if (!t.eq) t.eq = { low: 0, mid: 0, high: 0 };
+    });
     let trackIdCounter = Math.max(0, ...tracks.map(t => t.id || 0)) + 1;
 
     function persistTracks() {
       const serial = tracks.map(t => ({
         id: t.id, name: t.name, items: t.items, loopMode: !!t.loopMode, solo: !!t.solo,
+        eq: t.eq || { low: 0, mid: 0, high: 0 },
       }));
       localStorage.setItem('sounds-tracks', JSON.stringify(serial));
     }
@@ -3804,6 +4331,7 @@
       if (s.chord) copy.chord = s.chord.map(n => ({ ...n, params: n.params ? { ...n.params } : undefined }));
       if (s.params) copy.params = { ...s.params };
       if (s.subSteps) copy.subSteps = s.subSteps.map(cloneStep);
+      if (s.bend) copy.bend = { ...s.bend };
       return copy;
     }
 
@@ -3842,6 +4370,7 @@
         playing: false,
         currentItemIdx: null,
         timer: null,
+        eq: { low: 0, mid: 0, high: 0 },
       });
       persistTracks();
       renderTracks();
@@ -3849,6 +4378,11 @@
 
     function removeTrack(trackIdx) {
       stopTrack(trackIdx);
+      const track = tracks[trackIdx];
+      if (track && track._bus) {
+        try { track._bus.dispose(); } catch (e) {}
+        track._bus = null;
+      }
       tracks.splice(trackIdx, 1);
       persistTracks();
       renderTracks();
@@ -3925,7 +4459,7 @@
     }
     function itemDurationMs(item) {
       if (!item) return 0;
-      if (item.type === 'audio') return (item.durationSec || 0) * 1000;
+      if (item.type === 'audio' || item.type === 'silent') return (item.durationSec || 0) * 1000;
       const bpm = item.bpm || 120;
       const itemSub = item.subdivision || 1;
       let totalMs = 0;
@@ -3990,18 +4524,145 @@
       }
     }
 
+    // Lazy per-track audio bus (Tone.EQ3 → masterBus). Lets each track carry
+    // its own EQ without a full audio-graph rebuild and is cheap to retrieve
+    // inside the playback hot path. Rebuilt on demand if disposed.
+    function getTrackBus(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return masterBus;
+      if (!track._bus) {
+        const eq = track.eq || { low: 0, mid: 0, high: 0 };
+        track._bus = new Tone.EQ3({
+          low:  eq.low  || 0,
+          mid:  eq.mid  || 0,
+          high: eq.high || 0,
+        }).connect(masterBus);
+      }
+      return track._bus;
+    }
+    function setTrackEq(trackIdx, eq) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      track.eq = {
+        low:  Number.isFinite(eq.low)  ? eq.low  : 0,
+        mid:  Number.isFinite(eq.mid)  ? eq.mid  : 0,
+        high: Number.isFinite(eq.high) ? eq.high : 0,
+      };
+      const bus = getTrackBus(trackIdx);
+      try {
+        bus.low.value  = track.eq.low;
+        bus.mid.value  = track.eq.mid;
+        bus.high.value = track.eq.high;
+      } catch (e) {}
+      persistTracks();
+      // Refresh the EQ button's "active" tint without rebuilding the row.
+      const container = document.getElementById('tracks-container');
+      const row = container?.children[trackIdx];
+      const btn = row?.querySelector('.track-eq');
+      if (btn) btn.classList.toggle('active', !!(track.eq.low || track.eq.mid || track.eq.high));
+    }
+    function showTrackEqDialog(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      if (!track.eq) track.eq = { low: 0, mid: 0, high: 0 };
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      const e = track.eq;
+      const fmt = (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(1) + ' dB';
+      modal.innerHTML = `
+        <div class="sm-title">EQ — ${track.name}</div>
+        <div class="sm-param">
+          <div class="sm-param-row">Low <span class="sm-val" id="eq-low-v">${fmt(e.low)}</span></div>
+          <input type="range" id="eq-low" min="-12" max="12" step="0.5" value="${e.low}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">Mid <span class="sm-val" id="eq-mid-v">${fmt(e.mid)}</span></div>
+          <input type="range" id="eq-mid" min="-12" max="12" step="0.5" value="${e.mid}" />
+        </div>
+        <div class="sm-param">
+          <div class="sm-param-row">High <span class="sm-val" id="eq-high-v">${fmt(e.high)}</span></div>
+          <input type="range" id="eq-high" min="-12" max="12" step="0.5" value="${e.high}" />
+        </div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="eq-reset">Flat</button>
+          <button type="button" class="sm-apply" id="eq-done">Done</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (ev) => { if (ev.target === overlay) overlay.remove(); });
+
+      const lowSel  = modal.querySelector('#eq-low');
+      const midSel  = modal.querySelector('#eq-mid');
+      const highSel = modal.querySelector('#eq-high');
+      const lowVal  = modal.querySelector('#eq-low-v');
+      const midVal  = modal.querySelector('#eq-mid-v');
+      const highVal = modal.querySelector('#eq-high-v');
+      const apply = () => {
+        const next = {
+          low:  parseFloat(lowSel.value)  || 0,
+          mid:  parseFloat(midSel.value)  || 0,
+          high: parseFloat(highSel.value) || 0,
+        };
+        lowVal.textContent  = fmt(next.low);
+        midVal.textContent  = fmt(next.mid);
+        highVal.textContent = fmt(next.high);
+        setTrackEq(trackIdx, next);
+      };
+      lowSel.addEventListener('input',  apply);
+      midSel.addEventListener('input',  apply);
+      highSel.addEventListener('input', apply);
+      modal.querySelector('#eq-reset').addEventListener('click', () => {
+        lowSel.value = '0'; midSel.value = '0'; highSel.value = '0';
+        apply();
+      });
+      modal.querySelector('#eq-done').addEventListener('click', () => overlay.remove());
+    }
+    // Cheap active-item highlight that skips the full renderTracks DOM
+    // rebuild — used inside the playback timer so item transitions (and
+    // especially loop wraps) don't stall waiting on layout work.
+    function setActiveTrackItem(trackIdx, itemIdx) {
+      const container = document.getElementById('tracks-container');
+      if (!container) return;
+      const row = container.children[trackIdx];
+      if (!row) return;
+      const blocks = row.querySelectorAll('.track-item');
+      blocks.forEach((b, i) => b.classList.toggle('active', i === itemIdx));
+    }
+
+    // Silent placeholder — left behind when a saved sequence is removed.
+    // Holds its slot in the track so following items don't shift sooner;
+    // playback just runs out the duration without scheduling any audio.
+    function playSilentItem(trackIdx, itemIdx, item) {
+      const track = tracks[trackIdx];
+      if (!track || !track.playing) return;
+      const advanceMs = Math.max(50, (item.durationSec || 0) * 1000);
+      track.timer = setTimeout(() => {
+        const nextItem = itemIdx + 1;
+        if (nextItem < track.items.length) {
+          playTrackItem(trackIdx, nextItem, 0);
+        } else if (track.loopMode && track.items.length > 0) {
+          playTrackItem(trackIdx, 0, 0);
+        } else {
+          stopTrack(trackIdx, true);
+        }
+      }, advanceMs);
+      if (track.currentItemIdx !== itemIdx) {
+        track.currentItemIdx = itemIdx;
+        setActiveTrackItem(trackIdx, itemIdx);
+      }
+    }
+
     function playAudioItem(trackIdx, itemIdx, item) {
       const track = tracks[trackIdx];
       if (!track || !track.playing) return;
-      if (track.currentItemIdx !== itemIdx) {
-        track.currentItemIdx = itemIdx;
-        renderTracks();
-      }
       const player = new Tone.Player({
         url: item.audioDataUrl,
         autostart: false,
         onload: () => { try { player.start(); } catch (e) {} },
-      }).connect(masterBus);
+      }).connect(getTrackBus(trackIdx));
       const advanceMs = Math.max(50, (item.durationSec || 0) * 1000);
       track.timer = setTimeout(() => {
         try { player.stop(); } catch (e) {}
@@ -4015,6 +4676,10 @@
           stopTrack(trackIdx, true);
         }
       }, advanceMs);
+      if (track.currentItemIdx !== itemIdx) {
+        track.currentItemIdx = itemIdx;
+        setActiveTrackItem(trackIdx, itemIdx);
+      }
     }
 
     function playTrackItem(trackIdx, itemIdx, stepIdx) {
@@ -4033,6 +4698,10 @@
         playAudioItem(trackIdx, itemIdx, item);
         return;
       }
+      if (item && item.type === 'silent') {
+        playSilentItem(trackIdx, itemIdx, item);
+        return;
+      }
       if (!item || !item.steps || item.steps.length === 0) {
         playTrackItem(trackIdx, itemIdx + 1, 0);
         return;
@@ -4047,16 +4716,15 @@
       const stepMs = Math.round(60000 / (item.bpm || 120) * stepSub);
       const waitMs = stepMs * (step.duration || 1);
 
-      if (track.currentItemIdx !== itemIdx) {
-        track.currentItemIdx = itemIdx;
-        renderTracks();
-      }
-
+      // Audio first, before any DOM work — at the loop wrap especially we
+      // want the next note to fire the moment its turn arrives, not after
+      // the tracks pane redraws.
+      const trackBus = getTrackBus(trackIdx);
       if (step.chord) {
         const size = step.chord.length;
-        step.chord.forEach(n => playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), waitMs));
+        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, undefined, trackBus));
       } else if (step.freq !== null && step.freq !== undefined) {
-        playNote(step.freq, step.params || step.sound || 'sine', waitMs);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, undefined, trackBus);
       }
 
       track.timer = setTimeout(() => {
@@ -4067,6 +4735,11 @@
           playTrackItem(trackIdx, itemIdx + 1, 0);
         }
       }, waitMs);
+
+      if (track.currentItemIdx !== itemIdx) {
+        track.currentItemIdx = itemIdx;
+        setActiveTrackItem(trackIdx, itemIdx);
+      }
     }
 
     function stopAllTracks() {
@@ -4104,15 +4777,18 @@
         const row = document.createElement('div');
         row.className = 'track-row';
 
+        const eqOn = !!(track.eq && (track.eq.low || track.eq.mid || track.eq.high));
         const controls = document.createElement('div');
         controls.className = 'track-controls';
         controls.innerHTML = `
           <span class="track-name${track.solo ? ' soloed' : ''}" title="Click to solo, double-click to rename">${track.name}</span>
+          <button class="track-eq${eqOn ? ' active' : ''}" type="button" title="EQ — Low / Mid / High">EQ</button>
           <button class="track-remove" title="Remove track">×</button>
         `;
         // Single click toggles solo; double click toggles twice (cancelling
         // out) and the dblclick handler below opens the rename dialog.
         controls.querySelector('.track-name').addEventListener('click', () => toggleTrackSolo(trackIdx));
+        controls.querySelector('.track-eq').addEventListener('click', () => showTrackEqDialog(trackIdx));
         controls.querySelector('.track-remove').addEventListener('click', () => {
           if (track.items.length === 0 || confirm(`Remove ${track.name}?`)) removeTrack(trackIdx);
         });
@@ -4152,18 +4828,24 @@
         } else {
           track.items.forEach((item, itemIdx) => {
             const span = Math.max(1, itemStepCount(item));
-            const isAudio = item.type === 'audio';
+            const isAudio  = item.type === 'audio';
+            const isSilent = item.type === 'silent';
             const block = document.createElement('div');
             block.className = 'track-item'
-              + (isAudio ? ' audio-item' : '')
+              + (isAudio  ? ' audio-item'  : '')
+              + (isSilent ? ' silent-item' : '')
               + (track.playing && track.currentItemIdx === itemIdx ? ' active' : '');
             block.style.gridColumn = `span ${span}`;
-            block.textContent = (item.name || `#${itemIdx + 1}`) + (isAudio ? ` · ${(item.durationSec || 0).toFixed(1)}s` : '');
             const itemSeconds = (itemDurationMs(item) / 1000).toFixed(1);
+            block.textContent = isSilent
+              ? `— ${itemSeconds}s —`
+              : (item.name || `#${itemIdx + 1}`) + (isAudio ? ` · ${(item.durationSec || 0).toFixed(1)}s` : '');
             const stepCount = (item.steps || []).length;
-            block.title = isAudio
-              ? `${item.name} · audio · ${itemSeconds}s`
-              : `${item.name} · ${stepCount} step${stepCount !== 1 ? 's' : ''} · ${itemSeconds}s @ ${item.bpm || 120} BPM`;
+            block.title = isSilent
+              ? `Silent gap · ${itemSeconds}s (left behind by a removed saved sequence)`
+              : isAudio
+                ? `${item.name} · audio · ${itemSeconds}s`
+                : `${item.name} · ${stepCount} step${stepCount !== 1 ? 's' : ''} · ${itemSeconds}s @ ${item.bpm || 120} BPM`;
             const itemActions = () => [
               { label: 'Remove from track', danger: true, fn: () => removeTrackItem(trackIdx, itemIdx) },
             ];
@@ -4284,14 +4966,42 @@
 
       return await Tone.Offline(async () => {
         const limiter = new Tone.Limiter(-1).toDestination();
-        const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(limiter);
+        // Mirror the live global FX chain so the exported WAV matches what
+        // the user hears in the browser.
+        const offReverb = new Tone.Freeverb({
+          roomSize:  Math.max(0, Math.min(0.99, globalFx.reverbSize / 100)),
+          dampening: 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95,
+          wet:       Math.max(0, Math.min(1, globalFx.reverb / 100)),
+        }).connect(limiter);
+        const offDelay = new Tone.FeedbackDelay({
+          delayTime: Math.max(0.001, (globalFx.delayTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100)),
+          wet:       Math.max(0, Math.min(1, globalFx.delay / 100)),
+        }).connect(offReverb);
+        const offDistortion = new Tone.Distortion({
+          distortion: Math.max(0, Math.min(1, globalFx.distortion / 100)),
+          wet: 1,
+        }).connect(offDelay);
+        const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(offDistortion);
         const players = [];
         tracks.forEach(track => {
+          // Mirror the live per-track EQ in the offline render so the
+          // exported WAV matches what the user hears in the browser.
+          const teq = track.eq || { low: 0, mid: 0, high: 0 };
+          const trackBus = new Tone.EQ3({
+            low:  teq.low  || 0,
+            mid:  teq.mid  || 0,
+            high: teq.high || 0,
+          }).connect(bus);
           let time = 0;
           (track.items || []).forEach(item => {
             if (item.type === 'audio') {
-              const player = new Tone.Player({ url: item.audioDataUrl }).connect(bus);
+              const player = new Tone.Player({ url: item.audioDataUrl }).connect(trackBus);
               players.push({ player, startTime: time });
+              time += (item.durationSec || 0);
+              return;
+            }
+            if (item.type === 'silent') {
               time += (item.durationSec || 0);
               return;
             }
@@ -4304,9 +5014,9 @@
               const durSec = durMs / 1000;
               if (step.chord) {
                 const size = step.chord.length;
-                step.chord.forEach(n => playNote(n.freq, chordVoiceParams(n.params || n.sound || 'sine', size), durMs, time, bus));
+                step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, time, trackBus));
               } else if (step.freq !== null && step.freq !== undefined) {
-                playNote(step.freq, step.params || step.sound || 'sine', durMs, time, bus);
+                playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, time, trackBus);
               }
               time += durSec;
             });
@@ -4533,8 +5243,42 @@
         });
       }
       actions.push('hr');
-      actions.push({ label: 'Delete', danger: true, fn: () => { savedSequences.splice(seqIndex, 1); if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); } else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) { activeSeqIndex--; } persistSaved(); renderSavedSequences(); } });
+      actions.push({ label: 'Delete', danger: true, fn: () => {
+        const removed = savedSequences[seqIndex];
+        savedSequences.splice(seqIndex, 1);
+        if (activeSeqIndex === seqIndex) { activeSeqIndex = null; sequence = []; renderSequence(); }
+        else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) { activeSeqIndex--; }
+        if (removed && removed.name) replaceMatchingTrackItemsWithSilent(new Set([removed.name]));
+        persistSaved();
+        renderSavedSequences();
+      } });
       return actions;
+    }
+
+    // For each track item whose name matches one of `names`, swap it for a
+    // silent placeholder of the same total duration. Track items keep their
+    // grid-column position so anything after the deleted entry stays put
+    // instead of sliding earlier in time.
+    function replaceMatchingTrackItemsWithSilent(names) {
+      let touched = false;
+      tracks.forEach(track => {
+        track.items.forEach((item, idx) => {
+          if (item.type === 'silent' || item.type === 'audio') return;
+          if (item && item.name && names.has(item.name)) {
+            const dur = itemDurationMs(item) / 1000;
+            track.items[idx] = {
+              type: 'silent',
+              name: item.name + ' (removed)',
+              durationSec: dur,
+            };
+            touched = true;
+          }
+        });
+      });
+      if (touched) {
+        persistTracks();
+        renderTracks();
+      }
     }
 
     // ---- Drag-and-drop reorder ----
@@ -4559,6 +5303,17 @@
       document.getElementById('saved-grid').querySelectorAll('.drag-over')
         .forEach(el => el.classList.remove('drag-over'));
     }
+
+    document.getElementById('saved-clear-btn').addEventListener('click', () => {
+      if (savedSequences.length === 0) return;
+      if (!confirm(`Remove all ${savedSequences.length} saved sequence${savedSequences.length === 1 ? '' : 's'}? Track items that reference them become silent gaps.`)) return;
+      const names = new Set(savedSequences.map(s => s.name).filter(Boolean));
+      savedSequences = [];
+      activeSeqIndex = null;
+      replaceMatchingTrackItemsWithSilent(names);
+      persistSaved();
+      renderSavedSequences();
+    });
 
     function bindDrag(block, i) {
       block.draggable = true;
@@ -4726,7 +5481,7 @@
         'hr',
         { label: 'Reset sound → Sine', fn: () => {
             cellSounds[noteIndex] = 'sine';
-            cellParams[noteIndex] = { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 };
+            cellParams[noteIndex] = { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
             const sel = cells[noteIndex].querySelector('.cell-sound-select');
             if (sel) sel.value = 'sine';
         }},
@@ -4744,31 +5499,82 @@
       modal.className = 'sm-modal';
       modal.innerHTML = `
         <div class="sm-title">Sound Editor — ${note.label}</div>
-        <div class="sm-waves" id="sm-waves"></div>
-        <div class="sm-param">
-          <div class="sm-param-row">Attack <span class="sm-val" id="sm-atk-v">${p.attack} ms</span></div>
-          <input type="range" id="sm-atk" min="1" max="500" value="${p.attack}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Decay <span class="sm-val" id="sm-dec-v">${p.decay} ms</span></div>
-          <input type="range" id="sm-dec" min="10" max="1000" value="${p.decay}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Sustain <span class="sm-val" id="sm-sus-v">${p.sustain}%</span></div>
-          <input type="range" id="sm-sus" min="0" max="100" value="${p.sustain}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Release <span class="sm-val" id="sm-rel-v">${p.release} ms</span></div>
-          <input type="range" id="sm-rel" min="100" max="3000" value="${p.release}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Volume <span class="sm-val" id="sm-vol-v">${p.volume}%</span></div>
-          <input type="range" id="sm-vol" min="0" max="100" value="${p.volume}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Tune <span class="sm-val" id="sm-tune-v">${p.detune ?? 0} ¢</span></div>
-          <input type="range" id="sm-tune" min="-100" max="100" value="${p.detune ?? 0}" />
-        </div>
+        <details class="sm-fold" open>
+          <summary>Tone</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="sm-waves"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Envelope</summary>
+          <div class="sm-fold-body">
+            <div class="sm-param">
+              <div class="sm-param-row">Attack <span class="sm-val" id="sm-atk-v">${p.attack} ms</span></div>
+              <input type="range" id="sm-atk" min="1" max="500" value="${p.attack}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Decay <span class="sm-val" id="sm-dec-v">${p.decay} ms</span></div>
+              <input type="range" id="sm-dec" min="10" max="1000" value="${p.decay}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Sustain <span class="sm-val" id="sm-sus-v">${p.sustain}%</span></div>
+              <input type="range" id="sm-sus" min="0" max="100" value="${p.sustain}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Release <span class="sm-val" id="sm-rel-v">${p.release} ms</span></div>
+              <input type="range" id="sm-rel" min="100" max="3000" value="${p.release}" />
+            </div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Level &amp; tuning</summary>
+          <div class="sm-fold-body">
+            <div class="sm-param">
+              <div class="sm-param-row">Volume <span class="sm-val" id="sm-vol-v">${p.volume}%</span></div>
+              <input type="range" id="sm-vol" min="0" max="100" value="${p.volume}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Tune <span class="sm-val" id="sm-tune-v">${p.detune ?? 0} ¢</span></div>
+              <input type="range" id="sm-tune" min="-100" max="100" value="${p.detune ?? 0}" />
+            </div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Effects</summary>
+          <div class="sm-fold-body">
+            <div class="sm-section-label">Reverb</div>
+            <div class="sm-param">
+              <div class="sm-param-row">Mix <span class="sm-val" id="sm-rev-v">${p.reverb ?? 0}%</span></div>
+              <input type="range" id="sm-rev" min="0" max="100" value="${p.reverb ?? 0}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Size <span class="sm-val" id="sm-rev-size-v">${p.reverbSize ?? 70}%</span></div>
+              <input type="range" id="sm-rev-size" min="0" max="100" value="${p.reverbSize ?? 70}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Tone <span class="sm-val" id="sm-rev-tone-v">${p.reverbTone ?? 50}%</span></div>
+              <input type="range" id="sm-rev-tone" min="0" max="100" value="${p.reverbTone ?? 50}" />
+            </div>
+            <div class="sm-section-label">Delay</div>
+            <div class="sm-param">
+              <div class="sm-param-row">Mix <span class="sm-val" id="sm-dly-v">${p.delay ?? 0}%</span></div>
+              <input type="range" id="sm-dly" min="0" max="100" value="${p.delay ?? 0}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Time <span class="sm-val" id="sm-dly-time-v">${p.delayTime ?? 250} ms</span></div>
+              <input type="range" id="sm-dly-time" min="20" max="1000" step="10" value="${p.delayTime ?? 250}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Feedback <span class="sm-val" id="sm-dly-fb-v">${p.delayFeedback ?? 40}%</span></div>
+              <input type="range" id="sm-dly-fb" min="0" max="95" value="${p.delayFeedback ?? 40}" />
+            </div>
+            <div class="sm-section-label">Distortion</div>
+            <div class="sm-param">
+              <div class="sm-param-row">Amount <span class="sm-val" id="sm-dst-v">${p.distortion ?? 0}%</span></div>
+              <input type="range" id="sm-dst" min="0" max="100" value="${p.distortion ?? 0}" />
+            </div>
+          </div>
+        </details>
         <div class="sm-footer">
           <button class="sm-copy" id="sm-copy">Copy to…</button>
           <button class="sm-preview" id="sm-preview">▶ Preview</button>
@@ -4810,12 +5616,19 @@
 
       // Slider bindings
       [
-        ['sm-atk', 'sm-atk-v', 'attack',  ' ms'],
-        ['sm-dec', 'sm-dec-v', 'decay',   ' ms'],
-        ['sm-sus', 'sm-sus-v', 'sustain', '%'],
-        ['sm-rel', 'sm-rel-v', 'release', ' ms'],
-        ['sm-vol', 'sm-vol-v', 'volume',  '%'],
-        ['sm-tune','sm-tune-v','detune',  ' ¢'],
+        ['sm-atk',          'sm-atk-v',          'attack',        ' ms'],
+        ['sm-dec',          'sm-dec-v',          'decay',         ' ms'],
+        ['sm-sus',          'sm-sus-v',          'sustain',       '%'],
+        ['sm-rel',          'sm-rel-v',          'release',       ' ms'],
+        ['sm-vol',          'sm-vol-v',          'volume',        '%'],
+        ['sm-tune',         'sm-tune-v',         'detune',        ' ¢'],
+        ['sm-rev',          'sm-rev-v',          'reverb',        '%'],
+        ['sm-rev-size',     'sm-rev-size-v',     'reverbSize',    '%'],
+        ['sm-rev-tone',     'sm-rev-tone-v',     'reverbTone',    '%'],
+        ['sm-dly',          'sm-dly-v',          'delay',         '%'],
+        ['sm-dly-time',     'sm-dly-time-v',     'delayTime',     ' ms'],
+        ['sm-dly-fb',       'sm-dly-fb-v',       'delayFeedback', '%'],
+        ['sm-dst',          'sm-dst-v',          'distortion',    '%'],
       ].forEach(([id, valId, key, unit]) => {
         const input = modal.querySelector(`#${id}`);
         const label = modal.querySelector(`#${valId}`);
@@ -5224,42 +6037,116 @@
         release: step.params?.release ?? 1400,
         volume:  step.params?.volume  ?? 100,
         detune:  step.params?.detune  ?? 0,
+        reverb:        step.params?.reverb        ?? 0,
+        reverbSize:    step.params?.reverbSize    ?? 70,
+        reverbTone:    step.params?.reverbTone    ?? 50,
+        delay:         step.params?.delay         ?? 0,
+        delayTime:     step.params?.delayTime     ?? 250,
+        delayFeedback: step.params?.delayFeedback ?? 40,
+        distortion:    step.params?.distortion    ?? 0,
+        bendSemitones: step.bend?.semitones ?? 0,
+        bendAt:        Math.round(((step.bend?.atFraction ?? 1) * 100)),
       };
 
       modal.innerHTML = `
         <div class="sm-title">Edit Step ${stepIndex + 1}</div>
-        <div class="sm-section-label">Step subdivision</div>
-        <div class="sm-waves" id="se-sub-row"></div>
-        <div class="sm-section-label">Length (steps)</div>
-        <div class="sm-waves" id="se-len-row"></div>
-        <div class="sm-section-label">Note</div>
-        <div class="sm-waves" id="se-note-picker"></div>
-        <div class="sm-section-label">Sound</div>
-        <div class="sm-waves" id="se-wave-row"></div>
-        <div class="sm-param">
-          <div class="sm-param-row">Attack <span class="sm-val" id="se-atk-v">${p.attack} ms</span></div>
-          <input type="range" id="se-atk" min="1" max="500" value="${p.attack}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Decay <span class="sm-val" id="se-dec-v">${p.decay} ms</span></div>
-          <input type="range" id="se-dec" min="10" max="1000" value="${p.decay}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Sustain <span class="sm-val" id="se-sus-v">${p.sustain}%</span></div>
-          <input type="range" id="se-sus" min="0" max="100" value="${p.sustain}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Release <span class="sm-val" id="se-rel-v">${p.release} ms</span></div>
-          <input type="range" id="se-rel" min="100" max="3000" value="${p.release}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Volume <span class="sm-val" id="se-vol-v">${p.volume}%</span></div>
-          <input type="range" id="se-vol" min="0" max="100" value="${p.volume}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Tune <span class="sm-val" id="se-tune-v">${p.detune} ¢</span></div>
-          <input type="range" id="se-tune" min="-100" max="100" value="${p.detune}" />
-        </div>
+        <details class="sm-fold">
+          <summary>Step subdivision</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="se-sub-row"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Length (steps)</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="se-len-row"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Note</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="se-note-picker"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Sound</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="se-wave-row" style="margin-bottom:14px;"></div>
+            <div class="sm-param">
+              <div class="sm-param-row">Attack <span class="sm-val" id="se-atk-v">${p.attack} ms</span></div>
+              <input type="range" id="se-atk" min="1" max="500" value="${p.attack}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Decay <span class="sm-val" id="se-dec-v">${p.decay} ms</span></div>
+              <input type="range" id="se-dec" min="10" max="1000" value="${p.decay}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Sustain <span class="sm-val" id="se-sus-v">${p.sustain}%</span></div>
+              <input type="range" id="se-sus" min="0" max="100" value="${p.sustain}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Release <span class="sm-val" id="se-rel-v">${p.release} ms</span></div>
+              <input type="range" id="se-rel" min="100" max="3000" value="${p.release}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Volume <span class="sm-val" id="se-vol-v">${p.volume}%</span></div>
+              <input type="range" id="se-vol" min="0" max="100" value="${p.volume}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Tune <span class="sm-val" id="se-tune-v">${p.detune} ¢</span></div>
+              <input type="range" id="se-tune" min="-100" max="100" value="${p.detune}" />
+            </div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Pitch bend</summary>
+          <div class="sm-fold-body">
+            <div class="sm-param">
+              <div class="sm-param-row">Bend by <span class="sm-val" id="se-bend-v">${p.bendSemitones >= 0 ? '+' : ''}${p.bendSemitones} st</span></div>
+              <input type="range" id="se-bend" min="-12" max="12" step="1" value="${p.bendSemitones}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Reach by <span class="sm-val" id="se-bend-at-v">${p.bendAt}%</span></div>
+              <input type="range" id="se-bend-at" min="5" max="100" step="5" value="${p.bendAt}" />
+            </div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Effects</summary>
+          <div class="sm-fold-body">
+            <div class="sm-section-label">Reverb</div>
+            <div class="sm-param">
+              <div class="sm-param-row">Mix <span class="sm-val" id="se-rev-v">${p.reverb}%</span></div>
+              <input type="range" id="se-rev" min="0" max="100" value="${p.reverb}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Size <span class="sm-val" id="se-rev-size-v">${p.reverbSize}%</span></div>
+              <input type="range" id="se-rev-size" min="0" max="100" value="${p.reverbSize}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Tone <span class="sm-val" id="se-rev-tone-v">${p.reverbTone}%</span></div>
+              <input type="range" id="se-rev-tone" min="0" max="100" value="${p.reverbTone}" />
+            </div>
+            <div class="sm-section-label">Delay</div>
+            <div class="sm-param">
+              <div class="sm-param-row">Mix <span class="sm-val" id="se-dly-v">${p.delay}%</span></div>
+              <input type="range" id="se-dly" min="0" max="100" value="${p.delay}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Time <span class="sm-val" id="se-dly-time-v">${p.delayTime} ms</span></div>
+              <input type="range" id="se-dly-time" min="20" max="1000" step="10" value="${p.delayTime}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Feedback <span class="sm-val" id="se-dly-fb-v">${p.delayFeedback}%</span></div>
+              <input type="range" id="se-dly-fb" min="0" max="95" value="${p.delayFeedback}" />
+            </div>
+            <div class="sm-section-label">Distortion</div>
+            <div class="sm-param">
+              <div class="sm-param-row">Amount <span class="sm-val" id="se-dst-v">${p.distortion}%</span></div>
+              <input type="range" id="se-dst" min="0" max="100" value="${p.distortion}" />
+            </div>
+          </div>
+        </details>
         <div class="sm-footer">
           <button class="sm-remove-step">Remove</button>
           <button class="sm-preview">▶ Preview</button>
@@ -5326,12 +6213,19 @@
 
       // Sliders
       [
-        ['se-atk','se-atk-v','attack',' ms'],
-        ['se-dec','se-dec-v','decay',' ms'],
-        ['se-sus','se-sus-v','sustain','%'],
-        ['se-rel','se-rel-v','release',' ms'],
-        ['se-vol','se-vol-v','volume','%'],
-        ['se-tune','se-tune-v','detune',' ¢'],
+        ['se-atk',       'se-atk-v',       'attack',        ' ms'],
+        ['se-dec',       'se-dec-v',       'decay',         ' ms'],
+        ['se-sus',       'se-sus-v',       'sustain',       '%'],
+        ['se-rel',       'se-rel-v',       'release',       ' ms'],
+        ['se-vol',       'se-vol-v',       'volume',        '%'],
+        ['se-tune',      'se-tune-v',      'detune',        ' ¢'],
+        ['se-rev',       'se-rev-v',       'reverb',        '%'],
+        ['se-rev-size',  'se-rev-size-v',  'reverbSize',    '%'],
+        ['se-rev-tone',  'se-rev-tone-v',  'reverbTone',    '%'],
+        ['se-dly',       'se-dly-v',       'delay',         '%'],
+        ['se-dly-time',  'se-dly-time-v',  'delayTime',     ' ms'],
+        ['se-dly-fb',    'se-dly-fb-v',    'delayFeedback', '%'],
+        ['se-dst',       'se-dst-v',       'distortion',    '%'],
       ].forEach(([id, valId, key, unit]) => {
         const input = modal.querySelector(`#${id}`);
         const label = modal.querySelector(`#${valId}`);
@@ -5341,7 +6235,34 @@
         });
       });
 
-      modal.querySelector('.sm-preview').addEventListener('click', () => playNote(p.freq, p));
+      // Pitch-bend sliders. "Bend by" is in semitones; "Reach by" is the
+      // fraction of the step duration at which the bend reaches its target
+      // (the pitch then holds for the remainder).
+      const bendSlider = modal.querySelector('#se-bend');
+      const bendValEl  = modal.querySelector('#se-bend-v');
+      const bendAtSlider = modal.querySelector('#se-bend-at');
+      const bendAtValEl  = modal.querySelector('#se-bend-at-v');
+      bendSlider.addEventListener('input', () => {
+        p.bendSemitones = parseInt(bendSlider.value) || 0;
+        bendValEl.textContent = (p.bendSemitones >= 0 ? '+' : '') + p.bendSemitones + ' st';
+      });
+      bendAtSlider.addEventListener('input', () => {
+        p.bendAt = parseInt(bendAtSlider.value) || 100;
+        bendAtValEl.textContent = p.bendAt + '%';
+      });
+
+      const buildPreviewParams = () => {
+        const out = {
+          type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain,
+          release: p.release, volume: p.volume, detune: p.detune,
+          reverb: p.reverb, reverbSize: p.reverbSize, reverbTone: p.reverbTone,
+          delay:  p.delay,  delayTime:  p.delayTime,  delayFeedback: p.delayFeedback,
+          distortion: p.distortion,
+        };
+        if (p.bendSemitones !== 0) out.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
+        return out;
+      };
+      modal.querySelector('.sm-preview').addEventListener('click', () => playNote(p.freq, buildPreviewParams()));
 
       modal.querySelector('.sm-remove-step').addEventListener('click', () => {
         sequence.splice(stepIndex, 1);
@@ -5351,9 +6272,17 @@
       });
 
       modal.querySelector('.sm-apply').addEventListener('click', () => {
-        sequence[stepIndex] = { freq: p.freq, label: p.label, cellIndex: p.cellIndex,
+        const next = { freq: p.freq, label: p.label, cellIndex: p.cellIndex,
           sound: p.type, duration: p.duration, subdivision: p.subdivision,
-          params: { type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain, release: p.release, volume: p.volume, detune: p.detune } };
+          params: {
+            type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain,
+            release: p.release, volume: p.volume, detune: p.detune,
+            reverb: p.reverb, reverbSize: p.reverbSize, reverbTone: p.reverbTone,
+            delay:  p.delay,  delayTime:  p.delayTime,  delayFeedback: p.delayFeedback,
+            distortion: p.distortion,
+          } };
+        if (p.bendSemitones !== 0) next.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
+        sequence[stepIndex] = next;
         renderSequence();
         overlay.remove();
       });
@@ -5363,21 +6292,49 @@
       const step = sequence[stepIndex];
       let chordNotes = step.chord.map(n => ({
         ...n,
-        params: n.params ? { ...n.params } : { type: n.sound || 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 },
+        params: n.params ? { ...n.params } : { type: n.sound || 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 },
       }));
       let expandedIdx = null;
       let chordDuration = step.duration ?? 1;
       let chordSubdivision = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+      let chordBendSemitones = step.bend?.semitones ?? 0;
+      let chordBendAt = Math.round(((step.bend?.atFraction ?? 1) * 100));
 
       modal.innerHTML = `
         <div class="sm-title">Edit Chord — Step ${stepIndex + 1}</div>
-        <div class="sm-section-label">Step subdivision</div>
-        <div class="sm-waves" id="se-chord-sub-row"></div>
-        <div class="sm-section-label">Length (steps)</div>
-        <div class="sm-waves" id="se-chord-len-row"></div>
-        <div class="se-chord-list" id="se-chord-list"></div>
-        <div class="sm-section-label">Add note</div>
-        <div class="sm-waves" id="se-add-picker"></div>
+        <details class="sm-fold">
+          <summary>Step subdivision</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="se-chord-sub-row"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Length (steps)</summary>
+          <div class="sm-fold-body">
+            <div class="sm-waves" id="se-chord-len-row"></div>
+          </div>
+        </details>
+        <details class="sm-fold" open>
+          <summary>Notes</summary>
+          <div class="sm-fold-body">
+            <div class="se-chord-list" id="se-chord-list"></div>
+            <div class="sm-section-label">Add note</div>
+            <div class="sm-waves" id="se-add-picker"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Pitch bend (whole chord)</summary>
+          <div class="sm-fold-body">
+            <div class="sm-param">
+              <div class="sm-param-row">Bend by <span class="sm-val" id="se-cbend-v">${chordBendSemitones >= 0 ? '+' : ''}${chordBendSemitones} st</span></div>
+              <input type="range" id="se-cbend" min="-12" max="12" step="1" value="${chordBendSemitones}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Reach by <span class="sm-val" id="se-cbend-at-v">${chordBendAt}%</span></div>
+              <input type="range" id="se-cbend-at" min="5" max="100" step="5" value="${chordBendAt}" />
+            </div>
+          </div>
+        </details>
         <div class="sm-footer">
           <button class="sm-remove-step">Remove step</button>
           <button class="sm-preview">▶ Preview</button>
@@ -5483,8 +6440,27 @@
 
       renderList();
 
+      // Pitch-bend sliders (chord-wide). The same semitone offset is applied
+      // to every voice so the chord shape is preserved as it glides.
+      const cBendSlider = modal.querySelector('#se-cbend');
+      const cBendValEl  = modal.querySelector('#se-cbend-v');
+      const cBendAtSlider = modal.querySelector('#se-cbend-at');
+      const cBendAtValEl  = modal.querySelector('#se-cbend-at-v');
+      cBendSlider.addEventListener('input', () => {
+        chordBendSemitones = parseInt(cBendSlider.value) || 0;
+        cBendValEl.textContent = (chordBendSemitones >= 0 ? '+' : '') + chordBendSemitones + ' st';
+      });
+      cBendAtSlider.addEventListener('input', () => {
+        chordBendAt = parseInt(cBendAtSlider.value) || 100;
+        cBendAtValEl.textContent = chordBendAt + '%';
+      });
+
       modal.querySelector('.sm-preview').addEventListener('click', () => {
-        chordNotes.forEach(n => playNote(n.freq, n.params));
+        const previewBend = (chordBendSemitones !== 0)
+          ? { semitones: chordBendSemitones, atFraction: chordBendAt / 100 }
+          : null;
+        const size = chordNotes.length;
+        chordNotes.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params, size), previewBend)));
       });
 
       modal.querySelector('.sm-remove-step').addEventListener('click', () => {
@@ -5495,15 +6471,22 @@
       });
 
       modal.querySelector('.sm-apply').addEventListener('click', () => {
+        const bendObj = (chordBendSemitones !== 0)
+          ? { semitones: chordBendSemitones, atFraction: chordBendAt / 100 }
+          : null;
         if (chordNotes.length === 0) {
           sequence.splice(stepIndex, 1);
         } else if (chordNotes.length === 1) {
           const n = chordNotes[0];
-          sequence[stepIndex] = { freq: n.freq, label: n.label, cellIndex: n.cellIndex,
+          const next = { freq: n.freq, label: n.label, cellIndex: n.cellIndex,
             sound: n.params.type, duration: chordDuration, subdivision: chordSubdivision, params: { ...n.params } };
+          if (bendObj) next.bend = bendObj;
+          sequence[stepIndex] = next;
         } else {
-          sequence[stepIndex] = { chord: chordNotes.map(n => ({ ...n, params: { ...n.params } })),
+          const next = { chord: chordNotes.map(n => ({ ...n, params: { ...n.params } })),
             label: chordNotes.map(n => n.label).join('·'), duration: chordDuration, subdivision: chordSubdivision };
+          if (bendObj) next.bend = bendObj;
+          sequence[stepIndex] = next;
         }
         renderSequence();
         overlay.remove();
@@ -5715,7 +6698,7 @@
       grid.innerHTML = '';
       cells.length = 0;
       cellSounds = new Array(notes.length).fill('sine');
-      cellParams = notes.map(() => ({ type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 }));
+      cellParams = notes.map(() => ({ type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 }));
 
       notes.forEach((note, i) => {
         const cell = document.createElement('div');
@@ -5743,6 +6726,31 @@
             pendingChord.push({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params });
             renderSequence();
             document.getElementById('save-btn').disabled = false;
+          } else if (selectedStepRefs.length > 0) {
+            // Retune the selected step(s) in place — preserves duration,
+            // subdivision, and bend so the click is just a re-pitch. Skips
+            // sub-wrappers and chord steps (those have their own editors).
+            const targets = (multiSelectMode ? selectedStepRefs : [lastSelectedStep()]).filter(Boolean);
+            // Rests are editable too — clicking a cell turns a selected rest
+            // into that note. Sub-wrappers and chord steps are skipped since
+            // they have dedicated editors.
+            const editable = targets.filter(s => s && !s.isSub && !s.chord);
+            if (editable.length > 0) {
+              snapshotForUndo('Re-pitch');
+              editable.forEach(s => {
+                s.freq      = notes[i].freq;
+                s.label     = notes[i].label;
+                s.cellIndex = i;
+                s.sound     = params.type;
+                s.params    = { ...params };
+              });
+              renderSequence();
+            } else {
+              // Nothing editable in the selection (e.g. only sub/chord steps);
+              // fall back to the normal append behavior so the click does
+              // something useful instead of silently no-opping.
+              addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: noteLength, subdivision: stepSubdivision });
+            }
           } else {
             addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: noteLength, subdivision: stepSubdivision });
           }
@@ -5759,6 +6767,100 @@
     refreshHoldEnabled();
     loadSampleManifest();
     loadImportedSamples();
+    loadRemoteInstruments();
+
+    // ---- Top-right Tone dropdown: applies a tone to every grid cell ----
+    function applyToneToAllCells(type) {
+      // Cell sounds/params live outside the undo stack (matching Sound
+      // Editor → Apply), so don't snapshot — it would push an entry that
+      // can't actually roll the change back.
+      cellParams.forEach((p, idx) => {
+        p.type = type;
+        cellSounds[idx] = type;
+      });
+      // Also retune every step that's already in the workspace so picking
+      // a tone changes both what new clicks will produce AND the existing
+      // sequence — including chord voices and any nested subsequences.
+      // Rests have no audio, so skip them.
+      const retuneStep = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          s.subSteps.forEach(retuneStep);
+          return;
+        }
+        if (s.chord) {
+          s.chord.forEach(n => {
+            n.sound = type;
+            if (n.params) n.params.type = type;
+            else n.params = { type };
+          });
+          return;
+        }
+        if (s.freq == null) return; // rest
+        s.sound = type;
+        if (s.params) s.params.type = type;
+        else s.params = { type };
+      };
+      sequence.forEach(retuneStep);
+      pendingChord.forEach(n => {
+        n.sound = type;
+        if (n.params) n.params.type = type;
+        else n.params = { type };
+      });
+      renderSequence();
+    }
+    function populateTonePanel() {
+      const panel = document.getElementById('tone-panel');
+      if (!panel) return;
+      panel.innerHTML = '';
+      getAllSoundOptions().forEach(opt => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tone-opt';
+        b.textContent = opt.label;
+        b.dataset.tone = opt.value;
+        panel.appendChild(b);
+      });
+    }
+    (function initToneMenu() {
+      const btn = document.getElementById('tone-menu-btn');
+      const panel = document.getElementById('tone-panel');
+      if (!btn || !panel) return;
+      const setOpen = (open) => {
+        if (open) populateTonePanel(); // pick up freshly-loaded samples
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.textContent = open ? 'Tone ▴' : 'Tone ▾';
+        if (open) pinPanelToButton(btn, panel);
+      };
+      window.addEventListener('resize', () => {
+        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+      });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        setOpen(willOpen);
+      });
+      // Close when any sibling menubar panel announces itself.
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
+      });
+      panel.addEventListener('click', (e) => {
+        const opt = e.target.closest('.tone-opt');
+        if (!opt) return;
+        applyToneToAllCells(opt.dataset.tone);
+        setOpen(false);
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
+    })();
 
     // Re-parent the menubar dropdowns to <body> so the menubar's overflow
     // can't clip them on mobile. position: fixed via pinPanelToButton then
@@ -5766,8 +6868,85 @@
     (function detachPanelsFromMenubar() {
       const colors = document.getElementById('colors-panel');
       const grid = document.getElementById('grid-settings-panel');
+      const tone = document.getElementById('tone-panel');
+      const fx   = document.getElementById('fx-panel');
       if (colors && colors.parentNode !== document.body) document.body.appendChild(colors);
       if (grid && grid.parentNode !== document.body) document.body.appendChild(grid);
+      if (tone && tone.parentNode !== document.body) document.body.appendChild(tone);
+      if (fx   && fx.parentNode   !== document.body) document.body.appendChild(fx);
+    })();
+
+    (function initFxMenu() {
+      const btn   = document.getElementById('fx-menu-btn');
+      const panel = document.getElementById('fx-panel');
+      if (!btn || !panel) return;
+
+      // Reflect persisted values into the inputs and update the live audio.
+      // Each entry is [inputId, valueLabelId, globalFx key, unit suffix].
+      const sliders = [
+        ['fx-rev',         'fx-rev-v',         'reverb',        '%'],
+        ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',    '%'],
+        ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',    '%'],
+        ['fx-dly',         'fx-dly-v',         'delay',         '%'],
+        ['fx-dly-time',    'fx-dly-time-v',    'delayTime',     ' ms'],
+        ['fx-dly-fb',      'fx-dly-fb-v',      'delayFeedback', '%'],
+        ['fx-dst',         'fx-dst-v',         'distortion',    '%'],
+      ];
+      sliders.forEach(([id, valId, key, unit]) => {
+        const input = panel.querySelector('#' + id);
+        const label = panel.querySelector('#' + valId);
+        if (!input || !label) return;
+        input.value = String(globalFx[key]);
+        label.textContent = globalFx[key] + unit;
+        input.addEventListener('input', () => {
+          globalFx[key] = parseInt(input.value, 10) || 0;
+          label.textContent = globalFx[key] + unit;
+          applyGlobalFx();
+          persistGlobalFx();
+        });
+      });
+      // Bypass — only zeros the three "mix" sliders so size/tone/time/feedback
+      // remembered settings stay intact for the next time the user dials a
+      // wet level back up.
+      panel.querySelector('#fx-reset').addEventListener('click', () => {
+        ['reverb', 'delay', 'distortion'].forEach(key => { globalFx[key] = 0; });
+        sliders.forEach(([id, valId, key, unit]) => {
+          if (key !== 'reverb' && key !== 'delay' && key !== 'distortion') return;
+          const input = panel.querySelector('#' + id);
+          const label = panel.querySelector('#' + valId);
+          if (input) input.value = '0';
+          if (label) label.textContent = '0' + unit;
+        });
+        applyGlobalFx();
+        persistGlobalFx();
+      });
+
+      const setOpen = (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.textContent = open ? 'FX ▴' : 'FX ▾';
+        if (open) pinPanelToButton(btn, panel);
+      };
+      window.addEventListener('resize', () => {
+        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+      });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
     })();
 
     // ---- Color presets ----
@@ -5837,7 +7016,12 @@
       });
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        setOpen(!panel.classList.contains('open'));
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
       });
       panel.querySelectorAll('.colors-opt').forEach(opt => {
         opt.addEventListener('click', () => {
@@ -6084,7 +7268,12 @@
       });
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        setOpen(!panel.classList.contains('open'));
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
       });
       document.addEventListener('click', (e) => {
         if (!panel.classList.contains('open')) return;

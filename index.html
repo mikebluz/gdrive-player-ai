@@ -167,6 +167,17 @@
     }
     .hero-cta-top { margin-bottom: 20px; }
 
+    /* Bottom hero CTA group (Music / Artwork / Merch / Guitars and the
+       Mailing List button) — uniform min-width so the four buttons
+       always render the same size regardless of label length. The
+       Bloops / Player pair in the top group inherits the same sizing.
+       Latest Release stays its natural width. */
+    .hero-cta:not(.hero-cta-top) .btn,
+    .hero-cta-top .hero-cta-row .btn {
+      min-width: 160px;
+      text-align: center;
+    }
+
     .btn {
       display: inline-block;
       padding: 13px 32px;
@@ -220,16 +231,6 @@
       box-shadow: 0 0 22px rgba(253, 224, 71, 0.6);
     }
 
-    .btn-serialbox {
-      background: transparent;
-      color: #4299e1;
-      border: 1px solid #4299e1;
-    }
-    .btn-serialbox:hover {
-      transform: translateY(-2px);
-      background: rgba(66, 153, 225, 0.1);
-      box-shadow: 0 8px 28px rgba(66, 153, 225, 0.22);
-    }
 
     .btn-bloops {
       background: transparent;
@@ -240,6 +241,17 @@
       transform: translateY(-2px);
       background: rgba(159, 122, 234, 0.1);
       box-shadow: 0 8px 28px rgba(159, 122, 234, 0.22);
+    }
+
+    .btn-player {
+      background: transparent;
+      color: #f472b6;
+      border: 1px solid #d91e7c;
+    }
+    .btn-player:hover {
+      transform: translateY(-2px);
+      background: rgba(217, 30, 124, 0.1);
+      box-shadow: 0 8px 28px rgba(217, 30, 124, 0.25);
     }
 
     .btn-artwork {
@@ -554,10 +566,10 @@
     <div class="hero-inner">
       <img src="me2026.jpg" alt="Mike Luz" class="hero-portrait" />
       <div class="hero-cta hero-cta-top">
-        <a href="https://mikeluz.bandcamp.com/track/hallelujah" class="btn btn-latest-release" target="_blank" rel="noopener">Latest Release!</a>
+        <a href="https://mikeluz.bandcamp.com/track/hallelujah" class="btn btn-latest-release" target="_blank" rel="noopener">Latest Release</a>
         <div class="hero-cta-row">
           <a href="bloops.html" class="btn btn-bloops">Bloops</a>
-          <a href="serialbox.html" class="btn btn-serialbox">Serialbox</a>
+          <a href="bloops.html#player" class="btn btn-player">Player</a>
         </div>
       </div>
       <div class="hero-banner">
@@ -598,7 +610,7 @@
       </div>
       <div class="hero-cta">
         <div class="hero-cta-row">
-          <a href="https://linktr.ee/mercywizard" class="btn btn-recordings" target="_blank" rel="noopener">Recordings</a>
+          <a href="https://linktr.ee/mercywizard" class="btn btn-recordings" target="_blank" rel="noopener">Music</a>
           <a href="artwork.html" class="btn btn-artwork">Artwork</a>
         </div>
         <div class="hero-cta-row">

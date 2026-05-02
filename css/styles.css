@@ -127,14 +127,14 @@ body {
     font-size: 12px;
 }
 
-#shuffle-btn {
+#sb-shuffle-btn {
     background: #000;
     color: #d91e7c;
     border: 1px solid #d91e7c;
     box-shadow: 0 0 10px rgba(217, 30, 124, 0.35);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-#shuffle-btn:hover {
+#sb-shuffle-btn:hover {
     transform: translateY(-1px);
     box-shadow: 0 0 16px rgba(217, 30, 124, 0.6);
 }

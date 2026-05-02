@@ -90,6 +90,19 @@ class GoogleDriveAPI {
   }
 
   async signIn() {
+    // When embedded inside the unified Bloops + Serialbox page, delegate
+    // to the shared sign-in so both views use the same access token.
+    if (typeof window !== 'undefined' && window.bloopsAuth && typeof window.bloopsAuth.signIn === 'function') {
+      await window.bloopsAuth.signIn();
+      this.accessToken = window.bloopsAuth.getToken();
+      if (typeof gapi !== 'undefined' && gapi.client && this.accessToken) {
+        gapi.client.setToken({ access_token: this.accessToken });
+      }
+      document.dispatchEvent(
+        new CustomEvent("authStatusChanged", { detail: { isSignedIn: true } })
+      );
+      return;
+    }
     if (!this.gisTokenClient) throw new Error("Token client not initialized");
     this.gisTokenClient.requestAccessToken({ prompt: "consent" });
   }
@@ -269,8 +282,27 @@ class GoogleDriveAPI {
     return div.textContent || div.innerText || '';
   }
 
-  ensureSignedIn() {
-    if (!this.accessToken) throw new Error("Not signed in with Google");
+  async ensureSignedIn() {
+    if (this.accessToken) return;
+    // Pull the current token from the shared Bloops auth surface, or
+    // trigger a sign-in if no one has authenticated yet.
+    if (typeof window !== 'undefined' && window.bloopsAuth && typeof window.bloopsAuth.getToken === 'function') {
+      const tok = window.bloopsAuth.getToken();
+      if (tok) {
+        this.accessToken = tok;
+        if (typeof gapi !== 'undefined' && gapi.client) gapi.client.setToken({ access_token: tok });
+        return;
+      }
+      if (typeof window.bloopsAuth.signIn === 'function') {
+        await window.bloopsAuth.signIn();
+        this.accessToken = window.bloopsAuth.getToken();
+        if (typeof gapi !== 'undefined' && gapi.client && this.accessToken) {
+          gapi.client.setToken({ access_token: this.accessToken });
+        }
+        if (this.accessToken) return;
+      }
+    }
+    throw new Error("Not signed in with Google");
   }
 
   isAudioFile(name) {

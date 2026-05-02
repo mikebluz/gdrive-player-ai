@@ -20,9 +20,11 @@ class MusicPlayer {
     }
 
     initializeElements() {
-        this.playPauseBtn = document.getElementById('play-pause-btn');
-        this.prevBtn = document.getElementById('prev-btn');
-        this.nextBtn = document.getElementById('next-btn');
+        // sb- prefix avoids ID collision with Bloops's own play / step
+        // buttons inside the unified page (Player view).
+        this.playPauseBtn = document.getElementById('sb-play-pause-btn');
+        this.prevBtn      = document.getElementById('sb-prev-btn');
+        this.nextBtn      = document.getElementById('sb-next-btn');
 
         this.progressSlider = document.getElementById('progress-slider');
         this.progressFill = document.getElementById('progress-fill');

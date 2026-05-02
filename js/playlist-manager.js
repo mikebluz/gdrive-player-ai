@@ -9,8 +9,10 @@ class PlaylistManager {
 
         this.playlistContainer = document.getElementById('playlist-container');
         this.playlistCount = document.getElementById('playlist-count');
-        this.shuffleBtn = document.getElementById('shuffle-btn');
-        this.loopBtn = document.getElementById('loop-btn');
+        // sb- prefix avoids collision with Bloops's own #shuffle-btn /
+        // #loop-btn inside the unified page.
+        this.shuffleBtn = document.getElementById('sb-shuffle-btn');
+        this.loopBtn    = document.getElementById('sb-loop-btn');
         this.loopMode = 'off'; // 'off' | 'track' | 'playlist'
 
         this.bindEvents();

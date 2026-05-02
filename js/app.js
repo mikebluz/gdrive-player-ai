@@ -231,7 +231,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function freezeUI() {
     playlistSelect.disabled = true;
     player.disableControls();
-    const shuffleBtn = document.getElementById("shuffle-btn");
+    const shuffleBtn = document.getElementById("sb-shuffle-btn");
     if (shuffleBtn) shuffleBtn.disabled = true;
     signoutBtn.disabled = true;
   }
@@ -239,7 +239,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function unfreezeUI() {
     playlistSelect.disabled = false;
     player.enableControls();
-    const shuffleBtn = document.getElementById("shuffle-btn");
+    const shuffleBtn = document.getElementById("sb-shuffle-btn");
     if (shuffleBtn) shuffleBtn.disabled = false;
     signoutBtn.disabled = false;
   }

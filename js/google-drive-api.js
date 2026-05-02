@@ -135,11 +135,18 @@ class GoogleDriveAPI {
 
   async searchFolders(folderName) {
     await this.ensureSignedIn();
+    // Strict exact-name lookup. Drive's `name =` does the equality match
+    // server-side; the JS comparison is just a defensive belt-and-braces
+    // check. No fuzzy / contains fallback — if the playlist entry doesn't
+    // match a folder exactly, callers see an empty result and surface the
+    // "No folders found named X" error.
+    const safe = String(folderName).replace(/'/g, "\\'");
+    const wanted = String(folderName);
     const res = await gapi.client.drive.files.list({
-      q: `name contains '${folderName}' and mimeType='application/vnd.google-apps.folder'`,
+      q: `name = '${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
       fields: "files(id, name, parents)",
     });
-    return res.result.files || [];
+    return (res.result.files || []).filter(f => (f.name || '') === wanted);
   }
 
   async getMusicFilesFromFolders(folders) {

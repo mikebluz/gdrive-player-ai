@@ -2309,6 +2309,14 @@
     let notes = computeNotes();
 
     let sequenceTimer = null;
+    // Absolute audio-context time anchors for sequence playback. Each note
+    // is scheduled at _playBaseTime + _playOffsetSec instead of "now",
+    // which makes the cadence robust against setTimeout jitter — without
+    // this, mobile Safari rushes the first few notes (early setTimeout
+    // ticks) and then settles, sounding like the sequence speeds up at the
+    // start.
+    let _playBaseTime  = 0;
+    let _playOffsetSec = 0;
     let sequence = []; // [{ freq, label, cellIndex }] — freq null = rest; chord: [{...}]
     let chordMode = false;
     let loopMode = false;
@@ -3730,8 +3738,21 @@
       const outputLatency = Number.isFinite(raw.outputLatency)  ? raw.outputLatency  : 0;
       return Math.max(0, (lookAhead + baseLatency + outputLatency) * 1000);
     }
-    function scheduleVisual(fn) {
-      const ms = visualLookAheadMs();
+    // Optional `audioTime` anchors the visual to a specific audio-context
+    // time (used by the absolute-time sequencer below). Without it, falls
+    // back to a fixed lookahead delay good enough for one-shot previews.
+    function scheduleVisual(fn, audioTime) {
+      let ms;
+      if (audioTime != null && typeof Tone !== 'undefined' && Tone.context) {
+        const ctx = Tone.context;
+        const raw = ctx.rawContext || ctx;
+        const now = (typeof ctx.now === 'function') ? ctx.now() : (raw.currentTime || 0);
+        const baseLatency   = Number.isFinite(raw.baseLatency)   ? raw.baseLatency   : 0;
+        const outputLatency = Number.isFinite(raw.outputLatency) ? raw.outputLatency : 0;
+        ms = Math.max(0, (audioTime - now + baseLatency + outputLatency) * 1000);
+      } else {
+        ms = visualLookAheadMs();
+      }
       if (ms <= 0) { fn(); return; }
       const t = setTimeout(() => {
         _visualTimers = _visualTimers.filter(x => x !== t);
@@ -3774,17 +3795,19 @@
       const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       const bpm = parseInt(tempoInput.value) || 120;
       const waitMs = Math.round(60000 / bpm * stepSub) * stepDur;
-      // Audio first — Tone.js schedules at currentTime + lookAhead so the
-      // sound emits a beat ahead. Highlights are deferred by that same
-      // lookAhead via scheduleVisual so chip + cell flashes hit the user's
-      // ears and eyes at the same moment.
+      // Schedule audio at an absolute audio-context time derived from a
+      // shared cadence anchor. setTimeout jitter (mobile Safari fires the
+      // first few timers very fast and then settles) no longer affects
+      // when the actual notes play. Visuals key off the same audioTime so
+      // the highlight follows the audio, not the JS thread.
+      const audioTime = _playBaseTime + _playOffsetSec;
       if (step.chord) {
         const size = step.chord.length;
         step.chord.forEach(n => {
-          playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs);
+          playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, audioTime);
         });
       } else if (step.freq != null) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, audioTime);
       }
       scheduleVisual(() => {
         clearHighlights();
@@ -3797,7 +3820,8 @@
         } else {
           document.getElementById('rest-bar').classList.add('active-loop');
         }
-      });
+      }, audioTime);
+      _playOffsetSec += waitMs / 1000;
       sequenceTimer = setTimeout(onDone, waitMs);
     }
 
@@ -3869,19 +3893,20 @@
     function playSequence(index = 0) {
       if (index === 0) {
         document.getElementById('play-btn').textContent = '■';
+        // Re-anchor the absolute-time cadence at every fresh start (and at
+        // the loop wrap-around). Tone.now() already includes lookAhead, so
+        // the first note has built-in audio scheduling lead-time without
+        // the JS thread being on the critical path.
+        _playBaseTime  = Tone.now();
+        _playOffsetSec = 0;
       }
       if (sequence.length === 0) { stopSequence(); return; }
-      // Audio first — calling renderSequence before playStepCB used to
-      // delay the next note's audio scheduling by however long the DOM
-      // rebuild took, which was especially noticeable between the first
-      // two notes (no synth caching yet, render runs cold). With audio
-      // scheduled first and a cheap class-toggle for the highlight, the
-      // setTimeout-driven gap stays close to the intended waitMs. The
-      // chip activation is deferred via scheduleVisual (matches the
-      // cell-highlight delay inside playStepCB) so it lines up with the
-      // moment the audio is actually emitted.
+      // Anchor the chip highlight to the same audio time the upcoming step
+      // will be scheduled at, so the active chip flips in sync with the
+      // audio rather than with whatever moment setTimeout fired.
+      const chipAudioTime = _playBaseTime + _playOffsetSec;
       playStepCB(sequence[index], () => advanceAfterStep(index));
-      scheduleVisual(() => setActiveSequenceChip(index));
+      scheduleVisual(() => setActiveSequenceChip(index), chipAudioTime);
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {

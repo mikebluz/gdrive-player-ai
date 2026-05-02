@@ -55,29 +55,6 @@
     }
     .menubar > * { flex-shrink: 0; }
 
-    /* Right-anchored menubar pills — FX takes the auto-margin so the whole
-       FX→Tone cluster floats to the menubar's far end on desktop, then
-       collapses into the scroll row on narrow viewports. */
-    #fx-menu-btn {
-      margin-left: auto;
-    }
-    #fx-menu-btn,
-    #tone-menu-btn {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #fx-menu-btn:hover,
-    #tone-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #fx-menu-btn.open,
-    #tone-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
     .tone-panel {
       display: none;
       flex-direction: column;
@@ -163,21 +140,6 @@
       transition: all 0.15s ease;
     }
     .fx-reset:hover { border-color: #4299e1; color: #4299e1; }
-
-    #grid-settings-btn {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #grid-settings-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #grid-settings-btn.open { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
 
     .grid-settings-panel {
       display: none;
@@ -456,11 +418,24 @@
     .grid-state-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
 
     /* NOTE GRID */
-    /* Slim banner above the note grid showing the current scale at a glance.
-       Updated by updateScaleBanner() whenever the root or scale changes. */
-    .scale-banner {
+    /* Slim clickable banners above the note grid that double as menu
+       triggers — Scale + Tone share a row, FX sits below. Each half opens
+       its corresponding settings panel and reflects the current value where
+       applicable. Updated by updateScaleBanner() whenever the underlying
+       state changes. */
+    .banner-row {
+      display: flex;
+      flex-shrink: 0;
       background: #050510;
       border-bottom: 1px solid #1a1a2e;
+    }
+    .banner-row--fx { border-bottom: 1px solid #1a1a2e; }
+    .banner-half {
+      flex: 1;
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      border-right: 1px solid #1a1a2e;
       color: #4fd1c5;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
@@ -468,8 +443,30 @@
       letter-spacing: 1.5px;
       text-transform: uppercase;
       text-align: center;
-      padding: 4px 12px;
-      flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .banner-half:last-child { border-right: none; }
+    .banner-half::after {
+      content: ' ▾';
+      font-size: 0.65rem;
+      margin-left: 4px;
+      color: #2d8478;
+      transition: color 0.15s ease;
+      display: inline-block;
+    }
+    @media (hover: hover) {
+      .banner-half:hover { background: #0a0a14; color: #81e6d9; }
+      .banner-half:hover::after { color: #81e6d9; }
+    }
+    .banner-half.open {
+      background: #0a0a14;
+      color: #81e6d9;
+    }
+    .banner-half.open::after {
+      content: ' ▴';
+      color: #81e6d9;
     }
     .grid {
       flex: 1;
@@ -1276,6 +1273,10 @@
       transition: all 0.15s ease;
     }
     .song-btn:hover { border-color: #4299e1; color: #4299e1; }
+    .projects-bank .projects-load { border-color: #4fd1c5; color: #4fd1c5; }
+    .projects-bank .projects-load:hover { border-color: #81e6d9; color: #81e6d9; }
+    .project-chip { border-color: #2d2d3f; }
+    .project-chip-empty { color: #4a4a6a; cursor: default; padding: 6px 12px; font-style: italic; }
 
     body.tracks-fullscreen > *:not(.tracks-section) { display: none !important; }
     body.tracks-fullscreen {
@@ -1329,6 +1330,7 @@
     }
     #add-track-btn,
     #tracks-export-btn,
+    #tracks-share-btn,
     #tracks-save-project-btn,
     #tracks-load-project-btn,
     #tracks-loop-all {
@@ -1349,6 +1351,8 @@
     #tracks-load-project-btn:hover { border-color: #4299e1; color: #4299e1; }
     #tracks-save-project-btn:disabled,
     #tracks-load-project-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #tracks-share-btn:hover { border-color: #f6ad55; color: #fbd38d; }
+    #tracks-share-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     #tracks-loop-all:hover { border-color: #38b2ac; color: #38b2ac; }
     #tracks-loop-all.active {
       border-color: #38b2ac;
@@ -1765,7 +1769,6 @@
       <button type="button" class="colors-opt" data-mode="chess">Chess</button>
       <button type="button" class="colors-opt" data-mode="checkers">Checkers</button>
     </div>
-    <button id="grid-settings-btn" title="Grid settings">Grid ▾</button>
     <div class="grid-settings-panel" id="grid-settings-panel">
       <div class="grid-control">
         <label title="Starting note of the chromatic grid">Root
@@ -1803,7 +1806,6 @@
         </div>
       </div>
     </div>
-    <button id="fx-menu-btn" type="button" title="Global effects (apply to every note)">FX ▾</button>
     <div class="fx-panel" id="fx-panel">
       <div class="fx-group-label">Reverb</div>
       <div class="fx-control">
@@ -1840,11 +1842,16 @@
         <button type="button" id="fx-reset" class="fx-reset">Bypass</button>
       </div>
     </div>
-    <button id="tone-menu-btn" type="button" title="Apply a tone to every note">Tone ▾</button>
     <div class="tone-panel" id="tone-panel"></div>
   </div>
 
-  <div class="scale-banner" id="scale-banner" title="Current scale and root — change in Grid settings"></div>
+  <div class="banner-row">
+    <button type="button" id="scale-banner-half" class="banner-half" title="Click to change root, scale, octaves, A4 tuning, and saved grid states"></button>
+    <button type="button" id="tone-banner-half"  class="banner-half" title="Click to pick a tone applied to all notes"></button>
+  </div>
+  <div class="banner-row banner-row--fx">
+    <button type="button" id="fx-banner" class="banner-half" title="Click to adjust global reverb / delay / distortion">FX</button>
+  </div>
   <div class="grid" id="grid"></div>
 
   <div class="rest-bar" id="rest-bar"><span>REST</span></div>
@@ -1944,11 +1951,16 @@
       <button id="tracks-save-project-btn" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save Project</button>
       <button id="tracks-load-project-btn" title="Load a previously saved project from Google Drive">Load Project</button>
       <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
+      <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
       <button id="add-track-btn">+ Add Track</button>
     </div>
     <div id="tracks-container"></div>
   </div>
 
+  <div class="songs-bank projects-bank" id="projects-bank">
+    <span class="songs-bank-label">Projects</span>
+    <button type="button" class="song-btn projects-load" id="projects-load-btn" title="Sign in to Drive and list saved projects">↻ Load</button>
+  </div>
   <div class="songs-bank">
     <span class="songs-bank-label">Songs</span>
     <button type="button" class="song-btn" data-song="vivaldi">Vivaldi</button>
@@ -1956,6 +1968,9 @@
     <button type="button" class="song-btn" data-song="mozart">Mozart</button>
     <button type="button" class="song-btn" data-song="beethoven">Beethoven</button>
     <button type="button" class="song-btn" data-song="miles">Miles Davis</button>
+    <button type="button" class="song-btn" data-song="takeiteasy">Take It Easy</button>
+    <button type="button" class="song-btn" data-song="margaritaville">Margaritaville</button>
+    <button type="button" class="song-btn" data-song="likeaprayer">Like a Prayer</button>
   </div>
 
   <script>
@@ -2076,6 +2091,7 @@
               if (sel) sel.value = cellSounds[idx];
             });
             refreshAllCellFreqLabels();
+            updateScaleBanner();
           }
 
           if (saved.loopMode != null) {
@@ -2498,7 +2514,7 @@
       return base;
     }
 
-    function playNote(freq, params = {}, durationMs, startTime, destination) {
+    function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx) {
       if (typeof params === 'string') params = { type: params };
       const {
         type    = 'sine',
@@ -2535,17 +2551,25 @@
       const disposeMs = (preReleaseDur + rel + 0.4) * 1000;
 
       // Loaded sample (Tone.Sampler) — pitch-shifts the file to play any note.
-      // Effects are skipped on samples since the sampler is shared and routes
-      // straight to the master bus by construction.
+      // Per-note effects are skipped on samples (the sampler is shared); pan
+      // and EQ are still applied when called from track playback because we
+      // route through a per-track sampler bound to the track's bus.
       if (isSampleType(type)) {
-        const entry = getSampleEntry(type);
-        if (entry?.sampler && entry.sampler.loaded) {
+        let sampler = null;
+        if (Number.isFinite(trackIdx) && tracks[trackIdx]) {
+          sampler = getOrCreateTrackSampler(trackIdx, type.slice(7));
+        }
+        if (!sampler) {
+          const entry = getSampleEntry(type);
+          sampler = entry?.sampler || null;
+        }
+        if (sampler && sampler.loaded) {
           const tunedFreq = (typeof freq === 'number')
             ? freq * Math.pow(2, detune / 1200)
             : freq;
           const dur = Math.max(targetDur, 0.05);
           try {
-            entry.sampler.triggerAttackRelease(tunedFreq, dur, startTime, velocity);
+            sampler.triggerAttackRelease(tunedFreq, dur, startTime, velocity);
           } catch (e) {
             console.warn('Sample playback failed', type, e);
           }
@@ -4284,16 +4308,49 @@
       { n: 'D4', d: 2 }, null, 'A4', 'G4', null, null, null, null,
       'E4', 'G4', 'A4', { n: 'D5', d: 2 }, null, null, null, null,
     ];
+    // The Eagles — "Take It Easy" (1972) opening vocal melody: the
+    // "well, I'm running down the road tryin' to loosen my load" phrase,
+    // contoured around the G-major triad with a step-down on "load".
+    const TAKE_IT_EASY_NOTES = [
+      'G4', 'G4', 'G4', 'G4', 'G4', 'G4',
+      'A4', 'G4', 'F#4', 'E4',
+      { n: 'D4', d: 2 }, null,
+      'E4', 'E4', 'D4', 'C4', { n: 'D4', d: 4 },
+    ];
+    // Jimmy Buffett — "Margaritaville" (1977) chorus opener:
+    // "wastin' away again in Margaritaville", the descending D-major line.
+    const MARGARITAVILLE_NOTES = [
+      'D5', 'D5', 'D5',
+      'C#5', 'B4',
+      'A4', 'B4',
+      'A4', 'G4',
+      'F#4', 'E4', { n: 'D4', d: 4 },
+    ];
+    // Madonna — "Like a Prayer" (1989) chorus hook:
+    // "life is a mystery, everyone must stand alone" — Am→F→G feel.
+    const LIKE_A_PRAYER_NOTES = [
+      'E5', 'E5', 'E5', 'F5',
+      { n: 'E5', d: 2 }, 'D5',
+      'C5', 'D5', { n: 'E5', d: 2 }, null,
+      'A4', 'C5', 'D5', 'E5', { n: 'D5', d: 4 },
+    ];
     function defaultStepParams(type) {
       return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
     }
     function loadSongPreset(name) {
       let src;
-      if      (name === 'vivaldi')   src = { notes: VIVALDI_SPRING_NOTES,       bpm: 120, sub: 1,   sound: 'sawtooth' };
-      else if (name === 'bach')      src = { notes: BACH_TOCCATA_NOTES,         bpm: 100, sub: 1,   sound: 'square'   };
-      else if (name === 'mozart')    src = { notes: MOZART_NACHTMUSIK_NOTES,    bpm: 130, sub: 1,   sound: 'sawtooth' };
-      else if (name === 'beethoven') src = { notes: BEETHOVEN_5TH_NOTES,        bpm: 108, sub: 0.5, sound: 'sawtooth' };
-      else if (name === 'miles')     src = { notes: MILES_SO_WHAT_NOTES,        bpm: 130, sub: 1,   sound: 'sine'     };
+      // BPM and Step Div tuned so each preset plays at a tempo that feels
+      // close to the original recording rather than the early "halftime"
+      // pace. Most of these now use eighth-note pulse (sub=0.5) so a 16-step
+      // pattern lasts about a single bar.
+      if      (name === 'vivaldi')        src = { notes: VIVALDI_SPRING_NOTES,    bpm: 140, sub: 0.5, sound: 'sawtooth' };
+      else if (name === 'bach')           src = { notes: BACH_TOCCATA_NOTES,      bpm: 130, sub: 0.5, sound: 'square'   };
+      else if (name === 'mozart')         src = { notes: MOZART_NACHTMUSIK_NOTES, bpm: 150, sub: 0.5, sound: 'sawtooth' };
+      else if (name === 'beethoven')      src = { notes: BEETHOVEN_5TH_NOTES,     bpm: 132, sub: 0.5, sound: 'sawtooth' };
+      else if (name === 'miles')          src = { notes: MILES_SO_WHAT_NOTES,     bpm: 140, sub: 0.5, sound: 'sine'     };
+      else if (name === 'takeiteasy')     src = { notes: TAKE_IT_EASY_NOTES,      bpm: 138, sub: 0.5, sound: 'pluck'    };
+      else if (name === 'margaritaville') src = { notes: MARGARITAVILLE_NOTES,    bpm: 100, sub: 0.5, sound: 'pluck'    };
+      else if (name === 'likeaprayer')    src = { notes: LIKE_A_PRAYER_NOTES,     bpm: 116, sub: 0.5, sound: 'sawtooth' };
       else return;
       snapshotForUndo('Load ' + name);
       stopSequence();
@@ -4448,6 +4505,10 @@
       if (track && track._panner) {
         try { track._panner.dispose(); } catch (e) {}
         track._panner = null;
+      }
+      if (track && track._samplers) {
+        track._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
+        track._samplers = null;
       }
       tracks.splice(trackIdx, 1);
       persistTracks();
@@ -4648,6 +4709,30 @@
       persistTracks();
       refreshTrackMixButton(trackIdx);
     }
+    // Per-track Tone.Sampler instances bound to track._bus so sample-based
+    // notes (Piano, Organ, …) flow through the same EQ + panner path the
+    // synth voices already use. The shared live samplers connect straight
+    // to masterBus and would otherwise bypass per-track Mix settings.
+    function getOrCreateTrackSampler(trackIdx, sampleId) {
+      const track = tracks[trackIdx];
+      if (!track) return null;
+      if (!track._samplers) track._samplers = new Map();
+      if (track._samplers.has(sampleId)) return track._samplers.get(sampleId);
+      const info = sampleSamplers.get(sampleId);
+      if (!info || !info.urls) return null;
+      try {
+        const samp = new Tone.Sampler({
+          urls: info.urls,
+          baseUrl: info.baseUrl,
+          release: 1,
+        }).connect(getTrackBus(trackIdx));
+        track._samplers.set(sampleId, samp);
+        return samp;
+      } catch (e) {
+        console.warn('Failed to create per-track sampler', sampleId, e);
+        return null;
+      }
+    }
     function showTrackEqDialog(trackIdx) {
       const track = tracks[trackIdx];
       if (!track) return;
@@ -4830,9 +4915,9 @@
       const trackBus = getTrackBus(trackIdx);
       if (step.chord) {
         const size = step.chord.length;
-        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, undefined, trackBus));
+        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, undefined, trackBus, trackIdx));
       } else if (step.freq !== null && step.freq !== undefined) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, undefined, trackBus);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, undefined, trackBus, trackIdx);
       }
 
       track.timer = setTimeout(() => {
@@ -5296,15 +5381,26 @@
       return create.result.id;
     }
 
-    async function uploadJsonToDrive(name, jsonString, folderId) {
-      const initResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
-        method: 'POST',
+    async function uploadJsonToDrive(name, jsonString, folderId, existingFileId) {
+      // POST /files for new uploads, PATCH /files/{id} to replace an existing
+      // file in place (preserves the file's id / shared links / Drive history).
+      const url = existingFileId
+        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable`
+        : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable';
+      const method = existingFileId ? 'PATCH' : 'POST';
+      // PATCH must not include a `parents` field unless paired with the
+      // addParents/removeParents query params, so omit it when updating.
+      const metadata = existingFileId
+        ? { name, mimeType: 'application/json' }
+        : { name, parents: [folderId], mimeType: 'application/json' };
+      const initResp = await fetch(url, {
+        method,
         headers: {
           'Authorization': `Bearer ${googleAccessToken}`,
           'Content-Type': 'application/json; charset=UTF-8',
           'X-Upload-Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name, parents: [folderId], mimeType: 'application/json' }),
+        body: JSON.stringify(metadata),
       });
       if (!initResp.ok) throw new Error(`Drive init failed: ${initResp.status} ${await initResp.text()}`);
       const uploadUrl = initResp.headers.get('Location');
@@ -5376,6 +5472,50 @@
 
     document.getElementById('tracks-export-btn').addEventListener('click', exportTracksToDrive);
 
+    // Render the mix and hand the resulting WAV to the system share sheet —
+    // on mobile this brings up text/email/chat targets without bouncing
+    // through Drive. Falls back to a clear message when the browser doesn't
+    // implement the Web Share API for files (e.g. desktop Firefox).
+    async function shareTracksAudio() {
+      const btn = document.getElementById('tracks-share-btn');
+      const anyItems = tracks.some(t => (t.items || []).length > 0);
+      if (!anyItems) { alert('Add at least one saved sequence to a track before sharing.'); return; }
+      if (typeof navigator.share !== 'function') {
+        alert('This browser does not support sharing. Use Export to save the file and share it manually.');
+        return;
+      }
+      const filename = `bloops-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}.wav`;
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Rendering…';
+        const buffer = await renderTracksToBuffer();
+        const blob   = audioBufferToWav(buffer);
+        const file   = new File([blob], filename, { type: 'audio/wav' });
+        if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
+          alert('This browser cannot share audio files directly. Use Export to save the file and share it manually.');
+          return;
+        }
+        btn.textContent = 'Sharing…';
+        await navigator.share({
+          title: 'Bloops mix',
+          text:  'Made with Bloops',
+          files: [file],
+        });
+        btn.textContent = 'Shared';
+      } catch (e) {
+        // Web Share rejects with AbortError when the user dismisses the
+        // share sheet — that's a normal cancel, not an error worth alerting.
+        if (e && e.name !== 'AbortError') {
+          console.error(e);
+          alert(`Share failed: ${e.message || e}`);
+        }
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
+      }
+    }
+    document.getElementById('tracks-share-btn').addEventListener('click', shareTracksAudio);
+
     // Capture the whole workspace into a JSON-friendly snapshot — what the
     // user has on screen plus every persisted side-store (saved sequences,
     // tracks, grid states, global FX). Loaded back later via the matching
@@ -5444,12 +5584,28 @@
         btn.textContent = 'Signing in…';
         await googleSignInForDrive();
 
-        btn.textContent = 'Uploading…';
+        btn.textContent = 'Checking…';
         const folderId = await findOrCreateDriveFolder('Bloops Projects');
-        const file = await uploadJsonToDrive(filename, jsonString, folderId);
+        const existing = await listProjectsInDrive(folderId);
+        // Drive permits multiple files with the same name in one folder, so
+        // a strict-match scan is the only way to detect a name collision.
+        const match = existing.find(f => f.name === filename);
+        let existingFileId = null;
+        if (match) {
+          const ok = confirm(`A project named "${projectName.trim()}" already exists in "Bloops Projects".\n\nOverwrite it?`);
+          if (!ok) {
+            btn.textContent = origText;
+            btn.disabled = false;
+            return;
+          }
+          existingFileId = match.id;
+        }
 
-        btn.textContent = 'Saved';
-        alert(`Saved "${file.name || filename}" to Drive folder "Bloops Projects".`);
+        btn.textContent = existingFileId ? 'Overwriting…' : 'Uploading…';
+        const file = await uploadJsonToDrive(filename, jsonString, folderId, existingFileId);
+
+        btn.textContent = existingFileId ? 'Overwritten' : 'Saved';
+        alert(`${existingFileId ? 'Overwrote' : 'Saved'} "${file.name || filename}" in Drive folder "Bloops Projects".`);
       } catch (e) {
         console.error(e);
         alert(`Save failed: ${e.message || e}`);
@@ -5562,6 +5718,10 @@
       tracks.forEach(t => {
         if (t._bus)    { try { t._bus.dispose(); }    catch (e) {} t._bus = null; }
         if (t._panner) { try { t._panner.dispose(); } catch (e) {} t._panner = null; }
+        if (t._samplers) {
+          t._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
+          t._samplers = null;
+        }
         if (t.timer)   { clearTimeout(t.timer); t.timer = null; }
       });
       tracks = Array.isArray(snap.tracks) ? snap.tracks.map(t => ({
@@ -5714,6 +5874,130 @@
       }
     }
     document.getElementById('tracks-load-project-btn').addEventListener('click', loadProjectFromDrive);
+
+    // Bloops Projects bank — mirrors the Songs bank below the tracks. The
+    // first click on Load signs in to Drive, lists projects, and replaces
+    // itself with one chip per project. Subsequent clicks on the refreshed
+    // Load button re-fetch the list.
+    async function refreshProjectsBank() {
+      const bank = document.getElementById('projects-bank');
+      const loadBtn = document.getElementById('projects-load-btn');
+      if (!bank || !loadBtn) return;
+      const origText = loadBtn.textContent;
+      loadBtn.disabled = true;
+      try {
+        loadBtn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+        loadBtn.textContent = 'Listing…';
+        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const files = await listProjectsInDrive(folderId);
+        // Wipe any previously-rendered chips, keep the label + Load button.
+        bank.querySelectorAll('.project-chip').forEach(el => el.remove());
+        if (files.length === 0) {
+          const empty = document.createElement('span');
+          empty.className = 'project-chip project-chip-empty';
+          empty.textContent = 'No saved projects yet';
+          bank.appendChild(empty);
+        } else {
+          files.forEach(f => {
+            const displayName = f.name.replace(/\.json$/i, '');
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'song-btn project-chip';
+            chip.textContent = displayName;
+            chip.title = `Click to load · long-press to edit · last modified ${new Date(f.modifiedTime).toLocaleString()}`;
+
+            // Long-press / right-click → context menu so the user can edit
+            // the project (currently delete from Drive). The lp.fired flag
+            // suppresses the click event that pointerup would otherwise
+            // dispatch right after the menu opens.
+            const lp = { timer: null, startX: 0, startY: 0, fired: false };
+            const cancelLp = () => { clearTimeout(lp.timer); lp.timer = null; };
+            chip.addEventListener('pointerdown', (e) => {
+              lp.startX = e.clientX;
+              lp.startY = e.clientY;
+              lp.fired = false;
+              lp.timer = setTimeout(() => {
+                lp.timer = null;
+                lp.fired = true;
+                navigator.vibrate?.(40);
+                showCtxMenu(e.clientX, e.clientY, [
+                  { label: 'Delete from Drive', danger: true, fn: async () => {
+                    if (!confirm(`Delete project "${displayName}" from Google Drive? This can't be undone.`)) return;
+                    chip.disabled = true;
+                    chip.textContent = 'Deleting…';
+                    try {
+                      await gapi.client.drive.files.delete({ fileId: f.id });
+                      // Re-fetch the list so the chip + any tombstones drop.
+                      refreshProjectsBank();
+                    } catch (err) {
+                      console.error(err);
+                      alert(`Delete failed: ${err.message || err}`);
+                      chip.disabled = false;
+                      chip.textContent = displayName;
+                    }
+                  }},
+                ]);
+              }, 500);
+            });
+            chip.addEventListener('pointerup',     cancelLp);
+            chip.addEventListener('pointercancel', cancelLp);
+            chip.addEventListener('pointermove', (e) => {
+              if (!lp.timer) return;
+              if (Math.abs(e.clientX - lp.startX) > 8 || Math.abs(e.clientY - lp.startY) > 8) cancelLp();
+            });
+            chip.addEventListener('contextmenu', (e) => {
+              e.preventDefault();
+              cancelLp();
+              showCtxMenu(e.clientX, e.clientY, [
+                { label: 'Delete from Drive', danger: true, fn: async () => {
+                  if (!confirm(`Delete project "${displayName}" from Google Drive? This can't be undone.`)) return;
+                  chip.disabled = true;
+                  chip.textContent = 'Deleting…';
+                  try {
+                    await gapi.client.drive.files.delete({ fileId: f.id });
+                    refreshProjectsBank();
+                  } catch (err) {
+                    console.error(err);
+                    alert(`Delete failed: ${err.message || err}`);
+                    chip.disabled = false;
+                    chip.textContent = displayName;
+                  }
+                }},
+              ]);
+            });
+
+            chip.addEventListener('click', async () => {
+              if (lp.fired) { lp.fired = false; return; }
+              chip.disabled = true;
+              const prev = chip.textContent;
+              try {
+                chip.textContent = 'Loading…';
+                const snap = await fetchProjectJson(f.id);
+                applyProjectSnapshot(snap);
+                chip.textContent = prev;
+              } catch (e) {
+                console.error(e);
+                alert(`Load failed: ${e.message || e}`);
+                chip.textContent = prev;
+              } finally {
+                setTimeout(() => { chip.disabled = false; }, 600);
+              }
+            });
+            bank.appendChild(chip);
+          });
+        }
+        loadBtn.textContent = '↻';
+        loadBtn.title = 'Refresh project list';
+      } catch (e) {
+        console.error(e);
+        alert(`Couldn't list projects: ${e.message || e}`);
+        loadBtn.textContent = origText;
+      } finally {
+        loadBtn.disabled = false;
+      }
+    }
+    document.getElementById('projects-load-btn').addEventListener('click', refreshProjectsBank);
 
     // Seed one default track on first run.
     if (tracks.length === 0) {
@@ -6106,6 +6390,7 @@
             cellParams[noteIndex] = { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
             const sel = cells[noteIndex].querySelector('.cell-sound-select');
             if (sel) sel.value = 'sine';
+            updateScaleBanner();
         }},
       ];
     }
@@ -6268,6 +6553,7 @@
         const sel = cells[noteIndex]?.querySelector('.cell-sound-select');
         if (sel) sel.value = p.type;
         updateCellFreqLabel(noteIndex);
+        updateScaleBanner();
         overlay.remove();
       });
 
@@ -6311,6 +6597,7 @@
           if (sel) sel.value = p.type;
           updateCellFreqLabel(idx);
         });
+        updateScaleBanner();
       }
 
       copyPanel.querySelector('.sm-copy-all').addEventListener('click', () => {
@@ -7202,11 +7489,24 @@
       });
       updateScaleBanner();
     }
+    // The "current" tone: every cell's tone if they're all the same,
+    // otherwise "Mixed" — happens when the user has hand-tuned individual
+    // cells via the Sound Editor or chord per-note panel.
+    function getCurrentToneLabel() {
+      if (!Array.isArray(cellSounds) || cellSounds.length === 0) return null;
+      const first = cellSounds[0];
+      const uniform = cellSounds.every(s => s === first);
+      if (!uniform) return 'Mixed';
+      const opt = getAllSoundOptions().find(o => o.value === first);
+      return opt?.label || first;
+    }
     function updateScaleBanner() {
-      const banner = document.getElementById('scale-banner');
-      if (!banner) return;
+      const scaleHalf = document.getElementById('scale-banner-half');
+      const toneHalf  = document.getElementById('tone-banner-half');
       const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[rootIdx]) || 'C';
-      banner.textContent = `${root} · ${prettyScaleName(currentScale)}`;
+      const tone = getCurrentToneLabel();
+      if (scaleHalf) scaleHalf.textContent = `${root} · ${prettyScaleName(currentScale)}`;
+      if (toneHalf)  toneHalf.textContent  = tone || '—';
     }
 
     function applyPalette() {
@@ -7437,6 +7737,7 @@
         else n.params = { type };
       });
       renderSequence();
+      updateScaleBanner();
     }
     function populateTonePanel() {
       const panel = document.getElementById('tone-panel');
@@ -7452,14 +7753,17 @@
       });
     }
     (function initToneMenu() {
-      const btn = document.getElementById('tone-menu-btn');
+      // Right half of the scale banner — its label shows the live current
+      // tone (or "Mixed"), and clicking opens the same Tone panel that the
+      // old menubar pill used.
+      const btn = document.getElementById('tone-banner-half');
       const panel = document.getElementById('tone-panel');
       if (!btn || !panel) return;
+      const TRIGGER_ID = 'tone-banner-half';
       const setOpen = (open) => {
         if (open) populateTonePanel(); // pick up freshly-loaded samples
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
-        btn.textContent = open ? 'Tone ▴' : 'Tone ▾';
         if (open) pinPanelToButton(btn, panel);
       };
       window.addEventListener('resize', () => {
@@ -7468,12 +7772,12 @@
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const willOpen = !panel.classList.contains('open');
-        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
         setOpen(willOpen);
       });
       // Close when any sibling menubar panel announces itself.
       document.addEventListener('menubar-panel-open', (e) => {
-        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
+        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
       });
       panel.addEventListener('click', (e) => {
         const opt = e.target.closest('.tone-opt');
@@ -7506,9 +7810,12 @@
     })();
 
     (function initFxMenu() {
-      const btn   = document.getElementById('fx-menu-btn');
+      // Now triggered by the FX banner row beneath the scale/tone strip
+      // instead of the old menubar pill.
+      const btn   = document.getElementById('fx-banner');
       const panel = document.getElementById('fx-panel');
       if (!btn || !panel) return;
+      const TRIGGER_ID = 'fx-banner';
 
       // Reflect persisted values into the inputs and update the live audio.
       // Each entry is [inputId, valueLabelId, globalFx key, unit suffix].
@@ -7553,7 +7860,6 @@
       const setOpen = (open) => {
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
-        btn.textContent = open ? 'FX ▴' : 'FX ▾';
         if (open) pinPanelToButton(btn, panel);
       };
       window.addEventListener('resize', () => {
@@ -7562,11 +7868,11 @@
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const willOpen = !panel.classList.contains('open');
-        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
         setOpen(willOpen);
       });
       document.addEventListener('menubar-panel-open', (e) => {
-        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
+        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
       });
       document.addEventListener('click', (e) => {
         if (!panel.classList.contains('open')) return;
@@ -7724,6 +8030,7 @@
         cellSounds = [...state.cellSounds];
         cellParams = state.cellParams.map(p => ({ ...p }));
         refreshAllCellFreqLabels();
+        updateScaleBanner();
       }
     }
     function refreshGridStateDropdown(selectedName = '') {
@@ -7882,31 +8189,34 @@
     })();
 
     // ---- Grid settings dropdown toggle ----
+    // The left half of the scale banner doubles as the trigger — it already
+    // shows the live root + scale, so making it clickable gives the user one
+    // obvious place to open the panel that adjusts those.
     (function initGridSettingsToggle() {
-      const btn = document.getElementById('grid-settings-btn');
+      const banner = document.getElementById('scale-banner-half');
       const panel = document.getElementById('grid-settings-panel');
-      if (!btn || !panel) return;
+      if (!banner || !panel) return;
+      const TRIGGER_ID = 'scale-banner-half';
       const setOpen = (open) => {
         panel.classList.toggle('open', open);
-        btn.classList.toggle('open', open);
-        btn.textContent = open ? 'Grid ▴' : 'Grid ▾';
-        if (open) pinPanelToButton(btn, panel);
+        banner.classList.toggle('open', open);
+        if (open) pinPanelToButton(banner, panel);
       };
       window.addEventListener('resize', () => {
-        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+        if (panel.classList.contains('open')) pinPanelToButton(banner, panel);
       });
-      btn.addEventListener('click', (e) => {
+      banner.addEventListener('click', (e) => {
         e.stopPropagation();
         const willOpen = !panel.classList.contains('open');
-        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: btn.id } }));
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
         setOpen(willOpen);
       });
       document.addEventListener('menubar-panel-open', (e) => {
-        if (e.detail?.id !== btn.id && panel.classList.contains('open')) setOpen(false);
+        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
       });
       document.addEventListener('click', (e) => {
         if (!panel.classList.contains('open')) return;
-        if (panel.contains(e.target) || e.target === btn) return;
+        if (panel.contains(e.target) || banner.contains(e.target)) return;
         setOpen(false);
       });
       document.addEventListener('keydown', (e) => {

@@ -384,6 +384,89 @@
     }
     .colors-opt:hover { border-color: #4299e1; color: #4299e1; }
 
+    /* Voices menu — same pill + panel styling as Colors, listing saved
+       Voices (note grid presets) fetched from Drive on open. */
+    #voices-menu-btn {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #voices-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #voices-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+
+    /* "New" button — pinned to the right edge of the menubar so it always
+       sits at the top-right of the page. Greenish accent so it reads as a
+       create action, distinct from the blue dropdowns next to it. */
+    #new-project-btn {
+      margin-left: auto;
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #new-project-btn:hover { border-color: #38a169; color: #68d391; }
+    .voices-panel {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 10px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      padding: 10px;
+      z-index: 9000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      min-width: 200px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+    }
+    .voices-panel.open { display: flex; }
+    .voice-opt {
+      padding: 6px 12px;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      background: transparent;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      transition: all 0.15s ease;
+    }
+    .voice-opt:hover { border-color: #4299e1; color: #4299e1; }
+    .voice-opt-project {
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: #4a4a6a;
+      letter-spacing: 0.5px;
+    }
+    .voice-loading, .voice-empty {
+      color: #4a4a6a;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      padding: 6px 4px;
+      text-align: center;
+    }
+
     .grid-state-row {
       display: flex; flex-direction: column; align-items: stretch; gap: 6px;
       border-top: 1px solid #2d2d3f; padding-top: 10px;
@@ -996,6 +1079,11 @@
       color: #fff;
       animation: rec-pulse 1s ease-in-out infinite;
     }
+    #rec-btn.counting {
+      border-color: #f6ad55;
+      color: #fbd38d;
+      animation: rec-pulse 0.5s ease-in-out infinite;
+    }
     @keyframes rec-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.6); }
       50%      { box-shadow: 0 0 0 6px rgba(229,62,62,0); }
@@ -1125,25 +1213,6 @@
       overflow-y: auto;
       max-height: 160px;
     }
-    .saved-header {
-      display: flex;
-      justify-content: flex-end;
-      margin-bottom: 8px;
-    }
-    #saved-clear-btn {
-      padding: 4px 12px;
-      border: 1px solid #2d2d3f;
-      border-radius: 12px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.72rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #saved-clear-btn:hover:not(:disabled) { border-color: #e53e3e; color: #fc8181; }
-    #saved-clear-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
     .saved-grid {
       display: grid;
@@ -1208,6 +1277,50 @@
     }
     .tracks-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    /* Mobile: tighten the transport row so buttons fit and wrap cleanly,
+       and shorten the multi-word labels so a row of pill buttons doesn't
+       blow out the viewport. */
+    @media (max-width: 700px) {
+      .tracks-header {
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .tracks-header #tracks-title-btn {
+        flex: 0 1 auto;
+        font-size: 0.78rem;
+        padding: 0;
+      }
+      .tracks-header #tracks-play-all {
+        width: 30px; height: 30px; min-width: 30px; min-height: 30px;
+        font-size: 0.85rem;
+      }
+      .tracks-header #add-track-btn,
+      .tracks-header #tracks-export-btn,
+      .tracks-header #tracks-share-btn,
+      .tracks-header #tracks-save-project-btn,
+      .tracks-header #tracks-load-project-btn,
+      .tracks-header #tracks-loop-all,
+      .tracks-header #tracks-back-btn {
+        padding: 4px 9px;
+        font-size: 0.7rem;
+        letter-spacing: 0;
+      }
+      /* Replace multi-word labels with single-word equivalents so each pill
+         takes minimal width while still being self-explanatory. */
+      .tracks-header #tracks-save-project-btn { font-size: 0; }
+      .tracks-header #tracks-save-project-btn::before {
+        content: 'Save'; font-size: 0.7rem;
+      }
+      .tracks-header #tracks-load-project-btn { font-size: 0; }
+      .tracks-header #tracks-load-project-btn::before {
+        content: 'Load'; font-size: 0.7rem;
+      }
+      .tracks-header #add-track-btn { font-size: 0; }
+      .tracks-header #add-track-btn::before {
+        content: '+ Track'; font-size: 0.7rem;
+      }
     }
     #tracks-title-btn {
       flex: 1;
@@ -1333,6 +1446,7 @@
     #tracks-share-btn,
     #tracks-save-project-btn,
     #tracks-load-project-btn,
+    #tracks-countin-btn,
     #tracks-loop-all {
       padding: 5px 12px;
       border: 1px solid #2d2d3f;
@@ -1353,6 +1467,12 @@
     #tracks-load-project-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     #tracks-share-btn:hover { border-color: #f6ad55; color: #fbd38d; }
     #tracks-share-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #tracks-countin-btn:hover { border-color: #e53e3e; color: #fc8181; }
+    #tracks-countin-btn.active {
+      border-color: #e53e3e;
+      background: rgba(229, 62, 62, 0.18);
+      color: #fc8181;
+    }
     #tracks-loop-all:hover { border-color: #38b2ac; color: #38b2ac; }
     #tracks-loop-all.active {
       border-color: #38b2ac;
@@ -1384,10 +1504,27 @@
     .track-play.playing { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.1); }
     .track-loop.active { border-color: #38b2ac; color: #81e6d9; background: rgba(56,178,172,0.15); }
     .track-remove:hover { border-color: #e53e3e; color: #e53e3e; }
+    .track-clear { font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px; }
     .track-clear:hover { border-color: #e53e3e; color: #e53e3e; }
     .track-eq { font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px; }
     .track-eq:hover { border-color: #f6ad55; color: #fbd38d; }
     .track-eq.active { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.12); }
+    .track-rec {
+      font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px;
+      border-color: #e53e3e !important; color: #e53e3e !important;
+    }
+    .track-rec:hover { border-color: #fc8181 !important; color: #fc8181 !important; }
+    .track-rec.recording {
+      background: #e53e3e !important;
+      border-color: #e53e3e !important;
+      color: #fff !important;
+      animation: rec-pulse 1s ease-in-out infinite;
+    }
+    .track-rec.counting {
+      border-color: #f6ad55 !important;
+      color: #fbd38d !important;
+      animation: rec-pulse 0.5s ease-in-out infinite;
+    }
     .track-name {
       color: #e2e8f0;
       font-family: 'Segoe UI', sans-serif;
@@ -1670,6 +1807,13 @@
       font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
       color: #4a4a6a; margin: 14px 0 8px;
     }
+    .sm-checkbox-row {
+      display: flex; align-items: center; gap: 8px;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
+      color: #a0aec0; cursor: pointer; user-select: none;
+      padding: 4px 0;
+    }
+    .sm-checkbox-row input[type=checkbox] { cursor: pointer; }
 
     .se-chord-list { margin-bottom: 4px; }
     .se-chord-row {
@@ -1769,16 +1913,15 @@
       <button type="button" class="colors-opt" data-mode="chess">Chess</button>
       <button type="button" class="colors-opt" data-mode="checkers">Checkers</button>
     </div>
+    <button id="voices-menu-btn" title="Saved Voices (note grid presets) from Drive">Voices ▾</button>
+    <div class="voices-panel" id="voices-panel"></div>
     <div class="grid-settings-panel" id="grid-settings-panel">
       <div class="grid-control">
         <label title="Starting note of the chromatic grid">Root
           <select id="root-select"></select>
         </label>
-        <label title="Octave number of the lowest note (master shift)">Oct
-          <input type="number" id="base-octave-input" min="1" max="7" value="4" />
-        </label>
-        <label title="Number of octaves (1–3)">Octaves
-          <input type="number" id="octaves-input" min="1" max="3" value="1" />
+        <label title="Base octave × number of octaves. e.g. 4×1 = a single octave starting at C4. 7×7 covers the full keyboard from the lowest octave up.">Octaves
+          <select id="octave-range-select"></select>
         </label>
       </div>
       <div class="grid-control grid-control-row2">
@@ -1798,6 +1941,11 @@
         <div class="grid-state-actions">
           <button type="button" id="grid-state-save-btn">Save current</button>
           <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
+        </div>
+      </div>
+      <div class="grid-state-row" title="Save the current note grid (root, scale, palette, per-cell sounds) to Google Drive as a Voice. Filename is prepended with the current project name.">
+        <div class="grid-state-actions">
+          <button type="button" id="grid-save-voice-btn">Save Voice…</button>
         </div>
       </div>
       <div class="grid-state-row">
@@ -1839,10 +1987,14 @@
         <input type="range" id="fx-dst" min="0" max="100" value="0" />
       </div>
       <div class="fx-actions">
-        <button type="button" id="fx-reset" class="fx-reset">Bypass</button>
+        <button type="button" id="fx-save-btn"   class="fx-reset" title="Save current FX settings to Drive">Save…</button>
+        <button type="button" id="fx-load-btn"   class="fx-reset" title="Load FX settings from Drive">Load…</button>
+        <button type="button" id="fx-reset-all"  class="fx-reset" title="Restore every FX parameter to its default">Reset</button>
+        <button type="button" id="fx-reset"      class="fx-reset" title="Zero the three mix levels but keep size / tone / time / feedback">Bypass</button>
       </div>
     </div>
     <div class="tone-panel" id="tone-panel"></div>
+    <button id="new-project-btn" type="button" title="Start a fresh default project (offers to save the current one first)">+ New</button>
   </div>
 
   <div class="banner-row">
@@ -1934,9 +2086,6 @@
   </div>
 
   <div class="saved-viewer">
-    <div class="saved-header">
-      <button id="saved-clear-btn" type="button" title="Remove every saved sequence (track items become silent gaps)" disabled>Clear</button>
-    </div>
     <div class="saved-grid" id="saved-grid">
       <span class="saved-empty">No saved sequences yet.</span>
     </div>
@@ -1947,6 +2096,7 @@
       <button id="tracks-back-btn" type="button" title="Return to the full UI">← Back</button>
       <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
       <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
+      <button id="tracks-countin-btn" type="button" title="When on, recording starts after a 4-beat count-in at the workspace tempo">Count-in</button>
       <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
       <button id="tracks-save-project-btn" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save Project</button>
       <button id="tracks-load-project-btn" title="Load a previously saved project from Google Drive">Load Project</button>
@@ -2026,8 +2176,6 @@
 
     function renderSavedSequences() {
       const grid = document.getElementById('saved-grid');
-      const clearBtn = document.getElementById('saved-clear-btn');
-      if (clearBtn) clearBtn.disabled = savedSequences.length === 0;
       if (savedSequences.length === 0) {
         grid.innerHTML = '<span class="saved-empty">No saved sequences yet.</span>';
         return;
@@ -2065,14 +2213,12 @@
           }
 
           const rootSel   = document.getElementById('root-select');
-          const baseOctIn = document.getElementById('base-octave-input');
-          const octsIn    = document.getElementById('octaves-input');
+          const octRange  = document.getElementById('octave-range-select');
           const freqSl    = document.getElementById('master-freq-slider');
           const freqIn    = document.getElementById('master-freq-input');
           const scaleSel  = document.getElementById('scale-select');
           if (rootSel)   rootSel.value   = String(rootIdx);
-          if (baseOctIn) baseOctIn.value = baseOctave;
-          if (octsIn)    octsIn.value    = octaveCount;
+          if (octRange)  octRange.value  = `${baseOctave}x${octaveCount}`;
           if (freqSl)    freqSl.value    = masterFreqA;
           if (freqIn)    freqIn.value    = masterFreqA;
           if (scaleSel)  scaleSel.value  = currentScale;
@@ -2535,6 +2681,11 @@
         delayTime     = 250,
         delayFeedback = 40,
         distortion = 0,
+        // When true, the per-note effect chain bypasses the master compressor
+        // and global FX chain — track-level EQ/pan also gets skipped, since
+        // the route reroutes straight to the master limiter. Keeps the note's
+        // local FX settings as the only effects applied to that voice.
+        fxOverrideGlobal = false,
       } = params;
 
       const atk = Math.max(attack  / 1000, 0.005);
@@ -2582,7 +2733,7 @@
       // output is the previous head. `chainHead` becomes the synth's connect
       // target; effect nodes are disposed alongside the synth so they don't
       // leak.
-      const finalDest = destination || masterBus;
+      const finalDest = fxOverrideGlobal ? masterLimiter : (destination || masterBus);
       let chainHead = finalDest;
       const effectNodes = [];
       if (reverb > 0) {
@@ -3364,9 +3515,15 @@
       await Tone.start();
       if (sequenceTimer !== null) {
         stopSequence();
-      } else {
-        playSequence(0);
+        return;
       }
+      // Wait for any pending sample buffers + warm-up before the first
+      // note, so sample-based tones aren't silent and the first attack
+      // doesn't get clipped on a cold audio context.
+      try { await Tone.loaded(); } catch (e) {}
+      setTimeout(() => {
+        if (sequenceTimer === null && sequence.length > 0) playSequence(0);
+      }, 60);
     });
 
     document.getElementById('clear-btn').addEventListener('click', () => {
@@ -3646,8 +3803,8 @@
       activeSeqIndex = null;
 
       document.getElementById('root-select').value       = '0';
-      document.getElementById('base-octave-input').value = '4';
-      document.getElementById('octaves-input').value     = '1';
+      const octRange0 = document.getElementById('octave-range-select');
+      if (octRange0) octRange0.value = '4x1';
       document.getElementById('master-freq-slider').value = '440';
       document.getElementById('master-freq-input').value  = '440';
       document.getElementById('scale-select').value     = 'chromatic';
@@ -4191,11 +4348,25 @@
     let recordingStream = null;
     let recordingStartMs = 0;
     let recordingChunks = [];
+    let recordingCountingIn = false;
 
     async function toggleRecording() {
       const btn = document.getElementById('rec-btn');
       if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
+        return;
+      }
+      if (recordingCountingIn) {
+        // Cancel the in-flight count-in: drop the prepared mic stream and
+        // recorder so the count-in branch in the start path bails out.
+        recordingCountingIn = false;
+        if (recordingStream) {
+          try { recordingStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+        }
+        recordingStream = null;
+        mediaRecorder = null;
+        btn.classList.remove('counting');
+        btn.textContent = '● Rec';
         return;
       }
       if (typeof MediaRecorder === 'undefined') {
@@ -4228,11 +4399,31 @@
         mediaRecorder = null;
         recordingChunks = [];
         btn.classList.remove('recording');
+        btn.classList.remove('counting');
         btn.textContent = '● Rec';
         const reader = new FileReader();
         reader.onload = () => saveRecordingToLibrary(reader.result, durationSec);
         reader.readAsDataURL(blob);
       };
+
+      // Optional 4-beat count-in at the workspace tempo before the recorder
+      // actually starts. The Rec button shows "…" while counting and the
+      // user can click it again to abort.
+      if (countInEnabled) {
+        recordingCountingIn = true;
+        btn.classList.add('counting');
+        btn.textContent = '… Count';
+        try { await playCountIn(); } finally {
+          recordingCountingIn = false;
+          btn.classList.remove('counting');
+        }
+        // If user cancelled (mediaRecorder cleared / stream stopped), bail.
+        if (!mediaRecorder || !recordingStream) {
+          btn.textContent = '● Rec';
+          return;
+        }
+      }
+
       mediaRecorder.start();
       recordingStartMs = performance.now();
       btn.classList.add('recording');
@@ -4498,6 +4689,15 @@
     function removeTrack(trackIdx) {
       stopTrack(trackIdx);
       const track = tracks[trackIdx];
+      if (track && track._recording) {
+        try { track._recorder?.stop(); } catch (e) {}
+        if (track._recStream) {
+          try { track._recStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+        }
+        track._recording = false;
+        track._recorder = null;
+        track._recStream = null;
+      }
       if (track && track._bus) {
         try { track._bus.dispose(); } catch (e) {}
         track._bus = null;
@@ -4628,10 +4828,20 @@
       const track = tracks[trackIdx];
       if (!track || track.items.length === 0) return;
       await Tone.start();
+      // Wait for any pending sample buffers (Piano / Organ / imported, etc.)
+      // to finish loading. Without this, sampler.loaded is false at the
+      // first triggerAttackRelease and the note is silently dropped — making
+      // sample-based tracks appear to "not play" until the second pass.
+      try { await Tone.loaded(); } catch (e) {}
       track.playing = true;
       track.currentItemIdx = 0;
       renderTracks();
-      playTrackItem(trackIdx, 0, 0);
+      // 60 ms warm-up so the audio engine is fully running before the first
+      // trigger. Without this the cold-context attack on the first note
+      // gets clipped on iOS / certain browsers.
+      setTimeout(() => {
+        if (track.playing) playTrackItem(trackIdx, 0, 0);
+      }, 60);
     }
 
     let tracksMasterLoop = false;
@@ -4816,6 +5026,166 @@
     // Cheap active-item highlight that skips the full renderTracks DOM
     // rebuild — used inside the playback timer so item transitions (and
     // especially loop wraps) don't stall waiting on layout work.
+    // ---- Per-track audio recording ------------------------------------
+    // Records mic input directly into a track as an audio item, while
+    // playing every OTHER non-empty track in parallel for monitoring (so
+    // you can lay down a vocal or instrument take against the rest of the
+    // mix). Stopping the recorder appends the captured blob as a new
+    // audio item to the track and stops any monitor tracks the recording
+    // started.
+    function toggleTrackRecording(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      if (track._countingIn || track._recording) stopTrackRecording(trackIdx);
+      else                                       startTrackRecording(trackIdx);
+    }
+    function blobToDataUrl(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+        reader.readAsDataURL(blob);
+      });
+    }
+    async function startTrackRecording(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track || track._recording) return;
+      if (typeof MediaRecorder === 'undefined') {
+        alert('This browser does not support audio recording.');
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert(location.protocol !== 'https:' && location.hostname !== 'localhost'
+          ? 'Audio recording requires HTTPS. Open this page over https:// to enable the microphone.'
+          : 'This browser does not support microphone access.');
+        return;
+      }
+      // Only one track recording at a time. Stop any other ongoing track
+      // recordings (and the saved-bank recorder) before starting this one.
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      tracks.forEach((t, i) => {
+        if (i !== trackIdx && t._recording && t._recorder) {
+          try { t._recorder.stop(); } catch (e) {}
+        }
+      });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        alert('Microphone access was denied or unavailable.');
+        return;
+      }
+      const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+      const mimeType = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const chunks = [];
+      track._recorder    = recorder;
+      track._recStream   = stream;
+      track._recChunks   = chunks;
+      track._recMimeType = recorder.mimeType || mimeType || 'audio/webm';
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.onstop = async () => {
+        const durationSec = Math.max(0.05, (performance.now() - (track._recStartMs || performance.now())) / 1000);
+        try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+        // Stop the monitor tracks this recording brought up — leave any
+        // tracks the user had already playing alone.
+        const monitor = track._recMonitorTracks || [];
+        monitor.forEach(i => stopTrack(i));
+        track._recording        = false;
+        track._recorder         = null;
+        track._recStream        = null;
+        track._recChunks        = null;
+        track._recMonitorTracks = null;
+        track._recStartMs       = 0;
+        if (chunks.length === 0) { renderTracks(); return; }
+        try {
+          const blob = new Blob(chunks, { type: track._recMimeType });
+          const dataUrl = await blobToDataUrl(blob);
+          const takeNum = (track.items || []).filter(it => it.type === 'audio').length + 1;
+          track.items = track.items || [];
+          track.items.push({
+            type: 'audio',
+            name: `Take ${takeNum}`,
+            audioDataUrl: dataUrl,
+            durationSec,
+            steps: [],
+          });
+          try { persistTracks(); } catch (e) {
+            track.items.pop();
+            alert('Recorded clip is too large to persist in browser storage. Track recorded but not saved across reloads — export soon.');
+          }
+        } catch (e) {
+          console.error(e);
+          alert(`Failed to attach recording: ${e.message || e}`);
+        }
+        renderTracks();
+      };
+
+      // Optional count-in at workspace tempo before the recorder + monitor
+      // playback start. _countingIn flips the rec button to a counting
+      // visual and gates re-clicks until the count finishes.
+      if (countInEnabled) {
+        track._countingIn = true;
+        renderTracks();
+        try { await playCountIn(); } finally { track._countingIn = false; }
+        // If the track or recorder was torn down during the count (e.g. via
+        // applyProjectSnapshot or removeTrack), bail out cleanly.
+        if (!track._recorder || track._recorder !== recorder) {
+          try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+          renderTracks();
+          return;
+        }
+      }
+
+      track._recStartMs = performance.now();
+      track._recording  = true;
+      try {
+        recorder.start();
+      } catch (e) {
+        track._recording = false;
+        track._recorder = null;
+        try { stream.getTracks().forEach(t => t.stop()); } catch (er) {}
+        alert(`Couldn't start recorder: ${e.message || e}`);
+        renderTracks();
+        return;
+      }
+
+      // Bring up every other non-empty track so the user can play / sing
+      // along with the existing mix. Track which ones we started so we can
+      // tear them down on stop without disturbing user-initiated playback.
+      const monitor = [];
+      tracks.forEach((t, i) => {
+        if (i === trackIdx) return;
+        if (!t.items || t.items.length === 0) return;
+        if (t.playing) return;
+        try { startTrack(i); monitor.push(i); } catch (e) {}
+      });
+      track._recMonitorTracks = monitor;
+
+      renderTracks();
+    }
+    function stopTrackRecording(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      // Clicking stop during the count-in cancels the upcoming recording.
+      if (track._countingIn) {
+        track._countingIn = false;
+        try { track._recStream?.getTracks().forEach(t => t.stop()); } catch (e) {}
+        track._recorder = null;
+        track._recStream = null;
+        renderTracks();
+        return;
+      }
+      if (!track._recording || !track._recorder) return;
+      try { track._recorder.stop(); } catch (e) {}
+      // Cleanup happens inside the recorder.onstop handler above.
+    }
+
     function setActiveTrackItem(trackIdx, itemIdx) {
       const container = document.getElementById('tracks-container');
       if (!container) return;
@@ -4971,17 +5341,34 @@
         row.className = 'track-row';
 
         const mixOn = isTrackMixActive(track);
+        const recOn = !!track._recording;
+        const counting = !!track._countingIn;
+        const recIcon = counting ? '…' : (recOn ? '■' : '●');
+        const recCls  = counting ? ' counting' : (recOn ? ' recording' : '');
+        const recTitle = counting
+          ? 'Counting in… click to cancel'
+          : recOn
+            ? 'Stop recording'
+            : 'Record from mic into this track. Other tracks play as monitoring while recording.';
         const controls = document.createElement('div');
         controls.className = 'track-controls';
         controls.innerHTML = `
           <span class="track-name${track.solo ? ' soloed' : ''}" title="Click to solo, double-click to rename">${track.name}</span>
+          <button class="track-rec${recCls}" type="button" title="${recTitle}">${recIcon}</button>
           <button class="track-eq${mixOn ? ' active' : ''}" type="button" title="Mix — EQ + Pan">Mix</button>
+          <button class="track-clear" type="button" title="Empty this track (keep the track, drop all of its items)">Clear</button>
           <button class="track-remove" title="Remove track">×</button>
         `;
         // Single click toggles solo; double click toggles twice (cancelling
         // out) and the dblclick handler below opens the rename dialog.
         controls.querySelector('.track-name').addEventListener('click', () => toggleTrackSolo(trackIdx));
+        controls.querySelector('.track-rec').addEventListener('click', () => toggleTrackRecording(trackIdx));
         controls.querySelector('.track-eq').addEventListener('click', () => showTrackEqDialog(trackIdx));
+        controls.querySelector('.track-clear').addEventListener('click', () => {
+          if ((track.items || []).length === 0) return;
+          if (!confirm(`Empty ${track.name}? Removes every item in this track but keeps the track itself.`)) return;
+          clearTrack(trackIdx);
+        });
         controls.querySelector('.track-remove').addEventListener('click', () => {
           if (track.items.length === 0 || confirm(`Remove ${track.name}?`)) removeTrack(trackIdx);
         });
@@ -5117,6 +5504,40 @@
       tracksMasterLoop = !tracksMasterLoop;
       tracksLoopBtn.classList.toggle('active', tracksMasterLoop);
     });
+
+    // Count-in: when on, recording flows play 4 beats of metronome clicks
+    // at the workspace tempo before the recorder + monitor playback start,
+    // so the user has a clean reference for the downbeat.
+    let countInEnabled = (() => {
+      try { return JSON.parse(localStorage.getItem('sounds-countin') || 'false') === true; }
+      catch (e) { return false; }
+    })();
+    const countInBtn = document.getElementById('tracks-countin-btn');
+    if (countInBtn) {
+      countInBtn.classList.toggle('active', countInEnabled);
+      countInBtn.addEventListener('click', () => {
+        countInEnabled = !countInEnabled;
+        countInBtn.classList.toggle('active', countInEnabled);
+        try { localStorage.setItem('sounds-countin', JSON.stringify(countInEnabled)); } catch (e) {}
+      });
+    }
+    function playCountIn() {
+      const bpm = parseInt(tempoInput?.value, 10) || 120;
+      const beatMs = 60000 / bpm;
+      return new Promise(resolve => {
+        for (let i = 0; i < 4; i++) {
+          setTimeout(() => {
+            const freq = (i === 0) ? 1318.5 : 880; // E6 downbeat, A5 inner beats
+            try {
+              playNote(freq, { type: 'triangle', attack: 4, decay: 60, sustain: 0, release: 80, volume: 70 }, 90);
+            } catch (e) {}
+          }, beatMs * i);
+        }
+        // Resolve at the end of the fourth beat so callers can start the
+        // recorder + monitor tracks exactly on what would be beat 5.
+        setTimeout(resolve, beatMs * 4);
+      });
+    }
 
     // ---- Export: render tracks offline to WAV and upload to Google Drive ----
 
@@ -5523,6 +5944,11 @@
     // blobs live in IndexedDB and could be megabytes); cell sound types
     // that reference 'sample:<id>' will only resolve on a device that
     // already has the sample registered.
+    // Tracks the most recently saved or loaded project name so voice saves
+    // can prepend it without re-asking the user. Stays null until a project
+    // is named — voice flows then prompt the user for a project name first.
+    let currentProjectName = null;
+
     function buildProjectSnapshot() {
       return {
         version: 1,
@@ -5571,11 +5997,12 @@
       const btn = document.getElementById('tracks-save-project-btn');
       const defaultName = `bloops-project-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
       const projectName = prompt('Name for this project:', defaultName);
-      if (!projectName) return;
+      if (!projectName) return false;
       const filename = projectName.trim().replace(/\.json$/i, '') + '.json';
 
       const origText = btn.textContent;
       btn.disabled = true;
+      let saved = false;
       try {
         btn.textContent = 'Building…';
         const snapshot = buildProjectSnapshot();
@@ -5596,7 +6023,7 @@
           if (!ok) {
             btn.textContent = origText;
             btn.disabled = false;
-            return;
+            return false;
           }
           existingFileId = match.id;
         }
@@ -5604,8 +6031,347 @@
         btn.textContent = existingFileId ? 'Overwriting…' : 'Uploading…';
         const file = await uploadJsonToDrive(filename, jsonString, folderId, existingFileId);
 
+        // Remember this name so subsequent Save Voice flows can prepend it
+        // to the voice filename without re-prompting.
+        currentProjectName = projectName.trim();
         btn.textContent = existingFileId ? 'Overwritten' : 'Saved';
         alert(`${existingFileId ? 'Overwrote' : 'Saved'} "${file.name || filename}" in Drive folder "Bloops Projects".`);
+        saved = true;
+      } catch (e) {
+        console.error(e);
+        alert(`Save failed: ${e.message || e}`);
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
+      }
+      return saved;
+    }
+    document.getElementById('tracks-save-project-btn').addEventListener('click', saveProjectToDrive);
+
+    // ---- New project ---------------------------------------------------
+    // Wipes the in-memory state plus every persisted side-store back to
+    // the same shape the app boots into on a clean install. Runs after the
+    // user has had a chance to save the current project.
+    function resetToDefaultProject() {
+      stopSequence();
+      stopAllTracks();
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      if (_previewAudio) { try { _previewAudio.pause(); } catch (e) {} _previewAudio = null; }
+
+      // Dispose live track audio nodes before we drop the array — same
+      // teardown the project-load path uses.
+      tracks.forEach(t => {
+        if (t._recording) {
+          try { t._recorder?.stop(); } catch (e) {}
+          if (t._recStream) {
+            try { t._recStream.getTracks().forEach(s => s.stop()); } catch (e) {}
+          }
+          t._recording = false;
+          t._recorder = null;
+          t._recStream = null;
+        }
+        if (t._bus)    { try { t._bus.dispose(); }    catch (e) {} t._bus = null; }
+        if (t._panner) { try { t._panner.dispose(); } catch (e) {} t._panner = null; }
+        if (t._samplers) {
+          t._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
+          t._samplers = null;
+        }
+        if (t.timer) { clearTimeout(t.timer); t.timer = null; }
+      });
+
+      // Workspace.
+      sequence = [];
+      pendingChord = [];
+      selectedStepRefs = [];
+      insertionPoint = null;
+      activeSeqIndex = null;
+      noteLength = 1;
+      stepSubdivision = 0.5;
+      gridColumns = 8;
+      chordMode = false;
+      loopMode = false;
+      stepMode = false;
+      multiSelectMode = false;
+
+      if (typeof tempoInput  !== 'undefined' && tempoInput)  tempoInput.value  = '120';
+      if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = '120';
+      document.getElementById('chord-btn')?.classList.remove('active');
+      document.querySelector('.btn-group--step')?.classList.remove('chord-active');
+      document.getElementById('loop-btn')?.classList.remove('active');
+      const noteSel  = document.getElementById('note-length');        if (noteSel)  noteSel.value  = '1';
+      const subSel   = document.getElementById('subdivision-select'); if (subSel)   subSel.value   = '0.5';
+      const gridSel  = document.getElementById('grid-cols-select');   if (gridSel)  gridSel.value  = '8';
+      document.getElementById('step-mode-btn')?.classList.remove('active');
+      const multiCb  = document.getElementById('multi-select-toggle');if (multiCb)  multiCb.checked = false;
+      refreshHoldEnabled();
+
+      // Grid (root, octaves, scale, palette, A4) + cell sounds via rebuildGrid.
+      resetGridToDefault();
+
+      // Saved sequences bank.
+      savedSequences = [];
+      persistSaved();
+
+      // Tracks.
+      tracks = [];
+      persistTracks();
+
+      // Saved grid states.
+      savedGridStates = [];
+      persistGridStates();
+      refreshGridStateDropdown('');
+
+      // Global FX → defaults + sync the FX panel UI.
+      Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => { globalFx[k] = GLOBAL_FX_DEFAULTS[k]; });
+      applyGlobalFx();
+      persistGlobalFx();
+      [
+        ['fx-rev',      'fx-rev-v',      'reverb',        '%'],
+        ['fx-rev-size', 'fx-rev-size-v', 'reverbSize',    '%'],
+        ['fx-rev-tone', 'fx-rev-tone-v', 'reverbTone',    '%'],
+        ['fx-dly',      'fx-dly-v',      'delay',         '%'],
+        ['fx-dly-time', 'fx-dly-time-v', 'delayTime',     ' ms'],
+        ['fx-dly-fb',   'fx-dly-fb-v',   'delayFeedback', '%'],
+        ['fx-dst',      'fx-dst-v',      'distortion',    '%'],
+      ].forEach(([id, valId, key, unit]) => {
+        const input = document.getElementById(id);
+        const label = document.getElementById(valId);
+        if (input) input.value = String(globalFx[key]);
+        if (label) label.textContent = globalFx[key] + unit;
+      });
+
+      currentProjectName = null;
+
+      renderSequence();
+      renderSavedSequences();
+      renderTracks();
+      const saveBtn = document.getElementById('save-btn');
+      if (saveBtn) saveBtn.disabled = true;
+    }
+
+    // 3-button modal: Save first / Don't save / Cancel.
+    function askNewProjectChoice() {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'sm-overlay';
+        const modal = document.createElement('div');
+        modal.className = 'sm-modal';
+        modal.innerHTML = `
+          <div class="sm-title">Start a new project?</div>
+          <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;line-height:1.4;margin-bottom:18px;">
+            This clears the workspace, tracks, saved sequences, grid states, and effects. Save the current project first?
+          </div>
+          <div class="sm-footer">
+            <button type="button" class="sm-preview" id="np-cancel">Cancel</button>
+            <button type="button" class="sm-preview" id="np-discard">Don't save</button>
+            <button type="button" class="sm-apply"   id="np-save">Save first…</button>
+          </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        const close = (val) => { overlay.remove(); resolve(val); };
+        overlay.addEventListener('click', e => { if (e.target === overlay) close('cancel'); });
+        modal.querySelector('#np-cancel').addEventListener('click', () => close('cancel'));
+        modal.querySelector('#np-discard').addEventListener('click', () => close('discard'));
+        modal.querySelector('#np-save').addEventListener('click',   () => close('save'));
+      });
+    }
+
+    async function newProject() {
+      const choice = await askNewProjectChoice();
+      if (choice === 'cancel') return;
+      if (choice === 'save') {
+        const ok = await saveProjectToDrive();
+        if (!ok) return; // user cancelled the name prompt or the save errored
+      }
+      resetToDefaultProject();
+    }
+    document.getElementById('new-project-btn').addEventListener('click', newProject);
+
+    // ---- Voices: grid-only snapshots saved to Drive --------------------
+    // A "voice" captures just the note grid (root, octaves, scale, palette,
+    // per-cell sounds) — no workspace sequence, no tracks. Filenames are
+    // namespaced by the current project name so multiple projects can have
+    // their own "Lead", "Bass", etc. presets without colliding.
+    function buildVoiceSnapshot(name) {
+      return {
+        type: 'voice',
+        version: 1,
+        name,
+        project: currentProjectName || null,
+        savedAt: new Date().toISOString(),
+        grid: {
+          rootIdx,
+          baseOctave,
+          octaveCount,
+          masterFreqA,
+          currentScale,
+          palette: [...palette],
+          chipPalette: [...chipPalette],
+          restColor,
+          cellSounds: [...cellSounds],
+          cellParams: cellParams.map(p => ({ ...p })),
+        },
+      };
+    }
+    function applyVoiceSnapshot(snap) {
+      if (!snap || !snap.grid) throw new Error('Voice file is malformed.');
+      const g = snap.grid;
+      rootIdx     = Number.isFinite(g.rootIdx)     ? g.rootIdx     : 0;
+      baseOctave  = Number.isFinite(g.baseOctave)  ? g.baseOctave  : 4;
+      octaveCount = Number.isFinite(g.octaveCount) ? g.octaveCount : 1;
+      masterFreqA = Number.isFinite(g.masterFreqA) ? g.masterFreqA : 440;
+      currentScale = (g.currentScale && SCALES[g.currentScale]) ? g.currentScale : 'chromatic';
+      palette = Array.isArray(g.palette) && g.palette.length === 12 ? [...g.palette] : [...DEFAULT_PALETTE];
+      chipPalette = Array.isArray(g.chipPalette) && g.chipPalette.length === palette.length ? [...g.chipPalette] : [...palette];
+      restColor = g.restColor || DEFAULT_REST_COLOR;
+      applyRestColor();
+
+      const rootSel   = document.getElementById('root-select');
+      const octRange  = document.getElementById('octave-range-select');
+      const freqSl    = document.getElementById('master-freq-slider');
+      const freqIn    = document.getElementById('master-freq-input');
+      const scaleSel  = document.getElementById('scale-select');
+      if (rootSel)   rootSel.value   = String(rootIdx);
+      if (octRange)  octRange.value  = `${baseOctave}x${octaveCount}`;
+      if (freqSl)    freqSl.value    = String(masterFreqA);
+      if (freqIn)    freqIn.value    = String(masterFreqA);
+      if (scaleSel)  scaleSel.value  = currentScale;
+
+      rebuildGrid();
+
+      if (Array.isArray(g.cellSounds) && g.cellSounds.length === cellSounds.length
+          && Array.isArray(g.cellParams) && g.cellParams.length === cellParams.length) {
+        cellSounds = [...g.cellSounds];
+        cellParams = g.cellParams.map(p => ({ ...p }));
+        refreshAllCellFreqLabels();
+      }
+      updateScaleBanner();
+    }
+
+    // Drive-safe filename token: strip anything that would mess with Drive's
+    // file-name parsing or our `name.voice.something.json` convention.
+    function sanitizeVoiceToken(s) {
+      return String(s || '').trim().replace(/[\\/]+/g, '-').replace(/\.+/g, '-');
+    }
+
+    async function saveVoiceToDrive() {
+      const btn = document.getElementById('grid-save-voice-btn');
+      // Force a project name first — voices are namespaced under the current
+      // project so the user always knows what they belong to.
+      if (!currentProjectName || !currentProjectName.trim()) {
+        const ok = confirm('Save the project first? Voices are saved with the project\'s name in the filename.');
+        if (!ok) return;
+        await saveProjectToDrive();
+        if (!currentProjectName) return; // user cancelled the project save
+      }
+      const voiceRaw = prompt('Name for this Voice (grid state):', '');
+      if (!voiceRaw || !voiceRaw.trim()) return;
+      const voiceName = sanitizeVoiceToken(voiceRaw);
+      const projectToken = sanitizeVoiceToken(currentProjectName);
+      const filename = `${projectToken}.voice.${voiceName}.json`;
+
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Building…';
+        const snapshot = buildVoiceSnapshot(voiceName);
+        const jsonString = JSON.stringify(snapshot, null, 2);
+
+        btn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+
+        btn.textContent = 'Checking…';
+        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const existing = await listProjectsInDrive(folderId);
+        const match = existing.find(f => f.name === filename);
+        let existingFileId = null;
+        if (match) {
+          const ok = confirm(`A voice "${voiceName}" already exists for project "${projectToken}" — overwrite it?`);
+          if (!ok) {
+            btn.textContent = origText;
+            btn.disabled = false;
+            return;
+          }
+          existingFileId = match.id;
+        }
+
+        btn.textContent = existingFileId ? 'Overwriting…' : 'Uploading…';
+        const file = await uploadJsonToDrive(filename, jsonString, folderId, existingFileId);
+        btn.textContent = existingFileId ? 'Overwritten' : 'Saved';
+        alert(`${existingFileId ? 'Overwrote' : 'Saved'} voice "${voiceName}" for project "${projectToken}".`);
+      } catch (e) {
+        console.error(e);
+        alert(`Save voice failed: ${e.message || e}`);
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
+      }
+    }
+    document.getElementById('grid-save-voice-btn').addEventListener('click', saveVoiceToDrive);
+
+    // ---- FX preset save / load (Drive folder "Bloops effects") ----------
+    function buildEffectsSnapshot(name) {
+      return {
+        type: 'effects',
+        version: 1,
+        name,
+        savedAt: new Date().toISOString(),
+        globalFx: { ...globalFx },
+      };
+    }
+    function applyEffectsSnapshot(snap) {
+      if (!snap || !snap.globalFx) throw new Error('Effects file is malformed.');
+      Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
+        if (Number.isFinite(snap.globalFx[k])) globalFx[k] = snap.globalFx[k];
+      });
+      applyGlobalFx();
+      persistGlobalFx();
+    }
+
+    async function listEffectsInDrive(folderId) {
+      const resp = await gapi.client.drive.files.list({
+        q: `'${folderId}' in parents and trashed=false and mimeType='application/json'`,
+        fields: 'files(id, name, modifiedTime)',
+        orderBy: 'modifiedTime desc',
+        pageSize: 100,
+      });
+      return resp.result.files || [];
+    }
+
+    async function saveEffectsToDrive() {
+      const btn = document.getElementById('fx-save-btn');
+      const name = prompt('Name for these FX settings:', '');
+      if (!name || !name.trim()) return;
+      const filename = name.trim().replace(/\.json$/i, '') + '.json';
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Building…';
+        const snapshot = buildEffectsSnapshot(name.trim());
+        const jsonString = JSON.stringify(snapshot, null, 2);
+
+        btn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+
+        btn.textContent = 'Checking…';
+        const folderId = await findOrCreateDriveFolder('Bloops effects');
+        const existing = await listEffectsInDrive(folderId);
+        const match = existing.find(f => f.name === filename);
+        let existingFileId = null;
+        if (match) {
+          const ok = confirm(`FX preset "${name.trim()}" already exists. Overwrite it?`);
+          if (!ok) {
+            btn.textContent = origText;
+            btn.disabled = false;
+            return;
+          }
+          existingFileId = match.id;
+        }
+        btn.textContent = existingFileId ? 'Overwriting…' : 'Uploading…';
+        const file = await uploadJsonToDrive(filename, jsonString, folderId, existingFileId);
+        btn.textContent = existingFileId ? 'Overwritten' : 'Saved';
+        alert(`${existingFileId ? 'Overwrote' : 'Saved'} FX preset "${name.trim()}".`);
       } catch (e) {
         console.error(e);
         alert(`Save failed: ${e.message || e}`);
@@ -5613,7 +6379,42 @@
         setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
       }
     }
-    document.getElementById('tracks-save-project-btn').addEventListener('click', saveProjectToDrive);
+
+    async function loadEffectsFromDrive(onLoaded) {
+      const btn = document.getElementById('fx-load-btn');
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+        btn.textContent = 'Listing…';
+        const folderId = await findOrCreateDriveFolder('Bloops effects');
+        const files = await listEffectsInDrive(folderId);
+        btn.textContent = origText;
+        btn.disabled = false;
+        showProjectPickerDialog(files, async (file) => {
+          if (!file) return;
+          btn.disabled = true;
+          btn.textContent = 'Loading…';
+          try {
+            const snap = await fetchProjectJson(file.id);
+            applyEffectsSnapshot(snap);
+            if (typeof onLoaded === 'function') onLoaded();
+            btn.textContent = 'Loaded';
+          } catch (e) {
+            console.error(e);
+            alert(`Load failed: ${e.message || e}`);
+          } finally {
+            setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1000);
+          }
+        });
+      } catch (e) {
+        console.error(e);
+        alert(`Couldn't list FX presets: ${e.message || e}`);
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    }
 
     // Apply a saved-project snapshot to every relevant piece of state. Stops
     // playback first, disposes the live track audio nodes (so a fresh chain
@@ -5648,14 +6449,12 @@
       applyRestColor();
 
       const rootSel   = document.getElementById('root-select');
-      const baseOctIn = document.getElementById('base-octave-input');
-      const octsIn    = document.getElementById('octaves-input');
+      const octRange  = document.getElementById('octave-range-select');
       const freqSl    = document.getElementById('master-freq-slider');
       const freqIn    = document.getElementById('master-freq-input');
       const scaleSel  = document.getElementById('scale-select');
       if (rootSel)   rootSel.value   = String(rootIdx);
-      if (baseOctIn) baseOctIn.value = String(baseOctave);
-      if (octsIn)    octsIn.value    = String(octaveCount);
+      if (octRange)  octRange.value  = `${baseOctave}x${octaveCount}`;
       if (freqSl)    freqSl.value    = String(masterFreqA);
       if (freqIn)    freqIn.value    = String(masterFreqA);
       if (scaleSel)  scaleSel.value  = currentScale;
@@ -5716,6 +6515,15 @@
       // Tracks — dispose existing live audio nodes before swapping the
       // array so the next note creates a fresh chain in the live context.
       tracks.forEach(t => {
+        if (t._recording) {
+          try { t._recorder?.stop(); } catch (e) {}
+          if (t._recStream) {
+            try { t._recStream.getTracks().forEach(s => s.stop()); } catch (e) {}
+          }
+          t._recording = false;
+          t._recorder = null;
+          t._recStream = null;
+        }
         if (t._bus)    { try { t._bus.dispose(); }    catch (e) {} t._bus = null; }
         if (t._panner) { try { t._panner.dispose(); } catch (e) {} t._panner = null; }
         if (t._samplers) {
@@ -5793,6 +6601,23 @@
       return JSON.parse(resp.body || '{}');
     }
 
+    // Drive's gapi delete() can fail silently in some environments (the
+    // Request thenable resolves but the file isn't removed). The raw v3
+    // DELETE endpoint is more predictable and also surfaces failures via a
+    // real status code we can throw on.
+    async function deleteDriveFile(fileId) {
+      const resp = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${googleAccessToken}` },
+      });
+      // 204 No Content is success; some browsers report ok for any 2xx.
+      if (!resp.ok && resp.status !== 204) {
+        const body = await resp.text().catch(() => '');
+        throw new Error(`Drive delete failed: ${resp.status} ${body}`);
+      }
+      return true;
+    }
+
     // List Drive projects in a picker modal. On select, fetch + apply.
     function showProjectPickerDialog(files, onPick) {
       const overlay = document.createElement('div');
@@ -5846,10 +6671,12 @@
         btn.textContent = 'Listing…';
         const folderId = await findOrCreateDriveFolder('Bloops Projects');
         const files = await listProjectsInDrive(folderId);
+        // Voice files share the same folder; surface them under Voices, not Projects.
+        const projects = files.filter(f => !/\.voice\..+\.json$/i.test(f.name));
 
         btn.textContent = origText;
         btn.disabled = false;
-        showProjectPickerDialog(files, async (file) => {
+        showProjectPickerDialog(projects, async (file) => {
           if (!file) return;
           const loadBtn = document.getElementById('tracks-load-project-btn');
           loadBtn.disabled = true;
@@ -5858,6 +6685,7 @@
             loadBtn.textContent = 'Loading…';
             const snap = await fetchProjectJson(file.id);
             applyProjectSnapshot(snap);
+            currentProjectName = (file.name || '').replace(/\.json$/i, '') || null;
             loadBtn.textContent = 'Loaded';
           } catch (e) {
             console.error(e);
@@ -5890,7 +6718,10 @@
         await googleSignInForDrive();
         loadBtn.textContent = 'Listing…';
         const folderId = await findOrCreateDriveFolder('Bloops Projects');
-        const files = await listProjectsInDrive(folderId);
+        const allFiles = await listProjectsInDrive(folderId);
+        // Voice files live alongside projects in the same folder but belong
+        // in the Voices menu, not the Projects bank.
+        const files = allFiles.filter(f => !/\.voice\..+\.json$/i.test(f.name));
         // Wipe any previously-rendered chips, keep the label + Load button.
         bank.querySelectorAll('.project-chip').forEach(el => el.remove());
         if (files.length === 0) {
@@ -5927,7 +6758,7 @@
                     chip.disabled = true;
                     chip.textContent = 'Deleting…';
                     try {
-                      await gapi.client.drive.files.delete({ fileId: f.id });
+                      await deleteDriveFile(f.id);
                       // Re-fetch the list so the chip + any tombstones drop.
                       refreshProjectsBank();
                     } catch (err) {
@@ -5975,6 +6806,7 @@
                 chip.textContent = 'Loading…';
                 const snap = await fetchProjectJson(f.id);
                 applyProjectSnapshot(snap);
+                currentProjectName = displayName || null;
                 chip.textContent = prev;
               } catch (e) {
                 console.error(e);
@@ -6210,17 +7042,6 @@
         .forEach(el => el.classList.remove('drag-over'));
     }
 
-    document.getElementById('saved-clear-btn').addEventListener('click', () => {
-      if (savedSequences.length === 0) return;
-      if (!confirm(`Remove all ${savedSequences.length} saved sequence${savedSequences.length === 1 ? '' : 's'}? Track items that reference them become silent gaps.`)) return;
-      const names = new Set(savedSequences.map(s => s.name).filter(Boolean));
-      savedSequences = [];
-      activeSeqIndex = null;
-      replaceMatchingTrackItemsWithSilent(names);
-      persistSaved();
-      renderSavedSequences();
-    });
-
     function bindDrag(block, i) {
       block.draggable = true;
 
@@ -6449,6 +7270,10 @@
         <details class="sm-fold">
           <summary>Effects</summary>
           <div class="sm-fold-body">
+            <label class="sm-checkbox-row" title="When checked, this cell skips the global FX chain — only its local effects apply.">
+              <input type="checkbox" id="sm-fx-override" ${p.fxOverrideGlobal ? 'checked' : ''} />
+              Override Global
+            </label>
             <div class="sm-section-label">Reverb</div>
             <div class="sm-param">
               <div class="sm-param-row">Mix <span class="sm-val" id="sm-rev-v">${p.reverb ?? 0}%</span></div>
@@ -6544,6 +7369,12 @@
           label.textContent = p[key] + unit;
         });
       });
+      const overrideCheckbox = modal.querySelector('#sm-fx-override');
+      if (overrideCheckbox) {
+        overrideCheckbox.addEventListener('change', () => {
+          p.fxOverrideGlobal = !!overrideCheckbox.checked;
+        });
+      }
 
       modal.querySelector('#sm-preview').addEventListener('click', () => playNote(note.freq, p));
 
@@ -6953,6 +7784,7 @@
         delayTime:     step.params?.delayTime     ?? 250,
         delayFeedback: step.params?.delayFeedback ?? 40,
         distortion:    step.params?.distortion    ?? 0,
+        fxOverrideGlobal: !!step.params?.fxOverrideGlobal,
         bendSemitones: step.bend?.semitones ?? 0,
         bendAt:        Math.round(((step.bend?.atFraction ?? 1) * 100)),
       };
@@ -7023,6 +7855,10 @@
         <details class="sm-fold">
           <summary>Effects</summary>
           <div class="sm-fold-body">
+            <label class="sm-checkbox-row" title="When checked, this step skips the global FX chain — only its local effects apply.">
+              <input type="checkbox" id="se-fx-override" ${p.fxOverrideGlobal ? 'checked' : ''} />
+              Override Global
+            </label>
             <div class="sm-section-label">Reverb</div>
             <div class="sm-param">
               <div class="sm-param-row">Mix <span class="sm-val" id="se-rev-v">${p.reverb}%</span></div>
@@ -7143,6 +7979,12 @@
           label.textContent = p[key] + unit;
         });
       });
+      const seOverrideCheckbox = modal.querySelector('#se-fx-override');
+      if (seOverrideCheckbox) {
+        seOverrideCheckbox.addEventListener('change', () => {
+          p.fxOverrideGlobal = !!seOverrideCheckbox.checked;
+        });
+      }
 
       // Pitch-bend sliders. "Bend by" is in semitones; "Reach by" is the
       // fraction of the step duration at which the bend reaches its target
@@ -7167,6 +8009,7 @@
           reverb: p.reverb, reverbSize: p.reverbSize, reverbTone: p.reverbTone,
           delay:  p.delay,  delayTime:  p.delayTime,  delayFeedback: p.delayFeedback,
           distortion: p.distortion,
+          fxOverrideGlobal: !!p.fxOverrideGlobal,
         };
         if (p.bendSemitones !== 0) out.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
         return out;
@@ -7189,6 +8032,7 @@
             reverb: p.reverb, reverbSize: p.reverbSize, reverbTone: p.reverbTone,
             delay:  p.delay,  delayTime:  p.delayTime,  delayFeedback: p.delayFeedback,
             distortion: p.distortion,
+            fxOverrideGlobal: !!p.fxOverrideGlobal,
           } };
         if (p.bendSemitones !== 0) next.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
         sequence[stepIndex] = next;
@@ -7803,10 +8647,12 @@
       const grid = document.getElementById('grid-settings-panel');
       const tone = document.getElementById('tone-panel');
       const fx   = document.getElementById('fx-panel');
+      const voices = document.getElementById('voices-panel');
       if (colors && colors.parentNode !== document.body) document.body.appendChild(colors);
       if (grid && grid.parentNode !== document.body) document.body.appendChild(grid);
       if (tone && tone.parentNode !== document.body) document.body.appendChild(tone);
       if (fx   && fx.parentNode   !== document.body) document.body.appendChild(fx);
+      if (voices && voices.parentNode !== document.body) document.body.appendChild(voices);
     })();
 
     (function initFxMenu() {
@@ -7841,21 +8687,36 @@
           persistGlobalFx();
         });
       });
+      // Helper — push current globalFx values into the slider UI.
+      const refreshFxSliderUI = () => {
+        sliders.forEach(([id, valId, key, unit]) => {
+          const input = panel.querySelector('#' + id);
+          const label = panel.querySelector('#' + valId);
+          if (input) input.value = String(globalFx[key]);
+          if (label) label.textContent = globalFx[key] + unit;
+        });
+      };
       // Bypass — only zeros the three "mix" sliders so size/tone/time/feedback
       // remembered settings stay intact for the next time the user dials a
       // wet level back up.
       panel.querySelector('#fx-reset').addEventListener('click', () => {
         ['reverb', 'delay', 'distortion'].forEach(key => { globalFx[key] = 0; });
-        sliders.forEach(([id, valId, key, unit]) => {
-          if (key !== 'reverb' && key !== 'delay' && key !== 'distortion') return;
-          const input = panel.querySelector('#' + id);
-          const label = panel.querySelector('#' + valId);
-          if (input) input.value = '0';
-          if (label) label.textContent = '0' + unit;
-        });
+        refreshFxSliderUI();
         applyGlobalFx();
         persistGlobalFx();
       });
+      // Reset — restore every FX parameter (mix levels and the underlying
+      // size/tone/time/feedback knobs) to its initial default.
+      panel.querySelector('#fx-reset-all').addEventListener('click', () => {
+        Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => { globalFx[k] = GLOBAL_FX_DEFAULTS[k]; });
+        refreshFxSliderUI();
+        applyGlobalFx();
+        persistGlobalFx();
+      });
+      // Save / Load — round-trip the current globalFx through Google Drive
+      // so users can reuse their setups across projects and devices.
+      panel.querySelector('#fx-save-btn').addEventListener('click', saveEffectsToDrive);
+      panel.querySelector('#fx-load-btn').addEventListener('click', () => loadEffectsFromDrive(refreshFxSliderUI));
 
       const setOpen = (open) => {
         panel.classList.toggle('open', open);
@@ -7977,6 +8838,110 @@
       });
     })();
 
+    // ---- Voices menu (Drive-backed grid presets) ----
+    (function initVoicesMenu() {
+      const btn = document.getElementById('voices-menu-btn');
+      const panel = document.getElementById('voices-panel');
+      if (!btn || !panel) return;
+      const TRIGGER_ID = 'voices-menu-btn';
+      let cachedFiles = null; // last fetched file list, refetched on each open
+
+      const renderEmpty = (text) => {
+        panel.innerHTML = '';
+        const div = document.createElement('div');
+        div.className = 'voice-empty';
+        div.textContent = text;
+        panel.appendChild(div);
+      };
+      const renderLoading = () => {
+        panel.innerHTML = '';
+        const div = document.createElement('div');
+        div.className = 'voice-loading';
+        div.textContent = 'Loading…';
+        panel.appendChild(div);
+      };
+
+      async function populateVoicesPanel() {
+        renderLoading();
+        try {
+          await googleSignInForDrive();
+          const folderId = await findOrCreateDriveFolder('Bloops Projects');
+          const all = await listProjectsInDrive(folderId);
+          // Voice files use the "<project>.voice.<voice>.json" naming so we
+          // can split them out from regular project saves in the same folder.
+          const voices = all.filter(f => /\.voice\..+\.json$/i.test(f.name));
+          cachedFiles = voices;
+          panel.innerHTML = '';
+          if (voices.length === 0) {
+            renderEmpty('No voices saved yet');
+            return;
+          }
+          voices.forEach(f => {
+            const m = f.name.match(/^(.+)\.voice\.(.+)\.json$/i);
+            const projectPart = m ? m[1] : '?';
+            const voicePart   = m ? m[2] : f.name.replace(/\.json$/i, '');
+            const opt = document.createElement('button');
+            opt.type = 'button';
+            opt.className = 'voice-opt';
+            opt.innerHTML = `<span>${voicePart}</span><span class="voice-opt-project">${projectPart}</span>`;
+            opt.title = `Apply "${voicePart}" — last modified ${new Date(f.modifiedTime).toLocaleString()}`;
+            opt.addEventListener('click', async () => {
+              opt.disabled = true;
+              const prev = opt.innerHTML;
+              try {
+                opt.innerHTML = '<span>Loading…</span>';
+                const snap = await fetchProjectJson(f.id);
+                applyVoiceSnapshot(snap);
+                setOpen(false);
+              } catch (err) {
+                console.error(err);
+                alert(`Load voice failed: ${err.message || err}`);
+                opt.innerHTML = prev;
+              } finally {
+                setTimeout(() => { opt.disabled = false; }, 600);
+              }
+            });
+            panel.appendChild(opt);
+          });
+        } catch (e) {
+          console.error(e);
+          renderEmpty('Couldn\'t load voices');
+        }
+      }
+
+      const setOpen = async (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.textContent = open ? 'Voices ▴' : 'Voices ▾';
+        if (open) {
+          pinPanelToButton(btn, panel);
+          // Re-fetch each open so newly-saved voices appear without a reload.
+          await populateVoicesPanel();
+          if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+        }
+      };
+      window.addEventListener('resize', () => {
+        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+      });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
+    })();
+
     // ---- Saved grid states (root, scale, octaves, palette, cell sounds) ----
     let savedGridStates = JSON.parse(localStorage.getItem('sounds-grid-states') || '[]');
     function persistGridStates() {
@@ -8010,14 +8975,12 @@
       if (state.restColor)           { restColor = state.restColor; applyRestColor(); }
 
       const rootSel   = document.getElementById('root-select');
-      const baseOctIn = document.getElementById('base-octave-input');
-      const octsIn    = document.getElementById('octaves-input');
+      const octRange  = document.getElementById('octave-range-select');
       const freqSl    = document.getElementById('master-freq-slider');
       const freqIn    = document.getElementById('master-freq-input');
       const scaleSel  = document.getElementById('scale-select');
       if (rootSel)   rootSel.value   = String(rootIdx);
-      if (baseOctIn) baseOctIn.value = baseOctave;
-      if (octsIn)    octsIn.value    = octaveCount;
+      if (octRange)  octRange.value  = `${baseOctave}x${octaveCount}`;
       if (freqSl)    freqSl.value    = masterFreqA;
       if (freqIn)    freqIn.value    = masterFreqA;
       if (scaleSel)  scaleSel.value  = currentScale;
@@ -8104,14 +9067,12 @@
       applyRestColor();
 
       const rootSel   = document.getElementById('root-select');
-      const baseOctIn = document.getElementById('base-octave-input');
-      const octsIn    = document.getElementById('octaves-input');
+      const octRange  = document.getElementById('octave-range-select');
       const freqSl    = document.getElementById('master-freq-slider');
       const freqIn    = document.getElementById('master-freq-input');
       const scaleSel  = document.getElementById('scale-select');
       if (rootSel)   rootSel.value   = '0';
-      if (baseOctIn) baseOctIn.value = '4';
-      if (octsIn)    octsIn.value    = '1';
+      if (octRange)  octRange.value  = '4x1';
       if (freqSl)    freqSl.value    = '440';
       if (freqIn)    freqIn.value    = '440';
       if (scaleSel)  scaleSel.value  = 'chromatic';
@@ -8134,21 +9095,30 @@
         rebuildGrid();
       });
 
-      const baseOctaveInput = document.getElementById('base-octave-input');
-      baseOctaveInput.addEventListener('change', () => {
-        const v = Math.max(1, Math.min(7, parseInt(baseOctaveInput.value) || 4));
-        baseOctave = v;
-        baseOctaveInput.value = v;
+      // Single dropdown that captures both base octave and octave count as
+      // "BxC" — 7x7 = 49 options. Replaces the old pair of number inputs.
+      const octaveRangeSelect = document.getElementById('octave-range-select');
+      for (let b = 1; b <= 7; b++) {
+        for (let c = 1; c <= 7; c++) {
+          const opt = document.createElement('option');
+          opt.value = `${b}x${c}`;
+          opt.textContent = `${b}×${c}`;
+          octaveRangeSelect.appendChild(opt);
+        }
+      }
+      octaveRangeSelect.value = `${baseOctave}x${octaveCount}`;
+      octaveRangeSelect.addEventListener('change', () => {
+        const [b, c] = octaveRangeSelect.value.split('x').map(n => parseInt(n, 10) || 0);
+        if (b >= 1 && b <= 7) baseOctave = b;
+        if (c >= 1 && c <= 7) octaveCount = c;
         rebuildGrid();
       });
-
-      const octavesInput = document.getElementById('octaves-input');
-      octavesInput.addEventListener('change', () => {
-        const v = Math.max(1, Math.min(3, parseInt(octavesInput.value) || 1));
-        octaveCount = v;
-        octavesInput.value = v;
-        rebuildGrid();
-      });
+      // Helper used by the rest of the codebase to push state-driven
+      // baseOctave / octaveCount values back into the dropdown UI.
+      window.syncOctaveRangeSelect = () => {
+        const sel = document.getElementById('octave-range-select');
+        if (sel) sel.value = `${baseOctave}x${octaveCount}`;
+      };
 
       const scaleSelect = document.getElementById('scale-select');
       const scaleKeys = Object.keys(SCALES)

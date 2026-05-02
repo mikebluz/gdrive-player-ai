@@ -456,6 +456,21 @@
     .grid-state-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
 
     /* NOTE GRID */
+    /* Slim banner above the note grid showing the current scale at a glance.
+       Updated by updateScaleBanner() whenever the root or scale changes. */
+    .scale-banner {
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+      color: #4fd1c5;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 4px 12px;
+      flex-shrink: 0;
+    }
     .grid {
       flex: 1;
       display: grid;
@@ -1314,6 +1329,8 @@
     }
     #add-track-btn,
     #tracks-export-btn,
+    #tracks-save-project-btn,
+    #tracks-load-project-btn,
     #tracks-loop-all {
       padding: 5px 12px;
       border: 1px solid #2d2d3f;
@@ -1328,6 +1345,10 @@
     #add-track-btn:hover { border-color: #4299e1; color: #4299e1; }
     #tracks-export-btn:hover { border-color: #38a169; color: #38a169; }
     #tracks-export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #tracks-save-project-btn:hover,
+    #tracks-load-project-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #tracks-save-project-btn:disabled,
+    #tracks-load-project-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     #tracks-loop-all:hover { border-color: #38b2ac; color: #38b2ac; }
     #tracks-loop-all.active {
       border-color: #38b2ac;
@@ -1823,6 +1844,7 @@
     <div class="tone-panel" id="tone-panel"></div>
   </div>
 
+  <div class="scale-banner" id="scale-banner" title="Current scale and root — change in Grid settings"></div>
   <div class="grid" id="grid"></div>
 
   <div class="rest-bar" id="rest-bar"><span>REST</span></div>
@@ -1919,6 +1941,8 @@
       <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
       <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
       <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
+      <button id="tracks-save-project-btn" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save Project</button>
+      <button id="tracks-load-project-btn" title="Load a previously saved project from Google Drive">Load Project</button>
       <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
       <button id="add-track-btn">+ Add Track</button>
     </div>
@@ -2204,9 +2228,18 @@
     function isSampleType(type) {
       return typeof type === 'string' && type.startsWith('sample:');
     }
+    // Lets the offline export route sample-based notes through a parallel
+    // bank of samplers bound to the offline audio context. When set, this
+    // takes precedence over the live sampleSamplers map. When null, normal
+    // live playback resolves through the registered live samplers.
+    let _offlineSamplerOverride = null;
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;
-      return sampleSamplers.get(type.slice(7)) || null;
+      const id = type.slice(7);
+      if (_offlineSamplerOverride && _offlineSamplerOverride.has(id)) {
+        return { sampler: _offlineSamplerOverride.get(id) };
+      }
+      return sampleSamplers.get(id) || null;
     }
     function getAllSoundOptions() {
       const opts = SOUNDS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));
@@ -2285,6 +2318,10 @@
             name: inst.label,
             rootNote: 'C4',
             remote: true,
+            // Stash the original URL map so the offline export can recreate
+            // a parallel sampler bound to the offline audio context.
+            urls: inst.urls,
+            baseUrl: inst.baseUrl,
           });
         } catch (e) {
           console.warn('Failed to register remote instrument', inst.id, e);
@@ -2302,8 +2339,9 @@
           if (!s || !s.id || !s.file) return;
           const rootNote = s.rootNote || 'C4';
           try {
+            const urls = { [rootNote]: s.file };
             const sampler = new Tone.Sampler({
-              urls: { [rootNote]: s.file },
+              urls,
               release: 1,
               baseUrl: 'samples/',
             }).connect(masterBus);
@@ -2311,6 +2349,8 @@
               sampler,
               name: s.name || s.id,
               rootNote,
+              urls,
+              baseUrl: 'samples/',
             });
           } catch (e) {
             console.warn('Failed to load sample', s.id, e);
@@ -2363,8 +2403,9 @@
           if (!rec || !rec.id || !rec.blob) continue;
           try {
             const url = URL.createObjectURL(rec.blob);
+            const urls = { 'C4': url };
             const sampler = new Tone.Sampler({
-              urls: { 'C4': url },
+              urls,
               release: 1,
             }).connect(masterBus);
             sampleSamplers.set(rec.id, {
@@ -2372,6 +2413,7 @@
               name: rec.name || rec.id,
               rootNote: 'C4',
               imported: true,
+              urls,
             });
           } catch (e) {
             console.warn('Failed to restore imported sample', rec.id, e);
@@ -2411,8 +2453,9 @@
         const friendly = (file.name || id).replace(/\.[^.]+$/, '');
         try {
           const url = URL.createObjectURL(file);
+          const urls = { 'C4': url };
           const sampler = new Tone.Sampler({
-            urls: { 'C4': url },
+            urls,
             release: 1,
           }).connect(masterBus);
           sampleSamplers.set(id, {
@@ -2420,6 +2463,7 @@
             name: friendly,
             rootNote: 'C4',
             imported: true,
+            urls,
           });
           await persistImportedSample(id, friendly, file);
           if (typeof onLoaded === 'function') onLoaded(id, friendly);
@@ -3631,10 +3675,13 @@
     //                   Vowels and non-letters break the run.
     //   non-letters   → rest if includeRests, otherwise skipped (also flush
     //                   any pending chord run first).
-    function generateTextSequence(text, scaleName, tones, includeRests) {
+    function generateTextSequence(text, scaleName, tones, includeRests, octavesToUse = null) {
       const intervals = (scaleName && SCALES[scaleName]) || SCALES['chromatic'];
+      const totalOcts = Math.max(1, Math.floor(notes.length / 12));
+      const octCap = Math.max(1, Math.min(totalOcts, Number.isFinite(octavesToUse) ? octavesToUse : totalOcts));
       const scaleCells = [];
       for (let i = 0; i < notes.length; i++) {
+        if (Math.floor(i / 12) >= octCap) break;
         if (intervals.includes(i % 12)) scaleCells.push(i);
       }
       if (scaleCells.length === 0) return [];
@@ -3719,12 +3766,16 @@
       return out;
     }
 
-    function generateRandomSequence(numSteps, maxChordSize, includeRests = true, includeChords = true, scaleName = null, tones = null) {
+    function generateRandomSequence(numSteps, maxChordSize, includeRests = true, includeChords = true, scaleName = null, tones = null, octavesToUse = null) {
       // Filter the chromatic note grid down to scale tones — `pool` holds
-      // the cell indices we're allowed to sample from.
+      // the cell indices we're allowed to sample from. octavesToUse caps the
+      // pool to the bottom N octaves of the grid (1 = lowest octave only).
       const intervals = (scaleName && SCALES[scaleName]) || SCALES['chromatic'];
+      const totalOcts = Math.max(1, Math.floor(notes.length / 12));
+      const octCap = Math.max(1, Math.min(totalOcts, Number.isFinite(octavesToUse) ? octavesToUse : totalOcts));
       const pool = [];
       for (let i = 0; i < notes.length; i++) {
+        if (Math.floor(i / 12) >= octCap) break;
         if (intervals.includes(i % 12)) pool.push(i);
       }
       const poolSize = pool.length;
@@ -3796,6 +3847,10 @@
           <input type="range" id="rand-chord" min="1" max="8" value="3" />
         </div>
         <div class="sm-param">
+          <div class="sm-param-row">Octaves to use <span class="sm-val" id="rand-oct-v">${octaveCount}</span></div>
+          <input type="range" id="rand-oct" min="1" max="${octaveCount}" value="${octaveCount}" />
+        </div>
+        <div class="sm-param">
           <div class="sm-param-row">Scale</div>
           <select id="rand-scale" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#a0aec0;border-radius:6px;font-family:inherit;font-size:0.85rem;"></select>
         </div>
@@ -3829,9 +3884,12 @@
       const stepsOut = modal.querySelector('#rand-steps-v');
       const chordIn = modal.querySelector('#rand-chord');
       const chordOut = modal.querySelector('#rand-chord-v');
+      const octIn  = modal.querySelector('#rand-oct');
+      const octOut = modal.querySelector('#rand-oct-v');
       const chordsCheck = modal.querySelector('#rand-chords');
       stepsIn.addEventListener('input', () => stepsOut.textContent = stepsIn.value);
       chordIn.addEventListener('input', () => chordOut.textContent = chordIn.value);
+      octIn.addEventListener('input',   () => octOut.textContent   = octIn.value);
 
       // Max-chord-size slider only matters when chords are enabled.
       const syncChordSlider = () => {
@@ -3900,9 +3958,10 @@
         const text          = modal.querySelector('#rand-text').value.trim();
         snapshotForUndo(text ? 'Text → sequence' : 'Random sequence');
         stopSequence();
+        const o = Math.max(1, Math.min(octaveCount, parseInt(octIn.value, 10) || octaveCount));
         sequence = text
-          ? generateTextSequence(text, scaleName, tones, includeRests)
-          : generateRandomSequence(n, c, includeRests, includeChords, scaleName, tones);
+          ? generateTextSequence(text, scaleName, tones, includeRests, o)
+          : generateRandomSequence(n, c, includeRests, includeChords, scaleName, tones, o);
         pendingChord = [];
         insertionPoint = null;
 
@@ -4307,6 +4366,7 @@
       t.currentItemIdx = null;
       t.timer = null;
       if (!t.eq) t.eq = { low: 0, mid: 0, high: 0 };
+      if (!Number.isFinite(t.pan)) t.pan = 0;
     });
     let trackIdCounter = Math.max(0, ...tracks.map(t => t.id || 0)) + 1;
 
@@ -4314,6 +4374,7 @@
       const serial = tracks.map(t => ({
         id: t.id, name: t.name, items: t.items, loopMode: !!t.loopMode, solo: !!t.solo,
         eq: t.eq || { low: 0, mid: 0, high: 0 },
+        pan: Number.isFinite(t.pan) ? t.pan : 0,
       }));
       localStorage.setItem('sounds-tracks', JSON.stringify(serial));
     }
@@ -4371,6 +4432,7 @@
         currentItemIdx: null,
         timer: null,
         eq: { low: 0, mid: 0, high: 0 },
+        pan: 0,
       });
       persistTracks();
       renderTracks();
@@ -4382,6 +4444,10 @@
       if (track && track._bus) {
         try { track._bus.dispose(); } catch (e) {}
         track._bus = null;
+      }
+      if (track && track._panner) {
+        try { track._panner.dispose(); } catch (e) {}
+        track._panner = null;
       }
       tracks.splice(trackIdx, 1);
       persistTracks();
@@ -4524,21 +4590,36 @@
       }
     }
 
-    // Lazy per-track audio bus (Tone.EQ3 → masterBus). Lets each track carry
-    // its own EQ without a full audio-graph rebuild and is cheap to retrieve
-    // inside the playback hot path. Rebuilt on demand if disposed.
+    // Lazy per-track audio chain — synth → EQ3 → Panner → masterBus. Both
+    // nodes are built on first access and reused thereafter, keeping the
+    // playback hot path cheap. getTrackBus returns the EQ3 (the entry that
+    // synths/players connect to); the panner is reachable as track._panner.
     function getTrackBus(trackIdx) {
       const track = tracks[trackIdx];
       if (!track) return masterBus;
       if (!track._bus) {
-        const eq = track.eq || { low: 0, mid: 0, high: 0 };
+        const eq  = track.eq || { low: 0, mid: 0, high: 0 };
+        const pan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
+        track._panner = new Tone.Panner(pan).connect(masterBus);
         track._bus = new Tone.EQ3({
           low:  eq.low  || 0,
           mid:  eq.mid  || 0,
           high: eq.high || 0,
-        }).connect(masterBus);
+        }).connect(track._panner);
       }
       return track._bus;
+    }
+    function isTrackMixActive(track) {
+      if (!track) return false;
+      const eq = track.eq || { low: 0, mid: 0, high: 0 };
+      return !!(eq.low || eq.mid || eq.high) || Math.abs(track.pan || 0) > 0.01;
+    }
+    function refreshTrackMixButton(trackIdx) {
+      const track = tracks[trackIdx];
+      const container = document.getElementById('tracks-container');
+      const row = container?.children[trackIdx];
+      const btn = row?.querySelector('.track-eq');
+      if (btn) btn.classList.toggle('active', isTrackMixActive(track));
     }
     function setTrackEq(trackIdx, eq) {
       const track = tracks[trackIdx];
@@ -4555,24 +4636,37 @@
         bus.high.value = track.eq.high;
       } catch (e) {}
       persistTracks();
-      // Refresh the EQ button's "active" tint without rebuilding the row.
-      const container = document.getElementById('tracks-container');
-      const row = container?.children[trackIdx];
-      const btn = row?.querySelector('.track-eq');
-      if (btn) btn.classList.toggle('active', !!(track.eq.low || track.eq.mid || track.eq.high));
+      refreshTrackMixButton(trackIdx);
+    }
+    function setTrackPan(trackIdx, pan) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      const v = Math.max(-1, Math.min(1, Number.isFinite(pan) ? pan : 0));
+      track.pan = v;
+      getTrackBus(trackIdx); // make sure the panner exists
+      try { track._panner.pan.value = v; } catch (e) {}
+      persistTracks();
+      refreshTrackMixButton(trackIdx);
     }
     function showTrackEqDialog(trackIdx) {
       const track = tracks[trackIdx];
       if (!track) return;
       if (!track.eq) track.eq = { low: 0, mid: 0, high: 0 };
+      if (!Number.isFinite(track.pan)) track.pan = 0;
       const overlay = document.createElement('div');
       overlay.className = 'sm-overlay';
       const modal = document.createElement('div');
       modal.className = 'sm-modal';
       const e = track.eq;
       const fmt = (v) => (v >= 0 ? '+' : '') + Number(v).toFixed(1) + ' dB';
+      const fmtPan = (v) => {
+        const pct = Math.round(Math.abs(v) * 100);
+        if (pct === 0) return 'Center';
+        return (v < 0 ? 'L ' : 'R ') + pct;
+      };
       modal.innerHTML = `
-        <div class="sm-title">EQ — ${track.name}</div>
+        <div class="sm-title">Mix — ${track.name}</div>
+        <div class="sm-section-label">EQ</div>
         <div class="sm-param">
           <div class="sm-param-row">Low <span class="sm-val" id="eq-low-v">${fmt(e.low)}</span></div>
           <input type="range" id="eq-low" min="-12" max="12" step="0.5" value="${e.low}" />
@@ -4584,6 +4678,11 @@
         <div class="sm-param">
           <div class="sm-param-row">High <span class="sm-val" id="eq-high-v">${fmt(e.high)}</span></div>
           <input type="range" id="eq-high" min="-12" max="12" step="0.5" value="${e.high}" />
+        </div>
+        <div class="sm-section-label">Pan</div>
+        <div class="sm-param">
+          <div class="sm-param-row">Position <span class="sm-val" id="mix-pan-v">${fmtPan(track.pan)}</span></div>
+          <input type="range" id="mix-pan" min="-100" max="100" step="1" value="${Math.round(track.pan * 100)}" />
         </div>
         <div class="sm-footer">
           <button type="button" class="sm-preview" id="eq-reset">Flat</button>
@@ -4597,10 +4696,12 @@
       const lowSel  = modal.querySelector('#eq-low');
       const midSel  = modal.querySelector('#eq-mid');
       const highSel = modal.querySelector('#eq-high');
+      const panSel  = modal.querySelector('#mix-pan');
       const lowVal  = modal.querySelector('#eq-low-v');
       const midVal  = modal.querySelector('#eq-mid-v');
       const highVal = modal.querySelector('#eq-high-v');
-      const apply = () => {
+      const panVal  = modal.querySelector('#mix-pan-v');
+      const applyEq = () => {
         const next = {
           low:  parseFloat(lowSel.value)  || 0,
           mid:  parseFloat(midSel.value)  || 0,
@@ -4611,12 +4712,19 @@
         highVal.textContent = fmt(next.high);
         setTrackEq(trackIdx, next);
       };
-      lowSel.addEventListener('input',  apply);
-      midSel.addEventListener('input',  apply);
-      highSel.addEventListener('input', apply);
+      const applyPan = () => {
+        const v = (parseInt(panSel.value, 10) || 0) / 100;
+        panVal.textContent = fmtPan(v);
+        setTrackPan(trackIdx, v);
+      };
+      lowSel.addEventListener('input',  applyEq);
+      midSel.addEventListener('input',  applyEq);
+      highSel.addEventListener('input', applyEq);
+      panSel.addEventListener('input',  applyPan);
       modal.querySelector('#eq-reset').addEventListener('click', () => {
         lowSel.value = '0'; midSel.value = '0'; highSel.value = '0';
-        apply();
+        panSel.value = '0';
+        applyEq(); applyPan();
       });
       modal.querySelector('#eq-done').addEventListener('click', () => overlay.remove());
     }
@@ -4777,12 +4885,12 @@
         const row = document.createElement('div');
         row.className = 'track-row';
 
-        const eqOn = !!(track.eq && (track.eq.low || track.eq.mid || track.eq.high));
+        const mixOn = isTrackMixActive(track);
         const controls = document.createElement('div');
         controls.className = 'track-controls';
         controls.innerHTML = `
           <span class="track-name${track.solo ? ' soloed' : ''}" title="Click to solo, double-click to rename">${track.name}</span>
-          <button class="track-eq${eqOn ? ' active' : ''}" type="button" title="EQ — Low / Mid / High">EQ</button>
+          <button class="track-eq${mixOn ? ' active' : ''}" type="button" title="Mix — EQ + Pan">Mix</button>
           <button class="track-remove" title="Remove track">×</button>
         `;
         // Single click toggles solo; double click toggles twice (cancelling
@@ -4955,6 +5063,61 @@
       return new Blob([ab], { type: 'audio/wav' });
     }
 
+    // Estimate how long an effect tail keeps producing audible signal. Used
+    // to size the offline-render buffer so reverb / delay tails don't get
+    // chopped off the end of the export.
+    //   • Reverb tail scales with Freeverb's roomSize. roomSize 0.7 ≈ 5s,
+    //     0.99 ≈ 7s; tiny rooms decay almost immediately.
+    //   • Delay tail repeats until amplitude * feedback^N drops below ~-60dB
+    //     (0.001). Total tail = N × delayTime.
+    function fxTailSec(reverb, reverbSize, delay, delayTime, delayFeedback) {
+      let t = 0;
+      if (reverb > 0) {
+        const sizeFactor = Math.max(0, Math.min(1, reverbSize / 100));
+        t = Math.max(t, 1 + sizeFactor * 6);
+      }
+      if (delay > 0 && delayFeedback > 0) {
+        const f = Math.max(0.001, Math.min(0.95, delayFeedback / 100));
+        const repeats = Math.ceil(Math.log(0.001) / Math.log(f));
+        const delaySec = (delayTime || 0) / 1000;
+        t = Math.max(t, repeats * delaySec);
+      }
+      return t;
+    }
+    function estimateExportTailSec() {
+      // Start with the global FX tail.
+      let tail = fxTailSec(
+        globalFx.reverb, globalFx.reverbSize,
+        globalFx.delay,  globalFx.delayTime, globalFx.delayFeedback
+      );
+      // Fold in the worst-case per-note FX tail across every step in every
+      // track (chord voices, step params, and any nested subsequences).
+      const visit = (step) => {
+        if (!step) return;
+        if (step.isSub && Array.isArray(step.subSteps)) { step.subSteps.forEach(visit); return; }
+        const probe = (p) => {
+          if (!p) return;
+          tail = Math.max(tail, fxTailSec(
+            p.reverb     || 0, p.reverbSize    ?? 70,
+            p.delay      || 0, p.delayTime     ?? 250,
+                                p.delayFeedback ?? 40
+          ));
+        };
+        if (step.chord) step.chord.forEach(n => probe(n.params));
+        else probe(step.params);
+      };
+      tracks.forEach(track => {
+        (track.items || []).forEach(item => {
+          if (item.type === 'audio' || item.type === 'silent') return;
+          (item.steps || []).forEach(visit);
+        });
+      });
+      // Add 2s on top for envelope release decays past the FX tail, and
+      // clamp to a sane upper bound so a runaway feedback setting can't
+      // produce a multi-minute buffer.
+      return Math.min(60, Math.max(2, tail) + 2);
+    }
+
     async function renderTracksToBuffer() {
       const durationsMs = tracks.map(track => {
         let ms = 0;
@@ -4962,8 +5125,16 @@
         return ms;
       });
       const totalMs = Math.max(...durationsMs, 1000);
-      const totalSec = (totalMs + 3000) / 1000; // tail for envelope releases
+      // Add an FX-aware trailing tail so reverb / delay decays render in
+      // full (the previous fixed 3 s could chop long tails off the export).
+      const tailSec = estimateExportTailSec();
+      const totalSec = (totalMs / 1000) + tailSec;
 
+      // Match the live audio context's sample rate so the exported buffer
+      // (and the resulting WAV) plays back at the same speed and pitch as
+      // what's heard live. Without this, Tone.Offline can fall back to a
+      // different rate than the live context.
+      const sampleRate = (Tone.getContext && Tone.getContext().sampleRate) || 44100;
       return await Tone.Offline(async () => {
         const limiter = new Tone.Limiter(-1).toDestination();
         // Mirror the live global FX chain so the exported WAV matches what
@@ -4983,16 +5154,46 @@
           wet: 1,
         }).connect(offDelay);
         const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(offDistortion);
+
+        // Rebuild every registered sampler inside the offline context — the
+        // live samplers are bound to the live AudioContext, so triggering
+        // them in here would render to the live destination, not the offline
+        // buffer (which is why sample-based notes vanished from exports).
+        // Wait for them to load before scheduling notes so .loaded checks
+        // pass at trigger time.
+        const offlineSamplerMap = new Map();
+        sampleSamplers.forEach((info, id) => {
+          if (!info.urls) return;
+          try {
+            const samp = new Tone.Sampler({
+              urls: info.urls,
+              baseUrl: info.baseUrl,
+              release: 1,
+            }).connect(bus);
+            offlineSamplerMap.set(id, samp);
+          } catch (e) {
+            console.warn('Failed to recreate sampler in offline render', id, e);
+          }
+        });
+        // Block until the offline samplers have decoded their buffers so
+        // that .loaded is true at schedule time. Audio-item Tone.Player
+        // loads also drain through this same await.
+        await Tone.loaded();
+        _offlineSamplerOverride = offlineSamplerMap;
+
         const players = [];
+        try {
         tracks.forEach(track => {
-          // Mirror the live per-track EQ in the offline render so the
+          // Mirror the live per-track EQ + Pan in the offline render so the
           // exported WAV matches what the user hears in the browser.
           const teq = track.eq || { low: 0, mid: 0, high: 0 };
+          const tpan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
+          const trackPanner = new Tone.Panner(tpan).connect(bus);
           const trackBus = new Tone.EQ3({
             low:  teq.low  || 0,
             mid:  teq.mid  || 0,
             high: teq.high || 0,
-          }).connect(bus);
+          }).connect(trackPanner);
           let time = 0;
           (track.items || []).forEach(item => {
             if (item.type === 'audio') {
@@ -5022,12 +5223,19 @@
             });
           });
         });
-        // Wait for audio buffers to decode before scheduling their starts.
+        // Wait for any audio-item Tone.Player buffers to decode (offline
+        // samplers were already awaited above) before scheduling starts.
         if (players.length > 0) await Tone.loaded();
         players.forEach(({ player, startTime }) => {
           try { player.start(startTime); } catch (e) {}
         });
-      }, totalSec);
+        } finally {
+          // Drop the override regardless of whether scheduling threw —
+          // otherwise live playback after a failed export would keep
+          // resolving to disposed offline samplers.
+          _offlineSamplerOverride = null;
+        }
+      }, totalSec, 2, sampleRate);
     }
 
     // Google Drive auth + upload (lazy-loads gapi/GIS via <script> on demand)
@@ -5088,6 +5296,28 @@
       return create.result.id;
     }
 
+    async function uploadJsonToDrive(name, jsonString, folderId) {
+      const initResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${googleAccessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, parents: [folderId], mimeType: 'application/json' }),
+      });
+      if (!initResp.ok) throw new Error(`Drive init failed: ${initResp.status} ${await initResp.text()}`);
+      const uploadUrl = initResp.headers.get('Location');
+      if (!uploadUrl) throw new Error('Drive did not return an upload URL.');
+      const putResp = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: jsonString,
+      });
+      if (!putResp.ok) throw new Error(`Drive upload failed: ${putResp.status} ${await putResp.text()}`);
+      return putResp.json();
+    }
+
     async function uploadWavToDrive(name, blob, folderId) {
       const initResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
         method: 'POST',
@@ -5145,6 +5375,345 @@
     }
 
     document.getElementById('tracks-export-btn').addEventListener('click', exportTracksToDrive);
+
+    // Capture the whole workspace into a JSON-friendly snapshot — what the
+    // user has on screen plus every persisted side-store (saved sequences,
+    // tracks, grid states, global FX). Loaded back later via the matching
+    // restore path. Imported samples themselves are NOT bundled (their
+    // blobs live in IndexedDB and could be megabytes); cell sound types
+    // that reference 'sample:<id>' will only resolve on a device that
+    // already has the sample registered.
+    function buildProjectSnapshot() {
+      return {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        workspace: {
+          sequence: sequence.map(cloneStep),
+          pendingChord: pendingChord.map(p => ({ ...p, params: p.params ? { ...p.params } : undefined })),
+          bpm: parseInt(tempoInput?.value, 10) || 120,
+          noteLength,
+          stepSubdivision,
+          gridColumns,
+          chordMode: !!chordMode,
+          loopMode:  !!loopMode,
+          stepMode:  !!stepMode,
+          multiSelectMode: !!multiSelectMode,
+          activeSeqIndex,
+        },
+        grid: {
+          rootIdx,
+          baseOctave,
+          octaveCount,
+          masterFreqA,
+          currentScale,
+          palette: [...palette],
+          chipPalette: [...chipPalette],
+          restColor,
+          cellSounds: [...cellSounds],
+          cellParams: cellParams.map(p => ({ ...p })),
+        },
+        savedSequences: savedSequences.map(s => JSON.parse(JSON.stringify(s))),
+        tracks: tracks.map(t => ({
+          id: t.id,
+          name: t.name,
+          items: t.items,
+          loopMode: !!t.loopMode,
+          solo: !!t.solo,
+          eq: t.eq || { low: 0, mid: 0, high: 0 },
+          pan: Number.isFinite(t.pan) ? t.pan : 0,
+        })),
+        globalFx: { ...globalFx },
+        savedGridStates: JSON.parse(JSON.stringify(savedGridStates || [])),
+      };
+    }
+
+    async function saveProjectToDrive() {
+      const btn = document.getElementById('tracks-save-project-btn');
+      const defaultName = `bloops-project-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
+      const projectName = prompt('Name for this project:', defaultName);
+      if (!projectName) return;
+      const filename = projectName.trim().replace(/\.json$/i, '') + '.json';
+
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Building…';
+        const snapshot = buildProjectSnapshot();
+        const jsonString = JSON.stringify(snapshot, null, 2);
+
+        btn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+
+        btn.textContent = 'Uploading…';
+        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const file = await uploadJsonToDrive(filename, jsonString, folderId);
+
+        btn.textContent = 'Saved';
+        alert(`Saved "${file.name || filename}" to Drive folder "Bloops Projects".`);
+      } catch (e) {
+        console.error(e);
+        alert(`Save failed: ${e.message || e}`);
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
+      }
+    }
+    document.getElementById('tracks-save-project-btn').addEventListener('click', saveProjectToDrive);
+
+    // Apply a saved-project snapshot to every relevant piece of state. Stops
+    // playback first, disposes the live track audio nodes (so a fresh chain
+    // is built when the new tracks first play), and clears undo/redo since
+    // history doesn't carry meaning across a project switch.
+    function applyProjectSnapshot(snap) {
+      if (!snap || typeof snap !== 'object') throw new Error('Project file is empty or malformed.');
+      stopSequence();
+      stopAllTracks();
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      if (_previewAudio) { try { _previewAudio.pause(); } catch (e) {} _previewAudio = null; }
+
+      // Drop history — restored state is the new origin.
+      undoStack.length = 0;
+      redoStack.length = 0;
+      refreshHistoryButtons();
+
+      const w = snap.workspace || {};
+      const g = snap.grid || {};
+
+      // Grid (notes / palette / scale).
+      rootIdx     = Number.isFinite(g.rootIdx)     ? g.rootIdx     : 0;
+      baseOctave  = Number.isFinite(g.baseOctave)  ? g.baseOctave  : 4;
+      octaveCount = Number.isFinite(g.octaveCount) ? g.octaveCount : 1;
+      masterFreqA = Number.isFinite(g.masterFreqA) ? g.masterFreqA : 440;
+      currentScale = (g.currentScale && SCALES[g.currentScale]) ? g.currentScale : 'chromatic';
+      palette = Array.isArray(g.palette) && g.palette.length === 12 ? [...g.palette] : [...DEFAULT_PALETTE];
+      chipPalette = Array.isArray(g.chipPalette) && g.chipPalette.length === palette.length ? [...g.chipPalette] : [...palette];
+      restColor = g.restColor || DEFAULT_REST_COLOR;
+      applyRestColor();
+
+      const rootSel   = document.getElementById('root-select');
+      const baseOctIn = document.getElementById('base-octave-input');
+      const octsIn    = document.getElementById('octaves-input');
+      const freqSl    = document.getElementById('master-freq-slider');
+      const freqIn    = document.getElementById('master-freq-input');
+      const scaleSel  = document.getElementById('scale-select');
+      if (rootSel)   rootSel.value   = String(rootIdx);
+      if (baseOctIn) baseOctIn.value = String(baseOctave);
+      if (octsIn)    octsIn.value    = String(octaveCount);
+      if (freqSl)    freqSl.value    = String(masterFreqA);
+      if (freqIn)    freqIn.value    = String(masterFreqA);
+      if (scaleSel)  scaleSel.value  = currentScale;
+
+      rebuildGrid();
+
+      // Per-cell sound config — apply only when the dimensions match the
+      // freshly-rebuilt grid (octaveCount changes can otherwise misalign).
+      if (Array.isArray(g.cellSounds) && g.cellSounds.length === cellSounds.length
+          && Array.isArray(g.cellParams) && g.cellParams.length === cellParams.length) {
+        cellSounds = [...g.cellSounds];
+        cellParams = g.cellParams.map(p => ({ ...p }));
+        refreshAllCellFreqLabels();
+      }
+
+      // Workspace state.
+      sequence = Array.isArray(w.sequence) ? w.sequence.map(cloneStep) : [];
+      pendingChord = Array.isArray(w.pendingChord)
+        ? w.pendingChord.map(p => ({ ...p, params: p.params ? { ...p.params } : undefined }))
+        : [];
+      selectedStepRefs = [];
+      insertionPoint = null;
+      activeSeqIndex = (typeof w.activeSeqIndex === 'number') ? w.activeSeqIndex : null;
+      noteLength      = w.noteLength      ?? 1;
+      stepSubdivision = w.stepSubdivision ?? 0.5;
+      gridColumns     = w.gridColumns     ?? 8;
+      chordMode       = !!w.chordMode;
+      loopMode        = !!w.loopMode;
+      stepMode        = !!w.stepMode;
+      multiSelectMode = !!w.multiSelectMode;
+
+      const bpm = Number.isFinite(w.bpm) ? w.bpm : 120;
+      if (typeof tempoInput  !== 'undefined' && tempoInput)  tempoInput.value  = String(bpm);
+      if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = String(bpm);
+      const chordBtn = document.getElementById('chord-btn');
+      if (chordBtn) chordBtn.classList.toggle('active', chordMode);
+      document.querySelector('.btn-group--step')?.classList.toggle('chord-active', chordMode);
+      const loopBtn = document.getElementById('loop-btn');
+      if (loopBtn) loopBtn.classList.toggle('active', loopMode);
+      const noteSel  = document.getElementById('note-length');
+      if (noteSel)  noteSel.value  = String(noteLength);
+      const subSel2  = document.getElementById('subdivision-select');
+      if (subSel2)  subSel2.value  = String(stepSubdivision);
+      const gridSel = document.getElementById('grid-cols-select');
+      if (gridSel)  gridSel.value  = String(gridColumns || 0);
+      const stepBtn = document.getElementById('step-mode-btn');
+      if (stepBtn)  stepBtn.classList.toggle('active', stepMode);
+      const multiCb = document.getElementById('multi-select-toggle');
+      if (multiCb)  multiCb.checked = multiSelectMode;
+      refreshHoldEnabled();
+
+      // Saved sequences bank — replace and persist.
+      savedSequences = Array.isArray(snap.savedSequences)
+        ? snap.savedSequences.map(s => JSON.parse(JSON.stringify(s)))
+        : [];
+      persistSaved();
+
+      // Tracks — dispose existing live audio nodes before swapping the
+      // array so the next note creates a fresh chain in the live context.
+      tracks.forEach(t => {
+        if (t._bus)    { try { t._bus.dispose(); }    catch (e) {} t._bus = null; }
+        if (t._panner) { try { t._panner.dispose(); } catch (e) {} t._panner = null; }
+        if (t.timer)   { clearTimeout(t.timer); t.timer = null; }
+      });
+      tracks = Array.isArray(snap.tracks) ? snap.tracks.map(t => ({
+        id: t.id ?? trackIdCounter++,
+        name: t.name || '?',
+        items: Array.isArray(t.items) ? t.items : [],
+        loopMode: !!t.loopMode,
+        solo: !!t.solo,
+        eq: t.eq && typeof t.eq === 'object' ? t.eq : { low: 0, mid: 0, high: 0 },
+        pan: Number.isFinite(t.pan) ? t.pan : 0,
+        playing: false,
+        currentItemIdx: null,
+        timer: null,
+      })) : [];
+      trackIdCounter = Math.max(0, ...tracks.map(t => t.id || 0)) + 1;
+      persistTracks();
+
+      // Saved grid states.
+      if (Array.isArray(snap.savedGridStates)) {
+        savedGridStates = JSON.parse(JSON.stringify(snap.savedGridStates));
+        persistGridStates();
+        refreshGridStateDropdown('');
+      }
+
+      // Global FX — write into the live globalFx and refresh the panel.
+      if (snap.globalFx && typeof snap.globalFx === 'object') {
+        Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
+          if (Number.isFinite(snap.globalFx[k])) globalFx[k] = snap.globalFx[k];
+        });
+        applyGlobalFx();
+        persistGlobalFx();
+        [
+          ['fx-rev',      'fx-rev-v',      'reverb',        '%'],
+          ['fx-rev-size', 'fx-rev-size-v', 'reverbSize',    '%'],
+          ['fx-rev-tone', 'fx-rev-tone-v', 'reverbTone',    '%'],
+          ['fx-dly',      'fx-dly-v',      'delay',         '%'],
+          ['fx-dly-time', 'fx-dly-time-v', 'delayTime',     ' ms'],
+          ['fx-dly-fb',   'fx-dly-fb-v',   'delayFeedback', '%'],
+          ['fx-dst',      'fx-dst-v',      'distortion',    '%'],
+        ].forEach(([id, valId, key, unit]) => {
+          const input = document.getElementById(id);
+          const label = document.getElementById(valId);
+          if (input) input.value = String(globalFx[key]);
+          if (label) label.textContent = globalFx[key] + unit;
+        });
+      }
+
+      // Final renders.
+      renderSequence();
+      renderSavedSequences();
+      renderTracks();
+      const saveBtn = document.getElementById('save-btn');
+      if (saveBtn) saveBtn.disabled = sequence.length === 0;
+    }
+
+    async function listProjectsInDrive(folderId) {
+      const resp = await gapi.client.drive.files.list({
+        q: `'${folderId}' in parents and trashed=false and mimeType='application/json'`,
+        fields: 'files(id, name, modifiedTime, size)',
+        orderBy: 'modifiedTime desc',
+        pageSize: 100,
+      });
+      return resp.result.files || [];
+    }
+
+    async function fetchProjectJson(fileId) {
+      const resp = await gapi.client.drive.files.get({ fileId, alt: 'media' });
+      // gapi returns the body as a string for media downloads.
+      return JSON.parse(resp.body || '{}');
+    }
+
+    // List Drive projects in a picker modal. On select, fetch + apply.
+    function showProjectPickerDialog(files, onPick) {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      const fmtDate = (iso) => {
+        if (!iso) return '';
+        try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+      };
+      const rows = files.length === 0
+        ? `<div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.85rem;padding:12px 0;text-align:center;">No projects found in "Bloops Projects".</div>`
+        : files.map((f, i) => `
+          <button type="button" class="picker-row" data-idx="${i}" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;padding:10px 12px;border:1px solid #2d2d3f;border-radius:8px;background:transparent;color:#e2e8f0;font-family:'Segoe UI',sans-serif;cursor:pointer;transition:all 0.15s ease;">
+            <span style="font-size:0.85rem;font-weight:600;">${f.name.replace(/\.json$/i, '')}</span>
+            <span style="font-size:0.7rem;color:#4a4a6a;">${fmtDate(f.modifiedTime)}</span>
+          </button>
+        `).join('');
+      modal.innerHTML = `
+        <div class="sm-title">Load project</div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;margin-bottom:14px;">
+          ${rows}
+        </div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="picker-cancel">Cancel</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      modal.querySelector('#picker-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelectorAll('.picker-row').forEach(btn => {
+        btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#4299e1'; btn.style.background = 'rgba(66,153,225,0.08)'; });
+        btn.addEventListener('mouseleave', () => { btn.style.borderColor = '#2d2d3f'; btn.style.background = 'transparent'; });
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx, 10);
+          overlay.remove();
+          onPick(files[idx]);
+        });
+      });
+    }
+
+    async function loadProjectFromDrive() {
+      const btn = document.getElementById('tracks-load-project-btn');
+      const origText = btn.textContent;
+      btn.disabled = true;
+      try {
+        btn.textContent = 'Signing in…';
+        await googleSignInForDrive();
+
+        btn.textContent = 'Listing…';
+        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const files = await listProjectsInDrive(folderId);
+
+        btn.textContent = origText;
+        btn.disabled = false;
+        showProjectPickerDialog(files, async (file) => {
+          if (!file) return;
+          const loadBtn = document.getElementById('tracks-load-project-btn');
+          loadBtn.disabled = true;
+          const prev = loadBtn.textContent;
+          try {
+            loadBtn.textContent = 'Loading…';
+            const snap = await fetchProjectJson(file.id);
+            applyProjectSnapshot(snap);
+            loadBtn.textContent = 'Loaded';
+          } catch (e) {
+            console.error(e);
+            alert(`Load failed: ${e.message || e}`);
+          } finally {
+            setTimeout(() => { loadBtn.disabled = false; loadBtn.textContent = prev; }, 1000);
+          }
+        });
+      } catch (e) {
+        console.error(e);
+        alert(`Couldn't list projects: ${e.message || e}`);
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    }
+    document.getElementById('tracks-load-project-btn').addEventListener('click', loadProjectFromDrive);
 
     // Seed one default track on first run.
     if (tracks.length === 0) {
@@ -5242,6 +5811,7 @@
           actions.push({ label: `⊕ Add to ${track.name}`, fn: () => addSavedToTrack(tIdx, savedSequences[seqIndex]) });
         });
       }
+      actions.push({ label: '⊕ Copy ×N to track…', fn: () => showCopySavedDialog(seqIndex) });
       actions.push('hr');
       actions.push({ label: 'Delete', danger: true, fn: () => {
         const removed = savedSequences[seqIndex];
@@ -5253,6 +5823,58 @@
         renderSavedSequences();
       } });
       return actions;
+    }
+
+    // Open the "Copy ×N to track…" dialog from a saved-sequence long-press.
+    // Lets the user lay down a repeated section in one shot instead of
+    // dragging the same chip onto the track over and over.
+    function showCopySavedDialog(seqIndex) {
+      const seq = savedSequences[seqIndex];
+      if (!seq) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      const trackOptions = tracks.map((t, i) => `<option value="${i}">${t.name}</option>`).join('');
+      modal.innerHTML = `
+        <div class="sm-title">Copy "${seq.name}" to track</div>
+        <div class="sm-param">
+          <div class="sm-param-row">Iterations <span class="sm-val" id="copy-n-v">4</span></div>
+          <input type="range" id="copy-n" min="1" max="64" value="4" />
+        </div>
+        <div class="sm-section-label">Destination</div>
+        <select id="copy-track" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;">
+          <option value="new">— New track —</option>
+          ${trackOptions}
+        </select>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="copy-cancel">Cancel</button>
+          <button type="button" class="sm-apply" id="copy-apply">Add</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const nInput = modal.querySelector('#copy-n');
+      const nVal   = modal.querySelector('#copy-n-v');
+      nInput.addEventListener('input', () => { nVal.textContent = nInput.value; });
+
+      modal.querySelector('#copy-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('#copy-apply').addEventListener('click', () => {
+        const n = Math.max(1, Math.min(64, parseInt(nInput.value, 10) || 1));
+        const dest = modal.querySelector('#copy-track').value;
+        let trackIdx;
+        if (dest === 'new') {
+          addTrack();
+          trackIdx = tracks.length - 1;
+        } else {
+          trackIdx = parseInt(dest, 10);
+          if (!Number.isFinite(trackIdx) || !tracks[trackIdx]) { overlay.remove(); return; }
+        }
+        for (let i = 0; i < n; i++) addSavedToTrack(trackIdx, seq);
+        overlay.remove();
+      });
     }
 
     // For each track item whose name matches one of `names`, swap it for a
@@ -6578,6 +7200,13 @@
       cells.forEach((cell, i) => {
         cell.classList.toggle('out-of-scale', !intervals.includes(i % 12));
       });
+      updateScaleBanner();
+    }
+    function updateScaleBanner() {
+      const banner = document.getElementById('scale-banner');
+      if (!banner) return;
+      const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[rootIdx]) || 'C';
+      banner.textContent = `${root} · ${prettyScaleName(currentScale)}`;
     }
 
     function applyPalette() {

@@ -3468,8 +3468,20 @@
     // line up with the moment the user actually hears the note.
     let _visualTimers = [];
     function visualLookAheadMs() {
-      const la = (typeof Tone !== 'undefined' && Tone.context && Tone.context.lookAhead) || 0;
-      return Math.max(0, la * 1000);
+      if (typeof Tone === 'undefined' || !Tone.context) return 0;
+      const ctx = Tone.context;
+      const raw = ctx.rawContext || ctx;
+      // Three sources of delay from "playNote called" to "user hears it":
+      //   - lookAhead:     Tone.js scheduling lead-time (~100ms default).
+      //   - baseLatency:   AudioContext process buffer (a few ms).
+      //   - outputLatency: device output buffer / Bluetooth path. Mobile +
+      //                    wireless audio can be 100ms+, which is what made
+      //                    the old "lookAhead-only" delay still look 1 step
+      //                    off — the visual was racing the audio path.
+      const lookAhead     = Number.isFinite(ctx.lookAhead)      ? ctx.lookAhead      : 0;
+      const baseLatency   = Number.isFinite(raw.baseLatency)    ? raw.baseLatency    : 0;
+      const outputLatency = Number.isFinite(raw.outputLatency)  ? raw.outputLatency  : 0;
+      return Math.max(0, (lookAhead + baseLatency + outputLatency) * 1000);
     }
     function scheduleVisual(fn) {
       const ms = visualLookAheadMs();

@@ -36,7 +36,20 @@ class PlaylistManager {
         this.currentIndex = -1;
         this.renderPlaylist();
         this.updatePlaylistInfo();
-        if (this.tracks.length > 0) this.playTrack(0);
+        // Pre-load the first track but don't auto-play. The dropdown-change
+        // path runs through multiple awaits before the play call would fire,
+        // and iOS denies any audio.play() that isn't triggered directly
+        // within the original user gesture — the failed call also left the
+        // audio element in a state where the play button stayed unresponsive
+        // until the user clicked a song chip (a fresh gesture). Loading
+        // without auto-play keeps the element clean, so the first tap on
+        // the play button is the gesture that starts playback.
+        if (this.tracks.length > 0) {
+            this.currentIndex = 0;
+            this.musicPlayer.loadTrack(this.tracks[0]);
+            this.updateActiveTrack();
+            this._buildPrefetchWindow(0);
+        }
     }
 
     addTrack(track) {

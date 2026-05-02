@@ -9311,16 +9311,18 @@
     // can't clip them on mobile. position: fixed via pinPanelToButton then
     // anchors them under their trigger buttons regardless of menubar state.
     (function detachPanelsFromMenubar() {
-      const colors = document.getElementById('colors-panel');
-      const grid = document.getElementById('grid-settings-panel');
-      const tone = document.getElementById('tone-panel');
-      const fx   = document.getElementById('fx-panel');
-      const voices = document.getElementById('voices-panel');
-      if (colors && colors.parentNode !== document.body) document.body.appendChild(colors);
-      if (grid && grid.parentNode !== document.body) document.body.appendChild(grid);
-      if (tone && tone.parentNode !== document.body) document.body.appendChild(tone);
-      if (fx   && fx.parentNode   !== document.body) document.body.appendChild(fx);
-      if (voices && voices.parentNode !== document.body) document.body.appendChild(voices);
+      const colors  = document.getElementById('colors-panel');
+      const grid    = document.getElementById('grid-settings-panel');
+      const tone    = document.getElementById('tone-panel');
+      const fx      = document.getElementById('fx-panel');
+      const voices  = document.getElementById('voices-panel');
+      const project = document.getElementById('project-panel');
+      if (colors  && colors.parentNode  !== document.body) document.body.appendChild(colors);
+      if (grid    && grid.parentNode    !== document.body) document.body.appendChild(grid);
+      if (tone    && tone.parentNode    !== document.body) document.body.appendChild(tone);
+      if (fx      && fx.parentNode      !== document.body) document.body.appendChild(fx);
+      if (voices  && voices.parentNode  !== document.body) document.body.appendChild(voices);
+      if (project && project.parentNode !== document.body) document.body.appendChild(project);
     })();
 
     (function initFxMenu() {

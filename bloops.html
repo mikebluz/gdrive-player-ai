@@ -1083,7 +1083,8 @@
     #random-btn,
     #reverse-btn,
     #shuffle-btn,
-    #repeat-btn {
+    #repeat-btn,
+    #merge-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -1119,6 +1120,23 @@
     #shuffle-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #repeat-btn:hover { border-color: #4299e1; color: #4299e1; }
     #repeat-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #merge-btn:hover { border-color: #d69e2e; color: #f6ad55; }
+    #merge-btn.active {
+      border-color: #f6ad55;
+      background: rgba(214, 158, 46, 0.18);
+      color: #f6ad55;
+      box-shadow: 0 0 10px rgba(214, 158, 46, 0.35);
+    }
+    /* Merge mode visual cues — saved-bank chips become "pickable" rather
+       than "loadable", and selected entries get an amber outline that
+       persists until merge is committed (or canceled). */
+    .saved-grid.merge-mode-on .saved-block { cursor: copy; }
+    .saved-grid.merge-mode-on .saved-block.audio-item { cursor: not-allowed; opacity: 0.5; }
+    .saved-block.merge-selected {
+      outline: 2px solid #f6ad55;
+      outline-offset: -3px;
+      box-shadow: 0 0 12px rgba(214, 158, 46, 0.45);
+    }
     #rec-btn.recording {
       background: #e53e3e;
       border-color: #e53e3e;
@@ -2148,6 +2166,7 @@
       <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
       <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
       <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+      <button id="merge-btn" title="Enter merge mode, click 2+ saved sequences, then click Merge again to combine them. The merged chip can be unmerged later from its long-press menu.">Merge</button>
     </div>
 
     <span class="seq-count" id="seq-count">0 steps</span>
@@ -2233,6 +2252,138 @@
       return name;
     }
 
+    // ---- Merge mode (saved-bank multi-select → single combined entry) ----
+    // Click Merge once to arm the mode, click N saved-bank chips, click
+    // Merge again to commit. The combined entry keeps its parts in code
+    // so a long-press → Unmerge can split it back later. Audio entries
+    // are excluded from selection (combining recordings doesn't have a
+    // useful semantics here).
+    let mergeMode = false;
+    let mergeSelections = []; // saved-sequence references picked while armed
+
+    function enterMergeMode() {
+      mergeMode = true;
+      mergeSelections = [];
+      const btn = document.getElementById('merge-btn');
+      if (btn) {
+        btn.classList.add('active');
+        btn.textContent = 'Merge ✓';
+      }
+      const grid = document.getElementById('saved-grid');
+      if (grid) grid.classList.add('merge-mode-on');
+      renderSavedSequences();
+    }
+
+    function exitMergeMode() {
+      mergeMode = false;
+      mergeSelections = [];
+      const btn = document.getElementById('merge-btn');
+      if (btn) {
+        btn.classList.remove('active');
+        btn.textContent = 'Merge';
+      }
+      const grid = document.getElementById('saved-grid');
+      if (grid) grid.classList.remove('merge-mode-on');
+      renderSavedSequences();
+    }
+
+    function performMerge(refs) {
+      if (!Array.isArray(refs) || refs.length < 2) return;
+      // Sort by sequence-bank order so the merged steps preserve user
+      // intent (their on-screen left-to-right ordering).
+      const ordered = refs
+        .map(s => ({ s, idx: savedSequences.indexOf(s) }))
+        .filter(x => x.idx >= 0)
+        .sort((a, b) => a.idx - b.idx)
+        .map(x => x.s);
+      if (ordered.length < 2) return;
+
+      snapshotForUndo('Merge sequences');
+      // Deep-clone each part so future edits to the merged entry can't
+      // mutate originals (and so the JSON survives a Drive round-trip).
+      const parts = ordered.map(s => JSON.parse(JSON.stringify(s)));
+      const allSteps = [];
+      parts.forEach(p => {
+        if (Array.isArray(p.steps)) p.steps.forEach(st => allSteps.push(st));
+      });
+      // Pull common metadata from the first part — playback uses the
+      // merged entry's own bpm/subdivision when loaded into the workspace.
+      const first = ordered[0];
+      const baseName = ordered.map(s => s.name).join('+');
+      // Avoid collisions with any existing saved name.
+      let name = baseName;
+      let suffix = 1;
+      while (savedSequences.some(s => s.name === name && !ordered.includes(s))) {
+        name = `${baseName}.${suffix++}`;
+      }
+      const merged = {
+        name,
+        bpm: first.bpm,
+        subdivision: first.subdivision,
+        steps: allSteps,
+        merged: true,
+        parts,
+      };
+
+      // Insert the merged entry where the first selected one sat, then
+      // pull the rest out in reverse order so earlier indices stay valid.
+      const insertAt = savedSequences.indexOf(ordered[0]);
+      const removeIdxs = ordered.map(s => savedSequences.indexOf(s)).filter(i => i >= 0).sort((a, b) => b - a);
+      removeIdxs.forEach(i => savedSequences.splice(i, 1));
+      const finalInsert = Math.min(insertAt, savedSequences.length);
+      savedSequences.splice(finalInsert, 0, merged);
+
+      // Anything that was the "active" sequence may have been merged or
+      // shifted — clear it rather than leaving a dangling pointer.
+      if (activeSeqIndex !== null) {
+        if (!savedSequences[activeSeqIndex] || ordered.includes(savedSequences[activeSeqIndex])) {
+          activeSeqIndex = savedSequences.indexOf(merged);
+        } else {
+          activeSeqIndex = savedSequences.indexOf(savedSequences[activeSeqIndex]);
+        }
+      }
+      // Replace any tracks items that referenced the now-absent source
+      // sequences so playback through tracks doesn't go silent.
+      const goneNames = new Set(parts.map(p => p.name).filter(Boolean));
+      replaceMatchingTrackItemsWithSilent(goneNames);
+      persistSaved();
+      renderSavedSequences();
+    }
+
+    function performUnmerge(seqIndex) {
+      const merged = savedSequences[seqIndex];
+      if (!merged || !merged.merged || !Array.isArray(merged.parts) || merged.parts.length === 0) return;
+      snapshotForUndo('Unmerge sequence');
+      // Fix up any name collisions with currently-saved entries (other
+      // than the merged one we're about to remove) before splicing.
+      const taken = new Set(savedSequences.filter((_, i) => i !== seqIndex).map(s => s.name));
+      const restored = merged.parts.map(p => {
+        const copy = JSON.parse(JSON.stringify(p));
+        let name = copy.name || seqName(savedSequences.length);
+        if (taken.has(name)) {
+          const base = name.replace(/\.\d+$/, '');
+          let i = 1;
+          while (taken.has(`${base}.${i}`)) i++;
+          name = `${base}.${i}`;
+        }
+        taken.add(name);
+        copy.name = name;
+        return copy;
+      });
+      savedSequences.splice(seqIndex, 1, ...restored);
+      // Active pointer fixups: if it was the merged entry, clear it; if
+      // it was a later index, shift by the net change in count.
+      if (activeSeqIndex === seqIndex) {
+        activeSeqIndex = null;
+        sequence = [];
+        renderSequence();
+      } else if (activeSeqIndex !== null && activeSeqIndex > seqIndex) {
+        activeSeqIndex += (restored.length - 1);
+      }
+      persistSaved();
+      renderSavedSequences();
+    }
+
     function persistSaved() {
       localStorage.setItem('sounds-saved', JSON.stringify(savedSequences));
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -2248,9 +2399,11 @@
       savedSequences.forEach((saved, i) => {
         const isAudio = saved.type === 'audio';
         const block = document.createElement('div');
+        const isPickedForMerge = mergeMode && mergeSelections.includes(saved);
         block.className = 'saved-block'
           + (i === activeSeqIndex ? ' active-seq' : '')
-          + (isAudio ? ' audio-item' : '');
+          + (isAudio ? ' audio-item' : '')
+          + (isPickedForMerge ? ' merge-selected' : '');
         block.dataset.seqIndex = i;
         const countLabel = isAudio
           ? `audio · ${(saved.durationSec || 0).toFixed(1)}s`
@@ -2260,6 +2413,20 @@
           <span class="saved-block-count">${countLabel}</span>
         `;
         block.addEventListener('click', () => {
+          // Merge-mode short-circuit: clicks toggle picker selection
+          // instead of loading the saved sequence into the workspace.
+          if (mergeMode) {
+            if (isAudio) return; // audio entries can't be merged
+            const idx = mergeSelections.indexOf(saved);
+            if (idx >= 0) {
+              mergeSelections.splice(idx, 1);
+              block.classList.remove('merge-selected');
+            } else {
+              mergeSelections.push(saved);
+              block.classList.add('merge-selected');
+            }
+            return;
+          }
           if (isAudio) {
             previewSavedAudio(saved);
             return;
@@ -3714,6 +3881,23 @@
       pendingChord = [];
       insertionPoint = null;
       renderSequence();
+    });
+
+    document.getElementById('merge-btn').addEventListener('click', () => {
+      if (!mergeMode) {
+        enterMergeMode();
+        return;
+      }
+      // Already armed — commit if the user picked enough; otherwise just
+      // back out. Below 2 selections there's nothing to combine, so
+      // exit silently rather than alerting.
+      if (mergeSelections.length >= 2) {
+        const refs = [...mergeSelections];
+        exitMergeMode();
+        performMerge(refs);
+      } else {
+        exitMergeMode();
+      }
     });
 
     // Hold: when steps are selected, edit those steps' durations in place
@@ -7431,10 +7615,14 @@
     }
 
     function savedBlockActions(seqIndex) {
+      const saved = savedSequences[seqIndex];
       const actions = [
         { label: 'Rename…',     fn: () => showRenameDialog(seqIndex) },
         { label: '⧉ Duplicate',  fn: () => { const base = savedSequences[seqIndex].name.replace(/\.\d+$/, ''); let n = 1; while (savedSequences.some(s => s.name === `${base}.${n}`)) n++; const copy = { ...savedSequences[seqIndex], name: `${base}.${n}`, steps: [...savedSequences[seqIndex].steps] }; savedSequences.splice(seqIndex+1, 0, copy); persistSaved(); renderSavedSequences(); } },
       ];
+      if (saved && saved.merged && Array.isArray(saved.parts) && saved.parts.length > 0) {
+        actions.push({ label: '◬ Unmerge', fn: () => performUnmerge(seqIndex) });
+      }
       actions.push('hr');
       actions.push({ label: '⊕ Add to new track', fn: () => {
         addTrack();

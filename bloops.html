@@ -1151,6 +1151,7 @@
     #chord-btn,
     #rec-btn,
     #random-btn,
+    #seed-btn,
     #reverse-btn,
     #shuffle-btn,
     #repeat-btn,
@@ -1184,6 +1185,7 @@
       color: #fc8181;
     }
     #random-btn:hover { border-color: #ed8936; color: #fbd38d; }
+    #seed-btn:hover { border-color: #b794f4; color: #d6bcfa; }
     #reverse-btn:hover { border-color: #4299e1; color: #4299e1; }
     #reverse-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #shuffle-btn:hover { border-color: #4299e1; color: #4299e1; }
@@ -2313,7 +2315,8 @@
         <button id="redo-btn" type="button" title="Redo last undone action (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
       </div>
       <button id="save-btn" disabled>Save</button>
-      <button id="random-btn" title="Generate a random sequence">Random</button>
+      <button id="random-btn" title="Generate a random sequence using the current voice's scale + tones">Random</button>
+      <button id="seed-btn" title="Seed the sequence from a built-in song or from text">Seed</button>
       <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
       <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
       <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
@@ -4405,6 +4408,22 @@
       return out;
     }
 
+    // Tones currently in use across the grid — Random's tone selector only
+    // surfaces these, so the generated sequence stays in sync with the
+    // active voice. If the grid is uniform, only that one tone is offered.
+    function tonesUsedInVoice() {
+      const seen = new Set();
+      const ordered = [];
+      (cellSounds || []).forEach(t => {
+        if (!t) return;
+        if (seen.has(t)) return;
+        seen.add(t);
+        ordered.push(t);
+      });
+      if (ordered.length === 0) ordered.push('sine');
+      return ordered;
+    }
+
     function showRandomDialog() {
       const overlay = document.createElement('div');
       overlay.className = 'sm-overlay';
@@ -4412,13 +4431,6 @@
       modal.className = 'sm-modal';
       modal.innerHTML = `
         <div class="sm-title">Random sequence</div>
-        <div class="sm-section-label" style="margin-top:0;">Seed from a built-in song</div>
-        <div class="sm-waves" id="rand-songs"></div>
-        <div class="sm-param">
-          <div class="sm-param-row">Text to sequence <span class="sm-val" style="font-size:0.7rem;font-weight:400;color:#4a4a6a;">optional</span></div>
-          <input type="text" id="rand-text" placeholder="Type here to seed from text…" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;" />
-          <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.7rem;padding-top:4px;line-height:1.5;">Letters → scale tones (each letter uses a fixed tone from your selection). Vowels and uppercase are held longer. Runs of 2+ consonants become chords. Spaces & punctuation are rests when "Include rests" is on. Number of steps is ignored.</div>
-        </div>
         <div class="sm-param">
           <div class="sm-param-row">Number of steps <span class="sm-val" id="rand-steps-v">16</span></div>
           <input type="range" id="rand-steps" min="1" max="64" value="16" />
@@ -4427,15 +4439,7 @@
           <div class="sm-param-row">Max chord size <span class="sm-val" id="rand-chord-v">3</span></div>
           <input type="range" id="rand-chord" min="1" max="8" value="3" />
         </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Octaves to use <span class="sm-val" id="rand-oct-v">${octaveCount}</span></div>
-          <input type="range" id="rand-oct" min="1" max="7" value="${octaveCount}" />
-        </div>
-        <div class="sm-param">
-          <div class="sm-param-row">Scale</div>
-          <select id="rand-scale" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#a0aec0;border-radius:6px;font-family:inherit;font-size:0.85rem;"></select>
-        </div>
-        <div class="sm-section-label">Tones to use</div>
+        <div class="sm-section-label" style="margin-top:0;">Tones to use <span style="font-weight:400;letter-spacing:0;text-transform:none;color:#4a4a6a;">(from current voice)</span></div>
         <div class="sm-waves" id="rand-tones"></div>
         <div style="display:flex;gap:8px;padding:4px 0 4px;">
           <button type="button" id="rand-tones-all" class="sm-preview" style="padding:3px 10px;font-size:0.72rem;">All</button>
@@ -4450,7 +4454,7 @@
           Include chords
         </label>
         <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.72rem;padding:4px 0 10px;">
-          Replaces the current in-progress sequence. Save first to keep the existing one.
+          Uses the grid's current scale and octave range. Replaces the in-progress sequence — save first to keep the existing one.
         </div>
         <div class="sm-footer">
           <button type="button" class="sm-preview" id="rand-cancel">Cancel</button>
@@ -4461,10 +4465,111 @@
       document.body.appendChild(overlay);
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-      // Built-in song presets — clicking one seeds the workspace immediately
-      // and closes the dialog (separate path from the random / text flows
-      // below; the preset already chooses BPM, subdivision, and sound).
-      const songsRow = modal.querySelector('#rand-songs');
+      const stepsIn = modal.querySelector('#rand-steps');
+      const stepsOut = modal.querySelector('#rand-steps-v');
+      const chordIn = modal.querySelector('#rand-chord');
+      const chordOut = modal.querySelector('#rand-chord-v');
+      const chordsCheck = modal.querySelector('#rand-chords');
+      stepsIn.addEventListener('input', () => stepsOut.textContent = stepsIn.value);
+      chordIn.addEventListener('input', () => chordOut.textContent = chordIn.value);
+
+      // Max-chord-size slider only matters when chords are enabled.
+      const syncChordSlider = () => {
+        const on = chordsCheck.checked;
+        chordIn.disabled = !on;
+        chordIn.style.opacity = on ? '' : '0.4';
+        chordOut.style.opacity = on ? '' : '0.4';
+      };
+      chordsCheck.addEventListener('change', syncChordSlider);
+      syncChordSlider();
+
+      // Tone selector — only tones currently used in the voice are shown.
+      // All start selected so generating immediately produces something
+      // audible from every cell type the user has set up.
+      const tonesRow = modal.querySelector('#rand-tones');
+      const allOpts = getAllSoundOptions();
+      const labelFor = (val) => allOpts.find(o => o.value === val)?.label || val;
+      const voiceTones = tonesUsedInVoice();
+      const selectedTones = new Set(voiceTones);
+      const toneButtons = new Map();
+      voiceTones.forEach(value => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sm-wave active';
+        btn.textContent = labelFor(value);
+        btn.addEventListener('click', () => {
+          if (selectedTones.has(value)) {
+            selectedTones.delete(value);
+            btn.classList.remove('active');
+          } else {
+            selectedTones.add(value);
+            btn.classList.add('active');
+          }
+        });
+        tonesRow.appendChild(btn);
+        toneButtons.set(value, btn);
+      });
+      modal.querySelector('#rand-tones-all').addEventListener('click', () => {
+        voiceTones.forEach(v => {
+          selectedTones.add(v);
+          toneButtons.get(v)?.classList.add('active');
+        });
+      });
+      modal.querySelector('#rand-tones-none').addEventListener('click', () => {
+        selectedTones.clear();
+        toneButtons.forEach(btn => btn.classList.remove('active'));
+      });
+
+      modal.querySelector('#rand-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('#rand-generate').addEventListener('click', () => {
+        const n = Math.max(1, Math.min(64, parseInt(stepsIn.value) || 16));
+        const c = Math.max(1, Math.min(8,  parseInt(chordIn.value) || 3));
+        const includeRests  = !!modal.querySelector('#rand-rests').checked;
+        const includeChords = !!modal.querySelector('#rand-chords').checked;
+        const tones         = Array.from(selectedTones);
+        snapshotForUndo('Random sequence');
+        stopSequence();
+        // Use the grid's current scale + octaveCount so generation stays
+        // anchored to the active voice instead of forcing user choices.
+        sequence = generateRandomSequence(n, c, includeRests, includeChords, currentScale, tones, octaveCount);
+        pendingChord = [];
+        insertionPoint = null;
+        renderSequence();
+        document.getElementById('save-btn').disabled = sequence.length === 0;
+        overlay.remove();
+      });
+    }
+
+    // Seed sequence dialog — built-in song presets and text-to-sequence
+    // moved out of the Random dialog so each entry point stays focused.
+    function showSeedDialog() {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Seed sequence</div>
+        <div class="sm-section-label" style="margin-top:0;">Built-in song</div>
+        <div class="sm-waves" id="seed-songs"></div>
+        <div class="sm-section-label">Text to sequence</div>
+        <input type="text" id="seed-text" placeholder="Type here to seed from text…" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;" />
+        <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.7rem;padding-top:4px;line-height:1.5;">
+          Letters → scale tones from the current voice. Vowels and uppercase are held longer. Runs of 2+ consonants become chords. Spaces &amp; punctuation are rests when "Include rests" is on.
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 0 4px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="seed-rests" />
+          Include rests
+        </label>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="seed-cancel">Cancel</button>
+          <button type="button" class="sm-apply" id="seed-generate">Seed from text</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const songsRow = modal.querySelector('#seed-songs');
       const SONG_PRESETS = [
         { key: 'vivaldi',        label: 'Vivaldi' },
         { key: 'bach',           label: 'Bach' },
@@ -4488,100 +4593,17 @@
         songsRow.appendChild(btn);
       });
 
-      const stepsIn = modal.querySelector('#rand-steps');
-      const stepsOut = modal.querySelector('#rand-steps-v');
-      const chordIn = modal.querySelector('#rand-chord');
-      const chordOut = modal.querySelector('#rand-chord-v');
-      const octIn  = modal.querySelector('#rand-oct');
-      const octOut = modal.querySelector('#rand-oct-v');
-      const chordsCheck = modal.querySelector('#rand-chords');
-      stepsIn.addEventListener('input', () => stepsOut.textContent = stepsIn.value);
-      chordIn.addEventListener('input', () => chordOut.textContent = chordIn.value);
-      octIn.addEventListener('input',   () => octOut.textContent   = octIn.value);
-
-      // Max-chord-size slider only matters when chords are enabled.
-      const syncChordSlider = () => {
-        const on = chordsCheck.checked;
-        chordIn.disabled = !on;
-        chordIn.style.opacity = on ? '' : '0.4';
-        chordOut.style.opacity = on ? '' : '0.4';
-      };
-      chordsCheck.addEventListener('change', syncChordSlider);
-      syncChordSlider();
-
-      // Populate the scale dropdown to mirror the main grid's scale list,
-      // defaulting to whatever scale is currently active.
-      const randScaleSel = modal.querySelector('#rand-scale');
-      const randScaleKeys = Object.keys(SCALES).filter(n => n !== 'chromatic').sort();
-      ['chromatic', ...randScaleKeys].forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = prettyScaleName(name);
-        randScaleSel.appendChild(opt);
-      });
-      randScaleSel.value = currentScale;
-
-      // Tone selector — every built-in synth + any loaded sample is a toggle.
-      // Default: only Sine is selected; All / None below provide bulk toggles.
-      const tonesRow = modal.querySelector('#rand-tones');
-      const toneOptions = getAllSoundOptions();
-      const selectedTones = new Set(['sine']);
-      const toneButtons = new Map();
-      toneOptions.forEach(opt => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'sm-wave' + (selectedTones.has(opt.value) ? ' active' : '');
-        btn.textContent = opt.label;
-        btn.addEventListener('click', () => {
-          if (selectedTones.has(opt.value)) {
-            selectedTones.delete(opt.value);
-            btn.classList.remove('active');
-          } else {
-            selectedTones.add(opt.value);
-            btn.classList.add('active');
-          }
-        });
-        tonesRow.appendChild(btn);
-        toneButtons.set(opt.value, btn);
-      });
-      modal.querySelector('#rand-tones-all').addEventListener('click', () => {
-        toneOptions.forEach(opt => {
-          selectedTones.add(opt.value);
-          toneButtons.get(opt.value)?.classList.add('active');
-        });
-      });
-      modal.querySelector('#rand-tones-none').addEventListener('click', () => {
-        selectedTones.clear();
-        toneButtons.forEach(btn => btn.classList.remove('active'));
-      });
-
-      modal.querySelector('#rand-cancel').addEventListener('click', () => overlay.remove());
-      modal.querySelector('#rand-generate').addEventListener('click', () => {
-        const n = Math.max(1, Math.min(64, parseInt(stepsIn.value) || 16));
-        const c = Math.max(1, Math.min(8,  parseInt(chordIn.value) || 3));
-        const includeRests  = !!modal.querySelector('#rand-rests').checked;
-        const includeChords = !!modal.querySelector('#rand-chords').checked;
-        const scaleName     = modal.querySelector('#rand-scale').value;
-        const tones         = Array.from(selectedTones);
-        const text          = modal.querySelector('#rand-text').value.trim();
-        snapshotForUndo(text ? 'Text → sequence' : 'Random sequence');
+      modal.querySelector('#seed-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('#seed-generate').addEventListener('click', () => {
+        const text = modal.querySelector('#seed-text').value.trim();
+        if (!text) { overlay.remove(); return; }
+        const includeRests = !!modal.querySelector('#seed-rests').checked;
+        const tones = tonesUsedInVoice();
+        snapshotForUndo('Text → sequence');
         stopSequence();
-        const o = Math.max(1, Math.min(7, parseInt(octIn.value, 10) || octaveCount));
-        sequence = text
-          ? generateTextSequence(text, scaleName, tones, includeRests, o)
-          : generateRandomSequence(n, c, includeRests, includeChords, scaleName, tones, o);
+        sequence = generateTextSequence(text, currentScale, tones, includeRests, octaveCount);
         pendingChord = [];
         insertionPoint = null;
-
-        // Sync the grid's active scale to whatever the user generated against,
-        // so the visible cells match what the sequence is using.
-        if (scaleName && SCALES[scaleName]) {
-          currentScale = scaleName;
-          const mainScaleSel = document.getElementById('scale-select');
-          if (mainScaleSel) mainScaleSel.value = currentScale;
-          applyScale();
-        }
-
         renderSequence();
         document.getElementById('save-btn').disabled = sequence.length === 0;
         overlay.remove();
@@ -4883,6 +4905,7 @@
 
     document.getElementById('rec-btn').addEventListener('click', toggleRecording);
     document.getElementById('random-btn').addEventListener('click', showRandomDialog);
+    document.getElementById('seed-btn').addEventListener('click', showSeedDialog);
 
     // ---- Song presets ----
     // Each entry is one of:

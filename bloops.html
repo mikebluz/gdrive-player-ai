@@ -90,6 +90,21 @@
       transition: all 0.15s ease;
     }
     .tone-opt:hover { border-color: #4299e1; color: #4299e1; }
+    /* "Custom" indicator — non-clickable marker at the top of the panel
+       when at least one cell's tone has been changed away from the
+       global default. Pinkish accent + italic so it reads as a current
+       state, not as a selectable option. */
+    .tone-opt.tone-opt-custom {
+      border-color: #f472b6;
+      color: #f9a8d4;
+      background: rgba(244, 114, 182, 0.08);
+      font-style: italic;
+      cursor: default;
+    }
+    .tone-opt.tone-opt-custom:hover {
+      border-color: #f472b6;
+      color: #f9a8d4;
+    }
 
     /* Global FX panel — three slider rows for reverb / delay / distortion.
        Same panel chrome as the tone dropdown so the menubar feels uniform. */
@@ -645,6 +660,25 @@
       letter-spacing: 0.4px;
       color: rgba(0,0,0,0.45);
     }
+    /* Per-cell tone tag — only shown when the grid is in "Custom" state,
+       i.e., at least one cell's tone has been changed away from the
+       global setting. Top-left corner, small black text per spec. */
+    .cell .cell-tone {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      color: rgba(0,0,0,0.78);
+      pointer-events: none;
+      max-width: calc(100% - 12px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: none;
+    }
+    .cell .cell-tone.show { display: inline-block; }
 
     .cell:nth-child(12n+1)  { background: #e63946; }
     .cell:nth-child(12n+2)  { background: #f4a261; }
@@ -9239,13 +9273,45 @@
     // The "current" tone: every cell's tone if they're all the same,
     // otherwise "Mixed" — happens when the user has hand-tuned individual
     // cells via the Sound Editor or chord per-note panel.
+    function cellSoundsAreUniform() {
+      if (!Array.isArray(cellSounds) || cellSounds.length === 0) return true;
+      const first = cellSounds[0];
+      return cellSounds.every(s => s === first);
+    }
     function getCurrentToneLabel() {
       if (!Array.isArray(cellSounds) || cellSounds.length === 0) return null;
-      const first = cellSounds[0];
-      const uniform = cellSounds.every(s => s === first);
-      if (!uniform) return 'Mixed';
-      const opt = getAllSoundOptions().find(o => o.value === first);
-      return opt?.label || first;
+      // "Custom" — at least one cell's tone differs from the rest. Means
+      // the global tone banner doesn't represent the whole grid; the
+      // per-cell .cell-tone labels surface what each cell is actually
+      // using.
+      if (!cellSoundsAreUniform()) return 'Custom';
+      const opt = getAllSoundOptions().find(o => o.value === cellSounds[0]);
+      return opt?.label || cellSounds[0];
+    }
+    function shortToneLabelForValue(value) {
+      if (!value) return '';
+      const opt = getAllSoundOptions().find(o => o.value === value);
+      let label = opt?.label || value;
+      if (label.length > 8) label = label.slice(0, 7) + '…';
+      return label;
+    }
+    function refreshAllCellToneLabels() {
+      const custom = !cellSoundsAreUniform();
+      cells.forEach((cell, idx) => {
+        let tag = cell.querySelector('.cell-tone');
+        if (!tag) {
+          tag = document.createElement('span');
+          tag.className = 'cell-tone';
+          cell.appendChild(tag);
+        }
+        if (custom) {
+          tag.textContent = shortToneLabelForValue(cellSounds[idx]);
+          tag.classList.add('show');
+        } else {
+          tag.textContent = '';
+          tag.classList.remove('show');
+        }
+      });
     }
     function updateScaleBanner() {
       const scaleHalf = document.getElementById('scale-banner-half');
@@ -9254,6 +9320,7 @@
       const tone = getCurrentToneLabel();
       if (scaleHalf) scaleHalf.textContent = `${root} · ${prettyScaleName(currentScale)}`;
       if (toneHalf)  toneHalf.textContent  = tone || '—';
+      refreshAllCellToneLabels();
     }
 
     function applyPalette() {
@@ -9379,7 +9446,7 @@
       notes.forEach((note, i) => {
         const cell = document.createElement('div');
         cell.className = 'cell';
-        cell.innerHTML = `<span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span>`;
+        cell.innerHTML = `<span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span><span class="cell-tone"></span>`;
 
         cell.addEventListener('click', () => {
           const params = { ...cellParams[i] };
@@ -9491,6 +9558,19 @@
       const panel = document.getElementById('tone-panel');
       if (!panel) return;
       panel.innerHTML = '';
+      // Surface the current "Custom" state as a non-clickable marker at the
+      // top of the panel, mirroring the Tone banner label. Picking any of
+      // the regular options below applies that tone to every cell, which
+      // exits the custom state.
+      if (!cellSoundsAreUniform()) {
+        const marker = document.createElement('button');
+        marker.type = 'button';
+        marker.className = 'tone-opt tone-opt-custom';
+        marker.textContent = 'Custom';
+        marker.disabled = true;
+        marker.tabIndex = -1;
+        panel.appendChild(marker);
+      }
       getAllSoundOptions().forEach(opt => {
         const b = document.createElement('button');
         b.type = 'button';
@@ -9699,8 +9779,24 @@
     function pinPanelToButton(btn, panel) {
       const rect = btn.getBoundingClientRect();
       const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const top = rect.bottom + 4;
       panel.style.position = 'fixed';
-      panel.style.top = (rect.bottom + 4) + 'px';
+      panel.style.top = top + 'px';
+
+      // Cap the panel height to whatever's left below the trigger. The
+      // shared CSS rule (`max-height: calc(100vh - 80px)`) was a fixed
+      // estimate that ignored the trigger's actual y-position — on mobile
+      // (especially with the URL bar visible) tall panels could spill past
+      // the viewport, leaving the bottom options unreachable. Recomputing
+      // here means the panel always fits inside the viewport regardless of
+      // where it's anchored.
+      const maxH = Math.max(160, vh - top - 12);
+      panel.style.maxHeight = maxH + 'px';
+      panel.style.overflowY = 'auto';
+      // Smooth, momentum-based scrolling on iOS Safari — without this the
+      // panel's internal scroll on mobile felt sticky / abrupt.
+      panel.style.webkitOverflowScrolling = 'touch';
 
       // On mobile we let the panel span almost the full width — anchoring by
       // a single edge would push the opposite side off-screen, so set both

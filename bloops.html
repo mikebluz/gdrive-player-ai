@@ -144,6 +144,34 @@
       margin: 4px 0 -2px;
     }
     .fx-group-label:first-child { margin-top: 0; }
+    /* Each FX section header now hosts a small ON/OFF toggle pinned to the
+       right — per-effect bypass without nuking the configured mix value. */
+    .fx-group-label.fx-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .fx-bypass {
+      padding: 1px 8px;
+      border: 1px solid #2d2d3f;
+      border-radius: 9px;
+      background: transparent;
+      color: #68d391;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.15s ease;
+    }
+    .fx-bypass:hover { border-color: #38a169; }
+    .fx-bypass.off {
+      color: #4a4a6a;
+      border-color: #2d2d3f;
+    }
+    .fx-bypass.off:hover { border-color: #4a4a6a; color: #6b7280; }
     .fx-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
     .fx-reset {
       padding: 4px 12px;
@@ -502,6 +530,11 @@
       transition: all 0.15s ease;
     }
     .voice-opt:hover { border-color: #4299e1; color: #4299e1; }
+    .voice-opt.voice-opt-surprise:hover {
+      border-color: #f472b6;
+      color: #f9a8d4;
+      background: rgba(244, 114, 182, 0.08);
+    }
     .voice-opt-project {
       font-size: 0.7rem;
       font-weight: 500;
@@ -2165,7 +2198,7 @@
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
-      <div class="fx-group-label">Reverb</div>
+      <div class="fx-group-label fx-group-head"><span>Reverb</span><button type="button" class="fx-bypass" id="fx-rev-on" title="Bypass reverb">ON</button></div>
       <div class="fx-control">
         <div class="fx-control-row">Mix <span class="fx-val" id="fx-rev-v">0%</span></div>
         <input type="range" id="fx-rev" min="0" max="100" value="0" />
@@ -2178,7 +2211,7 @@
         <div class="fx-control-row">Tone <span class="fx-val" id="fx-rev-tone-v">50%</span></div>
         <input type="range" id="fx-rev-tone" min="0" max="100" value="50" />
       </div>
-      <div class="fx-group-label">Delay</div>
+      <div class="fx-group-label fx-group-head"><span>Delay</span><button type="button" class="fx-bypass" id="fx-dly-on" title="Bypass delay">ON</button></div>
       <div class="fx-control">
         <div class="fx-control-row">Mix <span class="fx-val" id="fx-dly-v">0%</span></div>
         <input type="range" id="fx-dly" min="0" max="100" value="0" />
@@ -2191,7 +2224,7 @@
         <div class="fx-control-row">Feedback <span class="fx-val" id="fx-dly-fb-v">40%</span></div>
         <input type="range" id="fx-dly-fb" min="0" max="95" value="40" />
       </div>
-      <div class="fx-group-label">Distortion</div>
+      <div class="fx-group-label fx-group-head"><span>Distortion</span><button type="button" class="fx-bypass" id="fx-dst-on" title="Bypass distortion">ON</button></div>
       <div class="fx-control">
         <div class="fx-control-row">Amount <span class="fx-val" id="fx-dst-v">0%</span></div>
         <input type="range" id="fx-dst" min="0" max="100" value="0" />
@@ -2704,17 +2737,25 @@
       reverb:        0,
       reverbSize:    70,
       reverbTone:    50,
+      reverbOn:      true,
       delay:         0,
       delayTime:     250,
       delayFeedback: 40,
+      delayOn:       true,
       distortion:    0,
+      distortionOn: true,
     };
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn'];
     const globalFx = (() => {
       try {
         const raw = JSON.parse(localStorage.getItem('sounds-global-fx') || '{}');
         const out = { ...GLOBAL_FX_DEFAULTS };
         Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
-          if (Number.isFinite(raw[k])) out[k] = raw[k];
+          if (FX_ON_KEYS.includes(k)) {
+            if (typeof raw[k] === 'boolean') out[k] = raw[k];
+          } else if (Number.isFinite(raw[k])) {
+            out[k] = raw[k];
+          }
         });
         return out;
       } catch (e) {
@@ -2725,11 +2766,14 @@
       try {
         masterReverb.roomSize.value  = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
         masterReverb.dampening.value = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
-        masterReverb.wet.value       = Math.max(0, Math.min(1, globalFx.reverb / 100));
+        // Per-effect bypass — when *On is false, force the wet/amount to 0
+        // without touching the stored mix value, so flipping back on
+        // restores exactly the previous setting.
+        masterReverb.wet.value       = globalFx.reverbOn === false ? 0 : Math.max(0, Math.min(1, globalFx.reverb / 100));
         masterDelay.delayTime.value  = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
         masterDelay.feedback.value   = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
-        masterDelay.wet.value        = Math.max(0, Math.min(1, globalFx.delay / 100));
-        masterDistortion.distortion  = Math.max(0, Math.min(1, globalFx.distortion / 100));
+        masterDelay.wet.value        = globalFx.delayOn === false ? 0 : Math.max(0, Math.min(1, globalFx.delay / 100));
+        masterDistortion.distortion  = globalFx.distortionOn === false ? 0 : Math.max(0, Math.min(1, globalFx.distortion / 100));
       } catch (e) {}
     }
     function persistGlobalFx() {
@@ -9673,6 +9717,34 @@
           persistGlobalFx();
         });
       });
+      // Per-effect bypass toggles — each ON/OFF button forces its own wet
+      // to 0 without touching the slider value, so the user can dip an
+      // effect out of the mix and bring it right back.
+      const bypassToggles = [
+        ['fx-rev-on', 'reverbOn'],
+        ['fx-dly-on', 'delayOn'],
+        ['fx-dst-on', 'distortionOn'],
+      ];
+      const refreshFxBypassUI = () => {
+        bypassToggles.forEach(([id, key]) => {
+          const tgl = panel.querySelector('#' + id);
+          if (!tgl) return;
+          const on = globalFx[key] !== false;
+          tgl.classList.toggle('off', !on);
+          tgl.textContent = on ? 'ON' : 'OFF';
+        });
+      };
+      bypassToggles.forEach(([id, key]) => {
+        const tgl = panel.querySelector('#' + id);
+        if (!tgl) return;
+        tgl.addEventListener('click', () => {
+          globalFx[key] = (globalFx[key] === false) ? true : false;
+          refreshFxBypassUI();
+          applyGlobalFx();
+          persistGlobalFx();
+        });
+      });
+      refreshFxBypassUI();
       // Helper — push current globalFx values into the slider UI.
       const refreshFxSliderUI = () => {
         sliders.forEach(([id, valId, key, unit]) => {
@@ -9681,6 +9753,7 @@
           if (input) input.value = String(globalFx[key]);
           if (label) label.textContent = globalFx[key] + unit;
         });
+        refreshFxBypassUI();
       };
       // Bypass — toggle. First click stashes the three mix levels and zeros
       // them; second click restores them. Size/tone/time/feedback are never
@@ -9857,87 +9930,137 @@
       });
     })();
 
-    // ---- Voices menu (Drive-backed grid presets) ----
-    (function initVoicesMenu() {
-      const btn = document.getElementById('voices-menu-btn');
-      const panel = document.getElementById('voices-panel');
-      if (!btn || !panel) return;
-      const TRIGGER_ID = 'voices-menu-btn';
-      let cachedFiles = null; // last fetched file list, refetched on each open
+    // ---- Voices menu (Save / Load / Surprise Me) ----
+    function showVoicePickerDialog() {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Load voice</div>
+        <div id="voice-picker-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;margin-bottom:14px;">
+          <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.85rem;padding:12px 0;text-align:center;">Loading…</div>
+        </div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="voice-picker-cancel">Cancel</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      modal.querySelector('#voice-picker-cancel').addEventListener('click', () => overlay.remove());
 
-      const renderEmpty = (text) => {
-        panel.innerHTML = '';
-        const div = document.createElement('div');
-        div.className = 'voice-empty';
-        div.textContent = text;
-        panel.appendChild(div);
-      };
-      const renderLoading = () => {
-        panel.innerHTML = '';
-        const div = document.createElement('div');
-        div.className = 'voice-loading';
-        div.textContent = 'Loading…';
-        panel.appendChild(div);
-      };
-
-      async function populateVoicesPanel() {
-        renderLoading();
+      (async () => {
+        const list = modal.querySelector('#voice-picker-list');
         try {
           await googleSignInForDrive();
           const folderId = await findOrCreateDriveFolder('Bloops Projects');
           const all = await listProjectsInDrive(folderId);
-          // Voice files use the "<project>.voice.<voice>.json" naming so we
-          // can split them out from regular project saves in the same folder.
           const voices = all.filter(f => /\.voice\..+\.json$/i.test(f.name));
-          cachedFiles = voices;
-          panel.innerHTML = '';
+          list.innerHTML = '';
           if (voices.length === 0) {
-            renderEmpty('No voices saved yet');
+            list.innerHTML = `<div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.85rem;padding:12px 0;text-align:center;">No voices saved yet.</div>`;
             return;
           }
           voices.forEach(f => {
             const m = f.name.match(/^(.+)\.voice\.(.+)\.json$/i);
             const projectPart = m ? m[1] : '?';
             const voicePart   = m ? m[2] : f.name.replace(/\.json$/i, '');
-            const opt = document.createElement('button');
-            opt.type = 'button';
-            opt.className = 'voice-opt';
-            opt.innerHTML = `<span>${voicePart}</span><span class="voice-opt-project">${projectPart}</span>`;
-            opt.title = `Apply "${voicePart}" — last modified ${new Date(f.modifiedTime).toLocaleString()}`;
-            opt.addEventListener('click', async () => {
-              opt.disabled = true;
-              const prev = opt.innerHTML;
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'picker-row';
+            Object.assign(row.style, {
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px',
+              width: '100%', textAlign: 'left', padding: '10px 12px', border: '1px solid #2d2d3f',
+              borderRadius: '8px', background: 'transparent', color: '#e2e8f0',
+              fontFamily: "'Segoe UI', sans-serif", cursor: 'pointer', transition: 'all 0.15s ease',
+            });
+            row.innerHTML = `
+              <span style="font-size:0.85rem;font-weight:600;">${voicePart}</span>
+              <span style="font-size:0.7rem;color:#4a4a6a;">${projectPart} · ${new Date(f.modifiedTime).toLocaleString()}</span>
+            `;
+            row.addEventListener('mouseenter', () => { row.style.borderColor = '#4299e1'; row.style.background = 'rgba(66,153,225,0.08)'; });
+            row.addEventListener('mouseleave', () => { row.style.borderColor = '#2d2d3f'; row.style.background = 'transparent'; });
+            row.addEventListener('click', async () => {
+              row.disabled = true;
+              row.querySelector('span').textContent = 'Loading…';
               try {
-                opt.innerHTML = '<span>Loading…</span>';
                 const snap = await fetchProjectJson(f.id);
                 applyVoiceSnapshot(snap);
-                setOpen(false);
+                overlay.remove();
               } catch (err) {
                 console.error(err);
                 alert(`Load voice failed: ${err.message || err}`);
-                opt.innerHTML = prev;
-              } finally {
-                setTimeout(() => { opt.disabled = false; }, 600);
+                row.disabled = false;
+                row.querySelector('span').textContent = voicePart;
               }
             });
-            panel.appendChild(opt);
+            list.appendChild(row);
           });
         } catch (e) {
           console.error(e);
-          renderEmpty('Couldn\'t load voices');
+          list.innerHTML = `<div style="color:#fc8181;font-family:'Segoe UI',sans-serif;font-size:0.85rem;padding:12px 0;text-align:center;">Couldn't load voices.</div>`;
+        }
+      })();
+    }
+
+    // Surprise Me — randomize root, scale, and per-cell tones for a quick
+    // creative shuffle. Octaves and A4 are left alone so the grid stays at
+    // a comfortable pitch range.
+    function surpriseMeVoice() {
+      snapshotForUndo('Surprise Me');
+      rootIdx = Math.floor(Math.random() * 12);
+      const allScales = Object.keys(SCALES || {}).filter(k => k && k !== 'chromatic');
+      if (allScales.length > 0) {
+        currentScale = allScales[Math.floor(Math.random() * allScales.length)];
+      }
+      const rootSel = document.getElementById('root-select');
+      const scaleSel = document.getElementById('scale-select');
+      if (rootSel)  rootSel.value  = String(rootIdx);
+      if (scaleSel) scaleSel.value = currentScale;
+      rebuildGrid();
+      // Random tones — sample-based instruments are skipped so the grid
+      // doesn't pin a heavy sampler to every cell.
+      const tonePool = getAllSoundOptions().map(o => o.value).filter(v => !isSampleType(v));
+      if (tonePool.length > 0 && cellSounds.length > 0) {
+        for (let i = 0; i < cellSounds.length; i++) {
+          const type = tonePool[Math.floor(Math.random() * tonePool.length)];
+          cellSounds[i] = type;
+          cellParams[i] = { ...cellParams[i], type };
         }
       }
+      applyScale();
+      refreshAllCellFreqLabels();
+      updateScaleBanner();
+    }
 
-      const setOpen = async (open) => {
+    (function initVoicesMenu() {
+      const btn = document.getElementById('voices-menu-btn');
+      const panel = document.getElementById('voices-panel');
+      if (!btn || !panel) return;
+      const TRIGGER_ID = 'voices-menu-btn';
+
+      // Static panel — three top-level actions instead of the scrollable
+      // voice list. "Load Voice…" opens a picker dialog so the panel
+      // itself stays compact regardless of how many voices the user has.
+      panel.innerHTML = '';
+      const mkBtn = (label, onClick, accentClass) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'voice-opt' + (accentClass ? ' ' + accentClass : '');
+        b.innerHTML = `<span>${label}</span>`;
+        b.addEventListener('click', () => { setOpen(false); onClick(); });
+        return b;
+      };
+      panel.appendChild(mkBtn('Save Voice…',  () => saveVoiceToDrive()));
+      panel.appendChild(mkBtn('Load Voice…',  () => showVoicePickerDialog()));
+      panel.appendChild(mkBtn('Surprise Me',  () => surpriseMeVoice(), 'voice-opt-surprise'));
+
+      const setOpen = (open) => {
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
         btn.textContent = open ? 'Voices ▴' : 'Voices ▾';
-        if (open) {
-          pinPanelToButton(btn, panel);
-          // Re-fetch each open so newly-saved voices appear without a reload.
-          await populateVoicesPanel();
-          if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
-        }
+        if (open) pinPanelToButton(btn, panel);
       };
       window.addEventListener('resize', () => {
         if (panel.classList.contains('open')) pinPanelToButton(btn, panel);

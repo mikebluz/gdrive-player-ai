@@ -3111,10 +3111,20 @@
         }).connect(chainHead);
         const tunedFreq = (typeof freq === 'number') ? freq * Math.pow(2, detune / 1200) : freq;
         synth.triggerAttackRelease(tunedFreq, Math.max(targetDur, 0.1), startTime, velocity);
-        if (startTime === undefined) setTimeout(() => {
+        // Schedule disposal whether or not startTime was provided.
+        // Previously this was gated on `startTime === undefined`, which was
+        // fine when only offline rendering passed a startTime (it disposes
+        // its context wholesale). The sequence playback path now passes a
+        // startTime too, and skipping disposal there leaked synths every
+        // step — the resulting voice pile-up showed up as glitchy /
+        // distorted audio after a few seconds of playback.
+        const pluckLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+          ? Math.max(0, (startTime - Tone.context.now()) * 1000)
+          : 0;
+        setTimeout(() => {
           try { synth.dispose(); } catch (e) {}
           disposeEffectChain();
-        }, (targetDur + 1.5) * 1000);
+        }, pluckLeadMs + (targetDur + 1.5) * 1000);
         return;
       } else if (type === 'fm') {
         synth = new Tone.FMSynth({
@@ -3190,10 +3200,16 @@
         } catch (e) {}
       }
 
-      if (startTime === undefined) setTimeout(() => {
+      // Always dispose. Sequence playback now passes a startTime and the
+      // pre-fix gate (`if (startTime === undefined)`) silently skipped
+      // cleanup, leaking a fresh synth + effect chain on every note.
+      const synthLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+        ? Math.max(0, (startTime - Tone.context.now()) * 1000)
+        : 0;
+      setTimeout(() => {
         try { synth.dispose(); } catch (e) {}
         disposeEffectChain();
-      }, disposeMs);
+      }, synthLeadMs + disposeMs);
     }
 
     // ---- Sequence display ----
@@ -3746,10 +3762,14 @@
       if (audioTime != null && typeof Tone !== 'undefined' && Tone.context) {
         const ctx = Tone.context;
         const raw = ctx.rawContext || ctx;
-        const now = (typeof ctx.now === 'function') ? ctx.now() : (raw.currentTime || 0);
-        const baseLatency   = Number.isFinite(raw.baseLatency)   ? raw.baseLatency   : 0;
+        // Use the raw audio-context currentTime as the baseline. ctx.now()
+        // already includes Tone.js's lookAhead, so subtracting it from a
+        // Tone.now()-anchored audioTime double-counted the lookAhead and
+        // fired the visual ~100ms before the audio was heard.
+        const currentAudio  = Number.isFinite(raw.currentTime)  ? raw.currentTime  : 0;
+        const baseLatency   = Number.isFinite(raw.baseLatency)  ? raw.baseLatency  : 0;
         const outputLatency = Number.isFinite(raw.outputLatency) ? raw.outputLatency : 0;
-        ms = Math.max(0, (audioTime - now + baseLatency + outputLatency) * 1000);
+        ms = Math.max(0, (audioTime - currentAudio + baseLatency + outputLatency) * 1000);
       } else {
         ms = visualLookAheadMs();
       }

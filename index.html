@@ -170,8 +170,7 @@
     /* Bottom hero CTA group (Music / Artwork / Merch / Guitars and the
        Mailing List button) — uniform min-width so the four buttons
        always render the same size regardless of label length. The
-       Bloops / Player pair in the top group inherits the same sizing.
-       Latest Release stays its natural width. */
+       Bloops / Player pair in the top group inherits the same sizing. */
     .hero-cta:not(.hero-cta-top) .btn,
     .hero-cta-top .hero-cta-row .btn {
       min-width: 160px;
@@ -218,14 +217,15 @@
       box-shadow: 0 8px 28px rgba(79, 209, 197, 0.22);
     }
 
-    /* Top "Latest Release!" — yellow-toned neon to call extra attention. */
-    .btn-latest-release {
+    /* Pre-Save CTA — yellow neon (carried over from the old Latest
+       Release button) to call extra attention. */
+    .btn-presave {
       background: transparent;
       color: #fde047;
       border: 1px solid #fde047;
       box-shadow: 0 0 12px rgba(253, 224, 71, 0.35);
     }
-    .btn-latest-release:hover {
+    .btn-presave:hover {
       transform: translateY(-2px);
       background: rgba(253, 224, 71, 0.12);
       box-shadow: 0 0 22px rgba(253, 224, 71, 0.6);
@@ -566,7 +566,7 @@
     <div class="hero-inner">
       <img src="me2026.jpg" alt="Mike Luz" class="hero-portrait" />
       <div class="hero-cta hero-cta-top">
-        <a href="https://mikeluz.bandcamp.com/track/hallelujah" class="btn btn-latest-release" target="_blank" rel="noopener">Latest Release</a>
+        <a href="https://symphony.to/mercywizard/grains" class="btn btn-presave" target="_blank" rel="noopener">Pre-save &ldquo;Grains&rdquo;</a>
         <div class="hero-cta-row">
           <a href="bloops.html" class="btn btn-bloops">Bloops</a>
           <a href="bloops.html#player" class="btn btn-player">Player</a>
@@ -670,13 +670,11 @@
       });
     })();
 
-    // Hero portrait → opens "Hallelujah" on Bandcamp in a new tab. Bandcamp's
-    // embed player requires a numeric track ID we can't derive from the slug,
-    // so the simplest reliable behaviour is a direct page open. To swap in an
-    // in-page player later, replace this with a modal hosting the Bandcamp
-    // embed iframe (whose src contains track=NNNNNNNN, the numeric ID).
+    // Hero portrait → opens the "Grains" pre-save (Symphony) in a new tab.
+    // Mirrors the Pre-save CTA button so the entire portrait is a tap target
+    // for the same destination.
     document.querySelector('.hero-portrait')?.addEventListener('click', () => {
-      window.open('https://mikeluz.bandcamp.com/track/hallelujah', '_blank', 'noopener');
+      window.open('https://symphony.to/mercywizard/grains', '_blank', 'noopener');
     });
   </script>
 

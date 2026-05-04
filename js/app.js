@@ -29,6 +29,9 @@ document.addEventListener("DOMContentLoaded", () => {
       driveAPI = new GoogleDriveAPI(window.APP_CONFIG);
       player = new MusicPlayer(driveAPI, blobCache);
       playlist = new PlaylistManager(player, userCache);
+      // Exposed so the Bloops/Make side of the unified page can pause
+      // playback when the user switches away from the Listen view.
+      window.musicPlayer = player;
       await driveAPI.initialize();
 
       hideLoading();
@@ -61,10 +64,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   playlistSelect?.addEventListener("change", (e) => {
     const value = e.target.value;
-    if (value) {
-      loadMusicFromDrive(value);
-      e.target.value = "";
-    }
+    if (!value) return;
+    e.target.value = "";
+    loadMusicFromDrive(value);
   });
 
   // --- Event: Auth Status Changed ---
@@ -161,8 +163,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadQuickLoadOptions() {
     try {
-      const options = await driveAPI.fetchPlaylistOptions("Serialbox Playlists");
-      playlistSelect.innerHTML = '<option value="">— Quick Load —</option>';
+      const options = await driveAPI.fetchPlaylistOptions("bloops/playlists");
+      playlistSelect.innerHTML = '<option value="">— Folders —</option>';
       options.forEach(name => {
         const opt = document.createElement("option");
         opt.value = name;

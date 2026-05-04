@@ -36,19 +36,22 @@ class PlaylistManager {
         this.currentIndex = -1;
         this.renderPlaylist();
         this.updatePlaylistInfo();
-        // Pre-load the first track but don't auto-play. The dropdown-change
-        // path runs through multiple awaits before the play call would fire,
-        // and iOS denies any audio.play() that isn't triggered directly
-        // within the original user gesture — the failed call also left the
-        // audio element in a state where the play button stayed unresponsive
-        // until the user clicked a song chip (a fresh gesture). Loading
-        // without auto-play keeps the element clean, so the first tap on
-        // the play button is the gesture that starts playback.
+        // Auto-play the first track after the playlist loads — but only
+        // when the user is actually on the Listen view. Otherwise the
+        // Make view would suddenly start audio in the background. iOS
+        // may still deny play() if the user gesture is too far in the
+        // past; play() catches NotAllowedError quietly so the user just
+        // taps the play button to start.
         if (this.tracks.length > 0) {
             this.currentIndex = 0;
             this.musicPlayer.loadTrack(this.tracks[0]);
             this.updateActiveTrack();
             this._buildPrefetchWindow(0);
+            const onListen = document.body.classList.contains('view-serialbox');
+            if (onListen) {
+                const p = this.musicPlayer.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+            }
         }
     }
 
@@ -333,7 +336,184 @@ class PlaylistManager {
             });
 
             this.bindTouchDrag(item, index);
+            this.bindLongPress(item, index);
         });
+    }
+
+    // Press-and-hold (~500ms, no significant movement) on a playlist
+    // item opens a small menu with cross-view actions like "Copy to
+    // Make track". Movement past the tolerance cancels the long-press
+    // so it doesn't fight scroll / drag.
+    bindLongPress(item, index) {
+        let timer = null;
+        let startX = 0, startY = 0;
+        const TOLERANCE = 8;
+        const cancel = () => { clearTimeout(timer); timer = null; };
+        item.addEventListener('pointerdown', (e) => {
+            // Don't trip on the drag-handle — that's the reorder gesture.
+            if (e.target.classList.contains('drag-handle')) return;
+            startX = e.clientX;
+            startY = e.clientY;
+            timer = setTimeout(() => {
+                timer = null;
+                navigator.vibrate?.(40);
+                this.showTrackContextMenu(e.clientX, e.clientY, index);
+            }, 500);
+        });
+        item.addEventListener('pointerup',     cancel);
+        item.addEventListener('pointercancel', cancel);
+        item.addEventListener('pointerleave',  cancel);
+        item.addEventListener('pointermove', (e) => {
+            if (!timer) return;
+            if (Math.abs(e.clientX - startX) > TOLERANCE ||
+                Math.abs(e.clientY - startY) > TOLERANCE) cancel();
+        });
+        // Right-click is the desktop equivalent — opens the same menu.
+        item.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.showTrackContextMenu(e.clientX, e.clientY, index);
+        });
+    }
+
+    showTrackContextMenu(clientX, clientY, index) {
+        // Tear down any existing menu first so a fresh one shows up at
+        // the new tap location instead of leaking offscreen.
+        document.querySelectorAll('.sb-track-menu').forEach(m => m.remove());
+        const track = this.tracks[index];
+        if (!track) return;
+        const menu = document.createElement('div');
+        menu.className = 'sb-track-menu';
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            background: '#0a0a14',
+            border: '1px solid #4fd1c5',
+            borderRadius: '8px',
+            padding: '6px',
+            boxShadow: '0 0 12px rgba(79, 209, 197, 0.35)',
+            fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+            fontSize: '0.85rem',
+            color: '#81e6d9',
+            minWidth: '180px',
+        });
+        const item = document.createElement('button');
+        Object.assign(item.style, {
+            display: 'block',
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            color: '#81e6d9',
+            textAlign: 'left',
+            padding: '6px 10px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+        });
+        item.textContent = 'Copy to Make track';
+        item.addEventListener('mouseenter', () => { item.style.background = 'rgba(79,209,197,0.18)'; item.style.color = '#b2f5ea'; });
+        item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; item.style.color = '#81e6d9'; });
+        item.addEventListener('click', async () => {
+            menu.remove();
+            await this.copyTrackToBloops(index);
+        });
+        menu.appendChild(item);
+
+        // Position with a clamp to the viewport so the menu doesn't get
+        // hidden when long-pressed near the right/bottom edge.
+        document.body.appendChild(menu);
+        const rect = menu.getBoundingClientRect();
+        const x = Math.min(clientX, window.innerWidth  - rect.width  - 8);
+        const y = Math.min(clientY, window.innerHeight - rect.height - 8);
+        menu.style.left = Math.max(0, x) + 'px';
+        menu.style.top  = Math.max(0, y) + 'px';
+
+        // Dismissal: any tap/click outside removes the menu. Captured
+        // on the next animation frame so the originating long-press
+        // pointerup doesn't immediately close it.
+        const dismiss = (e) => {
+            if (!menu.contains(e.target)) menu.remove();
+        };
+        requestAnimationFrame(() => {
+            document.addEventListener('pointerdown', dismiss, { once: true });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') menu.remove();
+            }, { once: true });
+        });
+    }
+
+    // Resolve the audio blob for a track from the cheapest source first
+    // (in-memory prefetch → persistent blob cache → Drive fetch). Used
+    // by the "Copy to Make track" action so the menu doesn't pay for a
+    // network round-trip when the bytes are already local.
+    async _getTrackBlob(track) {
+        if (!track) throw new Error('No track');
+        const cached = this.musicPlayer._prefetchCache?.get(track.id);
+        if (cached) return cached;
+        if (this.musicPlayer.blobCache) {
+            const blob = await this.musicPlayer.blobCache.getBlob(track.id);
+            if (blob) return blob;
+        }
+        const token = this.musicPlayer.gDrive?.accessToken;
+        if (!token) throw new Error('Not signed in');
+        const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
+        const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!resp.ok) throw new Error(`Drive fetch failed: ${resp.status} ${resp.statusText}`);
+        return await resp.blob();
+    }
+
+    async copyTrackToBloops(index) {
+        const track = this.tracks[index];
+        if (!track) return;
+        if (typeof window.bloopsImportAudio !== 'function') {
+            alert('Make import is not available — Bloops side hasn\'t loaded yet.');
+            return;
+        }
+        const itemEl = this.playlistContainer.querySelector(`.playlist-item[data-index="${index}"]`);
+        const original = itemEl?.style.opacity;
+        if (itemEl) itemEl.style.opacity = '0.55';
+        try {
+            const blob = await this._getTrackBlob(track);
+            const entry = await window.bloopsImportAudio(blob, track.name);
+            this._toast(`Added "${entry?.name || track.name}" to Make`);
+        } catch (e) {
+            console.error('Copy to Make failed:', e);
+            alert(`Could not copy to Make: ${e?.message || e}`);
+        } finally {
+            if (itemEl) itemEl.style.opacity = original || '';
+        }
+    }
+
+    // Lightweight bottom-of-screen toast — separate from the player's
+    // existing showError/showLoading banners so confirmations don't
+    // hijack the loading region.
+    _toast(message) {
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        Object.assign(toast.style, {
+            position: 'fixed',
+            left: '50%',
+            bottom: '24px',
+            transform: 'translateX(-50%)',
+            background: '#0a0a14',
+            color: '#81e6d9',
+            padding: '8px 16px',
+            border: '1px solid #4fd1c5',
+            borderRadius: '20px',
+            boxShadow: '0 0 14px rgba(79, 209, 197, 0.4)',
+            fontFamily: "'Segoe UI', sans-serif",
+            fontSize: '0.85rem',
+            letterSpacing: '0.5px',
+            zIndex: '9999',
+            opacity: '0',
+            transition: 'opacity 0.2s ease',
+        });
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => { toast.style.opacity = '1'; });
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 250);
+        }, 2200);
     }
 
     _clearDropIndicators() {

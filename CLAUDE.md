@@ -22,7 +22,7 @@ Four vanilla JS modules are loaded in order via `<script>` tags in `index.html`:
 1. **`js/google-drive-api.js`** — `GoogleDriveAPI` class. Initializes `gapi` and Google Identity Services (GIS) OAuth client, handles sign-in/sign-out, searches Drive folders, paginates through audio files, and fetches artist metadata.
 2. **`js/music-player.js`** — `MusicPlayer` class. Wraps the HTML5 `<audio>` element, manages blob URL lifecycle (creates on play, revokes on next load), and handles keyboard shortcuts (Space, Arrow keys).
 3. **`js/playlist-manager.js`** — `PlaylistManager` class. Owns the track array, renders the playlist DOM, handles drag-and-drop and touch reordering, and implements shuffle (Fisher-Yates, preserves original order for restore).
-4. **`js/app.js`** — Wires everything together, manages auth UI state, loads quick-load playlist options from a Drive file named "Serialbox Playlists", and shows loading/toast feedback.
+4. **`js/app.js`** — Wires everything together, manages auth UI state, loads playlist options from a Drive file at `bloops/playlists`, and shows loading/toast feedback.
 
 ### Event-driven communication
 
@@ -47,8 +47,9 @@ Modules communicate via custom DOM events (no external event bus):
 ### Google Drive folder convention
 
 The app expects:
-- A file named **"Serialbox Playlists"** containing folder names (one per line) used to populate the quick-load dropdown.
-- Audio folders optionally containing a file named **"Artist name"** whose first line is used as the artist.
+- A `bloops/` folder at the root of My Drive with subfolders `bloops/effects`, `bloops/projects`, `bloops/exports`. The Bloops sign-in init creates these on first run with one consolidated confirmation prompt.
+- A text file at `bloops/playlists` listing folder paths (one per line) that the Player turns into playlists. Paths use `/` for parent/child nesting (e.g. `bloops/exports`). The init step seeds this file with `bloops/exports`.
+- Audio folders optionally containing a file named **"Artist name"** whose first line is used as the artist, and an image named **"Artwork"** used as album art.
 - Supported audio formats: `mp3, wav, flac, aac, ogg, m4a, opus`.
 
 ### Google API credentials

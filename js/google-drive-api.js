@@ -133,20 +133,50 @@ class GoogleDriveAPI {
     }
   }
 
-  async searchFolders(folderName) {
+  async searchFolders(folderPath) {
     await this.ensureSignedIn();
-    // Strict exact-name lookup. Drive's `name =` does the equality match
-    // server-side; the JS comparison is just a defensive belt-and-braces
-    // check. No fuzzy / contains fallback — if the playlist entry doesn't
-    // match a folder exactly, callers see an empty result and surface the
-    // "No folders found named X" error.
-    const safe = String(folderName).replace(/'/g, "\\'");
-    const wanted = String(folderName);
-    const res = await gapi.client.drive.files.list({
-      q: `name = '${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      fields: "files(id, name, parents)",
-    });
-    return (res.result.files || []).filter(f => (f.name || '') === wanted);
+    const segments = String(folderPath).split('/').map(s => s.trim()).filter(Boolean);
+    if (segments.length === 0) return [];
+
+    // Single-segment entry (no "/") — keep the old global lookup so
+    // playlists files that just list folder names still resolve when
+    // those folders live nested under something else, or were shared
+    // into the user's Drive (and therefore aren't direct children of
+    // 'root').
+    if (segments.length === 1) {
+      const name = segments[0];
+      const safe = name.replace(/'/g, "\\'");
+      const res = await gapi.client.drive.files.list({
+        q: `name = '${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+        fields: "files(id, name, parents)",
+      });
+      return (res.result.files || []).filter(f => (f.name || '') === name);
+    }
+
+    // Multi-segment path — walk the hierarchy one level at a time. The
+    // first segment is anchored at 'root' so an explicit path like
+    // "bloops/exports" can't accidentally pick up a stray "exports"
+    // folder somewhere else in the tree.
+    let parents = ['root'];
+    let leafMatches = [];
+    for (let i = 0; i < segments.length; i++) {
+      const name = segments[i];
+      const safe = name.replace(/'/g, "\\'");
+      const matches = [];
+      for (const parentId of parents) {
+        const res = await gapi.client.drive.files.list({
+          q: `name = '${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`,
+          fields: "files(id, name, parents)",
+        });
+        (res.result.files || []).forEach(f => {
+          if ((f.name || '') === name) matches.push(f);
+        });
+      }
+      if (matches.length === 0) return [];
+      if (i === segments.length - 1) leafMatches = matches;
+      else parents = matches.map(f => f.id);
+    }
+    return leafMatches;
   }
 
   async getMusicFilesFromFolders(folders) {
@@ -236,15 +266,37 @@ class GoogleDriveAPI {
     } catch { return null; }
   }
 
-  async fetchPlaylistOptions(fileName) {
+  async fetchPlaylistOptions(filePath) {
     await this.ensureSignedIn();
 
+    // Walk the path so callers can pass a nested location like
+    // "bloops/playlists" — every "/" is a parent/child step. The last
+    // segment is the file name; everything before it is the folder
+    // chain, anchored at My Drive root.
+    const segments = String(filePath).split('/').map(s => s.trim()).filter(Boolean);
+    if (segments.length === 0) throw new Error('File path required');
+    const fileName = segments.pop();
+
+    let parentId = 'root';
+    for (const folderName of segments) {
+      const safeFolder = folderName.replace(/'/g, "\\'");
+      const r = await gapi.client.drive.files.list({
+        q: `name = '${safeFolder}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`,
+        fields: "files(id, name)",
+      });
+      if (!r.result.files || r.result.files.length === 0) {
+        throw new Error(`Folder "${folderName}" not found`);
+      }
+      parentId = r.result.files[0].id;
+    }
+
+    const safeName = fileName.replace(/'/g, "\\'");
     const res = await gapi.client.drive.files.list({
-      q: `name = '${fileName}' and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
+      q: `name = '${safeName}' and trashed=false and mimeType != 'application/vnd.google-apps.folder' and '${parentId}' in parents`,
       fields: "files(id, name, mimeType)",
     });
     const files = res.result.files || [];
-    if (files.length === 0) throw new Error(`File "${fileName}" not found`);
+    if (files.length === 0) throw new Error(`File "${filePath}" not found`);
 
     const file = files[0];
     console.log(`📄 Found "${file.name}" — mimeType: ${file.mimeType}`);

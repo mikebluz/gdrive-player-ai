@@ -90,6 +90,40 @@
       transition: all 0.15s ease;
     }
     .tone-opt:hover { border-color: #4299e1; color: #4299e1; }
+    /* Family rows — top-level entries that drill down into a sub-list. */
+    .tone-opt.tone-opt-family {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .tone-opt-count {
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: #4a4a6a;
+      letter-spacing: 0.5px;
+    }
+    .tone-opt.tone-opt-family:hover .tone-opt-count { color: #4299e1; }
+    /* Subgroup label — used inside a family's drilldown to group its
+       members (e.g., Drums splits into Single drums vs Drum kits). */
+    .tone-subhead {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #4a4a6a;
+      padding: 6px 4px 2px;
+    }
+    /* Back row — returns from a family drilldown to the top family list. */
+    .tone-opt.tone-opt-back {
+      color: #4a4a6a;
+      font-size: 0.78rem;
+      letter-spacing: 0.5px;
+    }
+    .tone-opt.tone-opt-back:hover {
+      border-color: #4299e1;
+      color: #a0aec0;
+    }
     /* "Custom" indicator — non-clickable marker at the top of the panel
        when at least one cell's tone has been changed away from the
        global default. Pinkish accent + italic so it reads as a current
@@ -337,6 +371,92 @@
       text-align: center;
     }
     #tempo-input:focus { outline: none; border-color: #00bfff; }
+    /* 3-digit BPM picker — replaces the slider + numeric input. Each
+       column nudges its place value (100s / 10s / 1s). */
+    .bpm-digits {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .bpm-digit-col {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
+    }
+    .bpm-step {
+      min-width: 22px;
+      padding: 0 4px;
+      height: 18px;
+      line-height: 1;
+      border: 1px solid #4fd1c5;
+      border-radius: 4px;
+      background: transparent;
+      color: #81e6d9;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+    }
+    .bpm-step:hover  { border-color: #81e6d9; color: #b2f5ea; background: rgba(79, 209, 197, 0.08); }
+    .bpm-digit {
+      min-width: 22px;
+      padding: 2px 0;
+      text-align: center;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      /* Neon — digit colour tracks the BPM accent (cyan↔red gradient)
+         set by updateBpmAccent, plus a layered text-shadow glow that
+         flashes red on every pulse beat. */
+      color: var(--bpm-thumb, #00bfff);
+      background: #050510;
+      border: 1px solid var(--bpm-thumb, #2d2d3f);
+      border-radius: 4px;
+      user-select: none;
+      text-shadow:
+        0 0 6px var(--bpm-thumb, #00bfff),
+        0 0 12px rgba(255, 60, 60, 0.45);
+      box-shadow: 0 0 8px rgba(255, 40, 40, 0.18) inset;
+      animation: bpm-pulse var(--bpm-pulse-dur, 0.5s) ease-in-out infinite;
+    }
+    @keyframes bpm-pulse {
+      /* Cycle goes from "just disappeared" (fully transparent) at the
+         start/end of each cycle to a glowing red peak at the midpoint,
+         so the digits read as a strong on-off pulse instead of a soft
+         dim. */
+      0%, 100% {
+        opacity: 0;
+        color: var(--bpm-thumb, #00bfff);
+        text-shadow: none;
+      }
+      50% {
+        opacity: 1;
+        color: #ff4848;
+        text-shadow:
+          0 0 8px #ff2a2a,
+          0 0 16px rgba(255, 40, 40, 0.75),
+          0 0 26px rgba(255, 0, 0, 0.5);
+      }
+    }
+    /* Click any digit to freeze the pulse — the host gets .bpm-paused. */
+    .bpm-digits.bpm-paused .bpm-digit { animation: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .bpm-digit { animation: none; }
+    }
+    .bpm-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #a0aec0;
+      margin-left: 4px;
+    }
     .tempo-unit {
       color: #a0aec0;
       font-size: 0.8rem;
@@ -463,6 +583,22 @@
     }
     #project-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
     #project-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+    .project-name-label {
+      display: inline-flex;
+      align-items: center;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-left: -2px;
+      padding: 2px 8px;
+      color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .project-name-label:empty { display: none; }
     .project-panel {
       display: none;
       flex-direction: column;
@@ -633,6 +769,36 @@
       content: ' ▴';
       color: #81e6d9;
     }
+    /* Mode banner: chevron suffix doesn't apply (this isn't a dropdown
+       trigger), and active modes get a magenta glow so the user sees at
+       a glance that the grid is in an alternate playback state. The
+       mode-banner shrinks to 7/8 of the row's right half (43.75%) to
+       make room for the lock-mode toggle on its right. */
+    #mode-banner { flex: 0 0 43.75%; }
+    #mode-banner::after { content: ''; display: none; }
+    #mode-banner[data-mode="arpeggio"] {
+      color: #f6ad55;
+      text-shadow: 0 0 10px rgba(246, 173, 85, 0.45);
+    }
+    #mode-banner[data-mode="chord"] {
+      color: #f472b6;
+      text-shadow: 0 0 10px rgba(244, 114, 182, 0.45);
+    }
+    /* Mode-lock toggle: 1/8 the size of the mode banner. When active,
+       a glow and a filled glyph signal that mode switches will perform
+       the round-trip flatten/regroup transformation. */
+    #mode-lock-banner {
+      flex: 0 0 6.25%;
+      padding: 6px 0;
+      font-size: 0.85rem;
+      letter-spacing: 0;
+      color: #4a5568;
+    }
+    #mode-lock-banner::after { content: ''; display: none; }
+    #mode-lock-banner.active {
+      color: #f6e05e;
+      text-shadow: 0 0 8px rgba(246, 224, 94, 0.55);
+    }
     .grid {
       flex: 1;
       display: grid;
@@ -651,6 +817,11 @@
       transition: filter 0.08s ease;
       user-select: none;
       position: relative;
+      /* Tell the browser this element is for play gestures, not scroll —
+         it commits to "play" without waiting for movement-direction
+         heuristics, which used to leave touchmove + pointer events
+         fighting and stalling page scroll on mobile. */
+      touch-action: none;
     }
 
     .cell-sound-select {
@@ -683,6 +854,17 @@
       color: rgba(0,0,0,0.35);
       letter-spacing: 1px;
       pointer-events: none;
+    }
+    /* Drum-kit cells show the drum role ("Kick", "Open Hat", …) instead
+       of the chromatic note name — these strings are longer than two
+       characters so the body font has to come down to fit a 70-100px
+       cell without overflow. */
+    .cell span.cell-name-drum {
+      font-size: clamp(0.85rem, 2.2vw, 1.15rem);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      padding: 0 6px;
+      text-align: center;
     }
     .cell .cell-freq {
       position: absolute;
@@ -726,31 +908,43 @@
     .cell:nth-child(12n+11) { background: #fb5607; }
     .cell:nth-child(12n)    { background: #8338ec; }
 
-    /* REST BAR */
+    /* REST BUTTON — small square sitting next to Step Mode in the BPM
+       row. Earlier this was a full-width bar across the page; collapsed
+       into a button so the BPM picker can stay centred on its own row. */
     :root { --rest-color: hsl(280, 55%, 78%); }
     .rest-bar {
-      height: 56px;
-      min-height: 56px;
+      min-width: 92px;
+      height: 52px;
+      box-sizing: border-box;
+      padding: 0 18px;
       background: #000;
-      border-top: 3px solid var(--rest-color);
-      border-bottom: 3px solid var(--rest-color);
-      display: flex;
+      border: 2px solid var(--rest-color);
+      border-radius: 10px;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
       user-select: none;
-      transition: background 0.08s ease;
+      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+      flex-shrink: 0;
+      box-shadow: 0 0 12px rgba(216, 180, 254, 0.18);
+      /* Halve the gap to the bar on top / right / bottom by pulling
+         into the parent's 6px / 16px / 6px padding. Left edge is left
+         alone so the spacing to Step Mode stays the same. */
+      margin: -3px -8px -3px 0;
     }
-    .rest-bar:active      { background: #1a1a2e; }
-    .rest-bar.flash       { background: #2d2d3f; }
-    .rest-bar.active-loop { background: #1a1a2e; outline: 3px solid var(--rest-color) inset; }
+    .rest-bar:hover      { border-color: #fff; box-shadow: 0 0 16px rgba(216, 180, 254, 0.32); }
+    .rest-bar:active     { background: #1a1a2e; }
+    .rest-bar.flash      { background: #2d2d3f; }
+    .rest-bar.active-loop { background: #1a1a2e; outline: 2px solid var(--rest-color); outline-offset: 1px; }
     .rest-bar span {
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
+      font-size: 1rem;
+      font-weight: 800;
       color: var(--rest-color);
-      letter-spacing: 2px;
+      letter-spacing: 2.5px;
       text-transform: uppercase;
+      text-shadow: 0 0 10px rgba(216, 180, 254, 0.55);
       pointer-events: none;
     }
 
@@ -829,6 +1023,49 @@
       transition: all 0.1s ease;
     }
     .seq-step.rest { color: #4a4a6a; }
+    /* Per-step pan glow — blue for right pan, purple for left. Uses
+       layered box-shadows so the chip's own border-color (set inline by
+       the palette tint) keeps showing through, and the .active /
+       .selected box-shadows still override when the chip is playing or
+       being edited. */
+    .seq-step.pan-right {
+      box-shadow:
+        0 0 0 1.5px #3b82f6,
+        0 0 8px rgba(59, 130, 246, 0.55);
+    }
+    .seq-step.pan-left {
+      box-shadow:
+        0 0 0 1.5px #a855f7,
+        0 0 8px rgba(168, 85, 247, 0.55);
+    }
+    /* Tiny pan dial in the upper-right corner of single-note step chips.
+       Drag horizontally on the dial to pan; double-click to recentre. */
+    .seq-step .pan-dial {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: rgba(5, 5, 16, 0.55);
+      border: 1px solid rgba(160, 174, 192, 0.45);
+      cursor: ew-resize;
+      z-index: 2;
+      touch-action: none;
+    }
+    .seq-step .pan-dial::before {
+      content: '';
+      position: absolute;
+      top: 1px;
+      left: 50%;
+      width: 1.5px;
+      height: 6px;
+      background: #cbd5e0;
+      border-radius: 1px;
+      transform-origin: 50% calc(100% + 0px);
+      transform: translateX(-50%) rotate(var(--pan-rot, 0deg));
+      transition: transform 0.05s linear;
+    }
 
     .seq-cursor {
       width: 4px;
@@ -1019,12 +1256,43 @@
     .step-grid-bar {
       background: #050510;
       border-bottom: 3px solid #000;
-      display: flex;
+      /* 3-column grid: empty (left) | BPM picker (centred) | Rest cluster
+         (right). The empty left column lets the centre column stay
+         visually centred regardless of the right cluster's width. */
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
       align-items: center;
       gap: 14px;
       padding: 6px 16px;
     }
-    .step-grid-bar .tempo-control { margin-left: auto; }
+    .step-grid-bar > .tempo-control { justify-self: center; }
+    .step-grid-bar-left {
+      justify-self: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-grid-bar-right {
+      justify-self: end;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    /* Left-side Rest mirrors the right one — pull into the bar's
+       padding on top, left, and bottom (right edge unchanged so the
+       gap to the centred BPM picker stays the same). */
+    .rest-bar--left { margin: -3px 0 -3px -8px; }
+    /* New strip below the sequence chip view: Grid menu + Step Mode
+       button. Sits above the footer-bar (Step controls). */
+    .seq-grid-bar {
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 6px 16px;
+    }
     .step-grid-bar-label {
       display: inline-flex;
       align-items: center;
@@ -1035,7 +1303,16 @@
       font-weight: 600;
       letter-spacing: 0.5px;
     }
-    .step-grid-bar #grid-cols-select {
+    /* Grid dimension inputs (rows × cols). Two narrow numeric fields
+       with a centered ×; matches the teal palette of the surrounding
+       chrome. */
+    .grid-dim-input {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .grid-dim-input input[type="number"] {
+      width: 38px;
       border: 1px solid #4fd1c5;
       color: #b2f5ea;
       background: #1a1a2e;
@@ -1043,19 +1320,32 @@
       padding: 3px 6px;
       font-size: 0.8rem;
       font-family: 'Segoe UI', sans-serif;
+      text-align: center;
+      -moz-appearance: textfield;
     }
-    .step-grid-bar #grid-cols-select:focus {
+    .grid-dim-input input[type="number"]::-webkit-outer-spin-button,
+    .grid-dim-input input[type="number"]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .grid-dim-input input[type="number"]:focus {
       outline: none;
       border-color: #81e6d9;
     }
+    .grid-dim-sep {
+      color: #81e6d9;
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 0 1px;
+    }
     #step-mode-btn {
-      padding: 4px 14px;
+      padding: 3px 8px;
       border: 1px solid #4fd1c5;
-      border-radius: 16px;
+      border-radius: 14px;
       background: transparent;
       color: #81e6d9;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
+      font-size: 0.7rem;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
@@ -1609,6 +1899,18 @@
     .track-eq { font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px; }
     .track-eq:hover { border-color: #f6ad55; color: #fbd38d; }
     .track-eq.active { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.12); }
+    .track-stereo {
+      font-size: 0.66rem !important; padding: 2px 6px !important; letter-spacing: 0.5px;
+      min-width: 24px;
+      border-color: #4299e1 !important; color: #90cdf4 !important;
+      background: rgba(66, 153, 225, 0.10) !important;
+    }
+    .track-stereo:hover { border-color: #63b3ed !important; color: #bee3f8 !important; }
+    .track-stereo.mono {
+      border-color: #d69e2e !important; color: #f6e05e !important;
+      background: rgba(214, 158, 46, 0.10) !important;
+    }
+    .track-stereo.mono:hover { border-color: #ecc94b !important; color: #faf089 !important; }
     .track-rec {
       font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px;
       border-color: #e53e3e !important; color: #e53e3e !important;
@@ -1918,6 +2220,9 @@
       padding: 4px 0;
     }
     .sm-checkbox-row input[type=checkbox] { cursor: pointer; }
+    /* Black-filled checkboxes everywhere — accent-color paints the
+       check-mark surface, so the box reads as filled black when ticked. */
+    input[type=checkbox] { accent-color: #000; }
 
     .se-chord-list { margin-bottom: 4px; }
     .se-chord-row {
@@ -1971,14 +2276,14 @@
       text-align: center;
       padding: 8px 12px;
       background: #000;
-      color: #c026d3;
+      color: #4fd1c5;
       text-decoration: none;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       font-size: 0.95rem;
       font-weight: 700;
       letter-spacing: 1.5px;
       text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(192, 38, 211, 0.5);
+      text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
       border-bottom: 1px solid #2d2d3f;
       transition: color 0.15s ease, text-shadow 0.15s ease;
       flex-shrink: 0;
@@ -1989,8 +2294,8 @@
       z-index: 100;
     }
     .home-bar:hover {
-      color: #f472b6;
-      text-shadow: 0 0 14px rgba(244, 114, 182, 0.65);
+      color: #81e6d9;
+      text-shadow: 0 0 14px rgba(129, 230, 217, 0.65);
     }
 
     /* Top bar — two tabs that switch between the Bloops sequencer and the
@@ -2008,65 +2313,100 @@
       font: inherit;
       cursor: pointer;
     }
-    .wip-banner {
-      flex: 1 1 50%;
-      box-sizing: border-box;
-      text-align: center;
-      padding: 6px 12px;
-      background: #050510;
-      color: #68d391;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      border-right: 1px solid #38a169;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
-    }
-    .wip-banner:not(.tab-active) { opacity: 0.55; }
-    .wip-banner:not(.tab-active):hover { opacity: 0.85; background: #0a1a0e; color: #9ae6b4; }
-    .wip-banner.tab-active { background: #0a1a0e; }
+    /* Make / Listen tabs — typography matches the Mercy Wizard home-bar
+       (same Segoe UI, 700 weight, 1.5px tracking, uppercase, neon teal
+       glow) so the two top headers read as one consistent banner stack. */
+    .wip-banner,
     .serialbox-top-link {
-      flex: 1 1 50%;
+      flex: 1 1 0;
+      min-width: 0;
       box-sizing: border-box;
       text-align: center;
-      padding: 6px 12px;
+      padding: 8px 12px;
       background: #050510;
-      color: #f472b6;
+      color: #4fd1c5;
       text-decoration: none;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 0.95rem;
       font-weight: 700;
       letter-spacing: 1.5px;
       text-transform: uppercase;
-      border-left: 1px solid #d91e7c;
+      text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+      transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease, text-shadow 0.15s ease;
     }
+    .wip-banner { border-right: 1px solid #2d8478; }
+    .serialbox-top-link { border-left: 1px solid #2d8478; }
+    .wip-banner:not(.tab-active),
     .serialbox-top-link:not(.tab-active) { opacity: 0.55; }
-    .serialbox-top-link:not(.tab-active):hover { opacity: 0.85; background: #1a0f1a; color: #f9a8d4; }
-    .serialbox-top-link.tab-active { background: #1a0f1a; }
-
-    /* Display-only banner cloned from the original top-left WIP button —
-       cycles the WIP / project-name copy without taking clicks, so the
-       message stays visible in both the Bloops and Serialbox views. */
-    .info-banner {
-      background: #ffffff;
-      color: #1a1a2e;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-align: center;
-      padding: 6px 12px;
-      border-bottom: 1px solid #e2e8f0;
-      flex-shrink: 0;
+    .wip-banner:not(.tab-active):hover,
+    .serialbox-top-link:not(.tab-active):hover {
+      opacity: 0.85;
+      background: #0a1416;
+      color: #81e6d9;
+      text-shadow: 0 0 14px rgba(129, 230, 217, 0.65);
     }
+    .wip-banner.tab-active,
+    .serialbox-top-link.tab-active { background: #0a1416; }
+
+    /* Sign-in gate — covers everything below the home bar until the user
+       has signed in with Google. Both Bloops and the Player need Drive
+       access, so we gate the whole page rather than each tab. */
+    .signin-gate {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #050510;
+      /* Below the home-bar (z-index 100) so the "Mercy Wizard" link
+         remains visible/clickable as an escape hatch back to index. */
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    body.signin-required .signin-gate { display: flex; }
+    body.signin-required > *:not(.signin-gate):not(.home-bar):not(script) {
+      display: none !important;
+    }
+    .signin-gate-inner {
+      max-width: 360px;
+      text-align: center;
+      color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    .signin-gate-inner h2 {
+      margin: 0 0 12px;
+      font-size: 1.4rem;
+      letter-spacing: 1px;
+      color: #4fd1c5;
+    }
+    .signin-gate-inner p {
+      margin: 0 0 24px;
+      font-size: 0.95rem;
+      color: #a0aec0;
+    }
+    #signin-btn {
+      padding: 10px 22px;
+      border: 1px solid #4fd1c5;
+      border-radius: 22px;
+      background: rgba(79, 209, 197, 0.10);
+      color: #81e6d9;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.92rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+    #signin-btn:hover {
+      background: rgba(79, 209, 197, 0.22);
+      border-color: #81e6d9;
+      color: #b2f5ea;
+    }
+    #signin-btn:disabled { opacity: 0.55; cursor: progress; }
 
     /* View switching — exactly one of the two app views is visible at a
        time. Body class drives which set of top-level children show. */
@@ -2126,7 +2466,7 @@
   <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
   <script src="js/config.js"></script>
 </head>
-<body>
+<body class="signin-required">
   <script>
     // Run before the rest of the body parses so a #player deep-link from
     // index.html lands directly on the Player view without a one-frame
@@ -2138,23 +2478,29 @@
 
   <a class="home-bar" href="index.html" title="Back to mikeluz.com">Mercy Wizard</a>
 
-  <div class="top-bar">
-    <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer">Bloops</button>
-    <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player">Player →</button>
+  <div class="signin-gate" id="signin-gate" role="dialog" aria-labelledby="signin-gate-title">
+    <div class="signin-gate-inner">
+      <h2 id="signin-gate-title">Bloops</h2>
+      <p>Sign in with Google to continue.</p>
+      <button type="button" id="signin-btn">Sign in with Google</button>
+    </div>
   </div>
 
-  <div class="info-banner" id="info-banner">Bloops is a work in progress!</div>
+  <div class="top-bar">
+    <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Make)">Make</button>
+    <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen)">Listen →</button>
+  </div>
 
   <div class="menubar">
     <button id="colors-menu-btn" title="Note block colors">Colors ▾</button>
     <div class="colors-panel" id="colors-panel">
       <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
-      <button type="button" class="colors-opt" data-mode="chess">Chess</button>
-      <button type="button" class="colors-opt" data-mode="checkers">Checkers</button>
+      <button type="button" class="colors-opt" data-mode="piano">Piano</button>
     </div>
     <button id="voices-menu-btn" title="Saved Voices (note grid presets) from Drive">Voices ▾</button>
     <div class="voices-panel" id="voices-panel"></div>
     <button id="project-menu-btn" title="Project: New, Save, Load">Project ▾</button>
+    <span class="project-name-label" id="project-name-label" title="Active project"></span>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
@@ -2247,26 +2593,43 @@
   </div>
   <div class="banner-row banner-row--fx">
     <button type="button" id="fx-banner" class="banner-half" title="Click to adjust global reverb / delay / distortion">FX</button>
+    <button type="button" id="mode-banner" class="banner-half" data-mode="sequencer" title="Note mode: click to cycle Spell → Run → Stack">Spell</button>
+    <button type="button" id="mode-lock-banner" class="banner-half" title="Note lock mode: when on, switching note modes re-shapes the sequence — flat notes ↔ subsequence ↔ chord — so you can round-trip without losing structure.">○</button>
   </div>
   <div class="grid" id="grid"></div>
 
-  <div class="rest-bar" id="rest-bar"><span>REST</span></div>
-
   <div class="step-grid-bar">
-    <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid (chips per row)">Grid
-      <select id="grid-cols-select">
-        <option value="0">Off</option>
-        <option value="4">4</option>
-        <option value="6">6</option>
-        <option value="8" selected>8</option>
-        <option value="12">12</option>
-        <option value="16">16</option>
-      </select>
-    </label>
-    <button id="step-mode-btn" type="button" title="Step-sequencer mode: pick a note from the grid, then click slots to toggle it on/off">Step Mode</button>
+    <div class="step-grid-bar-left">
+      <button class="rest-bar rest-bar--left" type="button" title="Add a rest step"><span>REST</span></button>
+    </div>
     <div class="tempo-control">
-      <input type="range" id="tempo-slider" min="60" max="320" value="120" step="10" />
-      <input type="number" id="tempo-input" min="60" max="320" value="120" title="BPM" />
+      <!-- 3-digit BPM picker — each column has + above and − below to bump
+           that digit's place value (100s / 10s / 1s) up or down. The
+           legacy slider + number input live on hidden, kept in DOM so
+           every existing tempoSlider.value / tempoInput.value reference
+           keeps working. -->
+      <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
+        <div class="bpm-digit-col">
+          <button type="button" class="bpm-step" data-place="100" data-dir="1" aria-label="BPM hundreds up">+</button>
+          <span class="bpm-digit" id="bpm-d-h">1</span>
+          <button type="button" class="bpm-step" data-place="100" data-dir="-1" aria-label="BPM hundreds down">−</button>
+        </div>
+        <div class="bpm-digit-col">
+          <button type="button" class="bpm-step" data-place="10" data-dir="1" aria-label="BPM tens up">+</button>
+          <span class="bpm-digit" id="bpm-d-t">2</span>
+          <button type="button" class="bpm-step" data-place="10" data-dir="-1" aria-label="BPM tens down">−</button>
+        </div>
+        <div class="bpm-digit-col">
+          <button type="button" class="bpm-step" data-place="1" data-dir="1" aria-label="BPM ones up">+</button>
+          <span class="bpm-digit" id="bpm-d-o">0</span>
+          <button type="button" class="bpm-step" data-place="1" data-dir="-1" aria-label="BPM ones down">−</button>
+        </div>
+      </div>
+      <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
+      <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
+    </div>
+    <div class="step-grid-bar-right">
+      <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
     </div>
   </div>
 
@@ -2277,6 +2640,17 @@
 
   <div class="sequence-display" id="sequence-display">
     <span class="seq-empty">Click notes or REST to build a sequence…</span>
+  </div>
+
+  <div class="seq-grid-bar">
+    <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">Grid
+      <span class="grid-dim-input">
+        <input type="number" id="grid-rows-input" min="1" max="32" value="1" aria-label="Grid rows" />
+        <span class="grid-dim-sep">×</span>
+        <input type="number" id="grid-cols-input" min="1" max="64" value="8" aria-label="Grid steps per row" />
+      </span>
+    </label>
+    <button id="step-mode-btn" type="button" title="Toggle between Free (append notes as you click) and Fixed (step-sequencer: pick a note from the grid, then click slots to toggle it on/off)">Free</button>
   </div>
 
   <div class="footer-bar">
@@ -2389,6 +2763,20 @@
     let _playOffsetSec = 0;
     let sequence = []; // [{ freq, label, cellIndex }] — freq null = rest; chord: [{...}]
     let chordMode = false;
+    // Grid playback mode — drives what a cell click does.
+    //   'sequencer' (default): existing behavior (add note / start sustain).
+    //   'arpeggio':  play the saved sequence transposed so its first note
+    //                lines up with the clicked cell. Sequence isn't edited.
+    //   'chord':     collapse the saved sequence into a chord, transpose to
+    //                the clicked cell's root, play simultaneously.
+    let gridMode = 'sequencer';
+    // Mode-lock toggle: when true, switching grid modes re-shapes the
+    // workspace — flat notes ↔ subsequence ↔ chord — so the user can
+    // round-trip Spell → Run → Stack → Spell without losing structure.
+    let lockMode = (() => {
+      try { return localStorage.getItem('lock-mode') === '1'; }
+      catch (e) { return false; }
+    })();
     let loopMode = false;
     let noteLength = 1;
     let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
@@ -2660,10 +3048,14 @@
     // 180° apart on the colour wheel) so the slider feels cool when slow
     // and hot when fast.
     function updateBpmAccent() {
-      const sliderMin = parseInt(tempoSlider.min, 10) || 60;
-      const sliderMax = parseInt(tempoSlider.max, 10) || 320;
-      const v = parseInt(tempoSlider.value, 10) || sliderMin;
-      const t = Math.max(0, Math.min(1, (v - sliderMin) / (sliderMax - sliderMin)));
+      // Anchor the colour gradient to the conventional musical range
+      // (60..320) so widening the picker bounds doesn't shift where the
+      // hot-red end lives. Values outside this range clamp to the edge
+      // colour rather than rescale the whole spectrum.
+      const accentMin = 60;
+      const accentMax = 320;
+      const v = parseInt(tempoSlider.value, 10) || accentMin;
+      const t = Math.max(0, Math.min(1, (v - accentMin) / (accentMax - accentMin)));
       const hue = 188 * (1 - t); // 188° (cyan) at min → 0° (red) at max
       const color = `hsl(${hue.toFixed(0)}, 80%, 55%)`;
       tempoSlider.style.accentColor = color;
@@ -2674,17 +3066,115 @@
     tempoSlider.addEventListener('input', () => {
       tempoInput.value = tempoSlider.value;
       updateBpmAccent();
+      refreshBpmDigits();
       persistWorkspace();
     });
 
     tempoInput.addEventListener('input', () => {
-      const v = Math.min(320, Math.max(60, parseInt(tempoInput.value) || 60));
+      const v = Math.min(999, Math.max(0, parseInt(tempoInput.value) || 0));
       tempoSlider.value = v;
       updateBpmAccent();
+      refreshBpmDigits();
       persistWorkspace();
     });
 
+    // ---- 3-digit BPM picker ---------------------------------------------
+    const _bpmDigitH = document.getElementById('bpm-d-h');
+    const _bpmDigitT = document.getElementById('bpm-d-t');
+    const _bpmDigitO = document.getElementById('bpm-d-o');
+    // BPM is allowed across the full 3-digit space (0..999) so each
+    // +/- button on the digit picker only changes its own digit. BPM 0
+    // is treated as "stopped" — the playback math has a `|| 120` fallback
+    // so a zeroed display doesn't divide by zero anywhere.
+    function getBpm() {
+      return Math.min(999, Math.max(0, parseInt(tempoInput.value, 10) || 0));
+    }
+    function setBpm(v) {
+      const next = Math.min(999, Math.max(0, v | 0));
+      tempoInput.value  = String(next);
+      tempoSlider.value = String(next);
+      updateBpmAccent();
+      refreshBpmDigits();
+      persistWorkspace();
+    }
+    function refreshBpmDigits() {
+      const v = getBpm();
+      const h = Math.floor(v / 100);
+      const t = Math.floor((v % 100) / 10);
+      const o = v % 10;
+      if (_bpmDigitH) _bpmDigitH.textContent = String(h);
+      if (_bpmDigitT) _bpmDigitT.textContent = String(t);
+      if (_bpmDigitO) _bpmDigitO.textContent = String(o);
+      // Drive the soft digit-pulse animation at the live BPM. One beat
+      // per cycle = 60/bpm seconds. Restart the animation cleanly when
+      // the duration changes so the new tempo takes effect immediately
+      // rather than waiting for the current cycle to finish.
+      const digitsHost = document.getElementById('bpm-digits');
+      if (digitsHost) {
+        // One pulse cycle = one beat (60/BPM seconds). BPM 0 falls back
+        // to a 0.5s cycle so the animation stays visible instead of
+        // stretching to an Infinity-second duration browsers reject.
+        const dur = (v > 0 ? (60 / v).toFixed(3) : '0.5') + 's';
+        digitsHost.style.setProperty('--bpm-pulse-dur', dur);
+        digitsHost.querySelectorAll('.bpm-digit').forEach(el => {
+          el.style.animation = 'none';
+          // eslint-disable-next-line no-unused-expressions
+          el.offsetWidth;
+          el.style.animation = '';
+        });
+      }
+      // The +/- buttons stay enabled at digit extremes so they keep
+      // pulsing in lockstep with the digits. Out-of-range steps clamp
+      // to 60..320 inside setBpm, so a click at the bound just no-ops
+      // visually instead of needing a disabled state.
+    }
+    document.querySelectorAll('.bpm-step').forEach(b => {
+      b.addEventListener('click', () => {
+        const place = parseInt(b.dataset.place, 10) || 0;
+        const dir   = parseInt(b.dataset.dir,   10) || 0;
+        if (!place || !dir) return;
+        // Per-digit operation: only the digit at `place` changes. Other
+        // digits stay put, even when the result drops below 60 or above
+        // a typical max — getBpm/setBpm allow the full 0..999 range. At
+        // a digit extreme (0 going further down, 9 going further up) the
+        // click no-ops so the user's mental model of "this button moves
+        // this digit" stays intact.
+        const v = getBpm();
+        let h = Math.floor(v / 100);
+        let t = Math.floor((v % 100) / 10);
+        let o = v % 10;
+        if (place === 100) {
+          const nh = h + dir;
+          if (nh < 0 || nh > 9) return;
+          h = nh;
+        } else if (place === 10) {
+          const nt = t + dir;
+          if (nt < 0 || nt > 9) return;
+          t = nt;
+        } else if (place === 1) {
+          const no = o + dir;
+          if (no < 0 || no > 9) return;
+          o = no;
+        }
+        setBpm(h * 100 + t * 10 + o);
+      });
+    });
+
+    // Click any of the BPM digits themselves to freeze (or resume) the
+    // pulse animation. The class on the host disables the keyframes for
+    // both the digits and the +/- buttons.
+    (function bindBpmDigitPauseToggle() {
+      const host = document.getElementById('bpm-digits');
+      if (!host) return;
+      host.querySelectorAll('.bpm-digit').forEach(el => {
+        el.addEventListener('click', () => {
+          host.classList.toggle('bpm-paused');
+        });
+      });
+    })();
+
     updateBpmAccent();
+    refreshBpmDigits();
 
     // iOS audio unlock: Tone.start() alone is async and often hasn't finished
     // resuming by the time the first tap fires playNote. Playing a silent buffer
@@ -2712,6 +3202,45 @@
     }
 
     const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','bell','pluck','kick','metal'];
+
+    // ---- Tone.js v14 URL double-encode patch ----------------------------
+    // ToneAudioBuffer.load() does
+    //   location.href = baseUrl + url; pathname = pathname.split('/').
+    //     map(encodeURIComponent).join('/');
+    // The browser auto-encodes any space in `href` to `%20`, then the
+    // path-segment encodeURIComponent runs again and turns `%` into
+    // `%25`, producing `%2520`. Filenames that contain spaces (or any
+    // other char that needs URL-encoding) 404.
+    //
+    // Override the static loader with a direct fetch + decodeAudioData.
+    // encodeURI handles literal spaces without double-encoding existing
+    // %XX escapes, so both pre-encoded and literal-space inputs work.
+    if (Tone && Tone.ToneAudioBuffer && Tone.ToneAudioBuffer.load) {
+      const _origToneLoad = Tone.ToneAudioBuffer.load;
+      Tone.ToneAudioBuffer.load = function(url) {
+        let safeUrl;
+        try { safeUrl = encodeURI(decodeURI(url)); }
+        catch (e) { safeUrl = url; }
+        return fetch(safeUrl, { credentials: 'omit' })
+          .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + safeUrl);
+            return r.arrayBuffer();
+          })
+          .then(buf => new Promise((resolve, reject) => {
+            const ctx = (Tone.getContext && Tone.getContext().rawContext) || Tone.context.rawContext;
+            try {
+              const p = ctx.decodeAudioData(buf, resolve, reject);
+              if (p && typeof p.then === 'function') p.then(resolve, reject);
+            } catch (e) { reject(e); }
+          }))
+          .catch(err => {
+            console.warn('[Tone patch] sample load failed', safeUrl, err);
+            // Fall back to the original buggy loader so we at least mirror
+            // the prior behavior on edge cases this patch can't handle.
+            return _origToneLoad.call(this, url);
+          });
+      };
+    }
 
     // Master bus: compressor softens dynamic peaks, limiter is a brick wall at
     // -1 dB so simultaneous voices (chords, overlapping tracks, long releases)
@@ -2789,6 +3318,24 @@
     // Each entry creates a Tone.Sampler that pitch-shifts the file across
     // the keyboard. type strings of the form 'sample:<id>' route through these.
     const sampleSamplers = new Map();
+
+    // For drum-kit samples, snap any incoming pitch to the C2 row so each
+    // pitch class triggers its native drum hit instead of pitch-shifting a
+    // single sample across the keyboard. The kits' urls map covers C2-B2;
+    // playing the snapped freq tells Tone.Sampler to use that exact mapped
+    // file with no pitch shift.
+    function snapDrumKitFreq(type, freq) {
+      if (typeof freq !== 'number' || !isSampleType(type)) return freq;
+      const meta = sampleSamplers.get(type.slice(7));
+      if (!meta || !meta.drumKit) return freq;
+      try {
+        const midi = Math.round(Tone.Frequency(freq).toMidi());
+        const pc = ((midi % 12) + 12) % 12;
+        return Tone.Frequency(36 + pc, 'midi').toFrequency(); // 36 = C2
+      } catch (e) {
+        return freq;
+      }
+    }
 
     function isSampleType(type) {
       return typeof type === 'string' && type.startsWith('sample:');
@@ -2868,6 +3415,175 @@
           'C5': 'C5.mp3', 'E5': 'E5.mp3', 'A5': 'A5.mp3',
         },
       },
+      // ---- Additional keys (electric piano, harpsichord, clavinet) and
+      // mallets — MusyngKite GM soundfont set, served via GitHub Pages
+      // with permissive CORS. Sparse octave coverage; Tone.Sampler
+      // pitch-shifts in between.
+      {
+        id: 'rhodes',
+        label: 'Rhodes',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/electric_piano_1-mp3/',
+        urls: { 'C2': 'C2.mp3', 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'epiano2',
+        label: 'EP Chorus',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/electric_piano_2-mp3/',
+        urls: { 'C2': 'C2.mp3', 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'harpsichord',
+        label: 'Harpsichord',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/harpsichord-mp3/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'clavinet',
+        label: 'Clavinet',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/clavinet-mp3/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3' },
+      },
+      {
+        id: 'celesta',
+        label: 'Celesta',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/celesta-mp3/',
+        urls: { 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3', 'C7': 'C7.mp3' },
+      },
+      {
+        id: 'vibraphone',
+        label: 'Vibraphone',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/vibraphone-mp3/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'marimba',
+        label: 'Marimba',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/marimba-mp3/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'cello',
+        label: 'Cello',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/cello/',
+        urls: {
+          'C2': 'C2.mp3', 'E2': 'E2.mp3', 'G2': 'G2.mp3',
+          'C3': 'C3.mp3', 'E3': 'E3.mp3', 'G3': 'G3.mp3',
+          'C4': 'C4.mp3',
+        },
+      },
+      {
+        id: 'eguitar',
+        label: 'Electric Guitar',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/guitar-electric/',
+        urls: { 'E2': 'E2.mp3', 'A2': 'A2.mp3', 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'A3': 'A3.mp3', 'A4': 'A4.mp3' },
+      },
+      {
+        // Square-wave lead — bright FM/synth lead from the GM bank.
+        id: 'leadsquare',
+        label: 'Square Lead',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/lead_1_square-mp3/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        id: 'padpoly',
+        label: 'Poly Pad',
+        baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/pad_3_polysynth-mp3/',
+        urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      // ---- Drum kits — CC0 / public-domain from tidalcycles/dirt-samples.
+      // Each kit fans out 12 distinct hits across the chromatic C2-B2 row
+      // (kick → C, rim → C#, snare → D, clap → D#, closed hat → E, open
+      // hat → F, low tom → F#, mid tom → G, cowbell/cymbal → G#, crash/
+      // ride → A, high tom → A#, perc → B). Picking a note in the grid
+      // therefore plays a specific drum, not a pitch-shifted single hit.
+      {
+        id: 'tr808',
+        label: 'TR-808',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/',
+        urls: {
+          'C2':   '808bd/BD0000.WAV',
+          'C#2':  '808/RS.WAV',
+          'D2':   '808sd/SD0000.WAV',
+          'D#2':  '808/CP.WAV',
+          'E2':   '808hc/HC00.WAV',
+          'F2':   '808oh/OH00.WAV',
+          'F#2':  '808lt/LT00.WAV',
+          'G2':   '808mt/MT00.WAV',
+          'G#2':  '808/CB.WAV',
+          'A2':   '808/CH.WAV',
+          'A#2':  '808ht/HT00.WAV',
+          'B2':   '808/MA.WAV',
+        },
+      },
+      {
+        // Filenames use literal spaces, NOT percent-encoded ones — Tone v14
+        // pipes urls values through `<a>.pathname.split('/').map(encodeURIComponent)`,
+        // which double-encodes any pre-encoded `%20` (→ `%2520`) and 404s.
+        // A literal space passes through cleanly to a single `%20`.
+        id: 'drumtraks',
+        label: 'DrumTraks',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/drumtraks/',
+        urls: {
+          'C2':   '006_DT Kick.wav',
+          'C#2':  '008_DT Rimshot.wav',
+          'D2':   '009_DT Snare.wav',
+          'D#2':  '001_DT Claps.wav',
+          'E2':   '004_DT Hat Closed.wav',
+          'F2':   '005_DT Hat Open.wav',
+          'F#2':  '011_DT Tom1.wav',
+          'G2':   '012_DT Tom2.wav',
+          'G#2':  '002_DT Cowbell.wav',
+          'A2':   '003_DT Crash.wav',
+          'A#2':  '007_DT Ride.wav',
+          'B2':   '000_DT Cabasa.wav',
+        },
+      },
+      {
+        id: 'drumkit',
+        label: 'Drum Kit',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/',
+        urls: {
+          'C2':   'bd/BT0AAD0.wav',
+          'C#2':  'rs/rytm-rs.wav',
+          'D2':   'sn/ST0T0S0.wav',
+          'D#2':  'cp/HANDCLP0.wav',
+          'E2':   'hh/000_hh3closedhh.wav',
+          'F2':   'ho/HHOD0.wav',
+          'F#2':  'lt/LT0D0.wav',
+          'G2':   'mt/MT0D0.wav',
+          'G#2':  'cb/rytm-cb.wav',
+          'A2':   'cr/RIDED0.wav',
+          'A#2':  'ht/HT0D0.wav',
+          'B2':   'perc/000_perc0.wav',
+        },
+      },
+      {
+        // dr55 only ships 4 native samples — fill the rest with the Boss
+        // DR-110 (dr2/) and a couple perc/ files so the chromatic mapping
+        // is complete and the kit still feels mini-drum-machine flavoured.
+        id: 'dr55',
+        label: 'DR-55',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/',
+        urls: {
+          // Literal spaces (not %20) — see DrumTraks comment above.
+          'C2':   'dr55/001_DR55 kick.wav',
+          'C#2':  'dr55/002_DR55 rimshot.wav',
+          'D2':   'dr55/003_DR55 snare.wav',
+          'D#2':  'dr2/001_DR110CLP.WAV',
+          'E2':   'dr55/000_DR55 hi hat.wav',
+          'F2':   'dr2/004_DR110OHT.WAV',
+          'F#2':  'perc/001_perc1.wav',
+          'G2':   'perc/002_perc2.wav',
+          'G#2':  'dr2/002_DR110CYM.WAV',
+          'A2':   'dr2/000_DR110CHT.WAV',
+          'A#2':  'dr2/005_DR110SNR.WAV',
+          'B2':   'dr2/003_DR110KIK.WAV',
+        },
+      },
     ];
     function loadRemoteInstruments() {
       REMOTE_INSTRUMENTS.forEach(inst => {
@@ -2883,6 +3599,12 @@
             name: inst.label,
             rootNote: 'C4',
             remote: true,
+            // Drum kits are the same Tone.Sampler shape as melodic
+            // instruments, but each grid pitch class should trigger a
+            // *specific* drum hit at native pitch instead of pitch-shifting
+            // a single sample across the keyboard. Flag them so playback
+            // can snap the play freq to the C2 row at runtime.
+            drumKit: !!inst.drumKit,
             // Stash the original URL map so the offline export can recreate
             // a parallel sampler bound to the offline audio context.
             urls: inst.urls,
@@ -3063,6 +3785,96 @@
       return base;
     }
 
+    // Click-and-hold sustain — start an attack on pointerdown, release on
+    // pointerup. Returns a handle with .release(); the caller is expected
+    // to call it exactly once. One-shot voices (pluck / kick / metal /
+    // samples without a clean release) fall back to a normal short hit.
+    function startSustainedNote(freq, params = {}) {
+      if (typeof params === 'string') params = { type: params };
+      const {
+        type = 'sine',
+        attack = 10, decay = 100, sustain = 50, release = 1400, volume = 100, detune = 0,
+        fxOverrideGlobal = false,
+      } = params;
+      const atk = Math.max(attack / 1000, 0.005);
+      const dec = Math.max(decay   / 1000, 0.01);
+      const sus = Math.max(sustain / 100,  0.001);
+      const rel = Math.max(release / 1000, 0.1);
+      const env = { attack: atk, decay: dec, sustain: sus, release: rel };
+      const velocity = Math.min(1, Math.max(0, volume / 100));
+
+      // Sample types — Tone.Sampler supports triggerAttack/Release.
+      if (isSampleType(type)) {
+        const entry = getSampleEntry(type);
+        if (!entry || !entry.sampler || !entry.sampler.loaded) {
+          playNote(freq, params);
+          return { release: () => {} };
+        }
+        const baseFreq = snapDrumKitFreq(type, freq);
+        const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
+        try { entry.sampler.triggerAttack(tunedFreq, undefined, velocity); } catch (e) {}
+        let released = false;
+        return { release: () => {
+          if (released) return; released = true;
+          try { entry.sampler.triggerRelease(tunedFreq, undefined); } catch (e) {}
+        }};
+      }
+
+      // Pluck / kick / metal don't sustain naturally — fall through to a
+      // short one-shot, no release work needed.
+      if (type === 'pluck' || type === 'kick' || type === 'metal') {
+        playNote(freq, params);
+        return { release: () => {} };
+      }
+
+      const finalDest = fxOverrideGlobal ? masterLimiter : masterBus;
+      let synth;
+      if (type === 'fm') {
+        synth = new Tone.FMSynth({
+          harmonicity: 3, modulationIndex: 10,
+          oscillator: { type: 'sine' }, envelope: env,
+          modulation: { type: 'square' },
+          modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
+        }).connect(finalDest);
+      } else if (type === 'am') {
+        synth = new Tone.AMSynth({
+          harmonicity: 2,
+          oscillator: { type: 'sine' }, envelope: env,
+          modulation: { type: 'square' },
+          modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
+        }).connect(finalDest);
+      } else if (type === 'mono') {
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'sawtooth' }, envelope: env,
+          filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.3, release: 2,
+                            baseFrequency: 200, octaves: 3 },
+        }).connect(finalDest);
+      } else if (type === 'bell') {
+        synth = new Tone.FMSynth({
+          harmonicity: 2.14, modulationIndex: 4,
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.001, decay: 2.0, sustain: 0.5, release: 0.8 },
+          modulation: { type: 'sine' },
+          modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
+        }).connect(finalDest);
+      } else {
+        let oscOpts;
+        if      (type === 'pulse') oscOpts = { type: 'pulse', width: 0.4 };
+        else if (type === 'fat')   oscOpts = { type: 'fatsawtooth', count: 3, spread: 30 };
+        else                       oscOpts = { type };
+        synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(finalDest);
+      }
+      if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
+      try { synth.triggerAttack(freq, undefined, velocity); } catch (e) {}
+
+      let released = false;
+      return { release: () => {
+        if (released) return; released = true;
+        try { synth.triggerRelease(); } catch (e) {}
+        setTimeout(() => { try { synth.dispose(); } catch (e) {} }, (rel + 0.5) * 1000);
+      }};
+    }
+
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx) {
       if (typeof params === 'string') params = { type: params };
       const {
@@ -3084,6 +3896,10 @@
         delayTime     = 250,
         delayFeedback = 40,
         distortion = 0,
+        // Per-note pan, -100..100. Inserted as a Tone.Panner after the
+        // FX chain so each chord voice or subStep can sit in its own
+        // spot in the stereo image. 0 = no panner created (saves a node).
+        pan = 0,
         // When true, the per-note effect chain bypasses the master compressor
         // and global FX chain — track-level EQ/pan also gets skipped, since
         // the route reroutes straight to the master limiter. Keeps the note's
@@ -3118,9 +3934,10 @@
           sampler = entry?.sampler || null;
         }
         if (sampler && sampler.loaded) {
-          const tunedFreq = (typeof freq === 'number')
-            ? freq * Math.pow(2, detune / 1200)
-            : freq;
+          const baseFreq = snapDrumKitFreq(type, freq);
+          const tunedFreq = (typeof baseFreq === 'number')
+            ? baseFreq * Math.pow(2, detune / 1200)
+            : baseFreq;
           const dur = Math.max(targetDur, 0.05);
           try {
             sampler.triggerAttackRelease(tunedFreq, dur, startTime, velocity);
@@ -3132,13 +3949,22 @@
       }
 
       // Per-note effect chain — order is synth → distortion → delay → reverb
-      // → destination. Built backward from the destination so each new node's
-      // output is the previous head. `chainHead` becomes the synth's connect
-      // target; effect nodes are disposed alongside the synth so they don't
-      // leak.
+      // → panner → destination. Built backward from the destination so each
+      // new node's output is the previous head. `chainHead` becomes the
+      // synth's connect target; effect nodes are disposed alongside the
+      // synth so they don't leak.
       const finalDest = fxOverrideGlobal ? masterLimiter : (destination || masterBus);
       let chainHead = finalDest;
       const effectNodes = [];
+      // Per-note pan sits closest to the destination so it pans the fully-
+      // wet signal (reverb / delay tails included). Skip the node entirely
+      // when pan is zero so we don't pay for an idle panner per voice.
+      const panNorm = Math.max(-1, Math.min(1, (pan || 0) / 100));
+      if (Math.abs(panNorm) > 0.001) {
+        const pn = new Tone.Panner(panNorm).connect(chainHead);
+        effectNodes.unshift(pn);
+        chainHead = pn;
+      }
       if (reverb > 0) {
         const rev = new Tone.Freeverb({
           // reverbTone is mapped to dampening (Hz) where higher Tone reads
@@ -3317,9 +4143,9 @@
       const display = document.getElementById('sequence-display');
       const count   = document.getElementById('seq-count');
 
-      // Grid layout: applies whenever the user picks a column count, or
-      // whenever step-mode is active (which always lays out as a grid).
-      const cols = (gridColumns >= 4 || stepMode) ? effectiveGridCols() : 0;
+      // Grid layout: rows × cols input is always-on now (no "Off"), so
+      // the grid-mode CSS class is on whenever cols ≥ 1.
+      const cols = effectiveGridCols();
       if (cols > 0) {
         display.classList.add('grid-mode');
         display.style.setProperty('--grid-cols', String(cols));
@@ -3382,6 +4208,9 @@
             ? `${step.label}${step.sound && step.sound !== 'sine' ? '\n' + step.sound.slice(0,3) : ''}`
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
+          // Per-step pan dial in the upper-right corner. Skip rests —
+          // they have no params/audio so a pan widget would be inert.
+          if (step.freq !== null) attachPanDial(chip, step);
         }
         // In grid mode, span the chip across as many cells as its duration
         // calls for so longer notes look longer. Step-mode is the exception
@@ -3403,9 +4232,10 @@
         // Click behaviour: in step mode (and only on non-sub chips) toggle
         // the slot between rest and the armed note; otherwise select the
         // step (so the step controls retarget it) and preview its audio.
-        // The single-click action is deferred ~250 ms so a double-click
-        // can hijack it and remove the step instead.
-        let _chipClickTimer = null;
+        // The click runs immediately on the FIRST click (event.detail===1)
+        // and skips the second click of a double-click pair so the
+        // dblclick → duplicate handler can run cleanly without us
+        // throwing a duplicate select/deselect into the mix.
         const performSingleClick = () => {
           if (stepMode && !step.isSub) {
             if (isRestStep(sequence[i])) {
@@ -3444,33 +4274,15 @@
           renderSequence();
           previewStep(sequence[i]);
         };
-        chip.addEventListener('click', () => {
-          if (_chipClickTimer) {
-            clearTimeout(_chipClickTimer);
-            _chipClickTimer = null;
-            return;
-          }
-          _chipClickTimer = setTimeout(() => {
-            _chipClickTimer = null;
-            performSingleClick();
-          }, 250);
+        chip.addEventListener('click', (e) => {
+          // event.detail is the click-count: 1 = single, 2 = the second
+          // click of a double-click pair. Skipping detail >= 2 keeps the
+          // single-click side-effects from running twice on a dblclick.
+          if (e.detail >= 2) return;
+          performSingleClick();
         });
         chip.addEventListener('dblclick', () => {
-          if (_chipClickTimer) { clearTimeout(_chipClickTimer); _chipClickTimer = null; }
-          snapshotForUndo('Delete step');
-          const removedRef = sequence[i];
-          sequence.splice(i, 1);
-          if (insertionPoint !== null) {
-            if (i < insertionPoint) insertionPoint--;
-            if (insertionPoint > sequence.length) insertionPoint = sequence.length;
-            if (sequence.length === 0) insertionPoint = null;
-          }
-          // Drop the removed step from selection if it was there.
-          const sIdx = selectedStepRefs.indexOf(removedRef);
-          if (sIdx >= 0) selectedStepRefs.splice(sIdx, 1);
-          renderSequence();
-          document.getElementById('save-btn').disabled = sequence.length === 0;
-          syncStepEditorFromSelection();
+          duplicateStep(i);
         });
         // Note-coloured chips: tint border + fill from chipPalette by pitch
         // class. Skip subsequence chips (they keep their green identity) and
@@ -3559,6 +4371,7 @@
         pendingChord: pendingChord.map(p => ({ ...p })),
         stepMode,
         gridColumns,
+        gridRows,
         noteLength,
         stepSubdivision,
         bpm: parseInt(tempoInput?.value, 10) || 120,
@@ -3579,7 +4392,8 @@
       chordMode = !!snap.chordMode;
       pendingChord = (snap.pendingChord || []).map(p => ({ ...p }));
       stepMode = !!snap.stepMode;
-      gridColumns = snap.gridColumns | 0;
+      gridColumns = (snap.gridColumns | 0) || 8;
+      gridRows = (snap.gridRows | 0) || 1;
       noteLength = snap.noteLength | 0 || 1;
       stepSubdivision = snap.stepSubdivision || 1;
 
@@ -3587,14 +4401,17 @@
       const chordBtn = document.getElementById('chord-btn');
       const stepClu  = document.querySelector('.btn-group--step');
       const stepBtn  = document.getElementById('step-mode-btn');
-      const gridSel  = document.getElementById('grid-cols-select');
+      const rowsEl   = document.getElementById('grid-rows-input');
+      const colsEl   = document.getElementById('grid-cols-input');
       const multiCb  = document.getElementById('multi-select-toggle');
       const noteSel  = document.getElementById('note-length');
       const subSel   = document.getElementById('subdivision-select');
       if (chordBtn) chordBtn.classList.toggle('active', chordMode);
       if (stepClu)  stepClu.classList.toggle('chord-active', chordMode);
-      if (stepBtn)  stepBtn.classList.toggle('active', stepMode);
-      if (gridSel)  gridSel.value = String(gridColumns || 0);
+      if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
+      else if (stepBtn) stepBtn.classList.toggle('active', stepMode);
+      if (rowsEl) rowsEl.value = String(gridRows);
+      if (colsEl) colsEl.value = String(gridColumns);
       if (multiCb)  multiCb.checked = multiSelectMode;
       if (noteSel)  noteSel.value = String(noteLength);
       if (subSel)   subSel.value = String(stepSubdivision);
@@ -3748,16 +4565,24 @@
       syncStepEditorFromSelection();
     }
 
-    // Visual layout: 0 = current flex-wrap behavior; 4..16 = grid mode with
-    // that many chips per row.
+    // Visual layout: rows × cols. The visible chip layout uses cols
+    // chips per row; in Fixed (step) mode the workspace is padded /
+    // trimmed to rows × cols total slots.
     let gridColumns = 8;
+    let gridRows = 1;
     // Step-sequencer mode — when on, the workspace is treated as a fixed
-    // pattern of `gridColumns` slots (defaults to 16 if grid isn't set).
-    // Cell clicks arm the current note; chip clicks toggle that note in/out.
+    // pattern of rows × cols slots. Cell clicks arm the current note;
+    // chip clicks toggle that note in/out.
     let stepMode = false;
     let stepModeArmed = null; // a step template prepped by the last grid click
     function effectiveGridCols() {
-      return gridColumns >= 4 ? gridColumns : 16;
+      return Math.max(1, gridColumns | 0);
+    }
+    function effectiveGridRows() {
+      return Math.max(1, gridRows | 0);
+    }
+    function effectiveStepCount() {
+      return effectiveGridRows() * effectiveGridCols();
     }
     function isRestStep(s) {
       return !!s && !s.isSub && !s.chord && (s.freq == null);
@@ -3766,7 +4591,7 @@
       return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: stepSubdivision };
     }
     function padToStepGrid() {
-      const n = effectiveGridCols();
+      const n = effectiveStepCount();
       while (sequence.length < n) sequence.push(makeRestStep());
       if (sequence.length > n) sequence.length = n;
     }
@@ -3809,7 +4634,7 @@
 
     function clearHighlights() {
       cells.forEach(c => c.classList.remove('active-loop'));
-      document.getElementById('rest-bar').classList.remove('active-loop');
+      document.querySelectorAll('.rest-bar').forEach(b => b.classList.remove('active-loop'));
     }
 
     // Tone.js schedules audio in the future by `Tone.context.lookAhead`
@@ -3880,7 +4705,10 @@
       if (next < sequence.length) {
         playSequence(next);
       } else if (loopMode && sequence.length > 0) {
-        playSequence(0);
+        // Loop wrap: keep the accumulated timing base so there's no
+        // silent gap between the last step and the first of the next
+        // iteration. freshStart=false skips the Tone.now() re-anchor.
+        playSequence(0, /* freshStart */ false);
       } else {
         stopSequence();
       }
@@ -3919,7 +4747,7 @@
         } else if (step.freq != null) {
           if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
         } else {
-          document.getElementById('rest-bar').classList.add('active-loop');
+          document.querySelectorAll('.rest-bar').forEach(b => b.classList.add('active-loop'));
         }
       }, audioTime);
       _playOffsetSec += waitMs / 1000;
@@ -3977,6 +4805,480 @@
       }
     }
 
+    // ---- Arpeggio / Chord grid modes -----------------------------------
+    // Both modes leave the saved sequence untouched and just re-pitch the
+    // playback: clicking a cell sets the "root" the sequence is transposed
+    // to. Arpeggio plays the steps in time; Chord stacks every note into
+    // a single sustained chord.
+    function transposeFreqHz(freq, semitones) {
+      if (typeof freq !== 'number') return freq;
+      return freq * Math.pow(2, semitones / 12);
+    }
+    function firstSequenceFreqHz() {
+      const visit = (s) => {
+        if (!s) return null;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          for (const sub of s.subSteps) { const f = visit(sub); if (f != null) return f; }
+          return null;
+        }
+        if (Array.isArray(s.chord) && s.chord[0] && s.chord[0].freq != null) return s.chord[0].freq;
+        if (s.freq != null) return s.freq;
+        return null;
+      };
+      for (const step of sequence) { const f = visit(step); if (f != null) return f; }
+      return null;
+    }
+    function semitonesBetweenHz(fromHz, toHz) {
+      try {
+        return Math.round(Tone.Frequency(toHz).toMidi() - Tone.Frequency(fromHz).toMidi());
+      } catch (e) {
+        return 0;
+      }
+    }
+
+    // Collapse every step in the workspace sequence (single notes, chord
+    // voices, subsequence subSteps) into one chord step. Used when the
+    // user enters Chord mode so the rest of the saved sequence becomes
+    // the "base chord" that subsequent cell clicks transpose and append.
+    function consolidateSequenceToChord() {
+      if (!Array.isArray(sequence) || sequence.length === 0) return false;
+      const voices = [];
+      // No frequency dedup — under note-lock-mode, mode transitions need
+      // to be lossless so any step the user added (including transposed
+      // copies that landed on a freq already in the chord) survives the
+      // round-trip Spell ↔ Run ↔ Stack. Same-freq voices stack up; a
+      // chord with two C4s is sonically just a louder C4, harmless.
+      const pushVoice = (n) => {
+        if (!n || n.freq == null) return;
+        voices.push({
+          freq: n.freq,
+          label: n.label,
+          cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+          sound: n.sound,
+          params: n.params ? { ...n.params } : undefined,
+        });
+      };
+      const collect = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) { s.subSteps.forEach(collect); return; }
+        if (Array.isArray(s.chord)) { s.chord.forEach(pushVoice); return; }
+        if (s.freq != null) pushVoice(s);
+      };
+      sequence.forEach(collect);
+      if (voices.length === 0) return false;
+      const first = sequence[0] || {};
+      const baseDur = first.duration || 1;
+      const baseSub = (first.subdivision != null) ? first.subdivision : stepSubdivision;
+      const collapsed = (voices.length === 1)
+        ? { ...voices[0], duration: baseDur, subdivision: baseSub }
+        : {
+            chord: voices,
+            label: voices.map(v => v.label).join('·'),
+            duration: baseDur,
+            subdivision: baseSub,
+          };
+      snapshotForUndo('Consolidate to chord');
+      stopSequence();
+      sequence = [collapsed];
+      pendingChord = [];
+      insertionPoint = null;
+      return true;
+    }
+
+    // Lock-mode helper: walk the workspace sequence and unmerge every
+    // chord and subsequence step into its constituent single-note (or
+    // rest) steps, preserving order. The resulting sequence is the
+    // canonical "flat" form used to round-trip between Spell ↔ Run ↔
+    // Stack — every grouped mode rebuilds its grouping from this flat
+    // list, so re-entering Run after a Spell pass regroups exactly
+    // the notes that had been grouped before.
+    function flattenSequenceForLock() {
+      if (!Array.isArray(sequence) || sequence.length === 0) return false;
+      // If a sequence is mid-playback when the user hops back to Spell
+      // (lockMode reshapes the workspace under the running scheduler),
+      // the recursion's pending setTimeout would advance into the new
+      // flat array out of phase — first note plays partially-released
+      // synths from the previous shape. Stop cleanly first so the next
+      // play gets a fresh _playBaseTime.
+      stopSequence();
+      const out = [];
+      const visit = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          s.subSteps.forEach(visit);
+          return;
+        }
+        if (Array.isArray(s.chord)) {
+          // Each voice becomes its own single-note step. Carry the
+          // chord's duration/subdivision through to every voice so
+          // re-consolidating to a chord reproduces the same length.
+          const dur = s.duration || 1;
+          const sub = (s.subdivision != null) ? s.subdivision : stepSubdivision;
+          s.chord.forEach(n => {
+            if (!n || n.freq == null) return;
+            out.push({
+              freq: n.freq,
+              label: n.label,
+              cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+              sound: n.sound,
+              params: n.params ? { ...n.params } : undefined,
+              duration: dur,
+              subdivision: sub,
+            });
+          });
+          return;
+        }
+        // Single note or rest — clone so later edits don't mutate.
+        out.push(cloneStep(s));
+      };
+      sequence.forEach(visit);
+      // No structural change if everything was already flat.
+      const wasAlreadyFlat = sequence.every(s => s && !s.isSub && !Array.isArray(s.chord));
+      if (wasAlreadyFlat && out.length === sequence.length) return false;
+      sequence = out;
+      pendingChord = [];
+      insertionPoint = null;
+      return true;
+    }
+
+    // Wrap the entire workspace sequence into a single subsequence step.
+    // Used when entering Run mode so the rest of the saved sequence
+    // becomes the "base subsequence" that subsequent cell clicks
+    // transpose, replay, and append.
+    function consolidateSequenceToSub() {
+      if (!Array.isArray(sequence) || sequence.length === 0) return false;
+      // Already a single sub — nothing to do.
+      if (sequence.length === 1 && sequence[0]?.isSub) return false;
+      const subSteps = sequence.map(cloneStep);
+      const collapsed = {
+        isSub: true,
+        subSteps,
+        label: '▤',
+        duration: 1,
+        subdivision: 1,
+      };
+      snapshotForUndo('Consolidate to subsequence');
+      stopSequence();
+      sequence = [collapsed];
+      pendingChord = [];
+      insertionPoint = null;
+      return true;
+    }
+
+    // First subsequence step in the workspace, or the first single/chord
+    // step if no sub exists yet (so the very first Run-mode tap can
+    // transpose-from something even without prior consolidation).
+    function runModeBaseStep() {
+      for (const s of sequence) {
+        if (s && s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0) return s;
+      }
+      for (const s of sequence) {
+        if (s && (s.freq != null || (Array.isArray(s.chord) && s.chord.length > 0))) return s;
+      }
+      return null;
+    }
+
+    // Deep-clone a step (or sub of steps) and shift every freq by `delta`
+    // semitones. Returns a fresh object so the source isn't mutated.
+    // cellIndex is dropped on transposed voices since they no longer
+    // correspond to the original grid cell.
+    function transposeStepRec(s, delta) {
+      if (!s) return s;
+      const factor = Math.pow(2, delta / 12);
+      if (s.isSub && Array.isArray(s.subSteps)) {
+        return {
+          ...s,
+          subSteps: s.subSteps.map(child => transposeStepRec(child, delta)),
+        };
+      }
+      if (Array.isArray(s.chord)) {
+        const newChord = s.chord.map(n => {
+          if (n.freq == null) return { ...n };
+          const f = n.freq * factor;
+          let label = n.label;
+          try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+          return {
+            ...n,
+            freq: f,
+            label,
+            cellIndex: null,
+            params: n.params ? { ...n.params } : undefined,
+          };
+        });
+        return {
+          ...s,
+          chord: newChord,
+          label: newChord.map(n => n.label).join('·'),
+          params: s.params ? { ...s.params } : undefined,
+        };
+      }
+      if (s.freq != null) {
+        const f = s.freq * factor;
+        let label = s.label;
+        try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+        return {
+          ...s,
+          freq: f,
+          label,
+          cellIndex: null,
+          params: s.params ? { ...s.params } : undefined,
+        };
+      }
+      return { ...s };
+    }
+
+    // Schedule a subsequence's subSteps starting at `baseTime` audio time.
+    // No transposition — the steps are assumed to already be tuned.
+    function playSubStepsAtTime(subSteps, baseTime) {
+      if (!Array.isArray(subSteps) || subSteps.length === 0) return;
+      const bpm = parseInt(tempoInput?.value, 10) || 120;
+      let offsetSec = 0;
+      const stepWaitMs = (s) => {
+        const dur = s.duration || 1;
+        const sub = (s.subdivision != null) ? s.subdivision : stepSubdivision;
+        return Math.round(60000 / bpm * sub) * dur;
+      };
+      const scheduleStep = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          s.subSteps.forEach(scheduleStep);
+          return;
+        }
+        const waitMs = stepWaitMs(s);
+        const at = baseTime + offsetSec;
+        if (Array.isArray(s.chord)) {
+          const size = s.chord.length;
+          s.chord.forEach(n => {
+            if (n.freq == null) return;
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), s.bend), waitMs, at);
+          });
+        } else if (s.freq != null) {
+          playNote(s.freq, paramsWithBend(s.params || s.sound || 'sine', s.bend), waitMs, at);
+        }
+        offsetSec += waitMs / 1000;
+      };
+      subSteps.forEach(scheduleStep);
+    }
+
+    // Click handler for Run mode: transpose the base subsequence to the
+    // clicked cell's pitch, append the new subsequence step, and play it.
+    function runModeOnCell(cellIdx) {
+      const note = notes[cellIdx];
+      if (!note) return;
+      const base = runModeBaseStep();
+      if (!base) {
+        // Empty workspace — seed with a single-step subsequence containing
+        // just the clicked note so the next tap has something to transpose.
+        const params = { ...cellParams[cellIdx] };
+        const seed = {
+          freq: note.freq,
+          label: note.label,
+          cellIndex: cellIdx,
+          sound: params.type,
+          params,
+          duration: 1,
+          subdivision: stepSubdivision,
+        };
+        snapshotForUndo('Seed run');
+        sequence.push({
+          isSub: true,
+          subSteps: [seed],
+          label: '▤',
+          duration: 1,
+          subdivision: 1,
+        });
+        renderSequence();
+        playNote(note.freq, params);
+        return;
+      }
+      const visit = (s) => {
+        if (!s) return null;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          for (const sub of s.subSteps) { const f = visit(sub); if (f != null) return f; }
+          return null;
+        }
+        if (Array.isArray(s.chord) && s.chord[0]?.freq != null) return s.chord[0].freq;
+        if (s.freq != null) return s.freq;
+        return null;
+      };
+      const baseFreq = visit(base);
+      if (baseFreq == null) return;
+      const delta = semitonesBetweenHz(baseFreq, note.freq);
+
+      let newStep;
+      if (base.isSub) {
+        newStep = transposeStepRec(base, delta);
+      } else {
+        // Promote the non-sub base into a one-step subsequence so the
+        // workspace ends up with consistent ▤ chips after the first tap.
+        const single = transposeStepRec(base, delta);
+        newStep = {
+          isSub: true,
+          subSteps: [single],
+          label: '▤',
+          duration: 1,
+          subdivision: 1,
+        };
+      }
+      snapshotForUndo('Add run');
+      sequence.push(newStep);
+      renderSequence();
+      playSubStepsAtTime(newStep.subSteps || [], Tone.now());
+    }
+
+    // Locate the chord-mode "base" — the first sequence step we can
+    // transpose from. Single-note steps return as a 1-voice chord.
+    function chordModeBaseStep() {
+      for (const s of sequence) {
+        if (!s) continue;
+        if (Array.isArray(s.chord) && s.chord.length > 0) return s;
+        if (s.freq != null) return s;
+      }
+      return null;
+    }
+
+    // Click handler for Chord mode: transpose the base chord to the
+    // clicked cell's root, append the new chord step to the sequence, and
+    // play it back with cell highlights for every voice's pitch class.
+    function chordModeOnCell(cellIdx) {
+      const note = notes[cellIdx];
+      if (!note) return;
+      const base = chordModeBaseStep();
+      if (!base) {
+        // Empty sequence — seed it with the clicked note as the first
+        // single-note step so subsequent clicks have something to
+        // transpose from.
+        const params = { ...cellParams[cellIdx] };
+        const seed = {
+          freq: note.freq,
+          label: note.label,
+          cellIndex: cellIdx,
+          sound: params.type,
+          params,
+          duration: 1,
+          subdivision: stepSubdivision,
+        };
+        snapshotForUndo('Seed chord');
+        sequence.push(seed);
+        renderSequence();
+        playNote(note.freq, params);
+        return;
+      }
+      const sourceVoices = Array.isArray(base.chord) ? base.chord : [{
+        freq: base.freq, label: base.label, cellIndex: base.cellIndex,
+        sound: base.sound, params: base.params,
+      }];
+      const baseFreq = sourceVoices[0].freq;
+      const delta = semitonesBetweenHz(baseFreq, note.freq);
+      const newVoices = sourceVoices.map(v => {
+        const f = transposeFreqHz(v.freq, delta);
+        let label = v.label;
+        try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+        return {
+          freq: f,
+          label,
+          cellIndex: null,
+          sound: v.sound,
+          params: v.params ? { ...v.params } : undefined,
+        };
+      });
+      const baseDur = base.duration || 1;
+      const baseSub = (base.subdivision != null) ? base.subdivision : stepSubdivision;
+      const newStep = (newVoices.length === 1)
+        ? { ...newVoices[0], duration: baseDur, subdivision: baseSub }
+        : {
+            chord: newVoices,
+            label: newVoices.map(v => v.label).join('·'),
+            duration: baseDur,
+            subdivision: baseSub,
+          };
+      snapshotForUndo('Add chord');
+      sequence.push(newStep);
+      renderSequence();
+
+      // Play the new chord + highlight matching cells.
+      const bpm = parseInt(tempoInput?.value, 10) || 120;
+      const sustainMs = Math.round(60000 / bpm * 4);
+      const at = Tone.now();
+      newVoices.forEach(v => {
+        playNote(
+          v.freq,
+          paramsWithBend(chordVoiceParams(v.params || v.sound || 'sine', newVoices.length), null),
+          sustainMs,
+          at
+        );
+      });
+      const pcs = new Set(newVoices.map(v => {
+        try { return ((Math.round(Tone.Frequency(v.freq).toMidi()) % 12) + 12) % 12; }
+        catch (e) { return -1; }
+      }));
+      clearHighlights();
+      cells.forEach((cell, idx) => {
+        const n = notes[idx];
+        if (!n) return;
+        try {
+          const pc = ((Math.round(Tone.Frequency(n.freq).toMidi()) % 12) + 12) % 12;
+          if (pcs.has(pc)) cell.classList.add('active-loop');
+        } catch (e) {}
+      });
+      setTimeout(() => clearHighlights(), sustainMs + 200);
+    }
+
+    // ---- Whole-sequence transpose (long-press menu helper) --------------
+    // Shifts every step's pitch by `semitones`, preserving rests and the
+    // structure of subsequences / chords. Snapshot for undo.
+    function transposeWholeSequence(semitones) {
+      if (!semitones || sequence.length === 0) return;
+      snapshotForUndo('Transpose');
+      stopSequence();
+      sequence.forEach(s => modulateStepRec(s, semitones));
+      renderSequence();
+    }
+    function showTransposeDialog(stepIndex) {
+      const baseFreq = firstSequenceFreqHz();
+      if (baseFreq == null) return;
+      let basePc;
+      try { basePc = ((Math.round(Tone.Frequency(baseFreq).toMidi()) % 12) + 12) % 12; }
+      catch (e) { basePc = 0; }
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Transpose</div>
+        <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.8rem;padding:0 0 12px;line-height:1.45;">
+          Pick the new root note. Every step's pitch shifts by the same interval — chords, subsequences, and rests are preserved.
+        </div>
+        <div class="sm-section-label" style="margin-top:0;">New root</div>
+        <div class="sm-waves" id="trans-roots"></div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="trans-cancel">Cancel</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      modal.querySelector('#trans-cancel').addEventListener('click', () => overlay.remove());
+      const row = modal.querySelector('#trans-roots');
+      CHROMATIC.forEach((name, pc) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sm-wave' + (pc === basePc ? ' active' : '');
+        b.textContent = name;
+        b.addEventListener('click', () => {
+          let delta = pc - basePc;
+          // Normalize into the smallest absolute interval (-6 to +5) so a
+          // tap on the next-door neighbour doesn't always shift by 11
+          // semitones in one direction.
+          if (delta > 6)  delta -= 12;
+          if (delta < -6) delta += 12;
+          if (delta !== 0) transposeWholeSequence(delta);
+          overlay.remove();
+        });
+        row.appendChild(b);
+      });
+    }
+
     // Cheap active-chip update for the playback hot path — toggling a class
     // on existing nodes instead of rebuilding the whole sequence-display
     // DOM. The full renderSequence runs only when the sequence structure
@@ -3991,8 +5293,15 @@
       }
     }
 
-    function playSequence(index = 0) {
-      if (index === 0) {
+    function playSequence(index = 0, freshStart = true) {
+      // freshStart=true re-anchors the timing base to Tone.now() (current
+      // audio time + lookAhead). That's right for the user pressing play
+      // — the lookAhead gives the audio thread head-room before the first
+      // note. But on a loop wrap-around we should NOT re-anchor: doing
+      // so would insert ~lookAhead ms of silence between the last step
+      // of one iteration and the first step of the next. Letting the
+      // accumulated _playOffsetSec carry over keeps the loop seamless.
+      if (index === 0 && freshStart) {
         document.getElementById('play-btn').textContent = '■';
         // Re-anchor the absolute-time cadence at every fresh start (and at
         // the loop wrap-around). Tone.now() already includes lookAhead, so
@@ -4137,25 +5446,49 @@
       renderSequence();
     });
 
-    document.getElementById('grid-cols-select').addEventListener('change', (e) => {
-      gridColumns = parseInt(e.target.value, 10) || 0;
-      // If step mode is on we need to top-up rests so the pattern fits the
-      // new column count.
+    // Grid dimension inputs (rows × cols). `change` fires on commit
+     // (Enter / blur), `input` fires per keystroke; we re-render on
+     // change so a partially-typed value doesn't reflow mid-typing.
+    function readGridDimsFromInputs() {
+      const rowsEl = document.getElementById('grid-rows-input');
+      const colsEl = document.getElementById('grid-cols-input');
+      if (rowsEl) {
+        const r = parseInt(rowsEl.value, 10);
+        gridRows = Number.isFinite(r) && r > 0 ? Math.min(32, r) : 1;
+        rowsEl.value = String(gridRows);
+      }
+      if (colsEl) {
+        const c = parseInt(colsEl.value, 10);
+        gridColumns = Number.isFinite(c) && c > 0 ? Math.min(64, c) : 1;
+        colsEl.value = String(gridColumns);
+      }
+    }
+    function applyGridDimsChange() {
+      readGridDimsFromInputs();
       if (stepMode) padToStepGrid();
       renderSequence();
-    });
+    }
+    document.getElementById('grid-rows-input')?.addEventListener('change', applyGridDimsChange);
+    document.getElementById('grid-cols-input')?.addEventListener('change', applyGridDimsChange);
+
+    // Step Mode toggle: Free (append-as-you-click) ↔ Fixed (step-sequencer
+     // grid). The single source of truth for the label/active state on the
+     // button is this helper — every state-change site below calls it
+     // instead of rewriting textContent + .active by hand.
+    function refreshStepModeBtn() {
+      const btn = document.getElementById('step-mode-btn');
+      if (!btn) return;
+      btn.textContent = stepMode ? 'Fixed' : 'Free';
+      btn.classList.toggle('active', stepMode);
+    }
+    refreshStepModeBtn();
 
     document.getElementById('step-mode-btn').addEventListener('click', () => {
       stepMode = !stepMode;
-      const btn = document.getElementById('step-mode-btn');
-      btn.classList.toggle('active', stepMode);
+      refreshStepModeBtn();
       if (stepMode) {
-        // Need a column count for step mode; default to 16 if Grid is Off.
-        if (gridColumns < 4) {
-          gridColumns = 16;
-          const sel = document.getElementById('grid-cols-select');
-          if (sel) sel.value = '16';
-        }
+        // Grid is always rows × cols now (no "Off"), so the column
+        // count is guaranteed valid. Just pad/trim to fit.
         padToStepGrid();
       } else {
         clearStepModeArm();
@@ -4187,6 +5520,7 @@
       noteLength = 1;
       stepSubdivision = 0.5;
       gridColumns = 8;
+      gridRows = 1;
       rootIdx = 0;
       baseOctave = 4;
       octaveCount = 1;
@@ -4210,7 +5544,10 @@
       document.querySelector('.btn-group--step')?.classList.remove('chord-active');
       document.getElementById('loop-btn').classList.remove('active');
       document.getElementById('subdivision-select').value = '0.5';
-      document.getElementById('grid-cols-select').value = '8';
+      const colsEl0 = document.getElementById('grid-cols-input');
+      const rowsEl0 = document.getElementById('grid-rows-input');
+      if (colsEl0) colsEl0.value = '8';
+      if (rowsEl0) rowsEl0.value = '1';
       document.getElementById('save-btn').disabled = true;
       refreshHoldEnabled();
 
@@ -4553,13 +5890,9 @@
         <div class="sm-waves" id="seed-songs"></div>
         <div class="sm-section-label">Text to sequence</div>
         <input type="text" id="seed-text" placeholder="Type here to seed from text…" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;" />
-        <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.7rem;padding-top:4px;line-height:1.5;">
-          Letters → scale tones from the current voice. Vowels and uppercase are held longer. Runs of 2+ consonants become chords. Spaces &amp; punctuation are rests when "Include rests" is on.
+        <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.7rem;padding:4px 0 8px;line-height:1.5;">
+          Letters → scale tones from the current voice. Vowels and uppercase are held longer. Runs of 2+ consonants become chords. Spaces &amp; punctuation become rests.
         </div>
-        <label style="display:flex;align-items:center;gap:8px;padding:8px 0 4px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
-          <input type="checkbox" id="seed-rests" />
-          Include rests
-        </label>
         <div class="sm-footer">
           <button type="button" class="sm-preview" id="seed-cancel">Cancel</button>
           <button type="button" class="sm-apply" id="seed-generate">Seed from text</button>
@@ -4597,11 +5930,14 @@
       modal.querySelector('#seed-generate').addEventListener('click', () => {
         const text = modal.querySelector('#seed-text').value.trim();
         if (!text) { overlay.remove(); return; }
-        const includeRests = !!modal.querySelector('#seed-rests').checked;
         const tones = tonesUsedInVoice();
         snapshotForUndo('Text → sequence');
         stopSequence();
-        sequence = generateTextSequence(text, currentScale, tones, includeRests, octaveCount);
+        // Punctuation / spaces become rests by default — the prior dialog
+        // exposed this as an opt-in checkbox, but the typical expectation
+        // of "text to sequence" is that whitespace is silence, so rests
+        // are now always on.
+        sequence = generateTextSequence(text, currentScale, tones, true, octaveCount);
         pendingChord = [];
         insertionPoint = null;
         renderSequence();
@@ -4726,7 +6062,7 @@
 
     document.getElementById('subedit-cancel').addEventListener('click', cancelSubEdit);
 
-    function flashSaveConfirm(label = 'Saved ✓') {
+    function flashSaveConfirm(label = 'Saved') {
       const btn = document.getElementById('save-btn');
       const original = btn.textContent;
       btn.textContent = label;
@@ -4878,6 +6214,61 @@
       btn.classList.add('recording');
       btn.textContent = '■ Stop';
     }
+
+    // Cross-view bridge: the Player's long-press menu calls into Bloops
+    // to copy a Drive audio track into the sequencer bank as an audio
+    // chip and onto a fresh stereo track. Returns the chip's saved entry
+    // so the caller can read its name back into a confirmation toast.
+    async function importAudioBlobToBloops(blob, suggestedName) {
+      if (!blob) throw new Error('No audio blob provided');
+      // Decode just enough to read duration. Use the live Tone context
+      // so the decode runs on the same AudioContext the rest of Bloops
+      // uses (avoids creating an orphan context on iOS).
+      let durationSec = 0;
+      try {
+        const ab = await blob.arrayBuffer();
+        const ctx = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+          ? Tone.context.rawContext
+          : (window.AudioContext ? new AudioContext() : null);
+        if (ctx) {
+          const decoded = await new Promise((resolve, reject) => {
+            const p = ctx.decodeAudioData(ab.slice(0), resolve, reject);
+            if (p && typeof p.then === 'function') p.then(resolve, reject);
+          });
+          durationSec = decoded?.duration || 0;
+        }
+      } catch (e) {
+        console.warn('Could not decode imported audio for duration:', e);
+      }
+      const dataUrl = await blobToDataUrl(blob);
+      const name = (suggestedName && suggestedName.trim()) || seqName(savedSequences.length);
+      const entry = {
+        name,
+        type: 'audio',
+        audioDataUrl: dataUrl,
+        durationSec,
+        bpm: parseInt(tempoInput.value) || 120,
+        subdivision: stepSubdivision,
+        steps: [],
+      };
+      savedSequences.push(entry);
+      try {
+        persistSaved();
+      } catch (e) {
+        savedSequences.pop();
+        throw new Error('Audio is too large to save in browser storage. Delete some sequences and try again.');
+      }
+      renderSavedSequences();
+      // Stereo track — Player audio is downloaded from Drive in its
+      // original stereo file format, so a mono track would collapse the
+      // image unnecessarily.
+      const trackIdx = addTrack({ stereo: true });
+      addSavedToTrack(trackIdx, entry);
+      return entry;
+    }
+    // Bridge for the Player's playlist long-press menu, defined on
+    // window so playlist-manager.js (a separate module) can reach it.
+    window.bloopsImportAudio = importAudioBlobToBloops;
 
     function saveRecordingToLibrary(dataUrl, durationSec) {
       const name = seqName(savedSequences.length);
@@ -5035,6 +6426,7 @@
     document.getElementById('loop-btn').addEventListener('click', () => {
       loopMode = !loopMode;
       document.getElementById('loop-btn').classList.toggle('active', loopMode);
+      persistWorkspace();
     });
 
     document.getElementById('chord-btn').addEventListener('click', () => {
@@ -5123,6 +6515,7 @@
       t.timer = null;
       if (!t.eq) t.eq = { low: 0, mid: 0, high: 0 };
       if (!Number.isFinite(t.pan)) t.pan = 0;
+      if (t.stereo === undefined) t.stereo = true;
     });
     let trackIdCounter = Math.max(0, ...tracks.map(t => t.id || 0)) + 1;
 
@@ -5131,6 +6524,7 @@
         id: t.id, name: t.name, items: t.items, loopMode: !!t.loopMode, solo: !!t.solo,
         eq: t.eq || { low: 0, mid: 0, high: 0 },
         pan: Number.isFinite(t.pan) ? t.pan : 0,
+        stereo: t.stereo !== false,
       }));
       localStorage.setItem('sounds-tracks', JSON.stringify(serial));
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -5151,6 +6545,22 @@
       if (s.subSteps) copy.subSteps = s.subSteps.map(cloneStep);
       if (s.bend) copy.bend = { ...s.bend };
       return copy;
+    }
+
+    // Duplicate the step at stepIndex by inserting a deep clone right
+    // after it. Snapshots for undo, slides insertionPoint right when
+    // it would otherwise land between original and copy, and re-renders.
+    function duplicateStep(stepIndex) {
+      if (!Array.isArray(sequence) || stepIndex < 0 || stepIndex >= sequence.length) return;
+      const original = sequence[stepIndex];
+      if (!original) return;
+      snapshotForUndo('Duplicate step');
+      const copy = cloneStep(original);
+      sequence.splice(stepIndex + 1, 0, copy);
+      if (insertionPoint !== null && insertionPoint > stepIndex) insertionPoint++;
+      renderSequence();
+      const saveBtn = document.getElementById('save-btn');
+      if (saveBtn) saveBtn.disabled = sequence.length === 0;
     }
 
     // When a saved sequence is overwritten via Save, sync the new contents into
@@ -5178,7 +6588,31 @@
       }
     }
 
-    function addTrack() {
+    // Decode a saved audio chip's data URL just far enough to read its
+    // channel count. Used to auto-pick mono vs stereo for tracks created
+    // from a chip's long-press menu. Returns 2 on failure so we err on
+    // the side of stereo.
+    async function detectAudioChannelCount(dataUrl) {
+      try {
+        if (!dataUrl) return 2;
+        const blob = dataUrlToBlob(dataUrl);
+        if (!blob) return 2;
+        const buf = await blob.arrayBuffer();
+        const ctx = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+          ? Tone.context.rawContext
+          : (window.AudioContext ? new AudioContext() : null);
+        if (!ctx) return 2;
+        const decoded = await new Promise((resolve, reject) => {
+          const p = ctx.decodeAudioData(buf, resolve, reject);
+          if (p && typeof p.then === 'function') p.then(resolve, reject);
+        });
+        return decoded?.numberOfChannels || 2;
+      } catch (e) {
+        return 2;
+      }
+    }
+
+    function addTrack(opts) {
       tracks.push({
         id: trackIdCounter++,
         name: `${tracks.length + 1}`,
@@ -5190,9 +6624,14 @@
         timer: null,
         eq: { low: 0, mid: 0, high: 0 },
         pan: 0,
+        // True = stereo bus (default). False = mono — output is summed
+        // through Tone.Mono so L+R collapse, useful when the source audio
+        // is mono or the user wants a mono image.
+        stereo: opts && opts.stereo === false ? false : true,
       });
       persistTracks();
       renderTracks();
+      return tracks.length - 1;
     }
 
     function removeTrack(trackIdx) {
@@ -5215,6 +6654,10 @@
         try { track._panner.dispose(); } catch (e) {}
         track._panner = null;
       }
+      if (track && track._mono) {
+        try { track._mono.dispose(); } catch (e) {}
+        track._mono = null;
+      }
       if (track && track._samplers) {
         track._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
         track._samplers = null;
@@ -5233,6 +6676,24 @@
 
     function toggleTrackLoop(trackIdx) {
       tracks[trackIdx].loopMode = !tracks[trackIdx].loopMode;
+      persistTracks();
+      renderTracks();
+    }
+
+    function toggleTrackStereo(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track) return;
+      track.stereo = track.stereo === false ? true : false;
+      // Tear down the bus chain so getTrackBus rebuilds it with/without
+      // the Tone.Mono node on next playback.
+      if (track._bus)    { try { track._bus.dispose(); }    catch (e) {} track._bus = null; }
+      if (track._panner) { try { track._panner.dispose(); } catch (e) {} track._panner = null; }
+      if (track._mono)   { try { track._mono.dispose(); }   catch (e) {} track._mono = null; }
+      // Per-track samplers are bound to the old bus — drop them too.
+      if (track._samplers) {
+        track._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
+        track._samplers = null;
+      }
       persistTracks();
       renderTracks();
     }
@@ -5380,12 +6841,22 @@
       if (!track._bus) {
         const eq  = track.eq || { low: 0, mid: 0, high: 0 };
         const pan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
+        // Chain order: EQ → [Mono] → Panner → master. The Mono node sums L+R
+        // before the panner so the source's stereo image collapses, then the
+        // panner places the mono'd signal in the field. Going Panner → Mono
+        // would clobber hard pans (one channel would be silent before the
+        // sum). Skip Mono entirely on stereo tracks to avoid an idle pass.
         track._panner = new Tone.Panner(pan).connect(masterBus);
+        if (track.stereo === false) {
+          track._mono = new Tone.Mono().connect(track._panner);
+        } else {
+          track._mono = null;
+        }
         track._bus = new Tone.EQ3({
           low:  eq.low  || 0,
           mid:  eq.mid  || 0,
           high: eq.high || 0,
-        }).connect(track._panner);
+        }).connect(track._mono || track._panner);
       }
       return track._bus;
     }
@@ -5861,9 +7332,15 @@
             : 'Record from mic into this track. Other tracks play as monitoring while recording.';
         const controls = document.createElement('div');
         controls.className = 'track-controls';
+        const isMono = track.stereo === false;
+        const stereoLabel = isMono ? 'M' : 'S';
+        const stereoTitle = isMono
+          ? 'Mono track — output summed to mono. Click to switch to stereo.'
+          : 'Stereo track. Click to switch to mono.';
         controls.innerHTML = `
           <span class="track-name${track.solo ? ' soloed' : ''}" title="Click to solo, double-click to rename">${track.name}</span>
           <button class="track-rec${recCls}" type="button" title="${recTitle}">${recIcon}</button>
+          <button class="track-stereo${isMono ? ' mono' : ''}" type="button" title="${stereoTitle}">${stereoLabel}</button>
           <button class="track-eq${mixOn ? ' active' : ''}" type="button" title="Mix — EQ + Pan">Mix</button>
           <button class="track-clear" type="button" title="Empty this track (keep the track, drop all of its items)">Clear</button>
           <button class="track-remove" title="Remove track">×</button>
@@ -5872,6 +7349,7 @@
         // out) and the dblclick handler below opens the rename dialog.
         controls.querySelector('.track-name').addEventListener('click', () => toggleTrackSolo(trackIdx));
         controls.querySelector('.track-rec').addEventListener('click', () => toggleTrackRecording(trackIdx));
+        controls.querySelector('.track-stereo').addEventListener('click', () => toggleTrackStereo(trackIdx));
         controls.querySelector('.track-eq').addEventListener('click', () => showTrackEqDialog(trackIdx));
         controls.querySelector('.track-clear').addEventListener('click', () => {
           if ((track.items || []).length === 0) return;
@@ -6268,9 +7746,9 @@
 
     // Combined scopes — drive.file lets Bloops create + read its own
     // project / asset files; drive.readonly + documents.readonly let
-    // Serialbox read user-uploaded music folders, the "Serialbox Playlists"
-    // file, and the optional "Artist name" Google Doc. One sign-in covers
-    // both views.
+    // Serialbox read user-uploaded music folders, the bloops/playlists
+    // file, and the optional "Artist name" Google Doc. One sign-in
+    // covers both views.
     const BLOOPS_OAUTH_SCOPE = [
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/drive.readonly',
@@ -6298,12 +7776,19 @@
         googleTokenClient = google.accounts.oauth2.initTokenClient({
           client_id: window.APP_CONFIG.clientId,
           scope: BLOOPS_OAUTH_SCOPE,
-          callback: (resp) => {
+          callback: async (resp) => {
             if (resp.error) return reject(new Error(resp.error));
             googleAccessToken = resp.access_token;
             gapi.client.setToken({ access_token: googleAccessToken });
-            // Notify Serialbox so its UI flips to "signed in" mode without
-            // needing its own OAuth round-trip.
+            // Run the structure init BEFORE dispatching authStatusChanged.
+            // Otherwise the Player's listener races us — it would call
+            // fetchPlaylistOptions("bloops/playlists") while the confirm
+            // dialog is still showing and bail with "Folder bloops not
+            // found" before we've had a chance to create anything.
+            // Failures are non-fatal: the listener still fires and the
+            // user gets a "File not found" message they can recover from.
+            try { await ensureBloopsStructure(); }
+            catch (e) { console.warn('Bloops init failed:', e); }
             try { document.dispatchEvent(new CustomEvent('authStatusChanged', { detail: { isSignedIn: true } })); } catch (e) {}
             resolve(googleAccessToken);
           },
@@ -6321,17 +7806,202 @@
       isSignedIn: () => !!googleAccessToken,
     };
 
-    async function findOrCreateDriveFolder(name) {
-      const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-      const list = await gapi.client.drive.files.list({
-        q, fields: 'files(id, name)', spaces: 'drive',
+    // ---- Sign-in gate ----------------------------------------------------
+    // Both Bloops and the embedded Player need a Drive token, so the whole
+    // page is hidden behind a Google sign-in until one is acquired. The
+    // gate shows immediately on load (token isn't persisted across reloads),
+    // and lifts once authStatusChanged fires with isSignedIn=true.
+    (function initSigninGate() {
+      const gate = document.getElementById('signin-gate');
+      const btn  = document.getElementById('signin-btn');
+      if (!gate || !btn) return;
+      const showGate = () => document.body.classList.add('signin-required');
+      const hideGate = () => document.body.classList.remove('signin-required');
+
+      // ---- DEV BYPASS — flip back to false to re-enable the gate. ----
+      // Lets the UI render without signing in so layout work doesn't
+      // require an OAuth round-trip every reload.
+      const DEV_BYPASS_SIGNIN = true;
+      if (DEV_BYPASS_SIGNIN) {
+        hideGate();
+        return;
+      }
+
+      // Title reflects which view the user is signing in for, so the
+      // index.html Player link lands on a "Listen" sign-in screen
+      // instead of the generic "Bloops" one.
+      const titleEl = document.getElementById('signin-gate-title');
+      if (titleEl) {
+        titleEl.textContent = document.body.classList.contains('view-serialbox')
+          ? 'Listen' : 'Bloops';
+      }
+      // The body ships with .signin-required so the gate is the first
+      // paint — no flash of the Bloops UI before JS runs. If we somehow
+      // boot up already authed (e.g. the GIS library refreshed silently),
+      // peel the class off right away.
+      if (window.bloopsAuth.isSignedIn()) hideGate();
+      else showGate();
+      btn.addEventListener('click', async () => {
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Signing in…';
+        try {
+          await window.bloopsAuth.signIn();
+          // Belt-and-braces — the authStatusChanged listener below also
+          // hides the gate on success, but lifting here makes the
+          // transition feel immediate.
+          hideGate();
+        } catch (e) {
+          console.error('Sign-in failed:', e);
+          alert(`Sign-in failed: ${e?.message || e}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
       });
-      if (list.result.files && list.result.files.length > 0) return list.result.files[0].id;
-      const create = await gapi.client.drive.files.create({
-        resource: { name, mimeType: 'application/vnd.google-apps.folder' },
-        fields: 'id',
+      document.addEventListener('authStatusChanged', (e) => {
+        if (e?.detail?.isSignedIn) hideGate();
       });
-      return create.result.id;
+    })();
+
+    // Walks a "/"-separated folder path and returns the leaf folder ID,
+    // creating any missing segments under My Drive root. Each segment is
+    // matched against children of the previous segment (or 'root' for
+    // the first), so two `bloops/effects` paths in different parents
+    // never collide.
+    async function findOrCreateDriveFolder(path) {
+      const segments = String(path).split('/').map(s => s.trim()).filter(Boolean);
+      if (segments.length === 0) throw new Error('Folder path required');
+      let parentId = 'root';
+      for (const name of segments) {
+        const safe = name.replace(/'/g, "\\'");
+        const q = `name='${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`;
+        const list = await gapi.client.drive.files.list({
+          q, fields: 'files(id, name)', spaces: 'drive',
+        });
+        if (list.result.files && list.result.files.length > 0) {
+          parentId = list.result.files[0].id;
+        } else {
+          const create = await gapi.client.drive.files.create({
+            resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+            fields: 'id',
+          });
+          parentId = create.result.id;
+        }
+      }
+      return parentId;
+    }
+
+    // Find-only path walk — returns the leaf folder ID or null if any
+    // segment along the path is missing. Used by the init step to detect
+    // which pieces of the bloops/* structure don't yet exist.
+    async function findDriveFolderByPath(path) {
+      const segments = String(path).split('/').map(s => s.trim()).filter(Boolean);
+      if (segments.length === 0) return null;
+      let parentId = 'root';
+      for (const name of segments) {
+        const safe = name.replace(/'/g, "\\'");
+        const q = `name='${safe}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`;
+        const list = await gapi.client.drive.files.list({ q, fields: 'files(id, name)', spaces: 'drive' });
+        if (!list.result.files || list.result.files.length === 0) return null;
+        parentId = list.result.files[0].id;
+      }
+      return parentId;
+    }
+
+    // Look up a single file by name inside a specific parent folder.
+    async function findFileInFolder(name, parentId) {
+      const safe = String(name).replace(/'/g, "\\'");
+      const q = `name='${safe}' and trashed=false and '${parentId}' in parents and mimeType != 'application/vnd.google-apps.folder'`;
+      const list = await gapi.client.drive.files.list({ q, fields: 'files(id, name, mimeType)' });
+      return (list.result.files && list.result.files[0]) || null;
+    }
+
+    // Multipart upload that creates a Google Doc from text content. Drive
+    // does the text/plain → application/vnd.google-apps.document
+    // conversion server-side when the source body is text/plain and the
+    // destination metadata mime is the Google Doc type. Used for the
+    // bloops/playlists seed so the user can edit the file in Google Docs
+    // directly without an extra "open with" step.
+    async function uploadGoogleDocToDrive(name, content, parentId) {
+      const boundary = 'bloops_init_' + Math.random().toString(36).slice(2);
+      const metadata = {
+        name,
+        parents: [parentId],
+        mimeType: 'application/vnd.google-apps.document',
+      };
+      const body =
+        `--${boundary}\r\n` +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) + '\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Type: text/plain; charset=UTF-8\r\n\r\n' +
+        content + '\r\n' +
+        `--${boundary}--`;
+      const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${googleAccessToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+        },
+        body,
+      });
+      if (!resp.ok) throw new Error(`Upload failed: ${resp.status} ${resp.statusText}`);
+      return await resp.json();
+    }
+
+    // Init step: ensure the bloops/* folder layout (and the seed
+    // playlists file) exists in Drive. Anything missing is listed in a
+    // single confirmation dialog so the user opts in once for the whole
+    // batch — no per-folder prompts.
+    let _bloopsStructureEnsured = false;
+    async function ensureBloopsStructure() {
+      if (_bloopsStructureEnsured) return;
+      const required = [
+        { kind: 'folder', path: 'bloops' },
+        { kind: 'folder', path: 'bloops/effects' },
+        { kind: 'folder', path: 'bloops/projects' },
+        { kind: 'folder', path: 'bloops/exports' },
+        { kind: 'file',   parentPath: 'bloops', name: 'playlists', content: 'bloops/exports' },
+      ];
+      const missing = [];
+      for (const item of required) {
+        if (item.kind === 'folder') {
+          const id = await findDriveFolderByPath(item.path);
+          if (!id) missing.push(item);
+        } else {
+          const parentId = await findDriveFolderByPath(item.parentPath);
+          if (!parentId) { missing.push(item); continue; }
+          const found = await findFileInFolder(item.name, parentId);
+          if (!found) missing.push(item);
+        }
+      }
+      if (missing.length === 0) {
+        _bloopsStructureEnsured = true;
+        return;
+      }
+      const lines = missing.map(m =>
+        m.kind === 'folder'
+          ? `  • ${m.path}  (folder)`
+          : `  • ${m.parentPath}/${m.name}  (file)`
+      ).join('\n');
+      const ok = confirm(
+        `Bloops needs to set up the following in your Google Drive:\n\n` +
+        `${lines}\n\n` +
+        `Create them now?`
+      );
+      if (!ok) return;
+      // Create folders first so files can be placed inside.
+      for (const item of missing) {
+        if (item.kind === 'folder') await findOrCreateDriveFolder(item.path);
+      }
+      for (const item of missing) {
+        if (item.kind === 'file') {
+          const parentId = await findOrCreateDriveFolder(item.parentPath);
+          await uploadGoogleDocToDrive(item.name, item.content, parentId);
+        }
+      }
+      _bloopsStructureEnsured = true;
     }
 
     async function uploadJsonToDrive(name, jsonString, folderId, existingFileId) {
@@ -6512,7 +8182,7 @@
       const defaultName = `sounds-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
       const filename = prompt('File name for the export (no extension):', defaultName);
       if (!filename) return;
-      const folderName = prompt('Google Drive folder to save in:', 'Bloops exports');
+      const folderName = prompt('Google Drive folder to save in:', 'bloops/exports');
       if (!folderName) return;
 
       const origText = btn.textContent;
@@ -6597,6 +8267,17 @@
     // is named — voice flows then prompt the user for a project name first.
     let currentProjectName = null;
 
+    // Reflects the active project name in the menubar label next to the
+    // Project menu trigger. Empty when no project has been named, so the
+    // CSS :empty rule keeps the gap from showing.
+    function refreshProjectNameLabel() {
+      const el = document.getElementById('project-name-label');
+      if (!el) return;
+      const name = (currentProjectName && currentProjectName.trim()) || '';
+      el.textContent = name;
+      el.title = name ? `Active project: ${name}` : 'No project loaded';
+    }
+
     // ---- Workspace persistence (survives reloads) ----
     // Debounced snapshot to localStorage so an in-progress project — sequence,
     // grid setup, palette, tempo, modes, project name — comes back on
@@ -6646,6 +8327,7 @@
           noteLength,
           stepSubdivision,
           gridColumns,
+          gridRows,
           chordMode: !!chordMode,
           loopMode:  !!loopMode,
           stepMode:  !!stepMode,
@@ -6673,6 +8355,7 @@
           solo: !!t.solo,
           eq: t.eq || { low: 0, mid: 0, high: 0 },
           pan: Number.isFinite(t.pan) ? t.pan : 0,
+          stereo: t.stereo !== false,
         })),
         globalFx: { ...globalFx },
         savedGridStates: JSON.parse(JSON.stringify(savedGridStates || [])),
@@ -6701,7 +8384,7 @@
         await googleSignInForDrive();
 
         setBtn('Checking…');
-        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const folderId = await findOrCreateDriveFolder('bloops/projects');
         const existing = await listProjectsInDrive(folderId);
         // Drive permits multiple files with the same name in one folder, so
         // a strict-match scan is the only way to detect a name collision.
@@ -6713,7 +8396,7 @@
           // again would just be friction. Any other name match still asks.
           const isReSavingLoaded = currentProjectName && projectName.trim() === currentProjectName.trim();
           if (!isReSavingLoaded) {
-            const ok = confirm(`A project named "${projectName.trim()}" already exists in "Bloops Projects".\n\nOverwrite it?`);
+            const ok = confirm(`A project named "${projectName.trim()}" already exists in "bloops/projects".\n\nOverwrite it?`);
             if (!ok) {
               setBtn(origText);
               if (btn) btn.disabled = false;
@@ -6809,11 +8492,12 @@
         const file = await uploadJsonToDrive(filename, jsonString, folderId, existingFileId);
 
         currentProjectName = projectName.trim();
+        refreshProjectNameLabel();
         setBtn(existingFileId ? 'Overwritten' : 'Saved');
         const assetSummary = (savedAudioCount + trackAudioRefs.length + sampleIds.length) > 0
           ? `\n\nAudio + samples were saved into "${assetFolderName}".`
           : '';
-        alert(`${existingFileId ? 'Overwrote' : 'Saved'} "${file.name || filename}" in Drive folder "Bloops Projects".${assetSummary}`);
+        alert(`${existingFileId ? 'Overwrote' : 'Saved'} "${file.name || filename}" in Drive folder "bloops/projects".${assetSummary}`);
         saved = true;
       } catch (e) {
         console.error(e);
@@ -6850,6 +8534,7 @@
         }
         if (t._bus)    { try { t._bus.dispose(); }    catch (e) {} t._bus = null; }
         if (t._panner) { try { t._panner.dispose(); } catch (e) {} t._panner = null; }
+        if (t._mono)   { try { t._mono.dispose(); }   catch (e) {} t._mono = null; }
         if (t._samplers) {
           t._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
           t._samplers = null;
@@ -6866,6 +8551,7 @@
       noteLength = 1;
       stepSubdivision = 0.5;
       gridColumns = 8;
+      gridRows = 1;
       chordMode = false;
       loopMode = false;
       stepMode = false;
@@ -6878,8 +8564,10 @@
       document.getElementById('loop-btn')?.classList.remove('active');
       const noteSel  = document.getElementById('note-length');        if (noteSel)  noteSel.value  = '1';
       const subSel   = document.getElementById('subdivision-select'); if (subSel)   subSel.value   = '0.5';
-      const gridSel  = document.getElementById('grid-cols-select');   if (gridSel)  gridSel.value  = '8';
-      document.getElementById('step-mode-btn')?.classList.remove('active');
+      const colsEl1 = document.getElementById('grid-cols-input'); if (colsEl1) colsEl1.value = '8';
+      const rowsEl1 = document.getElementById('grid-rows-input'); if (rowsEl1) rowsEl1.value = '1';
+      if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
+      else document.getElementById('step-mode-btn')?.classList.remove('active');
       const multiCb  = document.getElementById('multi-select-toggle');if (multiCb)  multiCb.checked = false;
       refreshHoldEnabled();
 
@@ -6919,6 +8607,7 @@
       });
 
       currentProjectName = null;
+      refreshProjectNameLabel();
 
       renderSequence();
       renderSavedSequences();
@@ -7107,7 +8796,7 @@
         await googleSignInForDrive();
 
         btn.textContent = 'Checking…';
-        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const folderId = await findOrCreateDriveFolder('bloops/projects');
         const existing = await listProjectsInDrive(folderId);
         const match = existing.find(f => f.name === filename);
         let existingFileId = null;
@@ -7134,7 +8823,7 @@
     }
     document.getElementById('grid-save-voice-btn').addEventListener('click', saveVoiceToDrive);
 
-    // ---- FX preset save / load (Drive folder "Bloops effects") ----------
+    // ---- FX preset save / load (Drive folder "bloops/effects") ----------
     function buildEffectsSnapshot(name) {
       return {
         type: 'effects',
@@ -7179,7 +8868,7 @@
         await googleSignInForDrive();
 
         btn.textContent = 'Checking…';
-        const folderId = await findOrCreateDriveFolder('Bloops effects');
+        const folderId = await findOrCreateDriveFolder('bloops/effects');
         const existing = await listEffectsInDrive(folderId);
         const match = existing.find(f => f.name === filename);
         let existingFileId = null;
@@ -7212,7 +8901,7 @@
         btn.textContent = 'Signing in…';
         await googleSignInForDrive();
         btn.textContent = 'Listing…';
-        const folderId = await findOrCreateDriveFolder('Bloops effects');
+        const folderId = await findOrCreateDriveFolder('bloops/effects');
         const files = await listEffectsInDrive(folderId);
         btn.textContent = origText;
         btn.disabled = false;
@@ -7361,6 +9050,7 @@
       noteLength      = w.noteLength      ?? 1;
       stepSubdivision = w.stepSubdivision ?? 0.5;
       gridColumns     = w.gridColumns     ?? 8;
+      gridRows        = w.gridRows        ?? 1;
       chordMode       = !!w.chordMode;
       loopMode        = !!w.loopMode;
       stepMode        = !!w.stepMode;
@@ -7378,10 +9068,13 @@
       if (noteSel)  noteSel.value  = String(noteLength);
       const subSel2  = document.getElementById('subdivision-select');
       if (subSel2)  subSel2.value  = String(stepSubdivision);
-      const gridSel = document.getElementById('grid-cols-select');
-      if (gridSel)  gridSel.value  = String(gridColumns || 0);
+      const colsEl2 = document.getElementById('grid-cols-input');
+      if (colsEl2) colsEl2.value = String(gridColumns);
+      const rowsEl2 = document.getElementById('grid-rows-input');
+      if (rowsEl2) rowsEl2.value = String(gridRows);
       const stepBtn = document.getElementById('step-mode-btn');
-      if (stepBtn)  stepBtn.classList.toggle('active', stepMode);
+      if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
+      else if (stepBtn) stepBtn.classList.toggle('active', stepMode);
       const multiCb = document.getElementById('multi-select-toggle');
       if (multiCb)  multiCb.checked = multiSelectMode;
       refreshHoldEnabled();
@@ -7406,6 +9099,7 @@
         }
         if (t._bus)    { try { t._bus.dispose(); }    catch (e) {} t._bus = null; }
         if (t._panner) { try { t._panner.dispose(); } catch (e) {} t._panner = null; }
+        if (t._mono)   { try { t._mono.dispose(); }   catch (e) {} t._mono = null; }
         if (t._samplers) {
           t._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
           t._samplers = null;
@@ -7420,6 +9114,7 @@
         solo: !!t.solo,
         eq: t.eq && typeof t.eq === 'object' ? t.eq : { low: 0, mid: 0, high: 0 },
         pan: Number.isFinite(t.pan) ? t.pan : 0,
+        stereo: t.stereo !== false,
         playing: false,
         currentItemIdx: null,
         timer: null,
@@ -7509,7 +9204,7 @@
         try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
       };
       const rows = files.length === 0
-        ? `<div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.85rem;padding:12px 0;text-align:center;">No projects found in "Bloops Projects".</div>`
+        ? `<div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.85rem;padding:12px 0;text-align:center;">No projects found in "bloops/projects".</div>`
         : files.map((f, i) => `
           <button type="button" class="picker-row" data-idx="${i}" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;padding:10px 12px;border:1px solid #2d2d3f;border-radius:8px;background:transparent;color:#e2e8f0;font-family:'Segoe UI',sans-serif;cursor:pointer;transition:all 0.15s ease;">
             <span style="font-size:0.85rem;font-weight:600;">${f.name.replace(/\.json$/i, '')}</span>
@@ -7549,7 +9244,7 @@
         await googleSignInForDrive();
 
         setBtn('Listing…');
-        const folderId = await findOrCreateDriveFolder('Bloops Projects');
+        const folderId = await findOrCreateDriveFolder('bloops/projects');
         const files = await listProjectsInDrive(folderId);
         // Voice files share the same folder; surface them under Voices, not Projects.
         const projects = files.filter(f => !/\.voice\..+\.json$/i.test(f.name));
@@ -7565,6 +9260,7 @@
             const snap = await fetchProjectJson(file.id);
             await applyProjectSnapshot(snap);
             currentProjectName = (file.name || '').replace(/\.json$/i, '') || null;
+            refreshProjectNameLabel();
             setBtn('Loaded');
           } catch (e) {
             console.error(e);
@@ -7604,6 +9300,7 @@
           if (snap && typeof snap === 'object') {
             await applyProjectSnapshot(snap);
             if (snap.currentProjectName) currentProjectName = snap.currentProjectName;
+            refreshProjectNameLabel();
           }
         }
       } catch (e) {
@@ -7613,47 +9310,28 @@
       }
     })();
 
-    // ---- WIP banner cycle -------------------------------------------------
-    // Page lands on the WIP disclaimer for the first 10s, then swaps to the
-    // current project name for 60s, then back to the disclaimer for 10s,
-    // alternating forever. Project name reads currentProjectName at swap
-    // time so a save / load mid-cycle is reflected on the next flip.
-    (function cycleInfoBanner() {
-      const banner = document.getElementById('info-banner');
-      if (!banner) return;
-      const WIP_TEXT = 'Bloops is a work in progress!';
-      const projectText = () => (currentProjectName && currentProjectName.trim()) || 'Untitled project';
-      const showProject = () => {
-        banner.textContent = projectText();
-        setTimeout(showWip, 60000);
-      };
-      const showWip = () => {
-        banner.textContent = WIP_TEXT;
-        setTimeout(showProject, 10000);
-      };
-      // Banner already starts on the WIP text in HTML, so just kick off the
-      // first swap to project name in 10s.
-      setTimeout(showProject, 10000);
-    })();
-
     // ---- Top-bar view switching (Bloops ↔ Player) ------------------------
     (function initTopBarTabs() {
       const bloopsTab = document.getElementById('bloops-tab');
       const sbTab     = document.getElementById('serialbox-tab');
       if (!bloopsTab || !sbTab) return;
-      // Left tab reads "Bloops" while Bloops is active, "← Bloops" when on
-      // the Player view (so it doubles as a back-affordance). The right tab
-      // mirrors that — "Player →" when inactive (a forward-cue), bare
-      // "Player" once already there.
+      // Left tab reads "Make" while Bloops is active, "← Make" when on
+      // the Player view (so it doubles as a back-affordance). The right
+      // tab mirrors that — "Listen →" when inactive (a forward-cue), bare
+      // "Listen" once already there.
       const updateLabels = (onSerialbox) => {
-        bloopsTab.textContent = onSerialbox ? '← Bloops' : 'Bloops';
-        sbTab.textContent     = onSerialbox ? 'Player'   : 'Player →';
+        bloopsTab.textContent = onSerialbox ? '← Make' : 'Make';
+        sbTab.textContent     = onSerialbox ? 'Listen' : 'Listen →';
       };
       const showBloops = () => {
         document.body.classList.remove('view-serialbox');
         bloopsTab.classList.add('tab-active');
         sbTab.classList.remove('tab-active');
         updateLabels(false);
+        // Switching to Make pauses any audio still playing in the
+        // Listen view — the user shouldn't hear background music from
+        // a tab they can no longer see / control.
+        try { window.musicPlayer?.pause(); } catch (e) {}
       };
       const showSerialbox = () => {
         document.body.classList.add('view-serialbox');
@@ -7761,9 +9439,15 @@
         actions.push({ label: '◬ Unmerge', fn: () => performUnmerge(seqIndex) });
       }
       actions.push('hr');
-      actions.push({ label: '⊕ Add to new track', fn: () => {
-        addTrack();
-        addSavedToTrack(tracks.length - 1, savedSequences[seqIndex]);
+      actions.push({ label: '⊕ Add to new track', fn: async () => {
+        const item = savedSequences[seqIndex];
+        let opts;
+        if (item && item.type === 'audio') {
+          const ch = await detectAudioChannelCount(item.audioDataUrl);
+          opts = { stereo: ch >= 2 };
+        }
+        const newIdx = addTrack(opts);
+        addSavedToTrack(newIdx, savedSequences[seqIndex]);
       } });
       if (tracks.length > 0) {
         tracks.forEach((track, tIdx) => {
@@ -7820,13 +9504,17 @@
       nInput.addEventListener('input', () => { nVal.textContent = nInput.value; });
 
       modal.querySelector('#copy-cancel').addEventListener('click', () => overlay.remove());
-      modal.querySelector('#copy-apply').addEventListener('click', () => {
+      modal.querySelector('#copy-apply').addEventListener('click', async () => {
         const n = Math.max(1, Math.min(64, parseInt(nInput.value, 10) || 1));
         const dest = modal.querySelector('#copy-track').value;
         let trackIdx;
         if (dest === 'new') {
-          addTrack();
-          trackIdx = tracks.length - 1;
+          let opts;
+          if (seq && seq.type === 'audio') {
+            const ch = await detectAudioChannelCount(seq.audioDataUrl);
+            opts = { stereo: ch >= 2 };
+          }
+          trackIdx = addTrack(opts);
         } else {
           trackIdx = parseInt(dest, 10);
           if (!Number.isFinite(trackIdx) || !tracks[trackIdx]) { overlay.remove(); return; }
@@ -8318,6 +10006,85 @@
       renderSequence();
     }
 
+    // Per-step pan dial: a tiny corner widget that drags horizontally
+    // to set step.params.pan in [-100, 100]. Pans the wet signal through
+    // the per-note Tone.Panner that playNote installs. Double-click
+    // recentres. The chip gets .pan-left / .pan-right classes whenever
+    // the value is non-zero so the glow border reflects the state.
+    function applyPanGlow(chip, pan) {
+      const p = Number.isFinite(pan) ? pan : 0;
+      chip.classList.toggle('pan-right', p > 0);
+      chip.classList.toggle('pan-left',  p < 0);
+    }
+    function attachPanDial(chip, step) {
+      const dial = document.createElement('div');
+      dial.className = 'pan-dial';
+      const initialPan = (step.params && Number.isFinite(step.params.pan))
+        ? step.params.pan : 0;
+      const setRot = (p) => {
+        // Map -100..100 → -90deg..90deg so the needle sweeps a half-circle.
+        dial.style.setProperty('--pan-rot', `${(p / 100) * 90}deg`);
+      };
+      setRot(initialPan);
+
+      // Stop chip-level click/drag handlers from firing while the user
+      // is fiddling with the dial; otherwise the chip would also try to
+      // be selected, dragged, or trigger a long-press menu. dragstart
+      // is preventDefault-ed so the chip's HTML5 draggable=true doesn't
+      // kick in while the user pans.
+      const swallow = (e) => e.stopPropagation();
+      dial.addEventListener('mousedown', swallow);
+      dial.addEventListener('touchstart', swallow, { passive: true });
+      dial.addEventListener('click', swallow);
+      dial.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+
+      let dragging = false, startX = 0, startPan = 0, moved = false;
+      dial.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        dragging = true;
+        moved = false;
+        startX = e.clientX;
+        startPan = (step.params && Number.isFinite(step.params.pan))
+          ? step.params.pan : 0;
+        try { dial.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      dial.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        if (Math.abs(dx) > 1) moved = true;
+        const next = Math.max(-100, Math.min(100, Math.round(startPan + dx * 1.5)));
+        if (!step.params) step.params = {};
+        step.params.pan = next;
+        setRot(next);
+        applyPanGlow(chip, next);
+      });
+      const finish = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        try { dial.releasePointerCapture(e.pointerId); } catch (err) {}
+        if (moved && typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      dial.addEventListener('pointerup', finish);
+      dial.addEventListener('pointercancel', finish);
+
+      // Double-click recentres the dial.
+      dial.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        if (!step.params) step.params = {};
+        step.params.pan = 0;
+        setRot(0);
+        applyPanGlow(chip, 0);
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+
+      chip.appendChild(dial);
+      applyPanGlow(chip, initialPan);
+    }
+
     function bindStepDrag(chip, i) {
       chip.draggable = true;
       chip.addEventListener('dragstart', (e) => {
@@ -8673,22 +10440,47 @@
           if (stepHasNotes(step)) {
             actions.push({ label: 'Modulate ↑½', fn: () => { snapshotForUndo('Modulate ↑½'); modulateStepRec(step, 1);  renderSequence(); } });
             actions.push({ label: 'Modulate ↓½', fn: () => { snapshotForUndo('Modulate ↓½'); modulateStepRec(step, -1); renderSequence(); } });
+            actions.push({ label: 'Transpose…', fn: () => showTransposeDialog(stepIndex) });
             actions.push('hr');
           }
+          actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
           actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
           actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
           actions.push('hr');
-          actions.push({ label: 'Remove step', danger: true, fn: () => {
-            snapshotForUndo('Remove step');
-            sequence.splice(stepIndex, 1);
-            if (insertionPoint !== null) {
-              if (stepIndex < insertionPoint) insertionPoint--;
-              if (insertionPoint > sequence.length) insertionPoint = sequence.length;
-              if (sequence.length === 0) insertionPoint = null;
+          // Multi-select aware delete: when 2+ chips are selected and the
+          // long-pressed chip is one of them, "Remove step" turns into
+          // "Remove N steps" and wipes the entire selection in one shot.
+          const selectedIdxs = (multiSelectMode || selectedStepRefs.length > 1)
+            ? selectedStepIndices().slice().sort((a, b) => a - b)
+            : [];
+          const longPressedSelected = selectedIdxs.includes(stepIndex);
+          const multiDelete = selectedIdxs.length >= 2 && longPressedSelected;
+          actions.push({
+            label: multiDelete ? `Remove ${selectedIdxs.length} steps` : 'Remove step',
+            danger: true,
+            fn: () => {
+              if (multiDelete) {
+                snapshotForUndo('Remove steps');
+                // Walk descending so splices don't shift later indices.
+                for (let i = selectedIdxs.length - 1; i >= 0; i--) {
+                  const idx = selectedIdxs[i];
+                  sequence.splice(idx, 1);
+                  if (insertionPoint !== null && idx < insertionPoint) insertionPoint--;
+                }
+                clearSelection();
+              } else {
+                snapshotForUndo('Remove step');
+                sequence.splice(stepIndex, 1);
+                if (insertionPoint !== null && stepIndex < insertionPoint) insertionPoint--;
+              }
+              if (insertionPoint !== null) {
+                if (insertionPoint > sequence.length) insertionPoint = sequence.length;
+                if (sequence.length === 0) insertionPoint = null;
+              }
+              renderSequence();
+              document.getElementById('save-btn').disabled = sequence.length === 0;
             }
-            renderSequence();
-            document.getElementById('save-btn').disabled = sequence.length === 0;
-          }});
+          });
           showCtxMenu(e.clientX, e.clientY, actions);
         }, 500);
       });
@@ -8733,18 +10525,28 @@
         ['release', ' ms', 100, 3000, p.release],
         ['volume',  '%',   0,   100,  p.volume],
         ['detune',  ' ¢',  -100, 100, p.detune ?? 0],
+        // -100 = full left, 0 = center, 100 = full right. Value is divided
+        // by 100 in playNote when a Tone.Panner is inserted into the
+        // per-note chain so chord voices can sit in different parts of
+        // the stereo image.
+        ['pan',     '',   -100, 100, p.pan ?? 0],
       ].forEach(([key, unit, min, max, val]) => {
         const row = document.createElement('div');
         row.className = 'sm-param';
         const labelRow = document.createElement('div');
         labelRow.className = 'sm-param-row';
-        labelRow.innerHTML = `${key.charAt(0).toUpperCase() + key.slice(1)} <span class="sm-val">${val}${unit}</span>`;
+        const formatVal = (v) => {
+          if (key !== 'pan') return v + unit;
+          if (v === 0) return 'C';
+          return (v < 0 ? 'L' : 'R') + Math.abs(v);
+        };
+        labelRow.innerHTML = `${key.charAt(0).toUpperCase() + key.slice(1)} <span class="sm-val">${formatVal(val)}</span>`;
         const valSpan = labelRow.querySelector('.sm-val');
         const slider = document.createElement('input');
         slider.type = 'range'; slider.min = min; slider.max = max; slider.value = val;
         slider.addEventListener('input', () => {
           p[key] = parseInt(slider.value);
-          valSpan.textContent = p[key] + unit;
+          valSpan.textContent = formatVal(p[key]);
           onChange(p);
         });
         row.appendChild(labelRow); row.appendChild(slider);
@@ -8788,6 +10590,7 @@
         delayTime:     step.params?.delayTime     ?? 250,
         delayFeedback: step.params?.delayFeedback ?? 40,
         distortion:    step.params?.distortion    ?? 0,
+        pan:           step.params?.pan           ?? 0,
         fxOverrideGlobal: !!step.params?.fxOverrideGlobal,
         bendSemitones: step.bend?.semitones ?? 0,
         bendAt:        Math.round(((step.bend?.atFraction ?? 1) * 100)),
@@ -8840,6 +10643,10 @@
             <div class="sm-param">
               <div class="sm-param-row">Tune <span class="sm-val" id="se-tune-v">${p.detune} ¢</span></div>
               <input type="range" id="se-tune" min="-100" max="100" value="${p.detune}" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Pan <span class="sm-val" id="se-pan-v">${p.pan === 0 ? 'C' : (p.pan < 0 ? 'L' : 'R') + Math.abs(p.pan)}</span></div>
+              <input type="range" id="se-pan" min="-100" max="100" value="${p.pan}" />
             </div>
           </div>
         </details>
@@ -8960,7 +10767,7 @@
         waveRow.appendChild(btn);
       });
 
-      // Sliders
+      // Sliders. Pan uses an L/C/R formatter instead of a unit suffix.
       [
         ['se-atk',       'se-atk-v',       'attack',        ' ms'],
         ['se-dec',       'se-dec-v',       'decay',         ' ms'],
@@ -8968,6 +10775,7 @@
         ['se-rel',       'se-rel-v',       'release',       ' ms'],
         ['se-vol',       'se-vol-v',       'volume',        '%'],
         ['se-tune',      'se-tune-v',      'detune',        ' ¢'],
+        ['se-pan',       'se-pan-v',       'pan',           'pan'],
         ['se-rev',       'se-rev-v',       'reverb',        '%'],
         ['se-rev-size',  'se-rev-size-v',  'reverbSize',    '%'],
         ['se-rev-tone',  'se-rev-tone-v',  'reverbTone',    '%'],
@@ -8980,7 +10788,11 @@
         const label = modal.querySelector(`#${valId}`);
         input.addEventListener('input', () => {
           p[key] = parseInt(input.value);
-          label.textContent = p[key] + unit;
+          if (unit === 'pan') {
+            label.textContent = p[key] === 0 ? 'C' : (p[key] < 0 ? 'L' : 'R') + Math.abs(p[key]);
+          } else {
+            label.textContent = p[key] + unit;
+          }
         });
       });
       const seOverrideCheckbox = modal.querySelector('#se-fx-override');
@@ -9010,6 +10822,7 @@
         const out = {
           type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain,
           release: p.release, volume: p.volume, detune: p.detune,
+          pan: p.pan,
           reverb: p.reverb, reverbSize: p.reverbSize, reverbTone: p.reverbTone,
           delay:  p.delay,  delayTime:  p.delayTime,  delayFeedback: p.delayFeedback,
           distortion: p.distortion,
@@ -9033,6 +10846,7 @@
           params: {
             type: p.type, attack: p.attack, decay: p.decay, sustain: p.sustain,
             release: p.release, volume: p.volume, detune: p.detune,
+            pan: p.pan,
             reverb: p.reverb, reverbSize: p.reverbSize, reverbTone: p.reverbTone,
             delay:  p.delay,  delayTime:  p.delayTime,  delayFeedback: p.delayFeedback,
             distortion: p.distortion,
@@ -9250,6 +11064,108 @@
       });
     }
 
+    // ---- Poly press session — sustain + drag-to-play + chord-on-multi --
+    // Keeps every active sustain alive until the *last* pointer holding
+    // it releases, supports dragging across cells with the pointer down
+    // (each cell crossed starts its own sustain), and aggregates anything
+    // that was pressed during a multi-touch session into a single chord
+    // step at session-end.
+    const _polySession = {
+      pointerCells:    new Map(), // pointerId -> Set<cellIndex>
+      cellSustains:    new Map(), // cellIndex -> sustain handle
+      cellRefCount:    new Map(), // cellIndex -> # pointers currently holding it
+      pressed:         new Map(), // cellIndex -> voice (snapshot at first touch)
+      // Did *this* pointer's first pointerdown land on a cell? Drag-to-play
+      // only fires while true, so a scroll gesture that began outside the
+      // grid and happens to drag through cells won't pile up sustains and
+      // jam the main thread (which on mobile reads as "scroll gets stuck").
+      pointerStartedOnCell: new Map(), // pointerId -> bool
+      endTimer:        null,
+      suppressClickUntil: 0,
+    };
+    function polyStartCell(cellIdx, pointerId) {
+      if (!notes[cellIdx]) return;
+      let set = _polySession.pointerCells.get(pointerId);
+      if (!set) { set = new Set(); _polySession.pointerCells.set(pointerId, set); }
+      if (set.has(cellIdx)) return; // this pointer already holds this cell
+      set.add(cellIdx);
+      // New press → cancel any pending session-finalize so consecutive
+      // taps coalesce into the same chord-vs-single decision.
+      if (_polySession.endTimer) {
+        clearTimeout(_polySession.endTimer);
+        _polySession.endTimer = null;
+      }
+      // Bump cell ref count; start a sustain on the first reference.
+      const refs = (_polySession.cellRefCount.get(cellIdx) || 0) + 1;
+      _polySession.cellRefCount.set(cellIdx, refs);
+      if (refs === 1) {
+        const params = { ...cellParams[cellIdx] };
+        try {
+          const handle = startSustainedNote(notes[cellIdx].freq, params);
+          _polySession.cellSustains.set(cellIdx, handle);
+        } catch (e) {}
+      }
+      if (!_polySession.pressed.has(cellIdx)) {
+        const p = { ...cellParams[cellIdx] };
+        _polySession.pressed.set(cellIdx, {
+          freq: notes[cellIdx].freq,
+          label: notes[cellIdx].label,
+          cellIndex: cellIdx,
+          sound: p.type,
+          params: p,
+        });
+      }
+    }
+    function polyEndCellForPointer(cellIdx, pointerId) {
+      const set = _polySession.pointerCells.get(pointerId);
+      if (!set || !set.has(cellIdx)) return;
+      set.delete(cellIdx);
+      const refs = (_polySession.cellRefCount.get(cellIdx) || 1) - 1;
+      if (refs <= 0) {
+        _polySession.cellRefCount.delete(cellIdx);
+        const handle = _polySession.cellSustains.get(cellIdx);
+        _polySession.cellSustains.delete(cellIdx);
+        if (handle) { try { handle.release(); } catch (e) {} }
+      } else {
+        _polySession.cellRefCount.set(cellIdx, refs);
+      }
+    }
+    function polyEndPointer(pointerId) {
+      _polySession.pointerStartedOnCell.delete(pointerId);
+      const set = _polySession.pointerCells.get(pointerId);
+      if (!set) return;
+      Array.from(set).forEach(idx => polyEndCellForPointer(idx, pointerId));
+      _polySession.pointerCells.delete(pointerId);
+      if (_polySession.pointerCells.size === 0) {
+        // Defer finalize so multiple pointers releasing within a frame or
+        // two collapse into one chord rather than racing each other.
+        _polySession.endTimer = setTimeout(polyFinalizeSession, 60);
+      }
+    }
+    function polyShouldSuppressClick() {
+      return performance.now() < _polySession.suppressClickUntil;
+    }
+    function polyFinalizeSession() {
+      _polySession.endTimer = null;
+      const voices = Array.from(_polySession.pressed.values());
+      _polySession.pressed.clear();
+      if (voices.length >= 2) {
+        // Multi-press → emit a chord step. Suppress the per-cell click
+        // handlers that fire right after each pointerup so they don't
+        // also append individual notes on top of the chord.
+        snapshotForUndo('Add chord');
+        addToSequence({
+          chord: voices,
+          label: voices.map(v => v.label).join('·'),
+          duration: noteLength,
+          subdivision: stepSubdivision,
+        });
+        _polySession.suppressClickUntil = performance.now() + 250;
+      }
+    }
+    document.addEventListener('pointerup',     (e) => polyEndPointer(e.pointerId));
+    document.addEventListener('pointercancel', (e) => polyEndPointer(e.pointerId));
+
     function bindCellLongPress(cell, noteIndex) {
       let lpt = null;
       cell.addEventListener('pointerdown', (e) => {
@@ -9283,8 +11199,8 @@
     let palette = [...DEFAULT_PALETTE];
     // chipPalette is declared/used below for note-coloured step chips. Start
     // it in sync with the visible grid palette so chips and cells line up
-    // on first render. Chess/Checkers will swap chipPalette to a separate
-    // random palette so chips don't collapse to two colours.
+    // on first render. Duotone presets (Piano) swap chipPalette to a
+    // separate random palette so chips don't collapse to two colours.
     // (Re-initialised whenever palette is reassigned via load/reset/preset.)
 
     // Scale catalog — chromatic plus everything Tonal.js ships (~100+ named scales).
@@ -9380,6 +11296,46 @@
         }
       });
     }
+    // For drum-kit cells, surface the drum role (Kick / Snare / Hat / …)
+    // in place of the chromatic note name. Pitch class → role mirrors the
+    // C2-B2 mapping used by every kit's urls map.
+    const DRUM_ROLE_BY_PC = [
+      'Kick', 'Rim', 'Snare', 'Clap',
+      'Hat',  'Open Hat', 'Low Tom', 'Mid Tom',
+      'Cowbell', 'Crash', 'High Tom', 'Perc',
+    ];
+    function isCellDrumKit(idx) {
+      const t = cellSounds[idx];
+      if (typeof t !== 'string' || !t.startsWith('sample:')) return false;
+      const meta = sampleSamplers.get(t.slice(7));
+      return !!(meta && meta.drumKit);
+    }
+    function pitchClassForCell(idx) {
+      // Mirror snapDrumKitFreq / the kit urls map: each cell's pitch class
+      // (rooted at C) is what determines which drum it plays.
+      const note = notes[idx];
+      if (!note) return 0;
+      try {
+        const midi = Math.round(Tone.Frequency(note.freq).toMidi());
+        return ((midi % 12) + 12) % 12;
+      } catch (e) {
+        return 0;
+      }
+    }
+    function refreshAllCellNameLabels() {
+      cells.forEach((cell, idx) => {
+        const span = cell.querySelector('span');
+        if (!span) return;
+        if (isCellDrumKit(idx)) {
+          const pc = pitchClassForCell(idx);
+          span.textContent = DRUM_ROLE_BY_PC[pc] || (notes[idx] && notes[idx].label) || '';
+          span.classList.add('cell-name-drum');
+        } else {
+          span.textContent = (notes[idx] && notes[idx].label) || '';
+          span.classList.remove('cell-name-drum');
+        }
+      });
+    }
     function updateScaleBanner() {
       const scaleHalf = document.getElementById('scale-banner-half');
       const toneHalf  = document.getElementById('tone-banner-half');
@@ -9388,6 +11344,7 @@
       if (scaleHalf) scaleHalf.textContent = `${root} · ${prettyScaleName(currentScale)}`;
       if (toneHalf)  toneHalf.textContent  = tone || '—';
       refreshAllCellToneLabels();
+      refreshAllCellNameLabels();
     }
 
     function applyPalette() {
@@ -9398,9 +11355,9 @@
     }
 
     // Chip-side palette — one colour per pitch class. Stays in sync with the
-    // grid palette during a normal Color shuffle, but during Chess/Checkers
-    // (which are intentionally duotone) we keep the chips colourful by giving
-    // them their own freshly-shuffled palette.
+    // grid palette during a normal Color shuffle, but during Piano (which is
+    // intentionally duotone) we keep the chips colourful by giving them
+    // their own freshly-shuffled palette.
     let chipPalette = [...palette];
 
     const PITCH_CLASS_MAP = {
@@ -9515,9 +11472,50 @@
         cell.className = 'cell';
         cell.innerHTML = `<span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span><span class="cell-tone"></span>`;
 
+        // Sustain + polyphony + drag-to-play — every press routes through
+        // the shared poly session below. Pointers can drag across cells
+        // (each crossed cell starts its own sustain) and multi-touch
+        // presses build a chord step at the end of the press session.
+        cell.addEventListener('pointerdown', (e) => {
+          if (e.target.closest('.cell-sound-select')) return;
+          // Arpeggio / Chord modes don't sustain — they fire a one-shot
+          // transposed playback of the saved sequence and bail.
+          if (gridMode === 'arpeggio') {
+            cell.classList.add('flash');
+            setTimeout(() => cell.classList.remove('flash'), 80);
+            runModeOnCell(i);
+            return;
+          }
+          if (gridMode === 'chord') {
+            cell.classList.add('flash');
+            setTimeout(() => cell.classList.remove('flash'), 80);
+            chordModeOnCell(i);
+            return;
+          }
+          // Default Sequencer mode — track origin for drag-to-play, start
+          // sustain.
+          _polySession.pointerStartedOnCell.set(e.pointerId, true);
+          polyStartCell(i, e.pointerId);
+        });
+        cell.addEventListener('pointerenter', (e) => {
+          if (gridMode !== 'sequencer') return;             // drag-to-play only in default mode
+          if (e.buttons === 0) return;                      // pointer not pressed
+          if (!_polySession.pointerStartedOnCell.get(e.pointerId)) return; // not a play gesture
+          if (e.target.closest('.cell-sound-select')) return;
+          polyStartCell(i, e.pointerId);
+        });
         cell.addEventListener('click', () => {
+          // Clicks that ride a multi-press session get folded into a
+          // chord at session-end — skip the per-cell single-note path
+          // here so we don't double-add. Single presses fall through
+          // normally.
+          if (polyShouldSuppressClick()) return;
+          // Arpeggio / Chord modes already played their audio on
+          // pointerdown — don't append to the workspace sequence.
+          if (gridMode !== 'sequencer') return;
           const params = { ...cellParams[i] };
-          playNote(notes[i].freq, params);
+          // Audio already played via pointerdown/pointerup sustain. The
+          // click handler only runs the workspace-mutation work.
           cell.classList.add('flash');
           setTimeout(() => cell.classList.remove('flash'), 80);
           if (stepMode) {
@@ -9621,6 +11619,47 @@
       renderSequence();
       updateScaleBanner();
     }
+    // ---- Tone families -- two-level menu (top: family list, drilldown:
+    // family's tones). Keeps the panel short and lets us add more
+    // instruments without scrolling forever.
+    const TONE_FAMILY_ORDER = ['synths', 'keys', 'mallets', 'strings', 'winds', 'leads', 'drums', 'imports', 'samples', 'other'];
+    const TONE_FAMILY_LABELS = {
+      synths:  'Synths',
+      keys:    'Keys',
+      mallets: 'Mallets',
+      strings: 'Strings',
+      winds:   'Winds',
+      leads:   'Leads & Pads',
+      drums:   'Drums',
+      imports: 'Imports',
+      samples: 'Samples',
+      other:   'Other',
+    };
+    const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'fm', 'am', 'mono']);
+    const _SAMPLE_KEYS_IDS    = new Set(['piano', 'organ', 'rhodes', 'epiano2', 'harpsichord', 'clavinet']);
+    const _SAMPLE_MALLETS_IDS = new Set(['celesta', 'vibraphone', 'marimba']);
+    const _SAMPLE_STRINGS_IDS = new Set(['guitar', 'violin', 'cello', 'eguitar']);
+    const _SAMPLE_LEADS_IDS   = new Set(['leadsquare', 'padpoly']);
+    const _SAMPLE_DRUM_IDS    = new Set(['tr808', 'drumtraks', 'drumkit', 'dr55']);
+    function toneFamilyFor(value) {
+      if (typeof value !== 'string') return 'other';
+      if (value.startsWith('sample:')) {
+        const id = value.slice(7);
+        if (_SAMPLE_KEYS_IDS.has(id))    return 'keys';
+        if (_SAMPLE_MALLETS_IDS.has(id)) return 'mallets';
+        if (_SAMPLE_STRINGS_IDS.has(id)) return 'strings';
+        if (id === 'flute')              return 'winds';
+        if (_SAMPLE_LEADS_IDS.has(id))   return 'leads';
+        if (_SAMPLE_DRUM_IDS.has(id))    return 'drums';
+        if (id.startsWith('imported-'))  return 'imports';
+        return 'samples';
+      }
+      if (_SYNTH_KEYS.has(value)) return 'synths';
+      if (value === 'kick' || value === 'metal') return 'drums';
+      if (value === 'pluck' || value === 'bell') return 'strings';
+      return 'other';
+    }
+    let _toneMenuView = 'top'; // 'top' or a family id
     function populateTonePanel() {
       const panel = document.getElementById('tone-panel');
       if (!panel) return;
@@ -9638,14 +11677,88 @@
         marker.tabIndex = -1;
         panel.appendChild(marker);
       }
+      // Bucket every available tone into a family.
+      const grouped = new Map();
       getAllSoundOptions().forEach(opt => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'tone-opt';
-        b.textContent = opt.label;
-        b.dataset.tone = opt.value;
-        panel.appendChild(b);
+        const fam = toneFamilyFor(opt.value);
+        if (!grouped.has(fam)) grouped.set(fam, []);
+        grouped.get(fam).push(opt);
       });
+      // Forget a stale drilldown if the family disappeared (e.g. samples
+      // unloaded between opens).
+      if (_toneMenuView !== 'top' && !grouped.has(_toneMenuView)) {
+        _toneMenuView = 'top';
+      }
+      if (_toneMenuView === 'top') {
+        TONE_FAMILY_ORDER.forEach(fam => {
+          if (!grouped.has(fam)) return;
+          const count = grouped.get(fam).length;
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'tone-opt tone-opt-family';
+          b.innerHTML = `<span>${TONE_FAMILY_LABELS[fam] || fam}</span><span class="tone-opt-count">${count} ▸</span>`;
+          b.addEventListener('click', (e) => {
+            // Re-rendering the panel removes the click target from the DOM
+            // before the document-level click-outside check can confirm
+            // the click was inside the panel — without stopPropagation
+            // that handler closes the menu instead of drilling in.
+            e.stopPropagation();
+            _toneMenuView = fam;
+            populateTonePanel();
+            const btn = document.getElementById('tone-banner-half');
+            if (btn && panel.classList.contains('open')) pinPanelToButton(btn, panel);
+          });
+          panel.appendChild(b);
+        });
+      } else {
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.className = 'tone-opt tone-opt-back';
+        back.textContent = `← ${TONE_FAMILY_LABELS[_toneMenuView] || _toneMenuView}`;
+        back.addEventListener('click', (e) => {
+          // Same propagation stop as the family rows — see the comment
+          // there. Without it, the click-outside handler closes the panel
+          // because the target was removed mid-flight.
+          e.stopPropagation();
+          _toneMenuView = 'top';
+          populateTonePanel();
+          const btn = document.getElementById('tone-banner-half');
+          if (btn && panel.classList.contains('open')) pinPanelToButton(btn, panel);
+        });
+        panel.appendChild(back);
+        const items = grouped.get(_toneMenuView);
+        const renderRow = (opt) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'tone-opt';
+          b.textContent = opt.label;
+          b.dataset.tone = opt.value;
+          panel.appendChild(b);
+        };
+        const renderHeader = (text) => {
+          const h = document.createElement('div');
+          h.className = 'tone-subhead';
+          h.textContent = text;
+          panel.appendChild(h);
+        };
+        if (_toneMenuView === 'drums') {
+          // Split synth-based one-shot drums from full sample-mapped kits
+          // so the user can tell at a glance which row plays a single
+          // drum vs an entire kit mapped across the chromatic grid.
+          const samples = items.filter(o => o.value === 'kick' || o.value === 'metal');
+          const kits    = items.filter(o => !samples.includes(o));
+          if (samples.length > 0) {
+            renderHeader('Single drums');
+            samples.forEach(renderRow);
+          }
+          if (kits.length > 0) {
+            renderHeader('Drum kits');
+            kits.forEach(renderRow);
+          }
+        } else {
+          items.forEach(renderRow);
+        }
+      }
     }
     (function initToneMenu() {
       // Right half of the scale banner — its label shows the live current
@@ -9656,7 +11769,12 @@
       if (!btn || !panel) return;
       const TRIGGER_ID = 'tone-banner-half';
       const setOpen = (open) => {
-        if (open) populateTonePanel(); // pick up freshly-loaded samples
+        if (open) {
+          // Always start at the family list when re-opening, and pick up
+          // freshly-loaded samples / instruments.
+          _toneMenuView = 'top';
+          populateTonePanel();
+        }
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
         if (open) pinPanelToButton(btn, panel);
@@ -9676,7 +11794,7 @@
       });
       panel.addEventListener('click', (e) => {
         const opt = e.target.closest('.tone-opt');
-        if (!opt) return;
+        if (!opt || !opt.dataset.tone) return; // skip family / back / custom marker
         applyToneToAllCells(opt.dataset.tone);
         setOpen(false);
       });
@@ -9706,6 +11824,87 @@
       if (fx      && fx.parentNode      !== document.body) document.body.appendChild(fx);
       if (voices  && voices.parentNode  !== document.body) document.body.appendChild(voices);
       if (project && project.parentNode !== document.body) document.body.appendChild(project);
+    })();
+
+    // ---- Grid mode banner cycle (Sequencer ↔ Arpeggio ↔ Chord) -------
+    (function initGridModeBanner() {
+      const btn = document.getElementById('mode-banner');
+      if (!btn) return;
+      const ORDER = ['sequencer', 'arpeggio', 'chord'];
+      // User-facing names: Spell (default sequencer), Run (arpeggio
+      // playback), Stack (chord build). Internal IDs kept as-is so all
+      // the existing branching code stays untouched.
+      const LABELS = { sequencer: 'Spell', arpeggio: 'Run', chord: 'Stack' };
+      const refresh = () => {
+        btn.textContent = LABELS[gridMode] || gridMode;
+        btn.dataset.mode = gridMode;
+      };
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const prev = gridMode;
+        const i = ORDER.indexOf(gridMode);
+        gridMode = ORDER[(i + 1) % ORDER.length];
+        refresh();
+        clearHighlights();
+        if (lockMode) {
+          // Lock-mode round-trip: every transition first flattens the
+          // workspace into single-note steps, then rebuilds the grouping
+          // for the new mode. So Stack→Run unmerges the chord then wraps
+          // the notes in a sub; Run→Spell unmerges the sub leaving the
+          // notes flat; etc.
+          let changed = false;
+          if (flattenSequenceForLock()) changed = true;
+          if (gridMode === 'chord' && sequence.length > 0) {
+            if (consolidateSequenceToChord()) changed = true;
+          } else if (gridMode === 'arpeggio' && sequence.length > 0) {
+            if (consolidateSequenceToSub()) changed = true;
+          }
+          if (changed) renderSequence();
+          return;
+        }
+        // Entering Chord mode: collapse whatever's in the sequence into a
+        // single base chord (snapshot for undo + render). Each subsequent
+        // click in chord mode reads that base and appends a transposed
+        // copy to the sequence.
+        if (gridMode === 'chord' && prev !== 'chord' && sequence.length > 1) {
+          if (consolidateSequenceToChord()) renderSequence();
+        }
+        // Entering Run mode: collapse the workspace into one subsequence
+        // chip. Each subsequent click transposes that base sub and
+        // appends a new ▤ chip.
+        if (gridMode === 'arpeggio' && prev !== 'arpeggio' && sequence.length > 1) {
+          if (consolidateSequenceToSub()) renderSequence();
+        }
+      });
+      refresh();
+
+      // Lock-mode toggle button — sits to the right of the mode banner.
+      // When flipped on with an existing sequence, immediately reshape
+      // the workspace to match the current mode so the user sees the
+      // round-trip rule taking effect.
+      const lockBtn = document.getElementById('mode-lock-banner');
+      if (lockBtn) {
+        const refreshLock = () => {
+          lockBtn.classList.toggle('active', lockMode);
+          lockBtn.textContent = lockMode ? '●' : '○';
+        };
+        refreshLock();
+        lockBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          lockMode = !lockMode;
+          try { localStorage.setItem('lock-mode', lockMode ? '1' : '0'); } catch (e2) {}
+          refreshLock();
+          if (lockMode && sequence.length > 0) {
+            let changed = flattenSequenceForLock();
+            if (gridMode === 'chord' && sequence.length > 0) {
+              if (consolidateSequenceToChord()) changed = true;
+            } else if (gridMode === 'arpeggio' && sequence.length > 0) {
+              if (consolidateSequenceToSub()) changed = true;
+            }
+            if (changed) renderSequence();
+          }
+        });
+      }
     })();
 
     (function initFxMenu() {
@@ -9845,22 +12044,18 @@
     })();
 
     // ---- Color presets ----
-    function applyChessPalette() {
-      // Classic chess: white / dark squares alternating across the 12 pitch
-      // classes. Rest gets a neutral grey so it doesn't fight the duotone.
-      palette = Array.from({ length: 12 }, (_, i) => i % 2 === 0 ? '#f7fafc' : '#1a202c');
+    function applyPianoPalette() {
+      // Piano keys: pitch classes 1, 3, 6, 8, 10 are the black keys
+      // (C#, D#, F#, G#, A#); the rest are white. Rest cell gets a
+      // neutral grey so it doesn't fight the monochrome duotone.
+      const BLACK_PCS = new Set([1, 3, 6, 8, 10]);
+      palette = Array.from({ length: 12 }, (_, i) =>
+        BLACK_PCS.has(i) ? '#1a202c' : '#f7fafc'
+      );
       restColor = 'hsl(0, 0%, 65%)';
-      // Duotone grid would make chord/note chips read as just two colours;
-      // give the chips a fresh random palette so the sequence stays readable.
-      chipPalette = generateRandomPalette();
-      applyRestColor();
-      applyPalette();
-      if (typeof renderSequence === 'function') renderSequence();
-    }
-    function applyCheckersPalette() {
-      // Classic checkers: red / black alternating; rest tinted amber.
-      palette = Array.from({ length: 12 }, (_, i) => i % 2 === 0 ? '#e53e3e' : '#1a202c');
-      restColor = 'hsl(36, 70%, 70%)';
+      // Duotone grid would make chord/note chips read as just two
+      // colours; give the chips a fresh random palette so the sequence
+      // stays readable when the grid is monochrome.
       chipPalette = generateRandomPalette();
       applyRestColor();
       applyPalette();
@@ -9938,8 +12133,7 @@
         opt.addEventListener('click', () => {
           const mode = opt.dataset.mode;
           if (mode === 'shuffle') shuffleColors();
-          else if (mode === 'chess') applyChessPalette();
-          else if (mode === 'checkers') applyCheckersPalette();
+          else if (mode === 'piano') applyPianoPalette();
           setOpen(false);
         });
       });
@@ -9977,7 +12171,7 @@
         const list = modal.querySelector('#voice-picker-list');
         try {
           await googleSignInForDrive();
-          const folderId = await findOrCreateDriveFolder('Bloops Projects');
+          const folderId = await findOrCreateDriveFolder('bloops/projects');
           const all = await listProjectsInDrive(folderId);
           const voices = all.filter(f => /\.voice\..+\.json$/i.test(f.name));
           list.innerHTML = '';
@@ -10361,13 +12555,18 @@
     })();
 
     // ---- Rest bar ----
-
-    const restBar = document.getElementById('rest-bar');
-    restBar.addEventListener('click', () => {
-      restBar.classList.add('flash');
-      setTimeout(() => restBar.classList.remove('flash'), 80);
-      addToSequence({ freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision });
+    // Two Rest buttons sit on either side of the centred BPM picker;
+    // both add a rest step and both flash on click / on playback so
+    // the user gets the feedback regardless of which one they tapped.
+    const restBars = document.querySelectorAll('.rest-bar');
+    restBars.forEach(rb => {
+      rb.addEventListener('click', () => {
+        restBars.forEach(b => b.classList.add('flash'));
+        setTimeout(() => restBars.forEach(b => b.classList.remove('flash')), 80);
+        addToSequence({ freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision });
+      });
     });
+
   </script>
 
   <!-- ===================== Serialbox view ============================== -->
@@ -10376,10 +12575,8 @@
        (window.bloopsAuth) so signing in once covers both. -->
   <div id="serialbox-view">
     <div class="container">
-      <h1 class="page-title">Player</h1>
-
-      <div class="info-box">
-        <p>This player will read a file in the root of your Google Drive called <strong>Serialbox Playlists</strong>. In this file, list the folder names which you want the player to treat as playlists, i.e., contain audio files. You can also create a Google Doc in that folder called <strong>Artist name</strong> containing the name of the artist and it will populate in the player. You can also add an image to the folder called <strong>Artwork</strong> and it will be used as the artwork.</p>
+      <div class="info-box" hidden>
+        <p>This player reads <strong>bloops/playlists</strong> in your Google Drive. List one folder path per line — use <strong>/</strong> to nest, e.g. <strong>bloops/exports</strong>. Each path becomes a playlist of the audio files inside that folder. Optional extras inside any of those folders: a Google Doc named <strong>Artist name</strong> (its first line is shown as the artist) and an image named <strong>Artwork</strong> (used as album art).</p>
       </div>
 
       <header class="header" id="authorize-btn">
@@ -10396,7 +12593,7 @@
         <section class="search-section">
           <div class="playlist-select-container">
             <select id="playlist-select" class="playlist-select" disabled>
-              <option value="">— Quick Load —</option>
+              <option value="">— Folders —</option>
             </select>
           </div>
         </section>

@@ -583,6 +583,25 @@
     }
     #project-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
     #project-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+    /* Master volume — a small inline slider in the menubar. The icon is
+       a non-interactive label; the slider itself drives the mix gain. */
+    .master-vol {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 4px;
+    }
+    .master-vol-icon {
+      font-size: 0.85rem;
+      color: #4fd1c5;
+      text-shadow: 0 0 8px rgba(79, 209, 197, 0.45);
+      user-select: none;
+    }
+    .master-vol input[type="range"] {
+      width: 90px;
+      accent-color: #4fd1c5;
+      cursor: pointer;
+    }
     .project-name-label {
       display: inline-flex;
       align-items: center;
@@ -1021,6 +1040,11 @@
       white-space: pre-line;
       text-align: center;
       transition: all 0.1s ease;
+      /* Lets vertical page-scroll pass through chips on mobile while
+         horizontal gestures (pan-on-hold, reorder drag) stay capturable
+         by JS pointer handlers. Without this the page scroll would
+         get eaten whenever the user's thumb landed on a chip. */
+      touch-action: pan-y;
     }
     .seq-step.rest { color: #4a4a6a; }
     /* Per-step pan glow — blue for right pan, purple for left. Uses
@@ -1028,43 +1052,14 @@
        the palette tint) keeps showing through, and the .active /
        .selected box-shadows still override when the chip is playing or
        being edited. */
-    .seq-step.pan-right {
-      box-shadow:
-        0 0 0 1.5px #3b82f6,
-        0 0 8px rgba(59, 130, 246, 0.55);
-    }
-    .seq-step.pan-left {
-      box-shadow:
-        0 0 0 1.5px #a855f7,
-        0 0 8px rgba(168, 85, 247, 0.55);
-    }
-    /* Tiny pan dial in the upper-right corner of single-note step chips.
-       Drag horizontally on the dial to pan; double-click to recentre. */
-    .seq-step .pan-dial {
-      position: absolute;
-      top: 2px;
-      right: 2px;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: rgba(5, 5, 16, 0.55);
-      border: 1px solid rgba(160, 174, 192, 0.45);
+    /* Whole-chip pan: hold a chip and drag horizontally to set its pan.
+       Visible feedback comes from the chip's own background colour
+       fading from the palette tint toward the L/R hard-pan colours,
+       set inline by JS — no extra DOM, no dial. While the user is
+       dragging, the chip dims a hair to confirm "you're panning". */
+    .seq-step.pan-active {
       cursor: ew-resize;
-      z-index: 2;
-      touch-action: none;
-    }
-    .seq-step .pan-dial::before {
-      content: '';
-      position: absolute;
-      top: 1px;
-      left: 50%;
-      width: 1.5px;
-      height: 6px;
-      background: #cbd5e0;
-      border-radius: 1px;
-      transform-origin: 50% calc(100% + 0px);
-      transform: translateX(-50%) rotate(var(--pan-rot, 0deg));
-      transition: transform 0.05s linear;
+      filter: brightness(1.15);
     }
 
     .seq-cursor {
@@ -2492,15 +2487,14 @@
   </div>
 
   <div class="menubar">
-    <button id="colors-menu-btn" title="Note block colors">Colors ▾</button>
-    <div class="colors-panel" id="colors-panel">
-      <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
-      <button type="button" class="colors-opt" data-mode="piano">Piano</button>
-    </div>
     <button id="voices-menu-btn" title="Saved Voices (note grid presets) from Drive">Voices ▾</button>
     <div class="voices-panel" id="voices-panel"></div>
     <button id="project-menu-btn" title="Project: New, Save, Load">Project ▾</button>
     <span class="project-name-label" id="project-name-label" title="Active project"></span>
+    <label class="master-vol" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter">
+      <span class="master-vol-icon" aria-hidden="true">🔊</span>
+      <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
+    </label>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
@@ -2643,6 +2637,11 @@
   </div>
 
   <div class="seq-grid-bar">
+    <button id="colors-menu-btn" title="Note block colors">Colors ▾</button>
+    <div class="colors-panel" id="colors-panel">
+      <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
+      <button type="button" class="colors-opt" data-mode="piano">Piano</button>
+    </div>
     <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">Grid
       <span class="grid-dim-input">
         <input type="number" id="grid-rows-input" min="1" max="32" value="1" aria-label="Grid rows" />
@@ -3247,12 +3246,17 @@
     // never clip. Aggressive settings because chord playback can spike well
     // above 0 dB from the raw sum of multiple synths.
     const masterLimiter = new Tone.Limiter(-1).toDestination();
+    // Master volume — sits right before the limiter so the slider scales
+    // the entire mix (Bloops + per-track output + global FX tails) but
+    // can't push the signal above the limiter's -1 dB ceiling. Volume of
+    // 0 dB at unity; the UI slider drives this in dB.
+    const masterVolume = new Tone.Volume(0).connect(masterLimiter);
     // Global FX chain — sits post-compressor / pre-limiter so the dynamics
     // settle before reverb/delay tails layer on. wet=0 / distortion=0 are
     // effective pass-throughs; the FX panel UI updates these in place.
     const masterReverb = new Tone.Freeverb({
       roomSize: 0.7, dampening: 3000, wet: 0,
-    }).connect(masterLimiter);
+    }).connect(masterVolume);
     const masterDelay = new Tone.FeedbackDelay({
       delayTime: '8n', feedback: 0.4, wet: 0,
     }).connect(masterReverb);
@@ -3313,6 +3317,32 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     applyGlobalFx();
+
+    // ---- Master volume slider ----
+    // Slider value is 0..100 percent. 100 → 0 dB (unity), 0 → silenced
+    // (-Infinity dB). The curve uses `Tone.gainToDb` so the slider feels
+    // perceptually-even — equal-amplitude steps along the slider, not
+    // equal dB. Persisted in localStorage so the level survives reloads.
+    (function initMasterVolume() {
+      const slider = document.getElementById('master-vol-slider');
+      if (!slider) return;
+      const KEY = 'sounds-master-vol';
+      const saved = parseInt(localStorage.getItem(KEY) || '', 10);
+      const initial = Number.isFinite(saved) ? Math.max(0, Math.min(100, saved)) : 100;
+      slider.value = String(initial);
+      const apply = (pct) => {
+        const norm = Math.max(0, Math.min(100, pct | 0)) / 100;
+        try {
+          masterVolume.volume.value = norm <= 0 ? -Infinity : Tone.gainToDb(norm);
+        } catch (e) {}
+      };
+      apply(initial);
+      slider.addEventListener('input', () => {
+        const v = parseInt(slider.value, 10) || 0;
+        apply(v);
+        try { localStorage.setItem(KEY, String(v)); } catch (e) {}
+      });
+    })();
 
     // ---- Custom sample loading (samples/manifest.json) ----
     // Each entry creates a Tone.Sampler that pitch-shifts the file across
@@ -4208,9 +4238,6 @@
             ? `${step.label}${step.sound && step.sound !== 'sine' ? '\n' + step.sound.slice(0,3) : ''}`
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
-          // Per-step pan dial in the upper-right corner. Skip rests —
-          // they have no params/audio so a pan widget would be inert.
-          if (step.freq !== null) attachPanDial(chip, step);
         }
         // In grid mode, span the chip across as many cells as its duration
         // calls for so longer notes look longer. Step-mode is the exception
@@ -4287,10 +4314,12 @@
         // Note-coloured chips: tint border + fill from chipPalette by pitch
         // class. Skip subsequence chips (they keep their green identity) and
         // skip the active chip so the playback highlight isn't masked.
+        let chipBaseColor = null;
         if (!step.isSub && i !== activeIndex) {
           const pc = stepColorPitchClass(step);
           if (pc != null && chipPalette[pc]) {
             const c = chipPalette[pc];
+            chipBaseColor = c;
             chip.style.borderColor = c;
             chip.style.background = tintHsl(c, 0.22);
             chip.style.color = c;
@@ -4299,6 +4328,12 @@
         bindStepLongPress(chip, i);
         bindStepDrag(chip, i);
         bindStepDragTouch(chip, i);
+        // Whole-chip pan-on-hold for non-rest single-note chips. Sub /
+        // chord chips skip this — those have their own per-voice pan
+        // editors inside the chord-step dialog.
+        if (!step.isSub && !Array.isArray(step.chord) && step.freq !== null) {
+          bindChipPanDrag(chip, step, chipBaseColor);
+        }
         display.appendChild(chip);
       });
       if (insertionPoint != null && insertionPoint >= sequence.length) {
@@ -5060,11 +5095,46 @@
       subSteps.forEach(scheduleStep);
     }
 
-    // Click handler for Run mode: transpose the base subsequence to the
-    // clicked cell's pitch, append the new subsequence step, and play it.
+    // Click handler for Run mode. Two flavors:
+    //  - Note-lock-mode ON: each click appends the clicked note as a
+    //    fresh subStep INSIDE the existing ▤. Stack/Spell round-trips
+    //    then preserve every Run-mode addition as a real voice/note.
+    //  - Note-lock-mode OFF: each click transposes the entire base sub
+    //    by the clicked-cell delta and appends a new ▤ chip — the
+    //    original "Run = transposed playback" behavior.
     function runModeOnCell(cellIdx) {
       const note = notes[cellIdx];
       if (!note) return;
+      if (lockMode) {
+        const params = { ...cellParams[cellIdx] };
+        const newSubStep = {
+          freq: note.freq,
+          label: note.label,
+          cellIndex: cellIdx,
+          sound: params.type,
+          params,
+          duration: 1,
+          subdivision: stepSubdivision,
+        };
+        // Find (or seed) the first ▤ in the sequence and append into it.
+        let baseSub = sequence.find(s => s && s.isSub && Array.isArray(s.subSteps));
+        snapshotForUndo('Add note in Run');
+        if (!baseSub) {
+          baseSub = {
+            isSub: true,
+            subSteps: [newSubStep],
+            label: '▤',
+            duration: 1,
+            subdivision: 1,
+          };
+          sequence.push(baseSub);
+        } else {
+          baseSub.subSteps.push(newSubStep);
+        }
+        renderSequence();
+        playNote(note.freq, params);
+        return;
+      }
       const base = runModeBaseStep();
       if (!base) {
         // Empty workspace — seed with a single-step subsequence containing
@@ -5140,9 +5210,67 @@
     // Click handler for Chord mode: transpose the base chord to the
     // clicked cell's root, append the new chord step to the sequence, and
     // play it back with cell highlights for every voice's pitch class.
+    // Note-lock-mode override: instead of stacking transposed copies of
+    // the chord, append the clicked note as a NEW VOICE in the existing
+    // chord. Preserves every Stack-mode click as a discrete note across
+    // round-trips through Run / Spell.
     function chordModeOnCell(cellIdx) {
       const note = notes[cellIdx];
       if (!note) return;
+      if (lockMode) {
+        const params = { ...cellParams[cellIdx] };
+        const newVoice = {
+          freq: note.freq,
+          label: note.label,
+          cellIndex: cellIdx,
+          sound: params.type,
+          params,
+        };
+        // Find the first chord step (or promote a single-note step into
+        // a chord) so the click adds a voice to it instead of creating
+        // a new chord chip.
+        let baseIdx = sequence.findIndex(s => s && Array.isArray(s.chord));
+        snapshotForUndo('Add voice in Stack');
+        if (baseIdx === -1) {
+          // No chord yet — fold the first single-note step (if any) plus
+          // the clicked note into a fresh chord step. Otherwise seed with
+          // just the clicked note.
+          const firstNoteIdx = sequence.findIndex(s => s && s.freq != null && !s.isSub);
+          if (firstNoteIdx >= 0) {
+            const first = sequence[firstNoteIdx];
+            const firstVoice = {
+              freq: first.freq, label: first.label,
+              cellIndex: first.cellIndex,
+              sound: first.sound,
+              params: first.params ? { ...first.params } : undefined,
+            };
+            const chordStep = {
+              chord: [firstVoice, newVoice],
+              label: [firstVoice.label, newVoice.label].join('·'),
+              duration: first.duration || 1,
+              subdivision: (first.subdivision != null) ? first.subdivision : stepSubdivision,
+            };
+            sequence.splice(firstNoteIdx, 1, chordStep);
+          } else {
+            sequence.push({
+              freq: note.freq,
+              label: note.label,
+              cellIndex: cellIdx,
+              sound: params.type,
+              params,
+              duration: 1,
+              subdivision: stepSubdivision,
+            });
+          }
+        } else {
+          const baseChord = sequence[baseIdx];
+          baseChord.chord.push(newVoice);
+          baseChord.label = baseChord.chord.map(v => v.label).join('·');
+        }
+        renderSequence();
+        playNote(note.freq, params);
+        return;
+      }
       const base = chordModeBaseStep();
       if (!base) {
         // Empty sequence — seed it with the clicked note as the first
@@ -5294,14 +5422,14 @@
     }
 
     function playSequence(index = 0, freshStart = true) {
-      // freshStart=true re-anchors the timing base to Tone.now() (current
-      // audio time + lookAhead). That's right for the user pressing play
-      // — the lookAhead gives the audio thread head-room before the first
-      // note. But on a loop wrap-around we should NOT re-anchor: doing
-      // so would insert ~lookAhead ms of silence between the last step
-      // of one iteration and the first step of the next. Letting the
-      // accumulated _playOffsetSec carry over keeps the loop seamless.
-      if (index === 0 && freshStart) {
+      // Re-anchor the timing base on every iteration start (fresh OR
+      // loop wrap). Skipping the wrap-time re-anchor accumulated JS
+      // setTimeout drift over many iterations and surfaced as audio
+      // glitches between notes — re-anchoring resets the alignment
+      // between audio and JS clocks each time the loop comes around.
+      // The freshStart flag is kept for symmetry but no longer changes
+      // behavior.
+      if (index === 0) {
         document.getElementById('play-btn').textContent = '■';
         // Re-anchor the absolute-time cadence at every fresh start (and at
         // the loop wrap-around). Tone.now() already includes lookAhead, so
@@ -10006,83 +10134,165 @@
       renderSequence();
     }
 
-    // Per-step pan dial: a tiny corner widget that drags horizontally
-    // to set step.params.pan in [-100, 100]. Pans the wet signal through
-    // the per-note Tone.Panner that playNote installs. Double-click
-    // recentres. The chip gets .pan-left / .pan-right classes whenever
-    // the value is non-zero so the glow border reflects the state.
-    function applyPanGlow(chip, pan) {
-      const p = Number.isFinite(pan) ? pan : 0;
-      chip.classList.toggle('pan-right', p > 0);
-      chip.classList.toggle('pan-left',  p < 0);
+    // Whole-chip pan: press and hold a chip, then drag horizontally to
+    // pan it. The visual is the chip's own background — fades from the
+    // base palette tint toward a hard-pan colour (purple for left,
+    // blue for right) proportional to |pan|/100. There is no separate
+    // dial element; the chip itself is the control.
+    const PAN_TARGET_LEFT  = { r: 168, g: 85,  b: 247 }; // #a855f7
+    const PAN_TARGET_RIGHT = { r:  59, g: 130, b: 246 }; // #3b82f6
+
+    function parseColorToRgb(input) {
+      if (!input) return null;
+      // Hex
+      let m = /^#([0-9a-f]{3,8})$/i.exec(input.trim());
+      if (m) {
+        let h = m[1];
+        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+        if (h.length >= 6) {
+          return {
+            r: parseInt(h.slice(0, 2), 16),
+            g: parseInt(h.slice(2, 4), 16),
+            b: parseInt(h.slice(4, 6), 16),
+          };
+        }
+      }
+      // rgb()/rgba()
+      m = /^rgba?\(([^)]+)\)$/i.exec(input.trim());
+      if (m) {
+        const parts = m[1].split(',').map(s => s.trim());
+        if (parts.length >= 3) {
+          return { r: +parts[0], g: +parts[1], b: +parts[2] };
+        }
+      }
+      // hsl()/hsla() — convert through a temporary element.
+      try {
+        const tmp = document.createElement('span');
+        tmp.style.color = input;
+        document.body.appendChild(tmp);
+        const cs = getComputedStyle(tmp).color;
+        document.body.removeChild(tmp);
+        const m2 = /rgba?\(([^)]+)\)/i.exec(cs);
+        if (m2) {
+          const parts = m2[1].split(',').map(s => s.trim());
+          return { r: +parts[0], g: +parts[1], b: +parts[2] };
+        }
+      } catch (e) {}
+      return null;
     }
-    function attachPanDial(chip, step) {
-      const dial = document.createElement('div');
-      dial.className = 'pan-dial';
-      const initialPan = (step.params && Number.isFinite(step.params.pan))
-        ? step.params.pan : 0;
-      const setRot = (p) => {
-        // Map -100..100 → -90deg..90deg so the needle sweeps a half-circle.
-        dial.style.setProperty('--pan-rot', `${(p / 100) * 90}deg`);
+
+    function lerpRgb(a, b, t) {
+      return {
+        r: Math.round(a.r + (b.r - a.r) * t),
+        g: Math.round(a.g + (b.g - a.g) * t),
+        b: Math.round(a.b + (b.b - a.b) * t),
       };
-      setRot(initialPan);
+    }
 
-      // Stop chip-level click/drag handlers from firing while the user
-      // is fiddling with the dial; otherwise the chip would also try to
-      // be selected, dragged, or trigger a long-press menu. dragstart
-      // is preventDefault-ed so the chip's HTML5 draggable=true doesn't
-      // kick in while the user pans.
-      const swallow = (e) => e.stopPropagation();
-      dial.addEventListener('mousedown', swallow);
-      dial.addEventListener('touchstart', swallow, { passive: true });
-      dial.addEventListener('click', swallow);
-      dial.addEventListener('dragstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
+    // Re-tint a chip based on its step's pan value. baseColor is the
+    // palette tint that would normally sit on the chip; if pan is 0 we
+    // hand the chip back to the existing inline-style tint set by
+    // renderSequence. Otherwise we lerp from base toward the L/R target.
+    function applyPanTint(chip, baseColor, pan) {
+      const p = Math.max(-100, Math.min(100, Number.isFinite(pan) ? pan : 0));
+      if (p === 0) {
+        // Restore the palette colour the renderer set.
+        if (baseColor) {
+          chip.style.background = (typeof tintHsl === 'function')
+            ? tintHsl(baseColor, 0.22)
+            : baseColor;
+        }
+        return;
+      }
+      const baseRgb = parseColorToRgb(baseColor) || { r: 26, g: 26, b: 46 };
+      const target  = p > 0 ? PAN_TARGET_RIGHT : PAN_TARGET_LEFT;
+      const t = Math.abs(p) / 100;
+      // Cap the lerp so the chip doesn't go fully solid hard-pan colour
+      // — leaves a hint of the original palette tint at hard pans.
+      const mix = lerpRgb(baseRgb, target, t * 0.85);
+      chip.style.background = `rgb(${mix.r}, ${mix.g}, ${mix.b})`;
+    }
 
-      let dragging = false, startX = 0, startPan = 0, moved = false;
-      dial.addEventListener('pointerdown', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        dragging = true;
-        moved = false;
+    // Bind whole-chip pan-on-hold. Fires only after a small hold
+    // threshold so a quick tap stays a click and a fast drag still
+    // routes through the HTML5 drag-and-drop reorder system. The hold
+    // threshold sits below the long-press menu's threshold (500ms) so
+    // moving horizontally while held enters pan mode; staying still
+    // until 500ms still opens the menu.
+    function bindChipPanDrag(chip, step, baseColor) {
+      const HOLD_MS = 220;
+      const MOVE_TRIGGER = 6; // px of horizontal motion needed to engage
+      let armed = false, engaged = false, holdTimer = null;
+      let startX = 0, startY = 0, startPan = 0;
+      let pointerId = null;
+      let prevDraggable = chip.draggable;
+
+      const arm = () => { armed = true; };
+      const cleanup = () => {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+        armed = false;
+        engaged = false;
+        chip.classList.remove('pan-active');
+        chip.draggable = prevDraggable;
+        if (pointerId !== null) {
+          try { chip.releasePointerCapture(pointerId); } catch (e) {}
+          pointerId = null;
+        }
+      };
+
+      chip.addEventListener('pointerdown', (e) => {
+        // Right-click / non-primary pointers are reserved for the menu.
+        if (e.button !== 0 && e.button !== undefined) return;
         startX = e.clientX;
+        startY = e.clientY;
         startPan = (step.params && Number.isFinite(step.params.pan))
           ? step.params.pan : 0;
-        try { dial.setPointerCapture(e.pointerId); } catch (err) {}
+        pointerId = e.pointerId;
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(arm, HOLD_MS);
       });
-      dial.addEventListener('pointermove', (e) => {
-        if (!dragging) return;
+      chip.addEventListener('pointermove', (e) => {
+        if (pointerId !== e.pointerId) return;
         const dx = e.clientX - startX;
-        if (Math.abs(dx) > 1) moved = true;
-        const next = Math.max(-100, Math.min(100, Math.round(startPan + dx * 1.5)));
+        const dy = e.clientY - startY;
+
+        if (!engaged) {
+          // Cancel pan-arm if the user starts dragging vertically (let
+          // the page scroll) or moves before the hold completed (HTML5
+          // drag-reorder takes over).
+          if (Math.abs(dy) > Math.abs(dx) + 4) { cleanup(); return; }
+          if (!armed) return;
+          if (Math.abs(dx) < MOVE_TRIGGER) return;
+          // Engaging pan — disable native drag, capture pointer, mark.
+          engaged = true;
+          chip.classList.add('pan-active');
+          chip.draggable = false;
+          try { chip.setPointerCapture(e.pointerId); } catch (err) {}
+        }
+        // Map horizontal pixels → pan units. ~80px to go from 0 to ±100.
+        const next = Math.max(-100, Math.min(100, Math.round(startPan + dx * 1.25)));
         if (!step.params) step.params = {};
         step.params.pan = next;
-        setRot(next);
-        applyPanGlow(chip, next);
+        applyPanTint(chip, baseColor, next);
+        e.preventDefault();
       });
       const finish = (e) => {
-        if (!dragging) return;
-        dragging = false;
-        try { dial.releasePointerCapture(e.pointerId); } catch (err) {}
-        if (moved && typeof persistWorkspace === 'function') persistWorkspace();
+        if (pointerId !== e.pointerId) return;
+        const wasEngaged = engaged;
+        cleanup();
+        if (wasEngaged && typeof persistWorkspace === 'function') {
+          persistWorkspace();
+        }
       };
-      dial.addEventListener('pointerup', finish);
-      dial.addEventListener('pointercancel', finish);
+      chip.addEventListener('pointerup', finish);
+      chip.addEventListener('pointercancel', finish);
+      chip.addEventListener('lostpointercapture', finish);
 
-      // Double-click recentres the dial.
-      dial.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        if (!step.params) step.params = {};
-        step.params.pan = 0;
-        setRot(0);
-        applyPanGlow(chip, 0);
-        if (typeof persistWorkspace === 'function') persistWorkspace();
-      });
-
-      chip.appendChild(dial);
-      applyPanGlow(chip, initialPan);
+      // Initial paint reflects any saved pan value.
+      const initialPan = (step.params && Number.isFinite(step.params.pan))
+        ? step.params.pan : 0;
+      if (initialPan !== 0) applyPanTint(chip, baseColor, initialPan);
     }
 
     function bindStepDrag(chip, i) {

@@ -4898,6 +4898,18 @@
           } else {
             setSelectedStep(i);
           }
+          // Lock-mode: clicking a chord/sub chip captures it as the
+          // active wrap form so future cell taps audition that
+          // structure transposed, and the Keep button reads the
+          // shorthand chord name. Single-note steps fall through —
+          // they're not "wrap-shaped" and would lose the existing
+          // wrapTemplate if treated as one.
+          if (lockMode && (step.isSub || Array.isArray(step.chord))) {
+            wrapTemplate = cloneStep(step);
+            _wrapTransposeDisplayStep = null;
+            _wrapTonicShift = 0;
+            refreshWrapVisuals();
+          }
           renderSequence();
           previewStep(sequence[i]);
         };
@@ -5788,6 +5800,49 @@
       };
     }
 
+    // Stack → Run helper (lockMode): convert each chord step into its
+    // own subsequence step at the same position, so a workspace with
+    // multiple chords lands in Run as multiple ▤ chips (one per chord)
+    // rather than consolidateSequenceToSub's single mega-sub.
+    // Non-chord steps (singles, rests, existing subs) pass through.
+    function chordsToSubsInPlace() {
+      if (!Array.isArray(sequence) || sequence.length === 0) return false;
+      let changed = false;
+      const next = sequence.map(step => {
+        if (!step || !Array.isArray(step.chord) || step.chord.length === 0) {
+          return step;
+        }
+        const baseDur = step.duration || 1;
+        const baseSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+        const subSteps = step.chord
+          .filter(n => n && n.freq != null)
+          .map(n => ({
+            freq: n.freq,
+            label: n.label,
+            cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+            sound: n.sound,
+            params: n.params ? { ...n.params } : undefined,
+            duration: 1,
+            subdivision: baseSub,
+          }));
+        if (subSteps.length === 0) return step;
+        changed = true;
+        return {
+          isSub: true,
+          subSteps,
+          label: '▤',
+          duration: baseDur,
+          subdivision: 1,
+        };
+      });
+      if (!changed) return false;
+      snapshotForUndo('Chords → subsequences');
+      stopSequence();
+      sequence = next;
+      pendingChord = [];
+      insertionPoint = null;
+      return true;
+    }
     function subsToChordsInPlace() {
       if (!Array.isArray(sequence) || sequence.length === 0) return false;
       let changed = false;
@@ -9049,7 +9104,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -13295,15 +13350,21 @@
         if (lockMode) {
           // Lock-mode round-trip: every transition first flattens the
           // workspace into single-note steps, then rebuilds the grouping
-          // for the new mode. So Stack→Run unmerges the chord then wraps
-          // the notes in a sub; Run→Spell unmerges the sub leaving the
-          // notes flat; etc.
+          // for the new mode — except Run, which lifts each existing
+          // chord to its own ▤ sub so chord-by-chord structure survives
+          // the Stack → Run transition (was: everything collapsed into
+          // a single mega-sub).
           let changed = false;
-          if (flattenSequenceForLock()) changed = true;
-          if (gridMode === 'chord' && sequence.length > 0) {
-            if (consolidateSequenceToChord()) changed = true;
-          } else if (gridMode === 'arpeggio' && sequence.length > 0) {
-            if (consolidateSequenceToSub()) changed = true;
+          if (gridMode === 'arpeggio'
+              && sequence.some(s => s && Array.isArray(s.chord))) {
+            if (chordsToSubsInPlace()) changed = true;
+          } else {
+            if (flattenSequenceForLock()) changed = true;
+            if (gridMode === 'chord' && sequence.length > 0) {
+              if (consolidateSequenceToChord()) changed = true;
+            } else if (gridMode === 'arpeggio' && sequence.length > 0) {
+              if (consolidateSequenceToSub()) changed = true;
+            }
           }
           if (changed) renderSequence();
           return;

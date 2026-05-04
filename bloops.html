@@ -7818,10 +7818,10 @@
       const showGate = () => document.body.classList.add('signin-required');
       const hideGate = () => document.body.classList.remove('signin-required');
 
-      // ---- DEV BYPASS — flip back to false to re-enable the gate. ----
-      // Lets the UI render without signing in so layout work doesn't
-      // require an OAuth round-trip every reload.
-      const DEV_BYPASS_SIGNIN = true;
+      // ---- DEV BYPASS — flip to true to skip the gate during layout
+      // work that doesn't need an OAuth round-trip. Leave false in
+      // production / committed state. ----
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;

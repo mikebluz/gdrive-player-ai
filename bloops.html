@@ -3249,8 +3249,12 @@
     const masterDistortion = new Tone.Distortion({
       distortion: 0, wet: 1,
     }).connect(masterDelay);
+    // Master compressor — softer than before (threshold -18 / ratio 2.5
+     // / longer release) so a stack of overlapping release tails during
+     // looped playback doesn't surface as audible "pumping" / "in and
+     // out" artifacts. Limiter still catches anything that would clip.
     const masterBus = new Tone.Compressor({
-      threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12,
+      threshold: -18, ratio: 2.5, attack: 0.005, release: 0.4, knee: 18,
     }).connect(masterDistortion);
 
     // Persisted global effect mix — applied to every voice via the master
@@ -3934,13 +3938,21 @@
       const preReleaseDur = durationMs
         ? Math.max(0.02, targetDur - rel)
         : atk + dec;
-      const disposeMs = (preReleaseDur + rel + 0.4) * 1000;
+      // Tightened grace from 0.4s → 0.1s. The release envelope is
+      // already done at preReleaseDur+rel; keeping disposed-but-silent
+      // synths in the audio graph for an extra 400ms accumulated voice
+      // count over long loops and contributed to "audio gets weird the
+      // longer it loops" CPU pressure.
+      const disposeMs = (preReleaseDur + rel + 0.1) * 1000;
 
       // Light up the corresponding cell in the note grid for the duration
       // of the note. Skipped during offline rendering (offline context's
       // currentTime doesn't match the live UI clock, so the timing math
-      // would fire visuals at the wrong moment).
-      if (!_offlineSamplerOverride) {
+      // would fire visuals at the wrong moment) and during sequence
+      // playback (playStepCB already handles cell highlighting via
+      // step.cellIndex; calling flashCellByFreq there would double the
+      // setTimeout queue per step for no visual difference).
+      if (!_offlineSamplerOverride && !_suppressCellFlash) {
         flashCellByFreq(freq, startTime, Math.max(80, targetDur * 1000));
       }
 
@@ -4800,6 +4812,13 @@
       }
     }
 
+    // Set during playStepCB so playNote knows to skip its
+    // flashCellByFreq call — the chip's scheduleVisual below already
+    // handles the cell highlight via step.cellIndex, and double-running
+    // it added two extra setTimeouts per note that piled up over long
+    // looped playback.
+    let _suppressCellFlash = false;
+
     function playStepCB(step, onDone) {
       // Subsequence: recurse through subSteps, then onDone.
       if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {
@@ -4824,13 +4843,18 @@
       // when the actual notes play. Visuals key off the same audioTime so
       // the highlight follows the audio, not the JS thread.
       const audioTime = _playBaseTime + _playOffsetSec;
-      if (step.chord) {
-        const size = step.chord.length;
-        step.chord.forEach(n => {
-          playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMsExact, audioTime);
-        });
-      } else if (step.freq != null) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMsExact, audioTime);
+      _suppressCellFlash = true;
+      try {
+        if (step.chord) {
+          const size = step.chord.length;
+          step.chord.forEach(n => {
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMsExact, audioTime);
+          });
+        } else if (step.freq != null) {
+          playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMsExact, audioTime);
+        }
+      } finally {
+        _suppressCellFlash = false;
       }
       scheduleVisual(() => {
         clearHighlights();

@@ -8153,23 +8153,24 @@
             if (resp.error) return reject(new Error(resp.error));
             googleAccessToken = resp.access_token;
             gapi.client.setToken({ access_token: googleAccessToken });
-            // Warm up the audio context proactively. Without this, the
-            // OAuth popup steals the original sign-in gesture, leaves
-            // the AudioContext in a "running but cold" state, and the
-            // first few taps after sign-in lose their first ~100ms of
-            // audio because the audio thread isn't producing samples
-            // yet. Playing a 1-frame silent buffer + an explicit resume
-            // forces the thread to start rendering immediately.
+            // Best-effort audio warm-up — fire-and-forget. The OAuth
+            // popup may have invalidated the gesture, in which case
+            // Tone.start()'s promise can hang indefinitely on iOS;
+            // we don't want sign-in to wait on that. The persistent
+            // iOS-unlock listener still kicks the context on the next
+            // user tap if this attempt fails.
             try {
               const ac = Tone.getContext().rawContext;
               if (ac) {
-                if (ac.state !== 'running') ac.resume?.();
-                const silent = ac.createBufferSource();
-                silent.buffer = ac.createBuffer(1, 1, 22050);
-                silent.connect(ac.destination);
-                silent.start(0);
+                try { ac.resume?.(); } catch (e) {}
+                try {
+                  const silent = ac.createBufferSource();
+                  silent.buffer = ac.createBuffer(1, 1, 22050);
+                  silent.connect(ac.destination);
+                  silent.start(0);
+                } catch (e) {}
               }
-              await Tone.start();
+              try { Tone.start(); } catch (e) {}
             } catch (e) { console.warn('Audio warm-up failed:', e); }
             // Run the structure init BEFORE dispatching authStatusChanged.
             // Otherwise the Player's listener races us — it would call

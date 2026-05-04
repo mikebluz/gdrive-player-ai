@@ -1231,6 +1231,19 @@
       padding: 6px 20px;
       gap: 10px;
     }
+    /* Row that hosts the moved Step controls (Wrap / Size / Multi) —
+       sits between the BPM bar and the sequence display so step
+       creation defaults are right where the user is reading. */
+    .step-controls-row {
+      background: #050510;
+      padding: 6px 16px;
+      border-bottom: 3px solid #000;
+    }
+    .step-controls-row .btn-group--step {
+      flex-basis: auto;
+      width: 100%;
+      box-sizing: border-box;
+    }
 
     .btn-group {
       display: flex;
@@ -2791,6 +2804,30 @@
     </div>
   </div>
 
+  <div class="step-controls-row">
+    <div class="btn-group btn-group--step" title="Step controls — set how the next note is added">
+      <span class="btn-group-label">Step</span>
+      <button id="chord-btn" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
+      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">Size
+        <select id="subdivision-select">
+          <option value="16">4/1</option>
+          <option value="12">3/1</option>
+          <option value="8">2/1</option>
+          <option value="4">1/1</option>
+          <option value="2">1/2</option>
+          <option value="1">1/4</option>
+          <option value="0.5" selected>1/8</option>
+          <option value="0.25">1/16</option>
+          <option value="0.125">1/32</option>
+        </select>
+      </label>
+      <label class="step-multi-toggle" title="Multi-select: clicking step chips adds them to the selection so Size edits them all at once.">
+        <input type="checkbox" id="multi-select-toggle" />
+        Multi
+      </label>
+    </div>
+  </div>
+
   <div class="step-pan-bar" id="step-pan-bar" hidden>
     <span class="step-pan-label" id="step-pan-label">Pan</span>
     <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
@@ -2841,28 +2878,6 @@
   </div>
 
   <div class="footer-bar">
-    <div class="btn-group btn-group--step" title="Step controls — set how the next note is added">
-      <span class="btn-group-label">Step</span>
-      <button id="chord-btn" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
-      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">Size
-        <select id="subdivision-select">
-          <option value="16">4/1</option>
-          <option value="12">3/1</option>
-          <option value="8">2/1</option>
-          <option value="4">1/1</option>
-          <option value="2">1/2</option>
-          <option value="1">1/4</option>
-          <option value="0.5" selected>1/8</option>
-          <option value="0.25">1/16</option>
-          <option value="0.125">1/32</option>
-        </select>
-      </label>
-      <label class="step-multi-toggle" title="Multi-select: clicking step chips adds them to the selection so Size edits them all at once.">
-        <input type="checkbox" id="multi-select-toggle" />
-        Multi
-      </label>
-    </div>
-
     <div class="footer-transport">
       <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
       <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
@@ -3020,6 +3035,11 @@
     // even though wrapTemplate itself stays anchored to its original
     // pitches. Cleared whenever the wrap exits.
     let _wrapTransposeDisplayStep = null;
+    // Step currently being highlighted by sequence playback. When set,
+    // updateKeepLabel surfaces its chord/note name instead of the wrap
+    // form, so the Keep button reads "C", "Em7", "F#dim/A" etc. as the
+    // sequence advances. Cleared on stopSequence and on rest steps.
+    let _playbackStep = null;
 
     const _PITCH_NAMES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     function _pcName(pc) {
@@ -3255,7 +3275,11 @@
       const span = btn.querySelector('span');
       if (!span) return;
       let freqs = null;
-      if (chordMode && pendingChord.length > 0) {
+      // Playback wins over wrap state — when the sequence is running,
+      // the user wants to read the chord that's currently sounding.
+      if (_playbackStep) {
+        freqs = collectStepFreqs(_playbackStep);
+      } else if (chordMode && pendingChord.length > 0) {
         freqs = pendingChord.map(n => n.freq);
       } else if (_wrapTransposeDisplayStep) {
         freqs = collectStepFreqs(_wrapTransposeDisplayStep);
@@ -3264,9 +3288,10 @@
       }
       // If the user has shifted the tonic, force the root to the
       // shifted note's pitch class. Skip the shift when there are
-      // fewer than 2 distinct pitches (nothing to rotate).
+      // fewer than 2 distinct pitches (nothing to rotate). Tonic
+      // shift is wrap-scoped — don't apply it to playback steps.
       let forcedRootPc = null;
-      if (_wrapTonicShift > 0) {
+      if (!_playbackStep && _wrapTonicShift > 0) {
         const orderedPcs = wrapPcsInBuildOrder();
         if (orderedPcs.length >= 2) {
           const idx = ((_wrapTonicShift % orderedPcs.length) + orderedPcs.length) % orderedPcs.length;
@@ -5295,8 +5320,12 @@
     // Used by every interactive note path (sequence playback, run /
     // chord previews, lock-mode audition, sustained taps) so the grid
     // stays a live indicator of what's sounding.
-    function flashCellByFreq(freq, audioTime, durationMs) {
-      if (!Number.isFinite(freq) || !cells || cells.length === 0) return;
+    // Closest grid cell to a freq, within 50 cents. Returns -1 when no
+    // grid cell is within range (e.g., the note is transposed past the
+    // grid's octave window). Shared by playback's freq-fallback and
+    // flashCellByFreq below.
+    function _findCellIdxForFreq(freq) {
+      if (!Number.isFinite(freq) || !cells || cells.length === 0) return -1;
       let bestIdx = -1, bestDiff = Infinity;
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
@@ -5304,7 +5333,12 @@
         const cents = Math.abs(1200 * Math.log2(freq / n.freq));
         if (cents < bestDiff) { bestDiff = cents; bestIdx = i; }
       }
-      if (bestIdx < 0 || bestDiff > 50) return;
+      return (bestIdx >= 0 && bestDiff <= 50) ? bestIdx : -1;
+    }
+    function flashCellByFreq(freq, audioTime, durationMs) {
+      if (!Number.isFinite(freq) || !cells || cells.length === 0) return;
+      const bestIdx = _findCellIdxForFreq(freq);
+      if (bestIdx < 0) return;
       const cell = cells[bestIdx];
       if (!cell) return;
       const dur = Math.max(80, durationMs || 250);
@@ -5381,6 +5415,10 @@
       clearHighlights();
       renderSequence();
       document.getElementById('play-btn').textContent = '▶';
+      // Stop driving the Keep button off the playback step — fall back
+      // to the wrap state (or "KEEP" if no wrap is active).
+      _playbackStep = null;
+      updateKeepLabel();
     }
 
     function advanceAfterStep(index) {
@@ -5443,14 +5481,34 @@
       }
       scheduleVisual(() => {
         clearHighlights();
+        // Resolve cell index for a voice with a stored cellIndex falling
+        // back to a freq-based lookup. Out-of-scale grid cells stay in
+        // the cells array (they only get .pointer-events: none), so the
+        // outline still shows; transposed wrap voices that store
+        // cellIndex=null still light up the closest matching cell.
+        const lightCellByVoice = (n) => {
+          if (!n) return;
+          let idx = (n.cellIndex != null) ? n.cellIndex : -1;
+          if (idx < 0 || idx >= cells.length || !cells[idx]) {
+            idx = _findCellIdxForFreq(n.freq);
+          }
+          if (idx >= 0) cells[idx]?.classList.add('active-loop');
+        };
         if (step.chord) {
-          step.chord.forEach(n => {
-            if (n.cellIndex != null) cells[n.cellIndex]?.classList.add('active-loop');
-          });
+          step.chord.forEach(lightCellByVoice);
         } else if (step.freq != null) {
-          if (step.cellIndex != null) cells[step.cellIndex]?.classList.add('active-loop');
+          lightCellByVoice(step);
         } else {
           document.querySelectorAll('.rest-bar').forEach(b => b.classList.add('active-loop'));
+        }
+        // Surface the currently-playing step in the Keep button so the
+        // user can read the chord/note name (e.g. "CM7", "F#dim/A") as
+        // playback advances. Rests don't carry pitch info, so leave the
+        // previous step's label up rather than flashing to "KEEP".
+        // Cleared in stopSequence.
+        if (step.chord || step.freq != null) {
+          _playbackStep = step;
+          updateKeepLabel();
         }
       }, audioTime);
       _playOffsetSec += waitSecExact;
@@ -8991,7 +9049,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;

@@ -3808,6 +3808,11 @@
       const rel = Math.max(release / 1000, 0.1);
       const env = { attack: atk, decay: dec, sustain: sus, release: rel };
       const velocity = Math.min(1, Math.max(0, volume / 100));
+      // Schedule attacks at Tone.now() (audio now + lookAhead) instead
+      // of context.now() so the audio thread has the standard ~100ms
+      // head-room — fixes silent first taps on iOS where the context
+      // may still be transitioning out of suspended just after sign-in.
+      const attackAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
 
       // Sample types — Tone.Sampler supports triggerAttack/Release.
       if (isSampleType(type)) {
@@ -3818,7 +3823,7 @@
         }
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
-        try { entry.sampler.triggerAttack(tunedFreq, undefined, velocity); } catch (e) {}
+        try { entry.sampler.triggerAttack(tunedFreq, attackAt, velocity); } catch (e) {}
         let released = false;
         return { release: () => {
           if (released) return; released = true;
@@ -3871,7 +3876,7 @@
         synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(finalDest);
       }
       if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
-      try { synth.triggerAttack(freq, undefined, velocity); } catch (e) {}
+      try { synth.triggerAttack(freq, attackAt, velocity); } catch (e) {}
 
       let released = false;
       return { release: () => {
@@ -3919,6 +3924,17 @@
       const rel = Math.max(release / 1000, 0.1);
       const velocity = Math.min(1, Math.max(0, volume / 100));
       const env = { attack: atk, decay: dec, sustain: sus, release: rel };
+
+      // Default schedule time = Tone.now() (audio-context now + lookAhead).
+      // Without this, callers that omit startTime (cell taps, previewStep)
+      // schedule at context.now() with zero head-room, and on iOS the
+      // first ~100 ms of the audio after sign-in is silently dropped
+      // because the audio thread hasn't started rendering yet. Sequence
+      // playback already passes an explicit future startTime, so this
+      // change only helps the immediate-trigger paths.
+      if (startTime == null || !Number.isFinite(startTime)) {
+        startTime = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      }
 
       const targetDur = durationMs ? durationMs / 1000 : Math.max(atk + dec, 0.1);
       const preReleaseDur = durationMs
@@ -5608,15 +5624,17 @@
           // accounting for Tone's lookAhead and audio-context latency.
           scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
         } else {
-          // Loop wrap: preserve seamless cadence when JS is on time
-          // (no perceptible gap between iterations) but absorb drift
-          // when the JS clock has fallen behind, so we never schedule
-          // in the past. Picks whichever is later: where the previous
-          // iteration's last note naturally ends, or a small safety
-          // window past the audio clock.
+          // Loop wrap: continue from where the previous iteration's
+          // last note naturally ended — no gap, ever. The audio thread
+          // has already been receiving lookAhead-headroom schedules
+          // throughout the iteration, so the new first-note schedule
+          // lands in the same scheduled-future as the previous note's
+          // end. Only bump forward if the continuation would actually
+          // land BEHIND the audio clock (very rare; means JS fell
+          // ~lookAhead ms behind the audio thread).
           const continuation = _playBaseTime + _playOffsetSec;
-          const minSafe = Tone.context.now() + 0.02; // 20ms cushion
-          _playBaseTime  = Math.max(continuation, minSafe);
+          const audioNow = Tone.context.now();
+          _playBaseTime  = continuation > audioNow ? continuation : audioNow;
           _playOffsetSec = 0;
         }
       }
@@ -8135,13 +8153,29 @@
             if (resp.error) return reject(new Error(resp.error));
             googleAccessToken = resp.access_token;
             gapi.client.setToken({ access_token: googleAccessToken });
+            // Warm up the audio context proactively. Without this, the
+            // OAuth popup steals the original sign-in gesture, leaves
+            // the AudioContext in a "running but cold" state, and the
+            // first few taps after sign-in lose their first ~100ms of
+            // audio because the audio thread isn't producing samples
+            // yet. Playing a 1-frame silent buffer + an explicit resume
+            // forces the thread to start rendering immediately.
+            try {
+              const ac = Tone.getContext().rawContext;
+              if (ac) {
+                if (ac.state !== 'running') ac.resume?.();
+                const silent = ac.createBufferSource();
+                silent.buffer = ac.createBuffer(1, 1, 22050);
+                silent.connect(ac.destination);
+                silent.start(0);
+              }
+              await Tone.start();
+            } catch (e) { console.warn('Audio warm-up failed:', e); }
             // Run the structure init BEFORE dispatching authStatusChanged.
             // Otherwise the Player's listener races us — it would call
             // fetchPlaylistOptions("bloops/playlists") while the confirm
             // dialog is still showing and bail with "Folder bloops not
             // found" before we've had a chance to create anything.
-            // Failures are non-fatal: the listener still fires and the
-            // user gets a "File not found" message they can recover from.
             try { await ensureBloopsStructure(); }
             catch (e) { console.warn('Bloops init failed:', e); }
             try { document.dispatchEvent(new CustomEvent('authStatusChanged', { detail: { isSignedIn: true } })); } catch (e) {}

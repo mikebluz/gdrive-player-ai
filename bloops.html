@@ -875,6 +875,10 @@
     .cell:active        { filter: brightness(0.75); }
     .cell.flash         { filter: brightness(1.35); }
     .cell.active-loop   { filter: brightness(1.25); outline: 4px solid #fff inset; }
+    /* Persistent highlight for cells whose note is in the in-progress
+       Wrap (chordMode). Cleared when Wrap is closed/committed. Tapping
+       a wrap-pending cell again removes the note from the pending wrap. */
+    .cell.wrap-pending  { filter: brightness(1.2); outline: 4px solid #9f7aea inset; }
 
     .cell span {
       font-family: 'Segoe UI', sans-serif;
@@ -2886,6 +2890,37 @@
     // sequence (per the active note mode). When off (default), the note
     // is auditioned only — sequence is not modified.
     let keepMode = false;
+    // Saved "form" from the most recent Wrap commit (chord step or
+    // subsequence step). While set, cell clicks audition this form
+    // transposed so the clicked note becomes its first note. With
+    // Keep on, the transposed form is also appended to the sequence;
+    // with Keep off, audition only.
+    let wrapTemplate = null;
+
+    // Source of truth for the Wrap button label + the purple step-
+    // controls glow. Three states:
+    //   - chordMode true            → "Close"  (actively building a wrap)
+    //   - !chordMode && wrapTemplate → "Unwrap" (committed template exists)
+    //   - else                      → "Wrap"
+    function refreshWrapVisuals() {
+      const btn = document.getElementById('chord-btn');
+      const group = document.querySelector('.btn-group--step');
+      if (btn) {
+        btn.classList.toggle('active', !!chordMode);
+        btn.textContent = chordMode
+          ? 'Close'
+          : (wrapTemplate ? 'Unwrap' : 'Wrap');
+      }
+      if (group) {
+        group.classList.toggle('chord-active', !!chordMode || !!wrapTemplate);
+      }
+    }
+    // Clears the wrap-pending outline from every cell. Called whenever
+    // chordMode exits (commit, cancel, clear, undo, workspace restore)
+    // so a stale highlight can't survive across wrap sessions.
+    function clearWrapPendingHighlights() {
+      cells.forEach(c => c && c.classList && c.classList.remove('wrap-pending'));
+    }
     let loopMode = false;
     let noteLength = 1;
     let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
@@ -3152,20 +3187,48 @@
     updateBpmAccent();
     refreshBpmDigits();
 
-    // iOS audio unlock: Tone.start() alone is async and often hasn't finished
-    // resuming by the time the first tap fires playNote. Playing a silent
-    // buffer synchronously inside the gesture forces the context to
-    // transition to running immediately, and Tone.start() keeps the Tone-
-    // level state in sync. Run on EVERY gesture until the context is
-    // actually 'running' — the original `once: true` would fire on the
-    // sign-in tap (before OAuth even returned), then never again, leaving
-    // the first several post-login taps silent on iOS.
+    // iOS audio unlock + master-chain warm-up: Tone.start() alone is async
+    // and often hasn't finished resuming by the time the first tap fires
+    // playNote. Playing a silent buffer synchronously inside the gesture
+    // forces the context to transition to running immediately, and
+    // Tone.start() keeps the Tone-level state in sync. Run on EVERY
+    // gesture until the context is actually 'running' — the original
+    // `once: true` would fire on the sign-in tap (before OAuth even
+    // returned), then never again, leaving the first several post-login
+    // taps silent on iOS.
+    //
+    // Once the context becomes running, we ALSO push a silent
+    // triggerAttackRelease through the full master bus so the WebAudio
+    // graph (distortion → delay → reverb → volume → limiter → destination)
+    // gets compiled / connected end-to-end. Without this warm pass, the
+    // first 1–2 user-pressed notes after a cold load can come out silent
+    // because the synth instantiated in playNote is the first signal the
+    // chain has ever processed.
+    let _bloopsAudioWarmed = false;
+    function warmMasterChainOnce() {
+      if (_bloopsAudioWarmed) return;
+      if (typeof masterBus === 'undefined' || !masterBus) return;
+      _bloopsAudioWarmed = true;
+      try {
+        const warmer = new Tone.Synth({
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.001, decay: 0.001, sustain: 0, release: 0.001 },
+          volume: -100,
+        }).connect(masterBus);
+        warmer.triggerAttackRelease('C4', 0.01);
+        setTimeout(() => { try { warmer.dispose(); } catch (e) {} }, 250);
+      } catch (e) {}
+    }
     (function bindIosAudioUnlock() {
       const events = ['pointerdown','touchstart','keydown'];
       const handler = () => {
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return; }
-        if (!ac || ac.state === 'running') return;
+        if (ac && ac.state === 'running') {
+          warmMasterChainOnce();
+          return;
+        }
+        if (!ac) return;
         try {
           const src = ac.createBufferSource();
           src.buffer = ac.createBuffer(1, 1, 22050);
@@ -3173,7 +3236,19 @@
           src.start(0);
         } catch (e) {}
         try { Tone.start(); } catch (e) {}
-        try { ac.resume?.(); } catch (e) {}
+        try {
+          const p = ac.resume?.();
+          if (p && typeof p.then === 'function') {
+            p.then(() => warmMasterChainOnce(), () => {});
+          } else {
+            // Synchronous resume path (older Safari) — try the warm-up
+            // immediately; if the chain isn't ready yet, the no-op
+            // Synth construction is harmless and the next gesture will
+            // re-fire (the _bloopsAudioWarmed flag isn't set unless
+            // construction succeeds).
+            warmMasterChainOnce();
+          }
+        } catch (e) {}
       };
       events.forEach(ev => document.addEventListener(ev, handler, { capture: true }));
     })();
@@ -3249,13 +3324,15 @@
     const masterDistortion = new Tone.Distortion({
       distortion: 0, wet: 1,
     }).connect(masterDelay);
-    // Master compressor — softer than before (threshold -18 / ratio 2.5
-     // / longer release) so a stack of overlapping release tails during
-     // looped playback doesn't surface as audible "pumping" / "in and
-     // out" artifacts. Limiter still catches anything that would clip.
-    const masterBus = new Tone.Compressor({
-      threshold: -18, ratio: 2.5, attack: 0.005, release: 0.4, knee: 18,
-    }).connect(masterDistortion);
+    // Master bus — was a Compressor; turned out the compressor's gain-
+    // reduction state varies with the signal's loudness history, so
+    // each loop iteration entered with a slightly different reduction
+    // floor and notes around the wrap sounded different each time.
+    // Replaced with a unity-gain Gain node — the -1dB Tone.Limiter at
+    // the very end still catches any peaks that would clip, but it
+    // recovers cleanly each sample frame instead of carrying state
+    // across iterations.
+    const masterBus = new Tone.Gain(1).connect(masterDistortion);
 
     // Persisted global effect mix — applied to every voice via the master
     // chain above. Loaded from localStorage so settings stick across reloads.
@@ -3805,6 +3882,26 @@
       return base;
     }
 
+    // Quick fade-to-silence then dispose. Calling synth.dispose() while
+    // any signal is still flowing through it (release tail not fully at
+    // -inf yet) produces a tiny click as the node disconnects mid-sample.
+    // Across many loop iterations, those click positions drift within the
+    // audio render quantum and surface as the "artifacts that change per
+    // iteration" the user hears. Ramp volume to ~silence over 30ms first,
+    // dispose 50ms later — the ramp guarantees zero discontinuity at
+    // disconnect.
+    function safeDisposeSynth(synth) {
+      if (!synth) return;
+      try {
+        if (synth.volume && typeof synth.volume.rampTo === 'function') {
+          synth.volume.rampTo(-80, 0.03);
+          setTimeout(() => { try { synth.dispose(); } catch (e) {} }, 60);
+        } else {
+          synth.dispose();
+        }
+      } catch (e) {}
+    }
+
     // Click-and-hold sustain — start an attack on pointerdown, release on
     // pointerup. Returns a handle with .release(); the caller is expected
     // to call it exactly once. One-shot voices (pluck / kick / metal /
@@ -3891,7 +3988,7 @@
       return { release: () => {
         if (released) return; released = true;
         try { synth.triggerRelease(); } catch (e) {}
-        setTimeout(() => { try { synth.dispose(); } catch (e) {} }, (rel + 0.5) * 1000);
+        setTimeout(() => safeDisposeSynth(synth), (rel + 0.5) * 1000);
       }};
     }
 
@@ -4065,7 +4162,7 @@
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
         setTimeout(() => {
-          try { synth.dispose(); } catch (e) {}
+          safeDisposeSynth(synth);
           disposeEffectChain();
         }, pluckLeadMs + (targetDur + 1.5) * 1000);
         return;
@@ -4150,7 +4247,7 @@
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
       setTimeout(() => {
-        try { synth.dispose(); } catch (e) {}
+        safeDisposeSynth(synth);
         disposeEffectChain();
       }, synthLeadMs + disposeMs);
     }
@@ -4354,7 +4451,11 @@
       }
 
       // Show in-progress chord as a dashed pending chip
-      if (chordMode && pendingChord.length > 0) {
+      // Pending-Wrap preview chip — only shown while Keep is on so the
+       // user can see the in-progress chord/sub being captured. With
+       // Keep off, the Wrap is template-only (won't land in the
+       // sequence) so a preview chip would be misleading.
+      if (chordMode && keepMode && pendingChord.length > 0) {
         const chip = document.createElement('div');
         chip.className = 'seq-step chord-pending';
         chip.textContent = pendingChord.map(n => n.label).join('·') + '…';
@@ -4457,8 +4558,8 @@
       const multiCb  = document.getElementById('multi-select-toggle');
       const noteSel  = document.getElementById('note-length');
       const subSel   = document.getElementById('subdivision-select');
-      if (chordBtn) chordBtn.classList.toggle('active', chordMode);
-      if (stepClu)  stepClu.classList.toggle('chord-active', chordMode);
+      refreshWrapVisuals();
+      clearWrapPendingHighlights();
       if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
       else if (stepBtn) stepBtn.classList.toggle('active', stepMode);
       if (rowsEl) rowsEl.value = String(gridRows);
@@ -5070,6 +5171,81 @@
     // that built up several ▤ chips lands in Stack as several distinct
     // chords (rather than merging into one big chord, which is what
     // consolidateSequenceToChord does).
+    // Convert a single chord-or-single-note step into a subsequence
+    // step (each voice / the lone note becomes a subStep). Used by the
+    // mode-banner handler when a wrapTemplate exists and the user
+    // switches to Run note mode — the saved Wrap form is reshaped so
+    // the cell-click audition plays a sub instead of a chord.
+    function wrapStepAsSub(step) {
+      if (!step) return step;
+      if (step.isSub) return step;
+      const baseDur = step.duration || 1;
+      const baseSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+      const voices = Array.isArray(step.chord)
+        ? step.chord
+        : (step.freq != null ? [step] : []);
+      if (voices.length === 0) return step;
+      const subSteps = voices.map(v => ({
+        freq: v.freq,
+        label: v.label,
+        cellIndex: (v.cellIndex != null) ? v.cellIndex : null,
+        sound: v.sound,
+        params: v.params ? { ...v.params } : undefined,
+        duration: 1,
+        subdivision: baseSub,
+      }));
+      return {
+        isSub: true,
+        subSteps,
+        label: '▤',
+        duration: baseDur,
+        subdivision: 1,
+      };
+    }
+
+    // Convert a single subsequence step into a chord step by collecting
+    // every nested voice into one chord. Mirror of wrapStepAsSub —
+    // used when the user switches the note mode to Stack with a
+    // wrapTemplate set.
+    function wrapStepAsChord(step) {
+      if (!step) return step;
+      if (Array.isArray(step.chord)) return step;
+      if (!step.isSub || !Array.isArray(step.subSteps)) return step;
+      const voices = [];
+      const collect = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) { s.subSteps.forEach(collect); return; }
+        if (Array.isArray(s.chord)) {
+          s.chord.forEach(n => {
+            if (n && n.freq != null) voices.push({
+              freq: n.freq,
+              label: n.label,
+              cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+              sound: n.sound,
+              params: n.params ? { ...n.params } : undefined,
+            });
+          });
+          return;
+        }
+        if (s.freq != null) voices.push({
+          freq: s.freq,
+          label: s.label,
+          cellIndex: (s.cellIndex != null) ? s.cellIndex : null,
+          sound: s.sound,
+          params: s.params ? { ...s.params } : undefined,
+        });
+      };
+      step.subSteps.forEach(collect);
+      if (voices.length === 0) return step;
+      const baseDur = step.duration || 1;
+      return {
+        chord: voices,
+        label: voices.map(v => v.label).join('·'),
+        duration: baseDur,
+        subdivision: stepSubdivision,
+      };
+    }
+
     function subsToChordsInPlace() {
       if (!Array.isArray(sequence) || sequence.length === 0) return false;
       let changed = false;
@@ -5260,6 +5436,50 @@
     //  - Note-lock-mode OFF: each click transposes the entire base sub
     //    by the clicked-cell delta and appends a new ▤ chip — the
     //    original "Run = transposed playback" behavior.
+    // Click handler used while a wrapTemplate is set. Plays a transposed
+    // copy of the saved Wrap form at the clicked cell's pitch (its first
+    // note becomes the clicked note). With keepMode on, also appends
+    // the transposed copy to the sequence; with keepMode off, the
+    // sequence is left alone (audition only).
+    function playWrapTemplateOnCell(cellIdx) {
+      if (!wrapTemplate) return false;
+      const note = notes[cellIdx];
+      if (!note) return false;
+      const visit = (s) => {
+        if (!s) return null;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          for (const sub of s.subSteps) { const f = visit(sub); if (f != null) return f; }
+          return null;
+        }
+        if (Array.isArray(s.chord) && s.chord[0]?.freq != null) return s.chord[0].freq;
+        if (s.freq != null) return s.freq;
+        return null;
+      };
+      const baseFreq = visit(wrapTemplate);
+      if (baseFreq == null) return false;
+      const delta = semitonesBetweenHz(baseFreq, note.freq);
+      const transposed = transposeStepRec(wrapTemplate, delta);
+      const at = Tone.now();
+      if (transposed.isSub && Array.isArray(transposed.subSteps)) {
+        playSubStepsAtTime(transposed.subSteps, at);
+      } else if (Array.isArray(transposed.chord)) {
+        const size = transposed.chord.length;
+        transposed.chord.forEach(n => {
+          if (n && n.freq != null) {
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), transposed.bend));
+          }
+        });
+      } else if (transposed.freq != null) {
+        playNote(transposed.freq, paramsWithBend(transposed.params || transposed.sound || 'sine', transposed.bend));
+      }
+      if (keepMode) {
+        snapshotForUndo('Wrap form');
+        sequence.push(transposed);
+        renderSequence();
+      }
+      return true;
+    }
+
     function runModeOnCell(cellIdx) {
       const note = notes[cellIdx];
       if (!note) return;
@@ -5854,8 +6074,9 @@
       document.getElementById('scale-select').value     = 'chromatic';
       document.getElementById('tempo-slider').value     = '120';
       document.getElementById('tempo-input').value      = '120';
-      document.getElementById('chord-btn').classList.remove('active');
-      document.querySelector('.btn-group--step')?.classList.remove('chord-active');
+      wrapTemplate = null;
+      refreshWrapVisuals();
+      clearWrapPendingHighlights();
       document.getElementById('loop-btn').classList.remove('active');
       document.getElementById('subdivision-select').value = '0.5';
       const colsEl0 = document.getElementById('grid-cols-input');
@@ -6824,13 +7045,30 @@
         }
       }
 
+      // Unwrap: when there's an active wrapTemplate and we're not in
+      // build mode, the button label reads "Unwrap" — clicking clears
+      // the template and any pending notes, then drops back to the
+      // default note-mode behavior.
+      if (wrapTemplate && !chordMode) {
+        wrapTemplate = null;
+        pendingChord = [];
+        clearWrapPendingHighlights();
+        refreshWrapVisuals();
+        renderSequence();
+        return;
+      }
+
       chordMode = !chordMode;
-      document.getElementById('chord-btn').classList.toggle('active', chordMode);
-      document.querySelector('.btn-group--step')?.classList.toggle('chord-active', chordMode);
+      refreshWrapVisuals();
+      if (!chordMode) clearWrapPendingHighlights();
       if (!chordMode && pendingChord.length > 0) {
         // Commit the accumulated notes. Run note mode wraps them as a
         // subsequence (each note becomes a subStep so they play in
         // sequence); Spell and Stack wrap them as a single chord step.
+        // The committed step always becomes the wrapTemplate so future
+        // cell clicks can audition it transposed; sequence-append is
+        // gated by Keep.
+        let newStep;
         if (gridMode === 'arpeggio') {
           const subSteps = pendingChord.map(n => ({
             freq: n.freq,
@@ -6841,20 +7079,31 @@
             duration: 1,
             subdivision: stepSubdivision,
           }));
-          addToSequence({
+          newStep = {
             isSub: true,
             subSteps,
             label: '▤',
             duration: noteLength,
             subdivision: 1,
-          });
+          };
         } else {
           const label = pendingChord.map(n => n.label).join('·');
-          addToSequence({ chord: [...pendingChord], label, duration: noteLength, subdivision: stepSubdivision });
+          newStep = { chord: [...pendingChord], label, duration: noteLength, subdivision: stepSubdivision };
+        }
+        wrapTemplate = newStep;
+        if (keepMode) {
+          addToSequence(newStep);
         }
         pendingChord = [];
+        refreshWrapVisuals();
+        renderSequence();
       } else if (!chordMode) {
+        // Wrap toggled off with no notes accumulated → clear any
+        // existing template so cell clicks fall back to the active
+        // note-mode handlers.
         pendingChord = [];
+        wrapTemplate = null;
+        refreshWrapVisuals();
         renderSequence();
       }
     });
@@ -8173,7 +8422,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -8933,8 +9182,9 @@
 
       if (typeof tempoInput  !== 'undefined' && tempoInput)  tempoInput.value  = '120';
       if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = '120';
-      document.getElementById('chord-btn')?.classList.remove('active');
-      document.querySelector('.btn-group--step')?.classList.remove('chord-active');
+      wrapTemplate = null;
+      refreshWrapVisuals();
+      clearWrapPendingHighlights();
       document.getElementById('loop-btn')?.classList.remove('active');
       const noteSel  = document.getElementById('note-length');        if (noteSel)  noteSel.value  = '1';
       const subSel   = document.getElementById('subdivision-select'); if (subSel)   subSel.value   = '0.5';
@@ -9431,9 +9681,8 @@
       const bpm = Number.isFinite(w.bpm) ? w.bpm : 120;
       if (typeof tempoInput  !== 'undefined' && tempoInput)  tempoInput.value  = String(bpm);
       if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = String(bpm);
-      const chordBtn = document.getElementById('chord-btn');
-      if (chordBtn) chordBtn.classList.toggle('active', chordMode);
-      document.querySelector('.btn-group--step')?.classList.toggle('chord-active', chordMode);
+      refreshWrapVisuals();
+      clearWrapPendingHighlights();
       const loopBtn = document.getElementById('loop-btn');
       if (loopBtn) loopBtn.classList.toggle('active', loopMode);
       const noteSel  = document.getElementById('note-length');
@@ -11883,24 +12132,43 @@
           // Wrap off commits the accumulated notes per gridMode (sub
           // for Run, chord otherwise) — see chord-btn click handler.
           if (chordMode) {
+            // Tapping an already-pending cell removes it from the wrap
+            // (notes shift left because pendingChord is just an array).
+            const existing = pendingChord.findIndex(n => n.cellIndex === i);
+            if (existing !== -1) {
+              pendingChord.splice(existing, 1);
+              cell.classList.remove('wrap-pending');
+              renderSequence();
+              return;
+            }
+            const params = { ...cellParams[i] };
+            // Wrap accumulation always builds the pending form (the
+            // committed step becomes wrapTemplate regardless of Keep).
+            // Keep only gates the sequence-append at commit time.
+            pendingChord.push({
+              freq: notes[i].freq,
+              label: notes[i].label,
+              cellIndex: i,
+              sound: params.type,
+              params,
+            });
+            // Persistent highlight stays until Close clears it. flash is
+            // intentionally skipped here so the wrap-pending outline isn't
+            // immediately overridden by the brightness ramp.
+            cell.classList.add('wrap-pending');
+            renderSequence();
+            playNote(notes[i].freq, params);
+            return;
+          }
+          // Wrap template — once Wrap has been used to build a chord
+          // or sub, cell clicks audition that form transposed so the
+          // pressed note becomes its first note. Overrides whichever
+          // note mode is active. With Keep on, the transposed copy is
+          // also appended to the sequence; with Keep off, audition only.
+          if (wrapTemplate) {
             cell.classList.add('flash');
             setTimeout(() => cell.classList.remove('flash'), 80);
-            const params = { ...cellParams[i] };
-            // Keep gates the capture only — the audio always plays so
-            // the user can hear what they're auditioning even with
-            // Keep off.
-            if (keepMode) {
-              pendingChord.push({
-                freq: notes[i].freq,
-                label: notes[i].label,
-                cellIndex: i,
-                sound: params.type,
-                params,
-              });
-              renderSequence();
-              document.getElementById('save-btn').disabled = false;
-            }
-            playNote(notes[i].freq, params);
+            playWrapTemplateOnCell(i);
             return;
           }
           // Arpeggio / Chord modes don't sustain — they fire a one-shot
@@ -11942,6 +12210,10 @@
           // sustained-tap audio from pointerdown still played; this
           // gate just prevents the workspace mutation.
           if (!keepMode) return;
+          // Wrap template — pointerdown already auditioned the form
+          // and (with Keep on) appended a transposed copy. Bail so
+          // we don't also tack on a single-note step here.
+          if (wrapTemplate) return;
           const params = { ...cellParams[i] };
           // Audio already played via pointerdown/pointerup sustain. The
           // click handler only runs the workspace-mutation work.
@@ -12045,6 +12317,11 @@
         if (n.params) n.params.type = type;
         else n.params = { type };
       });
+      // Wrap template — the saved transposable form an Unwrap-able wrap
+      // auditions on cell taps. Without this, picking a new tone from
+      // the menu would change every other voice but leave the active
+      // wrap auditioning the old tone.
+      if (wrapTemplate) retuneStep(wrapTemplate);
       renderSequence();
       updateScaleBanner();
     }
@@ -12296,6 +12573,16 @@
         // clicks behave going forward — runModeOnCell / chordModeOnCell
         // / Spell-mode appending all operate on whatever's already in
         // the sequence without reshaping existing steps.
+        // Wrap template DOES reshape with the active note mode so the
+        // form being auditioned matches "what Wrap would build right
+        // now": Run → ▤ subsequence, Stack → chord, Spell stays as-is.
+        if (wrapTemplate) {
+          if (gridMode === 'arpeggio' && !wrapTemplate.isSub) {
+            wrapTemplate = wrapStepAsSub(wrapTemplate);
+          } else if (gridMode === 'chord' && wrapTemplate.isSub) {
+            wrapTemplate = wrapStepAsChord(wrapTemplate);
+          }
+        }
       });
       refresh();
 

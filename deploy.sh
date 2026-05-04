@@ -31,6 +31,22 @@ if [[ ! -f "js/config.js" ]]; then
   exit 1
 fi
 
+# -----------------------------------------------
+# Make sure the dev sign-in bypass isn't shipped to production. The
+# bloops.html source carries `const DEV_BYPASS_SIGNIN = true|false;`
+# and we want it as `false` for the deployed build (sign-in required).
+# If it's currently `true`, flip it back and warn — the deploy
+# continues so the user doesn't have to run the script twice.
+# -----------------------------------------------
+if grep -qE 'const[[:space:]]+DEV_BYPASS_SIGNIN[[:space:]]*=[[:space:]]*true' bloops.html; then
+  echo "⚠️  DEV_BYPASS_SIGNIN was set to true in bloops.html — flipping to false before deploy."
+  # macOS / BSD sed needs a backup-suffix arg; keep the in-place edit
+  # portable by writing then moving.
+  sed -E 's/(const[[:space:]]+DEV_BYPASS_SIGNIN[[:space:]]*=[[:space:]]*)true/\1false/' bloops.html > bloops.html.tmp
+  mv bloops.html.tmp bloops.html
+  echo "    ✅ Auth flow re-enabled. Remember to commit this change."
+fi
+
 echo "🚀 Starting deployment to $FTP_HOST..."
 
 # -----------------------------------------------

@@ -5579,16 +5579,19 @@
           scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
         } else {
           // Loop wrap: continue from where the previous iteration's
-          // last note naturally ended — no gap, ever. The audio thread
-          // has already been receiving lookAhead-headroom schedules
-          // throughout the iteration, so the new first-note schedule
-          // lands in the same scheduled-future as the previous note's
-          // end. Only bump forward if the continuation would actually
-          // land BEHIND the audio clock (very rare; means JS fell
-          // ~lookAhead ms behind the audio thread).
+          // last note naturally ended. Compare against the BARE audio-
+          // thread time (rawContext.currentTime) — not Tone.context.now()
+          // which includes lookAhead. Otherwise any continuation that
+          // lands inside the lookAhead window (i.e. every well-behaved
+          // schedule) looks "behind" and we'd bump forward by ~lookAhead
+          // ms, introducing a perceptible gap every wrap. Only bump
+          // when continuation would land in the literal past (JS fell
+          // more than lookAhead ms behind the audio thread).
           const continuation = _playBaseTime + _playOffsetSec;
-          const audioNow = Tone.context.now();
-          _playBaseTime  = continuation > audioNow ? continuation : audioNow;
+          const raw = (Tone.context && Tone.context.rawContext)
+            ? Tone.context.rawContext : null;
+          const rawNow = raw ? raw.currentTime : Tone.context.now();
+          _playBaseTime  = continuation > rawNow ? continuation : rawNow;
           _playOffsetSec = 0;
         }
       }

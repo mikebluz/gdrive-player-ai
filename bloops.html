@@ -840,6 +840,11 @@
       justify-content: center;
       transition: filter 0.08s ease;
       user-select: none;
+      -webkit-user-select: none;
+      /* Suppress iOS Safari's tap-and-hold "select / copy / look up"
+         callout — without it, holding a cell pops the native selection
+         menu and pre-empts the JS long-press handler. */
+      -webkit-touch-callout: none;
       position: relative;
       /* Tell the browser this element is for play gestures, not scroll —
          it commits to "play" without waiting for movement-direction
@@ -1038,6 +1043,8 @@
       font-weight: 700;
       color: #a0aec0;
       user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
       cursor: grab;
       position: relative;
       flex-shrink: 0;
@@ -1730,6 +1737,9 @@
       cursor: pointer;
       transition: all 0.15s ease;
       gap: 3px;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
     .saved-block:hover { border-color: #4299e1; background: #1e2a3a; }
     .saved-block.dragging { opacity: 0.35; }
@@ -2666,7 +2676,7 @@
 
   <div class="step-grid-bar">
     <div class="step-grid-bar-left">
-      <button id="play-lock-btn" class="play-lock" type="button" title="Lock: when on, pressing a note plays the most recent chord/subsequence step transposed so the pressed note becomes its first note. Notes are auditioned only — sequence is not modified."><span>LOCK</span></button>
+      <button id="play-lock-btn" class="play-lock active" type="button" title="Keep: when on (default), pressing a note in the grid creates a step in the current sequence. When off, notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
     </div>
     <div class="tempo-control">
       <!-- 3-digit BPM picker — each column has + above and − below to bump
@@ -2871,11 +2881,11 @@
       try { return localStorage.getItem('lock-mode') === '1'; }
       catch (e) { return false; }
     })();
-    // Play-lock toggle (the "Lock" button in the BPM row): when on,
-    // pressing a cell auditions the most-recently-built chord/sub step
-    // transposed so the pressed note becomes its first note. The
-    // sequence isn't modified — it's a play-only lock.
-    let playLockMode = false;
+    // Keep toggle (the "Keep" button to the left of the BPM row): when
+    // on (default), pressing a cell in the grid creates a step in the
+    // current sequence (per the active note mode). When off, the note
+    // is auditioned only — sequence is not modified.
+    let keepMode = true;
     let loopMode = false;
     let noteLength = 1;
     let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
@@ -3808,11 +3818,6 @@
       const rel = Math.max(release / 1000, 0.1);
       const env = { attack: atk, decay: dec, sustain: sus, release: rel };
       const velocity = Math.min(1, Math.max(0, volume / 100));
-      // Schedule attacks at Tone.now() (audio now + lookAhead) instead
-      // of context.now() so the audio thread has the standard ~100ms
-      // head-room — fixes silent first taps on iOS where the context
-      // may still be transitioning out of suspended just after sign-in.
-      const attackAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
 
       // Sample types — Tone.Sampler supports triggerAttack/Release.
       if (isSampleType(type)) {
@@ -3823,7 +3828,7 @@
         }
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
-        try { entry.sampler.triggerAttack(tunedFreq, attackAt, velocity); } catch (e) {}
+        try { entry.sampler.triggerAttack(tunedFreq, undefined, velocity); } catch (e) {}
         let released = false;
         return { release: () => {
           if (released) return; released = true;
@@ -3876,7 +3881,7 @@
         synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(finalDest);
       }
       if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
-      try { synth.triggerAttack(freq, attackAt, velocity); } catch (e) {}
+      try { synth.triggerAttack(freq, undefined, velocity); } catch (e) {}
 
       let released = false;
       return { release: () => {
@@ -3924,17 +3929,6 @@
       const rel = Math.max(release / 1000, 0.1);
       const velocity = Math.min(1, Math.max(0, volume / 100));
       const env = { attack: atk, decay: dec, sustain: sus, release: rel };
-
-      // Default schedule time = Tone.now() (audio-context now + lookAhead).
-      // Without this, callers that omit startTime (cell taps, previewStep)
-      // schedule at context.now() with zero head-room, and on iOS the
-      // first ~100 ms of the audio after sign-in is silently dropped
-      // because the audio thread hasn't started rendering yet. Sequence
-      // playback already passes an explicit future startTime, so this
-      // change only helps the immediate-trigger paths.
-      if (startTime == null || !Number.isFinite(startTime)) {
-        startTime = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-      }
 
       const targetDur = durationMs ? durationMs / 1000 : Math.max(atk + dec, 0.1);
       const preReleaseDur = durationMs
@@ -5129,10 +5123,21 @@
       return true;
     }
 
-    // First subsequence step in the workspace, or the first single/chord
-    // step if no sub exists yet (so the very first Run-mode tap can
-    // transpose-from something even without prior consolidation).
+    // Pick the base step Run mode transposes from. Selection wins:
+    // if the user has a ▤ chip selected (or a chord/single step), it's
+    // used as the base, so the user can choose which subsequence to
+    // base subsequent Run-mode clicks off. Falls back to the first ▤
+    // in the workspace, then the first chord/single, so the very first
+    // tap still has something to transpose-from even with no selection.
     function runModeBaseStep() {
+      if (Array.isArray(selectedStepRefs) && selectedStepRefs.length > 0) {
+        for (const s of selectedStepRefs) {
+          if (s && s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0) return s;
+        }
+        for (const s of selectedStepRefs) {
+          if (s && (s.freq != null || (Array.isArray(s.chord) && s.chord.length > 0))) return s;
+        }
+      }
       for (const s of sequence) {
         if (s && s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0) return s;
       }
@@ -5231,65 +5236,6 @@
     //  - Note-lock-mode OFF: each click transposes the entire base sub
     //    by the clicked-cell delta and appends a new ▤ chip — the
     //    original "Run = transposed playback" behavior.
-    // Find the most-recently-built chord or subsequence step in the
-    // current sequence — used by the Lock toggle so a click auditions
-    // a transposed copy of "the latest thing you wrapped".
-    function findLastWrappedStep() {
-      for (let i = sequence.length - 1; i >= 0; i--) {
-        const s = sequence[i];
-        if (!s) continue;
-        if (s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0) return s;
-        if (Array.isArray(s.chord) && s.chord.length > 0) return s;
-      }
-      return null;
-    }
-
-    // Click handler used while the Lock toggle is on. Plays a transposed
-    // copy of the last chord/sub step at the clicked cell's pitch, with
-    // its first note aligned to the clicked note. Does NOT mutate the
-    // sequence — purely a play-only audition.
-    function playLockOnCell(cellIdx) {
-      const note = notes[cellIdx];
-      if (!note) return;
-      const baseStep = findLastWrappedStep();
-      if (!baseStep) {
-        // No chord/sub yet — fall back to a single-note preview so the
-        // user gets feedback for the click.
-        const params = { ...cellParams[cellIdx] };
-        playNote(note.freq, params);
-        return;
-      }
-      // Pull the base step's "first note" pitch — for chords that's
-      // chord[0]; for subs it's the first nested freq we hit.
-      const visit = (s) => {
-        if (!s) return null;
-        if (s.isSub && Array.isArray(s.subSteps)) {
-          for (const sub of s.subSteps) { const f = visit(sub); if (f != null) return f; }
-          return null;
-        }
-        if (Array.isArray(s.chord) && s.chord[0]?.freq != null) return s.chord[0].freq;
-        if (s.freq != null) return s.freq;
-        return null;
-      };
-      const baseFreq = visit(baseStep);
-      if (baseFreq == null) return;
-      const delta = semitonesBetweenHz(baseFreq, note.freq);
-      const transposed = transposeStepRec(baseStep, delta);
-      const at = Tone.now();
-      if (transposed.isSub && Array.isArray(transposed.subSteps)) {
-        playSubStepsAtTime(transposed.subSteps, at);
-      } else if (Array.isArray(transposed.chord)) {
-        const size = transposed.chord.length;
-        transposed.chord.forEach(n => {
-          if (n.freq == null) return;
-          playNote(
-            n.freq,
-            paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), transposed.bend)
-          );
-        });
-      }
-    }
-
     function runModeOnCell(cellIdx) {
       const note = notes[cellIdx];
       if (!note) return;
@@ -5304,48 +5250,53 @@
           duration: 1,
           subdivision: stepSubdivision,
         };
-        // Find (or seed) the first ▤ in the sequence and append into it.
-        let baseSub = sequence.find(s => s && s.isSub && Array.isArray(s.subSteps));
-        snapshotForUndo('Add note in Run');
-        if (!baseSub) {
-          baseSub = {
-            isSub: true,
-            subSteps: [newSubStep],
-            label: '▤',
-            duration: 1,
-            subdivision: 1,
-          };
-          sequence.push(baseSub);
-        } else {
-          baseSub.subSteps.push(newSubStep);
+        if (keepMode) {
+          // Find (or seed) the first ▤ and append into it.
+          let baseSub = sequence.find(s => s && s.isSub && Array.isArray(s.subSteps));
+          snapshotForUndo('Add note in Run');
+          if (!baseSub) {
+            baseSub = {
+              isSub: true,
+              subSteps: [newSubStep],
+              label: '▤',
+              duration: 1,
+              subdivision: 1,
+            };
+            sequence.push(baseSub);
+          } else {
+            baseSub.subSteps.push(newSubStep);
+          }
+          renderSequence();
         }
-        renderSequence();
         playNote(note.freq, params);
         return;
       }
       const base = runModeBaseStep();
       if (!base) {
-        // Empty workspace — seed with a single-step subsequence containing
-        // just the clicked note so the next tap has something to transpose.
+        // Empty workspace — there's no sub to transpose. With Keep on,
+        // seed a one-step ▤ so future taps have a base. With Keep off,
+        // just play the clicked note (no seed).
         const params = { ...cellParams[cellIdx] };
-        const seed = {
-          freq: note.freq,
-          label: note.label,
-          cellIndex: cellIdx,
-          sound: params.type,
-          params,
-          duration: 1,
-          subdivision: stepSubdivision,
-        };
-        snapshotForUndo('Seed run');
-        sequence.push({
-          isSub: true,
-          subSteps: [seed],
-          label: '▤',
-          duration: 1,
-          subdivision: 1,
-        });
-        renderSequence();
+        if (keepMode) {
+          const seed = {
+            freq: note.freq,
+            label: note.label,
+            cellIndex: cellIdx,
+            sound: params.type,
+            params,
+            duration: 1,
+            subdivision: stepSubdivision,
+          };
+          snapshotForUndo('Seed run');
+          sequence.push({
+            isSub: true,
+            subSteps: [seed],
+            label: '▤',
+            duration: 1,
+            subdivision: 1,
+          });
+          renderSequence();
+        }
         playNote(note.freq, params);
         return;
       }
@@ -5378,9 +5329,13 @@
           subdivision: 1,
         };
       }
-      snapshotForUndo('Add run');
-      sequence.push(newStep);
-      renderSequence();
+      // Keep gates the sequence mutation; the audio always plays so the
+      // user hears the transposed sub regardless.
+      if (keepMode) {
+        snapshotForUndo('Add run');
+        sequence.push(newStep);
+        renderSequence();
+      }
       playSubStepsAtTime(newStep.subSteps || [], Tone.now());
     }
 
@@ -5414,69 +5369,64 @@
           sound: params.type,
           params,
         };
-        // Find the first chord step (or promote a single-note step into
-        // a chord) so the click adds a voice to it instead of creating
-        // a new chord chip.
-        let baseIdx = sequence.findIndex(s => s && Array.isArray(s.chord));
-        snapshotForUndo('Add voice in Stack');
-        if (baseIdx === -1) {
-          // No chord yet — fold the first single-note step (if any) plus
-          // the clicked note into a fresh chord step. Otherwise seed with
-          // just the clicked note.
-          const firstNoteIdx = sequence.findIndex(s => s && s.freq != null && !s.isSub);
-          if (firstNoteIdx >= 0) {
-            const first = sequence[firstNoteIdx];
-            const firstVoice = {
-              freq: first.freq, label: first.label,
-              cellIndex: first.cellIndex,
-              sound: first.sound,
-              params: first.params ? { ...first.params } : undefined,
-            };
-            const chordStep = {
-              chord: [firstVoice, newVoice],
-              label: [firstVoice.label, newVoice.label].join('·'),
-              duration: first.duration || 1,
-              subdivision: (first.subdivision != null) ? first.subdivision : stepSubdivision,
-            };
-            sequence.splice(firstNoteIdx, 1, chordStep);
+        if (keepMode) {
+          let baseIdx = sequence.findIndex(s => s && Array.isArray(s.chord));
+          snapshotForUndo('Add voice in Stack');
+          if (baseIdx === -1) {
+            const firstNoteIdx = sequence.findIndex(s => s && s.freq != null && !s.isSub);
+            if (firstNoteIdx >= 0) {
+              const first = sequence[firstNoteIdx];
+              const firstVoice = {
+                freq: first.freq, label: first.label,
+                cellIndex: first.cellIndex,
+                sound: first.sound,
+                params: first.params ? { ...first.params } : undefined,
+              };
+              const chordStep = {
+                chord: [firstVoice, newVoice],
+                label: [firstVoice.label, newVoice.label].join('·'),
+                duration: first.duration || 1,
+                subdivision: (first.subdivision != null) ? first.subdivision : stepSubdivision,
+              };
+              sequence.splice(firstNoteIdx, 1, chordStep);
+            } else {
+              sequence.push({
+                freq: note.freq,
+                label: note.label,
+                cellIndex: cellIdx,
+                sound: params.type,
+                params,
+                duration: 1,
+                subdivision: stepSubdivision,
+              });
+            }
           } else {
-            sequence.push({
-              freq: note.freq,
-              label: note.label,
-              cellIndex: cellIdx,
-              sound: params.type,
-              params,
-              duration: 1,
-              subdivision: stepSubdivision,
-            });
+            const baseChord = sequence[baseIdx];
+            baseChord.chord.push(newVoice);
+            baseChord.label = baseChord.chord.map(v => v.label).join('·');
           }
-        } else {
-          const baseChord = sequence[baseIdx];
-          baseChord.chord.push(newVoice);
-          baseChord.label = baseChord.chord.map(v => v.label).join('·');
+          renderSequence();
         }
-        renderSequence();
         playNote(note.freq, params);
         return;
       }
       const base = chordModeBaseStep();
       if (!base) {
-        // Empty sequence — seed it with the clicked note as the first
-        // single-note step so subsequent clicks have something to
-        // transpose from.
         const params = { ...cellParams[cellIdx] };
-        const seed = {
-          freq: note.freq,
-          label: note.label,
-          cellIndex: cellIdx,
-          sound: params.type,
-          params,
-          duration: 1,
-          subdivision: stepSubdivision,
-        };
-        snapshotForUndo('Seed chord');
-        sequence.push(seed);
-        renderSequence();
+        if (keepMode) {
+          const seed = {
+            freq: note.freq,
+            label: note.label,
+            cellIndex: cellIdx,
+            sound: params.type,
+            params,
+            duration: 1,
+            subdivision: stepSubdivision,
+          };
+          snapshotForUndo('Seed chord');
+          sequence.push(seed);
+          renderSequence();
+        }
         playNote(note.freq, params);
         return;
       }
@@ -5508,9 +5458,13 @@
             duration: baseDur,
             subdivision: baseSub,
           };
-      snapshotForUndo('Add chord');
-      sequence.push(newStep);
-      renderSequence();
+      // Keep gates the sequence mutation; the audio always plays so the
+      // user hears the transposed chord regardless.
+      if (keepMode) {
+        snapshotForUndo('Add chord');
+        sequence.push(newStep);
+        renderSequence();
+      }
 
       // Play the new chord + highlight matching cells.
       const bpm = parseInt(tempoInput?.value, 10) || 120;
@@ -8153,25 +8107,6 @@
             if (resp.error) return reject(new Error(resp.error));
             googleAccessToken = resp.access_token;
             gapi.client.setToken({ access_token: googleAccessToken });
-            // Best-effort audio warm-up — fire-and-forget. The OAuth
-            // popup may have invalidated the gesture, in which case
-            // Tone.start()'s promise can hang indefinitely on iOS;
-            // we don't want sign-in to wait on that. The persistent
-            // iOS-unlock listener still kicks the context on the next
-            // user tap if this attempt fails.
-            try {
-              const ac = Tone.getContext().rawContext;
-              if (ac) {
-                try { ac.resume?.(); } catch (e) {}
-                try {
-                  const silent = ac.createBufferSource();
-                  silent.buffer = ac.createBuffer(1, 1, 22050);
-                  silent.connect(ac.destination);
-                  silent.start(0);
-                } catch (e) {}
-              }
-              try { Tone.start(); } catch (e) {}
-            } catch (e) { console.warn('Audio warm-up failed:', e); }
             // Run the structure init BEFORE dispatching authStatusChanged.
             // Otherwise the Player's listener races us — it would call
             // fetchPlaylistOptions("bloops/playlists") while the confirm
@@ -8211,7 +8146,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -8232,6 +8167,28 @@
       if (window.bloopsAuth.isSignedIn()) hideGate();
       else showGate();
       btn.addEventListener('click', async () => {
+        // Warm up the AudioContext synchronously inside this gesture,
+        // BEFORE the OAuth popup invalidates it. iOS only resumes a
+        // suspended context if the gesture is still valid, so the
+        // silent-buffer trick must run here, not in the OAuth callback
+        // (where the gesture is gone). Persistent iOS-unlock listener
+        // still covers later gestures if this attempt didn't take.
+        try {
+          if (typeof Tone !== 'undefined' && Tone.getContext) {
+            const ac = Tone.getContext().rawContext;
+            if (ac) {
+              try { ac.resume?.(); } catch (e) {}
+              try {
+                const silent = ac.createBufferSource();
+                silent.buffer = ac.createBuffer(1, 1, 22050);
+                silent.connect(ac.destination);
+                silent.start(0);
+              } catch (e) {}
+            }
+            try { Tone.start(); } catch (e) {}
+          }
+        } catch (e) { console.warn('Audio warm-up failed:', e); }
+
         const original = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Signing in…';
@@ -11888,15 +11845,6 @@
         // presses build a chord step at the end of the press session.
         cell.addEventListener('pointerdown', (e) => {
           if (e.target.closest('.cell-sound-select')) return;
-          // Lock toggle wins over note-mode behaviour: each press plays
-          // the most-recent chord/sub step transposed so the pressed
-          // note is its first note. Doesn't modify the sequence.
-          if (playLockMode) {
-            cell.classList.add('flash');
-            setTimeout(() => cell.classList.remove('flash'), 80);
-            playLockOnCell(i);
-            return;
-          }
           // Wrap (chordMode) takes precedence over the note-mode click
           // routing so accumulating notes works the same way regardless
           // of whether the user is in Spell, Run, or Stack. Toggling
@@ -11906,15 +11854,20 @@
             cell.classList.add('flash');
             setTimeout(() => cell.classList.remove('flash'), 80);
             const params = { ...cellParams[i] };
-            pendingChord.push({
-              freq: notes[i].freq,
-              label: notes[i].label,
-              cellIndex: i,
-              sound: params.type,
-              params,
-            });
-            renderSequence();
-            document.getElementById('save-btn').disabled = false;
+            // Keep gates the capture only — the audio always plays so
+            // the user can hear what they're auditioning even with
+            // Keep off.
+            if (keepMode) {
+              pendingChord.push({
+                freq: notes[i].freq,
+                label: notes[i].label,
+                cellIndex: i,
+                sound: params.type,
+                params,
+              });
+              renderSequence();
+              document.getElementById('save-btn').disabled = false;
+            }
             playNote(notes[i].freq, params);
             return;
           }
@@ -11953,6 +11906,10 @@
           // Arpeggio / Chord modes already played their audio on
           // pointerdown — don't append to the workspace sequence.
           if (gridMode !== 'sequencer') return;
+          // Keep off: Spell-mode click event also bails out here. The
+          // sustained-tap audio from pointerdown still played; this
+          // gate just prevents the workspace mutation.
+          if (!keepMode) return;
           const params = { ...cellParams[i] };
           // Audio already played via pointerdown/pointerup sustain. The
           // click handler only runs the workspace-mutation work.
@@ -12302,26 +12259,11 @@
           if (changed) renderSequence();
           return;
         }
-        // Entering Chord mode:
-        //  - From Run: convert each ▤ in place to its own chord so the
-        //    user keeps as many chord chips as they had subs, instead
-        //    of every voice merging into one chord.
-        //  - From other modes (Spell or first entry): collapse the whole
-        //    sequence into one base chord — that's the chord-mode seed
-        //    that subsequent cell clicks transpose and append.
-        if (gridMode === 'chord' && prev !== 'chord') {
-          if (prev === 'arpeggio') {
-            if (subsToChordsInPlace()) renderSequence();
-          } else if (sequence.length > 1) {
-            if (consolidateSequenceToChord()) renderSequence();
-          }
-        }
-        // Entering Run mode: collapse the workspace into one subsequence
-        // chip. Each subsequent click transposes that base sub and
-        // appends a new ▤ chip.
-        if (gridMode === 'arpeggio' && prev !== 'arpeggio' && sequence.length > 1) {
-          if (consolidateSequenceToSub()) renderSequence();
-        }
+        // Unlocked mode: the workspace stays exactly as the user left
+        // it. Cycling Spell / Run / Stack only changes how new cell
+        // clicks behave going forward — runModeOnCell / chordModeOnCell
+        // / Spell-mode appending all operate on whatever's already in
+        // the sequence without reshaping existing steps.
       });
       refresh();
 
@@ -13015,15 +12957,15 @@
     });
 
     // ---- Lock button (left of BPM) ----
-    // Toggles playLockMode. While on, every cell click auditions a
+    // Toggles keepMode. While on, every cell click auditions a
     // transposed copy of the last chord / sub step.
     (function bindPlayLockButton() {
       const btn = document.getElementById('play-lock-btn');
       if (!btn) return;
-      const refresh = () => btn.classList.toggle('active', playLockMode);
+      const refresh = () => btn.classList.toggle('active', keepMode);
       refresh();
       btn.addEventListener('click', () => {
-        playLockMode = !playLockMode;
+        keepMode = !keepMode;
         refresh();
       });
     })();

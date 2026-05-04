@@ -2676,7 +2676,7 @@
 
   <div class="step-grid-bar">
     <div class="step-grid-bar-left">
-      <button id="play-lock-btn" class="play-lock active" type="button" title="Keep: when on (default), pressing a note in the grid creates a step in the current sequence. When off, notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
+      <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
     </div>
     <div class="tempo-control">
       <!-- 3-digit BPM picker — each column has + above and − below to bump
@@ -2882,10 +2882,10 @@
       catch (e) { return false; }
     })();
     // Keep toggle (the "Keep" button to the left of the BPM row): when
-    // on (default), pressing a cell in the grid creates a step in the
-    // current sequence (per the active note mode). When off, the note
+    // on, pressing a cell in the grid creates a step in the current
+    // sequence (per the active note mode). When off (default), the note
     // is auditioned only — sequence is not modified.
-    let keepMode = true;
+    let keepMode = false;
     let loopMode = false;
     let noteLength = 1;
     let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
@@ -11519,14 +11519,19 @@
       if (voices.length >= 2) {
         // Multi-press → emit a chord step. Suppress the per-cell click
         // handlers that fire right after each pointerup so they don't
-        // also append individual notes on top of the chord.
-        snapshotForUndo('Add chord');
-        addToSequence({
-          chord: voices,
-          label: voices.map(v => v.label).join('·'),
-          duration: noteLength,
-          subdivision: stepSubdivision,
-        });
+        // also append individual notes on top of the chord. Capture is
+        // gated by keepMode (off = audition only); the suppression
+        // still fires either way so the bubble-phase click handlers
+        // don't sneak in extra single-note appends.
+        if (keepMode) {
+          snapshotForUndo('Add chord');
+          addToSequence({
+            chord: voices,
+            label: voices.map(v => v.label).join('·'),
+            duration: noteLength,
+            subdivision: stepSubdivision,
+          });
+        }
         _polySession.suppressClickUntil = performance.now() + 250;
       }
     }

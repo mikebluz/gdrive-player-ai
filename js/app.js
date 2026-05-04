@@ -20,7 +20,43 @@ document.addEventListener("DOMContentLoaded", () => {
   const blobCache = new BlobCache();
   const cacheBtn = document.getElementById("cache-btn");
   const cachePlaylistBtn = document.getElementById("cache-playlist-btn");
+  const addToTrackBtn = document.getElementById("add-to-track-btn");
   const cacheBtnContainer = cacheBtn?.closest(".cache-btn-container");
+
+  // Click → save the currently selected track as a sequencer chip in
+  // Bloops + drop it on a fresh stereo track. Mirrors the long-press
+  // "Copy to Make track" menu on individual playlist rows so the user
+  // can also act on the active track without scrolling the playlist.
+  addToTrackBtn?.addEventListener("click", async () => {
+    if (typeof window.bloopsImportAudio !== "function") {
+      alert("Make import isn't available — Bloops side hasn't loaded yet.");
+      return;
+    }
+    const idx = playlist?.currentIndex;
+    const track = (idx >= 0) ? playlist?.tracks?.[idx] : null;
+    if (!track) {
+      alert("No track selected.");
+      return;
+    }
+    const original = addToTrackBtn.textContent;
+    addToTrackBtn.disabled = true;
+    addToTrackBtn.textContent = "Adding…";
+    try {
+      // Reuse the playlist manager's tiered blob fetch (in-memory →
+      // persistent cache → Drive) so we don't pay for a network round-
+      // trip when the bytes are already local.
+      const blob = await playlist._getTrackBlob(track);
+      const entry = await window.bloopsImportAudio(blob, track.name);
+      addToTrackBtn.textContent = `Added "${entry?.name || track.name}"`;
+      setTimeout(() => { addToTrackBtn.textContent = original; }, 1600);
+    } catch (e) {
+      console.error("Add to Make track failed:", e);
+      alert(`Couldn't add to Make: ${e?.message || e}`);
+      addToTrackBtn.textContent = original;
+    } finally {
+      addToTrackBtn.disabled = false;
+    }
+  });
 
   // --- Initialization ---
   (async function initApp() {

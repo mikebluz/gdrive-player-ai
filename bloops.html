@@ -410,31 +410,26 @@
       font-weight: 800;
       letter-spacing: 0.5px;
       cursor: pointer;
-      /* Neon — digit colour tracks the BPM accent (cyan↔red gradient)
-         set by updateBpmAccent, plus a layered text-shadow glow that
-         flashes red on every pulse beat. */
-      color: var(--bpm-thumb, #00bfff);
+      /* Static teal palette to match the +/- step buttons next to the
+         digits. The flashing animation is opt-in (host gets
+         .bpm-flashing); without it the digits sit calmly in the
+         neutral teal. */
+      color: #81e6d9;
       background: #050510;
-      border: 1px solid var(--bpm-thumb, #2d2d3f);
+      border: 1px solid #4fd1c5;
       border-radius: 4px;
       user-select: none;
-      text-shadow:
-        0 0 6px var(--bpm-thumb, #00bfff),
-        0 0 12px rgba(255, 60, 60, 0.45);
-      box-shadow: 0 0 8px rgba(255, 40, 40, 0.18) inset;
+      text-shadow: 0 0 6px rgba(79, 209, 197, 0.45);
+    }
+    .bpm-digits.bpm-flashing .bpm-digit {
       animation: bpm-pulse var(--bpm-pulse-dur, 0.5s) ease-in-out infinite;
     }
     @keyframes bpm-pulse {
-      /* Cycle goes from "just disappeared" (fully transparent) at the
-         start/end of each cycle to a glowing red peak at the midpoint,
-         so the digits read as a strong on-off pulse instead of a soft
-         dim. */
+      /* Peak at 0% / 100% so each cycle BEGINS with the red glow — that
+         way restarting the animation at note-attack time makes the
+         visual peak land on the audible beat. The midpoint dips to
+         fully transparent for the strong on-off oscillation. */
       0%, 100% {
-        opacity: 0;
-        color: var(--bpm-thumb, #00bfff);
-        text-shadow: none;
-      }
-      50% {
         opacity: 1;
         color: #ff4848;
         text-shadow:
@@ -442,11 +437,14 @@
           0 0 16px rgba(255, 40, 40, 0.75),
           0 0 26px rgba(255, 0, 0, 0.5);
       }
+      50% {
+        opacity: 0;
+        color: var(--bpm-thumb, #00bfff);
+        text-shadow: none;
+      }
     }
-    /* Click any digit to freeze the pulse — the host gets .bpm-paused. */
-    .bpm-digits.bpm-paused .bpm-digit { animation: none; }
     @media (prefers-reduced-motion: reduce) {
-      .bpm-digit { animation: none; }
+      .bpm-digits.bpm-flashing .bpm-digit { animation: none; }
     }
     .bpm-label {
       font-family: 'Segoe UI', sans-serif;
@@ -504,20 +502,27 @@
     .cell.out-of-scale span,
     .cell.out-of-scale .cell-sound-select { visibility: hidden; }
 
+    /* Colors menu lives in the seq-grid-bar — match the teal pill look
+       of the Step Mode toggle next to it for visual consistency. */
     #colors-menu-btn {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
+      padding: 3px 8px;
+      border: 1px solid #4fd1c5;
+      border-radius: 14px;
       background: transparent;
-      color: #a0aec0;
+      color: #81e6d9;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
+      font-size: 0.7rem;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #colors-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #colors-menu-btn.open { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+    #colors-menu-btn:hover { border-color: #81e6d9; color: #b2f5ea; }
+    #colors-menu-btn.open  {
+      border-color: #81e6d9;
+      color: #b2f5ea;
+      background: rgba(79, 209, 197, 0.18);
+      box-shadow: 0 0 12px rgba(79, 209, 197, 0.4);
+    }
 
     .colors-panel {
       display: none;
@@ -1052,14 +1057,40 @@
        the palette tint) keeps showing through, and the .active /
        .selected box-shadows still override when the chip is playing or
        being edited. */
-    /* Whole-chip pan: hold a chip and drag horizontally to set its pan.
-       Visible feedback comes from the chip's own background colour
-       fading from the palette tint toward the L/R hard-pan colours,
-       set inline by JS — no extra DOM, no dial. While the user is
-       dragging, the chip dims a hair to confirm "you're panning". */
-    .seq-step.pan-active {
-      cursor: ew-resize;
-      filter: brightness(1.15);
+    /* Selected-step pan slider — appears just below the BPM row when
+       at least one step chip is selected, and applies its value to the
+       whole selection (multi-mode included). The chip background still
+       lerps toward the L/R hard-pan colour so the visual cue tracks
+       the slider live. */
+    .step-pan-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 18px;
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .step-pan-bar[hidden] { display: none; }
+    .step-pan-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #a0aec0;
+    }
+    .step-pan-bar input[type="range"] {
+      flex: 1;
+      height: 4px;
+      accent-color: #4fd1c5;
+    }
+    .step-pan-val {
+      min-width: 28px;
+      text-align: right;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #b2f5ea;
     }
 
     .seq-cursor {
@@ -1277,6 +1308,64 @@
        padding on top, left, and bottom (right edge unchanged so the
        gap to the centred BPM picker stays the same). */
     .rest-bar--left { margin: -3px 0 -3px -8px; }
+    /* Lock button — sits in the slot the left Rest button used to
+       occupy. Same physical footprint as the right Rest so the BPM
+       picker stays visually centred between them. */
+    .play-lock {
+      min-width: 92px;
+      height: 52px;
+      box-sizing: border-box;
+      padding: 0 18px;
+      background: #000;
+      border: 2px solid #f6ad55;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+      flex-shrink: 0;
+      box-shadow: 0 0 12px rgba(246, 173, 85, 0.18);
+      margin: -3px 0 -3px -8px;
+    }
+    .play-lock:hover { border-color: #fbd38d; box-shadow: 0 0 16px rgba(246, 173, 85, 0.32); }
+    /* Active state shifts to a hot-pink palette so the on/off contrast
+       reads at a glance, plus a steady glow pulse to scream "armed". */
+    .play-lock.active {
+      background: rgba(244, 114, 182, 0.22);
+      border-color: #f9a8d4;
+      box-shadow:
+        0 0 22px rgba(244, 114, 182, 0.85),
+        0 0 8px rgba(244, 114, 182, 0.55) inset;
+      animation: play-lock-pulse 0.95s ease-in-out infinite;
+    }
+    .play-lock.active span {
+      color: #fbcfe8;
+      text-shadow: 0 0 14px rgba(249, 168, 212, 0.95);
+    }
+    @keyframes play-lock-pulse {
+      0%, 100% {
+        box-shadow:
+          0 0 22px rgba(244, 114, 182, 0.85),
+          0 0 8px  rgba(244, 114, 182, 0.55) inset;
+      }
+      50% {
+        box-shadow:
+          0 0 32px rgba(244, 114, 182, 1),
+          0 0 14px rgba(244, 114, 182, 0.85) inset;
+      }
+    }
+    .play-lock span {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      color: #fbd38d;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      text-shadow: 0 0 10px rgba(246, 173, 85, 0.55);
+      pointer-events: none;
+    }
     /* New strip below the sequence chip view: Grid menu + Step Mode
        button. Sits above the footer-bar (Step controls). */
     .seq-grid-bar {
@@ -1306,27 +1395,29 @@
       align-items: center;
       gap: 4px;
     }
-    .grid-dim-input input[type="number"] {
-      width: 38px;
+    .grid-dim-input select {
+      width: 44px;
       border: 1px solid #4fd1c5;
       color: #b2f5ea;
       background: #1a1a2e;
       border-radius: 6px;
-      padding: 3px 6px;
+      padding: 3px 4px;
       font-size: 0.8rem;
       font-family: 'Segoe UI', sans-serif;
       text-align: center;
-      -moz-appearance: textfield;
+      cursor: pointer;
     }
-    .grid-dim-input input[type="number"]::-webkit-outer-spin-button,
-    .grid-dim-input input[type="number"]::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-    .grid-dim-input input[type="number"]:focus {
+    .grid-dim-input select:focus {
       outline: none;
       border-color: #81e6d9;
     }
+    .grid-dim-input select:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      border-color: #2d2d3f;
+      color: #4a5568;
+    }
+    .grid-dim-input select option { background: #1a1a2e; color: #b2f5ea; }
     .grid-dim-sep {
       color: #81e6d9;
       font-size: 0.85rem;
@@ -1439,8 +1530,7 @@
     #seed-btn,
     #reverse-btn,
     #shuffle-btn,
-    #repeat-btn,
-    #merge-btn {
+    #repeat-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;
@@ -1477,23 +1567,6 @@
     #shuffle-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     #repeat-btn:hover { border-color: #4299e1; color: #4299e1; }
     #repeat-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    #merge-btn:hover { border-color: #d69e2e; color: #f6ad55; }
-    #merge-btn.active {
-      border-color: #f6ad55;
-      background: rgba(214, 158, 46, 0.18);
-      color: #f6ad55;
-      box-shadow: 0 0 10px rgba(214, 158, 46, 0.35);
-    }
-    /* Merge mode visual cues — saved-bank chips become "pickable" rather
-       than "loadable", and selected entries get an amber outline that
-       persists until merge is committed (or canceled). */
-    .saved-grid.merge-mode-on .saved-block { cursor: copy; }
-    .saved-grid.merge-mode-on .saved-block.audio-item { cursor: not-allowed; opacity: 0.5; }
-    .saved-block.merge-selected {
-      outline: 2px solid #f6ad55;
-      outline-offset: -3px;
-      box-shadow: 0 0 12px rgba(214, 158, 46, 0.45);
-    }
     #rec-btn.recording {
       background: #e53e3e;
       border-color: #e53e3e;
@@ -1582,6 +1655,9 @@
     #note-length:focus,
     #subdivision-select:focus { outline: none; border-color: #4299e1; }
 
+    /* Loop button — strictly two states. Inactive: muted grey,
+       unchanged on hover/focus so the button doesn't look like there's
+       a third "almost-on" state. Active: teal fill + glow. */
     #loop-btn {
       padding: 6px 18px;
       border: 1px solid #2d2d3f;
@@ -1592,13 +1668,14 @@
       font-size: 0.8rem;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
     }
-    #loop-btn:hover { border-color: #38b2ac; color: #38b2ac; }
+    #loop-btn:hover, #loop-btn:focus { outline: none; }
     #loop-btn.active {
       border-color: #38b2ac;
-      background: rgba(56,178,172,0.15);
+      background: rgba(56, 178, 172, 0.18);
       color: #81e6d9;
+      box-shadow: 0 0 12px rgba(56, 178, 172, 0.45);
     }
 
     .seq-step.chord {
@@ -2528,11 +2605,6 @@
           <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
         </div>
       </div>
-      <div class="grid-state-row" title="Save the current note grid (root, scale, palette, per-cell sounds) to Google Drive as a Voice. Filename is prepended with the current project name.">
-        <div class="grid-state-actions">
-          <button type="button" id="grid-save-voice-btn">Save Voice…</button>
-        </div>
-      </div>
       <div class="grid-state-row">
         <div class="grid-state-actions">
           <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
@@ -2594,7 +2666,7 @@
 
   <div class="step-grid-bar">
     <div class="step-grid-bar-left">
-      <button class="rest-bar rest-bar--left" type="button" title="Add a rest step"><span>REST</span></button>
+      <button id="play-lock-btn" class="play-lock" type="button" title="Lock: when on, pressing a note plays the most recent chord/subsequence step transposed so the pressed note becomes its first note. Notes are auditioned only — sequence is not modified."><span>LOCK</span></button>
     </div>
     <div class="tempo-control">
       <!-- 3-digit BPM picker — each column has + above and − below to bump
@@ -2627,6 +2699,12 @@
     </div>
   </div>
 
+  <div class="step-pan-bar" id="step-pan-bar" hidden>
+    <span class="step-pan-label" id="step-pan-label">Pan</span>
+    <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
+    <span class="step-pan-val" id="step-pan-val">C</span>
+  </div>
+
   <div id="subedit-banner">
     <span>Editing subsequence — click <strong>Save</strong> to commit.</span>
     <button id="subedit-cancel" type="button">Cancel</button>
@@ -2644,9 +2722,27 @@
     </div>
     <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">Grid
       <span class="grid-dim-input">
-        <input type="number" id="grid-rows-input" min="1" max="32" value="1" aria-label="Grid rows" />
+        <select id="grid-rows-input" aria-label="Grid rows">
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
         <span class="grid-dim-sep">×</span>
-        <input type="number" id="grid-cols-input" min="1" max="64" value="8" aria-label="Grid steps per row" />
+        <select id="grid-cols-input" aria-label="Grid steps per row">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8" selected>8</option>
+        </select>
       </span>
     </label>
     <button id="step-mode-btn" type="button" title="Toggle between Free (append notes as you click) and Fixed (step-sequencer: pick a note from the grid, then click slots to toggle it on/off)">Free</button>
@@ -2655,7 +2751,7 @@
   <div class="footer-bar">
     <div class="btn-group btn-group--step" title="Step controls — set how the next note is added">
       <span class="btn-group-label">Step</span>
-      <button id="chord-btn" title="Group: collect multiple notes into a single chord step (toggle on, click notes, then off)">Group</button>
+      <button id="chord-btn" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
       <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">Size
         <select id="subdivision-select">
           <option value="16">4/1</option>
@@ -2693,7 +2789,6 @@
       <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
       <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
       <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
-      <button id="merge-btn" title="Enter merge mode, click 2+ saved sequences, then click Merge again to combine them. The merged chip can be unmerged later from its long-press menu.">Merge</button>
     </div>
 
     <span class="seq-count" id="seq-count">0 steps</span>
@@ -2776,6 +2871,11 @@
       try { return localStorage.getItem('lock-mode') === '1'; }
       catch (e) { return false; }
     })();
+    // Play-lock toggle (the "Lock" button in the BPM row): when on,
+    // pressing a cell auditions the most-recently-built chord/sub step
+    // transposed so the pressed note becomes its first note. The
+    // sequence isn't modified — it's a play-only lock.
+    let playLockMode = false;
     let loopMode = false;
     let noteLength = 1;
     let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
@@ -2797,138 +2897,6 @@
       return name;
     }
 
-    // ---- Merge mode (saved-bank multi-select → single combined entry) ----
-    // Click Merge once to arm the mode, click N saved-bank chips, click
-    // Merge again to commit. The combined entry keeps its parts in code
-    // so a long-press → Unmerge can split it back later. Audio entries
-    // are excluded from selection (combining recordings doesn't have a
-    // useful semantics here).
-    let mergeMode = false;
-    let mergeSelections = []; // saved-sequence references picked while armed
-
-    function enterMergeMode() {
-      mergeMode = true;
-      mergeSelections = [];
-      const btn = document.getElementById('merge-btn');
-      if (btn) {
-        btn.classList.add('active');
-        btn.textContent = 'Merge ✓';
-      }
-      const grid = document.getElementById('saved-grid');
-      if (grid) grid.classList.add('merge-mode-on');
-      renderSavedSequences();
-    }
-
-    function exitMergeMode() {
-      mergeMode = false;
-      mergeSelections = [];
-      const btn = document.getElementById('merge-btn');
-      if (btn) {
-        btn.classList.remove('active');
-        btn.textContent = 'Merge';
-      }
-      const grid = document.getElementById('saved-grid');
-      if (grid) grid.classList.remove('merge-mode-on');
-      renderSavedSequences();
-    }
-
-    function performMerge(refs) {
-      if (!Array.isArray(refs) || refs.length < 2) return;
-      // Sort by sequence-bank order so the merged steps preserve user
-      // intent (their on-screen left-to-right ordering).
-      const ordered = refs
-        .map(s => ({ s, idx: savedSequences.indexOf(s) }))
-        .filter(x => x.idx >= 0)
-        .sort((a, b) => a.idx - b.idx)
-        .map(x => x.s);
-      if (ordered.length < 2) return;
-
-      snapshotForUndo('Merge sequences');
-      // Deep-clone each part so future edits to the merged entry can't
-      // mutate originals (and so the JSON survives a Drive round-trip).
-      const parts = ordered.map(s => JSON.parse(JSON.stringify(s)));
-      const allSteps = [];
-      parts.forEach(p => {
-        if (Array.isArray(p.steps)) p.steps.forEach(st => allSteps.push(st));
-      });
-      // Pull common metadata from the first part — playback uses the
-      // merged entry's own bpm/subdivision when loaded into the workspace.
-      const first = ordered[0];
-      const baseName = ordered.map(s => s.name).join('+');
-      // Avoid collisions with any existing saved name.
-      let name = baseName;
-      let suffix = 1;
-      while (savedSequences.some(s => s.name === name && !ordered.includes(s))) {
-        name = `${baseName}.${suffix++}`;
-      }
-      const merged = {
-        name,
-        bpm: first.bpm,
-        subdivision: first.subdivision,
-        steps: allSteps,
-        merged: true,
-        parts,
-      };
-
-      // Insert the merged entry where the first selected one sat, then
-      // pull the rest out in reverse order so earlier indices stay valid.
-      const insertAt = savedSequences.indexOf(ordered[0]);
-      const removeIdxs = ordered.map(s => savedSequences.indexOf(s)).filter(i => i >= 0).sort((a, b) => b - a);
-      removeIdxs.forEach(i => savedSequences.splice(i, 1));
-      const finalInsert = Math.min(insertAt, savedSequences.length);
-      savedSequences.splice(finalInsert, 0, merged);
-
-      // Anything that was the "active" sequence may have been merged or
-      // shifted — clear it rather than leaving a dangling pointer.
-      if (activeSeqIndex !== null) {
-        if (!savedSequences[activeSeqIndex] || ordered.includes(savedSequences[activeSeqIndex])) {
-          activeSeqIndex = savedSequences.indexOf(merged);
-        } else {
-          activeSeqIndex = savedSequences.indexOf(savedSequences[activeSeqIndex]);
-        }
-      }
-      // Replace any tracks items that referenced the now-absent source
-      // sequences so playback through tracks doesn't go silent.
-      const goneNames = new Set(parts.map(p => p.name).filter(Boolean));
-      replaceMatchingTrackItemsWithSilent(goneNames);
-      persistSaved();
-      renderSavedSequences();
-    }
-
-    function performUnmerge(seqIndex) {
-      const merged = savedSequences[seqIndex];
-      if (!merged || !merged.merged || !Array.isArray(merged.parts) || merged.parts.length === 0) return;
-      snapshotForUndo('Unmerge sequence');
-      // Fix up any name collisions with currently-saved entries (other
-      // than the merged one we're about to remove) before splicing.
-      const taken = new Set(savedSequences.filter((_, i) => i !== seqIndex).map(s => s.name));
-      const restored = merged.parts.map(p => {
-        const copy = JSON.parse(JSON.stringify(p));
-        let name = copy.name || seqName(savedSequences.length);
-        if (taken.has(name)) {
-          const base = name.replace(/\.\d+$/, '');
-          let i = 1;
-          while (taken.has(`${base}.${i}`)) i++;
-          name = `${base}.${i}`;
-        }
-        taken.add(name);
-        copy.name = name;
-        return copy;
-      });
-      savedSequences.splice(seqIndex, 1, ...restored);
-      // Active pointer fixups: if it was the merged entry, clear it; if
-      // it was a later index, shift by the net change in count.
-      if (activeSeqIndex === seqIndex) {
-        activeSeqIndex = null;
-        sequence = [];
-        renderSequence();
-      } else if (activeSeqIndex !== null && activeSeqIndex > seqIndex) {
-        activeSeqIndex += (restored.length - 1);
-      }
-      persistSaved();
-      renderSavedSequences();
-    }
-
     function persistSaved() {
       localStorage.setItem('sounds-saved', JSON.stringify(savedSequences));
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -2944,11 +2912,9 @@
       savedSequences.forEach((saved, i) => {
         const isAudio = saved.type === 'audio';
         const block = document.createElement('div');
-        const isPickedForMerge = mergeMode && mergeSelections.includes(saved);
         block.className = 'saved-block'
           + (i === activeSeqIndex ? ' active-seq' : '')
-          + (isAudio ? ' audio-item' : '')
-          + (isPickedForMerge ? ' merge-selected' : '');
+          + (isAudio ? ' audio-item' : '');
         block.dataset.seqIndex = i;
         const countLabel = isAudio
           ? `audio · ${(saved.durationSec || 0).toFixed(1)}s`
@@ -2958,20 +2924,6 @@
           <span class="saved-block-count">${countLabel}</span>
         `;
         block.addEventListener('click', () => {
-          // Merge-mode short-circuit: clicks toggle picker selection
-          // instead of loading the saved sequence into the workspace.
-          if (mergeMode) {
-            if (isAudio) return; // audio entries can't be merged
-            const idx = mergeSelections.indexOf(saved);
-            if (idx >= 0) {
-              mergeSelections.splice(idx, 1);
-              block.classList.remove('merge-selected');
-            } else {
-              mergeSelections.push(saved);
-              block.classList.add('merge-selected');
-            }
-            return;
-          }
           if (isAudio) {
             previewSavedAudio(saved);
             return;
@@ -3096,6 +3048,21 @@
       refreshBpmDigits();
       persistWorkspace();
     }
+    // Restart the bpm-pulse animation across all digits at the next
+    // animation frame, in sync. Used both when the cycle duration
+    // changes (BPM / step subdivision edits) and when sequence
+    // playback starts so the visual peak hits the first note attack.
+    function restartBpmDigitAnimation() {
+      const digitsHost = document.getElementById('bpm-digits');
+      if (!digitsHost) return;
+      digitsHost.querySelectorAll('.bpm-digit').forEach(el => {
+        el.style.animation = 'none';
+        // eslint-disable-next-line no-unused-expressions
+        el.offsetWidth;
+        el.style.animation = '';
+      });
+    }
+
     function refreshBpmDigits() {
       const v = getBpm();
       const h = Math.floor(v / 100);
@@ -3104,16 +3071,14 @@
       if (_bpmDigitH) _bpmDigitH.textContent = String(h);
       if (_bpmDigitT) _bpmDigitT.textContent = String(t);
       if (_bpmDigitO) _bpmDigitO.textContent = String(o);
-      // Drive the soft digit-pulse animation at the live BPM. One beat
-      // per cycle = 60/bpm seconds. Restart the animation cleanly when
-      // the duration changes so the new tempo takes effect immediately
-      // rather than waiting for the current cycle to finish.
+      // One pulse cycle = one step (60/BPM × stepSubdivision seconds)
+      // so each step matches a flash. BPM 0 falls back to 0.5s so the
+      // animation stays visible instead of stretching to an Infinity-
+      // second duration browsers reject.
       const digitsHost = document.getElementById('bpm-digits');
       if (digitsHost) {
-        // One pulse cycle = one beat (60/BPM seconds). BPM 0 falls back
-        // to a 0.5s cycle so the animation stays visible instead of
-        // stretching to an Infinity-second duration browsers reject.
-        const dur = (v > 0 ? (60 / v).toFixed(3) : '0.5') + 's';
+        const stepSec = (v > 0 ? (60 / v) * (Number.isFinite(stepSubdivision) ? stepSubdivision : 0.5) : 0.5);
+        const dur = stepSec.toFixed(3) + 's';
         digitsHost.style.setProperty('--bpm-pulse-dur', dur);
         digitsHost.querySelectorAll('.bpm-digit').forEach(el => {
           el.style.animation = 'none';
@@ -3160,14 +3125,16 @@
     });
 
     // Click any of the BPM digits themselves to freeze (or resume) the
-    // pulse animation. The class on the host disables the keyframes for
-    // both the digits and the +/- buttons.
-    (function bindBpmDigitPauseToggle() {
+    // Click any digit to toggle the flashing pulse. Off by default —
+    // the host gets the .bpm-flashing class only while enabled, so a
+    // calmer first paint and the flashing is something the user opts
+    // into when they want a metronome-style visual.
+    (function bindBpmDigitFlashToggle() {
       const host = document.getElementById('bpm-digits');
       if (!host) return;
       host.querySelectorAll('.bpm-digit').forEach(el => {
         el.addEventListener('click', () => {
-          host.classList.toggle('bpm-paused');
+          host.classList.toggle('bpm-flashing');
         });
       });
     })();
@@ -3176,21 +3143,30 @@
     refreshBpmDigits();
 
     // iOS audio unlock: Tone.start() alone is async and often hasn't finished
-    // resuming by the time the first tap fires playNote. Playing a silent buffer
-    // synchronously inside the gesture forces the context to transition to
-    // running immediately, and Tone.start() keeps the Tone-level state in sync.
-    ['pointerdown','touchstart','keydown'].forEach(ev => {
-      document.addEventListener(ev, () => {
+    // resuming by the time the first tap fires playNote. Playing a silent
+    // buffer synchronously inside the gesture forces the context to
+    // transition to running immediately, and Tone.start() keeps the Tone-
+    // level state in sync. Run on EVERY gesture until the context is
+    // actually 'running' — the original `once: true` would fire on the
+    // sign-in tap (before OAuth even returned), then never again, leaving
+    // the first several post-login taps silent on iOS.
+    (function bindIosAudioUnlock() {
+      const events = ['pointerdown','touchstart','keydown'];
+      const handler = () => {
+        let ac;
+        try { ac = Tone.getContext().rawContext; } catch (e) { return; }
+        if (!ac || ac.state === 'running') return;
         try {
-          const ac = Tone.getContext().rawContext;
           const src = ac.createBufferSource();
           src.buffer = ac.createBuffer(1, 1, 22050);
           src.connect(ac.destination);
           src.start(0);
         } catch (e) {}
-        Tone.start();
-      }, { once: true, capture: true });
-    });
+        try { Tone.start(); } catch (e) {}
+        try { ac.resume?.(); } catch (e) {}
+      };
+      events.forEach(ev => document.addEventListener(ev, handler, { capture: true }));
+    })();
     document.addEventListener('visibilitychange', () => {
       const tctx = Tone.getContext().rawContext;
       if (!document.hidden && tctx && tctx.state === 'suspended') tctx.resume();
@@ -3950,6 +3926,14 @@
         : atk + dec;
       const disposeMs = (preReleaseDur + rel + 0.4) * 1000;
 
+      // Light up the corresponding cell in the note grid for the duration
+      // of the note. Skipped during offline rendering (offline context's
+      // currentTime doesn't match the live UI clock, so the timing math
+      // would fire visuals at the wrong moment).
+      if (!_offlineSamplerOverride) {
+        flashCellByFreq(freq, startTime, Math.max(80, targetDur * 1000));
+      }
+
       // Loaded sample (Tone.Sampler) — pitch-shifts the file to play any note.
       // Per-note effects are skipped on samples (the sampler is shared); pan
       // and EQ are still applied when called from track playback because we
@@ -4328,11 +4312,18 @@
         bindStepLongPress(chip, i);
         bindStepDrag(chip, i);
         bindStepDragTouch(chip, i);
-        // Whole-chip pan-on-hold for non-rest single-note chips. Sub /
-        // chord chips skip this — those have their own per-voice pan
-        // editors inside the chord-step dialog.
+        // Cache the palette tint + step index on the chip so the
+        // selected-step pan slider (below the BPM row) can re-tint
+        // chips live without rebuilding the whole sequence DOM.
+        chip.dataset.stepIdx = String(i);
+        if (chipBaseColor) chip.dataset.paletteColor = chipBaseColor;
+        // Reflect any saved pan in the chip's background — replaces the
+        // old press-and-drag pan; adjustment now happens through the
+        // selected-step pan slider.
         if (!step.isSub && !Array.isArray(step.chord) && step.freq !== null) {
-          bindChipPanDrag(chip, step, chipBaseColor);
+          const savedPan = (step.params && Number.isFinite(step.params.pan))
+            ? step.params.pan : 0;
+          if (savedPan !== 0) applyPanTint(chip, chipBaseColor, savedPan);
         }
         display.appendChild(chip);
       });
@@ -4427,8 +4418,11 @@
       chordMode = !!snap.chordMode;
       pendingChord = (snap.pendingChord || []).map(p => ({ ...p }));
       stepMode = !!snap.stepMode;
-      gridColumns = (snap.gridColumns | 0) || 8;
-      gridRows = (snap.gridRows | 0) || 1;
+      // Grid select-box only carries 1..8; clamp so older snapshots
+      // with bigger values don't leave the dropdown showing the
+      // default while the runtime state diverges.
+      gridColumns = Math.min(8, Math.max(1, (snap.gridColumns | 0) || 8));
+      gridRows    = Math.min(8, Math.max(1, (snap.gridRows    | 0) || 1));
       noteLength = snap.noteLength | 0 || 1;
       stepSubdivision = snap.stepSubdivision || 1;
 
@@ -4550,6 +4544,26 @@
       // appending fresh steps.
       const stepGroup = document.querySelector('.btn-group--step');
       if (stepGroup) stepGroup.classList.toggle('step-selected', selectedStepRefs.length > 0);
+
+      // Selected-step pan slider: hide when nothing is selected; show
+      // and sync to the primary's pan value when there is. Multi-mode
+      // ignores any divergence and just shows the primary's value.
+      const panBar = document.getElementById('step-pan-bar');
+      const panSlider = document.getElementById('step-pan-slider');
+      const panVal = document.getElementById('step-pan-val');
+      if (panBar) {
+        const eligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
+        if (eligible.length === 0) {
+          panBar.hidden = true;
+        } else {
+          panBar.hidden = false;
+          const primary = eligible[eligible.length - 1];
+          const p = (primary.params && Number.isFinite(primary.params.pan))
+            ? primary.params.pan : 0;
+          if (panSlider) panSlider.value = String(p);
+          if (panVal) panVal.textContent = formatPanLabel(p);
+        }
+      }
     }
     // Hold is meaningful only when Step Div is 1/1 (value=4). Below 1/1 the
     // step is already shorter than a beat, so multiplying its length leads
@@ -4667,6 +4681,33 @@
 
     // ---- Playback ----
 
+    // Universal cell-flash. Finds the grid cell whose pitch matches
+    // `freq` (within 50 cents — covers detune offsets without bleeding
+    // into the next semitone) and flashes its highlight at the audio
+    // time the note actually starts, for roughly the note's duration.
+    // Used by every interactive note path (sequence playback, run /
+    // chord previews, lock-mode audition, sustained taps) so the grid
+    // stays a live indicator of what's sounding.
+    function flashCellByFreq(freq, audioTime, durationMs) {
+      if (!Number.isFinite(freq) || !cells || cells.length === 0) return;
+      let bestIdx = -1, bestDiff = Infinity;
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i];
+        if (!n || !Number.isFinite(n.freq)) continue;
+        const cents = Math.abs(1200 * Math.log2(freq / n.freq));
+        if (cents < bestDiff) { bestDiff = cents; bestIdx = i; }
+      }
+      if (bestIdx < 0 || bestDiff > 50) return;
+      const cell = cells[bestIdx];
+      if (!cell) return;
+      const dur = Math.max(80, durationMs || 250);
+      const at = (typeof audioTime === 'number' && Number.isFinite(audioTime)) ? audioTime : null;
+      scheduleVisual(() => {
+        cell.classList.add('active-loop');
+        setTimeout(() => cell.classList.remove('active-loop'), dur);
+      }, at);
+    }
+
     function clearHighlights() {
       cells.forEach(c => c.classList.remove('active-loop'));
       document.querySelectorAll('.rest-bar').forEach(b => b.classList.remove('active-loop'));
@@ -4758,7 +4799,15 @@
       const stepDur = step.duration || 1;
       const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       const bpm = parseInt(tempoInput.value) || 120;
-      const waitMs = Math.round(60000 / bpm * stepSub) * stepDur;
+      // Exact step time (seconds) used for the audio cadence and the
+      // accumulated offset; rounded ms only used for the JS setTimeout
+      // (since setTimeout takes integer ms anyway). Storing the exact
+      // value in _playOffsetSec keeps audio scheduling drift-free over
+      // many loop iterations — rounding inside the offset would have
+      // accumulated up to ~0.5ms per step, audible at long runtimes.
+      const waitSecExact = (60 / bpm) * stepSub * stepDur;
+      const waitMsExact = waitSecExact * 1000;
+      const waitMs = Math.max(1, Math.round(waitMsExact));
       // Schedule audio at an absolute audio-context time derived from a
       // shared cadence anchor. setTimeout jitter (mobile Safari fires the
       // first few timers very fast and then settles) no longer affects
@@ -4768,10 +4817,10 @@
       if (step.chord) {
         const size = step.chord.length;
         step.chord.forEach(n => {
-          playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, audioTime);
+          playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMsExact, audioTime);
         });
       } else if (step.freq != null) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, audioTime);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMsExact, audioTime);
       }
       scheduleVisual(() => {
         clearHighlights();
@@ -4785,7 +4834,7 @@
           document.querySelectorAll('.rest-bar').forEach(b => b.classList.add('active-loop'));
         }
       }, audioTime);
-      _playOffsetSec += waitMs / 1000;
+      _playOffsetSec += waitSecExact;
       sequenceTimer = setTimeout(onDone, waitMs);
     }
 
@@ -4980,6 +5029,70 @@
     // Used when entering Run mode so the rest of the saved sequence
     // becomes the "base subsequence" that subsequent cell clicks
     // transpose, replay, and append.
+    // Run → Stack helper: convert each subsequence step in the
+    // workspace to its own chord step in place, preserving the
+    // sequence's position layout. Non-sub steps pass through untouched.
+    // Used by the non-lockMode mode-banner transition so a Run mode
+    // that built up several ▤ chips lands in Stack as several distinct
+    // chords (rather than merging into one big chord, which is what
+    // consolidateSequenceToChord does).
+    function subsToChordsInPlace() {
+      if (!Array.isArray(sequence) || sequence.length === 0) return false;
+      let changed = false;
+      const next = sequence.map(step => {
+        if (!step || !step.isSub || !Array.isArray(step.subSteps) || step.subSteps.length === 0) {
+          return step;
+        }
+        const voices = [];
+        const collect = (s) => {
+          if (!s) return;
+          if (s.isSub && Array.isArray(s.subSteps)) { s.subSteps.forEach(collect); return; }
+          if (Array.isArray(s.chord)) {
+            s.chord.forEach(n => {
+              if (n && n.freq != null) voices.push({
+                freq: n.freq,
+                label: n.label,
+                cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+                sound: n.sound,
+                params: n.params ? { ...n.params } : undefined,
+              });
+            });
+            return;
+          }
+          if (s.freq != null) {
+            voices.push({
+              freq: s.freq,
+              label: s.label,
+              cellIndex: (s.cellIndex != null) ? s.cellIndex : null,
+              sound: s.sound,
+              params: s.params ? { ...s.params } : undefined,
+            });
+          }
+        };
+        step.subSteps.forEach(collect);
+        if (voices.length === 0) return step; // nothing audible — leave it
+        changed = true;
+        const baseDur = step.duration || 1;
+        const baseSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+        if (voices.length === 1) {
+          return { ...voices[0], duration: baseDur, subdivision: baseSub };
+        }
+        return {
+          chord: voices,
+          label: voices.map(v => v.label).join('·'),
+          duration: baseDur,
+          subdivision: baseSub,
+        };
+      });
+      if (!changed) return false;
+      snapshotForUndo('Subsequences → chords');
+      stopSequence();
+      sequence = next;
+      pendingChord = [];
+      insertionPoint = null;
+      return true;
+    }
+
     function consolidateSequenceToSub() {
       if (!Array.isArray(sequence) || sequence.length === 0) return false;
       // Already a single sub — nothing to do.
@@ -5102,6 +5215,65 @@
     //  - Note-lock-mode OFF: each click transposes the entire base sub
     //    by the clicked-cell delta and appends a new ▤ chip — the
     //    original "Run = transposed playback" behavior.
+    // Find the most-recently-built chord or subsequence step in the
+    // current sequence — used by the Lock toggle so a click auditions
+    // a transposed copy of "the latest thing you wrapped".
+    function findLastWrappedStep() {
+      for (let i = sequence.length - 1; i >= 0; i--) {
+        const s = sequence[i];
+        if (!s) continue;
+        if (s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0) return s;
+        if (Array.isArray(s.chord) && s.chord.length > 0) return s;
+      }
+      return null;
+    }
+
+    // Click handler used while the Lock toggle is on. Plays a transposed
+    // copy of the last chord/sub step at the clicked cell's pitch, with
+    // its first note aligned to the clicked note. Does NOT mutate the
+    // sequence — purely a play-only audition.
+    function playLockOnCell(cellIdx) {
+      const note = notes[cellIdx];
+      if (!note) return;
+      const baseStep = findLastWrappedStep();
+      if (!baseStep) {
+        // No chord/sub yet — fall back to a single-note preview so the
+        // user gets feedback for the click.
+        const params = { ...cellParams[cellIdx] };
+        playNote(note.freq, params);
+        return;
+      }
+      // Pull the base step's "first note" pitch — for chords that's
+      // chord[0]; for subs it's the first nested freq we hit.
+      const visit = (s) => {
+        if (!s) return null;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          for (const sub of s.subSteps) { const f = visit(sub); if (f != null) return f; }
+          return null;
+        }
+        if (Array.isArray(s.chord) && s.chord[0]?.freq != null) return s.chord[0].freq;
+        if (s.freq != null) return s.freq;
+        return null;
+      };
+      const baseFreq = visit(baseStep);
+      if (baseFreq == null) return;
+      const delta = semitonesBetweenHz(baseFreq, note.freq);
+      const transposed = transposeStepRec(baseStep, delta);
+      const at = Tone.now();
+      if (transposed.isSub && Array.isArray(transposed.subSteps)) {
+        playSubStepsAtTime(transposed.subSteps, at);
+      } else if (Array.isArray(transposed.chord)) {
+        const size = transposed.chord.length;
+        transposed.chord.forEach(n => {
+          if (n.freq == null) return;
+          playNote(
+            n.freq,
+            paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), transposed.bend)
+          );
+        });
+      }
+    }
+
     function runModeOnCell(cellIdx) {
       const note = notes[cellIdx];
       if (!note) return;
@@ -5422,21 +5594,31 @@
     }
 
     function playSequence(index = 0, freshStart = true) {
-      // Re-anchor the timing base on every iteration start (fresh OR
-      // loop wrap). Skipping the wrap-time re-anchor accumulated JS
-      // setTimeout drift over many iterations and surfaced as audio
-      // glitches between notes — re-anchoring resets the alignment
-      // between audio and JS clocks each time the loop comes around.
-      // The freshStart flag is kept for symmetry but no longer changes
-      // behavior.
       if (index === 0) {
         document.getElementById('play-btn').textContent = '■';
-        // Re-anchor the absolute-time cadence at every fresh start (and at
-        // the loop wrap-around). Tone.now() already includes lookAhead, so
-        // the first note has built-in audio scheduling lead-time without
-        // the JS thread being on the critical path.
-        _playBaseTime  = Tone.now();
-        _playOffsetSec = 0;
+        if (freshStart) {
+          // Fresh start: anchor with the full Tone lookAhead so the
+          // audio thread has comfortable scheduling head-room before
+          // the first note.
+          _playBaseTime  = Tone.now();
+          _playOffsetSec = 0;
+          // Re-phase the BPM digit pulse so its cycle begins (the red
+          // peak in the keyframes) at the same moment the first note
+          // attacks. scheduleVisual maps audio-time → wall-clock time
+          // accounting for Tone's lookAhead and audio-context latency.
+          scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
+        } else {
+          // Loop wrap: preserve seamless cadence when JS is on time
+          // (no perceptible gap between iterations) but absorb drift
+          // when the JS clock has fallen behind, so we never schedule
+          // in the past. Picks whichever is later: where the previous
+          // iteration's last note naturally ends, or a small safety
+          // window past the audio clock.
+          const continuation = _playBaseTime + _playOffsetSec;
+          const minSafe = Tone.context.now() + 0.02; // 20ms cushion
+          _playBaseTime  = Math.max(continuation, minSafe);
+          _playOffsetSec = 0;
+        }
       }
       if (sequence.length === 0) { stopSequence(); return; }
       // Anchor the chip highlight to the same audio time the upcoming step
@@ -5526,23 +5708,6 @@
       renderSequence();
     });
 
-    document.getElementById('merge-btn').addEventListener('click', () => {
-      if (!mergeMode) {
-        enterMergeMode();
-        return;
-      }
-      // Already armed — commit if the user picked enough; otherwise just
-      // back out. Below 2 selections there's nothing to combine, so
-      // exit silently rather than alerting.
-      if (mergeSelections.length >= 2) {
-        const refs = [...mergeSelections];
-        exitMergeMode();
-        performMerge(refs);
-      } else {
-        exitMergeMode();
-      }
-    });
-
     // Hold: when steps are selected, edit those steps' durations in place
     // (all of them when Multi is on; just the primary otherwise). With no
     // selection, update the global default for the next note added.
@@ -5558,6 +5723,9 @@
         renderSequence();
       } else {
         stepSubdivision = v;
+        // The flash cycle is keyed off step duration — refresh so the
+        // pulse rate matches the new subdivision.
+        refreshBpmDigits();
       }
       refreshHoldEnabled();
     });
@@ -5582,12 +5750,12 @@
       const colsEl = document.getElementById('grid-cols-input');
       if (rowsEl) {
         const r = parseInt(rowsEl.value, 10);
-        gridRows = Number.isFinite(r) && r > 0 ? Math.min(32, r) : 1;
+        gridRows = Number.isFinite(r) && r > 0 ? Math.min(8, r) : 1;
         rowsEl.value = String(gridRows);
       }
       if (colsEl) {
         const c = parseInt(colsEl.value, 10);
-        gridColumns = Number.isFinite(c) && c > 0 ? Math.min(64, c) : 1;
+        gridColumns = Number.isFinite(c) && c > 0 ? Math.min(8, c) : 1;
         colsEl.value = String(gridColumns);
       }
     }
@@ -5608,6 +5776,12 @@
       if (!btn) return;
       btn.textContent = stepMode ? 'Fixed' : 'Free';
       btn.classList.toggle('active', stepMode);
+      // Rows control only matters in Fixed (step-sequencer) mode where
+      // the workspace is padded to rows × cols slots. In Free mode the
+      // sequence wraps as it grows so rows is meaningless — disable the
+      // selector to make that obvious.
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.disabled = !stepMode;
     }
     refreshStepModeBtn();
 
@@ -5620,14 +5794,27 @@
         padToStepGrid();
       } else {
         clearStepModeArm();
-        // If the user never filled any slots, dump the rest-only pattern so
-        // they don't leave step mode with a workspace full of placeholders.
         if (sequence.length > 0 && sequence.every(isRestStep)) {
+          // Empty rest pattern — drop the whole sequence so the user
+          // doesn't leave Fixed with a workspace full of placeholders.
           stopSequence();
           sequence = [];
           pendingChord = [];
           insertionPoint = null;
           document.getElementById('save-btn').disabled = true;
+        } else {
+          // Trim any trailing rest slots so the sequence ends on the
+          // last actual note. Leading and middle rests are kept since
+          // they're musically meaningful (held silences inside a phrase).
+          let trimEnd = sequence.length;
+          while (trimEnd > 0 && isRestStep(sequence[trimEnd - 1])) trimEnd--;
+          if (trimEnd < sequence.length) {
+            stopSequence();
+            sequence.length = trimEnd;
+            if (insertionPoint != null && insertionPoint > sequence.length) {
+              insertionPoint = sequence.length;
+            }
+          }
         }
       }
       renderSequence();
@@ -6593,20 +6780,39 @@
           });
           if (voices.length === 0) return; // nothing playable to group
 
-          snapshotForUndo('Group');
+          snapshotForUndo('Wrap');
           stopSequence();
           const firstIdx  = indices[0];
           const firstStep = sequence[firstIdx];
           const baseDur = firstStep.duration || 1;
           const baseSub = (firstStep.subdivision != null) ? firstStep.subdivision : stepSubdivision;
-          const newStep = (voices.length === 1)
-            ? { ...voices[0], duration: baseDur, subdivision: baseSub }
-            : {
-                chord: voices,
-                label: voices.map(n => n.label).join('·'),
-                duration: baseDur,
+          let newStep;
+          if (voices.length === 1) {
+            newStep = { ...voices[0], duration: baseDur, subdivision: baseSub };
+          } else if (gridMode === 'arpeggio') {
+            // Run note mode: wrap as a subsequence so the voices play in order.
+            newStep = {
+              isSub: true,
+              subSteps: voices.map(v => ({
+                freq: v.freq, label: v.label,
+                cellIndex: v.cellIndex,
+                sound: v.sound,
+                params: v.params ? { ...v.params } : undefined,
+                duration: 1,
                 subdivision: baseSub,
-              };
+              })),
+              label: '▤',
+              duration: baseDur,
+              subdivision: 1,
+            };
+          } else {
+            newStep = {
+              chord: voices,
+              label: voices.map(n => n.label).join('·'),
+              duration: baseDur,
+              subdivision: baseSub,
+            };
+          }
           // Splice the trailing selected indices out first (reverse order so
           // earlier indices keep their position), then overwrite firstIdx.
           indices.slice(1).reverse().forEach(i => sequence.splice(i, 1));
@@ -6623,9 +6829,30 @@
       document.getElementById('chord-btn').classList.toggle('active', chordMode);
       document.querySelector('.btn-group--step')?.classList.toggle('chord-active', chordMode);
       if (!chordMode && pendingChord.length > 0) {
-        // Commit the accumulated chord as one step
-        const label = pendingChord.map(n => n.label).join('·');
-        addToSequence({ chord: [...pendingChord], label, duration: noteLength, subdivision: stepSubdivision });
+        // Commit the accumulated notes. Run note mode wraps them as a
+        // subsequence (each note becomes a subStep so they play in
+        // sequence); Spell and Stack wrap them as a single chord step.
+        if (gridMode === 'arpeggio') {
+          const subSteps = pendingChord.map(n => ({
+            freq: n.freq,
+            label: n.label,
+            cellIndex: n.cellIndex,
+            sound: n.sound,
+            params: n.params ? { ...n.params } : undefined,
+            duration: 1,
+            subdivision: stepSubdivision,
+          }));
+          addToSequence({
+            isSub: true,
+            subSteps,
+            label: '▤',
+            duration: noteLength,
+            subdivision: 1,
+          });
+        } else {
+          const label = pendingChord.map(n => n.label).join('·');
+          addToSequence({ chord: [...pendingChord], label, duration: noteLength, subdivision: stepSubdivision });
+        }
         pendingChord = [];
       } else if (!chordMode) {
         pendingChord = [];
@@ -8949,8 +9176,6 @@
         setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
       }
     }
-    document.getElementById('grid-save-voice-btn').addEventListener('click', saveVoiceToDrive);
-
     // ---- FX preset save / load (Drive folder "bloops/effects") ----------
     function buildEffectsSnapshot(name) {
       return {
@@ -9177,8 +9402,8 @@
       activeSeqIndex = (typeof w.activeSeqIndex === 'number') ? w.activeSeqIndex : null;
       noteLength      = w.noteLength      ?? 1;
       stepSubdivision = w.stepSubdivision ?? 0.5;
-      gridColumns     = w.gridColumns     ?? 8;
-      gridRows        = w.gridRows        ?? 1;
+      gridColumns     = Math.min(8, Math.max(1, (w.gridColumns | 0) || 8));
+      gridRows        = Math.min(8, Math.max(1, (w.gridRows    | 0) || 1));
       chordMode       = !!w.chordMode;
       loopMode        = !!w.loopMode;
       stepMode        = !!w.stepMode;
@@ -9563,9 +9788,6 @@
         { label: 'Rename…',     fn: () => showRenameDialog(seqIndex) },
         { label: '⧉ Duplicate',  fn: () => { const base = savedSequences[seqIndex].name.replace(/\.\d+$/, ''); let n = 1; while (savedSequences.some(s => s.name === `${base}.${n}`)) n++; const copy = { ...savedSequences[seqIndex], name: `${base}.${n}`, steps: [...savedSequences[seqIndex].steps] }; savedSequences.splice(seqIndex+1, 0, copy); persistSaved(); renderSavedSequences(); } },
       ];
-      if (saved && saved.merged && Array.isArray(saved.parts) && saved.parts.length > 0) {
-        actions.push({ label: '◬ Unmerge', fn: () => performUnmerge(seqIndex) });
-      }
       actions.push('hr');
       actions.push({ label: '⊕ Add to new track', fn: async () => {
         const item = savedSequences[seqIndex];
@@ -10189,110 +10411,53 @@
       };
     }
 
-    // Re-tint a chip based on its step's pan value. baseColor is the
-    // palette tint that would normally sit on the chip; if pan is 0 we
-    // hand the chip back to the existing inline-style tint set by
-    // renderSequence. Otherwise we lerp from base toward the L/R target.
-    function applyPanTint(chip, baseColor, pan) {
+    // Pan visual: a coloured outer glow scaled by |pan|/100 with the L
+    // / R target colour. Leaves the chip's fill alone so the palette
+    // tint stays the chip's primary identity — pan reads as a halo.
+    // baseColor is unused (kept for signature-compat with older callers);
+    // pan = 0 clears the glow entirely.
+    function applyPanTint(chip, _baseColor, pan) {
       const p = Math.max(-100, Math.min(100, Number.isFinite(pan) ? pan : 0));
       if (p === 0) {
-        // Restore the palette colour the renderer set.
-        if (baseColor) {
-          chip.style.background = (typeof tintHsl === 'function')
-            ? tintHsl(baseColor, 0.22)
-            : baseColor;
-        }
+        chip.style.boxShadow = '';
         return;
       }
-      const baseRgb = parseColorToRgb(baseColor) || { r: 26, g: 26, b: 46 };
-      const target  = p > 0 ? PAN_TARGET_RIGHT : PAN_TARGET_LEFT;
+      const target = p > 0 ? PAN_TARGET_RIGHT : PAN_TARGET_LEFT;
       const t = Math.abs(p) / 100;
-      // Cap the lerp so the chip doesn't go fully solid hard-pan colour
-      // — leaves a hint of the original palette tint at hard pans.
-      const mix = lerpRgb(baseRgb, target, t * 0.85);
-      chip.style.background = `rgb(${mix.r}, ${mix.g}, ${mix.b})`;
+      // Two-layer outer glow: a tighter brighter core + a wider softer
+      // halo. Both scale with pan magnitude.
+      const r1 = (6 + 8 * t).toFixed(1);
+      const r2 = (14 + 12 * t).toFixed(1);
+      const a1 = (0.45 * t).toFixed(2);
+      const a2 = (0.7  * t).toFixed(2);
+      chip.style.boxShadow =
+        `0 0 ${r1}px rgba(${target.r}, ${target.g}, ${target.b}, ${a1}), ` +
+        `0 0 ${r2}px rgba(${target.r}, ${target.g}, ${target.b}, ${a2})`;
     }
 
-    // Bind whole-chip pan-on-hold. Fires only after a small hold
-    // threshold so a quick tap stays a click and a fast drag still
-    // routes through the HTML5 drag-and-drop reorder system. The hold
-    // threshold sits below the long-press menu's threshold (500ms) so
-    // moving horizontally while held enters pan mode; staying still
-    // until 500ms still opens the menu.
-    function bindChipPanDrag(chip, step, baseColor) {
-      const HOLD_MS = 220;
-      const MOVE_TRIGGER = 6; // px of horizontal motion needed to engage
-      let armed = false, engaged = false, holdTimer = null;
-      let startX = 0, startY = 0, startPan = 0;
-      let pointerId = null;
-      let prevDraggable = chip.draggable;
-
-      const arm = () => { armed = true; };
-      const cleanup = () => {
-        clearTimeout(holdTimer);
-        holdTimer = null;
-        armed = false;
-        engaged = false;
-        chip.classList.remove('pan-active');
-        chip.draggable = prevDraggable;
-        if (pointerId !== null) {
-          try { chip.releasePointerCapture(pointerId); } catch (e) {}
-          pointerId = null;
-        }
-      };
-
-      chip.addEventListener('pointerdown', (e) => {
-        // Right-click / non-primary pointers are reserved for the menu.
-        if (e.button !== 0 && e.button !== undefined) return;
-        startX = e.clientX;
-        startY = e.clientY;
-        startPan = (step.params && Number.isFinite(step.params.pan))
-          ? step.params.pan : 0;
-        pointerId = e.pointerId;
-        clearTimeout(holdTimer);
-        holdTimer = setTimeout(arm, HOLD_MS);
-      });
-      chip.addEventListener('pointermove', (e) => {
-        if (pointerId !== e.pointerId) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-
-        if (!engaged) {
-          // Cancel pan-arm if the user starts dragging vertically (let
-          // the page scroll) or moves before the hold completed (HTML5
-          // drag-reorder takes over).
-          if (Math.abs(dy) > Math.abs(dx) + 4) { cleanup(); return; }
-          if (!armed) return;
-          if (Math.abs(dx) < MOVE_TRIGGER) return;
-          // Engaging pan — disable native drag, capture pointer, mark.
-          engaged = true;
-          chip.classList.add('pan-active');
-          chip.draggable = false;
-          try { chip.setPointerCapture(e.pointerId); } catch (err) {}
-        }
-        // Map horizontal pixels → pan units. ~80px to go from 0 to ±100.
-        const next = Math.max(-100, Math.min(100, Math.round(startPan + dx * 1.25)));
+    // Apply a pan value to every currently-selected step and update
+    // each chip's tint live (no full sequence re-render). Invoked by
+    // the selected-step pan slider below the BPM row.
+    function applyPanToSelectedSteps(panValue) {
+      const v = Math.max(-100, Math.min(100, Math.round(panValue)));
+      const display = document.getElementById('sequence-display');
+      selectedStepRefs.forEach(step => {
+        if (!step || step.isSub) return;
         if (!step.params) step.params = {};
-        step.params.pan = next;
-        applyPanTint(chip, baseColor, next);
-        e.preventDefault();
+        step.params.pan = v;
+        if (!display) return;
+        const idx = sequence.indexOf(step);
+        if (idx < 0) return;
+        const chip = display.querySelector(`.seq-step[data-step-idx="${idx}"]`);
+        if (!chip) return;
+        const base = chip.dataset.paletteColor || null;
+        applyPanTint(chip, base, v);
       });
-      const finish = (e) => {
-        if (pointerId !== e.pointerId) return;
-        const wasEngaged = engaged;
-        cleanup();
-        if (wasEngaged && typeof persistWorkspace === 'function') {
-          persistWorkspace();
-        }
-      };
-      chip.addEventListener('pointerup', finish);
-      chip.addEventListener('pointercancel', finish);
-      chip.addEventListener('lostpointercapture', finish);
+    }
 
-      // Initial paint reflects any saved pan value.
-      const initialPan = (step.params && Number.isFinite(step.params.pan))
-        ? step.params.pan : 0;
-      if (initialPan !== 0) applyPanTint(chip, baseColor, initialPan);
+    function formatPanLabel(p) {
+      if (!Number.isFinite(p) || p === 0) return 'C';
+      return (p > 0 ? 'R' : 'L') + Math.abs(p);
     }
 
     function bindStepDrag(chip, i) {
@@ -11688,6 +11853,36 @@
         // presses build a chord step at the end of the press session.
         cell.addEventListener('pointerdown', (e) => {
           if (e.target.closest('.cell-sound-select')) return;
+          // Lock toggle wins over note-mode behaviour: each press plays
+          // the most-recent chord/sub step transposed so the pressed
+          // note is its first note. Doesn't modify the sequence.
+          if (playLockMode) {
+            cell.classList.add('flash');
+            setTimeout(() => cell.classList.remove('flash'), 80);
+            playLockOnCell(i);
+            return;
+          }
+          // Wrap (chordMode) takes precedence over the note-mode click
+          // routing so accumulating notes works the same way regardless
+          // of whether the user is in Spell, Run, or Stack. Toggling
+          // Wrap off commits the accumulated notes per gridMode (sub
+          // for Run, chord otherwise) — see chord-btn click handler.
+          if (chordMode) {
+            cell.classList.add('flash');
+            setTimeout(() => cell.classList.remove('flash'), 80);
+            const params = { ...cellParams[i] };
+            pendingChord.push({
+              freq: notes[i].freq,
+              label: notes[i].label,
+              cellIndex: i,
+              sound: params.type,
+              params,
+            });
+            renderSequence();
+            document.getElementById('save-btn').disabled = false;
+            playNote(notes[i].freq, params);
+            return;
+          }
           // Arpeggio / Chord modes don't sustain — they fire a one-shot
           // transposed playback of the saved sequence and bail.
           if (gridMode === 'arpeggio') {
@@ -11741,9 +11936,9 @@
               subdivision: stepSubdivision,
             });
           } else if (chordMode) {
-            pendingChord.push({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params });
-            renderSequence();
-            document.getElementById('save-btn').disabled = false;
+            // No-op here — Wrap (chordMode) is handled in the cell's
+            // pointerdown so it fires consistently across note modes
+            // and doesn't get a double-push from the click event.
           } else if (selectedStepRefs.length > 0) {
             // Retune the selected step(s) in place — preserves duration,
             // subdivision, and bend so the click is just a re-pitch. Skips
@@ -12072,12 +12267,19 @@
           if (changed) renderSequence();
           return;
         }
-        // Entering Chord mode: collapse whatever's in the sequence into a
-        // single base chord (snapshot for undo + render). Each subsequent
-        // click in chord mode reads that base and appends a transposed
-        // copy to the sequence.
-        if (gridMode === 'chord' && prev !== 'chord' && sequence.length > 1) {
-          if (consolidateSequenceToChord()) renderSequence();
+        // Entering Chord mode:
+        //  - From Run: convert each ▤ in place to its own chord so the
+        //    user keeps as many chord chips as they had subs, instead
+        //    of every voice merging into one chord.
+        //  - From other modes (Spell or first entry): collapse the whole
+        //    sequence into one base chord — that's the chord-mode seed
+        //    that subsequent cell clicks transpose and append.
+        if (gridMode === 'chord' && prev !== 'chord') {
+          if (prev === 'arpeggio') {
+            if (subsToChordsInPlace()) renderSequence();
+          } else if (sequence.length > 1) {
+            if (consolidateSequenceToChord()) renderSequence();
+          }
         }
         // Entering Run mode: collapse the workspace into one subsequence
         // chip. Each subsequent click transposes that base sub and
@@ -12765,9 +12967,9 @@
     })();
 
     // ---- Rest bar ----
-    // Two Rest buttons sit on either side of the centred BPM picker;
-    // both add a rest step and both flash on click / on playback so
-    // the user gets the feedback regardless of which one they tapped.
+    // The right-side Rest button adds a rest step. Both rest-bar
+    // elements share the class so the playback active-loop highlight
+    // could highlight any future copies as well.
     const restBars = document.querySelectorAll('.rest-bar');
     restBars.forEach(rb => {
       rb.addEventListener('click', () => {
@@ -12776,6 +12978,37 @@
         addToSequence({ freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision });
       });
     });
+
+    // ---- Lock button (left of BPM) ----
+    // Toggles playLockMode. While on, every cell click auditions a
+    // transposed copy of the last chord / sub step.
+    (function bindPlayLockButton() {
+      const btn = document.getElementById('play-lock-btn');
+      if (!btn) return;
+      const refresh = () => btn.classList.toggle('active', playLockMode);
+      refresh();
+      btn.addEventListener('click', () => {
+        playLockMode = !playLockMode;
+        refresh();
+      });
+    })();
+
+    // ---- Selected-step pan slider ----
+    // Live-updates the pan of every selected step as the user drags;
+    // the row's visibility is driven by syncStepEditorFromSelection.
+    (function bindStepPanSlider() {
+      const slider = document.getElementById('step-pan-slider');
+      const valEl  = document.getElementById('step-pan-val');
+      if (!slider) return;
+      slider.addEventListener('input', () => {
+        const v = parseInt(slider.value, 10) || 0;
+        applyPanToSelectedSteps(v);
+        if (valEl) valEl.textContent = formatPanLabel(v);
+      });
+      slider.addEventListener('change', () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
 
   </script>
 
@@ -12847,6 +13080,7 @@
           <div class="cache-btn-container" style="display:none;">
             <button id="cache-btn" class="btn btn-cache"></button>
             <button id="cache-playlist-btn" class="btn btn-cache">Playlist from cache</button>
+            <button id="add-to-track-btn" class="btn btn-cache" title="Add the current track to the Make track editor as a new stereo track and save it as a sequencer chip">Add To Track</button>
           </div>
 
           <audio id="audio-player" preload="metadata"></audio>

@@ -875,6 +875,12 @@
     .cell:active        { filter: brightness(0.75); }
     .cell.flash         { filter: brightness(1.35); }
     .cell.active-loop   { filter: brightness(1.25); outline: 4px solid #fff inset; }
+    /* Persistent press highlight — sticks for the full duration of the
+       user's pointerdown→pointerup gesture (driven by polyStartCell /
+       polyEndCellForPointer). Visible on top of .flash but yields to
+       .active-loop's outline during sequencer playback so the playhead
+       stays the dominant signal. */
+    .cell.sustaining    { filter: brightness(1.45); }
     /* Persistent highlight for cells whose note is in the in-progress
        Wrap (chordMode). Cleared when Wrap is closed/committed. Tapping
        a wrap-pending cell again removes the note from the pending wrap. */
@@ -959,12 +965,14 @@
       cursor: pointer;
       user-select: none;
       transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-      flex-shrink: 0;
       box-shadow: 0 0 12px rgba(216, 180, 254, 0.18);
-      /* Halve the gap to the bar on top / right / bottom by pulling
-         into the parent's 6px / 16px / 6px padding. Left edge is left
-         alone so the spacing to Step Mode stays the same. */
-      margin: -3px -8px -3px 0;
+      /* Fill the right cluster so Rest stretches from the BPM picker
+         toward the right side. The bar's 16px right padding stays
+         untouched so there's a matching gutter between Rest's right
+         edge and the screen edge. */
+      flex: 1 1 auto;
+      width: 100%;
+      margin: -3px 0;
     }
     .rest-bar:hover      { border-color: #fff; box-shadow: 0 0 16px rgba(216, 180, 254, 0.32); }
     .rest-bar:active     { background: #1a1a2e; }
@@ -996,6 +1004,40 @@
       overflow-y: auto;
       scrollbar-width: thin;
       scrollbar-color: #2d2d3f #0a0a14;
+      /* Anchor for the absolute-positioned interval markers (.row-interval)
+         that label semitone gaps between consecutive chips on the same row. */
+      position: relative;
+    }
+    /* Thin horizontal connector + label sitting between two adjacent step
+       chips that share a row. Built post-render in renderIntervalBars()
+       once chip layout is measurable. */
+    .row-interval {
+      position: absolute;
+      height: 12px;
+      pointer-events: none;
+      user-select: none;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      color: #6e7596;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1;
+    }
+    .row-interval::before {
+      content: '';
+      position: absolute;
+      left: 0; right: 0;
+      top: 50%;
+      height: 1px;
+      background: #2d2d3f;
+    }
+    .row-interval > span {
+      position: relative;
+      background: #0a0a14;
+      padding: 0 4px;
     }
     .sequence-display::-webkit-scrollbar { width: 4px; }
     .sequence-display::-webkit-scrollbar-track { background: #0a0a14; }
@@ -1008,6 +1050,11 @@
       grid-template-columns: repeat(var(--grid-cols, 16), 1fr);
       align-items: stretch;
       max-height: none;
+      /* Reserve vertical space between chip rows so the interval markers
+         don't overlap the next row of chips. Column gap stays 0 — chips
+         stay adjacent within a row to keep the dense look. */
+      row-gap: 16px;
+      column-gap: 0;
     }
     .sequence-display.grid-mode .seq-step { width: auto; }
     /* Empty pattern slot used while step-mode is on. */
@@ -1293,27 +1340,43 @@
     .step-grid-bar {
       background: #050510;
       border-bottom: 3px solid #000;
-      /* 3-column grid: empty (left) | BPM picker (centred) | Rest cluster
-         (right). The empty left column lets the centre column stay
-         visually centred regardless of the right cluster's width. */
+      /* 3-column grid: left cluster | BPM picker (centred) | right cluster.
+         minmax(0, 1fr) keeps the side columns from expanding past their
+         allotted share when their content (e.g. the chord-display pill)
+         grows, so the centre BPM stays visually centred regardless of
+         what's pinned to the left. */
       display: grid;
-      grid-template-columns: 1fr auto 1fr;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
       align-items: center;
       gap: 14px;
       padding: 6px 16px;
     }
     .step-grid-bar > .tempo-control { justify-self: center; }
     .step-grid-bar-left {
-      justify-self: start;
-      display: inline-flex;
+      /* Stretch across the 1fr column so the Keep button can expand to
+         fill all the room between the screen's left edge and the
+         centred BPM picker. */
+      justify-self: stretch;
+      display: flex;
       align-items: center;
       gap: 8px;
+      min-width: 0;
+      max-width: 100%;
     }
+    /* No standalone chord-display element — when a wrap is active the
+       Keep button itself flips its label to the chord name (and adds
+       .show-chord). See updateKeepLabel() and the .play-lock.show-chord
+       overrides below. */
     .step-grid-bar-right {
-      justify-self: end;
-      display: inline-flex;
+      /* Mirror the left cluster — stretch the column so Rest can fill
+         the space from the BPM's right edge to the screen's right edge. */
+      justify-self: stretch;
+      display: flex;
       align-items: center;
+      justify-content: flex-end;
       gap: 8px;
+      min-width: 0;
+      max-width: 100%;
     }
     /* Left-side Rest mirrors the right one — pull into the bar's
        padding on top, left, and bottom (right edge unchanged so the
@@ -1336,9 +1399,14 @@
       cursor: pointer;
       user-select: none;
       transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-      flex-shrink: 0;
       box-shadow: 0 0 12px rgba(246, 173, 85, 0.18);
-      margin: -3px 0 -3px -8px;
+      /* Fill the left cluster so Keep stretches toward the centred BPM
+         picker. The bar's 16px left padding stays untouched so there's
+         a comfortable gutter between Keep's left edge and the screen
+         edge. */
+      flex: 1 1 auto;
+      width: 100%;
+      margin: -3px 0;
     }
     .play-lock:hover { border-color: #fbd38d; box-shadow: 0 0 16px rgba(246, 173, 85, 0.32); }
     /* Active state shifts to a hot-pink palette so the on/off contrast
@@ -1376,6 +1444,16 @@
       text-transform: uppercase;
       text-shadow: 0 0 10px rgba(246, 173, 85, 0.55);
       pointer-events: none;
+    }
+    /* When a wrap is active, the Keep button flips its inner span to the
+       shorthand chord name (CM7, Dm7b5/A, …) instead of "KEEP". Drop the
+       uppercase transform — minor 'm' vs major 'M' is meaning-bearing —
+       and tighten letter-spacing so longer chord names (slash inversions)
+       don't crash into the button edge. */
+    .play-lock.show-chord span {
+      letter-spacing: 0.8px;
+      text-transform: none;
+      font-size: 1.05rem;
     }
     /* New strip below the sequence chip view: Grid menu + Step Mode
        button. Sits above the footer-bar (Step controls). */
@@ -2914,13 +2992,301 @@
       if (group) {
         group.classList.toggle('chord-active', !!chordMode || !!wrapTemplate);
       }
+      // Chord readout follows the same lifecycle as the Wrap visuals,
+      // so update it from the same source of truth.
+      updateChordDisplay();
     }
     // Clears the wrap-pending outline from every cell. Called whenever
     // chordMode exits (commit, cancel, clear, undo, workspace restore)
     // so a stale highlight can't survive across wrap sessions.
     function clearWrapPendingHighlights() {
       cells.forEach(c => c && c.classList && c.classList.remove('wrap-pending'));
+      // The transposed-display step is wrap-scoped — once highlights are
+      // wiped we're outside any active wrap, so let the chord-display
+      // readout fall back to wrapTemplate (or hide).
+      _wrapTransposeDisplayStep = null;
+      // The user-driven tonic shift is per-wrap. Reset alongside the
+      // pending highlights so a fresh wrap starts at shift 0.
+      _wrapTonicShift = 0;
     }
+
+    // ---- Chord-name display ----
+    // How many positions to rotate the wrap's tonic (root) for naming.
+    // Press-and-hold the Keep button while a wrap is active to cycle.
+    // Reset whenever the wrap exits (see clearWrapPendingHighlights).
+    let _wrapTonicShift = 0;
+    // Latest auditioned transposed wrapTemplate, or null. Set by
+    // playWrapTemplateOnCell so the readout follows transpositions
+    // even though wrapTemplate itself stays anchored to its original
+    // pitches. Cleared whenever the wrap exits.
+    let _wrapTransposeDisplayStep = null;
+
+    const _PITCH_NAMES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    function _pcName(pc) {
+      const idx = ((Math.round(pc) % 12) + 12) % 12;
+      return _PITCH_NAMES_SHARP[idx];
+    }
+    function _freqToMidi(f) {
+      return Number.isFinite(f) && f > 0 ? 12 * Math.log2(f / 440) + 69 : null;
+    }
+    // Chord pattern table — intervals from root (sorted ascending), most
+    // specific first so a 4-note Major 7 doesn't get downgraded to a 3-
+    // note Major. Anything that isn't matched falls back to a bare pitch-
+    // class list in chordNameFromFreqs().
+    // Chord pattern → traditional shorthand suffix appended to the root
+    // letter (e.g. "C" + "M7" → "CM7", "F#" + "m7b5" → "F#m7b5"). Empty
+    // suffix means "just the root letter" (plain major triad). Sorted by
+    // length descending then by perceived specificity within a length, so
+    // when an input matches multiple roots, the chord with the lowest
+    // patIdx (most specific) wins — Em7 beats C6 for {C,E,G,B-1}, etc.
+    const _CHORD_PATTERNS = [
+      // 6-note extensions (rare — usually some voice is omitted)
+      { ivs: [0, 2, 4, 7, 9, 11], name: 'M13' },
+      { ivs: [0, 2, 4, 7, 9, 10], name: '13' },
+      { ivs: [0, 2, 3, 7, 9, 10], name: 'm13' },
+      { ivs: [0, 2, 4, 5, 7, 11], name: 'M11' },
+      { ivs: [0, 2, 4, 5, 7, 10], name: '11' },
+      { ivs: [0, 2, 3, 5, 7, 10], name: 'm11' },
+      { ivs: [0, 2, 4, 6, 7, 11], name: 'M7#11' },
+
+      // 5-note 9ths and altered dominants
+      { ivs: [0, 2, 4, 7, 11], name: 'M9' },
+      { ivs: [0, 2, 4, 7, 10], name: '9' },
+      { ivs: [0, 2, 3, 7, 10], name: 'm9' },
+      { ivs: [0, 2, 3, 7, 11], name: 'mM9' },
+      { ivs: [0, 2, 4, 7, 9],  name: '6/9' },
+      { ivs: [0, 2, 3, 7, 9],  name: 'm6/9' },
+      { ivs: [0, 2, 5, 7, 10], name: '9sus4' },
+      { ivs: [0, 1, 4, 7, 10], name: '7b9' },
+      { ivs: [0, 3, 4, 7, 10], name: '7#9' },
+      { ivs: [0, 4, 6, 7, 10], name: '7#11' },
+      { ivs: [0, 4, 6, 7, 11], name: 'M7#11' },
+
+      // 4-note 7ths first — m7 / M7 / 7 are far more common than 6 chords,
+      // so they win the cross-root tiebreak when both interpretations fit
+      // (e.g. {C,E,G,A} → Am7 over C6).
+      { ivs: [0, 4, 7, 11], name: 'M7' },
+      { ivs: [0, 3, 7, 10], name: 'm7' },
+      { ivs: [0, 4, 7, 10], name: '7' },
+      { ivs: [0, 3, 6, 10], name: 'm7b5' },
+      { ivs: [0, 3, 6, 9],  name: 'dim7' },
+      { ivs: [0, 3, 7, 11], name: 'mM7' },
+      { ivs: [0, 4, 8, 10], name: 'aug7' },
+      { ivs: [0, 4, 8, 11], name: 'M7#5' },
+      { ivs: [0, 4, 6, 11], name: 'M7b5' },
+      { ivs: [0, 5, 7, 10], name: '7sus4' },
+      { ivs: [0, 4, 6, 10], name: '7b5' },
+      { ivs: [0, 4, 7, 9],  name: '6' },
+      { ivs: [0, 3, 7, 9],  name: 'm6' },
+      { ivs: [0, 2, 4, 7],  name: 'add9' },
+      { ivs: [0, 2, 3, 7],  name: 'madd9' },
+
+      // 3-note triads
+      { ivs: [0, 4, 7], name: '' },     // plain major triad
+      { ivs: [0, 3, 7], name: 'm' },
+      { ivs: [0, 3, 6], name: 'dim' },
+      { ivs: [0, 4, 8], name: 'aug' },
+      { ivs: [0, 2, 7], name: 'sus2' },
+      { ivs: [0, 5, 7], name: 'sus4' },
+
+      // 2-note power chord
+      { ivs: [0, 7], name: '5' },
+    ];
+    // Build a length → pattern[] index once so each cross-root probe only
+    // walks patterns of the right size. With up to a dozen patterns at
+    // each common length this matters far less than the readability win
+    // of "match returns first specific hit".
+    const _CHORD_PATTERNS_BY_LEN = (() => {
+      const m = new Map();
+      _CHORD_PATTERNS.forEach((pat, idx) => {
+        const arr = m.get(pat.ivs.length) || [];
+        arr.push({ pat, idx });
+        m.set(pat.ivs.length, arr);
+      });
+      return m;
+    })();
+    // Loose quality detection for cases where the chord doesn't fit any
+    // exact pattern (typically when the user has shifted the tonic to a
+    // note that doesn't yield a standard root-rooted chord). Picks "m"
+    // when a minor 3rd is present, "" (major) when a major 3rd is, and
+    // a "no3" suffix when neither — falls back to "?". Doesn't try to
+    // describe extensions; the user can read the bass from the slash.
+    function _looseQualityFromIvs(ivs) {
+      const set = new Set(ivs);
+      if (set.has(3) && !set.has(4)) return 'm';
+      if (set.has(4) && !set.has(3)) return '';
+      if (set.has(3) && set.has(4)) return ''; // both → call it major-ish
+      if (set.has(7))               return '5'; // P5 only (power chord)
+      return null; // no detectable quality — caller falls back to PCs
+    }
+    function chordNameFromFreqs(freqs, forcedRootPc) {
+      const valid = (freqs || []).filter(f => Number.isFinite(f) && f > 0);
+      if (valid.length === 0) return '';
+      const midis = valid.map(_freqToMidi).filter(m => m != null).map(Math.round);
+      if (midis.length === 0) return '';
+      if (midis.length === 1) return _pcName(midis[0]);
+      const pcs = [...new Set(midis.map(m => ((m % 12) + 12) % 12))];
+      if (pcs.length === 1) return _pcName(pcs[0]);
+      const bassPc = ((Math.min(...midis) % 12) + 12) % 12;
+
+      // Forced root path — used when the user has shifted the wrap
+      // tonic via Keep's long-press menu. Try the exact pattern table
+      // first; if nothing matches, fall back to a loose quality so the
+      // chord still gets a readable name (e.g. "Em/C" for E-tonic on a
+      // C-E-G voicing where {0,3,8} doesn't match a standard pattern).
+      if (forcedRootPc != null && pcs.includes(forcedRootPc)) {
+        const ivs = pcs
+          .map(pc => ((pc - forcedRootPc) % 12 + 12) % 12)
+          .sort((a, b) => a - b);
+        const sameLen = _CHORD_PATTERNS_BY_LEN.get(pcs.length) || [];
+        for (const { pat } of sameLen) {
+          let match = true;
+          for (let j = 0; j < ivs.length; j++) {
+            if (pat.ivs[j] !== ivs[j]) { match = false; break; }
+          }
+          if (match) {
+            const head = _pcName(forcedRootPc) + pat.name;
+            return forcedRootPc === bassPc ? head : head + '/' + _pcName(bassPc);
+          }
+        }
+        const loose = _looseQualityFromIvs(ivs);
+        if (loose === null) {
+          // No detectable quality (no 3rd, no P5) — surface the raw PCs
+          // with the forced root first so the user can still see what
+          // the wrap is.
+          const ordered = [forcedRootPc, ...pcs.filter(p => p !== forcedRootPc)];
+          return ordered.map(_pcName).join('·');
+        }
+        const head = _pcName(forcedRootPc) + loose;
+        return forcedRootPc === bassPc ? head : head + '/' + _pcName(bassPc);
+      }
+
+      const sameLengthPats = _CHORD_PATTERNS_BY_LEN.get(pcs.length) || [];
+
+      // Bass-rooted match wins outright when one exists — when the bass
+      // note is itself a chord root the user almost always means that
+      // chord (e.g. {C,E,G,A} bass=C → C6, not Am7/C). Only fall back
+      // to non-bass roots when no bass-rooted pattern fits, in which
+      // case we pick the most-specific match and append /bass.
+      let bassMatch = null;
+      let otherBest = null;
+      for (const rootPc of pcs) {
+        const ivs = pcs
+          .map(pc => ((pc - rootPc) % 12 + 12) % 12)
+          .sort((a, b) => a - b);
+        for (const { pat, idx } of sameLengthPats) {
+          let match = true;
+          for (let j = 0; j < ivs.length; j++) {
+            if (pat.ivs[j] !== ivs[j]) { match = false; break; }
+          }
+          if (!match) continue;
+          const cand = { rootPc, patIdx: idx, suffix: pat.name };
+          if (rootPc === bassPc) {
+            if (!bassMatch || idx < bassMatch.patIdx) bassMatch = cand;
+          } else {
+            if (!otherBest || idx < otherBest.patIdx) otherBest = cand;
+          }
+          break; // each (root, length) probe matches at most one pattern
+        }
+      }
+      const best = bassMatch || otherBest;
+      if (best) {
+        const head = _pcName(best.rootPc) + best.suffix;
+        // Slash notation surfaces the inversion when the actual bass note
+        // isn't the chord root (e.g. "C/E", "Dm7/A").
+        return best.rootPc === bassPc ? head : head + '/' + _pcName(bassPc);
+      }
+      // No match — surface the raw pitch classes so the user still sees
+      // what they're playing. Bass first so it reads ascending.
+      const ordered = [bassPc, ...pcs.filter(p => p !== bassPc)];
+      return ordered.map(_pcName).join('·');
+    }
+    // Distinct pitch classes of the wrap notes, in the order they were
+    // built (pendingChord push order, or wrap voice order). Used by the
+    // tonic-shift cycle so "next note" maps to the next distinct pitch.
+    function wrapPcsInBuildOrder() {
+      let freqs = null;
+      if (chordMode && pendingChord.length > 0) {
+        freqs = pendingChord.map(n => n.freq);
+      } else if (_wrapTransposeDisplayStep) {
+        freqs = collectStepFreqs(_wrapTransposeDisplayStep);
+      } else if (wrapTemplate) {
+        freqs = collectStepFreqs(wrapTemplate);
+      }
+      if (!freqs) return [];
+      const seen = new Set();
+      const out = [];
+      for (const f of freqs) {
+        const m = _freqToMidi(f);
+        if (m == null) continue;
+        const pc = ((Math.round(m) % 12) + 12) % 12;
+        if (seen.has(pc)) continue;
+        seen.add(pc);
+        out.push(pc);
+      }
+      return out;
+    }
+    // Walk a step (chord / sub / single) and collect every leaf freq.
+    function collectStepFreqs(step) {
+      if (!step) return [];
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        return step.subSteps.flatMap(collectStepFreqs);
+      }
+      if (Array.isArray(step.chord)) {
+        return step.chord.map(n => n && n.freq).filter(f => Number.isFinite(f));
+      }
+      return Number.isFinite(step.freq) ? [step.freq] : [];
+    }
+    // Drive the Keep button's label off the wrap state. When any wrap
+    // form is active (building, committed template, or last-auditioned
+    // transposition) the button reads the shorthand chord name instead
+    // of "KEEP" and gets a .show-chord modifier so its styling adapts
+    // (no uppercase, tighter letter-spacing). When no wrap is active
+    // the button flips back to "KEEP".
+    //
+    // Precedence:
+    //   1. Active build (chordMode + pendingChord) → name from pending
+    //   2. Last-auditioned transposed wrapTemplate → name from that
+    //   3. Static wrapTemplate                     → name from template
+    //   4. Otherwise show "KEEP"
+    function updateKeepLabel() {
+      const btn = document.getElementById('play-lock-btn');
+      if (!btn) return;
+      const span = btn.querySelector('span');
+      if (!span) return;
+      let freqs = null;
+      if (chordMode && pendingChord.length > 0) {
+        freqs = pendingChord.map(n => n.freq);
+      } else if (_wrapTransposeDisplayStep) {
+        freqs = collectStepFreqs(_wrapTransposeDisplayStep);
+      } else if (wrapTemplate) {
+        freqs = collectStepFreqs(wrapTemplate);
+      }
+      // If the user has shifted the tonic, force the root to the
+      // shifted note's pitch class. Skip the shift when there are
+      // fewer than 2 distinct pitches (nothing to rotate).
+      let forcedRootPc = null;
+      if (_wrapTonicShift > 0) {
+        const orderedPcs = wrapPcsInBuildOrder();
+        if (orderedPcs.length >= 2) {
+          const idx = ((_wrapTonicShift % orderedPcs.length) + orderedPcs.length) % orderedPcs.length;
+          forcedRootPc = orderedPcs[idx];
+        }
+      }
+      const name = (freqs && freqs.length > 0)
+        ? chordNameFromFreqs(freqs, forcedRootPc)
+        : '';
+      if (name) {
+        span.textContent = name;
+        btn.classList.add('show-chord');
+      } else {
+        span.textContent = 'KEEP';
+        btn.classList.remove('show-chord');
+      }
+    }
+    // Back-compat alias — older call sites still reference the old name.
+    const updateChordDisplay = updateKeepLabel;
+
     let loopMode = false;
     let noteLength = 1;
     let stepSubdivision = 0.5; // multiplier vs quarter note (1 = 1/4, 0.5 = 1/8, 0.25 = 1/16, 2 = 1/2, 4 = 1/1)
@@ -3924,7 +4290,15 @@
       if (isSampleType(type)) {
         const entry = getSampleEntry(type);
         if (!entry || !entry.sampler || !entry.sampler.loaded) {
-          playNote(freq, params);
+          // Sample isn't ready yet — fall back to a one-shot. Suppress
+          // playNote's flashCellByFreq active-loop outline since the
+          // cell already has .sustaining for the press; the extra
+          // 80–110ms white outline that pops then disappears is the
+          // visual artifact the user reported.
+          const prev = _suppressCellFlash;
+          _suppressCellFlash = true;
+          try { playNote(freq, params); }
+          finally { _suppressCellFlash = prev; }
           return { release: () => {} };
         }
         const baseFreq = snapDrumKitFreq(type, freq);
@@ -3938,9 +4312,14 @@
       }
 
       // Pluck / kick / metal don't sustain naturally — fall through to a
-      // short one-shot, no release work needed.
+      // short one-shot, no release work needed. Suppress the flashCell
+      // active-loop outline so it doesn't fight the .sustaining
+      // highlight during the press.
       if (type === 'pluck' || type === 'kick' || type === 'metal') {
-        playNote(freq, params);
+        const prev = _suppressCellFlash;
+        _suppressCellFlash = true;
+        try { playNote(freq, params); }
+        finally { _suppressCellFlash = prev; }
         return { release: () => {} };
       }
 
@@ -4271,6 +4650,99 @@
       return STEP_BASE_PX * stepLengthFactor(step);
     }
 
+    // Render a semitone count as a traditional chromatic interval name
+    // (P1, m2, M2, m3, M3, P4, TT, P5, m6, M6, m7, M7, P8 …) with a
+    // direction sign so descending vs. ascending is unambiguous on the
+    // visual bar. Compound intervals (>12 semitones) extend the
+    // 9th/10th/… naming up through P15 (two octaves), and anything
+    // bigger falls back to "Noct + base" (e.g. "3oct+M3") so it stays
+    // readable instead of overflowing.
+    const _SEMI_NAMES_SIMPLE   = ['P1','m2','M2','m3','M3','P4','TT','P5','m6','M6','m7','M7'];
+    const _SEMI_NAMES_COMPOUND = ['P8','m9','M9','m10','M10','P11','TT','P12','m13','M13','m14','M14'];
+    function semitoneIntervalName(semis) {
+      if (semis === 0) return 'P1';
+      const sign = semis > 0 ? '+' : '-';
+      const n = Math.abs(semis);
+      if (n <= 11) return sign + _SEMI_NAMES_SIMPLE[n];
+      if (n <= 23) return sign + _SEMI_NAMES_COMPOUND[n - 12];
+      if (n === 24) return sign + 'P15';
+      const oct = Math.floor(n / 12);
+      const rem = n % 12;
+      const base = rem === 0 ? 'P8' : _SEMI_NAMES_SIMPLE[rem];
+      return sign + oct + 'oct' + (rem === 0 ? '' : '+' + base);
+    }
+
+    // Pick the "headline" frequency for a step so we can compute an
+    // interval to the next step. Chord steps use the lowest voice
+    // (closest to a root); subsequences walk in to the first audible
+    // subStep; rests have no pitch.
+    function primaryStepFreq(step) {
+      if (!step) return null;
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        for (const s of step.subSteps) {
+          const f = primaryStepFreq(s);
+          if (f != null) return f;
+        }
+        return null;
+      }
+      if (Array.isArray(step.chord) && step.chord.length > 0) {
+        let lo = Infinity;
+        step.chord.forEach(n => {
+          if (n && Number.isFinite(n.freq) && n.freq < lo) lo = n.freq;
+        });
+        return Number.isFinite(lo) ? lo : null;
+      }
+      return Number.isFinite(step.freq) ? step.freq : null;
+    }
+
+    // Draw a small "+N / -N" semitone-gap indicator under each pair of
+    // adjacent chips that share a row. Runs after renderSequence has put
+    // chips in the DOM so we can read getBoundingClientRect for layout.
+    // Skips pairs where either side is a rest (no pitch to subtract).
+    function renderIntervalBars(display) {
+      // Clear stale markers from the previous render.
+      display.querySelectorAll('.row-interval').forEach(el => el.remove());
+      // Filter out pendingChord preview chips (.chord-pending) — those
+      // sit after the real sequence chips in the DOM but aren't part of
+      // `sequence`, so any interval drawn between them would be bogus.
+      const chips = Array.from(display.querySelectorAll('.seq-step:not(.chord-pending)'));
+      if (chips.length < 2) return;
+      const dispRect = display.getBoundingClientRect();
+      const ROW_TOL = 4; // px slop when deciding if two chips share a row
+      const limit = Math.min(chips.length, sequence.length) - 1;
+      for (let i = 0; i < limit; i++) {
+        const a = chips[i], b = chips[i + 1];
+        if (!a || !b) continue;
+        const aRect = a.getBoundingClientRect();
+        const bRect = b.getBoundingClientRect();
+        // Different rows → no bar (the interval would arc visually
+        // across the row break and confuse more than it informs).
+        if (Math.abs(aRect.top - bRect.top) > ROW_TOL) continue;
+        const fA = primaryStepFreq(sequence[i]);
+        const fB = primaryStepFreq(sequence[i + 1]);
+        if (fA == null || fB == null) continue;
+        const semis = Math.round(12 * Math.log2(fB / fA));
+        const label = semitoneIntervalName(semis);
+        const left = (aRect.right - dispRect.left) + display.scrollLeft;
+        const right = (bRect.left - dispRect.left) + display.scrollLeft;
+        const top = (aRect.bottom - dispRect.top) + display.scrollTop;
+        const bar = document.createElement('div');
+        bar.className = 'row-interval';
+        bar.innerHTML = `<span>${label}</span>`;
+        bar.style.left = left + 'px';
+        bar.style.top = top + 'px';
+        // When chips touch (column-gap: 0) the marker has zero geometric
+        // width — give it a min so the label and connector line are
+        // visible spanning the chip edge.
+        const w = Math.max(20, right - left);
+        bar.style.width = w + 'px';
+        // If the chips are touching, center the marker on the boundary
+        // by shifting half its width to the left.
+        if (right - left < 20) bar.style.marginLeft = -(w / 2) + 'px';
+        display.appendChild(bar);
+      }
+    }
+
     function renderSequence(activeIndex = -1) {
       clampSelectionToSequence();
       const display = document.getElementById('sequence-display');
@@ -4476,8 +4948,20 @@
       if (shuffBtn) shuffBtn.disabled = sequence.length < 2;
       const repeatBtn = document.getElementById('repeat-btn');
       if (repeatBtn) repeatBtn.disabled = sequence.length === 0;
+      // Layout-dependent semitone markers between adjacent chips. Run on
+      // a microtask so chip widths have settled (esp. in flex/grid mode
+      // where stretching is computed after layout).
+      requestAnimationFrame(() => renderIntervalBars(display));
       persistWorkspace();
     }
+
+    // Re-position interval markers when the display resizes (window
+    // resize, dock toggle, etc.) — chip rects move so the absolute-
+    // positioned bars need to follow.
+    window.addEventListener('resize', () => {
+      const display = document.getElementById('sequence-display');
+      if (display) renderIntervalBars(display);
+    });
 
     // null = append; otherwise the next note is spliced at this index.
     // The cursor advances by 1 after each insert so consecutive clicks
@@ -5396,6 +5880,70 @@
       return { ...s };
     }
 
+    // Snap a single frequency to the nearest in-scale pitch under the
+    // current scale + root. Returns the input unchanged on chromatic
+    // (or unknown) scales since every PC is in scale there. When two
+    // in-scale pitches are equidistant (e.g., chromatic step between two
+    // diatonic neighbours), prefers the upward direction so the wrap
+    // keeps its forward motion.
+    function snapFreqToScale(freq) {
+      if (!Number.isFinite(freq) || freq <= 0) return freq;
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      if (!intervals || intervals.length >= 12) return freq;
+      const midi = 12 * Math.log2(freq / 440) + 69;
+      const midiRound = Math.round(midi);
+      const offset = ((midiRound - rootIdx) % 12 + 12) % 12;
+      if (intervals.includes(offset)) return freq;
+      let bestAdj = 12;
+      for (const iv of intervals) {
+        const up   = ((iv - offset) + 12) % 12;       // 1..11
+        const down = ((offset - iv) + 12) % 12;       // 1..11
+        // Equal-distance ties round up (positive adjustment) for forward
+        // motion through the scale.
+        const adj = (up <= down) ? up : -down;
+        if (Math.abs(adj) < Math.abs(bestAdj) ||
+            (Math.abs(adj) === Math.abs(bestAdj) && adj > bestAdj)) {
+          bestAdj = adj;
+        }
+      }
+      return freq * Math.pow(2, bestAdj / 12);
+    }
+    // Walk a step (chord / sub / single) and snap every leaf freq to
+    // the current scale. Updates per-leaf labels so the chip text
+    // matches the snapped pitch. Used by the wrap-template audition
+    // path so a transposed wrap never plays an out-of-scale note.
+    function snapStepToScale(step) {
+      if (!step) return step;
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      if (!intervals || intervals.length >= 12) return step; // chromatic — no-op
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        return { ...step, subSteps: step.subSteps.map(snapStepToScale) };
+      }
+      if (Array.isArray(step.chord)) {
+        const chord = step.chord.map(n => {
+          if (!Number.isFinite(n.freq)) return { ...n };
+          const f = snapFreqToScale(n.freq);
+          if (f === n.freq) return { ...n };
+          let label = n.label;
+          try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+          return { ...n, freq: f, label };
+        });
+        return {
+          ...step,
+          chord,
+          label: chord.map(n => n.label).join('·'),
+        };
+      }
+      if (Number.isFinite(step.freq)) {
+        const f = snapFreqToScale(step.freq);
+        if (f === step.freq) return step;
+        let label = step.label;
+        try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+        return { ...step, freq: f, label };
+      }
+      return step;
+    }
+
     // Schedule a subsequence's subSteps starting at `baseTime` audio time.
     // No transposition — the steps are assumed to already be tuned.
     function playSubStepsAtTime(subSteps, baseTime) {
@@ -5458,7 +6006,10 @@
       const baseFreq = visit(wrapTemplate);
       if (baseFreq == null) return false;
       const delta = semitonesBetweenHz(baseFreq, note.freq);
-      const transposed = transposeStepRec(wrapTemplate, delta);
+      // Transpose first (semitone-accurate), then snap each leaf freq
+      // to the current scale so a wrap auditioned over (e.g.) C major
+      // never plays C# / Eb / etc. Chromatic scale → no-op snap.
+      const transposed = snapStepToScale(transposeStepRec(wrapTemplate, delta));
       const at = Tone.now();
       if (transposed.isSub && Array.isArray(transposed.subSteps)) {
         playSubStepsAtTime(transposed.subSteps, at);
@@ -5472,6 +6023,12 @@
       } else if (transposed.freq != null) {
         playNote(transposed.freq, paramsWithBend(transposed.params || transposed.sound || 'sine', transposed.bend));
       }
+      // Surface the transposed chord in the readout so the user sees
+      // (e.g.) "A Major 7" when an "E Major 7" template gets retargeted
+      // to A. Stays set until the wrap exits or another transposition
+      // overwrites it.
+      _wrapTransposeDisplayStep = transposed;
+      updateChordDisplay();
       if (keepMode) {
         snapshotForUndo('Wrap form');
         sequence.push(transposed);
@@ -7040,6 +7597,18 @@
           selectedStepRefs = [newStep];
           insertionPoint = null;
           pendingChord = [];
+          // Treat the multi-select wrap as a committed wrapTemplate so the
+          // button flips to "Unwrap" and subsequent cell taps audition the
+          // wrapped form transposed (matching how the toggle-mode commit
+          // path behaves at the end of a Close).
+          wrapTemplate = newStep;
+          // Drop multi-select mode — the user just collapsed their multi-
+          // selection into a single wrapped step, so leaving Multi armed
+          // would invite an accidental bulk-edit on the next chip click.
+          multiSelectMode = false;
+          const multiCb = document.getElementById('multi-select-toggle');
+          if (multiCb) multiCb.checked = false;
+          refreshWrapVisuals();
           renderSequence();
           return;
         }
@@ -11747,6 +12316,10 @@
           const handle = startSustainedNote(notes[cellIdx].freq, params);
           _polySession.cellSustains.set(cellIdx, handle);
         } catch (e) {}
+        // Persistent press highlight — stays until refs hits 0 in
+        // polyEndCellForPointer, so the user sees which cell their
+        // finger is sustaining.
+        cells[cellIdx]?.classList.add('sustaining');
       }
       if (!_polySession.pressed.has(cellIdx)) {
         const p = { ...cellParams[cellIdx] };
@@ -11756,6 +12329,11 @@
           cellIndex: cellIdx,
           sound: p.type,
           params: p,
+          // Wall-clock window of the user's press. pressEnd is filled in
+          // by polyEndCellForPointer when the cell's last pointer
+          // releases; held-step duration is derived from the difference.
+          pressStart: performance.now(),
+          pressEnd: null,
         });
       }
     }
@@ -11769,9 +12347,43 @@
         const handle = _polySession.cellSustains.get(cellIdx);
         _polySession.cellSustains.delete(cellIdx);
         if (handle) { try { handle.release(); } catch (e) {} }
+        cells[cellIdx]?.classList.remove('sustaining');
+        // Record press-end so polyFinalizeSession (and the cell click
+        // handler) can compute how long the user actually held the cell
+        // and stamp that as the new step's duration.
+        const entry = _polySession.pressed.get(cellIdx);
+        if (entry && entry.pressEnd == null) entry.pressEnd = performance.now();
       } else {
         _polySession.cellRefCount.set(cellIdx, refs);
       }
+    }
+    // Translate a press window (ms) into step.duration units at the
+    // current subdivision. Quick taps fall back to the user's chosen
+    // noteLength so a stray short tap doesn't land as a sub-1-step
+    // chip; longer holds round to whole step counts so the chip
+    // renders cleanly. The resulting step is played in sequence with
+    // a single attack-release whose `targetDur` matches the held time
+    // — synth voices sustain through it, sample voices decay naturally
+    // when their buffer ends.
+    function _holdStepDurationFromMs(holdMs) {
+      const bpm = parseInt(tempoInput?.value, 10) || 120;
+      const stepSec = (60 / bpm) * stepSubdivision;
+      const heldSec = Math.max(0, holdMs) / 1000;
+      // Below ~1.5× a single step, treat as a regular tap and use the
+      // user's noteLength setting — keeps short taps on the grid.
+      if (heldSec < stepSec * 1.5) return noteLength;
+      return Math.max(1, Math.round(heldSec / stepSec));
+    }
+    function _holdStepDurationForCell(cellIdx) {
+      const entry = _polySession.pressed.get(cellIdx);
+      if (!entry || entry.pressStart == null) return noteLength;
+      const end = entry.pressEnd ?? performance.now();
+      return _holdStepDurationFromMs(end - entry.pressStart);
+    }
+    function _holdStepDurationForVoice(voice) {
+      if (!voice || voice.pressStart == null) return noteLength;
+      const end = voice.pressEnd ?? performance.now();
+      return _holdStepDurationFromMs(end - voice.pressStart);
     }
     function polyEndPointer(pointerId) {
       _polySession.pointerStartedOnCell.delete(pointerId);
@@ -11788,9 +12400,18 @@
     function polyShouldSuppressClick() {
       return performance.now() < _polySession.suppressClickUntil;
     }
+    // Did the bubble-phase cell click handler already commit a step for
+    // this gesture? Some platforms (notably long touch holds on iOS, and
+    // fast pointer drift on desktop) drop the click event entirely after
+    // a sustained press, leaving polyFinalizeSession as the only handler
+    // that runs at session end. The flag lets that fallback add the
+    // single-note step itself without double-adding when click DID fire.
+    let _cellTapAdded = false;
     function polyFinalizeSession() {
       _polySession.endTimer = null;
       const voices = Array.from(_polySession.pressed.values());
+      const tapAlreadyAdded = _cellTapAdded;
+      _cellTapAdded = false;
       _polySession.pressed.clear();
       if (voices.length >= 2) {
         // Multi-press → emit a chord step. Suppress the per-cell click
@@ -11800,35 +12421,91 @@
         // still fires either way so the bubble-phase click handlers
         // don't sneak in extra single-note appends.
         if (keepMode) {
+          // Chord step duration follows the LONGEST-held voice so the
+          // chord rings until the last finger lifts (matching how the
+          // user actually heard it during the press).
+          const chordHold = Math.max(
+            ...voices.map(v => _holdStepDurationForVoice(v))
+          );
           snapshotForUndo('Add chord');
           addToSequence({
-            chord: voices,
+            chord: voices.map(v => ({
+              freq: v.freq, label: v.label, cellIndex: v.cellIndex,
+              sound: v.sound,
+              params: v.params ? { ...v.params } : undefined,
+            })),
             label: voices.map(v => v.label).join('·'),
-            duration: noteLength,
+            duration: chordHold,
             subdivision: stepSubdivision,
           });
         }
         _polySession.suppressClickUntil = performance.now() + 250;
+        return;
+      }
+      // Single-voice fallback — when the cell's click event didn't fire
+      // (long hold + minor pointer drift, or iOS Safari's long-touch
+      // click suppression), the user's tap was real and they expect a
+      // step to land. Reproduce the click-handler's default add path
+      // here, gated by the same conditions, when click hasn't already
+      // committed it.
+      if (voices.length === 1 && !tapAlreadyAdded
+          && keepMode
+          && !chordMode
+          && !wrapTemplate
+          && !stepMode
+          && gridMode === 'sequencer'
+          && selectedStepRefs.length === 0) {
+        const v = voices[0];
+        addToSequence({
+          freq:       v.freq,
+          label:      v.label,
+          cellIndex:  v.cellIndex,
+          sound:      v.sound,
+          params:     v.params ? { ...v.params } : undefined,
+          duration:   _holdStepDurationForVoice(v),
+          subdivision: stepSubdivision,
+        });
       }
     }
     document.addEventListener('pointerup',     (e) => polyEndPointer(e.pointerId));
     document.addEventListener('pointercancel', (e) => polyEndPointer(e.pointerId));
 
-    function bindCellLongPress(cell, noteIndex) {
-      let lpt = null;
+    // Double-tap on a cell opens its edit menu (was press-and-hold). The
+    // long-press timer used to fire mid-sustain and yank the play
+    // gesture into a context menu, which made hold-to-sustain feel
+    // broken — the user couldn't actually hold a note for any length of
+    // time. With this binding, hold = sustain (handled by the cell's
+    // existing pointerdown sustain path), tap-tap = edit menu.
+    function bindCellEditMenu(cell, noteIndex) {
+      let lastTapTime = 0;
+      let lastTapX = 0, lastTapY = 0;
+      // Capture-phase listener so we can intercept the second tap of a
+      // double-tap before the cell's regular pointerdown handlers fire.
+      // stopImmediatePropagation on a hit prevents the bubble-phase main
+      // handler from also pushing this tap into pendingChord / starting
+      // a sustain / etc.
       cell.addEventListener('pointerdown', (e) => {
         if (e.target.closest('.cell-sound-select')) return;
-        lpt = setTimeout(() => {
-          lpt = null;
+        const now = performance.now();
+        const dt = now - lastTapTime;
+        const dx = Math.abs(e.clientX - lastTapX);
+        const dy = Math.abs(e.clientY - lastTapY);
+        // 350ms window + 30px positional tolerance — same ballpark as
+        // mobile OS double-tap heuristics, and tight enough to avoid
+        // false-positives from two unrelated taps.
+        if (dt < 350 && dx < 30 && dy < 30) {
+          lastTapTime = 0;
+          e.preventDefault();
+          e.stopImmediatePropagation();
           navigator.vibrate?.(40);
           showCtxMenu(e.clientX, e.clientY, cellActions(noteIndex));
-        }, 500);
-      });
-      const cancel = () => { clearTimeout(lpt); lpt = null; };
-      cell.addEventListener('pointerup',     cancel);
-      cell.addEventListener('pointercancel', cancel);
-      cell.addEventListener('pointermove',   cancel);
-      cell.addEventListener('contextmenu',   (e) => e.preventDefault());
+          return;
+        }
+        lastTapTime = now;
+        lastTapX = e.clientX;
+        lastTapY = e.clientY;
+      }, { capture: true });
+      cell.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
 
@@ -12139,6 +12816,7 @@
               pendingChord.splice(existing, 1);
               cell.classList.remove('wrap-pending');
               renderSequence();
+              updateChordDisplay();
               return;
             }
             const params = { ...cellParams[i] };
@@ -12157,6 +12835,7 @@
             // immediately overridden by the brightness ramp.
             cell.classList.add('wrap-pending');
             renderSequence();
+            updateChordDisplay();
             playNote(notes[i].freq, params);
             return;
           }
@@ -12254,17 +12933,20 @@
                 s.params    = { ...params };
               });
               renderSequence();
+              _cellTapAdded = true; // covered — keep polyFinalizeSession out
             } else {
               // Nothing editable in the selection (e.g. only sub/chord steps);
               // fall back to the normal append behavior so the click does
               // something useful instead of silently no-opping.
-              addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: noteLength, subdivision: stepSubdivision });
+              addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision });
+              _cellTapAdded = true;
             }
           } else {
-            addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: noteLength, subdivision: stepSubdivision });
+            addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision });
+            _cellTapAdded = true;
           }
         });
-        bindCellLongPress(cell, i);
+        bindCellEditMenu(cell, i);
         grid.appendChild(cell);
         cells.push(cell);
       });
@@ -13276,14 +13958,49 @@
     });
 
     // ---- Lock button (left of BPM) ----
-    // Toggles keepMode. While on, every cell click auditions a
-    // transposed copy of the last chord / sub step.
+    // Click toggles keepMode. While a wrap is active, press-and-hold
+    // opens a small menu with "Shift tonic" — cycles through the wrap's
+    // notes so each can be treated as the chord root, updating the
+    // shorthand chord name shown on the button.
     (function bindPlayLockButton() {
       const btn = document.getElementById('play-lock-btn');
       if (!btn) return;
       const refresh = () => btn.classList.toggle('active', keepMode);
       refresh();
+      const isWrapActive = () =>
+        chordMode || !!wrapTemplate || !!_wrapTransposeDisplayStep;
+      let lpt = null;
+      let longPressFired = false;
+      btn.addEventListener('pointerdown', (e) => {
+        longPressFired = false;
+        if (!isWrapActive()) return;
+        const x = e.clientX, y = e.clientY;
+        lpt = setTimeout(() => {
+          lpt = null;
+          longPressFired = true;
+          navigator.vibrate?.(40);
+          const orderedPcs = wrapPcsInBuildOrder();
+          if (orderedPcs.length < 2) return;
+          showCtxMenu(x, y, [
+            { label: 'Shift tonic', fn: () => {
+                _wrapTonicShift = (_wrapTonicShift + 1) % orderedPcs.length;
+                updateKeepLabel();
+            }},
+          ]);
+        }, 500);
+      });
+      const cancelLpt = () => { clearTimeout(lpt); lpt = null; };
+      btn.addEventListener('pointerup',     cancelLpt);
+      btn.addEventListener('pointercancel', cancelLpt);
+      btn.addEventListener('pointermove',   cancelLpt);
+      btn.addEventListener('contextmenu',   (e) => e.preventDefault());
       btn.addEventListener('click', () => {
+        // Long-press already opened the tonic menu — the click that
+        // follows pointerup shouldn't ALSO toggle keepMode.
+        if (longPressFired) {
+          longPressFired = false;
+          return;
+        }
         keepMode = !keepMode;
         refresh();
       });

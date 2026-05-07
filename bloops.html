@@ -5,2887 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bloops</title>
   <!-- Serialbox stylesheet — embedded view inherits the player chrome.
-       Loaded BEFORE the inline style so Bloops's own rules win on conflict. -->
+       Loaded BEFORE bloops.css so the page's own rules win on conflict. -->
   <link rel="stylesheet" href="css/styles.css" />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      width: 100vw;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    @media (max-width: 700px) {
-      body {
-        height: auto;
-        min-height: 100vh;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .grid {
-        flex: none;
-        grid-auto-rows: minmax(70px, 1fr);
-        min-height: 55vh;
-      }
-      .grid-control-row2 {
-        flex-basis: 100%;
-      }
-      /* Grid panel needs to wrap so its rows of controls fit a narrow
-         viewport without overflowing the side. */
-      .grid-settings-panel {
-        width: calc(100vw - 16px);
-        max-width: calc(100vw - 16px);
-      }
-      .grid-control { flex-wrap: wrap; }
-      .grid-control select#scale-select { width: 100%; min-width: 90px; }
-      .grid-control input[type=range] { flex: 1 1 80px; min-width: 60px; width: auto; }
-    }
-
-    /* MENU BAR */
-    .menubar {
-      background: #000;
-      border-bottom: 3px solid #000;
-      display: flex;
-      align-items: center;
-      flex-wrap: nowrap;
-      padding: 10px 20px 10px 10px;
-      gap: 12px;
-      position: relative;
-      overflow-x: auto;
-    }
-    .menubar > * { flex-shrink: 0; }
-
-    .tone-panel {
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      position: absolute;
-      top: calc(100% + 4px);
-      right: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 10px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      min-width: 160px;
-      max-height: calc(100vh - 80px);
-      overflow-y: auto;
-    }
-    .tone-panel.open { display: flex; }
-    .tone-opt {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: left;
-      transition: all 0.15s ease;
-    }
-    .tone-opt:hover { border-color: #4299e1; color: #4299e1; }
-    /* Family rows — top-level entries that drill down into a sub-list. */
-    .tone-opt.tone-opt-family {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .tone-opt-count {
-      font-size: 0.7rem;
-      font-weight: 500;
-      color: #4a4a6a;
-      letter-spacing: 0.5px;
-    }
-    .tone-opt.tone-opt-family:hover .tone-opt-count { color: #4299e1; }
-    /* Subgroup label — used inside a family's drilldown to group its
-       members (e.g., Drums splits into Single drums vs Drum kits). */
-    .tone-subhead {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.65rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #4a4a6a;
-      padding: 6px 4px 2px;
-    }
-    /* Back row — returns from a family drilldown to the top family list. */
-    .tone-opt.tone-opt-back {
-      color: #4a4a6a;
-      font-size: 0.78rem;
-      letter-spacing: 0.5px;
-    }
-    .tone-opt.tone-opt-back:hover {
-      border-color: #4299e1;
-      color: #a0aec0;
-    }
-    /* "Custom" indicator — non-clickable marker at the top of the panel
-       when at least one cell's tone has been changed away from the
-       global default. Pinkish accent + italic so it reads as a current
-       state, not as a selectable option. */
-    .tone-opt.tone-opt-custom {
-      border-color: #f472b6;
-      color: #f9a8d4;
-      background: rgba(244, 114, 182, 0.08);
-      font-style: italic;
-      cursor: default;
-    }
-    .tone-opt.tone-opt-custom:hover {
-      border-color: #f472b6;
-      color: #f9a8d4;
-    }
-
-    /* Global FX panel — three slider rows for reverb / delay / distortion.
-       Same panel chrome as the tone dropdown so the menubar feels uniform. */
-    .fx-panel {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-      position: absolute;
-      top: calc(100% + 4px);
-      right: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 12px 14px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      min-width: 220px;
-      max-height: calc(100vh - 80px);
-      overflow-y: auto;
-    }
-    .fx-panel.open { display: flex; }
-    .fx-control { display: flex; flex-direction: column; gap: 4px; }
-    .fx-control-row {
-      display: flex; justify-content: space-between; align-items: baseline;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.75rem;
-      color: #a0aec0;
-    }
-    .fx-val { color: #e2e8f0; font-weight: 600; }
-    .fx-control input[type=range] { width: 100%; accent-color: #4299e1; }
-    .fx-group-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.66rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #4a4a6a;
-      margin: 4px 0 -2px;
-    }
-    .fx-group-label:first-child { margin-top: 0; }
-    /* Each FX section header now hosts a small ON/OFF toggle pinned to the
-       right — per-effect bypass without nuking the configured mix value. */
-    .fx-group-label.fx-group-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-    }
-    .fx-bypass {
-      padding: 1px 8px;
-      border: 1px solid #2d2d3f;
-      border-radius: 9px;
-      background: transparent;
-      color: #68d391;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.6rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-      cursor: pointer;
-      text-transform: uppercase;
-      transition: all 0.15s ease;
-    }
-    .fx-bypass:hover { border-color: #38a169; }
-    .fx-bypass.off {
-      color: #4a4a6a;
-      border-color: #2d2d3f;
-    }
-    .fx-bypass.off:hover { border-color: #4a4a6a; color: #6b7280; }
-    .fx-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
-    .fx-order-hint {
-      color: #4a4a6a; font-size: 0.7rem; font-weight: 500;
-      margin-left: 8px; letter-spacing: 0.4px;
-    }
-    .fx-order { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-    .fx-order-row {
-      display: flex; align-items: center; gap: 6px;
-      padding: 4px 8px;
-      background: #1a1a2e; border: 1px solid #2d2d3f; border-radius: 6px;
-      color: #a0aec0; font-size: 0.8rem; font-weight: 600;
-    }
-    .fx-order-row .fx-order-name { flex: 1 1 auto; }
-    .fx-order-row .fx-order-pos {
-      color: #4a4a6a; font-size: 0.7rem; min-width: 18px;
-    }
-    .fx-order-row .fx-order-arrow {
-      width: 24px; height: 22px;
-      background: transparent; border: 1px solid #2d2d3f; border-radius: 4px;
-      color: #a0aec0; cursor: pointer; padding: 0;
-      font-family: inherit; font-size: 0.85rem;
-      display: inline-flex; align-items: center; justify-content: center;
-    }
-    .fx-order-row .fx-order-arrow:hover:not(:disabled) {
-      border-color: #4fd1c5; color: #4fd1c5;
-    }
-    .fx-order-row .fx-order-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
-    .fx-reset {
-      padding: 4px 12px;
-      border: 1px solid #2d2d3f;
-      border-radius: 12px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.72rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .fx-reset:hover { border-color: #4299e1; color: #4299e1; }
-
-    .grid-settings-panel {
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-      position: absolute;
-      top: calc(100% + 4px);
-      right: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 14px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      max-width: calc(100vw - 20px);
-      max-height: calc(100vh - 80px);
-      overflow-y: auto;
-      box-sizing: border-box;
-    }
-    .grid-settings-panel.open { display: flex; }
-
-    .menubar a {
-      color: #a0aec0;
-      text-decoration: none;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.9rem;
-      font-weight: 600;
-      transition: color 0.2s;
-      margin-right: 4px;
-    }
-    .menubar a:hover { color: #4299e1; }
-
-    .menubar-toggle {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 600;
-      cursor: pointer;
-      user-select: none;
-    }
-    .menubar-toggle input { cursor: pointer; }
-
-    .menu-btn {
-      width: 38px;
-      height: 38px;
-      min-width: 38px;
-      min-height: 38px;
-      border: none;
-      border-radius: 50%;
-      cursor: pointer;
-      font-size: 1rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.15s ease;
-      flex-shrink: 0;
-    }
-
-    #play-btn {
-      background: #000;
-      color: #00bfff;
-      border: 2px solid #00bfff;
-      box-shadow: 0 0 12px rgba(0, 191, 255, 0.45);
-    }
-    #play-btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 0 18px rgba(0, 191, 255, 0.7);
-    }
-
-
-    .tempo-control {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      flex-shrink: 0;
-    }
-
-    /* Transport cluster — Play, Loop, BPM, Clear stay glued together so the
-       Clear button always sits on the same row as the BPM slider, even
-       when the footer wraps on narrow screens. */
-    .footer-transport {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-shrink: 0;
-      flex-wrap: nowrap;
-    }
-    #tempo-slider {
-      width: 90px;
-      min-width: 60px;
-      accent-color: #00bfff;
-      flex-shrink: 1;
-      touch-action: manipulation;
-    }
-    @media (hover: none) and (pointer: coarse) {
-      /* Bigger thumb + taller hit area so a fingertip can grab and drag the
-         slider on touch devices. iOS in particular makes the native thumb
-         too small to scrub at 90px width. */
-      #tempo-slider {
-        height: 32px;
-        -webkit-appearance: none;
-        appearance: none;
-        background: transparent;
-      }
-      #tempo-slider::-webkit-slider-runnable-track {
-        height: 4px;
-        background: #2d2d3f;
-        border-radius: 2px;
-      }
-      #tempo-slider::-moz-range-track {
-        height: 4px;
-        background: #2d2d3f;
-        border-radius: 2px;
-      }
-      #tempo-slider::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        background: var(--bpm-thumb, #00bfff);
-        margin-top: -8px;
-        border: none;
-      }
-      #tempo-slider::-moz-range-thumb {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        background: var(--bpm-thumb, #00bfff);
-        border: none;
-      }
-    }
-    #tempo-input {
-      width: 52px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 6px;
-      color: #e2e8f0;
-      font-size: 0.85rem;
-      font-family: 'Segoe UI', sans-serif;
-      padding: 3px 6px;
-      text-align: center;
-    }
-    #tempo-input:focus { outline: none; border-color: #00bfff; }
-    /* 3-digit BPM picker — replaces the slider + numeric input. Each
-       column nudges its place value (100s / 10s / 1s). */
-    .bpm-digits {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-    .bpm-digit-col {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 2px;
-    }
-    .bpm-step {
-      min-width: 22px;
-      padding: 0 4px;
-      height: 18px;
-      line-height: 1;
-      border: 1px solid #4fd1c5;
-      border-radius: 4px;
-      background: transparent;
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
-    }
-    .bpm-step:hover  { border-color: #81e6d9; color: #b2f5ea; background: rgba(79, 209, 197, 0.08); }
-    .bpm-digit {
-      min-width: 22px;
-      padding: 2px 0;
-      text-align: center;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 1rem;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      cursor: pointer;
-      /* Static teal palette to match the +/- step buttons next to the
-         digits. The flashing animation is opt-in (host gets
-         .bpm-flashing); without it the digits sit calmly in the
-         neutral teal. */
-      color: #81e6d9;
-      background: #050510;
-      border: 1px solid #4fd1c5;
-      border-radius: 4px;
-      user-select: none;
-      text-shadow: 0 0 6px rgba(79, 209, 197, 0.45);
-    }
-    .bpm-digits.bpm-flashing .bpm-digit {
-      animation: bpm-pulse var(--bpm-pulse-dur, 0.5s) ease-in-out infinite;
-    }
-    @keyframes bpm-pulse {
-      /* Peak at 0% / 100% so each cycle BEGINS with the red glow — that
-         way restarting the animation at note-attack time makes the
-         visual peak land on the audible beat. The midpoint dips to
-         fully transparent for the strong on-off oscillation. */
-      0%, 100% {
-        opacity: 1;
-        color: #ff4848;
-        text-shadow:
-          0 0 8px #ff2a2a,
-          0 0 16px rgba(255, 40, 40, 0.75),
-          0 0 26px rgba(255, 0, 0, 0.5);
-      }
-      50% {
-        opacity: 0;
-        color: var(--bpm-thumb, #00bfff);
-        text-shadow: none;
-      }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .bpm-digits.bpm-flashing .bpm-digit { animation: none; }
-    }
-    .bpm-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #a0aec0;
-      margin-left: 4px;
-    }
-    .tempo-unit {
-      color: #a0aec0;
-      font-size: 0.8rem;
-      font-family: 'Segoe UI', sans-serif;
-    }
-
-    .grid-control {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      flex-shrink: 0;
-    }
-    .grid-control label {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .grid-control input[type=number],
-    .grid-control select {
-      width: 54px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 6px;
-      color: #e2e8f0;
-      font-size: 0.8rem;
-      font-family: 'Segoe UI', sans-serif;
-      padding: 3px 6px;
-      text-align: center;
-    }
-    .grid-control input[type=number]:focus,
-    .grid-control select:focus { outline: none; border-color: #4299e1; }
-    .grid-control select#scale-select { width: 110px; }
-    .grid-control input[type=range] {
-      width: 80px;
-      accent-color: #4299e1;
-    }
-
-    .cell.out-of-scale {
-      background: #000 !important;
-      pointer-events: none;
-    }
-    .cell.out-of-scale span,
-    .cell.out-of-scale .cell-sound-select { visibility: hidden; }
-
-    /* Colors menu lives in the seq-grid-bar — match the teal pill look
-       of the Step Mode toggle next to it for visual consistency. */
-    #colors-menu-btn {
-      padding: 3px 8px;
-      border: 1px solid #4fd1c5;
-      border-radius: 14px;
-      background: transparent;
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #colors-menu-btn:hover { border-color: #81e6d9; color: #b2f5ea; }
-    #colors-menu-btn.open  {
-      border-color: #81e6d9;
-      color: #b2f5ea;
-      background: rgba(79, 209, 197, 0.18);
-      box-shadow: 0 0 12px rgba(79, 209, 197, 0.4);
-    }
-
-    .colors-panel {
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      position: absolute;
-      top: calc(100% + 4px);
-      left: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 10px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      min-width: 160px;
-    }
-    .colors-panel.open { display: flex; }
-    .colors-opt {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: left;
-      transition: all 0.15s ease;
-    }
-    .colors-opt:hover { border-color: #4299e1; color: #4299e1; }
-
-    /* Voices menu — same pill + panel styling as Colors, listing saved
-       Voices (note grid presets) fetched from Drive on open. */
-    #voices-menu-btn {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #voices-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #voices-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
-
-    /* Project menu — same pill + panel chrome as Colors / Voices, holds the
-       New / Save / Load actions formerly scattered across the page. */
-    #project-menu-btn {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #project-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #project-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
-    /* Edit toggle — sits to the right of master-vol in the menubar. When
-       on, body gets .edit-mode and per-cell sound-editor carrots become
-       visible. Default is off so the grid stays clean for play; users
-       click Edit to surface the carrots when they want to tweak sounds. */
-    #edit-mode-btn {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #edit-mode-btn:hover { border-color: #4fd1c5; color: #4fd1c5; }
-    body.edit-mode #edit-mode-btn {
-      border-color: #4fd1c5; color: #4fd1c5;
-      background: rgba(79, 209, 197, 0.12);
-    }
-    /* Carrots visible only when global edit-mode is on. */
-    body:not(.edit-mode) .cell-edit-carrot { display: none; }
-    /* Master volume — a small inline slider in the menubar. The icon is
-       a non-interactive label; the slider itself drives the mix gain. */
-    .master-vol {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      margin-left: 4px;
-    }
-    .master-vol-icon {
-      font-size: 0.85rem;
-      color: #4fd1c5;
-      text-shadow: 0 0 8px rgba(79, 209, 197, 0.45);
-      user-select: none;
-    }
-    .master-vol input[type="range"] {
-      width: 90px;
-      accent-color: #4fd1c5;
-      cursor: pointer;
-    }
-    .project-name-label {
-      display: inline-flex;
-      align-items: center;
-      max-width: 220px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      margin-left: -2px;
-      padding: 2px 8px;
-      color: #cbd5e0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 600;
-      letter-spacing: 0.3px;
-    }
-    .project-name-label:empty { display: none; }
-    .project-panel {
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      position: absolute;
-      top: calc(100% + 4px);
-      left: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 10px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      min-width: 180px;
-    }
-    .project-panel.open { display: flex; }
-    .project-opt {
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: left;
-      transition: all 0.15s ease;
-    }
-    .project-opt:hover { border-color: #4299e1; color: #4299e1; }
-    .project-opt.project-opt-new:hover { border-color: #38a169; color: #68d391; }
-    .project-opt:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    /* Riff dropdown — collapses Save / Random / Seed / Reverse / Shuffle /
-       Repeat under one pill in the sequence-controls row. With Keep on,
-       generated content is appended to the current sequence; with Keep
-       off, it replaces (the original behavior). flex: 0 0 auto keeps the
-       wrapper at content-width so it sits immediately adjacent to undo/
-       redo instead of growing to push itself across the row. */
-    .riff-wrapper { position: relative; display: inline-flex; flex: 0 0 auto; }
-    #riff-menu-btn {
-      flex: 0 0 auto;
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #riff-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #riff-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
-    .riff-panel {
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      position: absolute;
-      top: calc(100% + 4px);
-      left: 0;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 10px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      min-width: 160px;
-    }
-    .riff-panel.open { display: flex; }
-    .riff-panel > button {
-      flex: 0 0 auto;
-      width: 100%;
-      padding: 6px 14px;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: left;
-      transition: all 0.15s ease;
-    }
-    .riff-panel > button:hover:not(:disabled) { border-color: #4299e1; color: #4299e1; }
-    .riff-panel > button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .voices-panel {
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      position: absolute;
-      top: calc(100% + 4px);
-      left: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      padding: 10px;
-      z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      min-width: 200px;
-      max-height: calc(100vh - 80px);
-      overflow-y: auto;
-    }
-    .voices-panel.open { display: flex; }
-    .voice-opt {
-      padding: 6px 12px;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      background: transparent;
-      color: #e2e8f0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: left;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      transition: all 0.15s ease;
-    }
-    .voice-opt:hover { border-color: #4299e1; color: #4299e1; }
-    .voice-opt.voice-opt-surprise:hover {
-      border-color: #f472b6;
-      color: #f9a8d4;
-      background: rgba(244, 114, 182, 0.08);
-    }
-    .voice-opt-project {
-      font-size: 0.7rem;
-      font-weight: 500;
-      color: #4a4a6a;
-      letter-spacing: 0.5px;
-    }
-    .voice-loading, .voice-empty {
-      color: #4a4a6a;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      padding: 6px 4px;
-      text-align: center;
-    }
-
-    .grid-state-row {
-      display: flex; flex-direction: column; align-items: stretch; gap: 6px;
-      border-top: 1px solid #2d2d3f; padding-top: 10px;
-    }
-    .grid-state-row label { color: #a0aec0; font-size: 0.78rem; }
-    #grid-state-select {
-      width: 100%;
-      padding: 4px 8px;
-      background: #0a0a14;
-      border: 1px solid #2d2d3f;
-      border-radius: 6px;
-      color: #e2e8f0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-    }
-    .grid-state-actions { display: flex; gap: 6px; }
-    .grid-state-actions button {
-      flex: 1;
-      padding: 5px 10px;
-      background: transparent;
-      border: 1px solid #2d2d3f;
-      border-radius: 6px;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .grid-state-actions button:hover { border-color: #4299e1; color: #4299e1; }
-    .grid-state-actions #grid-state-delete-btn:hover { border-color: #e53e3e; color: #e53e3e; }
-    .grid-state-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
-
-    /* NOTE GRID */
-    /* Slim clickable banners above the note grid that double as menu
-       triggers — Scale + Tone share a row, FX sits below. Each half opens
-       its corresponding settings panel and reflects the current value where
-       applicable. Updated by updateScaleBanner() whenever the underlying
-       state changes. */
-    .banner-row {
-      display: flex;
-      flex-shrink: 0;
-      background: #050510;
-      border-bottom: 1px solid #1a1a2e;
-    }
-    .banner-row--fx { border-bottom: 1px solid #1a1a2e; }
-    /* Radial Tone toggle — small icon-pill that sits to the left of the
-       Scale banner. When on, the body gets .radial-tone and cells get a
-       subtle radial-gradient overlay so the user can see the bend zones. */
-    .radial-tone-btn {
-      flex: 0 0 auto;
-      padding: 0 10px;
-      background: transparent;
-      border: none;
-      border-right: 1px solid #1a1a2e;
-      color: #4a4a6a;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 1rem;
-      font-weight: 700;
-      cursor: pointer;
-      letter-spacing: 0.5px;
-      transition: color 0.15s ease, background 0.15s ease;
-    }
-    .radial-tone-btn:hover { color: #4fd1c5; }
-    body.radial-tone .radial-tone-btn {
-      color: #4fd1c5;
-      background: rgba(79, 209, 197, 0.12);
-      text-shadow: 0 0 6px rgba(79, 209, 197, 0.55);
-    }
-    /* Subtle bend-zone hint on every cell while Radial Tone is active —
-       diagonal gradient from top-left (down) to bottom-right (up). Sits
-       under the cell text so labels stay readable. */
-    body.radial-tone .cell::before {
-      content: '';
-      position: absolute; inset: 0;
-      pointer-events: none;
-      border-radius: inherit;
-      background: linear-gradient(135deg,
-        rgba(155, 92, 229, 0.18) 0%,
-        rgba(155, 92, 229, 0.04) 35%,
-        rgba(0, 0, 0, 0) 50%,
-        rgba(79, 209, 197, 0.04) 65%,
-        rgba(79, 209, 197, 0.18) 100%);
-      opacity: 0.9;
-    }
-    .banner-half {
-      flex: 1;
-      padding: 6px 12px;
-      background: transparent;
-      border: none;
-      border-right: 1px solid #1a1a2e;
-      color: #4fd1c5;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      text-align: center;
-      cursor: pointer;
-      user-select: none;
-      transition: background 0.15s ease, color 0.15s ease;
-    }
-    .banner-half:last-child { border-right: none; }
-    .banner-half::after {
-      content: ' ▾';
-      font-size: 0.65rem;
-      margin-left: 4px;
-      color: #2d8478;
-      transition: color 0.15s ease;
-      display: inline-block;
-    }
-    @media (hover: hover) {
-      .banner-half:hover { background: #0a0a14; color: #81e6d9; }
-      .banner-half:hover::after { color: #81e6d9; }
-    }
-    .banner-half.open {
-      background: #0a0a14;
-      color: #81e6d9;
-    }
-    .banner-half.open::after {
-      content: ' ▴';
-      color: #81e6d9;
-    }
-    /* Mode banner: chevron suffix doesn't apply (this isn't a dropdown
-       trigger), and active modes get a magenta glow so the user sees at
-       a glance that the grid is in an alternate playback state. The
-       mode-banner shrinks to 7/8 of the row's right half (43.75%) to
-       make room for the lock-mode toggle on its right. */
-    #mode-banner { flex: 0 0 43.75%; }
-    #mode-banner::after { content: ''; display: none; }
-    #mode-banner[data-mode="arpeggio"] {
-      color: #f6ad55;
-      text-shadow: 0 0 10px rgba(246, 173, 85, 0.45);
-    }
-    #mode-banner[data-mode="chord"] {
-      color: #f472b6;
-      text-shadow: 0 0 10px rgba(244, 114, 182, 0.45);
-    }
-    /* Mode-lock toggle: 1/8 the size of the mode banner. When active,
-       a glow and a filled glyph signal that mode switches will perform
-       the round-trip flatten/regroup transformation. */
-    #mode-lock-banner {
-      flex: 0 0 6.25%;
-      padding: 6px 0;
-      font-size: 0.85rem;
-      letter-spacing: 0;
-      color: #4a5568;
-    }
-    #mode-lock-banner::after { content: ''; display: none; }
-    #mode-lock-banner.active {
-      color: #f6e05e;
-      text-shadow: 0 0 8px rgba(246, 224, 94, 0.55);
-    }
-    .grid {
-      flex: 1;
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      grid-auto-rows: minmax(70px, 1fr);
-      min-height: 0;
-      overflow-y: auto;
-    }
-
-    .cell {
-      border: 3px solid #000;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: filter 0.08s ease;
-      user-select: none;
-      -webkit-user-select: none;
-      /* Suppress iOS Safari's tap-and-hold "select / copy / look up"
-         callout — without it, holding a cell pops the native selection
-         menu and pre-empts the JS long-press handler. */
-      -webkit-touch-callout: none;
-      position: relative;
-      /* Tell the browser this element is for play gestures, not scroll —
-         it commits to "play" without waiting for movement-direction
-         heuristics, which used to leave touchmove + pointer events
-         fighting and stalling page scroll on mobile. */
-      touch-action: none;
-    }
-
-    .cell-sound-select {
-      position: absolute;
-      bottom: 5px;
-      left: 5px;
-      background: rgba(0,0,0,0.35);
-      border: none;
-      border-radius: 4px;
-      color: rgba(255,255,255,0.8);
-      font-size: 0.6rem;
-      font-family: 'Segoe UI', sans-serif;
-      font-weight: 600;
-      padding: 2px 4px;
-      cursor: pointer;
-      appearance: none;
-      -webkit-appearance: none;
-      z-index: 1;
-      outline: none;
-    }
-    .cell-sound-select:focus { background: rgba(0,0,0,0.6); }
-
-    /* Tiny dropdown carrot in each cell's top-left — opens the sound editor.
-       Replaces the previous double-tap gesture so the affordance is visible
-       and cell taps don't have to compete with edit-intent. */
-    .cell-edit-carrot {
-      position: absolute;
-      top: 4px; left: 4px;
-      width: 18px; height: 18px;
-      background: rgba(0, 0, 0, 0.45);
-      color: rgba(255, 255, 255, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 4px;
-      font-size: 11px; line-height: 1;
-      font-family: inherit;
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      padding: 0; margin: 0;
-      z-index: 2;
-    }
-    .cell-edit-carrot:hover { background: rgba(0, 0, 0, 0.7); color: #fff; }
-    .cell.out-of-scale .cell-edit-carrot { visibility: hidden; }
-    .cell:active        { filter: brightness(0.75); }
-    .cell.flash         { filter: brightness(1.35); }
-    .cell.active-loop   { filter: brightness(1.25); outline: 4px solid #fff inset; }
-    /* Persistent press highlight — sticks for the full duration of the
-       user's pointerdown→pointerup gesture (driven by polyStartCell /
-       polyEndCellForPointer). Visible on top of .flash but yields to
-       .active-loop's outline during sequencer playback so the playhead
-       stays the dominant signal. */
-    .cell.sustaining    { filter: brightness(1.45); }
-    /* Persistent highlight for cells whose note is in the in-progress
-       Wrap (chordMode). Cleared when Wrap is closed/committed. Tapping
-       a wrap-pending cell again removes the note from the pending wrap. */
-    .cell.wrap-pending  { filter: brightness(1.2); outline: 4px solid #9f7aea inset; }
-
-    .cell span {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: clamp(2.25rem, 6vw, 3.3rem);
-      font-weight: 900;
-      color: rgba(0,0,0,0.35);
-      letter-spacing: 1px;
-      pointer-events: none;
-    }
-    /* Drum-kit cells show the drum role ("Kick", "Open Hat", …) instead
-       of the chromatic note name — these strings are longer than two
-       characters so the body font has to come down to fit a 70-100px
-       cell without overflow. */
-    .cell span.cell-name-drum {
-      font-size: clamp(0.85rem, 2.2vw, 1.15rem);
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-      padding: 0 6px;
-      text-align: center;
-    }
-    .cell .cell-freq {
-      position: absolute;
-      bottom: 4px;
-      right: 6px;
-      font-size: 0.62rem;
-      font-weight: 600;
-      letter-spacing: 0.4px;
-      color: rgba(0,0,0,0.45);
-    }
-    /* Per-cell tone tag — only shown when the grid is in "Custom" state,
-       i.e., at least one cell's tone has been changed away from the
-       global setting. Top-left corner, small black text per spec. */
-    .cell .cell-tone {
-      position: absolute;
-      top: 4px;
-      left: 6px;
-      font-size: 0.6rem;
-      font-weight: 700;
-      letter-spacing: 0.3px;
-      color: rgba(0,0,0,0.78);
-      pointer-events: none;
-      max-width: calc(100% - 12px);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      display: none;
-    }
-    .cell .cell-tone.show { display: inline-block; }
-
-    .cell:nth-child(12n+1)  { background: #e63946; }
-    .cell:nth-child(12n+2)  { background: #f4a261; }
-    .cell:nth-child(12n+3)  { background: #e9c46a; }
-    .cell:nth-child(12n+4)  { background: #2a9d8f; }
-    .cell:nth-child(12n+5)  { background: #457b9d; }
-    .cell:nth-child(12n+6)  { background: #9b5de5; }
-    .cell:nth-child(12n+7)  { background: #f15bb5; }
-    .cell:nth-child(12n+8)  { background: #00bbf9; }
-    .cell:nth-child(12n+9)  { background: #06d6a0; }
-    .cell:nth-child(12n+10) { background: #ffbe0b; }
-    .cell:nth-child(12n+11) { background: #fb5607; }
-    .cell:nth-child(12n)    { background: #8338ec; }
-
-    /* REST BUTTON — small square sitting next to Step Mode in the BPM
-       row. Earlier this was a full-width bar across the page; collapsed
-       into a button so the BPM picker can stay centred on its own row. */
-    :root { --rest-color: hsl(280, 55%, 78%); }
-    .rest-bar {
-      min-width: 92px;
-      height: 52px;
-      box-sizing: border-box;
-      padding: 0 18px;
-      background: #000;
-      border: 2px solid var(--rest-color);
-      border-radius: 10px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      user-select: none;
-      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-      box-shadow: 0 0 12px rgba(216, 180, 254, 0.18);
-      /* Fill the right cluster so Rest stretches from the BPM picker
-         toward the right side. The bar's 16px right padding stays
-         untouched so there's a matching gutter between Rest's right
-         edge and the screen edge. */
-      flex: 1 1 auto;
-      width: 100%;
-      margin: -3px 0;
-    }
-    .rest-bar:hover      { border-color: #fff; box-shadow: 0 0 16px rgba(216, 180, 254, 0.32); }
-    .rest-bar:active     { background: #1a1a2e; }
-    .rest-bar.flash      { background: #2d2d3f; }
-    .rest-bar.active-loop { background: #1a1a2e; outline: 2px solid var(--rest-color); outline-offset: 1px; }
-    .rest-bar span {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 1rem;
-      font-weight: 800;
-      color: var(--rest-color);
-      letter-spacing: 2.5px;
-      text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(216, 180, 254, 0.55);
-      pointer-events: none;
-    }
-
-    /* SEQUENCE DISPLAY */
-    .sequence-display {
-      min-height: 62px;
-      max-height: 140px;
-      background: #0a0a14;
-      border-bottom: 3px solid #000;
-      display: flex;
-      flex-wrap: wrap;
-      align-content: flex-start;
-      align-items: center;
-      padding: 8px 14px;
-      /* row-gap is 16px to leave room for the absolute-positioned 12px-tall
-         .row-interval markers that anchor at chip-bottom — without it they
-         overflow into the next row's chips. column-gap stays tight at 6px. */
-      row-gap: 16px;
-      column-gap: 6px;
-      overflow-y: auto;
-      scrollbar-width: thin;
-      scrollbar-color: #2d2d3f #0a0a14;
-      /* Anchor for the absolute-positioned interval markers (.row-interval)
-         that label semitone gaps between consecutive chips on the same row. */
-      position: relative;
-    }
-    /* Thin horizontal connector + label sitting between two adjacent step
-       chips that share a row. Built post-render in renderIntervalBars()
-       once chip layout is measurable. */
-    .row-interval {
-      position: absolute;
-      height: 12px;
-      pointer-events: none;
-      user-select: none;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 9px;
-      font-weight: 700;
-      color: #6e7596;
-      letter-spacing: 0.5px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1;
-    }
-    .row-interval::before {
-      content: '';
-      position: absolute;
-      left: 0; right: 0;
-      top: 50%;
-      height: 1px;
-      background: #2d2d3f;
-    }
-    .row-interval > span {
-      position: relative;
-      background: #0a0a14;
-      padding: 0 4px;
-    }
-    .sequence-display::-webkit-scrollbar { width: 4px; }
-    .sequence-display::-webkit-scrollbar-track { background: #0a0a14; }
-    .sequence-display::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
-    /* Grid layout: fixed N columns. Chips drop their explicit pixel width
-       and stretch to fill their grid cell. Triggered by JS setting both the
-       class and the --grid-cols custom property. */
-    .sequence-display.grid-mode {
-      display: grid;
-      grid-template-columns: repeat(var(--grid-cols, 16), 1fr);
-      align-items: stretch;
-      max-height: none;
-      /* Reserve vertical space between chip rows so the interval markers
-         don't overlap the next row of chips. Column gap stays 0 — chips
-         stay adjacent within a row to keep the dense look. */
-      row-gap: 16px;
-      column-gap: 0;
-    }
-    .sequence-display.grid-mode .seq-step { width: auto; }
-    /* Empty pattern slot used while step-mode is on. */
-    .seq-step.empty-slot {
-      background: rgba(45, 45, 63, 0.35);
-      border: 1px dashed #2d2d3f;
-      color: #4a4a6a;
-      cursor: pointer;
-    }
-    .seq-step.empty-slot:hover { border-color: #4299e1; color: #4299e1; }
-    /* Highlight the currently-armed grid cell while step-mode is on. */
-    .cell.step-mode-armed {
-      outline: 2px solid #f6ad55;
-      outline-offset: -2px;
-      box-shadow: 0 0 12px rgba(246, 173, 85, 0.6);
-    }
-
-    .seq-empty {
-      color: #2d2d3f;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      white-space: nowrap;
-      pointer-events: none;
-    }
-
-    .seq-step {
-      width: 80px;
-      height: 38px;
-      border-radius: 8px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.75rem;
-      font-weight: 700;
-      color: #a0aec0;
-      user-select: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-      cursor: grab;
-      position: relative;
-      flex-shrink: 0;
-      overflow: hidden;
-      white-space: pre-line;
-      text-align: center;
-      transition: all 0.1s ease;
-      /* Lets vertical page-scroll pass through chips on mobile while
-         horizontal gestures (pan-on-hold, reorder drag) stay capturable
-         by JS pointer handlers. Without this the page scroll would
-         get eaten whenever the user's thumb landed on a chip. */
-      touch-action: pan-y;
-    }
-    .seq-step.rest { color: #4a4a6a; }
-    /* Per-step pan glow — blue for right pan, purple for left. Uses
-       layered box-shadows so the chip's own border-color (set inline by
-       the palette tint) keeps showing through, and the .active /
-       .selected box-shadows still override when the chip is playing or
-       being edited. */
-    /* Selected-step pan slider — appears just below the BPM row when
-       at least one step chip is selected, and applies its value to the
-       whole selection (multi-mode included). The chip background still
-       lerps toward the L/R hard-pan colour so the visual cue tracks
-       the slider live. */
-    .step-pan-bar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 4px 18px;
-      background: #050510;
-      border-bottom: 1px solid #1a1a2e;
-    }
-    .step-pan-bar[hidden] { display: none; }
-    .step-pan-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      color: #a0aec0;
-    }
-    .step-pan-bar input[type="range"] {
-      flex: 1;
-      height: 4px;
-      accent-color: #4fd1c5;
-    }
-    .step-pan-val {
-      min-width: 28px;
-      text-align: right;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: #b2f5ea;
-    }
-
-    .seq-cursor {
-      width: 4px;
-      height: 38px;
-      background: #68d391;
-      border-radius: 2px;
-      cursor: pointer;
-      flex-shrink: 0;
-      box-shadow: 0 0 8px rgba(104, 211, 145, 0.7);
-      animation: seqCursorPulse 1.1s ease-in-out infinite;
-    }
-    @keyframes seqCursorPulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.45; }
-    }
-    .seq-step.subseq {
-      border-color: #68d391;
-      color: #68d391;
-      background: rgba(104, 211, 145, 0.08);
-    }
-    .seq-step.active {
-      background: linear-gradient(135deg, #d91e7c, #f472b6);
-      border-color: #f472b6;
-      color: #fff;
-      transform: scale(1.1);
-      box-shadow: 0 0 14px rgba(244, 114, 182, 0.55);
-    }
-    /* Click-selected step — distinguishes "the step I'm editing" from "the
-       step currently playing". Cyan double-outline pairs with the play
-       button color but doesn't fight the magenta active highlight. */
-    .seq-step.selected:not(.active) {
-      outline: 2px solid #00bfff;
-      outline-offset: -3px;
-      box-shadow: 0 0 12px rgba(0, 191, 255, 0.45);
-    }
-    .seq-step.subseq.active {
-      background: linear-gradient(135deg, #38a169, #68d391);
-      border-color: #68d391;
-      color: #fff;
-    }
-
-    #subedit-banner {
-      display: none;
-      align-items: center;
-      gap: 12px;
-      margin: 6px 8px 0;
-      padding: 6px 12px;
-      background: rgba(104, 211, 145, 0.12);
-      border: 1px solid #68d391;
-      border-radius: 8px;
-      color: #68d391;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.82rem;
-      font-weight: 600;
-    }
-    #subedit-banner.open { display: flex; }
-    #subedit-cancel {
-      margin-left: auto;
-      padding: 4px 12px;
-      border: 1px solid #68d391;
-      background: transparent;
-      color: #68d391;
-      border-radius: 14px;
-      font-family: inherit;
-      font-size: 0.78rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #subedit-cancel:hover { background: rgba(104, 211, 145, 0.15); }
-
-    /* FOOTER */
-    .footer-bar {
-      min-height: 48px;
-      background: #000;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      padding: 6px 20px;
-      gap: 10px;
-    }
-    /* Row that hosts the moved Step controls (Wrap / Size / Multi) —
-       sits between the BPM bar and the sequence display so step
-       creation defaults are right where the user is reading. */
-    .step-controls-row {
-      background: #050510;
-      padding: 6px 16px;
-      border-bottom: 3px solid #000;
-    }
-    .step-controls-row .btn-group--step {
-      flex-basis: auto;
-      width: 100%;
-      box-sizing: border-box;
-    }
-
-    .btn-group {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-    }
-    /* Stretch buttons (and select-bearing labels) to share row width. The
-       group label stays auto-sized so it doesn't grow with the rest. */
-    .btn-group--seq > button {
-      flex: 1 1 80px;
-    }
-    .btn-group--step > *:not(.btn-group-label) {
-      flex: 1 1 80px;
-    }
-    .btn-group--step .note-length-label {
-      justify-content: space-between;
-    }
-    .btn-group--step .note-length-label select {
-      flex: 1 1 auto;
-    }
-    .btn-group + .btn-group {
-      padding-left: 12px;
-      margin-left: 2px;
-      border-left: 1px solid #2d2d3f;
-    }
-    @media (max-width: 700px) {
-      .btn-group + .btn-group {
-        padding-left: 0;
-        margin-left: 0;
-        border-left: none;
-      }
-    }
-
-    /* Step controls cluster — its own row above the play button, framed
-       with a thin teal border so it reads as a coherent group apart from
-       the transport / sequence controls. */
-    .btn-group--step {
-      flex-basis: 100%;
-      padding: 6px 12px;
-      border: 1px solid rgba(79, 209, 197, 0.45);
-      border-radius: 12px;
-      background: rgba(79, 209, 197, 0.05);
-    }
-    .btn-group--step + .btn-group {
-      border-left: none;
-      padding-left: 0;
-      margin-left: 0;
-    }
-    .btn-group-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #4fd1c5;
-      padding-right: 4px;
-    }
-    .btn-group--step #chord-btn {
-      border-color: #4fd1c5;
-      color: #81e6d9;
-    }
-    .btn-group--step #chord-btn:hover {
-      border-color: #81e6d9;
-      color: #b2f5ea;
-    }
-    .btn-group--step #chord-btn.active {
-      border-color: #9f7aea;
-      background: linear-gradient(135deg, #553c9a, #9f7aea);
-      color: #fff;
-      box-shadow: 0 0 14px rgba(159, 122, 234, 0.55);
-    }
-    .btn-group--step.chord-active {
-      border-color: #9f7aea;
-      background: rgba(159, 122, 234, 0.10);
-    }
-    .btn-group--step.chord-active .btn-group-label {
-      color: #d6bcfa;
-    }
-    /* Highlight the Step section while a chip is selected — clicking a grid
-       cell will retune the selected step rather than appending a new one,
-       so the pink outline signals "you're editing, not creating". */
-    .btn-group--step.step-selected {
-      border-color: #ed64a6;
-      background: rgba(237, 100, 166, 0.10);
-    }
-    .btn-group--step.step-selected .btn-group-label { color: #fbb6ce; }
-    .btn-group--step .note-length-label { color: #81e6d9; }
-    .btn-group--step #note-length,
-    .btn-group--step #subdivision-select {
-      border-color: #4fd1c5;
-      color: #b2f5ea;
-      background: #1a1a2e;
-      border-radius: 6px;
-      padding: 3px 6px;
-      font-size: 0.8rem;
-      font-family: 'Segoe UI', sans-serif;
-    }
-    .btn-group--step #note-length:focus,
-    .btn-group--step #subdivision-select:focus {
-      border-color: #81e6d9;
-    }
-
-    /* Standalone Grid + Step Mode bar — sits directly under the REST bar so
-       the layout / step-sequencer toggles aren't buried inside the step-edit
-       cluster at the bottom. */
-    .step-grid-bar {
-      background: #050510;
-      border-bottom: 3px solid #000;
-      /* 3-column grid: left cluster | BPM picker (centred) | right cluster.
-         minmax(0, 1fr) keeps the side columns from expanding past their
-         allotted share when their content (e.g. the chord-display pill)
-         grows, so the centre BPM stays visually centred regardless of
-         what's pinned to the left. */
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-      align-items: center;
-      gap: 14px;
-      padding: 6px 16px;
-    }
-    .step-grid-bar > .tempo-control { justify-self: center; }
-    .step-grid-bar-left {
-      /* Stretch across the 1fr column so the Keep button can expand to
-         fill all the room between the screen's left edge and the
-         centred BPM picker. */
-      justify-self: stretch;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-      max-width: 100%;
-    }
-    /* No standalone chord-display element — when a wrap is active the
-       Keep button itself flips its label to the chord name (and adds
-       .show-chord). See updateKeepLabel() and the .play-lock.show-chord
-       overrides below. */
-    .step-grid-bar-right {
-      /* Mirror the left cluster — stretch the column so Rest can fill
-         the space from the BPM's right edge to the screen's right edge. */
-      justify-self: stretch;
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      min-width: 0;
-      max-width: 100%;
-    }
-    /* Left-side Rest mirrors the right one — pull into the bar's
-       padding on top, left, and bottom (right edge unchanged so the
-       gap to the centred BPM picker stays the same). */
-    .rest-bar--left { margin: -3px 0 -3px -8px; }
-    /* Lock button — sits in the slot the left Rest button used to
-       occupy. Same physical footprint as the right Rest so the BPM
-       picker stays visually centred between them. */
-    .play-lock {
-      min-width: 92px;
-      height: 52px;
-      box-sizing: border-box;
-      padding: 0 18px;
-      background: #000;
-      border: 2px solid #f6ad55;
-      border-radius: 10px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      user-select: none;
-      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-      box-shadow: 0 0 12px rgba(246, 173, 85, 0.18);
-      /* Fill the left cluster so Keep stretches toward the centred BPM
-         picker. The bar's 16px left padding stays untouched so there's
-         a comfortable gutter between Keep's left edge and the screen
-         edge. */
-      flex: 1 1 auto;
-      width: 100%;
-      margin: -3px 0;
-    }
-    .play-lock:hover { border-color: #fbd38d; box-shadow: 0 0 16px rgba(246, 173, 85, 0.32); }
-    /* Active state shifts to a hot-pink palette so the on/off contrast
-       reads at a glance, plus a steady glow pulse to scream "armed". */
-    .play-lock.active {
-      background: rgba(244, 114, 182, 0.22);
-      border-color: #f9a8d4;
-      box-shadow:
-        0 0 22px rgba(244, 114, 182, 0.85),
-        0 0 8px rgba(244, 114, 182, 0.55) inset;
-      animation: play-lock-pulse 0.95s ease-in-out infinite;
-    }
-    .play-lock.active span {
-      color: #fbcfe8;
-      text-shadow: 0 0 14px rgba(249, 168, 212, 0.95);
-    }
-    @keyframes play-lock-pulse {
-      0%, 100% {
-        box-shadow:
-          0 0 22px rgba(244, 114, 182, 0.85),
-          0 0 8px  rgba(244, 114, 182, 0.55) inset;
-      }
-      50% {
-        box-shadow:
-          0 0 32px rgba(244, 114, 182, 1),
-          0 0 14px rgba(244, 114, 182, 0.85) inset;
-      }
-    }
-    .play-lock span {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 1rem;
-      font-weight: 800;
-      color: #fbd38d;
-      letter-spacing: 2.5px;
-      text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(246, 173, 85, 0.55);
-      pointer-events: none;
-    }
-    /* When a wrap is active, the Keep button flips its inner span to the
-       shorthand chord name (CM7, Dm7b5/A, …) instead of "KEEP". Drop the
-       uppercase transform — minor 'm' vs major 'M' is meaning-bearing —
-       and tighten letter-spacing so longer chord names (slash inversions)
-       don't crash into the button edge. */
-    .play-lock.show-chord span {
-      letter-spacing: 0.8px;
-      text-transform: none;
-      font-size: 1.05rem;
-    }
-    /* New strip below the sequence chip view: Grid menu + Step Mode
-       button. Sits above the footer-bar (Step controls). */
-    .seq-grid-bar {
-      background: #050510;
-      border-bottom: 1px solid #1a1a2e;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 18px;
-      padding: 6px 16px;
-    }
-    .step-grid-bar-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-    }
-    /* Grid dimension inputs (rows × cols). Two narrow numeric fields
-       with a centered ×; matches the teal palette of the surrounding
-       chrome. */
-    .grid-dim-input {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .grid-dim-input select {
-      width: 44px;
-      border: 1px solid #4fd1c5;
-      color: #b2f5ea;
-      background: #1a1a2e;
-      border-radius: 6px;
-      padding: 3px 4px;
-      font-size: 0.8rem;
-      font-family: 'Segoe UI', sans-serif;
-      text-align: center;
-      cursor: pointer;
-    }
-    .grid-dim-input select:focus {
-      outline: none;
-      border-color: #81e6d9;
-    }
-    .grid-dim-input select:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      border-color: #2d2d3f;
-      color: #4a5568;
-    }
-    .grid-dim-input select option { background: #1a1a2e; color: #b2f5ea; }
-    .grid-dim-sep {
-      color: #81e6d9;
-      font-size: 0.85rem;
-      font-weight: 700;
-      padding: 0 1px;
-    }
-    #step-mode-btn {
-      padding: 3px 8px;
-      border: 1px solid #4fd1c5;
-      border-radius: 14px;
-      background: transparent;
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #step-mode-btn:hover {
-      border-color: #81e6d9;
-      color: #b2f5ea;
-    }
-    #step-mode-btn.active {
-      background: rgba(79, 209, 197, 0.18);
-      border-color: #81e6d9;
-      color: #b2f5ea;
-      box-shadow: 0 0 12px rgba(79, 209, 197, 0.4);
-    }
-    .btn-group--step .step-multi-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 600;
-      cursor: pointer;
-      user-select: none;
-      padding: 0 6px;
-    }
-    .btn-group--step .step-multi-toggle input { cursor: pointer; }
-
-    /* Undo toast — fades in at the top of the page when an action is undone. */
-    #undo-toast {
-      position: fixed;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%) translateY(-8px);
-      background: #1a1a2e;
-      border: 1px solid #00bfff;
-      color: #00bfff;
-      padding: 9px 18px;
-      border-radius: 999px;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.82rem;
-      font-weight: 600;
-      z-index: 9999;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      box-shadow: 0 6px 20px rgba(0, 191, 255, 0.25);
-    }
-    #undo-toast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-
-    #clear-btn {
-      padding: 6px 18px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #clear-btn:hover { border-color: #e53e3e; color: #e53e3e; }
-
-    #save-btn {
-      padding: 6px 18px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #save-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #save-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-
-    #save-btn.flash-confirm { border-color: #68d391; color: #68d391; }
-    /* Save button while editing a subsequence — matches the green of the
-       subedit banner so the action's scope is clear without renaming. */
-    #save-btn.sub-edit {
-      border-color: #38a169;
-      background: rgba(56, 161, 105, 0.18);
-      color: #68d391;
-    }
-    #save-btn.sub-edit:hover { border-color: #68d391; color: #b2f5ea; }
-
-    #chord-btn,
-    #rec-btn,
-    #random-btn,
-    #seed-btn,
-    #reverse-btn,
-    #shuffle-btn,
-    #repeat-btn {
-      padding: 6px 18px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #chord-btn:hover { border-color: #9f7aea; color: #9f7aea; }
-    #chord-btn.active {
-      border-color: #9f7aea;
-      background: rgba(159,122,234,0.15);
-      color: #d6bcfa;
-    }
-    /* Rec: red outline + red text by default. When recording, the colors invert
-       — fill becomes red, border and text adopt the original (transparent) fill —
-       producing a solid red blob that pulses. */
-    #rec-btn {
-      border-color: #e53e3e;
-      color: #e53e3e;
-    }
-    #rec-btn:hover {
-      border-color: #fc8181;
-      color: #fc8181;
-    }
-    #random-btn:hover { border-color: #ed8936; color: #fbd38d; }
-    #seed-btn:hover { border-color: #b794f4; color: #d6bcfa; }
-    #reverse-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #reverse-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    #shuffle-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #shuffle-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    #repeat-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #repeat-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    #rec-btn.recording {
-      background: #e53e3e;
-      border-color: #e53e3e;
-      color: #fff;
-      animation: rec-pulse 1s ease-in-out infinite;
-    }
-    #rec-btn.counting {
-      border-color: #f6ad55;
-      color: #fbd38d;
-      animation: rec-pulse 0.5s ease-in-out infinite;
-    }
-    @keyframes rec-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.6); }
-      50%      { box-shadow: 0 0 0 6px rgba(229,62,62,0); }
-    }
-    /* Undo / Redo pill — two adjacent buttons sharing the inner border, with
-       only their outside corners rounded. Red theme matches Rec. Sized to
-       content so the Riff pill sits immediately to its right instead of
-       being pushed to the far edge of the row. */
-    .btn-group--seq {
-      flex-wrap: nowrap;
-    }
-    .btn-group--seq > .undo-redo-pair {
-      flex: 0 0 auto;
-      display: flex;
-    }
-    .undo-redo-pair > button {
-      flex: 1;
-      padding: 6px 14px;
-      border: 1px solid #e53e3e;
-      background: transparent;
-      color: #e53e3e;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .undo-redo-pair > #undo-btn {
-      border-radius: 20px 0 0 20px;
-    }
-    .undo-redo-pair > #redo-btn {
-      border-radius: 0 20px 20px 0;
-      border-color: #68d391;
-      color: #68d391;
-    }
-    .undo-redo-pair > button:disabled {
-      opacity: 0.3;
-      cursor: not-allowed;
-    }
-    @media (hover: hover) {
-      .undo-redo-pair > #undo-btn:hover:not(:disabled) {
-        border-color: #fc8181;
-        color: #fc8181;
-      }
-      .undo-redo-pair > #redo-btn:hover:not(:disabled) {
-        border-color: #9ae6b4;
-        color: #9ae6b4;
-      }
-    }
-
-    .saved-block.audio-item {
-      border-color: #e53e3e;
-    }
-    .saved-block.audio-item.active-seq {
-      background: linear-gradient(135deg, #3a1a2a, #5a1e3a);
-      border-color: #fc8181;
-    }
-    .track-item.audio-item {
-      background: linear-gradient(135deg, #4a1a2a, #5a2a3a);
-      border-color: #e53e3e;
-    }
-    .track-item.audio-item.active {
-      background: linear-gradient(135deg, #b13a50, #e53e3e);
-      border-color: #fc8181;
-    }
-
-    .note-length-label {
-      display: flex; align-items: center; gap: 4px;
-      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem; flex-shrink: 0;
-    }
-    #note-length,
-    #subdivision-select {
-      width: 60px;
-      background: #1a1a2e; border: 1px solid #2d2d3f;
-      border-radius: 6px; color: #e2e8f0;
-      font-size: 0.8rem; font-family: 'Segoe UI', sans-serif;
-      padding: 3px 6px; text-align: center;
-    }
-    #note-length:focus,
-    #subdivision-select:focus { outline: none; border-color: #4299e1; }
-
-    /* Loop button — strictly two states. Inactive: muted grey,
-       unchanged on hover/focus so the button doesn't look like there's
-       a third "almost-on" state. Active: teal fill + glow. */
-    #loop-btn {
-      padding: 6px 18px;
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-    }
-    #loop-btn:hover, #loop-btn:focus { outline: none; }
-    #loop-btn.active {
-      border-color: #38b2ac;
-      background: rgba(56, 178, 172, 0.18);
-      color: #81e6d9;
-      box-shadow: 0 0 12px rgba(56, 178, 172, 0.45);
-    }
-
-    .seq-step.chord {
-      background: rgba(159,122,234,0.18);
-      border-color: #9f7aea;
-      color: #d6bcfa;
-      min-width: 48px;
-    }
-    .seq-step.chord.active {
-      background: linear-gradient(135deg, #553c9a, #9f7aea);
-      border-color: #9f7aea;
-      color: #fff;
-    }
-    .seq-step.chord-pending {
-      background: rgba(159,122,234,0.08);
-      border: 1px dashed #9f7aea;
-      color: #9f7aea;
-      min-width: 48px;
-    }
-
-    /* SAVED SEQUENCES VIEWER */
-    .saved-viewer {
-      background: #050510;
-      border-top: 3px solid #000;
-      padding: 14px 20px;
-      overflow-y: auto;
-      max-height: 160px;
-    }
-
-    .saved-grid {
-      display: grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap: 8px;
-    }
-
-    .saved-block {
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      padding: 8px 4px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      gap: 3px;
-      user-select: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-    }
-    .saved-block:hover { border-color: #4299e1; background: #1e2a3a; }
-    .saved-block.dragging { opacity: 0.35; }
-    .saved-block.drag-over { outline: 2px solid #4299e1; }
-    .seq-step.dragging { opacity: 0.35; cursor: grabbing; }
-    .seq-step.drag-over { outline: 2px solid #4299e1; outline-offset: -1px; }
-    /* Pitch bend indicator — small arrow in the chip's top-right corner so
-       a bending step is recognizable at a glance without crowding the label. */
-    .seq-step.bend-up::after,
-    .seq-step.bend-down::after {
-      position: absolute;
-      top: 2px;
-      right: 4px;
-      font-size: 0.7rem;
-      font-weight: 700;
-      color: #f6ad55;
-      pointer-events: none;
-    }
-    .seq-step.bend-up::after   { content: '↗'; }
-    .seq-step.bend-down::after { content: '↘'; }
-    .saved-block.active-seq { border-color: #4299e1; background: linear-gradient(135deg, #1a2a4a, #1e3a5a); }
-
-    .saved-block-name {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: #e2e8f0;
-    }
-    .saved-block-count {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.65rem;
-      color: #4a4a6a;
-    }
-
-    /* PLAYLIST BAR */
-    /* TRACKS SECTION */
-    .tracks-section {
-      background: #050510;
-      border-top: 3px solid #000;
-      padding: 10px 16px;
-      overflow-y: auto;
-      max-height: 240px;
-    }
-    /* Mixdown — Export + Share live in their own row below tracks so they
-       don't compete with per-track controls in the tracks header. */
-    .mixdown-section {
-      background: #050510;
-      border-top: 3px solid #000;
-      padding: 8px 16px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .mixdown-label {
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-right: 6px;
-    }
-    .tracks-header {
-      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-      flex-wrap: wrap;
-    }
-    /* Mobile: tighten the transport row so buttons fit and wrap cleanly,
-       and shorten the multi-word labels so a row of pill buttons doesn't
-       blow out the viewport. */
-    @media (max-width: 700px) {
-      .tracks-header {
-        gap: 6px;
-        margin-bottom: 8px;
-      }
-      .tracks-header #tracks-title-btn {
-        flex: 0 1 auto;
-        font-size: 0.78rem;
-        padding: 0;
-      }
-      .tracks-header #tracks-play-all {
-        width: 30px; height: 30px; min-width: 30px; min-height: 30px;
-        font-size: 0.85rem;
-      }
-      .tracks-header #add-track-btn,
-      .tracks-header #tracks-loop-all,
-      .tracks-header #tracks-back-btn {
-        padding: 4px 9px;
-        font-size: 0.7rem;
-        letter-spacing: 0;
-      }
-      .tracks-header #add-track-btn { font-size: 0; }
-      .tracks-header #add-track-btn::before {
-        content: '+ New'; font-size: 0.7rem;
-      }
-    }
-    #tracks-title-btn {
-      flex: 1;
-      text-align: left;
-      background: transparent;
-      border: none;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      cursor: pointer;
-      padding: 4px 0;
-      transition: color 0.15s ease;
-    }
-    #tracks-title-btn:hover { color: #4299e1; }
-    #tracks-back-btn {
-      display: none;
-      padding: 5px 12px;
-      border: 1px solid #2d2d3f;
-      border-radius: 16px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #tracks-back-btn:hover { border-color: #4299e1; color: #4299e1; }
-
-    /* Fullscreen tracks view — triggered by tapping the Tracks title.
-       Hides every sibling and pins the tracks section to the viewport so
-       a phone held lengthwise shows the whole tracks grid edge-to-edge. */
-
-    body.tracks-fullscreen > *:not(.tracks-section) { display: none !important; }
-    body.tracks-fullscreen {
-      overflow: hidden;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh; /* track the visible viewport on iOS so the URL bar
-                         collapsing in landscape doesn't clip content */
-    }
-    body.tracks-fullscreen .tracks-section {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
-      max-height: none;
-      z-index: 1000;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      padding:
-        max(14px, env(safe-area-inset-top))
-        max(20px, env(safe-area-inset-right))
-        max(14px, env(safe-area-inset-bottom))
-        max(20px, env(safe-area-inset-left));
-    }
-    /* Pin the header to the top of the scrollable area so Back / Play / Add
-       Track stay reachable in landscape where vertical room is tight. */
-    body.tracks-fullscreen .tracks-header {
-      position: sticky;
-      top: 0;
-      background: #050510;
-      padding: 4px 0 8px;
-      margin-bottom: 8px;
-      z-index: 5;
-      border-bottom: 1px solid #1a1a2e;
-    }
-    body.tracks-fullscreen #tracks-back-btn { display: inline-block; }
-    body.tracks-fullscreen #tracks-title-btn { display: none; }
-    #tracks-play-all {
-      background: #000;
-      color: #22ff88;
-      border: 2px solid #22ff88;
-      box-shadow: 0 0 12px rgba(34, 255, 136, 0.45);
-      width: 34px; height: 34px; min-width: 34px; min-height: 34px;
-    }
-    #tracks-play-all:hover {
-      box-shadow: 0 0 18px rgba(34, 255, 136, 0.7);
-    }
-    #add-track-btn,
-    #tracks-export-btn,
-    #tracks-share-btn,
-    #tracks-countin-btn,
-    #tracks-loop-all {
-      padding: 5px 12px;
-      border: 1px solid #2d2d3f;
-      border-radius: 16px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem; font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    #add-track-btn:hover { border-color: #4299e1; color: #4299e1; }
-    #tracks-export-btn:hover { border-color: #38a169; color: #38a169; }
-    #tracks-export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    #tracks-share-btn:hover { border-color: #f6ad55; color: #fbd38d; }
-    #tracks-share-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    #tracks-countin-btn:hover { border-color: #e53e3e; color: #fc8181; }
-    #tracks-countin-btn.active {
-      border-color: #e53e3e;
-      background: rgba(229, 62, 62, 0.18);
-      color: #fc8181;
-    }
-    #tracks-loop-all:hover { border-color: #38b2ac; color: #38b2ac; }
-    #tracks-loop-all.active {
-      border-color: #38b2ac;
-      background: rgba(56,178,172,0.15);
-      color: #81e6d9;
-    }
-    .track-row {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 10px;
-      margin-bottom: 8px;
-      align-items: stretch;
-    }
-    .track-controls {
-      display: flex; align-items: center; gap: 4px; flex-shrink: 0;
-    }
-    .track-controls button {
-      padding: 4px 8px;
-      border: 1px solid #2d2d3f;
-      border-radius: 12px;
-      background: transparent;
-      color: #a0aec0;
-      font-size: 0.72rem;
-      font-family: 'Segoe UI', sans-serif;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .track-play { min-width: 30px; font-size: 0.8rem; }
-    .track-play.playing { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.1); }
-    .track-loop.active { border-color: #38b2ac; color: #81e6d9; background: rgba(56,178,172,0.15); }
-    .track-remove:hover { border-color: #e53e3e; color: #e53e3e; }
-    .track-clear { font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px; }
-    .track-clear:hover { border-color: #e53e3e; color: #e53e3e; }
-    .track-eq { font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px; }
-    .track-eq:hover { border-color: #f6ad55; color: #fbd38d; }
-    .track-eq.active { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.12); }
-    .track-stereo {
-      font-size: 0.66rem !important; padding: 2px 6px !important; letter-spacing: 0.5px;
-      min-width: 24px;
-      border-color: #4299e1 !important; color: #90cdf4 !important;
-      background: rgba(66, 153, 225, 0.10) !important;
-    }
-    .track-stereo:hover { border-color: #63b3ed !important; color: #bee3f8 !important; }
-    .track-stereo.mono {
-      border-color: #d69e2e !important; color: #f6e05e !important;
-      background: rgba(214, 158, 46, 0.10) !important;
-    }
-    .track-stereo.mono:hover { border-color: #ecc94b !important; color: #faf089 !important; }
-    .track-rec {
-      font-size: 0.66rem !important; padding: 2px 8px !important; letter-spacing: 0.5px;
-      border-color: #e53e3e !important; color: #e53e3e !important;
-    }
-    .track-rec:hover { border-color: #fc8181 !important; color: #fc8181 !important; }
-    .track-rec.recording {
-      background: #e53e3e !important;
-      border-color: #e53e3e !important;
-      color: #fff !important;
-      animation: rec-pulse 1s ease-in-out infinite;
-    }
-    .track-rec.counting {
-      border-color: #f6ad55 !important;
-      color: #fbd38d !important;
-      animation: rec-pulse 0.5s ease-in-out infinite;
-    }
-    .track-name {
-      color: #e2e8f0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.76rem; font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 6px;
-      border: 1px solid transparent;
-      cursor: pointer;
-      user-select: none;
-      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-    }
-    .track-name:hover { border-color: #38a169; color: #68d391; }
-    .track-name.soloed {
-      background: rgba(56, 161, 105, 0.18);
-      border-color: #38a169;
-      color: #68d391;
-    }
-    .track-grid {
-      display: grid;
-      grid-auto-flow: column;
-      /* Fixed pixel cells (not 1fr) so the same time-duration takes the same
-         visual width across every track row. With 1fr the cells stretched
-         per-track, making short tracks appear as wide as long ones; with a
-         pinned cell width, longer tracks just extend further into their
-         scroll area. */
-      grid-auto-columns: 18px;
-      grid-template-rows: 44px;
-      gap: 2px;
-      overflow-x: auto;
-      background: #0a0a14;
-      border: 1px solid #1a1a2e;
-      border-radius: 6px;
-      padding: 4px;
-      min-height: 52px;
-      scrollbar-width: thin;
-      scrollbar-color: #2d2d3f #0a0a14;
-    }
-    .track-grid.drag-over {
-      outline: 2px dashed #4299e1;
-      outline-offset: -2px;
-      background: #0e1324;
-    }
-    .track-grid::-webkit-scrollbar { height: 4px; }
-    .track-grid::-webkit-scrollbar-track { background: #0a0a14; }
-    .track-grid::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
-    .track-item {
-      background: linear-gradient(135deg, #1a2a4a, #1e3a5a);
-      border: 1px solid #2b6cb0;
-      border-radius: 4px;
-      display: flex; align-items: center; justify-content: center;
-      padding: 0 4px;
-      color: #e2e8f0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem; font-weight: 700;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .track-item:hover { border-color: #4299e1; }
-    .track-item.active {
-      background: linear-gradient(135deg, #2b6cb0, #4299e1);
-      border-color: #4299e1;
-    }
-    /* Silent placeholder — left behind when a saved sequence is deleted so
-       items after it keep their absolute time position in the track. */
-    .track-item.silent-item {
-      background: repeating-linear-gradient(
-        45deg,
-        #1a1a2e,
-        #1a1a2e 6px,
-        #15151f 6px,
-        #15151f 12px
-      );
-      border: 1px dashed #2d2d3f;
-      color: #4a4a6a;
-      font-style: italic;
-    }
-    .track-item.silent-item:hover { border-color: #4a4a6a; }
-    .track-empty {
-      color: #4a4a6a;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.72rem;
-      padding: 10px;
-      grid-column: 1 / -1;
-      white-space: nowrap;
-    }
-
-    /* LONG-PRESS CONTEXT MENU */
-    .ctx-menu {
-      position: fixed;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      z-index: 999;
-      overflow: hidden;
-      min-width: 140px;
-    }
-
-    .ctx-menu button {
-      display: block;
-      width: 100%;
-      padding: 12px 16px;
-      background: none;
-      border: none;
-      color: #e2e8f0;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      text-align: left;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .ctx-menu button:hover { background: #2d2d3f; }
-    .ctx-menu button.danger { color: #fc8181; }
-    .ctx-menu button.danger:hover { background: #2d1a1a; }
-    .ctx-menu hr { border: none; border-top: 1px solid #2d2d3f; margin: 0; }
-
-    .saved-empty {
-      color: #2d2d3f;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      grid-column: 1 / -1;
-    }
-
-    /* SOUND EDITOR MODAL */
-    .sm-overlay {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.72);
-      z-index: 1100;
-      display: flex; align-items: center; justify-content: center;
-    }
-
-    .sm-modal {
-      background: #050510;
-      border: 1px solid #2d2d3f;
-      border-radius: 14px;
-      padding: 18px 18px 16px;
-      width: min(380px, 92vw);
-      box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(0, 191, 255, 0.06);
-    }
-
-    .sm-title {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.95rem; font-weight: 700;
-      color: #f0f4ff; margin-bottom: 18px;
-    }
-
-    .sm-waves {
-      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px;
-    }
-
-    .sm-wave {
-      padding: 4px 12px; border-radius: 14px;
-      border: 1px solid #2d2d3f; background: transparent;
-      color: #a0aec0; font-size: 0.73rem; font-weight: 600;
-      font-family: 'Segoe UI', sans-serif;
-      cursor: pointer; transition: all 0.15s;
-    }
-    @media (hover: hover) {
-      .sm-wave:hover { border-color: #4299e1; color: #4299e1; }
-    }
-    .sm-wave.active { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
-    .sm-wave--song { border-color: rgba(183, 148, 244, 0.45); color: #d6bcfa; }
-    @media (hover: hover) {
-      .sm-wave--song:hover { border-color: #b794f4; color: #e9d8fd; background: rgba(183, 148, 244, 0.12); }
-    }
-
-    .sm-param { margin-bottom: 12px; }
-    .sm-param-row {
-      display: flex; justify-content: space-between; align-items: baseline;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.73rem;
-      color: #a0aec0; margin-bottom: 4px;
-    }
-    .sm-param-row .sm-val { color: #e2e8f0; font-weight: 600; }
-    .sm-param input[type=range] { width: 100%; accent-color: #4299e1; }
-    .sm-param .sm-select {
-      width: 100%;
-      background: #1a1a2e; color: #e2e8f0;
-      border: 1px solid #2d2d3f; border-radius: 4px;
-      padding: 4px 6px; font-size: 0.85rem;
-      font-family: inherit;
-    }
-    .sm-param .sm-select:focus { outline: none; border-color: #4299e1; }
-    .sm-fx-group {
-      margin: 8px 0; padding: 6px 8px;
-      background: #0f1020; border: 1px solid #2d2d3f; border-radius: 4px;
-    }
-    .sm-fx-group > summary {
-      cursor: pointer; user-select: none;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; font-weight: 600;
-      color: #a0aec0; padding: 2px 0;
-    }
-    .sm-fx-group[open] > summary { color: #e2e8f0; margin-bottom: 6px; }
-    .sm-apply-all {
-      display: inline-flex; align-items: center; gap: 6px;
-      margin: 0 0 10px 0; padding: 3px 10px;
-      background: rgba(79, 209, 197, 0.04);
-      border: 1px solid #4fd1c5;
-      border-radius: 14px;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.68rem; letter-spacing: 0.3px;
-      color: #4fd1c5; font-weight: 600;
-      cursor: pointer; user-select: none;
-      text-shadow: 0 0 4px rgba(79, 209, 197, 0.35);
-    }
-    .sm-apply-all input { accent-color: #4fd1c5; cursor: pointer; }
-
-    .sm-footer {
-      display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end;
-    }
-
-    .sm-preview {
-      padding: 6px 14px; border-radius: 18px;
-      background: transparent; border: 1px solid #2d2d3f;
-      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
-    }
-    .sm-preview:hover { border-color: #4299e1; color: #4299e1; }
-
-    .sm-apply {
-      padding: 6px 18px; border-radius: 18px;
-      background: linear-gradient(135deg, #2b6cb0, #4299e1);
-      border: none; color: white;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
-      cursor: pointer; transition: all 0.15s;
-    }
-    .sm-apply:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(66,153,225,0.275); }
-
-    .rename-input {
-      width: 100%;
-      background: #0a0a14;
-      border: 1px solid #2d2d3f;
-      border-radius: 8px;
-      color: #e2e8f0;
-      font-size: 0.9rem;
-      font-family: 'Segoe UI', sans-serif;
-      padding: 8px 10px;
-      margin-bottom: 12px;
-    }
-    .rename-input:focus { outline: none; border-color: #4299e1; }
-
-    /* Modal scrolling — touch-action: pan-y tells iOS the content scrolls
-       vertically so a finger drag inside the modal scrolls the modal rather
-       than getting captured by the body. overscroll-behavior keeps scroll
-       chains from leaking out into the page underneath. */
-    .sm-modal {
-      max-height: 85vh;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
-      touch-action: pan-y;
-    }
-    .sm-modal::-webkit-scrollbar { width: 6px; }
-    .sm-modal::-webkit-scrollbar-track { background: transparent; }
-    .sm-modal::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 3px; }
-
-    /* Collapsible "fold" sections — group related controls under a click-to-
-       expand summary header, matching the menubar's panel aesthetic so the
-       editor reads as a stack of compact dropdowns rather than a tall list. */
-    .sm-fold {
-      margin-bottom: 8px;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
-      background: #0a0a14;
-      overflow: hidden;
-    }
-    .sm-fold[open] { border-color: #4299e1; }
-    .sm-fold > summary {
-      padding: 10px 14px;
-      cursor: pointer;
-      user-select: none;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #a0aec0;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      list-style: none;
-    }
-    .sm-fold > summary::-webkit-details-marker { display: none; }
-    .sm-fold > summary::after {
-      content: '▾';
-      font-size: 0.7rem;
-      color: #4a4a6a;
-      transition: transform 0.15s ease;
-    }
-    .sm-fold[open] > summary { color: #e2e8f0; }
-    .sm-fold[open] > summary::after { transform: rotate(180deg); color: #4299e1; }
-    @media (hover: hover) {
-      .sm-fold > summary:hover { color: #4299e1; }
-      .sm-fold > summary:hover::after { color: #4299e1; }
-    }
-    .sm-fold-body {
-      padding: 12px 14px 14px;
-      border-top: 1px solid #2d2d3f;
-    }
-    .sm-fold-body .sm-waves { margin-bottom: 0; }
-    .sm-fold-body .sm-param:last-child { margin-bottom: 0; }
-    .sm-fold-body > .sm-section-label:first-child { margin-top: 0; }
-
-    .sm-remove-step {
-      padding: 6px 14px; border-radius: 18px;
-      background: transparent; border: 1px solid #2d2d3f;
-      color: #fc8181; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
-      margin-right: auto;
-    }
-    .sm-remove-step:hover { border-color: #fc8181; background: rgba(252,129,129,0.08); }
-
-    .sm-section-label {
-      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem;
-      font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
-      color: #4a4a6a; margin: 14px 0 8px;
-    }
-    .sm-checkbox-row {
-      display: flex; align-items: center; gap: 8px;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
-      color: #a0aec0; cursor: pointer; user-select: none;
-      padding: 4px 0;
-    }
-    .sm-checkbox-row input[type=checkbox] { cursor: pointer; }
-    /* Black-filled checkboxes everywhere — accent-color paints the
-       check-mark surface, so the box reads as filled black when ticked. */
-    input[type=checkbox] { accent-color: #000; }
-
-    .se-chord-list { margin-bottom: 4px; }
-    .se-chord-row {
-      display: flex; align-items: center; gap: 6px;
-      padding: 7px 0; border-bottom: 1px solid #2d2d3f;
-    }
-    .se-chord-note-label {
-      flex: 1; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem; font-weight: 700; color: #e2e8f0;
-    }
-    .se-wave-badge {
-      font-size: 0.63rem; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
-      background: #0f0f1a; border: 1px solid #2d2d3f;
-      border-radius: 4px; padding: 2px 5px;
-    }
-    .se-edit-btn {
-      background: none; border: none; cursor: pointer;
-      font-size: 0.72rem; font-family: 'Segoe UI', sans-serif;
-      color: #4299e1; padding: 3px 7px; border-radius: 8px; transition: all 0.15s;
-    }
-    .se-edit-btn:hover { background: rgba(66,153,225,0.12); }
-    .se-remove-btn {
-      background: none; border: none; cursor: pointer;
-      font-size: 0.95rem; color: #fc8181; padding: 3px 6px;
-      border-radius: 8px; transition: all 0.15s; line-height: 1;
-    }
-    .se-remove-btn:hover { background: rgba(252,129,129,0.1); }
-    .se-inline-sound {
-      padding: 10px 4px 4px;
-      border-bottom: 1px solid #2d2d3f;
-      background: #0f0f1a; border-radius: 0 0 6px 6px;
-      margin-bottom: 2px;
-    }
-
-    .sm-copy {
-      padding: 6px 14px; border-radius: 18px;
-      background: transparent; border: 1px solid #2d2d3f;
-      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
-      margin-right: auto;
-    }
-    .sm-copy:hover { border-color: #a0aec0; color: #e2e8f0; }
-
-    /* Home bar — full-width link back to the mikeluz.com hero, branded
-       "Mercy Wizard". Sits at the very top of the page above the Bloops /
-       Player tabs. */
-    .home-bar {
-      display: block;
-      width: 100%;
-      box-sizing: border-box;
-      text-align: center;
-      padding: 8px 12px;
-      background: #000;
-      color: #4fd1c5;
-      text-decoration: none;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      font-size: 0.95rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
-      border-bottom: 1px solid #2d2d3f;
-      transition: color 0.15s ease, text-shadow 0.15s ease;
-      flex-shrink: 0;
-      /* Pinned to the viewport top — body scrolls underneath on mobile +
-         inside the Player view, but the home affordance stays put. */
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-    .home-bar:hover {
-      color: #81e6d9;
-      text-shadow: 0 0 14px rgba(129, 230, 217, 0.65);
-    }
-
-    /* Top bar — two tabs that switch between the Bloops sequencer and the
-       Serialbox player. Left half doubles as the WIP / project-name banner;
-       right half is a link to the Serialbox view. Sign-in is shared, so
-       both share a single Google access token. */
-    .top-bar {
-      display: flex;
-      align-items: stretch;
-      width: 100%;
-      flex-shrink: 0;
-    }
-    .top-bar > button {
-      border: none;
-      font: inherit;
-      cursor: pointer;
-    }
-    /* Make / Listen tabs — typography matches the Mercy Wizard home-bar
-       (same Segoe UI, 700 weight, 1.5px tracking, uppercase, neon teal
-       glow) so the two top headers read as one consistent banner stack. */
-    .wip-banner,
-    .serialbox-top-link {
-      flex: 1 1 0;
-      min-width: 0;
-      box-sizing: border-box;
-      text-align: center;
-      padding: 8px 12px;
-      background: #050510;
-      color: #4fd1c5;
-      text-decoration: none;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      font-size: 0.95rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease, text-shadow 0.15s ease;
-    }
-    .wip-banner { border-right: 1px solid #2d8478; }
-    .serialbox-top-link { border-left: 1px solid #2d8478; }
-    .wip-banner:not(.tab-active),
-    .serialbox-top-link:not(.tab-active) { opacity: 0.55; }
-    .wip-banner:not(.tab-active):hover,
-    .serialbox-top-link:not(.tab-active):hover {
-      opacity: 0.85;
-      background: #0a1416;
-      color: #81e6d9;
-      text-shadow: 0 0 14px rgba(129, 230, 217, 0.65);
-    }
-    .wip-banner.tab-active,
-    .serialbox-top-link.tab-active { background: #0a1416; }
-
-    /* Sign-in gate — covers everything below the home bar until the user
-       has signed in with Google. Both Bloops and the Player need Drive
-       access, so we gate the whole page rather than each tab. */
-    .signin-gate {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: #050510;
-      /* Below the home-bar (z-index 100) so the "Mercy Wizard" link
-         remains visible/clickable as an escape hatch back to index. */
-      z-index: 50;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      box-sizing: border-box;
-    }
-    body.signin-required .signin-gate { display: flex; }
-    body.signin-required > *:not(.signin-gate):not(.home-bar):not(script) {
-      display: none !important;
-    }
-    .signin-gate-inner {
-      max-width: 360px;
-      text-align: center;
-      color: #cbd5e0;
-      font-family: 'Segoe UI', sans-serif;
-    }
-    .signin-gate-inner h2 {
-      margin: 0 0 12px;
-      font-size: 1.4rem;
-      letter-spacing: 1px;
-      color: #4fd1c5;
-    }
-    .signin-gate-inner p {
-      margin: 0 0 24px;
-      font-size: 0.95rem;
-      color: #a0aec0;
-    }
-    #signin-btn {
-      padding: 10px 22px;
-      border: 1px solid #4fd1c5;
-      border-radius: 22px;
-      background: rgba(79, 209, 197, 0.10);
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.92rem;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      cursor: pointer;
-      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-    }
-    #signin-btn:hover {
-      background: rgba(79, 209, 197, 0.22);
-      border-color: #81e6d9;
-      color: #b2f5ea;
-    }
-    #signin-btn:disabled { opacity: 0.55; cursor: progress; }
-
-    /* Sample-loading gate — covers the Bloops UI until the default piano
-       sampler has finished its network fetch, so the first cell tap can
-       actually produce sound. Sits above the signin gate; hides itself
-       once samples are ready. Not shown on the Player view (it doesn't
-       need samples). */
-    .bloops-loading-gate {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: #050510;
-      z-index: 60;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      box-sizing: border-box;
-    }
-    body.bloops-loading:not(.signin-required):not(.view-serialbox) .bloops-loading-gate {
-      display: flex;
-    }
-    .bloops-loading-inner {
-      max-width: 360px;
-      text-align: center;
-      color: #cbd5e0;
-      font-family: 'Segoe UI', sans-serif;
-    }
-    .bloops-loading-inner h2 {
-      margin: 0 0 12px;
-      font-size: 1.4rem;
-      letter-spacing: 1px;
-      color: #4fd1c5;
-    }
-    .bloops-loading-inner p {
-      margin: 0;
-      font-size: 0.95rem;
-      color: #a0aec0;
-    }
-    .bloops-loading-dot {
-      display: inline-block;
-      width: 6px; height: 6px; margin: 0 2px;
-      border-radius: 50%; background: #4fd1c5;
-      animation: bloops-dot 1.2s ease-in-out infinite;
-    }
-    .bloops-loading-dot:nth-child(2) { animation-delay: 0.15s; }
-    .bloops-loading-dot:nth-child(3) { animation-delay: 0.30s; }
-    @keyframes bloops-dot {
-      0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
-      40% { opacity: 1; transform: scale(1); }
-    }
-
-    /* View switching — exactly one of the two app views is visible at a
-       time. Body class drives which set of top-level children show. */
-    #serialbox-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px; box-sizing: border-box; }
-    body.view-serialbox > #serialbox-view { display: block; }
-    body.view-serialbox > *:not(.home-bar):not(.top-bar):not(#serialbox-view):not(script) {
-      display: none !important;
-    }
-    body.view-serialbox { overflow-y: auto; }
-    /* Serialbox container override — drop the global .container max-width
-       so the embedded view fills the available space inside the body. */
-    #serialbox-view .container { max-width: 1100px; margin: 0 auto; padding: 0; }
-    .sm-copy.open  { border-color: #4299e1; color: #4299e1; }
-
-    .sm-copy-panel {
-      margin-top: 14px;
-      padding-top: 14px;
-      border-top: 1px solid #2d2d3f;
-    }
-    .sm-copy-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.73rem; color: #a0aec0;
-      margin-bottom: 10px;
-    }
-    .sm-copy-notes {
-      display: flex; flex-wrap: wrap; gap: 6px;
-      margin-bottom: 12px;
-    }
-    .sm-copy-note {
-      padding: 4px 10px; border-radius: 14px;
-      border: 1px solid #2d2d3f; background: transparent;
-      color: #a0aec0; font-size: 0.73rem; font-weight: 600;
-      font-family: 'Segoe UI', sans-serif;
-      cursor: pointer; transition: all 0.15s;
-    }
-    .sm-copy-note:hover   { border-color: #4299e1; color: #4299e1; }
-    .sm-copy-note.picked  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.15); }
-    .sm-copy-actions { display: flex; gap: 8px; justify-content: flex-end; }
-    .sm-copy-all {
-      padding: 5px 14px; border-radius: 18px;
-      background: transparent; border: 1px solid #2d2d3f;
-      color: #a0aec0; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.75rem; cursor: pointer; transition: all 0.15s;
-    }
-    .sm-copy-all:hover { border-color: #e2e8f0; color: #e2e8f0; }
-    .sm-copy-sel {
-      padding: 5px 14px; border-radius: 18px;
-      background: linear-gradient(135deg, #2b6cb0, #4299e1);
-      border: none; color: white;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.75rem;
-      cursor: pointer; transition: all 0.15s;
-    }
-    .sm-copy-sel:disabled { opacity: 0.35; cursor: not-allowed; }
-    .sm-copy-sel:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(66,153,225,0.275); }
-  </style>
+  <link rel="stylesheet" href="css/bloops.css" />
   <script src="https://cdn.jsdelivr.net/npm/tone@14.9.17/build/Tone.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
   <script src="js/config.js"></script>
@@ -3057,61 +179,10 @@
   <div class="grid" id="grid"></div>
 
   <div class="step-grid-bar">
-    <div class="step-grid-bar-left">
+    <div class="kwr-pair">
       <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
-    </div>
-    <div class="tempo-control">
-      <!-- 3-digit BPM picker — each column has + above and − below to bump
-           that digit's place value (100s / 10s / 1s) up or down. The
-           legacy slider + number input live on hidden, kept in DOM so
-           every existing tempoSlider.value / tempoInput.value reference
-           keeps working. -->
-      <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
-        <div class="bpm-digit-col">
-          <button type="button" class="bpm-step" data-place="100" data-dir="1" aria-label="BPM hundreds up">+</button>
-          <span class="bpm-digit" id="bpm-d-h">1</span>
-          <button type="button" class="bpm-step" data-place="100" data-dir="-1" aria-label="BPM hundreds down">−</button>
-        </div>
-        <div class="bpm-digit-col">
-          <button type="button" class="bpm-step" data-place="10" data-dir="1" aria-label="BPM tens up">+</button>
-          <span class="bpm-digit" id="bpm-d-t">2</span>
-          <button type="button" class="bpm-step" data-place="10" data-dir="-1" aria-label="BPM tens down">−</button>
-        </div>
-        <div class="bpm-digit-col">
-          <button type="button" class="bpm-step" data-place="1" data-dir="1" aria-label="BPM ones up">+</button>
-          <span class="bpm-digit" id="bpm-d-o">0</span>
-          <button type="button" class="bpm-step" data-place="1" data-dir="-1" aria-label="BPM ones down">−</button>
-        </div>
-      </div>
-      <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
-      <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
-    </div>
-    <div class="step-grid-bar-right">
+      <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
       <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
-    </div>
-  </div>
-
-  <div class="step-controls-row">
-    <div class="btn-group btn-group--step" title="Step controls — set how the next note is added">
-      <span class="btn-group-label">Step</span>
-      <button id="chord-btn" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
-      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">Size
-        <select id="subdivision-select">
-          <option value="16">4/1</option>
-          <option value="12">3/1</option>
-          <option value="8">2/1</option>
-          <option value="4">1/1</option>
-          <option value="2">1/2</option>
-          <option value="1">1/4</option>
-          <option value="0.5" selected>1/8</option>
-          <option value="0.25">1/16</option>
-          <option value="0.125">1/32</option>
-        </select>
-      </label>
-      <label class="step-multi-toggle" title="Multi-select: clicking step chips adds them to the selection so Size edits them all at once.">
-        <input type="checkbox" id="multi-select-toggle" />
-        Multi
-      </label>
     </div>
   </div>
 
@@ -3131,37 +202,60 @@
   </div>
 
   <div class="seq-grid-bar">
-    <button id="colors-menu-btn" title="Note block colors">Colors ▾</button>
-    <div class="colors-panel" id="colors-panel">
+    <!-- Colors menu hidden for now — keeping the button + panel in DOM
+         (display:none) so the menu wiring (#colors-menu-btn click toggle,
+         .colors-opt data-mode handlers) still resolves and we can surface
+         it again by removing the inline style. -->
+    <button id="colors-menu-btn" title="Note block colors" style="display:none">Colors ▾</button>
+    <div class="colors-panel" id="colors-panel" style="display:none">
       <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
       <button type="button" class="colors-opt" data-mode="piano">Piano</button>
     </div>
-    <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">Grid
-      <span class="grid-dim-input">
-        <select id="grid-rows-input" aria-label="Grid rows">
-          <option value="1" selected>1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-          <option value="8">8</option>
+    <div class="btn-group btn-group--step" title="Step controls — set Size, multi-select, grid layout, and append/fixed mode">
+      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">Size
+        <select id="subdivision-select">
+          <option value="16">4/1</option>
+          <option value="12">3/1</option>
+          <option value="8">2/1</option>
+          <option value="4">1/1</option>
+          <option value="2">1/2</option>
+          <option value="1">1/4</option>
+          <option value="0.5" selected>1/8</option>
+          <option value="0.25">1/16</option>
+          <option value="0.125">1/32</option>
         </select>
-        <span class="grid-dim-sep">×</span>
-        <select id="grid-cols-input" aria-label="Grid steps per row">
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-          <option value="8" selected>8</option>
-        </select>
-      </span>
-    </label>
-    <button id="step-mode-btn" type="button" title="Toggle between Free (append notes as you click) and Fixed (step-sequencer: pick a note from the grid, then click slots to toggle it on/off)">Free</button>
+      </label>
+      <label class="step-multi-toggle" title="Multi-select: clicking step chips adds them to the selection so Size edits them all at once.">
+        <input type="checkbox" id="multi-select-toggle" />
+        Multi
+      </label>
+      <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">Grid
+        <span class="grid-dim-input">
+          <select id="grid-rows-input" aria-label="Grid rows">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+          <span class="grid-dim-sep">×</span>
+          <select id="grid-cols-input" aria-label="Grid steps per row">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8" selected>8</option>
+          </select>
+        </span>
+      </label>
+      <button id="step-mode-btn" type="button" title="Toggle between Free (append notes as you click) and Fixed (step-sequencer: pick a note from the grid, then click slots to toggle it on/off)">Free</button>
+    </div>
   </div>
 
   <div class="footer-bar">
@@ -3187,6 +281,32 @@
           <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
           <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
         </div>
+      </div>
+      <div class="tempo-control">
+        <!-- 3-digit BPM picker — each column has + above and − below to bump
+             that digit's place value (100s / 10s / 1s) up or down. The
+             legacy slider + number input live on hidden, kept in DOM so
+             every existing tempoSlider.value / tempoInput.value reference
+             keeps working. -->
+        <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
+          <div class="bpm-digit-col">
+            <button type="button" class="bpm-step" data-place="100" data-dir="1" aria-label="BPM hundreds up">+</button>
+            <span class="bpm-digit" id="bpm-d-h">1</span>
+            <button type="button" class="bpm-step" data-place="100" data-dir="-1" aria-label="BPM hundreds down">−</button>
+          </div>
+          <div class="bpm-digit-col">
+            <button type="button" class="bpm-step" data-place="10" data-dir="1" aria-label="BPM tens up">+</button>
+            <span class="bpm-digit" id="bpm-d-t">2</span>
+            <button type="button" class="bpm-step" data-place="10" data-dir="-1" aria-label="BPM tens down">−</button>
+          </div>
+          <div class="bpm-digit-col">
+            <button type="button" class="bpm-step" data-place="1" data-dir="1" aria-label="BPM ones up">+</button>
+            <span class="bpm-digit" id="bpm-d-o">0</span>
+            <button type="button" class="bpm-step" data-place="1" data-dir="-1" aria-label="BPM ones down">−</button>
+          </div>
+        </div>
+        <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
+        <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
       </div>
     </div>
 
@@ -6956,10 +4076,16 @@
     // shape can't be sustained (sub-step wraps schedule sequentially —
     // we play them one-shot and return null so the poly session skips
     // sustaining bookkeeping).
-    function startSustainedWrapOnCell(cellIdx) {
+    function startSustainedWrapOnCell(cellIdx, opts = {}) {
       if (!wrapTemplate) return null;
       const note = notes[cellIdx];
       if (!note) return null;
+      // Radial Tone bend (cents) — applied uniformly to every voice in
+      // the wrap chord so the whole chord bends together. Synth voices
+      // can be live-updated via setDetune; sample voices bake the bend
+      // into the attack frequency since Tone.Sampler doesn't expose a
+      // clean per-voice detune ramp.
+      const bendCents = Number.isFinite(opts.detune) ? opts.detune : 0;
       const visit = (s) => {
         if (!s) return null;
         if (s.isSub && Array.isArray(s.subSteps)) {
@@ -6998,6 +4124,14 @@
       // later voices' attack times — every voice fires at exactly
       // `wrapAt`. Returns a release handle so pressing-and-holding the
       // cell sustains the chord until pointerup.
+      // Wake the audio context if it's still suspended — Tone.now() on
+      // a suspended ctx pins to a stale currentTime, so a wrapAt
+      // computed against it can land in the past after ctx resumes,
+      // which is exactly when voices are most prone to staggering.
+      try {
+        const _ac = Tone.context && Tone.context.rawContext;
+        if (_ac && _ac.state === 'suspended') _ac.resume();
+      } catch (e) {}
       if (Array.isArray(transposed.chord) && transposed.chord.length > 0) {
         const size = transposed.chord.length;
         const voices = transposed.chord.map(n => {
@@ -7011,11 +4145,15 @@
             if (!entry || !entry.sampler || !entry.sampler.loaded) return null;
             const baseFreq = snapDrumKitFreq(p.type, n.freq);
             const tunedFreq = (typeof baseFreq === 'number')
-              ? baseFreq * Math.pow(2, (p.detune || 0) / 1200)
+              ? baseFreq * Math.pow(2, ((p.detune || 0) + bendCents) / 1200)
               : baseFreq;
             return {
               attack:  (at) => { try { entry.sampler.triggerAttack(tunedFreq, at, vol); } catch (e) {} },
               release: () => { try { entry.sampler.triggerRelease(tunedFreq, undefined); } catch (e) {} },
+              // Sampler doesn't expose a live per-voice detune ramp, so
+              // setDetune is a no-op here — the bend is baked into the
+              // attack frequency above.
+              setDetune: () => {},
               env: { release: 1.0 },
             };
           }
@@ -7049,22 +4187,48 @@
           }
           synth.connect(masterBus);
           try { synth.volume.value = Tone.gainToDb(vol); } catch (e) {}
-          if (synth.detune && Number.isFinite(p.detune)) synth.detune.value = p.detune;
+          const baseDetune = Number.isFinite(p.detune) ? p.detune : 0;
+          if (synth.detune) synth.detune.value = baseDetune + bendCents;
           return {
             attack:  (at) => { try { synth.triggerAttack(n.freq, at, 1); } catch (e) {} },
             release: () => {
               try { synth.triggerRelease(); } catch (e) {}
               setTimeout(() => { try { synth.dispose(); } catch (e) {} }, (env.release + 0.5) * 1000);
             },
+            // Live Radial Tone update — ramps detune (not frequency)
+            // so it can't fight the attack's own freq scheduling.
+            setDetune: (cents) => {
+              try {
+                if (!synth.detune) return;
+                const target = baseDetune + cents;
+                const raw = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+                const t = raw ? raw.currentTime + 0.005 : Tone.now();
+                if (typeof synth.detune.linearRampToValueAtTime === 'function') {
+                  try { synth.detune.setValueAtTime(synth.detune.value, t); } catch (e) {}
+                  synth.detune.linearRampToValueAtTime(target, t + 0.02);
+                } else {
+                  synth.detune.value = target;
+                }
+              } catch (e) {}
+            },
             env,
           };
         }).filter(Boolean);
         if (voices.length === 0) return null;
         // Capture wrapAt AFTER all construction so per-voice setup time
-        // doesn't push later voices' triggers past it. Small lookahead
-        // (50 ms) absorbs any micro-jitter in the trigger loop below.
-        const ac = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
-        const wrapAt = (ac ? ac.currentTime : 0) + 0.05;
+        // doesn't push later voices' triggers past it. Use Tone.now()
+        // (currentTime + Tone's internal lookAhead) plus a generous
+        // 80 ms cushion so the trigger loop's wall-clock drift between
+        // the first and last voice can never push any voice past
+        // wrapAt — all voices schedule against the same audio time and
+        // the audio thread fires them sample-accurately in lock-step.
+        // The previous 50 ms lookahead worked when ctx was fully warm
+        // but left almost no margin during a cold-start audition (when
+        // construction + first-trigger overhead can spike past 50 ms),
+        // which manifested as audibly staggered chord voices.
+        const wrapAt = (typeof Tone.now === 'function')
+          ? Tone.now() + 0.08
+          : ((Tone.context?.rawContext?.currentTime || 0) + 0.08);
         // Tight trigger loop — every voice attacks at exactly wrapAt.
         voices.forEach(v => v.attack(wrapAt));
         let released = false;
@@ -7072,6 +4236,11 @@
           release: () => {
             if (released) return; released = true;
             voices.forEach(v => v.release());
+          },
+          // Radial Tone live bend — fans out to every voice so the
+          // whole chord shifts together as the user drags.
+          setDetune: (cents) => {
+            voices.forEach(v => { try { v.setDetune?.(cents); } catch (e) {} });
           },
         };
       }
@@ -10059,7 +7228,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -11061,6 +8230,33 @@
       const el = cell.querySelector('.cell-freq');
       if (el) el.textContent = `${Math.round(note.freq)} Hz`;
     }
+    // Disable the Radial Tone button (and force the mode off) when no
+    // cell can actually use it — every cell is on a sample tone, which
+    // Tone.Sampler can't bend per-voice. Re-evaluated on every tone
+    // change via updateScaleBanner. The try/catch guards the cellParams
+    // access against the temporal dead zone — the function is defined
+    // earlier in the script than the `let cellParams` declaration, so
+    // an early call (before the let runs) would otherwise throw
+    // ReferenceError instead of being a no-op.
+    function refreshRadialToneAvailability() {
+      const btn = document.getElementById('radial-tone-btn');
+      if (!btn) return;
+      let allSamples = false;
+      try {
+        allSamples = Array.isArray(cellParams) && cellParams.length > 0
+          && cellParams.every(p => isSampleType(p?.type));
+      } catch (e) {
+        return;
+      }
+      btn.disabled = allSamples;
+      btn.title = allSamples
+        ? 'Radial Tone — disabled while every cell is on a sample tone (Tone.Sampler can\'t bend per-voice). Pick a synth tone to re-enable.'
+        : 'Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.';
+      if (allSamples && radialTone) {
+        radialTone = false;
+        document.body.classList.remove('radial-tone');
+      }
+    }
     (function initRadialToneToggle() {
       const btn = document.getElementById('radial-tone-btn');
       if (!btn) return;
@@ -11068,10 +8264,17 @@
       radialTone = localStorage.getItem(KEY) === '1';
       document.body.classList.toggle('radial-tone', radialTone);
       btn.addEventListener('click', () => {
+        if (btn.disabled) return;
         radialTone = !radialTone;
         document.body.classList.toggle('radial-tone', radialTone);
         try { localStorage.setItem(KEY, radialTone ? '1' : '0'); } catch (e) {}
       });
+      // Defer the initial availability check — cellParams is declared
+      // further down with `let`, so calling refreshRadialToneAvailability
+      // synchronously here hits the temporal dead zone. By the time this
+      // microtask runs, the script body has finished executing and
+      // cellParams / rebuildGrid have populated.
+      setTimeout(refreshRadialToneAvailability, 0);
     })();
 
     // ---- Edit-mode toggle (sits next to master-vol in the menubar) ----
@@ -13864,14 +11067,14 @@
     // the press, releasing on pointerup. Sub-shaped wraps fall back to a
     // one-shot (their voices are scheduled sequentially and don't have a
     // single sustain to hold).
-    function polyStartWrapCell(cellIdx, pointerId) {
+    function polyStartWrapCell(cellIdx, pointerId, opts = {}) {
       if (!notes[cellIdx] || !wrapTemplate) return;
       _polyStartSustain(cellIdx, pointerId,
-        () => startSustainedWrapOnCell(cellIdx),
+        () => startSustainedWrapOnCell(cellIdx, opts),
         null
       );
     }
-    function polyEndCellForPointer(cellIdx, pointerId) {
+    function polyEndCellForPointer(cellIdx, pointerId, opts = {}) {
       const set = _polySession.pointerCells.get(pointerId);
       if (!set || !set.has(cellIdx)) return;
       set.delete(cellIdx);
@@ -13892,6 +11095,41 @@
         // and stamp that as the new step's duration.
         const entry = _polySession.pressed.get(cellIdx);
         if (entry && entry.pressEnd == null) entry.pressEnd = performance.now();
+        // Drag hand-off: when this cell is being released mid-drag (the
+        // pointer crossed into a new cell, not the final pointerup),
+        // commit it as its own single-note step right now — duration
+        // matches how long the finger actually sat on this cell. Without
+        // this, every cell traversed in one drag would either be lost
+        // (Keep on, last-press wins as a single-note) or collapsed into
+        // one chord at session end (multi-press grouping).
+        if (opts.handoff
+            && entry
+            && keepMode
+            && !chordMode
+            && !wrapTemplate
+            && !stepMode
+            && gridMode === 'sequencer'
+            && selectedStepRefs.length === 0
+            && notes[cellIdx]) {
+          const baseParams = entry.params ? { ...entry.params } : { ...cellParams[cellIdx] };
+          const heldMs = Math.max(0, (entry.pressEnd ?? performance.now()) - entry.pressStart);
+          const heldParams = _holdAdjustedParams(baseParams, heldMs);
+          addToSequence(_radialBendApplyToStep(cellIdx, {
+            freq:       notes[cellIdx].freq,
+            label:      notes[cellIdx].label,
+            cellIndex:  cellIdx,
+            sound:      heldParams.type,
+            params:     heldParams,
+            duration:   _holdStepDurationFromMs(heldMs),
+            subdivision: stepSubdivision,
+          }));
+          // Drop the entry so polyFinalizeSession doesn't see it again
+          // (would otherwise re-emit it as half of a chord at session
+          // end). The final cell still commits via its own click event;
+          // no suppression needed since each press window now becomes a
+          // separate single-note step rather than a multi-voice chord.
+          _polySession.pressed.delete(cellIdx);
+        }
       } else {
         _polySession.cellRefCount.set(cellIdx, refs);
       }
@@ -14038,6 +11276,91 @@
     }
     document.addEventListener('pointerup',     (e) => polyEndPointer(e.pointerId));
     document.addEventListener('pointercancel', (e) => polyEndPointer(e.pointerId));
+
+    // Drag-to-play / drag-handoff / live Radial Tone bend at the document
+    // level. Per-cell pointermove can't drive these on touch because
+    // touch input gets implicit pointer capture: every pointermove after
+    // pointerdown fires on the originating cell, never on the cell the
+    // finger drags onto. Hit-testing via elementFromPoint here always
+    // resolves to the cell currently under the pointer regardless of
+    // capture, so drag-to-play and the new hand-off both work on touch.
+    document.addEventListener('pointermove', (e) => {
+      if (!_polySession.pointerStartedOnCell.get(e.pointerId)) return;
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      if (!target) return;
+      if (target.closest('.cell-sound-select, .cell-edit-carrot')) return;
+      const cell = target.closest('.cell');
+      if (!cell) return;
+      const i = cells.indexOf(cell);
+      if (i < 0) return;
+
+      const wrapActive = !!wrapTemplate;
+      if (gridMode !== 'sequencer' && !wrapActive) return;
+
+      const rect = cell.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const xFrac = (e.clientX - rect.left) / rect.width;
+      const yFrac = (e.clientY - rect.top)  / rect.height;
+      const set = _polySession.pointerCells.get(e.pointerId);
+      const isCurrentCell = !!(set && set.has(i));
+
+      // Live Radial Tone bend on the cell currently being pressed.
+      // Skipped for sample-typed cells — Tone.Sampler doesn't expose a
+      // per-voice detune ramp, so live bends don't sound. (The initial
+      // bend from press position is still baked into the attack
+      // frequency at pointerdown for samples.)
+      if (radialTone && isCurrentCell) {
+        const cellType = cellParams[i]?.type;
+        if (!isSampleType(cellType)) {
+          const handle = _polySession.cellSustains.get(i);
+          if (handle && typeof handle.setDetune === 'function') {
+            const cents = radialBendCents(xFrac, yFrac);
+            _radialBendUpdate(i, cents);
+            handle.setDetune(cents);
+            setCellFreqDisplayCents(i, cents);
+          }
+        }
+        // Already on this cell — no hand-off needed regardless of
+        // whether the bend was applied.
+        return;
+      }
+
+      // Drag hand-off: once the pointer crosses into a *new* cell,
+      // release every previously-held cell on this same pointer (each
+      // committed as its own step via polyEndCellForPointer's handoff
+      // path) and start the new one. The hit-test from elementFromPoint
+      // already proves the pointer is inside this cell's rect, so no
+      // additional inner-zone gate — the previous 25%–75% box made the
+      // hand-off feel laggy (a press dragged horizontally near the top
+      // or bottom of cells would never satisfy the y-axis check). With
+      // a wrap active, route through polyStartWrapCell so the wrap
+      // shape stays intact and re-auditions transposed to the new cell
+      // as its first note. Radial Tone bend (initial press position)
+      // is forwarded as opts.detune so the new cell starts at the bent
+      // pitch.
+      if (e.buttons === 0) return;
+      if (isCurrentCell) return;
+      if (xFrac < 0 || xFrac > 1 || yFrac < 0 || yFrac > 1) return;
+      let opts = {};
+      if (radialTone) {
+        const cents = radialBendCents(xFrac, yFrac);
+        _radialBendInit(i, cents);
+        opts.detune = cents;
+        setCellFreqDisplayCents(i, cents);
+      } else {
+        _radialBend.delete(i);
+      }
+      if (set) {
+        Array.from(set).forEach(prevIdx => {
+          if (prevIdx !== i) polyEndCellForPointer(prevIdx, e.pointerId, { handoff: true });
+        });
+      }
+      if (wrapActive) {
+        polyStartWrapCell(i, e.pointerId, opts);
+      } else {
+        polyStartCell(i, e.pointerId, opts);
+      }
+    });
 
     renderSavedSequences();
 
@@ -14214,6 +11537,7 @@
       if (toneHalf)  toneHalf.textContent  = tone || '—';
       refreshAllCellToneLabels();
       refreshAllCellNameLabels();
+      if (typeof refreshRadialToneAvailability === 'function') refreshRadialToneAvailability();
     }
 
     function applyPalette() {
@@ -14407,7 +11731,24 @@
             // the duration of the press and release on pointerup. Sub
             // wraps fall through inside polyStartWrapCell to a one-shot.
             _polySession.pointerStartedOnCell.set(e.pointerId, true);
-            polyStartWrapCell(i, e.pointerId);
+            // Radial Tone applies to wrap auditions too — sample the
+            // press position and seed all chord voices with the same
+            // detune offset; pointermove keeps it updated.
+            let _wrapOpts = {};
+            if (radialTone) {
+              const rect = cell.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) {
+                const xFrac = (e.clientX - rect.left) / rect.width;
+                const yFrac = (e.clientY - rect.top)  / rect.height;
+                const cents = radialBendCents(xFrac, yFrac);
+                _radialBendInit(i, cents);
+                _wrapOpts.detune = cents;
+                setCellFreqDisplayCents(i, cents);
+              }
+            } else {
+              _radialBend.delete(i);
+            }
+            polyStartWrapCell(i, e.pointerId, _wrapOpts);
             return;
           }
           // Arpeggio / Chord modes don't sustain — they fire a one-shot
@@ -14447,52 +11788,15 @@
           }
           polyStartCell(i, e.pointerId, _initOpts);
         });
-        // Drag-to-play with a 50% threshold: triggering on bare pointerenter
-        // made cell edges fire whenever a finger grazed them, so we now wait
-        // for the pointer to land inside the inner 50% × 50% region of the
-        // cell (i.e. past the midpoint along both axes) before sounding the
-        // new note. Skimming an edge no longer plays it; deliberate drags
-        // still trigger naturally as the pointer passes the cell center.
         // Suppress right-click / iOS long-press native context menu so the
         // press-and-hold radial bend gesture isn't interrupted by the
         // browser's "Copy / Look Up / Share" callout.
         cell.addEventListener('contextmenu', (e) => e.preventDefault());
-        cell.addEventListener('pointermove', (e) => {
-          if (gridMode !== 'sequencer') return;             // drag-to-play only in default mode
-          if (!_polySession.pointerStartedOnCell.get(e.pointerId)) return; // not a play gesture
-          if (e.target.closest('.cell-sound-select, .cell-edit-carrot')) return;
-          const set = _polySession.pointerCells.get(e.pointerId);
-          const rect = cell.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return;
-          const xFrac = (e.clientX - rect.left) / rect.width;
-          const yFrac = (e.clientY - rect.top)  / rect.height;
-          // Radial Tone: while sustaining, slide-to-bend the live note.
-          // Don't gate on e.buttons — touch pointermove events report
-          // buttons=0 in some Safari builds, which silently killed the
-          // bend update. pointerStartedOnCell already proves "currently
-          // pressing", so it's the better guard.
-          if (radialTone) {
-            // More forgiving than set.has(i): just check that the cell is
-            // currently sustaining for SOME pointer. Multi-touch and
-            // event-flow quirks could otherwise silently drop bend updates.
-            const handle = _polySession.cellSustains.get(i);
-            if (!handle) return;
-            const cents = radialBendCents(xFrac, yFrac);
-            _radialBendUpdate(i, cents);
-            if (typeof handle.setDetune === 'function') handle.setDetune(cents);
-            setCellFreqDisplayCents(i, cents);
-            return;
-          }
-          // Normal drag-to-play: requires e.buttons proof that the pointer
-          // is actually pressed (guards against synthetic mouseover events
-          // firing on a hover-over after release), then the inner 50% × 50%
-          // region of a *new* cell.
-          if (e.buttons === 0) return;
-          if (set && set.has(i)) return;
-          if (xFrac >= 0.25 && xFrac <= 0.75 && yFrac >= 0.25 && yFrac <= 0.75) {
-            polyStartCell(i, e.pointerId);
-          }
-        });
+        // Drag-to-play, drag-handoff, and live Radial Tone bend are all
+        // handled by the document-level pointermove handler — touch
+        // implicit pointer capture would otherwise silently drop those
+        // events on the original cell only. See the listener installed
+        // alongside document.pointerup above.
         cell.addEventListener('click', () => {
           // Clicks that ride a multi-press session get folded into a
           // chord at session-end — skip the per-cell single-note path

@@ -207,6 +207,32 @@
     }
     .fx-bypass.off:hover { border-color: #4a4a6a; color: #6b7280; }
     .fx-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+    .fx-order-hint {
+      color: #4a4a6a; font-size: 0.7rem; font-weight: 500;
+      margin-left: 8px; letter-spacing: 0.4px;
+    }
+    .fx-order { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+    .fx-order-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 8px;
+      background: #1a1a2e; border: 1px solid #2d2d3f; border-radius: 6px;
+      color: #a0aec0; font-size: 0.8rem; font-weight: 600;
+    }
+    .fx-order-row .fx-order-name { flex: 1 1 auto; }
+    .fx-order-row .fx-order-pos {
+      color: #4a4a6a; font-size: 0.7rem; min-width: 18px;
+    }
+    .fx-order-row .fx-order-arrow {
+      width: 24px; height: 22px;
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 4px;
+      color: #a0aec0; cursor: pointer; padding: 0;
+      font-family: inherit; font-size: 0.85rem;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .fx-order-row .fx-order-arrow:hover:not(:disabled) {
+      border-color: #4fd1c5; color: #4fd1c5;
+    }
+    .fx-order-row .fx-order-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
     .fx-reset {
       padding: 4px 12px;
       border: 1px solid #2d2d3f;
@@ -588,6 +614,29 @@
     }
     #project-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
     #project-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+    /* Edit toggle — sits to the right of master-vol in the menubar. When
+       on, body gets .edit-mode and per-cell sound-editor carrots become
+       visible. Default is off so the grid stays clean for play; users
+       click Edit to surface the carrots when they want to tweak sounds. */
+    #edit-mode-btn {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #edit-mode-btn:hover { border-color: #4fd1c5; color: #4fd1c5; }
+    body.edit-mode #edit-mode-btn {
+      border-color: #4fd1c5; color: #4fd1c5;
+      background: rgba(79, 209, 197, 0.12);
+    }
+    /* Carrots visible only when global edit-mode is on. */
+    body:not(.edit-mode) .cell-edit-carrot { display: none; }
     /* Master volume — a small inline slider in the menubar. The icon is
        a non-interactive label; the slider itself drives the mix gain. */
     .master-vol {
@@ -655,6 +704,62 @@
     .project-opt:hover { border-color: #4299e1; color: #4299e1; }
     .project-opt.project-opt-new:hover { border-color: #38a169; color: #68d391; }
     .project-opt:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Riff dropdown — collapses Save / Random / Seed / Reverse / Shuffle /
+       Repeat under one pill in the sequence-controls row. With Keep on,
+       generated content is appended to the current sequence; with Keep
+       off, it replaces (the original behavior). flex: 0 0 auto keeps the
+       wrapper at content-width so it sits immediately adjacent to undo/
+       redo instead of growing to push itself across the row. */
+    .riff-wrapper { position: relative; display: inline-flex; flex: 0 0 auto; }
+    #riff-menu-btn {
+      flex: 0 0 auto;
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #riff-menu-btn:hover { border-color: #4299e1; color: #4299e1; }
+    #riff-menu-btn.open  { border-color: #4299e1; color: #4299e1; background: rgba(66,153,225,0.12); }
+    .riff-panel {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      padding: 10px;
+      z-index: 9000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      min-width: 160px;
+    }
+    .riff-panel.open { display: flex; }
+    .riff-panel > button {
+      flex: 0 0 auto;
+      width: 100%;
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }
+    .riff-panel > button:hover:not(:disabled) { border-color: #4299e1; color: #4299e1; }
+    .riff-panel > button:disabled { opacity: 0.4; cursor: not-allowed; }
     .voices-panel {
       display: none;
       flex-direction: column;
@@ -755,6 +860,45 @@
       border-bottom: 1px solid #1a1a2e;
     }
     .banner-row--fx { border-bottom: 1px solid #1a1a2e; }
+    /* Radial Tone toggle — small icon-pill that sits to the left of the
+       Scale banner. When on, the body gets .radial-tone and cells get a
+       subtle radial-gradient overlay so the user can see the bend zones. */
+    .radial-tone-btn {
+      flex: 0 0 auto;
+      padding: 0 10px;
+      background: transparent;
+      border: none;
+      border-right: 1px solid #1a1a2e;
+      color: #4a4a6a;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: color 0.15s ease, background 0.15s ease;
+    }
+    .radial-tone-btn:hover { color: #4fd1c5; }
+    body.radial-tone .radial-tone-btn {
+      color: #4fd1c5;
+      background: rgba(79, 209, 197, 0.12);
+      text-shadow: 0 0 6px rgba(79, 209, 197, 0.55);
+    }
+    /* Subtle bend-zone hint on every cell while Radial Tone is active —
+       diagonal gradient from top-left (down) to bottom-right (up). Sits
+       under the cell text so labels stay readable. */
+    body.radial-tone .cell::before {
+      content: '';
+      position: absolute; inset: 0;
+      pointer-events: none;
+      border-radius: inherit;
+      background: linear-gradient(135deg,
+        rgba(155, 92, 229, 0.18) 0%,
+        rgba(155, 92, 229, 0.04) 35%,
+        rgba(0, 0, 0, 0) 50%,
+        rgba(79, 209, 197, 0.04) 65%,
+        rgba(79, 209, 197, 0.18) 100%);
+      opacity: 0.9;
+    }
     .banner-half {
       flex: 1;
       padding: 6px 12px;
@@ -872,6 +1016,27 @@
       outline: none;
     }
     .cell-sound-select:focus { background: rgba(0,0,0,0.6); }
+
+    /* Tiny dropdown carrot in each cell's top-left — opens the sound editor.
+       Replaces the previous double-tap gesture so the affordance is visible
+       and cell taps don't have to compete with edit-intent. */
+    .cell-edit-carrot {
+      position: absolute;
+      top: 4px; left: 4px;
+      width: 18px; height: 18px;
+      background: rgba(0, 0, 0, 0.45);
+      color: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      font-size: 11px; line-height: 1;
+      font-family: inherit;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0; margin: 0;
+      z-index: 2;
+    }
+    .cell-edit-carrot:hover { background: rgba(0, 0, 0, 0.7); color: #fff; }
+    .cell.out-of-scale .cell-edit-carrot { visibility: hidden; }
     .cell:active        { filter: brightness(0.75); }
     .cell.flash         { filter: brightness(1.35); }
     .cell.active-loop   { filter: brightness(1.25); outline: 4px solid #fff inset; }
@@ -1000,7 +1165,11 @@
       align-content: flex-start;
       align-items: center;
       padding: 8px 14px;
-      gap: 6px;
+      /* row-gap is 16px to leave room for the absolute-positioned 12px-tall
+         .row-interval markers that anchor at chip-bottom — without it they
+         overflow into the next row's chips. column-gap stays tight at 6px. */
+      row-gap: 16px;
+      column-gap: 6px;
       overflow-y: auto;
       scrollbar-width: thin;
       scrollbar-color: #2d2d3f #0a0a14;
@@ -1685,9 +1854,14 @@
       50%      { box-shadow: 0 0 0 6px rgba(229,62,62,0); }
     }
     /* Undo / Redo pill — two adjacent buttons sharing the inner border, with
-       only their outside corners rounded. Red theme matches Rec. */
+       only their outside corners rounded. Red theme matches Rec. Sized to
+       content so the Riff pill sits immediately to its right instead of
+       being pushed to the far edge of the row. */
+    .btn-group--seq {
+      flex-wrap: nowrap;
+    }
     .btn-group--seq > .undo-redo-pair {
-      flex: 2 1 160px;
+      flex: 0 0 auto;
       display: flex;
     }
     .undo-redo-pair > button {
@@ -1796,13 +1970,6 @@
       border: 1px dashed #9f7aea;
       color: #9f7aea;
       min-width: 48px;
-    }
-
-    .seq-count {
-      color: #4a4a6a;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem;
-      min-width: 60px;
     }
 
     /* SAVED SEQUENCES VIEWER */
@@ -2279,6 +2446,37 @@
     }
     .sm-param-row .sm-val { color: #e2e8f0; font-weight: 600; }
     .sm-param input[type=range] { width: 100%; accent-color: #4299e1; }
+    .sm-param .sm-select {
+      width: 100%;
+      background: #1a1a2e; color: #e2e8f0;
+      border: 1px solid #2d2d3f; border-radius: 4px;
+      padding: 4px 6px; font-size: 0.85rem;
+      font-family: inherit;
+    }
+    .sm-param .sm-select:focus { outline: none; border-color: #4299e1; }
+    .sm-fx-group {
+      margin: 8px 0; padding: 6px 8px;
+      background: #0f1020; border: 1px solid #2d2d3f; border-radius: 4px;
+    }
+    .sm-fx-group > summary {
+      cursor: pointer; user-select: none;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; font-weight: 600;
+      color: #a0aec0; padding: 2px 0;
+    }
+    .sm-fx-group[open] > summary { color: #e2e8f0; margin-bottom: 6px; }
+    .sm-apply-all {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin: 0 0 10px 0; padding: 3px 10px;
+      background: rgba(79, 209, 197, 0.04);
+      border: 1px solid #4fd1c5;
+      border-radius: 14px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.68rem; letter-spacing: 0.3px;
+      color: #4fd1c5; font-weight: 600;
+      cursor: pointer; user-select: none;
+      text-shadow: 0 0 4px rgba(79, 209, 197, 0.35);
+    }
+    .sm-apply-all input { accent-color: #4fd1c5; cursor: pointer; }
 
     .sm-footer {
       display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end;
@@ -2677,6 +2875,7 @@
       <span class="master-vol-icon" aria-hidden="true">🔊</span>
       <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
     </label>
+    <button type="button" id="edit-mode-btn" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">Edit</button>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
@@ -2748,6 +2947,37 @@
         <div class="fx-control-row">Amount <span class="fx-val" id="fx-dst-v">0%</span></div>
         <input type="range" id="fx-dst" min="0" max="100" value="0" />
       </div>
+      <div class="fx-group-label fx-group-head"><span>Chorus</span><button type="button" class="fx-bypass" id="fx-cho-on" title="Bypass chorus">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-cho-v">0%</span></div><input type="range" id="fx-cho" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-cho-freq-v">4 Hz</span></div><input type="range" id="fx-cho-freq" min="0.1" max="10" step="0.1" value="4" /></div>
+      <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-cho-depth-v">70%</span></div><input type="range" id="fx-cho-depth" min="0" max="100" value="70" /></div>
+      <div class="fx-group-label fx-group-head"><span>Vibrato</span><button type="button" class="fx-bypass" id="fx-vib-on" title="Bypass vibrato">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-vib-v">0%</span></div><input type="range" id="fx-vib" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-vib-freq-v">5 Hz</span></div><input type="range" id="fx-vib-freq" min="0.1" max="20" step="0.1" value="5" /></div>
+      <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-vib-depth-v">30%</span></div><input type="range" id="fx-vib-depth" min="0" max="100" value="30" /></div>
+      <div class="fx-group-label fx-group-head"><span>Tremolo</span><button type="button" class="fx-bypass" id="fx-trm-on" title="Bypass tremolo">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-trm-v">0%</span></div><input type="range" id="fx-trm" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-trm-freq-v">5 Hz</span></div><input type="range" id="fx-trm-freq" min="0.1" max="20" step="0.1" value="5" /></div>
+      <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-trm-depth-v">70%</span></div><input type="range" id="fx-trm-depth" min="0" max="100" value="70" /></div>
+      <div class="fx-group-label fx-group-head"><span>Phaser</span><button type="button" class="fx-bypass" id="fx-phs-on" title="Bypass phaser">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-phs-v">0%</span></div><input type="range" id="fx-phs" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-phs-freq-v">0.5 Hz</span></div><input type="range" id="fx-phs-freq" min="0.05" max="10" step="0.05" value="0.5" /></div>
+      <div class="fx-control"><div class="fx-control-row">Octaves <span class="fx-val" id="fx-phs-oct-v">3</span></div><input type="range" id="fx-phs-oct" min="1" max="7" step="1" value="3" /></div>
+      <div class="fx-group-label fx-group-head"><span>Auto Filter</span><button type="button" class="fx-bypass" id="fx-af-on" title="Bypass auto filter">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-af-v">0%</span></div><input type="range" id="fx-af" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-af-freq-v">1 Hz</span></div><input type="range" id="fx-af-freq" min="0.1" max="10" step="0.1" value="1" /></div>
+      <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-af-depth-v">100%</span></div><input type="range" id="fx-af-depth" min="0" max="100" value="100" /></div>
+      <div class="fx-control"><div class="fx-control-row">Base <span class="fx-val" id="fx-af-base-v">200 Hz</span></div><input type="range" id="fx-af-base" min="50" max="2000" step="10" value="200" /></div>
+      <div class="fx-group-label fx-group-head"><span>Ping-Pong Delay</span><button type="button" class="fx-bypass" id="fx-pp-on" title="Bypass ping-pong">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-pp-v">0%</span></div><input type="range" id="fx-pp" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Time <span class="fx-val" id="fx-pp-time-v">250 ms</span></div><input type="range" id="fx-pp-time" min="20" max="1000" step="10" value="250" /></div>
+      <div class="fx-control"><div class="fx-control-row">Feedback <span class="fx-val" id="fx-pp-fb-v">30%</span></div><input type="range" id="fx-pp-fb" min="0" max="95" value="30" /></div>
+      <div class="fx-group-label fx-group-head"><span>Auto Pan</span><button type="button" class="fx-bypass" id="fx-apan-on" title="Bypass auto pan">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-apan-v">0%</span></div><input type="range" id="fx-apan" min="0" max="100" value="0" /></div>
+      <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-apan-freq-v">1 Hz</span></div><input type="range" id="fx-apan-freq" min="0.1" max="10" step="0.1" value="1" /></div>
+      <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-apan-depth-v">100%</span></div><input type="range" id="fx-apan-depth" min="0" max="100" value="100" /></div>
+      <div class="fx-group-label fx-group-head"><span>Effect Order</span><span class="fx-order-hint">signal flow ↓</span></div>
+      <div class="fx-order" id="fx-order-list"></div>
       <div class="fx-actions">
         <button type="button" id="fx-save-btn"   class="fx-reset" title="Save current FX settings to Drive">Save…</button>
         <button type="button" id="fx-load-btn"   class="fx-reset" title="Load FX settings from Drive">Load…</button>
@@ -2759,6 +2989,7 @@
   </div>
 
   <div class="banner-row">
+    <button type="button" id="radial-tone-btn" class="radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±¼ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖</button>
     <button type="button" id="scale-banner-half" class="banner-half" title="Click to change root, scale, octaves, A4 tuning, and saved grid states"></button>
     <button type="button" id="tone-banner-half"  class="banner-half" title="Click to pick a tone applied to all notes"></button>
   </div>
@@ -2890,15 +3121,19 @@
         <button id="undo-btn" type="button" title="Undo last action (Ctrl/Cmd+Z)" disabled>↶</button>
         <button id="redo-btn" type="button" title="Redo last undone action (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
       </div>
-      <button id="save-btn" disabled>Save</button>
-      <button id="random-btn" title="Generate a random sequence using the current voice's scale + tones">Random</button>
-      <button id="seed-btn" title="Seed the sequence from a built-in song or from text">Seed</button>
-      <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
-      <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
-      <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+      <div class="riff-wrapper">
+        <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
+        <div class="riff-panel" id="riff-panel">
+          <button id="save-btn" disabled>Save</button>
+          <button id="random-btn" title="Generate a random sequence using the current voice's scale + tones">Random</button>
+          <button id="seed-btn" title="Seed the sequence from a built-in song or from text">Seed</button>
+          <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
+          <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
+          <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+        </div>
+      </div>
     </div>
 
-    <span class="seq-count" id="seq-count">0 steps</span>
   </div>
 
   <div class="saved-viewer">
@@ -3596,18 +3831,64 @@
     // because the synth instantiated in playNote is the first signal the
     // chain has ever processed.
     let _bloopsAudioWarmed = false;
+    // Pre-instantiates one of every synth type playNote knows about and
+    // wires up a per-note FX chain (Distortion → Delay → Reverb → Panner)
+    // at -100 dB so the AudioWorklets / shaders / Tone.js node graph all
+    // compile end-to-end before the user's first real note. Safe to call
+    // before any user gesture — node construction works on a suspended
+    // context, and the silent triggerAttackRelease is just queued.
     function warmMasterChainOnce() {
       if (_bloopsAudioWarmed) return;
       if (typeof masterBus === 'undefined' || !masterBus) return;
+      if (typeof Tone === 'undefined') return;
       _bloopsAudioWarmed = true;
+      const muted   = -100;
+      const tinyEnv = { attack: 0.001, decay: 0.001, sustain: 0, release: 0.001 };
+      const created = [];
+      const tryMake = (build) => {
+        try { const n = build(); created.push(n); return n; } catch (e) { return null; }
+      };
       try {
-        const warmer = new Tone.Synth({
-          oscillator: { type: 'sine' },
-          envelope: { attack: 0.001, decay: 0.001, sustain: 0, release: 0.001 },
-          volume: -100,
-        }).connect(masterBus);
-        warmer.triggerAttackRelease('C4', 0.01);
-        setTimeout(() => { try { warmer.dispose(); } catch (e) {} }, 250);
+        // 1) Each synth type used by playNote, routed through masterBus so
+        //    the synth + master path compiles end-to-end.
+        [
+          () => new Tone.Synth        ({ oscillator: { type: 'sine' }, envelope: tinyEnv, volume: muted }),
+          () => new Tone.FMSynth      ({ envelope: tinyEnv, modulationEnvelope: tinyEnv, volume: muted }),
+          () => new Tone.AMSynth      ({ envelope: tinyEnv, modulationEnvelope: tinyEnv, volume: muted }),
+          () => new Tone.MonoSynth    ({ envelope: tinyEnv, filterEnvelope: tinyEnv,    volume: muted }),
+          () => new Tone.MembraneSynth({ envelope: tinyEnv,                              volume: muted }),
+          () => new Tone.MetalSynth   ({ envelope: { attack: 0.001, decay: 0.001, release: 0.001 }, volume: muted }),
+          () => new Tone.PluckSynth   ({                                                 volume: muted }),
+        ].forEach(make => {
+          const s = tryMake(make);
+          if (!s) return;
+          try { s.connect(masterBus); } catch (e) {}
+          try { s.triggerAttackRelease('C4', 0.01); } catch (e) {}
+        });
+
+        // 2) Per-note FX chain — what playNote builds for any chip with
+        //    non-zero effect knobs. Push one silent attack through it so
+        //    the effect nodes get compiled too.
+        const pn = tryMake(() => new Tone.Panner(0));
+        const rv = tryMake(() => new Tone.Freeverb({ roomSize: 0.5, dampening: 3000, wet: 0.001 }));
+        const dl = tryMake(() => new Tone.FeedbackDelay({ delayTime: 0.1, feedback: 0.001, wet: 0.001 }));
+        const ds = tryMake(() => new Tone.Distortion({ distortion: 0.001, wet: 0.001 }));
+        const sx = tryMake(() => new Tone.Synth({ envelope: tinyEnv, volume: muted }));
+        if (pn && rv && dl && ds && sx) {
+          try {
+            pn.connect(masterBus);
+            rv.connect(pn);
+            dl.connect(rv);
+            ds.connect(dl);
+            sx.connect(ds);
+            sx.triggerAttackRelease('C4', 0.01);
+          } catch (e) {}
+        }
+
+        // Generous tail covers the longest synth release (Pluck/Metal ~1s).
+        setTimeout(() => {
+          created.forEach(n => { try { n.dispose(); } catch (e) {} });
+        }, 1500);
       } catch (e) {}
     }
     (function bindIosAudioUnlock() {
@@ -3630,7 +3911,7 @@
         try {
           const p = ac.resume?.();
           if (p && typeof p.then === 'function') {
-            p.then(() => warmMasterChainOnce(), () => {});
+            p.then(() => { warmMasterChainOnce(); }, () => {});
           } else {
             // Synchronous resume path (older Safari) — try the warm-up
             // immediately; if the chain isn't ready yet, the no-op
@@ -3652,7 +3933,7 @@
       return Math.round(60000 / (parseInt(tempoInput.value) || 120) * stepSubdivision);
     }
 
-    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','bell','pluck','kick','metal'];
+    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','duo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
 
     // ---- Tone.js v14 URL double-encode patch ----------------------------
     // ToneAudioBuffer.load() does
@@ -3706,46 +3987,175 @@
     // Global FX chain — sits post-compressor / pre-limiter so the dynamics
     // settle before reverb/delay tails layer on. wet=0 / distortion=0 are
     // effective pass-throughs; the FX panel UI updates these in place.
+    // Global FX chain (built backward from masterVolume):
+    //   masterDistortion → masterAutoFilter → masterPhaser → masterVibrato →
+    //   masterChorus → masterTremolo → masterDelay → masterPingPong →
+    //   masterReverb → masterAutoPan → masterVolume → masterLimiter
+    // LFO-driven effects (Tremolo, Chorus, AutoFilter, AutoPanner) need an
+    // explicit .start() to begin oscillating; idle wet=0 = transparent.
+    const masterAutoPan = new Tone.AutoPanner({
+      frequency: 1, depth: 1, wet: 0,
+    }).connect(masterVolume);
+    try { masterAutoPan.start(); } catch (e) {}
     const masterReverb = new Tone.Freeverb({
       roomSize: 0.7, dampening: 3000, wet: 0,
-    }).connect(masterVolume);
+    }).connect(masterAutoPan);
+    const masterPingPong = new Tone.PingPongDelay({
+      delayTime: 0.25, feedback: 0.3, wet: 0,
+    }).connect(masterReverb);
     const masterDelay = new Tone.FeedbackDelay({
       delayTime: '8n', feedback: 0.4, wet: 0,
-    }).connect(masterReverb);
+    }).connect(masterPingPong);
+    const masterTremolo = new Tone.Tremolo({
+      frequency: 5, depth: 0.7, wet: 0,
+    }).connect(masterDelay);
+    try { masterTremolo.start(); } catch (e) {}
+    const masterChorus = new Tone.Chorus({
+      frequency: 4, delayTime: 3.5, depth: 0.7, feedback: 0.1, wet: 0,
+    }).connect(masterTremolo);
+    try { masterChorus.start(); } catch (e) {}
+    const masterVibrato = new Tone.Vibrato({
+      frequency: 5, depth: 0.3, wet: 0,
+    }).connect(masterChorus);
+    const masterPhaser = new Tone.Phaser({
+      frequency: 0.5, octaves: 3, baseFrequency: 350, wet: 0,
+    }).connect(masterVibrato);
+    const masterAutoFilter = new Tone.AutoFilter({
+      frequency: 1, depth: 1, baseFrequency: 200, octaves: 2.6, wet: 0,
+    }).connect(masterPhaser);
+    try { masterAutoFilter.start(); } catch (e) {}
     const masterDistortion = new Tone.Distortion({
       distortion: 0, wet: 1,
-    }).connect(masterDelay);
-    // Master bus — was a Compressor; turned out the compressor's gain-
-    // reduction state varies with the signal's loudness history, so
-    // each loop iteration entered with a slightly different reduction
-    // floor and notes around the wrap sounded different each time.
-    // Replaced with a unity-gain Gain node — the -1dB Tone.Limiter at
-    // the very end still catches any peaks that would clip, but it
-    // recovers cleanly each sample frame instead of carrying state
-    // across iterations.
-    const masterBus = new Tone.Gain(1).connect(masterDistortion);
+    }).connect(masterAutoFilter);
+    // Soft master compressor — sits between masterBus and the FX chain to
+    // smoothly absorb peak overlap from sequential / overlapping voices
+    // before they reach the brick -1 dB limiter, which would otherwise
+    // clip pure tones (sines especially) into audible harmonic crunch.
+    // Very fast release (30 ms) so gain reduction recovers within a
+    // single step, keeping loop iterations consistent — the prior
+    // compressor was removed for this exact reason but had a much longer
+    // release. Soft knee + 4:1 ratio = transparent on chord stacks,
+    // catches the sine-tail-into-attack peaks that cause crunch.
+    const masterCompressor = new Tone.Compressor({
+      threshold: -6, ratio: 4, attack: 0.003, release: 0.03, knee: 8,
+    }).connect(masterDistortion);
+    const masterBus = new Tone.Gain(1).connect(masterCompressor);
+
+    // ---- Configurable FX order ----
+    // Single ordered list of effect IDs that drives both the master chain
+    // (routed via rebuildMasterChain below) and each per-note chain
+    // (built in playNote). The list defaults to the original hardcoded
+    // order; the FX panel exposes ↑/↓ buttons that reorder it and persist
+    // the result via globalFx.fxOrder.
+    const FX_NAMES = ['distortion','autoFilter','phaser','vibrato','chorus','tremolo','delay','pingPong','reverb','autoPan'];
+    const FX_LABELS = {
+      distortion: 'Distortion', autoFilter: 'Auto Filter', phaser: 'Phaser',
+      vibrato: 'Vibrato', chorus: 'Chorus', tremolo: 'Tremolo',
+      delay: 'Delay', pingPong: 'Ping-Pong', reverb: 'Reverb', autoPan: 'Auto Pan',
+    };
+    const _masterFxNodes = {
+      distortion: masterDistortion, autoFilter: masterAutoFilter, phaser: masterPhaser,
+      vibrato: masterVibrato, chorus: masterChorus, tremolo: masterTremolo,
+      delay: masterDelay, pingPong: masterPingPong, reverb: masterReverb,
+      autoPan: masterAutoPan,
+    };
+    // Wire (or rewire) the master chain end-to-end in the configured order.
+    // Pre-chain (masterBus → masterCompressor) and post-chain (masterVolume
+    // → masterLimiter → destination) are fixed; the 10 FX nodes are slotted
+    // in between in whatever order globalFx.fxOrder dictates. Safe to call
+    // any time — disconnects each node first to clear stale routing.
+    function rebuildMasterChain() {
+      try {
+        const order = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
+          ? globalFx.fxOrder
+          : FX_NAMES;
+        // Disconnect everything we're about to re-route.
+        try { masterCompressor.disconnect(); } catch (e) {}
+        FX_NAMES.forEach(name => {
+          const n = _masterFxNodes[name];
+          if (n) { try { n.disconnect(); } catch (e) {} }
+        });
+        // Build forward: compressor → first FX → … → last FX → volume.
+        let head = masterCompressor;
+        order.forEach(name => {
+          const n = _masterFxNodes[name];
+          if (!n) return;
+          head.connect(n);
+          head = n;
+        });
+        head.connect(masterVolume);
+      } catch (e) {}
+    }
+
+    // Pre-compile the audio graph at script load so the first user note
+    // doesn't pay the AudioWorklet/synth-instantiation cost. The first
+    // gesture (which actually resumes the AudioContext) just has to
+    // unlock — all node compilation is already done.
+    warmMasterChainOnce();
 
     // Persisted global effect mix — applied to every voice via the master
     // chain above. Loaded from localStorage so settings stick across reloads.
     const GLOBAL_FX_DEFAULTS = {
-      reverb:        0,
-      reverbSize:    70,
-      reverbTone:    50,
-      reverbOn:      true,
-      delay:         0,
-      delayTime:     250,
-      delayFeedback: 40,
-      delayOn:       true,
-      distortion:    0,
-      distortionOn: true,
+      reverb:             0,
+      reverbSize:         70,
+      reverbTone:         50,
+      reverbOn:           true,
+      delay:              0,
+      delayTime:          250,
+      delayFeedback:      40,
+      delayOn:            true,
+      distortion:         0,
+      distortionOn:       true,
+      chorus:             0,
+      chorusFreq:         4,
+      chorusDepth:        70,
+      chorusOn:           true,
+      vibrato:            0,
+      vibratoFreq:        5,
+      vibratoDepth:       30,
+      vibratoOn:          true,
+      tremolo:            0,
+      tremoloFreq:        5,
+      tremoloDepth:       70,
+      tremoloOn:          true,
+      phaser:             0,
+      phaserFreq:         0.5,
+      phaserOctaves:      3,
+      phaserOn:           true,
+      autoFilter:         0,
+      autoFilterFreq:     1,
+      autoFilterDepth:    100,
+      autoFilterBaseFreq: 200,
+      autoFilterOn:       true,
+      pingPong:           0,
+      pingPongTime:       250,
+      pingPongFeedback:   30,
+      pingPongOn:         true,
+      autoPan:            0,
+      autoPanFreq:        1,
+      autoPanDepth:       100,
+      autoPanOn:          true,
+      // Configurable FX chain order — array of effect IDs (see FX_NAMES).
+      // Drives both the master chain and per-note chains in playNote.
+      fxOrder:            FX_NAMES.slice(),
     };
-    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn'];
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn'];
     const globalFx = (() => {
       try {
         const raw = JSON.parse(localStorage.getItem('sounds-global-fx') || '{}');
-        const out = { ...GLOBAL_FX_DEFAULTS };
+        const out = { ...GLOBAL_FX_DEFAULTS, fxOrder: FX_NAMES.slice() };
         Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
-          if (FX_ON_KEYS.includes(k)) {
+          if (k === 'fxOrder') {
+            // Restore a saved order only if it's a valid permutation of
+            // FX_NAMES — guards against schema drift if effect IDs
+            // change and a stale stored order references unknown ones.
+            if (Array.isArray(raw.fxOrder)
+                && raw.fxOrder.length === FX_NAMES.length
+                && raw.fxOrder.every(n => FX_NAMES.includes(n))
+                && new Set(raw.fxOrder).size === FX_NAMES.length) {
+              out.fxOrder = raw.fxOrder.slice();
+            }
+          } else if (FX_ON_KEYS.includes(k)) {
             if (typeof raw[k] === 'boolean') out[k] = raw[k];
           } else if (Number.isFinite(raw[k])) {
             out[k] = raw[k];
@@ -3753,21 +4163,51 @@
         });
         return out;
       } catch (e) {
-        return { ...GLOBAL_FX_DEFAULTS };
+        return { ...GLOBAL_FX_DEFAULTS, fxOrder: FX_NAMES.slice() };
       }
     })();
     function applyGlobalFx() {
+      // Helper: when *On is false, force the wet/amount to 0 without
+      // touching the stored mix value, so flipping back on restores
+      // exactly the previous setting.
+      const wetOf = (mix, on) => (on === false ? 0 : Math.max(0, Math.min(1, (mix || 0) / 100)));
       try {
-        masterReverb.roomSize.value  = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
-        masterReverb.dampening.value = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
-        // Per-effect bypass — when *On is false, force the wet/amount to 0
-        // without touching the stored mix value, so flipping back on
-        // restores exactly the previous setting.
-        masterReverb.wet.value       = globalFx.reverbOn === false ? 0 : Math.max(0, Math.min(1, globalFx.reverb / 100));
-        masterDelay.delayTime.value  = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
-        masterDelay.feedback.value   = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
-        masterDelay.wet.value        = globalFx.delayOn === false ? 0 : Math.max(0, Math.min(1, globalFx.delay / 100));
-        masterDistortion.distortion  = globalFx.distortionOn === false ? 0 : Math.max(0, Math.min(1, globalFx.distortion / 100));
+        masterReverb.roomSize.value      = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
+        masterReverb.dampening.value     = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
+        masterReverb.wet.value           = wetOf(globalFx.reverb, globalFx.reverbOn);
+        masterDelay.delayTime.value      = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
+        masterDelay.feedback.value       = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
+        masterDelay.wet.value            = wetOf(globalFx.delay, globalFx.delayOn);
+        masterDistortion.distortion      = globalFx.distortionOn === false ? 0 : Math.max(0, Math.min(1, globalFx.distortion / 100));
+
+        masterChorus.frequency.value     = Math.max(0.01, globalFx.chorusFreq);
+        masterChorus.depth               = Math.max(0, Math.min(1, globalFx.chorusDepth / 100));
+        masterChorus.wet.value           = wetOf(globalFx.chorus, globalFx.chorusOn);
+
+        masterVibrato.frequency.value    = Math.max(0.01, globalFx.vibratoFreq);
+        masterVibrato.depth.value        = Math.max(0, Math.min(1, globalFx.vibratoDepth / 100));
+        masterVibrato.wet.value          = wetOf(globalFx.vibrato, globalFx.vibratoOn);
+
+        masterTremolo.frequency.value    = Math.max(0.01, globalFx.tremoloFreq);
+        masterTremolo.depth.value        = Math.max(0, Math.min(1, globalFx.tremoloDepth / 100));
+        masterTremolo.wet.value          = wetOf(globalFx.tremolo, globalFx.tremoloOn);
+
+        masterPhaser.frequency.value     = Math.max(0.01, globalFx.phaserFreq);
+        masterPhaser.octaves             = Math.max(1, Math.min(7, globalFx.phaserOctaves));
+        masterPhaser.wet.value           = wetOf(globalFx.phaser, globalFx.phaserOn);
+
+        masterAutoFilter.frequency.value = Math.max(0.01, globalFx.autoFilterFreq);
+        masterAutoFilter.depth.value     = Math.max(0, Math.min(1, globalFx.autoFilterDepth / 100));
+        masterAutoFilter.baseFrequency   = Math.max(20, globalFx.autoFilterBaseFreq);
+        masterAutoFilter.wet.value       = wetOf(globalFx.autoFilter, globalFx.autoFilterOn);
+
+        masterPingPong.delayTime.value   = Math.max(0.001, (globalFx.pingPongTime || 0) / 1000);
+        masterPingPong.feedback.value    = Math.max(0, Math.min(0.95, globalFx.pingPongFeedback / 100));
+        masterPingPong.wet.value         = wetOf(globalFx.pingPong, globalFx.pingPongOn);
+
+        masterAutoPan.frequency.value    = Math.max(0.01, globalFx.autoPanFreq);
+        masterAutoPan.depth.value        = Math.max(0, Math.min(1, globalFx.autoPanDepth / 100));
+        masterAutoPan.wet.value          = wetOf(globalFx.autoPan, globalFx.autoPanOn);
       } catch (e) {}
     }
     function persistGlobalFx() {
@@ -3775,6 +4215,7 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     applyGlobalFx();
+    rebuildMasterChain();
 
     // ---- Master volume slider ----
     // Slider value is 0..100 percent. 100 → 0 dB (unity), 0 → silenced
@@ -4251,13 +4692,39 @@
     }
 
     // Scale a chord note's params so N simultaneous voices sum to a roughly
-    // single-voice loudness — otherwise the bus hits the compressor / limiter
-    // far above threshold and audibly distorts on the attack.
+    // single-voice loudness, keeping the master limiter from being driven
+    // hard enough to clip the waveform into audible harmonic distortion.
+    //
+    // Tonal synth voices (sine/FM/AM/etc.) sum near-coherently — a pure
+    // 4-voice sine chord peaks at +6 dB even with 1/√N scaling, which is
+    // exactly what makes the -1 dB limiter audibly distort. Use 1/N so
+    // the summed peak lands at ~single-voice level (≈0 dB) and the
+    // limiter only kisses the very tips. Percussive / sample voices have
+    // incoherent peaks that sum more like RMS, so 1/√N is correct there
+    // and dropping further would just bury them.
     function chordVoiceParams(noteParams, chordSize) {
-      const scale = 1 / Math.sqrt(Math.max(1, chordSize));
       const base = (noteParams && typeof noteParams === 'object') ? noteParams : (typeof noteParams === 'string' ? { type: noteParams } : {});
       const baseVol = base.volume ?? 100;
+      const type = base.type || 'sine';
+      const N = Math.max(1, chordSize);
+      const percussive = type === 'kick' || type === 'pluck' || type === 'metal' || isSampleType(type);
+      const scale = percussive ? (1 / Math.sqrt(N)) : (1 / N);
       return { ...base, volume: baseVol * scale };
+    }
+
+    // Convert a Tone-style note value ('4n', '8n.', '16t', '2n', '1n', etc.)
+    // to seconds at the given BPM, assuming a 4/4 quarter-note pulse.
+    // Suffix . = dotted (×1.5), t = triplet (×2/3). Used by per-note
+    // delay sync so the user can lock delay time to musical divisions.
+    function noteValueToSec(notation, bpm) {
+      const m = String(notation || '').match(/^(\d+)n([.t]?)$/);
+      if (!m) return 0.25; // sane fallback if the string is malformed
+      const denom = parseInt(m[1], 10);
+      let beats = 4 / denom; // 4n = 1 beat, 8n = 0.5, 2n = 2, 1n = 4
+      const sfx = m[2];
+      if (sfx === '.') beats *= 1.5;
+      else if (sfx === 't') beats *= 2 / 3;
+      return Math.max(0.001, beats * (60 / (bpm || 120)));
     }
 
     // Fold a step-level bend into the per-note params object that playNote
@@ -4293,11 +4760,69 @@
       } catch (e) {}
     }
 
+    // Voice cap — limits simultaneous synth voices to keep the master
+    // limiter from being driven into IM artifacts by overlapping release
+    // tails. When a new voice would push the count over the cap, the
+    // OLDEST active voice is stolen: its release is forced via
+    // safeDisposeSynth (rampTo(-80) over ~30ms, then dispose), so the
+    // perceived effect is "the quietest tail fades out a little earlier
+    // than it would have decayed naturally." Per-note effect chains are
+    // disposed alongside the stolen voice so their reverb/delay tail
+    // stops with the source.
+    //
+    // Sample-type voices aren't tracked here — Tone.Sampler manages its
+    // own internal polyphony. Warm-up synths (warmMasterChainOnce) and
+    // sustain handles (startSustainedNote) also bypass this — they have
+    // their own lifetimes and aren't a sequence-density problem.
+    const VOICE_CAP = 24;
+    const _activeVoices = []; // FIFO; oldest at index 0
+    function _registerVoice(entry) {
+      _activeVoices.push(entry);
+      while (_activeVoices.length > VOICE_CAP) {
+        _stealVoice(_activeVoices.shift());
+      }
+    }
+    function _unregisterVoice(entry) {
+      const i = _activeVoices.indexOf(entry);
+      if (i >= 0) _activeVoices.splice(i, 1);
+    }
+    function _stealVoice(entry) {
+      if (!entry || entry._stolen) return;
+      entry._stolen = true;
+      if (entry.disposeTimer) {
+        clearTimeout(entry.disposeTimer);
+        entry.disposeTimer = null;
+      }
+      try { safeDisposeSynth(entry.synth); } catch (e) {}
+      // Wait out safeDisposeSynth's fade (~60ms) before tearing down the
+      // effect chain so the rampTo doesn't ring through a dead chain.
+      setTimeout(() => {
+        if (Array.isArray(entry.effectNodes)) {
+          entry.effectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
+        }
+      }, 80);
+    }
+
     // Click-and-hold sustain — start an attack on pointerdown, release on
     // pointerup. Returns a handle with .release(); the caller is expected
     // to call it exactly once. One-shot voices (pluck / kick / metal /
     // samples without a clean release) fall back to a normal short hit.
-    function startSustainedNote(freq, params = {}) {
+    function startSustainedNote(freq, params = {}, startAt) {
+      // Cold-start guard — same race as playNote. Optional `startAt`
+      // (Tone audio time) lets multi-voice wrap auditions pin every
+      // voice to the same instant; without it, each voice computes its
+      // own Tone.now() during iteration and ends up scheduled a few ms
+      // apart, sounding rolled rather than chordal.
+      let _coldStartAt = startAt;
+      try {
+        const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+          ? Tone.context.rawContext : null;
+        if (ac && ac.state === 'suspended' && _coldStartAt == null) {
+          try { ac.resume(); } catch (e) {}
+          if (typeof Tone.now === 'function') _coldStartAt = Tone.now() + 0.08;
+        }
+      } catch (e) {}
+
       if (typeof params === 'string') params = { type: params };
       const {
         type = 'sine',
@@ -4315,20 +4840,17 @@
       if (isSampleType(type)) {
         const entry = getSampleEntry(type);
         if (!entry || !entry.sampler || !entry.sampler.loaded) {
-          // Sample isn't ready yet — fall back to a one-shot. Suppress
-          // playNote's flashCellByFreq active-loop outline since the
-          // cell already has .sustaining for the press; the extra
-          // 80–110ms white outline that pops then disappears is the
-          // visual artifact the user reported.
-          const prev = _suppressCellFlash;
-          _suppressCellFlash = true;
-          try { playNote(freq, params); }
-          finally { _suppressCellFlash = prev; }
-          return { release: () => {} };
+          // Sampler hasn't finished its network fetch yet — the most
+          // common cause of "first taps make no sound" on a cold load,
+          // since the default tone is sample:piano. Fall back to a
+          // Tone.Synth sine sustain so the press is audible and held;
+          // the next press (likely a few hundred ms later) will use the
+          // real sample.
+          return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
         }
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
-        try { entry.sampler.triggerAttack(tunedFreq, undefined, velocity); } catch (e) {}
+        try { entry.sampler.triggerAttack(tunedFreq, _coldStartAt, velocity); } catch (e) {}
         let released = false;
         return { release: () => {
           if (released) return; released = true;
@@ -4386,17 +4908,61 @@
         synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(finalDest);
       }
       if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
-      try { synth.triggerAttack(freq, undefined, velocity); } catch (e) {}
+      // Trigger at the caller's pinned startAt (wrap chord audition) or
+      // the cold-start-shifted _coldStartAt; falls back to Tone.now() at
+      // call time when both are undefined.
+      const _triggerAt = startAt != null ? startAt : _coldStartAt;
+      try { synth.triggerAttack(freq, _triggerAt, velocity); } catch (e) {}
 
       let released = false;
-      return { release: () => {
-        if (released) return; released = true;
-        try { synth.triggerRelease(); } catch (e) {}
-        setTimeout(() => safeDisposeSynth(synth), (rel + 0.5) * 1000);
-      }};
+      return {
+        release: () => {
+          if (released) return; released = true;
+          try { synth.triggerRelease(); } catch (e) {}
+          setTimeout(() => safeDisposeSynth(synth), (rel + 0.5) * 1000);
+        },
+        // Used by Radial Tone to bend the live note as the user slides
+        // their finger across the cell. Only touches `.detune` — the
+        // previous version also ramped `.frequency`, which required
+        // `cancelScheduledValues` and ended up clobbering the attack's
+        // own frequency setting (the synth then either played at the
+        // default 440 Hz or didn't sound at all). Detune is purely
+        // additive on top of the oscillator's frequency, so a ramp here
+        // can't fight the attack. Schedules at raw audio-context time
+        // to bypass Tone's ~100 ms lookahead and feel responsive.
+        setDetune: (cents) => {
+          try {
+            if (!synth || !synth.detune) return;
+            const raw = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+            const t = raw ? raw.currentTime + 0.005 : Tone.now();
+            if (typeof synth.detune.linearRampToValueAtTime === 'function') {
+              try { synth.detune.setValueAtTime(synth.detune.value, t); } catch (e) {}
+              synth.detune.linearRampToValueAtTime(cents, t + 0.02);
+            } else {
+              synth.detune.value = cents;
+            }
+          } catch (e) {}
+        },
+      };
     }
 
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx) {
+      // Cold-start guard: if the AudioContext hasn't actually resumed yet
+      // (very first gesture race — the gesture's resume() is async, the
+      // synchronous call into playNote loses), kick the resume now and
+      // shift the note's startTime ~60ms into the future so the audio
+      // thread has time to come up before the event fires.
+      try {
+        const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+          ? Tone.context.rawContext : null;
+        if (ac && ac.state === 'suspended') {
+          try { ac.resume(); } catch (e) {}
+          if (startTime == null && typeof Tone.now === 'function') {
+            startTime = Tone.now() + 0.06;
+          }
+        }
+      } catch (e) {}
+
       if (typeof params === 'string') params = { type: params };
       const {
         type    = 'sine',
@@ -4416,7 +4982,19 @@
         delay         = 0,
         delayTime     = 250,
         delayFeedback = 40,
+        // When set (Tone-style note value: '4n', '8n.', '16t', etc.), the
+        // delay's time is computed from the current BPM at play time and
+        // delayTime is ignored. null/empty = use delayTime in ms.
+        delaySync     = null,
         distortion = 0,
+        // ---- New modulation / time effects (all default off at mix=0). ----
+        chorus        = 0, chorusFreq     = 4,    chorusDepth    = 70,
+        vibrato       = 0, vibratoFreq    = 5,    vibratoDepth   = 30,
+        tremolo       = 0, tremoloFreq    = 5,    tremoloDepth   = 70,
+        phaser        = 0, phaserFreq     = 0.5,  phaserOctaves  = 3,
+        autoFilter    = 0, autoFilterFreq = 1,    autoFilterDepth= 100, autoFilterBaseFreq = 200,
+        pingPong      = 0, pingPongTime   = 250,  pingPongFeedback = 30, pingPongSync = null,
+        autoPan       = 0, autoPanFreq    = 1,    autoPanDepth   = 100,
         // Per-note pan, -100..100. Inserted as a Tone.Panner after the
         // FX chain so each chord voice or subStep can sit in its own
         // spot in the stereo image. 0 = no panner created (saves a node).
@@ -4450,7 +5028,7 @@
       // of the note. Skipped during offline rendering (offline context's
       // currentTime doesn't match the live UI clock, so the timing math
       // would fire visuals at the wrong moment) and during sequence
-      // playback (playStepCB already handles cell highlighting via
+      // playback (scheduleStepAt already handles cell highlighting via
       // step.cellIndex; calling flashCellByFreq there would double the
       // setTimeout queue per step for no visual difference).
       if (!_offlineSamplerOverride && !_suppressCellFlash) {
@@ -4481,8 +5059,14 @@
           } catch (e) {
             console.warn('Sample playback failed', type, e);
           }
+          return;
         }
-        return;
+        // Sampler hasn't finished its network fetch yet — the most
+        // common cause of "first taps make no sound" on a cold load,
+        // since the default tone is sample:piano. Fall back to a sine
+        // synth one-shot so the press is audible; the next press
+        // (likely a few hundred ms later) will use the real sample.
+        return playNote(freq, { ...params, type: 'sine' }, durationMs, startTime, destination, trackIdx);
       }
 
       // Per-note effect chain — order is synth → distortion → delay → reverb
@@ -4502,33 +5086,85 @@
         effectNodes.unshift(pn);
         chainHead = pn;
       }
-      if (reverb > 0) {
-        const rev = new Tone.Freeverb({
-          // reverbTone is mapped to dampening (Hz) where higher Tone reads
-          // brighter — 0 → 500 Hz (very damped), 100 → 10000 Hz (open).
+      // LFO-driven effects need .start() to begin oscillating; otherwise
+      // they sit at their initial phase and produce no modulation.
+      const startLfo = (n) => { try { if (typeof n.start === 'function') n.start(); } catch (e) {} };
+      // Per-note FX chain follows the configured global order (same one
+      // the master chain uses) so the user's reorder applies everywhere.
+      // Each builder returns null when its mix is 0 — chain is built
+      // backward so order[N-1] is closest to chainHead (just before the
+      // panner toward dest), order[0] sits closest to the synth.
+      const _fxBuilders = {
+        distortion: () => distortion > 0 ? new Tone.Distortion({
+          distortion: Math.max(0, Math.min(1, distortion / 100)),
+          wet: 1,
+        }) : null,
+        autoFilter: () => autoFilter > 0 ? new Tone.AutoFilter({
+          frequency:     Math.max(0.01, autoFilterFreq),
+          depth:         Math.max(0, Math.min(1, autoFilterDepth / 100)),
+          baseFrequency: Math.max(20, autoFilterBaseFreq),
+          octaves:       2.6,
+          wet:           Math.max(0, Math.min(1, autoFilter / 100)),
+        }) : null,
+        phaser: () => phaser > 0 ? new Tone.Phaser({
+          frequency:    Math.max(0.01, phaserFreq),
+          octaves:      Math.max(1, Math.min(7, phaserOctaves)),
+          baseFrequency: 350,
+          wet:          Math.max(0, Math.min(1, phaser / 100)),
+        }) : null,
+        vibrato: () => vibrato > 0 ? new Tone.Vibrato({
+          frequency: Math.max(0.01, vibratoFreq),
+          depth:     Math.max(0, Math.min(1, vibratoDepth / 100)),
+          wet:       Math.max(0, Math.min(1, vibrato / 100)),
+        }) : null,
+        chorus: () => chorus > 0 ? new Tone.Chorus({
+          frequency: Math.max(0.01, chorusFreq),
+          depth:     Math.max(0, Math.min(1, chorusDepth / 100)),
+          delayTime: 3.5, feedback: 0.1,
+          wet:       Math.max(0, Math.min(1, chorus / 100)),
+        }) : null,
+        tremolo: () => tremolo > 0 ? new Tone.Tremolo({
+          frequency: Math.max(0.01, tremoloFreq),
+          depth:     Math.max(0, Math.min(1, tremoloDepth / 100)),
+          wet:       Math.max(0, Math.min(1, tremolo / 100)),
+        }) : null,
+        delay: () => delay > 0 ? new Tone.FeedbackDelay({
+          delayTime: delaySync
+            ? noteValueToSec(delaySync, parseInt(tempoInput?.value, 10) || 120)
+            : Math.max(0.001, (delayTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, delayFeedback / 100)),
+          wet:       Math.max(0, Math.min(1, delay / 100)),
+        }) : null,
+        pingPong: () => pingPong > 0 ? new Tone.PingPongDelay({
+          delayTime: pingPongSync
+            ? noteValueToSec(pingPongSync, parseInt(tempoInput?.value, 10) || 120)
+            : Math.max(0.001, (pingPongTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, pingPongFeedback / 100)),
+          wet:       Math.max(0, Math.min(1, pingPong / 100)),
+        }) : null,
+        reverb: () => reverb > 0 ? new Tone.Freeverb({
+          // reverbTone → dampening (Hz): 0 → 500 Hz (very damped),
+          // 100 → 10000 Hz (open).
           roomSize:  Math.max(0, Math.min(0.99, reverbSize / 100)),
           dampening: 500 + Math.max(0, Math.min(100, reverbTone)) * 95,
           wet:       Math.max(0, Math.min(1, reverb / 100)),
-        }).connect(chainHead);
-        effectNodes.unshift(rev);
-        chainHead = rev;
-      }
-      if (delay > 0) {
-        const dly = new Tone.FeedbackDelay({
-          delayTime: Math.max(0.001, (delayTime || 0) / 1000),
-          feedback:  Math.max(0, Math.min(0.95, delayFeedback / 100)),
-          wet:       Math.max(0, Math.min(1, delay / 100)),
-        }).connect(chainHead);
-        effectNodes.unshift(dly);
-        chainHead = dly;
-      }
-      if (distortion > 0) {
-        const dist = new Tone.Distortion({
-          distortion: Math.max(0, Math.min(1, distortion / 100)),
-          wet: 1,
-        }).connect(chainHead);
-        effectNodes.unshift(dist);
-        chainHead = dist;
+        }) : null,
+        autoPan: () => autoPan > 0 ? new Tone.AutoPanner({
+          frequency: Math.max(0.01, autoPanFreq),
+          depth:     Math.max(0, Math.min(1, autoPanDepth / 100)),
+          wet:       Math.max(0, Math.min(1, autoPan / 100)),
+        }) : null,
+      };
+      const _fxOrder = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
+        ? globalFx.fxOrder
+        : FX_NAMES;
+      for (let i = _fxOrder.length - 1; i >= 0; i--) {
+        const node = _fxBuilders[_fxOrder[i]]?.();
+        if (!node) continue;
+        startLfo(node);
+        node.connect(chainHead);
+        effectNodes.unshift(node);
+        chainHead = node;
       }
       const disposeEffectChain = () => {
         effectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
@@ -4565,10 +5201,34 @@
         const pluckLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
-        setTimeout(() => {
+        const pluckEntry = { synth, effectNodes, disposeTimer: null };
+        pluckEntry.disposeTimer = setTimeout(() => {
+          _unregisterVoice(pluckEntry);
           safeDisposeSynth(synth);
           disposeEffectChain();
         }, pluckLeadMs + (targetDur + 1.5) * 1000);
+        _registerVoice(pluckEntry);
+        return;
+      } else if (typeof type === 'string' && type.startsWith('noise')) {
+        // NoiseSynth — like pluck, doesn't take a frequency, so it needs
+        // its own trigger + early return. Type encodes the colour:
+        // 'noise:white' (default), 'noise:pink', 'noise:brown'.
+        const colour = type.includes(':') ? type.split(':')[1] : 'white';
+        const ns = new Tone.NoiseSynth({
+          noise: { type: colour },
+          envelope: env,
+        }).connect(chainHead);
+        try { ns.triggerAttackRelease(preReleaseDur, startTime, velocity); } catch (e) {}
+        const noiseLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+          ? Math.max(0, (startTime - Tone.context.now()) * 1000)
+          : 0;
+        const noiseEntry = { synth: ns, effectNodes, disposeTimer: null };
+        noiseEntry.disposeTimer = setTimeout(() => {
+          _unregisterVoice(noiseEntry);
+          safeDisposeSynth(ns);
+          disposeEffectChain();
+        }, noiseLeadMs + disposeMs);
+        _registerVoice(noiseEntry);
         return;
       } else if (type === 'fm') {
         synth = new Tone.FMSynth({
@@ -4578,6 +5238,14 @@
           envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
+        }).connect(chainHead);
+      } else if (type === 'duo') {
+        synth = new Tone.DuoSynth({
+          voice0: { oscillator: { type: 'sine'    }, envelope: env },
+          voice1: { oscillator: { type: 'sawtooth'}, envelope: env },
+          harmonicity: 1.5,
+          vibratoAmount: 0.3,
+          vibratoRate: 5,
         }).connect(chainHead);
       } else if (type === 'am') {
         synth = new Tone.AMSynth({
@@ -4627,20 +5295,25 @@
       if (synth.detune) synth.detune.value = detune;
       synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
 
-      // Pitch bend: ramp the synth's frequency from the start pitch up/down
-      // by `semitones` over the first `atFraction` of the step duration, then
-      // hold. Only attempts the schedule when the synth exposes an
-      // automatable frequency Param — pluck/kick/metal are skipped.
-      if (bend && Number.isFinite(bend.semitones) && bend.semitones !== 0 && synth.frequency
-          && typeof synth.frequency.setValueAtTime === 'function') {
+      // Pitch bend: ramp the synth's detune from `detune` cents to
+      // `detune + bend.semitones * 100` cents over the first
+      // `atFraction` of the step duration. Detune is independent of the
+      // envelope, so the bend is fully audible across the entire
+      // sustain + release tail (a frequency-Param ramp tended to be
+      // truncated by the envelope's release window for short steps).
+      // Pluck / kick / metal / noise / sample types early-return above,
+      // so every synth that reaches here has an automatable .detune.
+      if (bend && Number.isFinite(bend.semitones) && bend.semitones !== 0 && synth.detune
+          && typeof synth.detune.linearRampToValueAtTime === 'function') {
         const bendStart = (typeof startTime === 'number') ? startTime : Tone.now();
         const at = Math.max(0, Math.min(1, Number.isFinite(bend.atFraction) ? bend.atFraction : 1));
         const bendArrive = bendStart + Math.max(0.001, targetDur * at);
-        const endFreq = freq * Math.pow(2, bend.semitones / 12);
+        const startCents = Number.isFinite(detune) ? detune : 0;
+        const endCents   = startCents + bend.semitones * 100;
         try {
-          synth.frequency.cancelScheduledValues(bendStart);
-          synth.frequency.setValueAtTime(freq, bendStart);
-          synth.frequency.linearRampToValueAtTime(endFreq, bendArrive);
+          synth.detune.cancelScheduledValues(bendStart);
+          synth.detune.setValueAtTime(startCents, bendStart);
+          synth.detune.linearRampToValueAtTime(endCents, bendArrive);
         } catch (e) {}
       }
 
@@ -4650,10 +5323,13 @@
       const synthLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
-      setTimeout(() => {
+      const voiceEntry = { synth, effectNodes, disposeTimer: null };
+      voiceEntry.disposeTimer = setTimeout(() => {
+        _unregisterVoice(voiceEntry);
         safeDisposeSynth(synth);
         disposeEffectChain();
       }, synthLeadMs + disposeMs);
+      _registerVoice(voiceEntry);
     }
 
     // ---- Sequence display ----
@@ -4770,8 +5446,13 @@
 
     function renderSequence(activeIndex = -1) {
       clampSelectionToSequence();
+      // Sweep orphan touch-drag chip clones — bindStepDragTouch appends a
+      // position:fixed clone to <body> while dragging, and on a few iOS
+      // event-flow paths the cleanup didn't fire (manifested as a chip
+      // floating across rows after Modulate / context-menu actions).
+      // Cleaning here guarantees a clean slate before re-render.
+      document.querySelectorAll('body > .seq-step').forEach(el => el.remove());
       const display = document.getElementById('sequence-display');
-      const count   = document.getElementById('seq-count');
 
       // Grid layout: rows × cols input is always-on now (no "Off"), so
       // the grid-mode CSS class is on whenever cols ≥ 1.
@@ -4787,7 +5468,6 @@
       const isEmpty = sequence.length === 0 && pendingChord.length === 0;
       if (isEmpty) {
         display.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
-        count.textContent = '0 steps';
         const revBtn = document.getElementById('reverse-btn');
         if (revBtn) revBtn.disabled = true;
         const shuffBtn = document.getElementById('shuffle-btn');
@@ -4971,8 +5651,6 @@
         display.appendChild(chip);
         chip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
-
-      count.textContent = `${sequence.length} step${sequence.length !== 1 ? 's' : ''}`;
 
       if (activeIndex >= 0) {
         const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
@@ -5433,51 +6111,62 @@
       updateKeepLabel();
     }
 
-    function advanceAfterStep(index) {
-      const next = index + 1;
-      if (next < sequence.length) {
-        playSequence(next);
-      } else if (loopMode && sequence.length > 0) {
-        // Loop wrap: keep the accumulated timing base so there's no
-        // silent gap between the last step and the first of the next
-        // iteration. freshStart=false skips the Tone.now() re-anchor.
-        playSequence(0, /* freshStart */ false);
+    // ---- Lookahead scheduler -------------------------------------------
+    // A 25ms tick fills the next ~100ms of audio events on the audio
+    // thread. JS-thread jitter (GC, layout, paint) can no longer push
+    // step starts late, and the next bar's first step is pre-scheduled
+    // before the current bar ends — so wraps are gapless.
+    //
+    // Tradeoff: a live edit (BPM change, chord swap, sub change) takes
+    // effect at the next tick boundary instead of the next step boundary,
+    // i.e. up to ~SCHED_LOOKAHEAD_SEC later. Imperceptible at musical BPMs.
+    const SCHED_LOOKAHEAD_SEC = 0.1;
+    const SCHED_TICK_MS       = 25;
+
+    let _schedIndex       = 0;
+    let _schedSubStack    = []; // [{ subSteps, idx }] — top is deepest level
+    let _schedStopping    = false;
+    let _schedTailEndTime = 0;
+
+    // Set during scheduleStepAt so playNote skips its flashCellByFreq —
+    // we schedule the cell highlight ourselves via scheduleVisual keyed
+    // off audio time, so doubling it adds extra setTimeouts per note
+    // that piled up over long looped playback.
+    let _suppressCellFlash = false;
+
+    function rawAudioNow() {
+      const raw = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+        ? Tone.context.rawContext : null;
+      if (raw && Number.isFinite(raw.currentTime)) return raw.currentTime;
+      return (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
+    }
+
+    function currentSchedStep() {
+      if (_schedSubStack.length > 0) {
+        const top = _schedSubStack[_schedSubStack.length - 1];
+        return top.subSteps[top.idx];
+      }
+      return sequence[_schedIndex];
+    }
+
+    function advanceSchedLevel() {
+      if (_schedSubStack.length > 0) {
+        _schedSubStack[_schedSubStack.length - 1].idx++;
       } else {
-        stopSequence();
+        _schedIndex++;
       }
     }
 
-    // Set during playStepCB so playNote knows to skip its
-    // flashCellByFreq call — the chip's scheduleVisual below already
-    // handles the cell highlight via step.cellIndex, and double-running
-    // it added two extra setTimeouts per note that piled up over long
-    // looped playback.
-    let _suppressCellFlash = false;
-
-    function playStepCB(step, onDone) {
-      // Subsequence: recurse through subSteps, then onDone.
-      if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {
-        playSubStepsCB(step.subSteps, 0, onDone);
-        return;
-      }
+    function scheduleStepAt(step, audioTime) {
       const stepDur = step.duration || 1;
       const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       const bpm = parseInt(tempoInput.value) || 120;
-      // Exact step time (seconds) used for the audio cadence and the
-      // accumulated offset; rounded ms only used for the JS setTimeout
-      // (since setTimeout takes integer ms anyway). Storing the exact
-      // value in _playOffsetSec keeps audio scheduling drift-free over
-      // many loop iterations — rounding inside the offset would have
-      // accumulated up to ~0.5ms per step, audible at long runtimes.
+      // Storing the exact value in _playOffsetSec keeps the cadence
+      // drift-free over many loops — rounding here would accumulate
+      // ~0.5ms per step, audible after long runtimes.
       const waitSecExact = (60 / bpm) * stepSub * stepDur;
       const waitMsExact = waitSecExact * 1000;
-      const waitMs = Math.max(1, Math.round(waitMsExact));
-      // Schedule audio at an absolute audio-context time derived from a
-      // shared cadence anchor. setTimeout jitter (mobile Safari fires the
-      // first few timers very fast and then settles) no longer affects
-      // when the actual notes play. Visuals key off the same audioTime so
-      // the highlight follows the audio, not the JS thread.
-      const audioTime = _playBaseTime + _playOffsetSec;
+
       _suppressCellFlash = true;
       try {
         if (step.chord) {
@@ -5491,13 +6180,14 @@
       } finally {
         _suppressCellFlash = false;
       }
+
       scheduleVisual(() => {
         clearHighlights();
         // Resolve cell index for a voice with a stored cellIndex falling
-        // back to a freq-based lookup. Out-of-scale grid cells stay in
-        // the cells array (they only get .pointer-events: none), so the
-        // outline still shows; transposed wrap voices that store
-        // cellIndex=null still light up the closest matching cell.
+        // back to a freq-based lookup. Out-of-scale cells stay in the
+        // cells array (only get pointer-events:none) so the outline still
+        // shows; transposed wrap voices that store cellIndex=null still
+        // light up the closest matching cell.
         const lightCellByVoice = (n) => {
           if (!n) return;
           let idx = (n.cellIndex != null) ? n.cellIndex : -1;
@@ -5514,22 +6204,75 @@
           document.querySelectorAll('.rest-bar').forEach(b => b.classList.add('active-loop'));
         }
         // Surface the currently-playing step in the Keep button so the
-        // user can read the chord/note name (e.g. "CM7", "F#dim/A") as
-        // playback advances. Rests don't carry pitch info, so leave the
-        // previous step's label up rather than flashing to "KEEP".
-        // Cleared in stopSequence.
+        // user can read the chord/note name as playback advances. Rests
+        // don't carry pitch info, so leave the previous step's label up
+        // rather than flashing to "KEEP". Cleared in stopSequence.
         if (step.chord || step.freq != null) {
           _playbackStep = step;
           updateKeepLabel();
         }
       }, audioTime);
+
       _playOffsetSec += waitSecExact;
-      sequenceTimer = setTimeout(onDone, waitMs);
+      return waitSecExact;
     }
 
-    function playSubStepsCB(subSteps, idx, onDone) {
-      if (idx >= subSteps.length) { onDone(); return; }
-      playStepCB(subSteps[idx], () => playSubStepsCB(subSteps, idx + 1, onDone));
+    function schedulerTick() {
+      if (!_schedStopping) {
+        const horizon = rawAudioNow() + SCHED_LOOKAHEAD_SEC;
+        let safety = 0;
+        while (_playBaseTime + _playOffsetSec <= horizon) {
+          if (++safety > 1024) break; // pathological-input guard
+          const step = currentSchedStep();
+          if (step === undefined) {
+            // End of current level — pop sub or end main sequence.
+            if (_schedSubStack.length > 0) {
+              _schedSubStack.pop();
+              advanceSchedLevel();
+              continue;
+            }
+            if (loopMode && sequence.length > 0) {
+              // Wrap. If JS fell so far behind that the cadence anchor is
+              // in the past, snap forward to rawNow so we don't try
+              // scheduling into the past.
+              const continuation = _playBaseTime + _playOffsetSec;
+              const rawNow = rawAudioNow();
+              if (continuation < rawNow) {
+                _playBaseTime  = rawNow;
+                _playOffsetSec = 0;
+              }
+              _schedIndex = 0;
+              continue;
+            }
+            // Non-loop end: stop scheduling new audio; the tick keeps
+            // running until the tail of the last scheduled step has
+            // played out, then calls stopSequence.
+            _schedStopping = true;
+            break;
+          }
+          // Top-level chip highlight fires at the start of every top-level
+          // step (regular OR sub); sub children inherit it.
+          if (_schedSubStack.length === 0) {
+            const myIdx = _schedIndex;
+            const chipAudioTime = _playBaseTime + _playOffsetSec;
+            scheduleVisual(() => setActiveSequenceChip(myIdx), chipAudioTime);
+          }
+          if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {
+            _schedSubStack.push({ subSteps: step.subSteps, idx: 0 });
+            continue;
+          }
+          const audioTime = _playBaseTime + _playOffsetSec;
+          const waitSec = scheduleStepAt(step, audioTime);
+          _schedTailEndTime = audioTime + waitSec;
+          advanceSchedLevel();
+        }
+      }
+      if (_schedStopping && rawAudioNow() >= _schedTailEndTime) {
+        sequenceTimer = null;
+        stopSequence();
+        return;
+      }
+      sequenceTimer = setTimeout(schedulerTick, SCHED_TICK_MS);
     }
 
     // One-shot preview that doesn't touch sequenceTimer / playback state, so
@@ -6150,6 +6893,150 @@
       return true;
     }
 
+    // Sustained variant of playWrapTemplateOnCell — used by the cell
+    // pointerdown wrap branch so press-and-hold rings each chord voice
+    // for as long as the user holds the cell. Returns a release handle
+    // on success (chord / single-note wraps), or null when the wrap
+    // shape can't be sustained (sub-step wraps schedule sequentially —
+    // we play them one-shot and return null so the poly session skips
+    // sustaining bookkeeping).
+    function startSustainedWrapOnCell(cellIdx) {
+      if (!wrapTemplate) return null;
+      const note = notes[cellIdx];
+      if (!note) return null;
+      const visit = (s) => {
+        if (!s) return null;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          for (const sub of s.subSteps) { const f = visit(sub); if (f != null) return f; }
+          return null;
+        }
+        if (Array.isArray(s.chord) && s.chord[0]?.freq != null) return s.chord[0].freq;
+        if (s.freq != null) return s.freq;
+        return null;
+      };
+      const baseFreq = visit(wrapTemplate);
+      if (baseFreq == null) return null;
+      const delta = semitonesBetweenHz(baseFreq, note.freq);
+      const transposed = snapStepToScale(transposeStepRec(wrapTemplate, delta));
+
+      _wrapTransposeDisplayStep = transposed;
+      updateChordDisplay();
+      if (keepMode) {
+        snapshotForUndo('Wrap form');
+        sequence.push(transposed);
+        renderSequence();
+      }
+
+      if (transposed.isSub && Array.isArray(transposed.subSteps)) {
+        // Sub wraps play sequentially via Tone scheduling; there's no
+        // single sustain to hold. Fire one-shot, no handle.
+        playSubStepsAtTime(transposed.subSteps, Tone.now());
+        return null;
+      }
+
+      // Chord wraps: build a voice object per chord note (handles both
+      // synth-based AND sample-based instruments like Piano/Organ),
+      // then trigger every one in a tight loop with a single shared
+      // audio timestamp captured AFTER construction. Construction is
+      // separated from triggering so per-voice JS work doesn't slide
+      // later voices' attack times — every voice fires at exactly
+      // `wrapAt`. Returns a release handle so pressing-and-holding the
+      // cell sustains the chord until pointerup.
+      if (Array.isArray(transposed.chord) && transposed.chord.length > 0) {
+        const size = transposed.chord.length;
+        const voices = transposed.chord.map(n => {
+          if (!n || n.freq == null) return null;
+          const p = chordVoiceParams(n.params || n.sound || 'sine', size);
+          const vol = Math.max(0.001, (p.volume ?? 100) / 100);
+          // Sample-based instrument (Piano, Organ, etc.) — route via
+          // the shared Tone.Sampler instead of constructing a synth.
+          if (isSampleType(p.type)) {
+            const entry = getSampleEntry(p.type);
+            if (!entry || !entry.sampler || !entry.sampler.loaded) return null;
+            const baseFreq = snapDrumKitFreq(p.type, n.freq);
+            const tunedFreq = (typeof baseFreq === 'number')
+              ? baseFreq * Math.pow(2, (p.detune || 0) / 1200)
+              : baseFreq;
+            return {
+              attack:  (at) => { try { entry.sampler.triggerAttack(tunedFreq, at, vol); } catch (e) {} },
+              release: () => { try { entry.sampler.triggerRelease(tunedFreq, undefined); } catch (e) {} },
+              env: { release: 1.0 },
+            };
+          }
+          // Synth-based voice.
+          const env = {
+            attack:  Math.max((p.attack  ?? 10)   / 1000, 0.005),
+            decay:   Math.max((p.decay   ?? 100)  / 1000, 0.01),
+            sustain: Math.max((p.sustain ?? 50)   / 100,  0.001),
+            release: Math.max((p.release ?? 1400) / 1000, 0.1),
+          };
+          const oscType = p.type === 'fat'   ? 'fatsawtooth'
+                        : p.type === 'pulse' ? 'pulse'
+                        : (p.type || 'sine');
+          let synth;
+          if (p.type === 'fm') {
+            synth = new Tone.FMSynth({ oscillator: { type: 'sine' }, envelope: env });
+          } else if (p.type === 'am') {
+            synth = new Tone.AMSynth({ oscillator: { type: 'sine' }, envelope: env });
+          } else if (p.type === 'mono') {
+            synth = new Tone.MonoSynth({ oscillator: { type: 'sawtooth' }, envelope: env });
+          } else if (p.type === 'bell') {
+            synth = new Tone.FMSynth({
+              harmonicity: 2.14, modulationIndex: 4,
+              oscillator: { type: 'sine' },
+              envelope: { attack: 0.001, decay: 2.0, sustain: 0.5, release: 0.8 },
+              modulation: { type: 'sine' },
+              modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
+            });
+          } else {
+            synth = new Tone.Synth({ oscillator: { type: oscType }, envelope: env });
+          }
+          synth.connect(masterBus);
+          try { synth.volume.value = Tone.gainToDb(vol); } catch (e) {}
+          if (synth.detune && Number.isFinite(p.detune)) synth.detune.value = p.detune;
+          return {
+            attack:  (at) => { try { synth.triggerAttack(n.freq, at, 1); } catch (e) {} },
+            release: () => {
+              try { synth.triggerRelease(); } catch (e) {}
+              setTimeout(() => { try { synth.dispose(); } catch (e) {} }, (env.release + 0.5) * 1000);
+            },
+            env,
+          };
+        }).filter(Boolean);
+        if (voices.length === 0) return null;
+        // Capture wrapAt AFTER all construction so per-voice setup time
+        // doesn't push later voices' triggers past it. Small lookahead
+        // (50 ms) absorbs any micro-jitter in the trigger loop below.
+        const ac = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+        const wrapAt = (ac ? ac.currentTime : 0) + 0.05;
+        // Tight trigger loop — every voice attacks at exactly wrapAt.
+        voices.forEach(v => v.attack(wrapAt));
+        let released = false;
+        return {
+          release: () => {
+            if (released) return; released = true;
+            voices.forEach(v => v.release());
+          },
+        };
+      }
+
+      const handles = [];
+      if (transposed.freq != null) {
+        try {
+          const h = startSustainedNote(
+            transposed.freq,
+            paramsWithBend(transposed.params || transposed.sound || 'sine', transposed.bend),
+            wrapAt
+          );
+          if (h) handles.push(h);
+        } catch (e) {}
+      }
+      if (handles.length === 0) return null;
+      return {
+        release: () => handles.forEach(h => { try { h.release(); } catch (e) {} }),
+      };
+    }
+
     function runModeOnCell(cellIdx) {
       const note = notes[cellIdx];
       if (!note) return;
@@ -6478,44 +7365,27 @@
     }
 
     function playSequence(index = 0, freshStart = true) {
-      if (index === 0) {
-        document.getElementById('play-btn').textContent = '■';
-        if (freshStart) {
-          // Fresh start: anchor with the full Tone lookAhead so the
-          // audio thread has comfortable scheduling head-room before
-          // the first note.
-          _playBaseTime  = Tone.now();
-          _playOffsetSec = 0;
-          // Re-phase the BPM digit pulse so its cycle begins (the red
-          // peak in the keyframes) at the same moment the first note
-          // attacks. scheduleVisual maps audio-time → wall-clock time
-          // accounting for Tone's lookAhead and audio-context latency.
-          scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
-        } else {
-          // Loop wrap: continue from where the previous iteration's
-          // last note naturally ended. Compare against the BARE audio-
-          // thread time (rawContext.currentTime) — not Tone.context.now()
-          // which includes lookAhead. Otherwise any continuation that
-          // lands inside the lookAhead window (i.e. every well-behaved
-          // schedule) looks "behind" and we'd bump forward by ~lookAhead
-          // ms, introducing a perceptible gap every wrap. Only bump
-          // when continuation would land in the literal past (JS fell
-          // more than lookAhead ms behind the audio thread).
-          const continuation = _playBaseTime + _playOffsetSec;
-          const raw = (Tone.context && Tone.context.rawContext)
-            ? Tone.context.rawContext : null;
-          const rawNow = raw ? raw.currentTime : Tone.context.now();
-          _playBaseTime  = continuation > rawNow ? continuation : rawNow;
-          _playOffsetSec = 0;
-        }
-      }
       if (sequence.length === 0) { stopSequence(); return; }
-      // Anchor the chip highlight to the same audio time the upcoming step
-      // will be scheduled at, so the active chip flips in sync with the
-      // audio rather than with whatever moment setTimeout fired.
-      const chipAudioTime = _playBaseTime + _playOffsetSec;
-      playStepCB(sequence[index], () => advanceAfterStep(index));
-      scheduleVisual(() => setActiveSequenceChip(index), chipAudioTime);
+      document.getElementById('play-btn').textContent = '■';
+      if (freshStart) {
+        // Fresh start: anchor with the full Tone lookAhead so the
+        // audio thread has comfortable scheduling head-room before
+        // the first note.
+        _playBaseTime  = Tone.now();
+        _playOffsetSec = 0;
+        // Re-phase the BPM digit pulse so its cycle begins (the red
+        // peak in the keyframes) at the same moment the first note
+        // attacks. scheduleVisual maps audio-time → wall-clock time
+        // accounting for Tone's lookAhead and audio-context latency.
+        scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
+      }
+      _schedIndex       = index;
+      _schedSubStack    = [];
+      _schedStopping    = false;
+      _schedTailEndTime = _playBaseTime + _playOffsetSec;
+      // Synchronous first tick so the first batch of audio events lands
+      // immediately rather than waiting one SCHED_TICK_MS.
+      schedulerTick();
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {
@@ -6566,7 +7436,14 @@
       if (sequence.length < 2) return;
       snapshotForUndo('Reverse');
       stopSequence();
-      sequence.reverse();
+      if (keepMode) {
+        // Keep on: append a reversed copy so the original stays put and
+        // the user gets a longer sequence ending in the mirror.
+        const reversed = sequence.map(cloneStep).reverse();
+        sequence = sequence.concat(reversed);
+      } else {
+        sequence.reverse();
+      }
       pendingChord = [];
       insertionPoint = null;
       renderSequence();
@@ -6576,10 +7453,20 @@
       if (sequence.length < 2) return;
       snapshotForUndo('Shuffle');
       stopSequence();
-      // Fisher-Yates
-      for (let i = sequence.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [sequence[i], sequence[j]] = [sequence[j], sequence[i]];
+      const shuffleInPlace = (arr) => {
+        // Fisher-Yates
+        for (let i = arr.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+      };
+      if (keepMode) {
+        // Keep on: append a shuffled copy of the current sequence.
+        const shuffled = sequence.map(cloneStep);
+        shuffleInPlace(shuffled);
+        sequence = sequence.concat(shuffled);
+      } else {
+        shuffleInPlace(sequence);
       }
       pendingChord = [];
       insertionPoint = null;
@@ -6778,7 +7665,7 @@
     }
 
     function randomStepParams(type) {
-      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
+      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 };
     }
 
     // Text → sequence translation. Mapping rules:
@@ -7073,7 +7960,9 @@
         stopSequence();
         // Use the grid's current scale + octaveCount so generation stays
         // anchored to the active voice instead of forcing user choices.
-        sequence = generateRandomSequence(n, c, includeRests, includeChords, currentScale, tones, octaveCount);
+        const generated = generateRandomSequence(n, c, includeRests, includeChords, currentScale, tones, octaveCount);
+        // Keep on: append; Keep off: replace (original behavior).
+        sequence = keepMode ? sequence.concat(generated) : generated;
         pendingChord = [];
         insertionPoint = null;
         renderSequence();
@@ -7142,7 +8031,8 @@
         // exposed this as an opt-in checkbox, but the typical expectation
         // of "text to sequence" is that whitespace is silence, so rests
         // are now always on.
-        sequence = generateTextSequence(text, currentScale, tones, true, octaveCount);
+        const generated = generateTextSequence(text, currentScale, tones, true, octaveCount);
+        sequence = keepMode ? sequence.concat(generated) : generated;
         pendingChord = [];
         insertionPoint = null;
         renderSequence();
@@ -7572,7 +8462,7 @@
       'A4', 'C5', 'D5', 'E5', { n: 'D5', d: 4 },
     ];
     function defaultStepParams(type) {
-      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
+      return { type, attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 };
     }
     function loadSongPreset(name) {
       let src;
@@ -7592,7 +8482,7 @@
       snapshotForUndo('Load ' + name);
       stopSequence();
       const params = defaultStepParams(src.sound);
-      sequence = src.notes.map(n => {
+      const generated = src.notes.map(n => {
         if (n == null) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: src.sub };
         const noteName = (typeof n === 'object') ? n.n : n;
         const dur      = (typeof n === 'object') ? (n.d || 1) : 1;
@@ -7606,14 +8496,23 @@
           subdivision: src.sub,
         };
       });
+      // Keep on: append the song to the current sequence; Keep off: replace
+      // (original behavior). BPM / subdivision are only re-tuned to the
+      // song's settings when replacing — appending should leave the user's
+      // current tempo/grid alone.
+      if (keepMode) {
+        sequence = sequence.concat(generated);
+      } else {
+        sequence = generated;
+        tempoInput.value = src.bpm;
+        tempoSlider.value = src.bpm;
+        stepSubdivision = src.sub;
+        const subSel = document.getElementById('subdivision-select');
+        if (subSel) subSel.value = String(src.sub);
+      }
       pendingChord = [];
       insertionPoint = null;
       activeSeqIndex = null;
-      tempoInput.value = src.bpm;
-      tempoSlider.value = src.bpm;
-      stepSubdivision = src.sub;
-      const subSel = document.getElementById('subdivision-select');
-      if (subSel) subSel.value = String(src.sub);
       refreshHoldEnabled();
       renderSequence();
       renderSavedSequences();
@@ -9104,7 +10003,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -9898,13 +10797,35 @@
       applyGlobalFx();
       persistGlobalFx();
       [
-        ['fx-rev',      'fx-rev-v',      'reverb',        '%'],
-        ['fx-rev-size', 'fx-rev-size-v', 'reverbSize',    '%'],
-        ['fx-rev-tone', 'fx-rev-tone-v', 'reverbTone',    '%'],
-        ['fx-dly',      'fx-dly-v',      'delay',         '%'],
-        ['fx-dly-time', 'fx-dly-time-v', 'delayTime',     ' ms'],
-        ['fx-dly-fb',   'fx-dly-fb-v',   'delayFeedback', '%'],
-        ['fx-dst',      'fx-dst-v',      'distortion',    '%'],
+        ['fx-rev',         'fx-rev-v',         'reverb',             '%'],
+        ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',         '%'],
+        ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',         '%'],
+        ['fx-dly',         'fx-dly-v',         'delay',              '%'],
+        ['fx-dly-time',    'fx-dly-time-v',    'delayTime',          ' ms'],
+        ['fx-dly-fb',      'fx-dly-fb-v',      'delayFeedback',      '%'],
+        ['fx-dst',         'fx-dst-v',         'distortion',         '%'],
+        ['fx-cho',         'fx-cho-v',         'chorus',             '%'],
+        ['fx-cho-freq',    'fx-cho-freq-v',    'chorusFreq',         ' Hz'],
+        ['fx-cho-depth',   'fx-cho-depth-v',   'chorusDepth',        '%'],
+        ['fx-vib',         'fx-vib-v',         'vibrato',            '%'],
+        ['fx-vib-freq',    'fx-vib-freq-v',    'vibratoFreq',        ' Hz'],
+        ['fx-vib-depth',   'fx-vib-depth-v',   'vibratoDepth',       '%'],
+        ['fx-trm',         'fx-trm-v',         'tremolo',            '%'],
+        ['fx-trm-freq',    'fx-trm-freq-v',    'tremoloFreq',        ' Hz'],
+        ['fx-trm-depth',   'fx-trm-depth-v',   'tremoloDepth',       '%'],
+        ['fx-phs',         'fx-phs-v',         'phaser',             '%'],
+        ['fx-phs-freq',    'fx-phs-freq-v',    'phaserFreq',         ' Hz'],
+        ['fx-phs-oct',     'fx-phs-oct-v',     'phaserOctaves',      ''],
+        ['fx-af',          'fx-af-v',          'autoFilter',         '%'],
+        ['fx-af-freq',     'fx-af-freq-v',     'autoFilterFreq',     ' Hz'],
+        ['fx-af-depth',    'fx-af-depth-v',    'autoFilterDepth',    '%'],
+        ['fx-af-base',     'fx-af-base-v',     'autoFilterBaseFreq', ' Hz'],
+        ['fx-pp',          'fx-pp-v',          'pingPong',           '%'],
+        ['fx-pp-time',     'fx-pp-time-v',     'pingPongTime',       ' ms'],
+        ['fx-pp-fb',       'fx-pp-fb-v',       'pingPongFeedback',   '%'],
+        ['fx-apan',        'fx-apan-v',        'autoPan',            '%'],
+        ['fx-apan-freq',   'fx-apan-freq-v',   'autoPanFreq',        ' Hz'],
+        ['fx-apan-depth',  'fx-apan-depth-v',  'autoPanDepth',       '%'],
       ].forEach(([id, valId, key, unit]) => {
         const input = document.getElementById(id);
         const label = document.getElementById(valId);
@@ -10005,6 +10926,149 @@
       });
       loadBtn?.addEventListener('click', async () => {
         await loadProjectFromDrive(loadBtn);
+      });
+    })();
+
+    // ---- Radial Tone — press-position-sensitive pitch bend per cell ----
+    // When on, the cell pointerdown samples the press location and detunes
+    // the note accordingly: top/left edges = -25 cents, bottom/right edges
+    // = +25 cents, with a center deadzone (no bend). Drag-while-held bends
+    // the live note in real time; with Keep on, the final detune is saved
+    // into the new step's params.
+    let radialTone = false;
+    // Per-cell bend trajectory captured during a Radial Tone press.
+    //   start    = cents at the press location (initial detune)
+    //   end      = cents at the latest pointer position (live)
+    //   current  = same as end; tracked separately in case we ever need
+    //              to distinguish "live" from "captured-for-save"
+    // When the press finalises into a step (click handler / single-voice
+    // polyFinalize), start → end becomes a linear pitch ramp baked into
+    // step.params.detune + step.bend so playback reproduces the gesture.
+    const _radialBend = new Map(); // cellIdx -> { start, current, end }
+    function _radialBendInit(cellIdx, cents) {
+      _radialBend.set(cellIdx, { start: cents, current: cents, end: cents });
+    }
+    function _radialBendUpdate(cellIdx, cents) {
+      const e = _radialBend.get(cellIdx);
+      if (e) { e.current = cents; e.end = cents; }
+      else _radialBendInit(cellIdx, cents);
+    }
+    // Bake the captured trajectory into a step's params + bend, then
+    // delete the entry. Returns the mutated step. Safe to call when
+    // there's no entry — leaves the step untouched.
+    function _radialBendApplyToStep(cellIdx, step) {
+      const e = _radialBend.get(cellIdx);
+      _radialBend.delete(cellIdx);
+      if (!e) return step;
+      step.params = step.params ? { ...step.params } : {};
+      step.params.detune = e.start;
+      const deltaCents = e.end - e.start;
+      // Save a linear pitch ramp only if the user actually moved more
+      // than a tiny amount; static-bend cases rely on params.detune
+      // alone (no bend object → playNote skips its frequency ramp).
+      if (Math.abs(deltaCents) > 0.5) {
+        step.bend = { semitones: deltaCents / 100, atFraction: 1 };
+      }
+      return step;
+    }
+    function radialBendCents(xFrac, yFrac) {
+      // Project the press onto the anti-diagonal (top-right ↔ bottom-left
+      // is the no-bend ridge). Top-left corner = max negative, bottom-
+      // right corner = max positive. ±25 cents = ±¼ semitone.
+      const proj = (xFrac - 0.5) + (yFrac - 0.5);
+      const absP = Math.abs(proj);
+      const DEAD = 0.125;          // center deadzone (no bend inside)
+      const SPAN = 0.5 - DEAD;     // remaining travel that maps to ±25
+      if (absP <= DEAD) return 0;
+      const adj = Math.sign(proj) * (absP - DEAD) / SPAN * 25;
+      return Math.max(-25, Math.min(25, adj));
+    }
+    // Update the small "freq Hz" label on a cell to reflect the bent
+    // pitch — gives the user visual confirmation that the radial bend
+    // is taking effect even if their ear is still calibrating.
+    function setCellFreqDisplayCents(cellIdx, cents) {
+      const cell = cells[cellIdx];
+      const note = notes[cellIdx];
+      if (!cell || !note) return;
+      const el = cell.querySelector('.cell-freq');
+      if (!el) return;
+      const bent = note.freq * Math.pow(2, (cents || 0) / 1200);
+      const sign = cents > 0 ? '+' : (cents < 0 ? '' : '');
+      el.textContent = cents
+        ? `${Math.round(bent)} Hz (${sign}${cents.toFixed(0)}¢)`
+        : `${Math.round(bent)} Hz`;
+    }
+    function resetCellFreqDisplay(cellIdx) {
+      const cell = cells[cellIdx];
+      const note = notes[cellIdx];
+      if (!cell || !note) return;
+      const el = cell.querySelector('.cell-freq');
+      if (el) el.textContent = `${Math.round(note.freq)} Hz`;
+    }
+    (function initRadialToneToggle() {
+      const btn = document.getElementById('radial-tone-btn');
+      if (!btn) return;
+      const KEY = 'bloops-radial-tone';
+      radialTone = localStorage.getItem(KEY) === '1';
+      document.body.classList.toggle('radial-tone', radialTone);
+      btn.addEventListener('click', () => {
+        radialTone = !radialTone;
+        document.body.classList.toggle('radial-tone', radialTone);
+        try { localStorage.setItem(KEY, radialTone ? '1' : '0'); } catch (e) {}
+      });
+    })();
+
+    // ---- Edit-mode toggle (sits next to master-vol in the menubar) ----
+    // When on, body.edit-mode is added; CSS reveals the per-cell sound-
+    // editor carrots. Default off so a fresh load is a clean play view.
+    (function initEditModeToggle() {
+      const btn = document.getElementById('edit-mode-btn');
+      if (!btn) return;
+      const KEY = 'bloops-edit-mode';
+      const initial = localStorage.getItem(KEY) === '1';
+      document.body.classList.toggle('edit-mode', initial);
+      btn.addEventListener('click', () => {
+        const on = !document.body.classList.contains('edit-mode');
+        document.body.classList.toggle('edit-mode', on);
+        try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {}
+      });
+    })();
+
+    // ---- Riff dropdown — Save / Random / Seed / Reverse / Shuffle / Repeat ----
+    // Mirrors the Project / Voices / Colors menu chrome so the menubar look
+    // carries over to the sequence-controls row. Each entry's existing
+    // handler still fires; the dropdown just collapses 6 pills into 1.
+    (function initRiffMenu() {
+      const btn = document.getElementById('riff-menu-btn');
+      const panel = document.getElementById('riff-panel');
+      if (!btn || !panel) return;
+      const TRIGGER_ID = 'riff-menu-btn';
+      const setOpen = (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.textContent = open ? 'Riff ▴' : 'Riff ▾';
+      };
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
+      // Close after any item click — the user picked something, get out of
+      // their way. Disabled buttons don't fire click so they don't close.
+      panel.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', () => { if (!b.disabled) setOpen(false); });
       });
     })();
 
@@ -10139,9 +11203,22 @@
     }
     function applyEffectsSnapshot(snap) {
       if (!snap || !snap.globalFx) throw new Error('Effects file is malformed.');
+      const FX_ON_KEYS_LOCAL = ['reverbOn','delayOn','distortionOn','chorusOn','vibratoOn','tremoloOn','phaserOn','autoFilterOn','pingPongOn','autoPanOn'];
       Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
-        if (Number.isFinite(snap.globalFx[k])) globalFx[k] = snap.globalFx[k];
+        const v = snap.globalFx[k];
+        if (k === 'fxOrder') {
+          if (Array.isArray(v) && v.length === FX_NAMES.length
+              && v.every(n => FX_NAMES.includes(n))
+              && new Set(v).size === FX_NAMES.length) {
+            globalFx.fxOrder = v.slice();
+          }
+        } else if (FX_ON_KEYS_LOCAL.includes(k)) {
+          if (typeof v === 'boolean') globalFx[k] = v;
+        } else if (Number.isFinite(v)) {
+          globalFx[k] = v;
+        }
       });
+      rebuildMasterChain();
       applyGlobalFx();
       persistGlobalFx();
     }
@@ -10441,12 +11518,34 @@
         persistGlobalFx();
         [
           ['fx-rev',      'fx-rev-v',      'reverb',        '%'],
-          ['fx-rev-size', 'fx-rev-size-v', 'reverbSize',    '%'],
-          ['fx-rev-tone', 'fx-rev-tone-v', 'reverbTone',    '%'],
-          ['fx-dly',      'fx-dly-v',      'delay',         '%'],
-          ['fx-dly-time', 'fx-dly-time-v', 'delayTime',     ' ms'],
-          ['fx-dly-fb',   'fx-dly-fb-v',   'delayFeedback', '%'],
-          ['fx-dst',      'fx-dst-v',      'distortion',    '%'],
+          ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',         '%'],
+          ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',         '%'],
+          ['fx-dly',         'fx-dly-v',         'delay',              '%'],
+          ['fx-dly-time',    'fx-dly-time-v',    'delayTime',          ' ms'],
+          ['fx-dly-fb',      'fx-dly-fb-v',      'delayFeedback',      '%'],
+          ['fx-dst',         'fx-dst-v',         'distortion',         '%'],
+          ['fx-cho',         'fx-cho-v',         'chorus',             '%'],
+          ['fx-cho-freq',    'fx-cho-freq-v',    'chorusFreq',         ' Hz'],
+          ['fx-cho-depth',   'fx-cho-depth-v',   'chorusDepth',        '%'],
+          ['fx-vib',         'fx-vib-v',         'vibrato',            '%'],
+          ['fx-vib-freq',    'fx-vib-freq-v',    'vibratoFreq',        ' Hz'],
+          ['fx-vib-depth',   'fx-vib-depth-v',   'vibratoDepth',       '%'],
+          ['fx-trm',         'fx-trm-v',         'tremolo',            '%'],
+          ['fx-trm-freq',    'fx-trm-freq-v',    'tremoloFreq',        ' Hz'],
+          ['fx-trm-depth',   'fx-trm-depth-v',   'tremoloDepth',       '%'],
+          ['fx-phs',         'fx-phs-v',         'phaser',             '%'],
+          ['fx-phs-freq',    'fx-phs-freq-v',    'phaserFreq',         ' Hz'],
+          ['fx-phs-oct',     'fx-phs-oct-v',     'phaserOctaves',      ''],
+          ['fx-af',          'fx-af-v',          'autoFilter',         '%'],
+          ['fx-af-freq',     'fx-af-freq-v',     'autoFilterFreq',     ' Hz'],
+          ['fx-af-depth',    'fx-af-depth-v',    'autoFilterDepth',    '%'],
+          ['fx-af-base',     'fx-af-base-v',     'autoFilterBaseFreq', ' Hz'],
+          ['fx-pp',          'fx-pp-v',          'pingPong',           '%'],
+          ['fx-pp-time',     'fx-pp-time-v',     'pingPongTime',       ' ms'],
+          ['fx-pp-fb',       'fx-pp-fb-v',       'pingPongFeedback',   '%'],
+          ['fx-apan',        'fx-apan-v',        'autoPan',            '%'],
+          ['fx-apan-freq',   'fx-apan-freq-v',   'autoPanFreq',        ' Hz'],
+          ['fx-apan-depth',  'fx-apan-depth-v',  'autoPanDepth',       '%'],
         ].forEach(([id, valId, key, unit]) => {
           const input = document.getElementById(id);
           const label = document.getElementById(valId);
@@ -11037,11 +12136,11 @@
             document.getElementById('save-btn').disabled = sequence.length === 0;
         }},
         'hr',
-        { label: 'Reset sound → Sine', fn: () => {
-            cellSounds[noteIndex] = 'sine';
-            cellParams[noteIndex] = { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
+        { label: 'Reset sound → Piano', fn: () => {
+            cellSounds[noteIndex] = 'sample:piano';
+            cellParams[noteIndex] = { type: 'sample:piano', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 };
             const sel = cells[noteIndex].querySelector('.cell-sound-select');
-            if (sel) sel.value = 'sine';
+            if (sel) sel.value = 'sample:piano';
             updateScaleBanner();
         }},
       ];
@@ -11058,6 +12157,7 @@
       modal.className = 'sm-modal';
       modal.innerHTML = `
         <div class="sm-title">Sound Editor — ${note.label}</div>
+        <label class="sm-apply-all"><input type="checkbox" id="sm-apply-all" /> Apply to all notes</label>
         <details class="sm-fold" open>
           <summary>Tone</summary>
           <div class="sm-fold-body">
@@ -11128,6 +12228,23 @@
               <input type="range" id="sm-dly-time" min="20" max="1000" step="10" value="${p.delayTime ?? 250}" />
             </div>
             <div class="sm-param">
+              <div class="sm-param-row">Sync to BPM</div>
+              <select id="sm-dly-sync" class="sm-select">
+                <option value="">Off (use Time)</option>
+                <option value="2n">1/2</option>
+                <option value="4n.">1/4 dotted</option>
+                <option value="4n">1/4</option>
+                <option value="4t">1/4 triplet</option>
+                <option value="8n.">1/8 dotted</option>
+                <option value="8n">1/8</option>
+                <option value="8t">1/8 triplet</option>
+                <option value="16n.">1/16 dotted</option>
+                <option value="16n">1/16</option>
+                <option value="16t">1/16 triplet</option>
+                <option value="32n">1/32</option>
+              </select>
+            </div>
+            <div class="sm-param">
               <div class="sm-param-row">Feedback <span class="sm-val" id="sm-dly-fb-v">${p.delayFeedback ?? 40}%</span></div>
               <input type="range" id="sm-dly-fb" min="0" max="95" value="${p.delayFeedback ?? 40}" />
             </div>
@@ -11136,6 +12253,43 @@
               <div class="sm-param-row">Amount <span class="sm-val" id="sm-dst-v">${p.distortion ?? 0}%</span></div>
               <input type="range" id="sm-dst" min="0" max="100" value="${p.distortion ?? 0}" />
             </div>
+            <details class="sm-fx-group"><summary>Chorus</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-cho-v">${p.chorus ?? 0}%</span></div><input type="range" id="sm-cho" min="0" max="100" value="${p.chorus ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="sm-cho-freq-v">${p.chorusFreq ?? 4} Hz</span></div><input type="range" id="sm-cho-freq" min="0.1" max="10" step="0.1" value="${p.chorusFreq ?? 4}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="sm-cho-depth-v">${p.chorusDepth ?? 70}%</span></div><input type="range" id="sm-cho-depth" min="0" max="100" value="${p.chorusDepth ?? 70}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Vibrato</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-vib-v">${p.vibrato ?? 0}%</span></div><input type="range" id="sm-vib" min="0" max="100" value="${p.vibrato ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="sm-vib-freq-v">${p.vibratoFreq ?? 5} Hz</span></div><input type="range" id="sm-vib-freq" min="0.1" max="20" step="0.1" value="${p.vibratoFreq ?? 5}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="sm-vib-depth-v">${p.vibratoDepth ?? 30}%</span></div><input type="range" id="sm-vib-depth" min="0" max="100" value="${p.vibratoDepth ?? 30}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Tremolo</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-trm-v">${p.tremolo ?? 0}%</span></div><input type="range" id="sm-trm" min="0" max="100" value="${p.tremolo ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="sm-trm-freq-v">${p.tremoloFreq ?? 5} Hz</span></div><input type="range" id="sm-trm-freq" min="0.1" max="20" step="0.1" value="${p.tremoloFreq ?? 5}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="sm-trm-depth-v">${p.tremoloDepth ?? 70}%</span></div><input type="range" id="sm-trm-depth" min="0" max="100" value="${p.tremoloDepth ?? 70}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Phaser</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-phs-v">${p.phaser ?? 0}%</span></div><input type="range" id="sm-phs" min="0" max="100" value="${p.phaser ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="sm-phs-freq-v">${p.phaserFreq ?? 0.5} Hz</span></div><input type="range" id="sm-phs-freq" min="0.05" max="10" step="0.05" value="${p.phaserFreq ?? 0.5}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Octaves <span class="sm-val" id="sm-phs-oct-v">${p.phaserOctaves ?? 3}</span></div><input type="range" id="sm-phs-oct" min="1" max="7" step="1" value="${p.phaserOctaves ?? 3}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Auto Filter</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-af-v">${p.autoFilter ?? 0}%</span></div><input type="range" id="sm-af" min="0" max="100" value="${p.autoFilter ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="sm-af-freq-v">${p.autoFilterFreq ?? 1} Hz</span></div><input type="range" id="sm-af-freq" min="0.1" max="10" step="0.1" value="${p.autoFilterFreq ?? 1}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="sm-af-depth-v">${p.autoFilterDepth ?? 100}%</span></div><input type="range" id="sm-af-depth" min="0" max="100" value="${p.autoFilterDepth ?? 100}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Base <span class="sm-val" id="sm-af-base-v">${p.autoFilterBaseFreq ?? 200} Hz</span></div><input type="range" id="sm-af-base" min="50" max="2000" step="10" value="${p.autoFilterBaseFreq ?? 200}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Ping-Pong Delay</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-pp-v">${p.pingPong ?? 0}%</span></div><input type="range" id="sm-pp" min="0" max="100" value="${p.pingPong ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Time <span class="sm-val" id="sm-pp-time-v">${p.pingPongTime ?? 250} ms</span></div><input type="range" id="sm-pp-time" min="20" max="1000" step="10" value="${p.pingPongTime ?? 250}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Sync to BPM</div><select id="sm-pp-sync" class="sm-select"><option value="">Off (use Time)</option><option value="2n">1/2</option><option value="4n.">1/4 dotted</option><option value="4n">1/4</option><option value="4t">1/4 triplet</option><option value="8n.">1/8 dotted</option><option value="8n">1/8</option><option value="8t">1/8 triplet</option><option value="16n.">1/16 dotted</option><option value="16n">1/16</option><option value="16t">1/16 triplet</option><option value="32n">1/32</option></select></div>
+              <div class="sm-param"><div class="sm-param-row">Feedback <span class="sm-val" id="sm-pp-fb-v">${p.pingPongFeedback ?? 30}%</span></div><input type="range" id="sm-pp-fb" min="0" max="95" value="${p.pingPongFeedback ?? 30}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Auto Pan</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="sm-apan-v">${p.autoPan ?? 0}%</span></div><input type="range" id="sm-apan" min="0" max="100" value="${p.autoPan ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="sm-apan-freq-v">${p.autoPanFreq ?? 1} Hz</span></div><input type="range" id="sm-apan-freq" min="0.1" max="10" step="0.1" value="${p.autoPanFreq ?? 1}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="sm-apan-depth-v">${p.autoPanDepth ?? 100}%</span></div><input type="range" id="sm-apan-depth" min="0" max="100" value="${p.autoPanDepth ?? 100}" /></div>
+            </details>
           </div>
         </details>
         <div class="sm-footer">
@@ -11147,6 +12301,29 @@
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
+      // "Apply to all" — when checked, every param change broadcasts the
+      // new value to cellParams[i] for every cell in the grid, so the
+      // user can dial in one synth and propagate it everywhere with a
+      // single edit. The current cell's `p` (a working copy applied at
+      // Apply time) still reflects local changes; broadcastAll mirrors
+      // them to the live cellParams immediately.
+      const applyAllChk = modal.querySelector('#sm-apply-all');
+      const broadcastAll = (key, value) => {
+        if (!applyAllChk?.checked) return;
+        cellParams.forEach((cp, idx) => {
+          if (!cp) return;
+          cp[key] = value;
+          // Type changes also need the parallel cellSounds[] mirror and the
+          // visible per-cell label updated to stay in sync — same updates
+          // the Apply button does for the single-cell case.
+          if (key === 'type') {
+            cellSounds[idx] = value;
+            const sel = cells[idx]?.querySelector('.cell-sound-select');
+            if (sel) sel.value = value;
+          }
+        });
+      };
+
       // Wave type buttons (built-in synths + any loaded samples)
       const waveRow = modal.querySelector('#sm-waves');
       const addToneButton = (opt) => {
@@ -11155,6 +12332,7 @@
         btn.textContent = opt.label;
         btn.addEventListener('click', () => {
           p.type = opt.value;
+          broadcastAll('type', opt.value);
           waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -11177,33 +12355,76 @@
       });
       waveRow.appendChild(importBtn);
 
-      // Slider bindings
+      // Slider bindings — parseFloat so step=0.1 sliders (Hz) keep precision;
+      // integer-stepped sliders unaffected since their .value is already int.
       [
-        ['sm-atk',          'sm-atk-v',          'attack',        ' ms'],
-        ['sm-dec',          'sm-dec-v',          'decay',         ' ms'],
-        ['sm-sus',          'sm-sus-v',          'sustain',       '%'],
-        ['sm-rel',          'sm-rel-v',          'release',       ' ms'],
-        ['sm-vol',          'sm-vol-v',          'volume',        '%'],
-        ['sm-tune',         'sm-tune-v',         'detune',        ' ¢'],
-        ['sm-rev',          'sm-rev-v',          'reverb',        '%'],
-        ['sm-rev-size',     'sm-rev-size-v',     'reverbSize',    '%'],
-        ['sm-rev-tone',     'sm-rev-tone-v',     'reverbTone',    '%'],
-        ['sm-dly',          'sm-dly-v',          'delay',         '%'],
-        ['sm-dly-time',     'sm-dly-time-v',     'delayTime',     ' ms'],
-        ['sm-dly-fb',       'sm-dly-fb-v',       'delayFeedback', '%'],
-        ['sm-dst',          'sm-dst-v',          'distortion',    '%'],
+        ['sm-atk',          'sm-atk-v',          'attack',             ' ms'],
+        ['sm-dec',          'sm-dec-v',          'decay',              ' ms'],
+        ['sm-sus',          'sm-sus-v',          'sustain',            '%'],
+        ['sm-rel',          'sm-rel-v',          'release',            ' ms'],
+        ['sm-vol',          'sm-vol-v',          'volume',             '%'],
+        ['sm-tune',         'sm-tune-v',         'detune',             ' ¢'],
+        ['sm-rev',          'sm-rev-v',          'reverb',             '%'],
+        ['sm-rev-size',     'sm-rev-size-v',     'reverbSize',         '%'],
+        ['sm-rev-tone',     'sm-rev-tone-v',     'reverbTone',         '%'],
+        ['sm-dly',          'sm-dly-v',          'delay',              '%'],
+        ['sm-dly-time',     'sm-dly-time-v',     'delayTime',          ' ms'],
+        ['sm-dly-fb',       'sm-dly-fb-v',       'delayFeedback',      '%'],
+        ['sm-dst',          'sm-dst-v',          'distortion',         '%'],
+        ['sm-cho',          'sm-cho-v',          'chorus',             '%'],
+        ['sm-cho-freq',     'sm-cho-freq-v',     'chorusFreq',         ' Hz'],
+        ['sm-cho-depth',    'sm-cho-depth-v',    'chorusDepth',        '%'],
+        ['sm-vib',          'sm-vib-v',          'vibrato',            '%'],
+        ['sm-vib-freq',     'sm-vib-freq-v',     'vibratoFreq',        ' Hz'],
+        ['sm-vib-depth',    'sm-vib-depth-v',    'vibratoDepth',       '%'],
+        ['sm-trm',          'sm-trm-v',          'tremolo',            '%'],
+        ['sm-trm-freq',     'sm-trm-freq-v',     'tremoloFreq',        ' Hz'],
+        ['sm-trm-depth',    'sm-trm-depth-v',    'tremoloDepth',       '%'],
+        ['sm-phs',          'sm-phs-v',          'phaser',             '%'],
+        ['sm-phs-freq',     'sm-phs-freq-v',     'phaserFreq',         ' Hz'],
+        ['sm-phs-oct',      'sm-phs-oct-v',      'phaserOctaves',      ''],
+        ['sm-af',           'sm-af-v',           'autoFilter',         '%'],
+        ['sm-af-freq',      'sm-af-freq-v',      'autoFilterFreq',     ' Hz'],
+        ['sm-af-depth',     'sm-af-depth-v',     'autoFilterDepth',    '%'],
+        ['sm-af-base',      'sm-af-base-v',      'autoFilterBaseFreq', ' Hz'],
+        ['sm-pp',           'sm-pp-v',           'pingPong',           '%'],
+        ['sm-pp-time',      'sm-pp-time-v',      'pingPongTime',       ' ms'],
+        ['sm-pp-fb',        'sm-pp-fb-v',        'pingPongFeedback',   '%'],
+        ['sm-apan',         'sm-apan-v',         'autoPan',            '%'],
+        ['sm-apan-freq',    'sm-apan-freq-v',    'autoPanFreq',        ' Hz'],
+        ['sm-apan-depth',   'sm-apan-depth-v',   'autoPanDepth',       '%'],
       ].forEach(([id, valId, key, unit]) => {
         const input = modal.querySelector(`#${id}`);
+        if (!input) return;
         const label = modal.querySelector(`#${valId}`);
         input.addEventListener('input', () => {
-          p[key] = parseInt(input.value);
-          label.textContent = p[key] + unit;
+          const v = parseFloat(input.value);
+          p[key] = v;
+          broadcastAll(key, v);
+          if (label) label.textContent = v + unit;
         });
       });
       const overrideCheckbox = modal.querySelector('#sm-fx-override');
       if (overrideCheckbox) {
         overrideCheckbox.addEventListener('change', () => {
           p.fxOverrideGlobal = !!overrideCheckbox.checked;
+          broadcastAll('fxOverrideGlobal', p.fxOverrideGlobal);
+        });
+      }
+      const dlySyncSel = modal.querySelector('#sm-dly-sync');
+      if (dlySyncSel) {
+        dlySyncSel.value = p.delaySync || '';
+        dlySyncSel.addEventListener('change', () => {
+          p.delaySync = dlySyncSel.value || null;
+          broadcastAll('delaySync', p.delaySync);
+        });
+      }
+      const ppSyncSel = modal.querySelector('#sm-pp-sync');
+      if (ppSyncSel) {
+        ppSyncSel.value = p.pingPongSync || '';
+        ppSyncSel.addEventListener('change', () => {
+          p.pingPongSync = ppSyncSel.value || null;
+          broadcastAll('pingPongSync', p.pingPongSync);
         });
       }
 
@@ -11547,6 +12768,12 @@
       };
       chip.addEventListener('touchend', onTouchEnd);
       chip.addEventListener('touchcancel', onTouchEnd);
+      // Pointer mirrors — iOS sometimes drops touchend when a long-press
+      // takes over (e.g. when the chip menu opens), leaving the position:
+      // fixed clone orphaned in the DOM. Pointer events still flow in
+      // those cases, so cleaning up on pointerup/cancel covers the gap.
+      chip.addEventListener('pointerup',     onTouchEnd);
+      chip.addEventListener('pointercancel', onTouchEnd);
     }
 
     // Shift every audible note in a step (and any nested subSteps) by `semis`
@@ -11736,12 +12963,26 @@
       let lpt = null;
       let startX = 0, startY = 0;
       const MOVE_TOLERANCE = 8; // matches the drag system; ignores finger jitter
+      // Right-click / long-press-on-desktop fires contextmenu before our
+      // timer; suppress it so the browser's native menu doesn't compete
+      // with the chip menu and steal focus.
+      chip.addEventListener('contextmenu', (e) => e.preventDefault());
+      // iOS / some browsers can still try to start a text-selection on
+      // long-press despite user-select: none — selectstart preventDefault
+      // covers the residual case.
+      chip.addEventListener('selectstart', (e) => e.preventDefault());
       chip.addEventListener('pointerdown', (e) => {
         startX = e.clientX;
         startY = e.clientY;
         lpt = setTimeout(() => {
           lpt = null;
           navigator.vibrate?.(40);
+          // Long-press fired — abort any in-flight HTML5 / touch drag so
+          // the menu doesn't show alongside a drag ghost. HTML5 drag is
+          // suppressed by clearing draggable; the touch-drag pipeline
+          // listens for the synthetic pointercancel below.
+          chip.draggable = false;
+          try { chip.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true })); } catch (e2) {}
           const step = sequence[stepIndex];
           const actions = [];
           if (step && step.isSub) {
@@ -12018,6 +13259,23 @@
               <input type="range" id="se-dly-time" min="20" max="1000" step="10" value="${p.delayTime}" />
             </div>
             <div class="sm-param">
+              <div class="sm-param-row">Sync to BPM</div>
+              <select id="se-dly-sync" class="sm-select">
+                <option value="">Off (use Time)</option>
+                <option value="2n">1/2</option>
+                <option value="4n.">1/4 dotted</option>
+                <option value="4n">1/4</option>
+                <option value="4t">1/4 triplet</option>
+                <option value="8n.">1/8 dotted</option>
+                <option value="8n">1/8</option>
+                <option value="8t">1/8 triplet</option>
+                <option value="16n.">1/16 dotted</option>
+                <option value="16n">1/16</option>
+                <option value="16t">1/16 triplet</option>
+                <option value="32n">1/32</option>
+              </select>
+            </div>
+            <div class="sm-param">
               <div class="sm-param-row">Feedback <span class="sm-val" id="se-dly-fb-v">${p.delayFeedback}%</span></div>
               <input type="range" id="se-dly-fb" min="0" max="95" value="${p.delayFeedback}" />
             </div>
@@ -12026,6 +13284,43 @@
               <div class="sm-param-row">Amount <span class="sm-val" id="se-dst-v">${p.distortion}%</span></div>
               <input type="range" id="se-dst" min="0" max="100" value="${p.distortion}" />
             </div>
+            <details class="sm-fx-group"><summary>Chorus</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-cho-v">${p.chorus ?? 0}%</span></div><input type="range" id="se-cho" min="0" max="100" value="${p.chorus ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="se-cho-freq-v">${p.chorusFreq ?? 4} Hz</span></div><input type="range" id="se-cho-freq" min="0.1" max="10" step="0.1" value="${p.chorusFreq ?? 4}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="se-cho-depth-v">${p.chorusDepth ?? 70}%</span></div><input type="range" id="se-cho-depth" min="0" max="100" value="${p.chorusDepth ?? 70}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Vibrato</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-vib-v">${p.vibrato ?? 0}%</span></div><input type="range" id="se-vib" min="0" max="100" value="${p.vibrato ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="se-vib-freq-v">${p.vibratoFreq ?? 5} Hz</span></div><input type="range" id="se-vib-freq" min="0.1" max="20" step="0.1" value="${p.vibratoFreq ?? 5}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="se-vib-depth-v">${p.vibratoDepth ?? 30}%</span></div><input type="range" id="se-vib-depth" min="0" max="100" value="${p.vibratoDepth ?? 30}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Tremolo</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-trm-v">${p.tremolo ?? 0}%</span></div><input type="range" id="se-trm" min="0" max="100" value="${p.tremolo ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="se-trm-freq-v">${p.tremoloFreq ?? 5} Hz</span></div><input type="range" id="se-trm-freq" min="0.1" max="20" step="0.1" value="${p.tremoloFreq ?? 5}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="se-trm-depth-v">${p.tremoloDepth ?? 70}%</span></div><input type="range" id="se-trm-depth" min="0" max="100" value="${p.tremoloDepth ?? 70}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Phaser</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-phs-v">${p.phaser ?? 0}%</span></div><input type="range" id="se-phs" min="0" max="100" value="${p.phaser ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="se-phs-freq-v">${p.phaserFreq ?? 0.5} Hz</span></div><input type="range" id="se-phs-freq" min="0.05" max="10" step="0.05" value="${p.phaserFreq ?? 0.5}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Octaves <span class="sm-val" id="se-phs-oct-v">${p.phaserOctaves ?? 3}</span></div><input type="range" id="se-phs-oct" min="1" max="7" step="1" value="${p.phaserOctaves ?? 3}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Auto Filter</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-af-v">${p.autoFilter ?? 0}%</span></div><input type="range" id="se-af" min="0" max="100" value="${p.autoFilter ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="se-af-freq-v">${p.autoFilterFreq ?? 1} Hz</span></div><input type="range" id="se-af-freq" min="0.1" max="10" step="0.1" value="${p.autoFilterFreq ?? 1}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="se-af-depth-v">${p.autoFilterDepth ?? 100}%</span></div><input type="range" id="se-af-depth" min="0" max="100" value="${p.autoFilterDepth ?? 100}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Base <span class="sm-val" id="se-af-base-v">${p.autoFilterBaseFreq ?? 200} Hz</span></div><input type="range" id="se-af-base" min="50" max="2000" step="10" value="${p.autoFilterBaseFreq ?? 200}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Ping-Pong Delay</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-pp-v">${p.pingPong ?? 0}%</span></div><input type="range" id="se-pp" min="0" max="100" value="${p.pingPong ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Time <span class="sm-val" id="se-pp-time-v">${p.pingPongTime ?? 250} ms</span></div><input type="range" id="se-pp-time" min="20" max="1000" step="10" value="${p.pingPongTime ?? 250}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Sync to BPM</div><select id="se-pp-sync" class="sm-select"><option value="">Off (use Time)</option><option value="2n">1/2</option><option value="4n.">1/4 dotted</option><option value="4n">1/4</option><option value="4t">1/4 triplet</option><option value="8n.">1/8 dotted</option><option value="8n">1/8</option><option value="8t">1/8 triplet</option><option value="16n.">1/16 dotted</option><option value="16n">1/16</option><option value="16t">1/16 triplet</option><option value="32n">1/32</option></select></div>
+              <div class="sm-param"><div class="sm-param-row">Feedback <span class="sm-val" id="se-pp-fb-v">${p.pingPongFeedback ?? 30}%</span></div><input type="range" id="se-pp-fb" min="0" max="95" value="${p.pingPongFeedback ?? 30}" /></div>
+            </details>
+            <details class="sm-fx-group"><summary>Auto Pan</summary>
+              <div class="sm-param"><div class="sm-param-row">Mix <span class="sm-val" id="se-apan-v">${p.autoPan ?? 0}%</span></div><input type="range" id="se-apan" min="0" max="100" value="${p.autoPan ?? 0}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Rate <span class="sm-val" id="se-apan-freq-v">${p.autoPanFreq ?? 1} Hz</span></div><input type="range" id="se-apan-freq" min="0.1" max="10" step="0.1" value="${p.autoPanFreq ?? 1}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Depth <span class="sm-val" id="se-apan-depth-v">${p.autoPanDepth ?? 100}%</span></div><input type="range" id="se-apan-depth" min="0" max="100" value="${p.autoPanDepth ?? 100}" /></div>
+            </details>
           </div>
         </details>
         <div class="sm-footer">
@@ -12104,19 +13399,44 @@
         ['se-rev',       'se-rev-v',       'reverb',        '%'],
         ['se-rev-size',  'se-rev-size-v',  'reverbSize',    '%'],
         ['se-rev-tone',  'se-rev-tone-v',  'reverbTone',    '%'],
-        ['se-dly',       'se-dly-v',       'delay',         '%'],
-        ['se-dly-time',  'se-dly-time-v',  'delayTime',     ' ms'],
-        ['se-dly-fb',    'se-dly-fb-v',    'delayFeedback', '%'],
-        ['se-dst',       'se-dst-v',       'distortion',    '%'],
+        ['se-dly',       'se-dly-v',       'delay',              '%'],
+        ['se-dly-time',  'se-dly-time-v',  'delayTime',          ' ms'],
+        ['se-dly-fb',    'se-dly-fb-v',    'delayFeedback',      '%'],
+        ['se-dst',       'se-dst-v',       'distortion',         '%'],
+        ['se-cho',       'se-cho-v',       'chorus',             '%'],
+        ['se-cho-freq',  'se-cho-freq-v',  'chorusFreq',         ' Hz'],
+        ['se-cho-depth', 'se-cho-depth-v', 'chorusDepth',        '%'],
+        ['se-vib',       'se-vib-v',       'vibrato',            '%'],
+        ['se-vib-freq',  'se-vib-freq-v',  'vibratoFreq',        ' Hz'],
+        ['se-vib-depth', 'se-vib-depth-v', 'vibratoDepth',       '%'],
+        ['se-trm',       'se-trm-v',       'tremolo',            '%'],
+        ['se-trm-freq',  'se-trm-freq-v',  'tremoloFreq',        ' Hz'],
+        ['se-trm-depth', 'se-trm-depth-v', 'tremoloDepth',       '%'],
+        ['se-phs',       'se-phs-v',       'phaser',             '%'],
+        ['se-phs-freq',  'se-phs-freq-v',  'phaserFreq',         ' Hz'],
+        ['se-phs-oct',   'se-phs-oct-v',   'phaserOctaves',      ''],
+        ['se-af',        'se-af-v',        'autoFilter',         '%'],
+        ['se-af-freq',   'se-af-freq-v',   'autoFilterFreq',     ' Hz'],
+        ['se-af-depth',  'se-af-depth-v',  'autoFilterDepth',    '%'],
+        ['se-af-base',   'se-af-base-v',   'autoFilterBaseFreq', ' Hz'],
+        ['se-pp',        'se-pp-v',        'pingPong',           '%'],
+        ['se-pp-time',   'se-pp-time-v',   'pingPongTime',       ' ms'],
+        ['se-pp-fb',     'se-pp-fb-v',     'pingPongFeedback',   '%'],
+        ['se-apan',      'se-apan-v',      'autoPan',            '%'],
+        ['se-apan-freq', 'se-apan-freq-v', 'autoPanFreq',        ' Hz'],
+        ['se-apan-depth','se-apan-depth-v','autoPanDepth',       '%'],
       ].forEach(([id, valId, key, unit]) => {
         const input = modal.querySelector(`#${id}`);
+        if (!input) return;
         const label = modal.querySelector(`#${valId}`);
         input.addEventListener('input', () => {
-          p[key] = parseInt(input.value);
+          const v = parseFloat(input.value);
+          p[key] = v;
+          if (!label) return;
           if (unit === 'pan') {
-            label.textContent = p[key] === 0 ? 'C' : (p[key] < 0 ? 'L' : 'R') + Math.abs(p[key]);
+            label.textContent = v === 0 ? 'C' : (v < 0 ? 'L' : 'R') + Math.abs(v);
           } else {
-            label.textContent = p[key] + unit;
+            label.textContent = v + unit;
           }
         });
       });
@@ -12124,6 +13444,20 @@
       if (seOverrideCheckbox) {
         seOverrideCheckbox.addEventListener('change', () => {
           p.fxOverrideGlobal = !!seOverrideCheckbox.checked;
+        });
+      }
+      const seDlySyncSel = modal.querySelector('#se-dly-sync');
+      if (seDlySyncSel) {
+        seDlySyncSel.value = p.delaySync || '';
+        seDlySyncSel.addEventListener('change', () => {
+          p.delaySync = seDlySyncSel.value || null;
+        });
+      }
+      const sePpSyncSel = modal.querySelector('#se-pp-sync');
+      if (sePpSyncSel) {
+        sePpSyncSel.value = p.pingPongSync || '';
+        sePpSyncSel.addEventListener('change', () => {
+          p.pingPongSync = sePpSyncSel.value || null;
         });
       }
 
@@ -12188,7 +13522,7 @@
       const step = sequence[stepIndex];
       let chordNotes = step.chord.map(n => ({
         ...n,
-        params: n.params ? { ...n.params } : { type: n.sound || 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 },
+        params: n.params ? { ...n.params } : { type: n.sound || 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 },
       }));
       let expandedIdx = null;
       let chordDuration = step.duration ?? 1;
@@ -12408,11 +13742,18 @@
       endTimer:        null,
       suppressClickUntil: 0,
     };
-    function polyStartCell(cellIdx, pointerId) {
-      if (!notes[cellIdx]) return;
+    // Common pointerdown bookkeeping for sustained voices, shared between
+    // regular cell presses and wrap-template auditions. The voiceStarter
+    // callback is invoked exactly once (when the cell goes from 0 → 1
+    // reference count) and should return a handle with .release() (or
+    // null when no sustain is appropriate, e.g. sub-shaped wraps that
+    // play sequentially). pressedSnapshot, when non-null, registers the
+    // press in _polySession.pressed so multi-press chord-grouping picks
+    // it up at session end; wraps pass null to stay out of grouping.
+    function _polyStartSustain(cellIdx, pointerId, voiceStarter, pressedSnapshot) {
       let set = _polySession.pointerCells.get(pointerId);
       if (!set) { set = new Set(); _polySession.pointerCells.set(pointerId, set); }
-      if (set.has(cellIdx)) return; // this pointer already holds this cell
+      if (set.has(cellIdx)) return;
       set.add(cellIdx);
       // New press → cancel any pending session-finalize so consecutive
       // taps coalesce into the same chord-vs-single decision.
@@ -12420,28 +13761,22 @@
         clearTimeout(_polySession.endTimer);
         _polySession.endTimer = null;
       }
-      // Bump cell ref count; start a sustain on the first reference.
       const refs = (_polySession.cellRefCount.get(cellIdx) || 0) + 1;
       _polySession.cellRefCount.set(cellIdx, refs);
       if (refs === 1) {
-        const params = { ...cellParams[cellIdx] };
-        try {
-          const handle = startSustainedNote(notes[cellIdx].freq, params);
+        let handle = null;
+        try { handle = voiceStarter(); } catch (e) {}
+        if (handle) {
           _polySession.cellSustains.set(cellIdx, handle);
-        } catch (e) {}
-        // Persistent press highlight — stays until refs hits 0 in
-        // polyEndCellForPointer, so the user sees which cell their
-        // finger is sustaining.
-        cells[cellIdx]?.classList.add('sustaining');
+          // Persistent press highlight — stays until refs hits 0 in
+          // polyEndCellForPointer. Skipped when no handle (e.g. sub
+          // wrap one-shot) since there's nothing held to highlight.
+          cells[cellIdx]?.classList.add('sustaining');
+        }
       }
-      if (!_polySession.pressed.has(cellIdx)) {
-        const p = { ...cellParams[cellIdx] };
+      if (pressedSnapshot && !_polySession.pressed.has(cellIdx)) {
         _polySession.pressed.set(cellIdx, {
-          freq: notes[cellIdx].freq,
-          label: notes[cellIdx].label,
-          cellIndex: cellIdx,
-          sound: p.type,
-          params: p,
+          ...pressedSnapshot,
           // Wall-clock window of the user's press. pressEnd is filled in
           // by polyEndCellForPointer when the cell's last pointer
           // releases; held-step duration is derived from the difference.
@@ -12449,6 +13784,36 @@
           pressEnd: null,
         });
       }
+    }
+    function polyStartCell(cellIdx, pointerId, opts = {}) {
+      if (!notes[cellIdx]) return;
+      const note = notes[cellIdx];
+      const params = { ...cellParams[cellIdx] };
+      // Radial Tone overrides the cell's stored detune with a press-position-
+      // derived value (see radialBendCents); subsequent pointermoves update
+      // the live synth via the sustain handle.
+      if (Number.isFinite(opts.detune)) params.detune = opts.detune;
+      _polyStartSustain(cellIdx, pointerId,
+        () => startSustainedNote(note.freq, params),
+        {
+          freq: note.freq,
+          label: note.label,
+          cellIndex: cellIdx,
+          sound: params.type,
+          params,
+        }
+      );
+    }
+    // Wrap-template press: each chord voice sustains for the duration of
+    // the press, releasing on pointerup. Sub-shaped wraps fall back to a
+    // one-shot (their voices are scheduled sequentially and don't have a
+    // single sustain to hold).
+    function polyStartWrapCell(cellIdx, pointerId) {
+      if (!notes[cellIdx] || !wrapTemplate) return;
+      _polyStartSustain(cellIdx, pointerId,
+        () => startSustainedWrapOnCell(cellIdx),
+        null
+      );
     }
     function polyEndCellForPointer(cellIdx, pointerId) {
       const set = _polySession.pointerCells.get(pointerId);
@@ -12461,6 +13826,11 @@
         _polySession.cellSustains.delete(cellIdx);
         if (handle) { try { handle.release(); } catch (e) {} }
         cells[cellIdx]?.classList.remove('sustaining');
+        // Restore the cell's static "Hz" label after a Radial Tone bend.
+        // _radialBend itself is preserved until the click handler consumes
+        // it (so the appended step gets the bent detune); only the
+        // visible label resets.
+        if (typeof resetCellFreqDisplay === 'function') resetCellFreqDisplay(cellIdx);
         // Record press-end so polyFinalizeSession (and the cell click
         // handler) can compute how long the user actually held the cell
         // and stamp that as the new step's duration.
@@ -12482,10 +13852,12 @@
       const bpm = parseInt(tempoInput?.value, 10) || 120;
       const stepSec = (60 / bpm) * stepSubdivision;
       const heldSec = Math.max(0, holdMs) / 1000;
-      // Below ~1.5× a single step, treat as a regular tap and use the
-      // user's noteLength setting — keeps short taps on the grid.
-      if (heldSec < stepSec * 1.5) return noteLength;
-      return Math.max(1, Math.round(heldSec / stepSec));
+      // Quick tap (under ~40% of a step's duration) → noteLength.
+      if (heldSec < stepSec * 0.4) return noteLength;
+      // Chip width = press time, rounded up to a whole step. The release
+      // cap in _holdAdjustedParams keeps the audio playback within this
+      // window so chip-width and audible-duration match.
+      return Math.max(1, Math.ceil(heldSec / stepSec));
     }
     function _holdStepDurationForCell(cellIdx) {
       const entry = _polySession.pressed.get(cellIdx);
@@ -12497,6 +13869,32 @@
       if (!voice || voice.pressStart == null) return noteLength;
       const end = voice.pressEnd ?? performance.now();
       return _holdStepDurationFromMs(end - voice.pressStart);
+    }
+    function _holdMsForCell(cellIdx) {
+      const entry = _polySession.pressed.get(cellIdx);
+      if (!entry || entry.pressStart == null) return 0;
+      const end = entry.pressEnd ?? performance.now();
+      return Math.max(0, end - entry.pressStart);
+    }
+    function _holdMsForVoice(voice) {
+      if (!voice || voice.pressStart == null) return 0;
+      const end = voice.pressEnd ?? performance.now();
+      return Math.max(0, end - voice.pressStart);
+    }
+    // For genuine holds (>200 ms), hard-cap release so the chip's audio
+    // is dominated by the SUSTAINED tone, not the release fade. The
+    // previous "balanced" caps left the chip mostly fading — the user
+    // heard a brief peak then a long quiet decay, no real sustain.
+    // With release pinned at 150 ms (or shorter if the user explicitly
+    // chose less), preReleaseDur becomes (chipDuration - 150ms), so a
+    // 1 s chip plays as ~850 ms of clearly sustained tone + 150 ms
+    // snappy fade. Audio duration still matches chip width.
+    function _holdAdjustedParams(baseParams, holdMs) {
+      if (!baseParams || holdMs <= 200) return baseParams;
+      const out = { ...baseParams };
+      const original = out.release ?? 1400;
+      out.release = Math.min(original, 150);
+      return out;
     }
     function polyEndPointer(pointerId) {
       _polySession.pointerStartedOnCell.delete(pointerId);
@@ -12569,58 +13967,21 @@
           && gridMode === 'sequencer'
           && selectedStepRefs.length === 0) {
         const v = voices[0];
-        addToSequence({
+        const _heldMs = _holdMsForVoice(v);
+        const _heldParams = _holdAdjustedParams(v.params ? { ...v.params } : undefined, _heldMs);
+        addToSequence(_radialBendApplyToStep(v.cellIndex, {
           freq:       v.freq,
           label:      v.label,
           cellIndex:  v.cellIndex,
           sound:      v.sound,
-          params:     v.params ? { ...v.params } : undefined,
+          params:     _heldParams,
           duration:   _holdStepDurationForVoice(v),
           subdivision: stepSubdivision,
-        });
+        }));
       }
     }
     document.addEventListener('pointerup',     (e) => polyEndPointer(e.pointerId));
     document.addEventListener('pointercancel', (e) => polyEndPointer(e.pointerId));
-
-    // Double-tap on a cell opens its edit menu (was press-and-hold). The
-    // long-press timer used to fire mid-sustain and yank the play
-    // gesture into a context menu, which made hold-to-sustain feel
-    // broken — the user couldn't actually hold a note for any length of
-    // time. With this binding, hold = sustain (handled by the cell's
-    // existing pointerdown sustain path), tap-tap = edit menu.
-    function bindCellEditMenu(cell, noteIndex) {
-      let lastTapTime = 0;
-      let lastTapX = 0, lastTapY = 0;
-      // Capture-phase listener so we can intercept the second tap of a
-      // double-tap before the cell's regular pointerdown handlers fire.
-      // stopImmediatePropagation on a hit prevents the bubble-phase main
-      // handler from also pushing this tap into pendingChord / starting
-      // a sustain / etc.
-      cell.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('.cell-sound-select')) return;
-        const now = performance.now();
-        const dt = now - lastTapTime;
-        const dx = Math.abs(e.clientX - lastTapX);
-        const dy = Math.abs(e.clientY - lastTapY);
-        // 350ms window + 30px positional tolerance — same ballpark as
-        // mobile OS double-tap heuristics, and tight enough to avoid
-        // false-positives from two unrelated taps.
-        if (dt < 350 && dx < 30 && dy < 30) {
-          lastTapTime = 0;
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          navigator.vibrate?.(40);
-          showCtxMenu(e.clientX, e.clientY, cellActions(noteIndex));
-          return;
-        }
-        lastTapTime = now;
-        lastTapX = e.clientX;
-        lastTapY = e.clientY;
-      }, { capture: true });
-      cell.addEventListener('contextmenu', (e) => e.preventDefault());
-    }
-
 
     renderSavedSequences();
 
@@ -12902,20 +14263,32 @@
       const grid = document.getElementById('grid');
       grid.innerHTML = '';
       cells.length = 0;
-      cellSounds = new Array(notes.length).fill('sine');
-      cellParams = notes.map(() => ({ type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 }));
+      cellSounds = new Array(notes.length).fill('sample:piano');
+      cellParams = notes.map(() => ({ type: 'sample:piano', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 }));
 
       notes.forEach((note, i) => {
         const cell = document.createElement('div');
         cell.className = 'cell';
-        cell.innerHTML = `<span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span><span class="cell-tone"></span>`;
+        cell.innerHTML = `<button type="button" class="cell-edit-carrot" title="Open sound editor for ${note.label}" aria-label="Open sound editor">▾</button><span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span><span class="cell-tone"></span>`;
+        const editBtn = cell.querySelector('.cell-edit-carrot');
+        if (editBtn) {
+          // Prevent the carrot from triggering the cell's sustain / wrap /
+          // run-mode pointerdown logic. stopPropagation on pointerdown +
+          // click covers both the sustain bookkeeping and the synthetic
+          // click that follows touch.
+          editBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showSoundEditor(i);
+          });
+        }
 
         // Sustain + polyphony + drag-to-play — every press routes through
         // the shared poly session below. Pointers can drag across cells
         // (each crossed cell starts its own sustain) and multi-touch
         // presses build a chord step at the end of the press session.
         cell.addEventListener('pointerdown', (e) => {
-          if (e.target.closest('.cell-sound-select')) return;
+          if (e.target.closest('.cell-sound-select, .cell-edit-carrot')) return;
           // Wrap (chordMode) takes precedence over the note-mode click
           // routing so accumulating notes works the same way regardless
           // of whether the user is in Spell, Run, or Stack. Toggling
@@ -12960,7 +14333,11 @@
           if (wrapTemplate) {
             cell.classList.add('flash');
             setTimeout(() => cell.classList.remove('flash'), 80);
-            playWrapTemplateOnCell(i);
+            // Engage the poly session so chord-shaped wraps sustain for
+            // the duration of the press and release on pointerup. Sub
+            // wraps fall through inside polyStartWrapCell to a one-shot.
+            _polySession.pointerStartedOnCell.set(e.pointerId, true);
+            polyStartWrapCell(i, e.pointerId);
             return;
           }
           // Arpeggio / Chord modes don't sustain — they fire a one-shot
@@ -12980,14 +14357,71 @@
           // Default Sequencer mode — track origin for drag-to-play, start
           // sustain.
           _polySession.pointerStartedOnCell.set(e.pointerId, true);
-          polyStartCell(i, e.pointerId);
+          // Radial Tone: sample the press position and seed the sustain
+          // with a position-derived detune. The pointermove handler keeps
+          // this updated as the user slides; the click handler applies
+          // the final value to the saved step (when Keep is on).
+          let _initOpts = {};
+          if (radialTone) {
+            const rect = cell.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              const xFrac = (e.clientX - rect.left) / rect.width;
+              const yFrac = (e.clientY - rect.top)  / rect.height;
+              const cents = radialBendCents(xFrac, yFrac);
+              _radialBendInit(i, cents);
+              _initOpts.detune = cents;
+              setCellFreqDisplayCents(i, cents);
+            }
+          } else {
+            _radialBend.delete(i);
+          }
+          polyStartCell(i, e.pointerId, _initOpts);
         });
-        cell.addEventListener('pointerenter', (e) => {
+        // Drag-to-play with a 50% threshold: triggering on bare pointerenter
+        // made cell edges fire whenever a finger grazed them, so we now wait
+        // for the pointer to land inside the inner 50% × 50% region of the
+        // cell (i.e. past the midpoint along both axes) before sounding the
+        // new note. Skimming an edge no longer plays it; deliberate drags
+        // still trigger naturally as the pointer passes the cell center.
+        // Suppress right-click / iOS long-press native context menu so the
+        // press-and-hold radial bend gesture isn't interrupted by the
+        // browser's "Copy / Look Up / Share" callout.
+        cell.addEventListener('contextmenu', (e) => e.preventDefault());
+        cell.addEventListener('pointermove', (e) => {
           if (gridMode !== 'sequencer') return;             // drag-to-play only in default mode
-          if (e.buttons === 0) return;                      // pointer not pressed
           if (!_polySession.pointerStartedOnCell.get(e.pointerId)) return; // not a play gesture
-          if (e.target.closest('.cell-sound-select')) return;
-          polyStartCell(i, e.pointerId);
+          if (e.target.closest('.cell-sound-select, .cell-edit-carrot')) return;
+          const set = _polySession.pointerCells.get(e.pointerId);
+          const rect = cell.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          const xFrac = (e.clientX - rect.left) / rect.width;
+          const yFrac = (e.clientY - rect.top)  / rect.height;
+          // Radial Tone: while sustaining, slide-to-bend the live note.
+          // Don't gate on e.buttons — touch pointermove events report
+          // buttons=0 in some Safari builds, which silently killed the
+          // bend update. pointerStartedOnCell already proves "currently
+          // pressing", so it's the better guard.
+          if (radialTone) {
+            // More forgiving than set.has(i): just check that the cell is
+            // currently sustaining for SOME pointer. Multi-touch and
+            // event-flow quirks could otherwise silently drop bend updates.
+            const handle = _polySession.cellSustains.get(i);
+            if (!handle) return;
+            const cents = radialBendCents(xFrac, yFrac);
+            _radialBendUpdate(i, cents);
+            if (typeof handle.setDetune === 'function') handle.setDetune(cents);
+            setCellFreqDisplayCents(i, cents);
+            return;
+          }
+          // Normal drag-to-play: requires e.buttons proof that the pointer
+          // is actually pressed (guards against synthetic mouseover events
+          // firing on a hover-over after release), then the inner 50% × 50%
+          // region of a *new* cell.
+          if (e.buttons === 0) return;
+          if (set && set.has(i)) return;
+          if (xFrac >= 0.25 && xFrac <= 0.75 && yFrac >= 0.25 && yFrac <= 0.75) {
+            polyStartCell(i, e.pointerId);
+          }
         });
         cell.addEventListener('click', () => {
           // Clicks that ride a multi-press session get folded into a
@@ -13051,15 +14485,22 @@
               // Nothing editable in the selection (e.g. only sub/chord steps);
               // fall back to the normal append behavior so the click does
               // something useful instead of silently no-opping.
-              addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision });
+              const _holdMs = _holdMsForCell(i);
+              const _heldParams = _holdAdjustedParams(params, _holdMs);
+              addToSequence(_radialBendApplyToStep(i, { freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: _heldParams.type, params: _heldParams, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision }));
               _cellTapAdded = true;
             }
           } else {
-            addToSequence({ freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: params.type, params, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision });
+            const _holdMs = _holdMsForCell(i);
+            const _heldParams = _holdAdjustedParams(params, _holdMs);
+            addToSequence(_radialBendApplyToStep(i, { freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: _heldParams.type, params: _heldParams, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision }));
             _cellTapAdded = true;
           }
         });
-        bindCellEditMenu(cell, i);
+        // Editor opens via the .cell-edit-carrot button installed above —
+        // double-tap edit gesture removed (replaced by the carrot for a
+        // visible affordance and to free the double-tap from the sustain
+        // gesture).
         grid.appendChild(cell);
         cells.push(cell);
       });
@@ -13427,13 +14868,35 @@
       // Reflect persisted values into the inputs and update the live audio.
       // Each entry is [inputId, valueLabelId, globalFx key, unit suffix].
       const sliders = [
-        ['fx-rev',         'fx-rev-v',         'reverb',        '%'],
-        ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',    '%'],
-        ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',    '%'],
-        ['fx-dly',         'fx-dly-v',         'delay',         '%'],
-        ['fx-dly-time',    'fx-dly-time-v',    'delayTime',     ' ms'],
-        ['fx-dly-fb',      'fx-dly-fb-v',      'delayFeedback', '%'],
-        ['fx-dst',         'fx-dst-v',         'distortion',    '%'],
+        ['fx-rev',         'fx-rev-v',         'reverb',             '%'],
+        ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',         '%'],
+        ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',         '%'],
+        ['fx-dly',         'fx-dly-v',         'delay',              '%'],
+        ['fx-dly-time',    'fx-dly-time-v',    'delayTime',          ' ms'],
+        ['fx-dly-fb',      'fx-dly-fb-v',      'delayFeedback',      '%'],
+        ['fx-dst',         'fx-dst-v',         'distortion',         '%'],
+        ['fx-cho',         'fx-cho-v',         'chorus',             '%'],
+        ['fx-cho-freq',    'fx-cho-freq-v',    'chorusFreq',         ' Hz'],
+        ['fx-cho-depth',   'fx-cho-depth-v',   'chorusDepth',        '%'],
+        ['fx-vib',         'fx-vib-v',         'vibrato',            '%'],
+        ['fx-vib-freq',    'fx-vib-freq-v',    'vibratoFreq',        ' Hz'],
+        ['fx-vib-depth',   'fx-vib-depth-v',   'vibratoDepth',       '%'],
+        ['fx-trm',         'fx-trm-v',         'tremolo',            '%'],
+        ['fx-trm-freq',    'fx-trm-freq-v',    'tremoloFreq',        ' Hz'],
+        ['fx-trm-depth',   'fx-trm-depth-v',   'tremoloDepth',       '%'],
+        ['fx-phs',         'fx-phs-v',         'phaser',             '%'],
+        ['fx-phs-freq',    'fx-phs-freq-v',    'phaserFreq',         ' Hz'],
+        ['fx-phs-oct',     'fx-phs-oct-v',     'phaserOctaves',      ''],
+        ['fx-af',          'fx-af-v',          'autoFilter',         '%'],
+        ['fx-af-freq',     'fx-af-freq-v',     'autoFilterFreq',     ' Hz'],
+        ['fx-af-depth',    'fx-af-depth-v',    'autoFilterDepth',    '%'],
+        ['fx-af-base',     'fx-af-base-v',     'autoFilterBaseFreq', ' Hz'],
+        ['fx-pp',          'fx-pp-v',          'pingPong',           '%'],
+        ['fx-pp-time',     'fx-pp-time-v',     'pingPongTime',       ' ms'],
+        ['fx-pp-fb',       'fx-pp-fb-v',       'pingPongFeedback',   '%'],
+        ['fx-apan',        'fx-apan-v',        'autoPan',            '%'],
+        ['fx-apan-freq',   'fx-apan-freq-v',   'autoPanFreq',        ' Hz'],
+        ['fx-apan-depth',  'fx-apan-depth-v',  'autoPanDepth',       '%'],
       ];
       sliders.forEach(([id, valId, key, unit]) => {
         const input = panel.querySelector('#' + id);
@@ -13442,7 +14905,10 @@
         input.value = String(globalFx[key]);
         label.textContent = globalFx[key] + unit;
         input.addEventListener('input', () => {
-          globalFx[key] = parseInt(input.value, 10) || 0;
+          // parseFloat so step=0.1 / step=0.05 sliders (Hz) keep precision;
+          // integer-stepped sliders unaffected since input.value is already
+          // an integer string.
+          globalFx[key] = parseFloat(input.value) || 0;
           label.textContent = globalFx[key] + unit;
           applyGlobalFx();
           persistGlobalFx();
@@ -13452,9 +14918,16 @@
       // to 0 without touching the slider value, so the user can dip an
       // effect out of the mix and bring it right back.
       const bypassToggles = [
-        ['fx-rev-on', 'reverbOn'],
-        ['fx-dly-on', 'delayOn'],
-        ['fx-dst-on', 'distortionOn'],
+        ['fx-rev-on',  'reverbOn'],
+        ['fx-dly-on',  'delayOn'],
+        ['fx-dst-on',  'distortionOn'],
+        ['fx-cho-on',  'chorusOn'],
+        ['fx-vib-on',  'vibratoOn'],
+        ['fx-trm-on',  'tremoloOn'],
+        ['fx-phs-on',  'phaserOn'],
+        ['fx-af-on',   'autoFilterOn'],
+        ['fx-pp-on',   'pingPongOn'],
+        ['fx-apan-on', 'autoPanOn'],
       ];
       const refreshFxBypassUI = () => {
         bypassToggles.forEach(([id, key]) => {
@@ -13476,6 +14949,45 @@
         });
       });
       refreshFxBypassUI();
+
+      // Effect-order list — renders globalFx.fxOrder as a stack of rows
+      // with ↑ / ↓ buttons. A move re-runs rebuildMasterChain so the
+      // master signal flow follows immediately; per-note chains pick up
+      // the new order on each subsequent playNote call.
+      const orderListEl = panel.querySelector('#fx-order-list');
+      const renderFxOrder = () => {
+        if (!orderListEl) return;
+        orderListEl.innerHTML = '';
+        const order = (Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
+          ? globalFx.fxOrder
+          : FX_NAMES;
+        order.forEach((name, idx) => {
+          const row = document.createElement('div');
+          row.className = 'fx-order-row';
+          row.innerHTML = `
+            <span class="fx-order-pos">${idx + 1}.</span>
+            <span class="fx-order-name">${FX_LABELS[name] || name}</span>
+            <button type="button" class="fx-order-arrow" data-dir="up"   title="Move earlier in chain"${idx === 0 ? ' disabled' : ''}>↑</button>
+            <button type="button" class="fx-order-arrow" data-dir="down" title="Move later in chain"${idx === order.length - 1 ? ' disabled' : ''}>↓</button>
+          `;
+          row.querySelectorAll('.fx-order-arrow').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const dir = btn.dataset.dir;
+              const swapWith = (dir === 'up') ? idx - 1 : idx + 1;
+              if (swapWith < 0 || swapWith >= order.length) return;
+              const next = order.slice();
+              [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+              globalFx.fxOrder = next;
+              persistGlobalFx();
+              rebuildMasterChain();
+              renderFxOrder();
+            });
+          });
+          orderListEl.appendChild(row);
+        });
+      };
+      renderFxOrder();
+
       // Helper — push current globalFx values into the slider UI.
       const refreshFxSliderUI = () => {
         sliders.forEach(([id, valId, key, unit]) => {
@@ -13485,6 +14997,7 @@
           if (label) label.textContent = globalFx[key] + unit;
         });
         refreshFxBypassUI();
+        renderFxOrder();
       };
       // Bypass — toggle. First click stashes the three mix levels and zeros
       // them; second click restores them. Size/tone/time/feedback are never
@@ -13492,21 +15005,17 @@
       // across the round-trip.
       let _fxBypassMemo = null;
       panel.querySelector('#fx-reset').addEventListener('click', () => {
-        const allZero = globalFx.reverb === 0 && globalFx.delay === 0 && globalFx.distortion === 0;
+        // Bypass = zero every mix-level (snapshot first so the button
+        // toggles back to the prior values on a second click).
+        const MIX_KEYS = ['reverb', 'delay', 'distortion', 'chorus', 'vibrato', 'tremolo', 'phaser', 'autoFilter', 'pingPong', 'autoPan'];
+        const allZero = MIX_KEYS.every(k => (globalFx[k] || 0) === 0);
         if (allZero && _fxBypassMemo) {
-          globalFx.reverb     = _fxBypassMemo.reverb;
-          globalFx.delay      = _fxBypassMemo.delay;
-          globalFx.distortion = _fxBypassMemo.distortion;
+          MIX_KEYS.forEach(k => { globalFx[k] = _fxBypassMemo[k] ?? 0; });
           _fxBypassMemo = null;
         } else {
-          _fxBypassMemo = {
-            reverb:     globalFx.reverb,
-            delay:      globalFx.delay,
-            distortion: globalFx.distortion,
-          };
-          globalFx.reverb = 0;
-          globalFx.delay = 0;
-          globalFx.distortion = 0;
+          _fxBypassMemo = {};
+          MIX_KEYS.forEach(k => { _fxBypassMemo[k] = globalFx[k] || 0; });
+          MIX_KEYS.forEach(k => { globalFx[k] = 0; });
         }
         refreshFxSliderUI();
         applyGlobalFx();
@@ -13515,7 +15024,13 @@
       // Reset — restore every FX parameter (mix levels and the underlying
       // size/tone/time/feedback knobs) to its initial default.
       panel.querySelector('#fx-reset-all').addEventListener('click', () => {
-        Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => { globalFx[k] = GLOBAL_FX_DEFAULTS[k]; });
+        Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
+          const v = GLOBAL_FX_DEFAULTS[k];
+          // Clone arrays so future mutations on globalFx.fxOrder don't
+          // bleed back into the defaults.
+          globalFx[k] = Array.isArray(v) ? v.slice() : v;
+        });
+        rebuildMasterChain();
         refreshFxSliderUI();
         applyGlobalFx();
         persistGlobalFx();

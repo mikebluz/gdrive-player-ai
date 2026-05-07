@@ -22,7 +22,27 @@
     }
   </script>
 
-  <a class="home-bar" href="index.html" title="Back to mikeluz.com">Mercy Wizard</a>
+  <div class="home-bar-row">
+    <div class="undo-redo-pair">
+      <button id="undo-btn" type="button" title="Undo last action (Ctrl/Cmd+Z)" disabled>↶</button>
+      <button id="redo-btn" type="button" title="Redo last undone action (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
+    </div>
+    <a class="home-bar" href="index.html" title="Back to mikeluz.com">Mercy Wizard</a>
+    <div class="tempo-control">
+      <!-- 3-digit BPM picker — each column has + above and − below to bump
+           that digit's place value (100s / 10s / 1s) up or down. The
+           legacy slider + number input live on hidden, kept in DOM so
+           every existing tempoSlider.value / tempoInput.value reference
+           keeps working. -->
+      <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
+        <button type="button" class="bpm-digit" id="bpm-d-h" data-place="100" aria-label="BPM hundreds — press to pick a digit">1</button>
+        <button type="button" class="bpm-digit" id="bpm-d-t" data-place="10"  aria-label="BPM tens — press to pick a digit">2</button>
+        <button type="button" class="bpm-digit" id="bpm-d-o" data-place="1"   aria-label="BPM ones — press to pick a digit">0</button>
+      </div>
+      <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
+      <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
+    </div>
+  </div>
 
   <div class="bloops-loading-gate" id="bloops-loading-gate" role="status" aria-live="polite">
     <div class="bloops-loading-inner">
@@ -41,6 +61,7 @@
 
   <div class="top-bar">
     <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Make)">Make</button>
+    <button type="button" class="mix-top-link" id="mix-tab" title="Switch to the Tracks / Mixdown view (Mix)">Mix</button>
     <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen)">Listen →</button>
   </div>
 
@@ -264,13 +285,6 @@
       <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
       <button id="loop-btn" title="Loop the current sequence">Loop</button>
       <button id="clear-btn">Clear</button>
-    </div>
-
-    <div class="btn-group btn-group--seq" title="Sequence controls">
-      <div class="undo-redo-pair">
-        <button id="undo-btn" type="button" title="Undo last action (Ctrl/Cmd+Z)" disabled>↶</button>
-        <button id="redo-btn" type="button" title="Redo last undone action (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
-      </div>
       <div class="riff-wrapper">
         <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
         <div class="riff-panel" id="riff-panel">
@@ -282,32 +296,6 @@
           <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
         </div>
       </div>
-      <div class="tempo-control">
-        <!-- 3-digit BPM picker — each column has + above and − below to bump
-             that digit's place value (100s / 10s / 1s) up or down. The
-             legacy slider + number input live on hidden, kept in DOM so
-             every existing tempoSlider.value / tempoInput.value reference
-             keeps working. -->
-        <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
-          <div class="bpm-digit-col">
-            <button type="button" class="bpm-step" data-place="100" data-dir="1" aria-label="BPM hundreds up">+</button>
-            <span class="bpm-digit" id="bpm-d-h">1</span>
-            <button type="button" class="bpm-step" data-place="100" data-dir="-1" aria-label="BPM hundreds down">−</button>
-          </div>
-          <div class="bpm-digit-col">
-            <button type="button" class="bpm-step" data-place="10" data-dir="1" aria-label="BPM tens up">+</button>
-            <span class="bpm-digit" id="bpm-d-t">2</span>
-            <button type="button" class="bpm-step" data-place="10" data-dir="-1" aria-label="BPM tens down">−</button>
-          </div>
-          <div class="bpm-digit-col">
-            <button type="button" class="bpm-step" data-place="1" data-dir="1" aria-label="BPM ones up">+</button>
-            <span class="bpm-digit" id="bpm-d-o">0</span>
-            <button type="button" class="bpm-step" data-place="1" data-dir="-1" aria-label="BPM ones down">−</button>
-          </div>
-        </div>
-        <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
-        <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
-      </div>
     </div>
 
   </div>
@@ -318,22 +306,28 @@
     </div>
   </div>
 
-  <div class="tracks-section">
-    <div class="tracks-header">
-      <button id="tracks-back-btn" type="button" title="Return to the full UI">← Back</button>
-      <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
-      <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
-      <button id="tracks-countin-btn" type="button" title="When on, recording starts after a 4-beat count-in at the workspace tempo">Count-in</button>
-      <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
-      <button id="add-track-btn" title="Create a new track">+ New</button>
+  <!-- Mix view: holds the multi-track sequencer (Tracks) and the Mixdown
+       Export/Share controls. Hidden until the user clicks the Mix tab.
+       All audio + sequence state is shared across Make / Mix / Listen
+       since it lives in module-scoped JS variables, not in this DOM. -->
+  <div id="mix-view">
+    <div class="tracks-section">
+      <div class="tracks-header">
+        <button id="tracks-back-btn" type="button" title="Return to the full UI">← Back</button>
+        <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
+        <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
+        <button id="tracks-countin-btn" type="button" title="When on, recording starts after a 4-beat count-in at the workspace tempo">Count-in</button>
+        <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
+        <button id="add-track-btn" title="Create a new track">+ New</button>
+      </div>
+      <div id="tracks-container"></div>
     </div>
-    <div id="tracks-container"></div>
-  </div>
 
-  <div class="mixdown-section">
-    <span class="mixdown-label">Mixdown</span>
-    <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
-    <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
+    <div class="mixdown-section">
+      <span class="mixdown-label">Mixdown</span>
+      <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
+      <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
+    </div>
   </div>
 
 
@@ -839,6 +833,21 @@
 
     document.addEventListener('pointerdown', () => Tone.start(), { once: true });
 
+    // Trim Tone's scheduling lookAhead from the 100 ms default to 25 ms.
+    // Every Tone.now() returns currentTime + lookAhead, so an interactive
+    // triggerAttack with no explicit time gets buffered that far ahead —
+    // 100 ms is audible as lag on every tap, especially on mobile where
+    // the OS audio path adds ~50–100 ms of inherent latency on top.
+    // 25 ms still gives the audio thread a render quantum or two of
+    // headroom but cuts ~75 ms off every interactive trigger. The
+    // sequencer's own lookahead scheduler maintains its 100 ms
+    // playback window separately, so this doesn't affect playback
+    // smoothness. visualLookAheadMs() reads the current value, so the
+    // chip/cell flash timing stays in sync with the new audio offset.
+    try {
+      if (typeof Tone !== 'undefined' && Tone.context) Tone.context.lookAhead = 0.025;
+    } catch (e) {}
+
     const tempoSlider = document.getElementById('tempo-slider');
     const tempoInput  = document.getElementById('tempo-input');
 
@@ -939,52 +948,40 @@
       // to 60..320 inside setBpm, so a click at the bound just no-ops
       // visually instead of needing a disabled state.
     }
-    document.querySelectorAll('.bpm-step').forEach(b => {
-      b.addEventListener('click', () => {
-        const place = parseInt(b.dataset.place, 10) || 0;
-        const dir   = parseInt(b.dataset.dir,   10) || 0;
-        if (!place || !dir) return;
-        // Per-digit operation: only the digit at `place` changes. Other
-        // digits stay put, even when the result drops below 60 or above
-        // a typical max — getBpm/setBpm allow the full 0..999 range. At
-        // a digit extreme (0 going further down, 9 going further up) the
-        // click no-ops so the user's mental model of "this button moves
-        // this digit" stays intact.
-        const v = getBpm();
-        let h = Math.floor(v / 100);
-        let t = Math.floor((v % 100) / 10);
-        let o = v % 10;
-        if (place === 100) {
-          const nh = h + dir;
-          if (nh < 0 || nh > 9) return;
-          h = nh;
-        } else if (place === 10) {
-          const nt = t + dir;
-          if (nt < 0 || nt > 9) return;
-          t = nt;
-        } else if (place === 1) {
-          const no = o + dir;
-          if (no < 0 || no > 9) return;
-          o = no;
-        }
-        setBpm(h * 100 + t * 10 + o);
+    // Each BPM digit is now a button that opens a 0–9 picker (via the
+     // same showCtxMenu pattern used elsewhere) so the user picks the
+     // exact digit they want instead of stepping with +/−. Press on
+     // mobile or click on desktop both work — the menu anchors to the
+     // gesture's screen coordinates and replaces the digit's value when
+     // a number is selected.
+    function setBpmDigitAt(place, value) {
+      const v = getBpm();
+      let h = Math.floor(v / 100);
+      let t = Math.floor((v % 100) / 10);
+      let o = v % 10;
+      if      (place === 100) h = value;
+      else if (place === 10)  t = value;
+      else if (place === 1)   o = value;
+      setBpm(h * 100 + t * 10 + o);
+    }
+    function openBpmDigitPicker(x, y, place) {
+      const actions = [];
+      for (let d = 0; d <= 9; d++) {
+        actions.push({ label: String(d), fn: () => setBpmDigitAt(place, d) });
+      }
+      showCtxMenu(x, y, actions);
+    }
+    document.querySelectorAll('#bpm-digits .bpm-digit').forEach(btn => {
+      const place = parseInt(btn.dataset.place, 10) || 0;
+      if (!place) return;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openBpmDigitPicker(e.clientX, e.clientY, place);
       });
+      // Suppress the native long-press menu on touch so the picker is
+      // the only thing that surfaces.
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
     });
-
-    // Click any of the BPM digits themselves to freeze (or resume) the
-    // Click any digit to toggle the flashing pulse. Off by default —
-    // the host gets the .bpm-flashing class only while enabled, so a
-    // calmer first paint and the flashing is something the user opts
-    // into when they want a metronome-style visual.
-    (function bindBpmDigitFlashToggle() {
-      const host = document.getElementById('bpm-digits');
-      if (!host) return;
-      host.querySelectorAll('.bpm-digit').forEach(el => {
-        el.addEventListener('click', () => {
-          host.classList.toggle('bpm-flashing');
-        });
-      });
-    })();
 
     updateBpmAccent();
     refreshBpmDigits();
@@ -8306,7 +8303,15 @@
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
         btn.textContent = open ? 'Riff ▴' : 'Riff ▾';
+        // Re-position the panel using the shared viewport-clamping helper
+        // every time it opens, so it can never spill past the right edge
+        // (the CSS position:absolute / left:0 baseline ignores the
+        // anchor's distance from the viewport edge).
+        if (open) pinPanelToButton(btn, panel);
       };
+      window.addEventListener('resize', () => {
+        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+      });
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const willOpen = !panel.classList.contains('open');
@@ -8971,49 +8976,59 @@
       }
     })();
 
-    // ---- Top-bar view switching (Bloops ↔ Player) ------------------------
+    // ---- Top-bar view switching (Make ↔ Mix ↔ Listen) -------------------
     (function initTopBarTabs() {
       const bloopsTab = document.getElementById('bloops-tab');
+      const mixTab    = document.getElementById('mix-tab');
       const sbTab     = document.getElementById('serialbox-tab');
       if (!bloopsTab || !sbTab) return;
-      // Left tab reads "Make" while Bloops is active, "← Make" when on
-      // the Player view (so it doubles as a back-affordance). The right
-      // tab mirrors that — "Listen →" when inactive (a forward-cue), bare
-      // "Listen" once already there.
-      const updateLabels = (onSerialbox) => {
-        bloopsTab.textContent = onSerialbox ? '← Make' : 'Make';
-        sbTab.textContent     = onSerialbox ? 'Listen' : 'Listen →';
+      const tabs = [bloopsTab, mixTab, sbTab].filter(Boolean);
+      const setActive = (which) => {
+        tabs.forEach(t => t.classList.toggle('tab-active', t === which));
+      };
+      // Update labels so the active tab reads cleanly and inactive tabs
+      // hint at direction ("← Make" on the left, "Listen →" on the right).
+      const updateLabels = (active) => {
+        // 'make' | 'mix' | 'serialbox'
+        bloopsTab.textContent = (active === 'make') ? 'Make' : '← Make';
+        if (mixTab) mixTab.textContent = 'Mix';
+        sbTab.textContent     = (active === 'serialbox') ? 'Listen' : 'Listen →';
       };
       const showBloops = () => {
+        document.body.classList.remove('view-serialbox', 'view-mix');
+        setActive(bloopsTab);
+        updateLabels('make');
+        // Leaving Listen pauses any background music so the user isn't
+        // hearing audio from a tab they can no longer see/control.
+        try { window.musicPlayer?.pause(); } catch (e) {}
+      };
+      const showMix = () => {
         document.body.classList.remove('view-serialbox');
-        bloopsTab.classList.add('tab-active');
-        sbTab.classList.remove('tab-active');
-        updateLabels(false);
-        // Switching to Make pauses any audio still playing in the
-        // Listen view — the user shouldn't hear background music from
-        // a tab they can no longer see / control.
+        document.body.classList.add('view-mix');
+        setActive(mixTab);
+        updateLabels('mix');
         try { window.musicPlayer?.pause(); } catch (e) {}
       };
       const showSerialbox = () => {
+        document.body.classList.remove('view-mix');
         document.body.classList.add('view-serialbox');
-        sbTab.classList.add('tab-active');
-        bloopsTab.classList.remove('tab-active');
-        updateLabels(true);
+        setActive(sbTab);
+        updateLabels('serialbox');
       };
       bloopsTab.addEventListener('click', showBloops);
+      if (mixTab) mixTab.addEventListener('click', showMix);
       sbTab.addEventListener('click', showSerialbox);
       // The pre-body inline script may have already applied
       // body.view-serialbox via the #player deep-link; sync the tab
-      // states / labels to whatever the body class says now.
-      const onSerialbox = document.body.classList.contains('view-serialbox');
-      if (onSerialbox) {
-        sbTab.classList.add('tab-active');
-        bloopsTab.classList.remove('tab-active');
-      } else {
-        bloopsTab.classList.add('tab-active');
-        sbTab.classList.remove('tab-active');
-      }
-      updateLabels(onSerialbox);
+      // state to whatever class the body has now.
+      const cls = document.body.classList;
+      const initial = cls.contains('view-serialbox') ? 'serialbox'
+                    : cls.contains('view-mix')       ? 'mix'
+                    : 'make';
+      setActive(initial === 'serialbox' ? sbTab
+              : initial === 'mix'       ? mixTab
+              : bloopsTab);
+      updateLabels(initial);
     })();
 
     // ---- Long-press context menu for saved blocks ----

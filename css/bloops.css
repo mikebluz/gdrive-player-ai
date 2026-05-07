@@ -387,36 +387,16 @@
       text-align: center;
     }
     #tempo-input:focus { outline: none; border-color: #00bfff; }
-    /* 3-digit BPM picker — replaces the slider + numeric input. Each
-       column nudges its place value (100s / 10s / 1s). */
+    /* 3-digit BPM picker — three buttons, each opening a 0–9 picker on
+       click. The legacy +/- step buttons (.bpm-step) and per-column
+       wrappers (.bpm-digit-col) are gone; .bpm-digit is now a button
+       you press to bring up the value picker. */
     .bpm-digits {
       display: flex;
       align-items: center;
       gap: 4px;
       flex-shrink: 0;
     }
-    .bpm-digit-col {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 2px;
-    }
-    .bpm-step {
-      min-width: 22px;
-      padding: 0 4px;
-      height: 18px;
-      line-height: 1;
-      border: 1px solid #4fd1c5;
-      border-radius: 4px;
-      background: transparent;
-      color: #81e6d9;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
-    }
-    .bpm-step:hover  { border-color: #81e6d9; color: #b2f5ea; background: rgba(79, 209, 197, 0.08); }
     .bpm-digit {
       min-width: 22px;
       padding: 2px 0;
@@ -1983,10 +1963,10 @@
       transition: all 0.15s ease;
     }
     .undo-redo-pair > #undo-btn {
-      border-radius: 20px 0 0 20px;
+      border-radius: 4px 0 0 4px;
     }
     .undo-redo-pair > #redo-btn {
-      border-radius: 0 20px 20px 0;
+      border-radius: 0 4px 4px 0;
       border-color: #68d391;
       color: #68d391;
     }
@@ -2237,7 +2217,14 @@
        Hides every sibling and pins the tracks section to the viewport so
        a phone held lengthwise shows the whole tracks grid edge-to-edge. */
 
-    body.tracks-fullscreen > *:not(.tracks-section) { display: none !important; }
+    /* Tracks-fullscreen: only the tracks-section itself shows. .tracks-
+       section now lives inside #mix-view, so we let #mix-view through at
+       the top level (forced display:block since it's normally hidden in
+       Make view), then hide every #mix-view child except the tracks
+       section so the Mixdown bar collapses too. */
+    body.tracks-fullscreen > *:not(#mix-view) { display: none !important; }
+    body.tracks-fullscreen > #mix-view { display: block !important; padding: 0; }
+    body.tracks-fullscreen #mix-view > *:not(.tracks-section) { display: none !important; }
     body.tracks-fullscreen {
       overflow: hidden;
       width: 100vw;
@@ -2750,13 +2737,66 @@
     /* Home bar — full-width link back to the mikeluz.com hero, branded
        "Mercy Wizard". Sits at the very top of the page above the Bloops /
        Player tabs. */
+    /* Top sticky row: undo/redo on the left, Mercy Wizard centered, an
+       invisible spacer on the right that mirrors the undo/redo width so
+       the heading stays optically centered regardless of how wide the
+       undo/redo cluster grows. */
+    .home-bar-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 8px;
+      background: #000;
+      border-bottom: 1px solid #2d2d3f;
+      padding: 4px 8px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      /* Lock the row height so it doesn't shrink in Listen view (where
+         undo/redo + BPM are display:none, leaving only the shorter
+         Mercy Wizard text). 40px fits the BPM digit (24px) and the
+         undo/redo button (~28px) plus the 4+4 vertical padding with a
+         bit of headroom — same height across Make / Mix / Listen. */
+      min-height: 40px;
+    }
+    .home-bar-row .undo-redo-pair {
+      display: flex;
+      justify-self: start;
+    }
+    /* BPM picker tucks into the right column of the home row. The full-
+       size 3-digit picker (used elsewhere) is too tall for a compact
+       header strip; scale down step buttons + digits so the row stays
+       slim. Outer hidden inputs still drive every tempo* reference. */
+    .home-bar-row .tempo-control {
+      justify-self: end;
+      gap: 6px;
+    }
+    .home-bar-row .bpm-digits { gap: 3px; }
+    .home-bar-row .bpm-digit {
+      min-width: 22px;
+      height: 24px;
+      padding: 0 4px;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    .home-bar-row .bpm-digit:hover {
+      border-color: #81e6d9;
+      color: #b2f5ea;
+      background: rgba(79, 209, 197, 0.12);
+    }
+    /* Listen view hides the entire bloops chrome except the home bar
+       itself; the per-control hides below additionally drop undo/redo +
+       BPM so the header is just "Mercy Wizard" while listening. */
+    body.view-serialbox .home-bar-row .undo-redo-pair,
+    body.view-serialbox .home-bar-row .tempo-control {
+      display: none;
+    }
     .home-bar {
       display: block;
-      width: 100%;
       box-sizing: border-box;
       text-align: center;
-      padding: 8px 12px;
-      background: #000;
+      padding: 4px 12px;
+      background: transparent;
       color: #4fd1c5;
       text-decoration: none;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -2765,14 +2805,14 @@
       letter-spacing: 1.5px;
       text-transform: uppercase;
       text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
-      border-bottom: 1px solid #2d2d3f;
       transition: color 0.15s ease, text-shadow 0.15s ease;
       flex-shrink: 0;
-      /* Pinned to the viewport top — body scrolls underneath on mobile +
-         inside the Player view, but the home affordance stays put. */
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      justify-self: center;
+      /* Pin to the middle grid column so it stays centered even when
+         the undo/redo (col 1) and BPM (col 3) clusters are display:none
+         in the Listen view — without this, grid auto-placement would
+         shift the home-bar into the first empty track. */
+      grid-column: 2;
     }
     .home-bar:hover {
       color: #81e6d9;
@@ -2794,10 +2834,12 @@
       font: inherit;
       cursor: pointer;
     }
-    /* Make / Listen tabs — typography matches the Mercy Wizard home-bar
-       (same Segoe UI, 700 weight, 1.5px tracking, uppercase, neon teal
-       glow) so the two top headers read as one consistent banner stack. */
+    /* Make / Mix / Listen tabs — typography matches the Mercy Wizard
+       home-bar (same Segoe UI, 700 weight, 1.5px tracking, uppercase,
+       neon teal glow) so the top headers read as one consistent banner
+       stack. */
     .wip-banner,
+    .mix-top-link,
     .serialbox-top-link {
       flex: 1 1 0;
       min-width: 0;
@@ -2819,10 +2861,13 @@
       transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease, text-shadow 0.15s ease;
     }
     .wip-banner { border-right: 1px solid #2d8478; }
+    .mix-top-link { border-right: 1px solid #2d8478; }
     .serialbox-top-link { border-left: 1px solid #2d8478; }
     .wip-banner:not(.tab-active),
+    .mix-top-link:not(.tab-active),
     .serialbox-top-link:not(.tab-active) { opacity: 0.55; }
     .wip-banner:not(.tab-active):hover,
+    .mix-top-link:not(.tab-active):hover,
     .serialbox-top-link:not(.tab-active):hover {
       opacity: 0.85;
       background: #0a1416;
@@ -2830,7 +2875,30 @@
       text-shadow: 0 0 14px rgba(129, 230, 217, 0.65);
     }
     .wip-banner.tab-active,
+    .mix-top-link.tab-active,
     .serialbox-top-link.tab-active { background: #0a1416; }
+
+    /* Listen tab uses the inverse of the shared palette — teal fill,
+       dark text — so the Player tab visually pops as the "destination"
+       half of the header. Overrides come after the shared rules above so
+       they win on the cascade for hover, inactive, and active states. */
+    .serialbox-top-link {
+      background: #4fd1c5;
+      color: #050510;
+      text-shadow: none;
+    }
+    .serialbox-top-link:not(.tab-active) { opacity: 0.85; }
+    .serialbox-top-link:not(.tab-active):hover {
+      opacity: 1;
+      background: #81e6d9;
+      color: #050510;
+      text-shadow: none;
+    }
+    .serialbox-top-link.tab-active {
+      background: #81e6d9;
+      color: #050510;
+      box-shadow: inset 0 -2px 0 rgba(5, 5, 16, 0.4);
+    }
 
     /* Sign-in gate — covers everything below the home bar until the user
        has signed in with Google. Both Bloops and the Player need Drive
@@ -2849,7 +2917,7 @@
       box-sizing: border-box;
     }
     body.signin-required .signin-gate { display: flex; }
-    body.signin-required > *:not(.signin-gate):not(.home-bar):not(script) {
+    body.signin-required > *:not(.signin-gate):not(.home-bar-row):not(script) {
       display: none !important;
     }
     .signin-gate-inner {
@@ -2938,17 +3006,29 @@
       40% { opacity: 1; transform: scale(1); }
     }
 
-    /* View switching — exactly one of the two app views is visible at a
-       time. Body class drives which set of top-level children show. */
+    /* View switching — exactly one of the three app views (Make, Mix,
+       Listen) is visible at a time. Body class drives which set of
+       top-level children show. */
     #serialbox-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px; box-sizing: border-box; }
     body.view-serialbox > #serialbox-view { display: block; }
-    body.view-serialbox > *:not(.home-bar):not(.top-bar):not(#serialbox-view):not(script) {
+    body.view-serialbox > *:not(.home-bar-row):not(.top-bar):not(#serialbox-view):not(script) {
       display: none !important;
     }
     body.view-serialbox { overflow-y: auto; }
     /* Serialbox container override — drop the global .container max-width
        so the embedded view fills the available space inside the body. */
     #serialbox-view .container { max-width: 1100px; margin: 0 auto; padding: 0; }
+
+    /* Mix view — wraps the Tracks section + Mixdown bar. Hidden by
+       default so the Make view doesn't see it; revealed when the body
+       carries .view-mix. State (tracks, mixdown buffers, sequences) is
+       all module-scoped JS, so swapping views never resets data. */
+    #mix-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; }
+    body.view-mix > #mix-view { display: block; }
+    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(script) {
+      display: none !important;
+    }
+    body.view-mix { overflow-y: auto; }
     .sm-copy.open  { border-color: #4299e1; color: #4299e1; }
 
     .sm-copy-panel {

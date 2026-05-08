@@ -328,6 +328,9 @@
     <div class="saved-grid" id="saved-grid">
       <span class="saved-empty">No saved sequences yet.</span>
     </div>
+    <div class="clear-bank-row">
+      <button type="button" id="clear-bank-btn" title="Delete every saved sequence in the bank">Clear bank</button>
+    </div>
   </div>
 
   <!-- Mix view: holds the multi-track sequencer (Tracks) and the Mixdown
@@ -767,8 +770,14 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
 
+    function refreshClearBankBtn() {
+      const btn = document.getElementById('clear-bank-btn');
+      if (btn) btn.disabled = savedSequences.length === 0;
+    }
+
     function renderSavedSequences() {
       const grid = document.getElementById('saved-grid');
+      refreshClearBankBtn();
       if (savedSequences.length === 0) {
         grid.innerHTML = '<span class="saved-empty">No saved sequences yet.</span>';
         return;
@@ -854,6 +863,33 @@
         grid.appendChild(block);
       });
     }
+
+    // ---- Clear bank ----
+    // Wipes every saved sequence after a confirm prompt. Also replaces
+    // any track items that referenced a wiped sequence (by name) with
+    // silent placeholders so multi-track playback doesn't crash on a
+    // missing reference.
+    document.getElementById('clear-bank-btn')?.addEventListener('click', () => {
+      if (savedSequences.length === 0) return;
+      const n = savedSequences.length;
+      const ok = confirm(`Delete all ${n} saved sequence${n === 1 ? '' : 's'} from the bank? This can't be undone.`);
+      if (!ok) return;
+      try { stopSequence(); } catch (e) {}
+      const names = new Set(savedSequences.map(s => s && s.name).filter(Boolean));
+      savedSequences = [];
+      const hadActive = activeSeqIndex !== null;
+      activeSeqIndex = null;
+      if (hadActive) {
+        sequence = [];
+        renderSequence();
+        document.getElementById('save-btn').disabled = true;
+      }
+      if (names.size > 0 && typeof replaceMatchingTrackItemsWithSilent === 'function') {
+        replaceMatchingTrackItemsWithSilent(names);
+      }
+      persistSaved();
+      renderSavedSequences();
+    });
 
     document.addEventListener('pointerdown', () => Tone.start(), { once: true });
 

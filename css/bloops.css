@@ -2203,6 +2203,34 @@
       gap: 8px;
     }
 
+    /* Centered "Clear bank" pill below the saved-sequence grid. Uses
+       50% of the saved-viewer's content width so it reads as a single
+       deliberate action, not part of the bank itself. */
+    .clear-bank-row {
+      display: flex;
+      justify-content: center;
+      padding: 12px 0 4px;
+    }
+    .clear-bank-row > #clear-bank-btn {
+      width: 50%;
+      padding: 8px 16px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) {
+      .clear-bank-row > #clear-bank-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    }
+    .clear-bank-row > #clear-bank-btn:active { border-color: #e53e3e; color: #e53e3e; }
+    .clear-bank-row > #clear-bank-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .clear-bank-row > #clear-bank-btn:focus { outline: none; }
+
     .saved-block {
       background: #1a1a2e;
       border: 1px solid #2d2d3f;

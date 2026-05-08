@@ -2689,14 +2689,19 @@
 
       // Grid layout: rows × cols input is always-on now (no "Off"), so
       // the grid-mode CSS class is on whenever cols ≥ 1.
-      // The visual grid is split into sub-columns (cols × SUBCELL_MULT)
-      // so chips of every supported step-div get a distinct width —
-      // without sub-cells, anything ≤ 1/cols rounds to a 1-cell span and
-      // 1/8, 1/16, 1/32 all look the same. SUBCELL_MULT=4 covers down
-      // to 1/32 with cols=8 (the picker's range): each "natural" cell
-      // is split into 4 sub-cells so 1/32 spans 1, 1/16 spans 2, etc.
+      //
+      // Sub-cell model: every chip's span is sized in fixed musical
+      // units (one sub-cell = 1/32, so a 1/8 chip is always 4 sub-cells
+      // and a 1/1 chip is always 32). The Grid (cols) setting controls
+      // the row's musical duration: each "natural" cell = 1/8 = 4
+      // sub-cells, so subCols = cols × 4. With cols=8 a row holds one
+      // full measure (32 sub-cells); with cols=4 a row holds half a
+      // measure (16 sub-cells), making the same 1/8 chip look twice as
+      // wide relative to its row. SPAN_PER_MEASURE stays fixed so chip
+      // widths in absolute musical units never change with cols.
       const cols = effectiveGridCols();
       const SUBCELL_MULT = 4;
+      const SPAN_PER_MEASURE = 32;
       const subCols = cols * SUBCELL_MULT;
       if (cols > 0) {
         display.classList.add('grid-mode');
@@ -2760,16 +2765,16 @@
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
         }
-        // In grid mode, span the chip across as many sub-cells as its
-        // step-div calls for so each Step Div size produces a distinct
-        // chip width — even at the small end (1/16, 1/32) where the
-        // un-subdivided grid would round multiple sizes down to a single
-        // cell. Applies uniformly to notes, rests, chords, and subs in
-        // both Free and Fixed modes. Outside grid mode, pin width
+        // In grid mode, span the chip across a fixed number of sub-cells
+        // derived from its step-div: a 1/8 chip is always 4 sub-cells, a
+        // 1/1 chip is always 32, etc. Cols controls the row's musical
+        // duration (subCols sub-cells per row) so changing it rescales
+        // how many chips fit per row, while individual chip widths stay
+        // proportional to their step-div. Outside grid mode, pin width
         // directly via stepWidthPx.
         if (cols > 0) {
           chip.style.width = '';
-          const span = Math.max(1, Math.round(stepLengthFactor(step) * subCols));
+          const span = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
           chip.style.gridColumn = `span ${Math.min(span, subCols)}`;
         } else {
           chip.style.gridColumn = '';
@@ -4812,6 +4817,15 @@
         if (targets.length > 0) snapshotForUndo('Size');
         targets.forEach(s => { if (s && !s.isSub) s.subdivision = v; });
         renderSequence();
+      } else if (wrapTemplate && wrapTemplate.isSub && Array.isArray(wrapTemplate.subSteps) && wrapTemplate.subSteps.length > 0) {
+        // Active sub-shaped wrap (Run mode): retime every voice in the
+        // wrap to the new Step Div so the held audition (and any saved
+        // copy of this wrap in the sequence) plays at the chosen size.
+        snapshotForUndo('Size');
+        wrapTemplate.subSteps.forEach(s => { if (s) s.subdivision = v; });
+        stepSubdivision = v;
+        renderSequence();
+        refreshBpmDigits();
       } else {
         stepSubdivision = v;
         // The flash cycle is keyed off step duration — refresh so the

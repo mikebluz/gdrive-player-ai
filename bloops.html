@@ -207,10 +207,31 @@
     </div>
   </div>
 
+  <!-- Fixed-mode slot builder. Each chip appends a programmable rest slot
+       of the given Step Div size to the sequence; assign a pitch later
+       by arming a note (cell click) and tapping the slot. -->
+  <div class="size-chips-row" id="size-chips-row" hidden>
+    <button type="button" class="size-chip" data-sub="16"    title="Add a 4/1 slot">4/1</button>
+    <button type="button" class="size-chip" data-sub="12"    title="Add a 3/1 slot">3/1</button>
+    <button type="button" class="size-chip" data-sub="8"     title="Add a 2/1 slot">2/1</button>
+    <button type="button" class="size-chip" data-sub="4"     title="Add a 1/1 slot">1/1</button>
+    <button type="button" class="size-chip" data-sub="2"     title="Add a 1/2 slot">1/2</button>
+    <button type="button" class="size-chip" data-sub="1"     title="Add a 1/4 slot">1/4</button>
+    <button type="button" class="size-chip" data-sub="0.5"   title="Add a 1/8 slot">1/8</button>
+    <button type="button" class="size-chip" data-sub="0.25"  title="Add a 1/16 slot">1/16</button>
+    <button type="button" class="size-chip" data-sub="0.125" title="Add a 1/32 slot">1/32</button>
+  </div>
+
   <div class="step-pan-bar" id="step-pan-bar" hidden>
     <span class="step-pan-label" id="step-pan-label">Pan</span>
     <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
     <span class="step-pan-val" id="step-pan-val">C</span>
+  </div>
+
+  <div class="step-vol-bar" id="step-vol-bar" hidden>
+    <span class="step-vol-label" id="step-vol-label">Vol</span>
+    <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
+    <span class="step-vol-val" id="step-vol-val">100%</span>
   </div>
 
   <div id="subedit-banner">
@@ -220,6 +241,21 @@
 
   <div class="sequence-display" id="sequence-display">
     <span class="seq-empty">Click notes or REST to build a sequence…</span>
+  </div>
+
+  <div class="clear-riff-row">
+    <button id="save-btn" disabled>Save</button>
+    <button id="clear-btn">Clear</button>
+    <div class="riff-wrapper">
+      <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
+      <div class="riff-panel" id="riff-panel">
+        <button id="random-btn" title="Generate a random sequence using the current voice's scale + tones">Random</button>
+        <button id="seed-btn" title="Seed the sequence from a built-in song or from text">Seed</button>
+        <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
+        <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
+        <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+      </div>
+    </div>
   </div>
 
   <div class="seq-grid-bar">
@@ -233,7 +269,7 @@
       <button type="button" class="colors-opt" data-mode="piano">Piano</button>
     </div>
     <div class="btn-group btn-group--step" title="Step controls — set Size, multi-select, grid layout, and append/fixed mode">
-      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">Size
+      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">
         <select id="subdivision-select">
           <option value="16">4/1</option>
           <option value="12">3/1</option>
@@ -250,7 +286,7 @@
         <input type="checkbox" id="multi-select-toggle" />
         Multi
       </label>
-      <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">Grid
+      <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">
         <span class="grid-dim-input">
           <select id="grid-rows-input" aria-label="Grid rows">
             <option value="1" selected>1</option>
@@ -284,18 +320,6 @@
       <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
       <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
       <button id="loop-btn" title="Loop the current sequence">Loop</button>
-      <button id="clear-btn">Clear</button>
-      <div class="riff-wrapper">
-        <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
-        <div class="riff-panel" id="riff-panel">
-          <button id="save-btn" disabled>Save</button>
-          <button id="random-btn" title="Generate a random sequence using the current voice's scale + tones">Random</button>
-          <button id="seed-btn" title="Seed the sequence from a built-in song or from text">Seed</button>
-          <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
-          <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
-          <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
-        </div>
-      </div>
     </div>
 
   </div>
@@ -2629,10 +2653,18 @@
 
       // Grid layout: rows × cols input is always-on now (no "Off"), so
       // the grid-mode CSS class is on whenever cols ≥ 1.
+      // The visual grid is split into sub-columns (cols × SUBCELL_MULT)
+      // so chips of every supported step-div get a distinct width —
+      // without sub-cells, anything ≤ 1/cols rounds to a 1-cell span and
+      // 1/8, 1/16, 1/32 all look the same. SUBCELL_MULT=4 covers down
+      // to 1/32 with cols=8 (the picker's range): each "natural" cell
+      // is split into 4 sub-cells so 1/32 spans 1, 1/16 spans 2, etc.
       const cols = effectiveGridCols();
+      const SUBCELL_MULT = 4;
+      const subCols = cols * SUBCELL_MULT;
       if (cols > 0) {
         display.classList.add('grid-mode');
-        display.style.setProperty('--grid-cols', String(cols));
+        display.style.setProperty('--grid-cols', String(subCols));
       } else {
         display.classList.remove('grid-mode');
         display.style.removeProperty('--grid-cols');
@@ -2692,18 +2724,17 @@
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
         }
-        // In grid mode, span the chip across as many cells as its duration
-        // calls for so longer notes look longer. Step-mode is the exception
-        // — its grid IS the pattern of fixed slots, so each chip stays in
-        // exactly one cell. Outside grid mode, pin the width directly.
+        // In grid mode, span the chip across as many sub-cells as its
+        // step-div calls for so each Step Div size produces a distinct
+        // chip width — even at the small end (1/16, 1/32) where the
+        // un-subdivided grid would round multiple sizes down to a single
+        // cell. Applies uniformly to notes, rests, chords, and subs in
+        // both Free and Fixed modes. Outside grid mode, pin width
+        // directly via stepWidthPx.
         if (cols > 0) {
           chip.style.width = '';
-          if (stepMode) {
-            chip.style.gridColumn = '';
-          } else {
-            const span = Math.max(1, Math.round(stepLengthFactor(step) * cols));
-            chip.style.gridColumn = `span ${Math.min(span, cols)}`;
-          }
+          const span = Math.max(1, Math.round(stepLengthFactor(step) * subCols));
+          chip.style.gridColumn = `span ${Math.min(span, subCols)}`;
         } else {
           chip.style.gridColumn = '';
           chip.style.width = stepWidthPx(step) + 'px';
@@ -2718,11 +2749,23 @@
         // throwing a duplicate select/deselect into the mix.
         const performSingleClick = () => {
           if (stepMode && !step.isSub) {
+            // Each slot carries the subdivision/duration the size-chip
+            // assigned at append time — preserve that when toggling the
+            // slot between rest and the armed pitch so the rhythm the
+            // user built doesn't reset to the global Step Div on every
+            // assignment.
+            const slotSub = sequence[i].subdivision;
+            const slotDur = sequence[i].duration;
             if (isRestStep(sequence[i])) {
               if (!stepModeArmed) return;
-              sequence[i] = { ...stepModeArmed, params: { ...(stepModeArmed.params || {}) } };
+              sequence[i] = {
+                ...stepModeArmed,
+                params: { ...(stepModeArmed.params || {}) },
+                subdivision: slotSub,
+                duration: slotDur,
+              };
             } else {
-              sequence[i] = makeRestStep();
+              sequence[i] = { freq: null, label: '—', cellIndex: null, duration: slotDur, subdivision: slotSub };
             }
             renderSequence();
             document.getElementById('save-btn').disabled = sequence.length === 0;
@@ -3046,8 +3089,11 @@
       const panBar = document.getElementById('step-pan-bar');
       const panSlider = document.getElementById('step-pan-slider');
       const panVal = document.getElementById('step-pan-val');
+      const volBar = document.getElementById('step-vol-bar');
+      const volSlider = document.getElementById('step-vol-slider');
+      const volVal = document.getElementById('step-vol-val');
+      const eligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
       if (panBar) {
-        const eligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
         if (eligible.length === 0) {
           panBar.hidden = true;
         } else {
@@ -3057,6 +3103,18 @@
             ? primary.params.pan : 0;
           if (panSlider) panSlider.value = String(p);
           if (panVal) panVal.textContent = formatPanLabel(p);
+        }
+      }
+      if (volBar) {
+        if (eligible.length === 0) {
+          volBar.hidden = true;
+        } else {
+          volBar.hidden = false;
+          const primary = eligible[eligible.length - 1];
+          const v = (primary.params && Number.isFinite(primary.params.volume))
+            ? primary.params.volume : 100;
+          if (volSlider) volSlider.value = String(v);
+          if (volVal) volVal.textContent = v + '%';
         }
       }
     }
@@ -4213,19 +4271,18 @@
         }).filter(Boolean);
         if (voices.length === 0) return null;
         // Capture wrapAt AFTER all construction so per-voice setup time
-        // doesn't push later voices' triggers past it. Use Tone.now()
-        // (currentTime + Tone's internal lookAhead) plus a generous
-        // 80 ms cushion so the trigger loop's wall-clock drift between
-        // the first and last voice can never push any voice past
-        // wrapAt — all voices schedule against the same audio time and
-        // the audio thread fires them sample-accurately in lock-step.
-        // The previous 50 ms lookahead worked when ctx was fully warm
-        // but left almost no margin during a cold-start audition (when
-        // construction + first-trigger overhead can spike past 50 ms),
-        // which manifested as audibly staggered chord voices.
+        // doesn't push later voices' triggers past it. Tone.now() already
+        // includes the scheduling lookAhead (~25 ms), which is enough
+        // headroom for a tight trigger loop on a warm audio context.
+        // Cold-start (suspended ctx) still gets an extra 80 ms cushion
+        // because the resume() race + first-trigger overhead can spike
+        // beyond what lookAhead alone covers, which manifested as
+        // audibly staggered chord voices.
+        const _wrapAcSuspended = !!(Tone.context?.rawContext && Tone.context.rawContext.state === 'suspended');
+        const _wrapPad = _wrapAcSuspended ? 0.08 : 0;
         const wrapAt = (typeof Tone.now === 'function')
-          ? Tone.now() + 0.08
-          : ((Tone.context?.rawContext?.currentTime || 0) + 0.08);
+          ? Tone.now() + _wrapPad
+          : ((Tone.context?.rawContext?.currentTime || 0) + _wrapPad);
         // Tight trigger loop — every voice attacks at exactly wrapAt.
         voices.forEach(v => v.attack(wrapAt));
         let released = false;
@@ -4629,16 +4686,16 @@
     document.getElementById('clear-btn').addEventListener('click', () => {
       if (sequence.length === 0) return;
       // While Step Mode is on, Clear empties the cells but keeps the grid:
-      // the user wants a fresh row of rest slots, not an empty workspace.
+      // Clear empties everything — the user re-adds slots via the
+      // size-chip row.
       if (stepMode) {
-        if (sequence.every(isRestStep)) return; // already all-rest, nothing to do
+        if (sequence.length === 0) return;
         snapshotForUndo('Clear');
         stopSequence();
         sequence = [];
         pendingChord = [];
         activeSeqIndex = null;
         insertionPoint = null;
-        padToStepGrid();
         renderSequence();
         renderSavedSequences();
         return;
@@ -4759,11 +4816,22 @@
     }
     function applyGridDimsChange() {
       readGridDimsFromInputs();
-      if (stepMode) padToStepGrid();
       renderSequence();
     }
     document.getElementById('grid-rows-input')?.addEventListener('change', applyGridDimsChange);
     document.getElementById('grid-cols-input')?.addEventListener('change', applyGridDimsChange);
+
+    // ---- Fixed-mode size chips ----
+    // Each chip appends a programmable rest slot of its Step Div size
+    // to the current sequence. The slot keeps that subdivision when a
+    // pitch is later assigned via the arm + slot-click flow.
+    document.querySelectorAll('#size-chips-row .size-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const sub = parseFloat(chip.dataset.sub);
+        if (!Number.isFinite(sub) || sub <= 0) return;
+        addToSequence({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub });
+      });
+    });
 
     // Step Mode toggle: Free (append-as-you-click) ↔ Fixed (step-sequencer
      // grid). The single source of truth for the label/active state on the
@@ -4775,11 +4843,13 @@
       btn.textContent = stepMode ? 'Fixed' : 'Free';
       btn.classList.toggle('active', stepMode);
       // Rows control only matters in Fixed (step-sequencer) mode where
-      // the workspace is padded to rows × cols slots. In Free mode the
-      // sequence wraps as it grows so rows is meaningless — disable the
-      // selector to make that obvious.
+      // the workspace lays slots out as a fixed rows × cols visual grid.
+      // In Free mode the sequence wraps as it grows so rows is meaningless.
       const rowsEl = document.getElementById('grid-rows-input');
       if (rowsEl) rowsEl.disabled = !stepMode;
+      // Size-chip row is the slot builder — only meaningful in Fixed mode.
+      const sizeRow = document.getElementById('size-chips-row');
+      if (sizeRow) sizeRow.hidden = !stepMode;
     }
     refreshStepModeBtn();
 
@@ -4787,9 +4857,9 @@
       stepMode = !stepMode;
       refreshStepModeBtn();
       if (stepMode) {
-        // Grid is always rows × cols now (no "Off"), so the column
-        // count is guaranteed valid. Just pad/trim to fit.
-        padToStepGrid();
+        // No auto-padding — the user adds slots explicitly via the
+        // size-chip row that opens with Fixed mode. Starts from whatever
+        // sequence already exists.
       } else {
         clearStepModeArm();
         if (sequence.length > 0 && sequence.every(isRestStep)) {
@@ -11725,13 +11795,21 @@
               sound: params.type,
               params,
             });
-            // Persistent highlight stays until Close clears it. flash is
-            // intentionally skipped here so the wrap-pending outline isn't
-            // immediately overridden by the brightness ramp.
+            // Fire audio first — DOM work (renderSequence,
+            // updateChordDisplay) on a sequence that's getting long can
+            // push the audio call past 10–20 ms after the press, which
+            // adds up with Tone's lookAhead. wrap-pending goes on
+            // immediately so the cell colour-changes alongside the sound.
+            // Suppress the per-note active-loop flash so its white outline
+            // doesn't fight the wrap-pending purple outline; wrap-pending
+            // is the dominant visual cue for "this note is in the wrap."
             cell.classList.add('wrap-pending');
+            const _prevSuppress = _suppressCellFlash;
+            _suppressCellFlash = true;
+            try { playNote(notes[i].freq, params); }
+            finally { _suppressCellFlash = _prevSuppress; }
             renderSequence();
             updateChordDisplay();
-            playNote(notes[i].freq, params);
             return;
           }
           // Wrap template — once Wrap has been used to build a chord
@@ -13056,6 +13134,28 @@
         const v = parseInt(slider.value, 10) || 0;
         applyPanToSelectedSteps(v);
         if (valEl) valEl.textContent = formatPanLabel(v);
+      });
+      slider.addEventListener('change', () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
+    // ---- Selected-step volume slider ----
+    // Edits only the primary (last-selected) step's volume so users can
+    // shape dynamics without retouching every chip in a multi-selection.
+    (function bindStepVolSlider() {
+      const slider = document.getElementById('step-vol-slider');
+      const valEl  = document.getElementById('step-vol-val');
+      if (!slider) return;
+      slider.addEventListener('input', () => {
+        const v = Math.max(0, Math.min(100, parseInt(slider.value, 10) || 0));
+        const eligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
+        const primary = eligible[eligible.length - 1];
+        if (primary) {
+          if (!primary.params) primary.params = {};
+          primary.params.volume = v;
+        }
+        if (valEl) valEl.textContent = v + '%';
       });
       slider.addEventListener('change', () => {
         if (typeof persistWorkspace === 'function') persistWorkspace();

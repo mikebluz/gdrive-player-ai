@@ -41,12 +41,52 @@
       display: flex;
       align-items: center;
       flex-wrap: nowrap;
-      padding: 10px 20px 10px 10px;
-      gap: 12px;
+      padding: 10px 8px;
+      gap: 6px;
       position: relative;
-      overflow-x: auto;
+      overflow-x: hidden;
     }
-    .menubar > * { flex-shrink: 0; }
+    /* Voices / Project / Edit grow to share any leftover row space so
+       the row stays full when the master-vol slider is capped. They
+       still won't shrink below their content (flex-shrink: 0) so the
+       labels stay legible; the project-name label absorbs the squeeze
+       on narrow viewports. */
+    .menubar > #voices-menu-btn,
+    .menubar > #project-menu-btn,
+    .menubar > #edit-mode-btn {
+      flex: 1 0 auto;
+    }
+    .menubar > .project-name-label {
+      min-width: 0;
+      flex-shrink: 1;
+    }
+    .menubar > .master-vol {
+      min-width: 0;
+      /* Capped at ~25vw so the slider doesn't hog the row. The other
+         menubar items grow to fill whatever space the slider gives up —
+         rule #1 (no horizontal scrolling, fill the row). */
+      flex: 1 1 auto;
+      max-width: 25vw;
+    }
+    .menubar > .master-vol input[type="range"] {
+      min-width: 0;
+      width: 100%;
+      flex: 1 1 0;
+    }
+    /* Tighten button padding on narrow viewports so all four items fit
+       without clipping Edit. */
+    @media (max-width: 480px) {
+      .menubar {
+        padding: 10px 6px;
+        gap: 4px;
+      }
+      .menubar > #voices-menu-btn,
+      .menubar > #project-menu-btn,
+      .menubar > #edit-mode-btn {
+        padding: 6px 8px;
+        font-size: 0.72rem;
+      }
+    }
 
     .tone-panel {
       display: none;
@@ -320,15 +360,54 @@
       flex-shrink: 0;
     }
 
-    /* Transport cluster — Play, Loop, BPM, Clear stay glued together so the
-       Clear button always sits on the same row as the BPM slider, even
-       when the footer wraps on narrow screens. */
+    /* Transport cluster — Play, Rec, Loop fill the row evenly. Clear and
+       Riff have moved to their own row above the step controls, so this
+       row only carries the three transport actions. */
     .footer-transport {
       display: flex;
-      align-items: center;
+      align-items: stretch;
       gap: 10px;
-      flex-shrink: 0;
+      flex: 1 1 100%;
       flex-wrap: nowrap;
+    }
+    .footer-transport > #rec-btn,
+    .footer-transport > #loop-btn {
+      flex: 1 1 0;
+      min-width: 0;
+      height: 52px;
+      font-size: 1rem;
+      padding: 0 18px;
+    }
+    .footer-transport > #play-btn {
+      width: 52px;
+      height: 52px;
+      min-width: 52px;
+      min-height: 52px;
+      font-size: 1.25rem;
+      flex: 0 0 auto;
+    }
+
+    /* Row that hosts Clear + Riff between the sequence chip display and
+       the step controls. Each button takes half the row. */
+    .clear-riff-row {
+      display: flex;
+      gap: 10px;
+      padding: 6px 18px;
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .clear-riff-row > #save-btn,
+    .clear-riff-row > #clear-btn,
+    .clear-riff-row > .riff-wrapper {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .clear-riff-row > #save-btn,
+    .clear-riff-row > #clear-btn {
+      width: 100%;
+    }
+    .clear-riff-row > .riff-wrapper > #riff-menu-btn {
+      width: 100%;
     }
     #tempo-slider {
       width: 90px;
@@ -1274,12 +1353,50 @@
        the palette tint) keeps showing through, and the .active /
        .selected box-shadows still override when the chip is playing or
        being edited. */
+    /* Fixed-mode slot builder. Each chip appends a programmable rest
+       slot of the given Step Div size to the sequence; visible only
+       when the Free/Fixed toggle is in Fixed mode. Sits between the
+       KEEP/Wrap/REST row and the sequence chip display. */
+    .size-chips-row {
+      display: flex;
+      gap: 6px;
+      padding: 4px 18px;
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+    .size-chips-row[hidden] { display: none; }
+    .size-chip {
+      flex: 1 1 0;
+      min-width: 0;
+      padding: 6px 4px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      /* Scale the label down on narrow viewports so the longest chip
+         ("1/32") never spills past its cell. clamp keeps a readable
+         floor and prevents the font from growing past 0.78rem. */
+      font-size: clamp(0.55rem, 1.6vw, 0.78rem);
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+    }
+    .size-chip:hover { border-color: #4299e1; color: #4299e1; }
+    .size-chip:active { background: rgba(66,153,225,0.18); }
+
     /* Selected-step pan slider — appears just below the BPM row when
        at least one step chip is selected, and applies its value to the
        whole selection (multi-mode included). The chip background still
        lerps toward the L/R hard-pan colour so the visual cue tracks
        the slider live. */
-    .step-pan-bar {
+    .step-pan-bar, .step-vol-bar {
       display: flex;
       align-items: center;
       gap: 12px;
@@ -1287,8 +1404,8 @@
       background: #050510;
       border-bottom: 1px solid #1a1a2e;
     }
-    .step-pan-bar[hidden] { display: none; }
-    .step-pan-label {
+    .step-pan-bar[hidden], .step-vol-bar[hidden] { display: none; }
+    .step-pan-label, .step-vol-label {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
       font-weight: 700;
@@ -1296,12 +1413,12 @@
       text-transform: uppercase;
       color: #a0aec0;
     }
-    .step-pan-bar input[type="range"] {
+    .step-pan-bar input[type="range"], .step-vol-bar input[type="range"] {
       flex: 1;
       height: 4px;
       accent-color: #4fd1c5;
     }
-    .step-pan-val {
+    .step-pan-val, .step-vol-val {
       min-width: 28px;
       text-align: right;
       font-family: 'Segoe UI', sans-serif;
@@ -1781,15 +1898,19 @@
       font-weight: 700;
       padding: 0 1px;
     }
+    /* Larger Free/Fixed pill — bigger horizontal presence + heavier
+       text without exceeding the row height set by the surrounding
+       0.8rem dropdowns (vertical padding stays at 3px to match). */
     #step-mode-btn {
-      padding: 3px 8px;
+      padding: 3px 22px;
       border: 1px solid #4fd1c5;
       border-radius: 14px;
       background: transparent;
       color: #81e6d9;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.7rem;
-      font-weight: 600;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
       cursor: pointer;
       transition: all 0.15s ease;
     }
@@ -1854,7 +1975,16 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #clear-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    /* Hover-tinted red, but only on devices with a real hover state —
+       on touch the tap-then-release would otherwise leave the button
+       stuck red until the next interaction. :active still flashes red
+       while the press is held so desktop and touch both get the same
+       press feedback. */
+    @media (hover: hover) {
+      #clear-btn:hover { border-color: #e53e3e; color: #e53e3e; }
+    }
+    #clear-btn:active { border-color: #e53e3e; color: #e53e3e; }
+    #clear-btn:focus { outline: none; }
 
     #save-btn {
       padding: 6px 18px;

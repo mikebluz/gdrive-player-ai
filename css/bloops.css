@@ -586,6 +586,27 @@
     }
     #metronome-btn.tick { transform: scale(1.18); }
 
+    /* On mobile, float the metronome button to the midpoint between
+       "Mercy Wizard" (absolute-centered at 50%) and the BPM picker
+       (pinned to the right edge of the home-bar-row). Absolute
+       positioning anchors to the .home-bar-row's sticky containing
+       block, skipping its .tempo-control flex parent. The button keeps
+       its tempoSlider/tempoInput wiring because we only move it
+       visually — it's still a child of .tempo-control in the DOM. */
+    @media (max-width: 700px) {
+      .home-bar-row #metronome-btn {
+        position: absolute;
+        left: 75%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        margin: 0;
+        z-index: 1;
+      }
+      .home-bar-row #metronome-btn.tick {
+        transform: translate(-50%, -50%) scale(1.18);
+      }
+    }
+
     .bpm-digits {
       display: flex;
       align-items: center;
@@ -1771,7 +1792,6 @@
       background: linear-gradient(135deg, #d91e7c, #f472b6);
       border-color: #f472b6;
       color: #fff;
-      transform: scale(1.1);
       box-shadow: 0 0 14px rgba(244, 114, 182, 0.55);
     }
     /* Click-selected step — distinguishes "the step I'm editing" from "the

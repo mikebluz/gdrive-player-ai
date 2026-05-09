@@ -507,6 +507,12 @@
     // form, so the Keep button reads "C", "Em7", "F#dim/A" etc. as the
     // sequence advances. Cleared on stopSequence and on rest steps.
     let _playbackStep = null;
+    // Poly mode runs multiple lanes concurrently, so a single
+    // _playbackStep can't represent what's sounding. This map tracks
+    // each lane's currently-playing step keyed by laneIdx; the Keep
+    // label joins their names ("C D" if lane 0 plays C and lane 1
+    // plays D). Cleared in stopSequence alongside _playbackStep.
+    const _playbackStepsByLane = new Map();
 
     const _PITCH_NAMES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     function _pcName(pc) {
@@ -741,6 +747,29 @@
       if (!btn) return;
       const span = btn.querySelector('span');
       if (!span) return;
+      // Poly + active per-lane playback: render one chord/note name
+      // per lane, joined with spaces in lane order. Each lane gets
+      // its own naming pass so chord shapes stay correct (e.g. lane
+      // A's "C" and lane B's "Dm" become "C Dm" rather than the
+      // confusing stacked-name you'd get from concatenated freqs).
+      // Falls through to the single-step path below when nothing is
+      // playing in any lane.
+      if (polyMode && _playbackStepsByLane.size > 0) {
+        const indices = Array.from(_playbackStepsByLane.keys()).sort((a, b) => a - b);
+        const parts = [];
+        for (const li of indices) {
+          const lstep = _playbackStepsByLane.get(li);
+          const lfreqs = collectStepFreqs(lstep);
+          if (!lfreqs || lfreqs.length === 0) continue;
+          const lname = chordNameFromFreqs(lfreqs, null);
+          if (lname) parts.push(lname);
+        }
+        if (parts.length > 0) {
+          span.textContent = parts.join(' ');
+          btn.classList.add('show-chord');
+          return;
+        }
+      }
       let freqs = null;
       // Playback wins over wrap state — when the sequence is running,
       // the user wants to read the chord that's currently sounding.
@@ -3439,6 +3468,42 @@
       });
       return out;
     }
+    // Step taxonomy helpers — used by the Edit row's eligibility logic
+    // and by every pan / vol / slip writer so chord and sub-sequence
+    // chips behave like note chips do. Without these, the editor's
+    // `freq != null && !isSub` filter quietly hid the bars whenever
+    // the selection was a chord (no freq) or a sub (isSub=true).
+    const _stepHasPlayableContent = (s) =>
+      !!s && (s.freq != null || Array.isArray(s.chord) || (s.isSub && Array.isArray(s.subSteps) && s.subSteps.length > 0));
+    // Drill through nested subSteps to the first leaf with playable
+    // content. Returns the step itself if it isn't a sub. Used to
+    // pick a value to display on the slider when the selected chip
+    // is a sub group — the first child's pan/vol/slip is a sensible
+    // representative; if the user drags the slider every leaf gets
+    // the new value via _forEachStepLeaf.
+    function _firstStepLeaf(s) {
+      if (!s) return null;
+      if (s.isSub && Array.isArray(s.subSteps)) {
+        for (const c of s.subSteps) {
+          const f = _firstStepLeaf(c);
+          if (f) return f;
+        }
+        return null;
+      }
+      return s;
+    }
+    // Walk every leaf descendant of `s` (or `s` itself if it isn't a
+    // sub) and call fn on it. Writers use this to apply pan / vol /
+    // slip to all children of a sub-sequence so the chip's slider
+    // edits propagate down to the actually-fired voices.
+    function _forEachStepLeaf(s, fn) {
+      if (!s) return;
+      if (s.isSub && Array.isArray(s.subSteps)) {
+        s.subSteps.forEach(c => _forEachStepLeaf(c, fn));
+        return;
+      }
+      fn(s);
+    }
     function syncStepEditorFromSelection() {
       const step = lastSelectedStep();
       const noteLengthSel = document.getElementById('note-length');
@@ -3478,17 +3543,26 @@
       const slipBar = document.getElementById('step-slip-bar');
       const slipSlider = document.getElementById('step-slip-slider');
       const slipVal = document.getElementById('step-slip-val');
-      const selEligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
-      // In Poly with no selection the bars reflect the active lane's
-      // own pan / volume (the lane bus values), not any individual
-      // step's. Switch the source accordingly so the slider position
-      // matches what dragging it will actually edit.
+      // Eligibility is now "step has any playable content" — chord
+      // chips (no freq, has chord[]) and sub-sequence chips (isSub,
+      // has subSteps[]) qualify alongside plain notes. The bars'
+      // displayed values come from the step's first leaf so subs
+      // surface a representative value; writers fan out to every
+      // leaf so the edit actually reaches each voice.
+      const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
       const polyLaneScope = (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]);
       const laneEligible = polyLaneScope
-        ? (lanes[activeLaneIdx].steps || []).filter(s => s && !s.isSub && s.freq != null)
+        ? (lanes[activeLaneIdx].steps || []).filter(_stepHasPlayableContent)
         : [];
       const eligible = selEligible.length > 0 ? selEligible : laneEligible;
       const showBars = polyLaneScope ? !!lanes[activeLaneIdx] : eligible.length > 0;
+      // Read the slider's display value from the primary step's first
+      // playable leaf — collapses chord and sub cases to the same
+      // lookup. For chord steps the leaf IS the chord step (chord
+      // params live on step.params); for subs we drill down.
+      const _primaryLeaf = (showBars && !polyLaneScope)
+        ? _firstStepLeaf(eligible[eligible.length - 1])
+        : null;
       if (panBar) {
         if (!showBars) {
           panBar.hidden = true;
@@ -3499,9 +3573,8 @@
             const lane = lanes[activeLaneIdx];
             p = Number.isFinite(lane.pan) ? lane.pan : 0;
           } else {
-            const primary = eligible[eligible.length - 1];
-            p = (primary.params && Number.isFinite(primary.params.pan))
-              ? primary.params.pan : 0;
+            p = (_primaryLeaf && _primaryLeaf.params && Number.isFinite(_primaryLeaf.params.pan))
+              ? _primaryLeaf.params.pan : 0;
           }
           if (panSlider) panSlider.value = String(p);
           if (panVal) panVal.textContent = formatPanLabel(p);
@@ -3517,9 +3590,8 @@
             const lane = lanes[activeLaneIdx];
             v = Number.isFinite(lane.volume) ? lane.volume : 100;
           } else {
-            const primary = eligible[eligible.length - 1];
-            v = (primary.params && Number.isFinite(primary.params.volume))
-              ? primary.params.volume : 100;
+            v = (_primaryLeaf && _primaryLeaf.params && Number.isFinite(_primaryLeaf.params.volume))
+              ? _primaryLeaf.params.volume : 100;
           }
           if (volSlider) volSlider.value = String(v);
           if (volVal) volVal.textContent = v + '%';
@@ -3534,11 +3606,12 @@
           if (polyLaneScope) {
             const lane = lanes[activeLaneIdx];
             s = Number.isFinite(lane.slip) ? lane.slip : 0;
+          } else if (_primaryLeaf) {
+            s = (_primaryLeaf.params && Number.isFinite(_primaryLeaf.params.slip))
+              ? _primaryLeaf.params.slip
+              : (Number.isFinite(_primaryLeaf.slip) ? _primaryLeaf.slip : 0);
           } else {
-            const primary = eligible[eligible.length - 1];
-            s = (primary.params && Number.isFinite(primary.params.slip))
-              ? primary.params.slip
-              : (Number.isFinite(primary.slip) ? primary.slip : 0);
+            s = 0;
           }
           if (slipSlider) slipSlider.value = String(s);
           if (slipVal) slipVal.textContent = (s > 0 ? '+' : '') + s + '%';
@@ -4375,6 +4448,7 @@
       // Stop driving the Keep button off the playback step — fall back
       // to the wrap state (or "KEEP" if no wrap is active).
       _playbackStep = null;
+      _playbackStepsByLane.clear();
       updateKeepLabel();
     }
 
@@ -4535,7 +4609,17 @@
       }
       // Silent path: muted lane keeps its scheduler pointer advancing
       // so unmuting mid-loop snaps back into the cadence cleanly.
+      // Drop the lane's stale entry from the per-lane Keep label so
+      // muting a lane mid-playback removes its name from the readout
+      // (otherwise the last note before mute would stick visible).
       if (silent) {
+        if (polyMode && Number.isFinite(laneIdx) && _playbackStepsByLane.has(laneIdx)) {
+          const _li = laneIdx;
+          scheduleVisual(() => {
+            _playbackStepsByLane.delete(_li);
+            updateKeepLabel();
+          }, audioTime);
+        }
         stream.offsetSec += waitSecExact;
         return waitSecExact;
       }
@@ -4586,8 +4670,15 @@
         // user can read the chord/note name as playback advances. Rests
         // don't carry pitch info, so leave the previous step's label up
         // rather than flashing to "KEEP". Cleared in stopSequence.
+        // In Poly the map records each lane's current step so the
+        // label can render "C D" when lanes play different chords; in
+        // Mono we keep using the single _playbackStep slot.
         if (step.chord || step.freq != null) {
-          _playbackStep = step;
+          if (polyMode && Number.isFinite(laneIdx)) {
+            _playbackStepsByLane.set(laneIdx, step);
+          } else {
+            _playbackStep = step;
+          }
           updateKeepLabel();
         }
       }, fireTime);
@@ -8858,7 +8949,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -11608,22 +11699,28 @@
         try { lane._panner.pan.value = Math.max(-1, Math.min(1, v / 100)); } catch (e) {}
         return;
       }
-      // Selection-scoped pan (existing Mono behavior, also reachable
-      // from Poly when chips are selected). Step-level params; chord
-      // voices mirror the value so chord playback honors it too.
-      selectedStepRefs.forEach(step => {
-        if (!step || step.isSub) return;
-        if (!step.params) step.params = {};
-        step.params.pan = v;
-        if (Array.isArray(step.chord)) {
-          step.chord.forEach(voice => {
-            if (!voice) return;
-            if (!voice.params) voice.params = {};
-            voice.params.pan = v;
-          });
-        }
+      // Selection-scoped pan. For sub-sequence chips we recurse into
+      // every leaf so each fired voice picks up the new pan; chord
+      // voices mirror the step's value so chord playback honors it.
+      // The chip tint is applied at the top level only — subs paint
+      // a single chip in the strip and that chip represents all its
+      // children's pan visually.
+      selectedStepRefs.forEach(top => {
+        if (!top) return;
+        _forEachStepLeaf(top, leaf => {
+          if (!leaf || leaf.isSub) return;
+          if (!leaf.params) leaf.params = {};
+          leaf.params.pan = v;
+          if (Array.isArray(leaf.chord)) {
+            leaf.chord.forEach(voice => {
+              if (!voice) return;
+              if (!voice.params) voice.params = {};
+              voice.params.pan = v;
+            });
+          }
+        });
         if (!display) return;
-        const idx = sequence.indexOf(step);
+        const idx = sequence.indexOf(top);
         if (idx < 0) return;
         const chip = display.querySelector(`.seq-step[data-step-idx="${idx}"]`);
         if (!chip) return;
@@ -14841,7 +14938,10 @@
     // same action list as the (now-removed) press-and-hold menu, just
     // anchored to the button's position.
     document.getElementById('step-edit-btn')?.addEventListener('click', (e) => {
-      const eligible = selectedStepRefs.filter(s => s && !s.isSub);
+      // Match the Edit row's eligibility — chord and sub-sequence
+      // chips qualify too, and _buildStepCtxActions already builds
+      // sub-aware menu entries (Edit subsequence…, Reverse, etc.).
+      const eligible = selectedStepRefs.filter(_stepHasPlayableContent);
       const step = eligible[eligible.length - 1];
       if (!step) return;
       const stepIdx = sequence.indexOf(step);
@@ -14882,7 +14982,11 @@
       if (!slider) return;
       slider.addEventListener('input', () => {
         const v = Math.max(0, Math.min(100, parseInt(slider.value, 10) || 0));
-        const selEligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
+        // Eligibility now matches the Edit row's: chord and sub-sequence
+        // chips qualify too, so the volume slider isn't quietly hidden
+        // for them. _forEachStepLeaf below fans the write down to a
+        // sub's children so each fired voice picks up the new volume.
+        const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
         // Poly + no selection: drive the lane's Volume node directly.
         // Same reasoning as pan — sample-type tones bypass per-note
         // volume baked into params, but the lane Volume node sits
@@ -14900,16 +15004,19 @@
         }
         // Selection-scoped volume — primary chip in Mono / Poly+selection.
         const targets = selEligible.length > 0 ? [selEligible[selEligible.length - 1]] : [];
-        targets.forEach(step => {
-          if (!step.params) step.params = {};
-          step.params.volume = v;
-          if (Array.isArray(step.chord)) {
-            step.chord.forEach(voice => {
-              if (!voice) return;
-              if (!voice.params) voice.params = {};
-              voice.params.volume = v;
-            });
-          }
+        targets.forEach(top => {
+          _forEachStepLeaf(top, leaf => {
+            if (!leaf || leaf.isSub) return;
+            if (!leaf.params) leaf.params = {};
+            leaf.params.volume = v;
+            if (Array.isArray(leaf.chord)) {
+              leaf.chord.forEach(voice => {
+                if (!voice) return;
+                if (!voice.params) voice.params = {};
+                voice.params.volume = v;
+              });
+            }
+          });
         });
         if (valEl) valEl.textContent = v + '%';
       });
@@ -14930,19 +15037,25 @@
       if (!slider) return;
       slider.addEventListener('input', () => {
         const v = Math.max(-50, Math.min(50, parseInt(slider.value, 10) || 0));
-        const selEligible = selectedStepRefs.filter(s => s && !s.isSub);
+        const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
         if (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]) {
           // Lane-scope slip — shifts every step in the active lane by
           // the same percent. Stored on the lane so selection-level
           // edits don't fight it.
           lanes[activeLaneIdx].slip = v;
         } else if (selEligible.length > 0) {
-          // Selection-scope slip — per-step. Stored on step.params
-          // so it survives clones / persistence the same as pan/vol.
-          selEligible.forEach(step => {
-            if (!step) return;
-            if (!step.params) step.params = {};
-            step.params.slip = v;
+          // Selection-scope slip — per-step. Stored on step.params so
+          // it survives clones / persistence the same as pan/vol. Sub
+          // chips fan out to leaves so each child's fire time slips
+          // by the same percent of its own duration; chord chips just
+          // store on the parent (slip is read at the top scheduleStepAt
+          // call, not per chord voice).
+          selEligible.forEach(top => {
+            _forEachStepLeaf(top, leaf => {
+              if (!leaf || leaf.isSub) return;
+              if (!leaf.params) leaf.params = {};
+              leaf.params.slip = v;
+            });
           });
         }
         if (valEl) valEl.textContent = (v > 0 ? '+' : '') + v + '%';

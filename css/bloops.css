@@ -360,9 +360,11 @@
       flex-shrink: 0;
     }
 
-    /* Transport cluster — Play, Rec, Loop fill the row evenly. Clear and
-       Riff have moved to their own row above the step controls, so this
-       row only carries the three transport actions. */
+    /* Transport cluster — Play, Rec, Loop (and Drift in Poly mode)
+       fill the row evenly. Clear and Riff have moved to their own row
+       above the step controls. In Mono only three buttons live here;
+       in Poly the Drift button takes a fourth slot, so Rec and Loop
+       shrink proportionally to keep the row on a single line. */
     .footer-transport {
       display: flex;
       align-items: stretch;
@@ -371,12 +373,24 @@
       flex-wrap: nowrap;
     }
     .footer-transport > #rec-btn,
-    .footer-transport > #loop-btn {
+    .footer-transport > #loop-btn,
+    .footer-transport > #drift-btn {
       flex: 1 1 0;
       min-width: 0;
       height: 52px;
       font-size: 1rem;
       padding: 0 18px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* Poly mode: tighten Rec / Loop / Drift padding + font so all three
+       pills + the Play circle fit on the row without overflow. */
+    .footer-transport.poly-mode-on > #rec-btn,
+    .footer-transport.poly-mode-on > #loop-btn,
+    .footer-transport.poly-mode-on > #drift-btn {
+      padding: 0 10px;
+      font-size: 0.92rem;
     }
     .footer-transport > #play-btn {
       width: 52px;
@@ -385,6 +399,42 @@
       min-height: 52px;
       font-size: 1.25rem;
       flex: 0 0 auto;
+    }
+    /* Drift pill — orange identity to distinguish from the other
+       transport pills. Active state (current lane is drifting) lights
+       up brighter and switches the label to "Clear". */
+    #drift-btn {
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      #drift-btn:hover { border-color: #ed8936; color: #fbd38d; }
+    }
+    #drift-btn.active {
+      border-color: #ed8936;
+      color: #fbd38d;
+      background: rgba(237, 137, 54, 0.18);
+      box-shadow: 0 0 12px rgba(237, 137, 54, 0.4);
+    }
+    /* Drifting lane — orange-tinted glow on the lane row so the user
+       can see at a glance which lanes are drifting. */
+    .lane-row.drifting {
+      box-shadow: inset 0 0 0 1px rgba(237, 137, 54, 0.55);
+    }
+    .lane-row.drifting.active {
+      box-shadow: inset 0 0 0 1px #ed8936, 0 0 12px rgba(237, 137, 54, 0.35);
+    }
+    .lane-row.drifting .lane-label::after {
+      content: ' ⤳';
+      color: #ed8936;
+      font-weight: 700;
     }
 
     /* Row that hosts Clear + Riff between the sequence chip display and
@@ -398,16 +448,30 @@
     }
     .clear-riff-row > #save-btn,
     .clear-riff-row > #clear-btn,
+    .clear-riff-row > #poly-mode-btn,
     .clear-riff-row > .riff-wrapper {
       flex: 1 1 0;
       min-width: 0;
     }
     .clear-riff-row > #save-btn,
-    .clear-riff-row > #clear-btn {
+    .clear-riff-row > #clear-btn,
+    .clear-riff-row > #poly-mode-btn {
       width: 100%;
     }
     .clear-riff-row > .riff-wrapper > #riff-menu-btn {
       width: 100%;
+    }
+    /* Tighten horizontal padding inside the row so all four pills fit
+       on a single line without the Riff carrot (▾) wrapping. */
+    .clear-riff-row > #save-btn,
+    .clear-riff-row > #clear-btn,
+    .clear-riff-row > #poly-mode-btn,
+    .clear-riff-row > .riff-wrapper > #riff-menu-btn {
+      padding-left: 6px;
+      padding-right: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     #tempo-slider {
       width: 90px;
@@ -492,6 +556,36 @@
        click. The legacy +/- step buttons (.bpm-step) and per-column
        wrappers (.bpm-digit-col) are gone; .bpm-digit is now a button
        you press to bring up the value picker. */
+    /* Metronome toggle — sits to the LEFT of the BPM digits and emits
+       an audible click at the current BPM when active. Off = dim grey,
+       on = bright cyan with a subtle glow that pulses with each tick. */
+    #metronome-btn {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      margin-right: 6px;
+      border: 1px solid #2d2d3f;
+      border-radius: 50%;
+      background: #050510;
+      color: #4a4a6a;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      #metronome-btn:hover { border-color: #4fd1c5; color: #81e6d9; }
+    }
+    #metronome-btn.active {
+      border-color: #4fd1c5;
+      color: #81e6d9;
+      box-shadow: 0 0 12px rgba(79, 209, 197, 0.45);
+    }
+    #metronome-btn.tick { transform: scale(1.18); }
+
     .bpm-digits {
       display: flex;
       align-items: center;
@@ -1317,7 +1411,168 @@
       row-gap: 2px;
       column-gap: 0;
     }
-    .sequence-display.grid-mode .seq-step { width: auto; }
+
+    /* Poly-mode lanes: one row per lane, each with a small label/M/S
+       column on the left and a side-scrolling chip strip on the right.
+       Only the active lane gets full editing handlers; other lanes
+       render preview chips and click anywhere to activate. */
+    .sequence-display.polymode {
+      display: flex;
+      flex-direction: column;
+      flex-wrap: nowrap;
+      align-items: stretch;
+      gap: 4px;
+      padding: 6px 0 6px 0;
+      max-height: none;
+      overflow-y: auto;
+    }
+    .sequence-display.polymode.grid-mode {
+      /* Override the grid layout so polymode's flex-column wins. */
+      display: flex;
+    }
+    .lane-row {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+      padding: 2px 6px;
+      border-radius: 8px;
+      cursor: pointer;
+      min-height: 44px;
+      transition: background 0.12s ease;
+    }
+    .lane-row.active {
+      background: rgba(66, 153, 225, 0.10);
+      box-shadow: inset 0 0 0 1px rgba(66, 153, 225, 0.45);
+      cursor: default;
+    }
+    .lane-row.muted .lane-chips,
+    .lane-row.muted .lane-label { opacity: 0.35; }
+    .lane-row.soloed { box-shadow: inset 0 0 0 1px rgba(246, 173, 85, 0.5); }
+    .lane-row.active.soloed { box-shadow: inset 0 0 0 1px #f6ad55; }
+    /* Single status-light button per lane — replaces the old separate
+       label + Mute + Solo. The button's background colour reflects
+       the lane's mute/solo state; the lane label is centred on top.
+       Stretches to fill the controls column for max click area. */
+    .lane-controls {
+      display: flex;
+      flex-direction: column;
+      flex: 0 0 auto;
+      align-items: stretch;
+      justify-content: stretch;
+      padding: 2px;
+      width: 32px;
+      min-width: 32px;
+    }
+    .lane-status {
+      flex: 1 1 auto;
+      width: 100%;
+      border: 2px solid #2d2d3f;
+      border-radius: 8px;
+      background: rgba(45, 45, 63, 0.4);
+      color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+      padding: 0;
+    }
+    .lane-row.active .lane-status { color: #b3d4ff; border-color: #4299e1; }
+    .lane-status[data-state="muted"] {
+      background: rgba(229, 62, 62, 0.18);
+      border-color: #e53e3e;
+      color: #fc8181;
+    }
+    .lane-status[data-state="solo"] {
+      background: rgba(246, 173, 85, 0.20);
+      border-color: #f6ad55;
+      color: #fbd38d;
+    }
+    .lane-row.active .lane-status[data-state="muted"] {
+      box-shadow: 0 0 10px rgba(229, 62, 62, 0.45);
+    }
+    .lane-row.active .lane-status[data-state="solo"] {
+      box-shadow: 0 0 10px rgba(246, 173, 85, 0.5);
+    }
+    /* Non-active lanes: status button is read-only — show the colour
+       state but flag it as not directly interactive so the user knows
+       to switch lanes first. */
+    .lane-status.inactive {
+      cursor: default;
+      opacity: 0.85;
+    }
+    @media (hover: hover) {
+      .lane-row.active .lane-status:hover { filter: brightness(1.15); }
+    }
+    @media (hover: hover) {
+      .lane-btn:hover { border-color: #4299e1; color: #4299e1; }
+    }
+    .lane-mute.on { border-color: #e53e3e; color: #e53e3e; background: rgba(229, 62, 62, 0.15); }
+    .lane-solo.on { border-color: #f6ad55; color: #f6ad55; background: rgba(246, 173, 85, 0.18); }
+    .lane-chips {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: stretch;
+      gap: 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 4px 6px;
+      background: rgba(10, 10, 20, 0.55);
+      border-radius: 6px;
+      scrollbar-width: thin;
+      scrollbar-color: #2d2d3f #0a0a14;
+    }
+    .lane-chips::-webkit-scrollbar { height: 4px; }
+    .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }
+    .lane-chips::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
+    .lane-chips.grid-mode {
+      /* Each lane chip strip uses the same sub-cell grid as Mono. The
+         inline grid overrides flex so chips lay out by gridColumn span. */
+      display: grid;
+      grid-template-columns: repeat(var(--grid-cols, 32), minmax(8px, 1fr));
+      grid-auto-flow: row dense;
+      align-items: stretch;
+    }
+    .lane-chips .seq-empty {
+      color: #4a4a6a;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      align-self: center;
+      padding: 0 6px;
+    }
+
+    /* Mono / Poly toggle pill — same chrome as Free/Fixed for visual
+       parity. Active state lights up cyan when Poly is on. */
+    #poly-mode-btn {
+      padding: 3px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 14px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      #poly-mode-btn:hover { border-color: #4299e1; color: #4299e1; }
+    }
+    #poly-mode-btn.active {
+      border-color: #4299e1;
+      color: #b3d4ff;
+      background: rgba(66, 153, 225, 0.18);
+      box-shadow: 0 0 12px rgba(66, 153, 225, 0.4);
+    }
+    .sequence-display.grid-mode .seq-step,
+    .lane-chips.grid-mode .seq-step { width: auto; }
     /* Empty pattern slot used while step-mode is on. */
     .seq-step.empty-slot {
       background: rgba(45, 45, 63, 0.35);
@@ -1414,21 +1669,62 @@
     .size-chip:hover { border-color: #4299e1; color: #4299e1; }
     .size-chip:active { background: rgba(66,153,225,0.18); }
 
+    /* Step Edit row: holds an "Edit" button on the left (10vw wide,
+       full-row height = both sliders) and the Pan / Vol sliders
+       stacked on the right. The wrapper hides when neither slider
+       bar is being shown. */
+    .step-edit-row {
+      display: flex;
+      align-items: stretch;
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .step-edit-row[hidden] { display: none; }
+    .step-edit-row > #step-edit-btn {
+      flex: 0 0 10vw;
+      width: 10vw;
+      max-width: 10vw;
+      margin: 4px 6px 4px 18px;
+      padding: 6px 4px;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    .step-edit-row > #step-edit-btn[hidden] { display: none; }
+    @media (hover: hover) {
+      .step-edit-row > #step-edit-btn:hover { border-color: #4299e1; color: #4299e1; }
+    }
+    .step-edit-row > #step-edit-btn:active { background: rgba(66,153,225,0.18); }
+    .step-edit-row > .step-edit-bars {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
     /* Selected-step pan slider — appears just below the BPM row when
        at least one step chip is selected, and applies its value to the
        whole selection (multi-mode included). The chip background still
        lerps toward the L/R hard-pan colour so the visual cue tracks
        the slider live. */
-    .step-pan-bar, .step-vol-bar {
+    .step-pan-bar, .step-vol-bar, .step-slip-bar {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 4px 18px;
       background: #050510;
-      border-bottom: 1px solid #1a1a2e;
     }
-    .step-pan-bar[hidden], .step-vol-bar[hidden] { display: none; }
-    .step-pan-label, .step-vol-label {
+    .step-pan-bar, .step-vol-bar { border-bottom: 1px solid #1a1a2e; }
+    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden] { display: none; }
+    .step-pan-label, .step-vol-label, .step-slip-label {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
       font-weight: 700;
@@ -1436,13 +1732,15 @@
       text-transform: uppercase;
       color: #a0aec0;
     }
-    .step-pan-bar input[type="range"], .step-vol-bar input[type="range"] {
+    .step-pan-bar input[type="range"],
+    .step-vol-bar input[type="range"],
+    .step-slip-bar input[type="range"] {
       flex: 1;
       height: 4px;
       accent-color: #4fd1c5;
     }
-    .step-pan-val, .step-vol-val {
-      min-width: 28px;
+    .step-pan-val, .step-vol-val, .step-slip-val {
+      min-width: 36px;
       text-align: right;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.78rem;
@@ -2696,7 +2994,6 @@
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
-      margin-bottom: 14px;
     }
     .step-div-modal .sdiv-opt {
       padding: 12px 8px;
@@ -2722,11 +3019,215 @@
       color: #a0aec0;
       cursor: pointer;
       user-select: none;
-      padding: 6px 4px 0;
+      padding: 0 4px;
+      margin-bottom: 14px;
     }
     .step-div-modal .sdiv-lock input[type="checkbox"] {
       cursor: pointer;
       accent-color: #4299e1;
+    }
+
+    /* PITCH RAMP DIALOG — opens from the step ctx menu, sets the
+       step.bend semitones + atFraction the playback path already
+       honors. */
+    .pitch-ramp-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 1200;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .pitch-ramp-modal {
+      background: #050510;
+      border: 1px solid #2d2d3f;
+      border-radius: 14px;
+      padding: 18px 18px 16px;
+      width: min(380px, 92vw);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(66, 153, 225, 0.10);
+    }
+    .pitch-ramp-modal .pr-title {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
+      color: #f0f4ff; margin-bottom: 6px;
+      text-align: center;
+    }
+    .pitch-ramp-modal .pr-sub {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      color: #a0aec0;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .pitch-ramp-modal .pr-sub strong { color: #b3d4ff; }
+    .pitch-ramp-modal .pr-param { margin-bottom: 12px; padding: 0 4px; }
+    .pitch-ramp-modal .pr-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      color: #a0aec0;
+      margin-bottom: 4px;
+    }
+    .pitch-ramp-modal .pr-val {
+      color: #b3d4ff;
+      font-weight: 700;
+    }
+    .pitch-ramp-modal input[type="range"] {
+      width: 100%;
+      accent-color: #4299e1;
+    }
+    .pitch-ramp-modal .pr-actions {
+      display: flex; justify-content: space-between; gap: 8px;
+      margin-top: 14px;
+    }
+    .pitch-ramp-modal .pr-btn {
+      flex: 1 1 0;
+      padding: 8px 6px;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      .pitch-ramp-modal .pr-btn:hover { border-color: #4299e1; color: #4299e1; }
+    }
+    .pitch-ramp-modal .pr-btn.pr-clear:hover { border-color: #e53e3e; color: #e53e3e; }
+    .pitch-ramp-modal .pr-btn.pr-save {
+      border-color: #4299e1;
+      color: #b3d4ff;
+      background: rgba(66, 153, 225, 0.18);
+    }
+
+    /* VARIANCE PICKER (per-step Random / Linear) */
+    .variance-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 1200;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .variance-modal {
+      background: #050510;
+      border: 1px solid #2d2d3f;
+      border-radius: 14px;
+      padding: 18px 18px 16px;
+      width: min(360px, 92vw);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(246, 173, 85, 0.10);
+    }
+    .variance-modal .vrn-title {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
+      color: #f0f4ff; margin-bottom: 14px;
+      text-align: center;
+    }
+    .variance-modal .vrn-iters {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      color: #cbd5e0;
+      margin-bottom: 10px;
+      padding: 0 4px;
+    }
+    .variance-modal .vrn-iters input[type="number"] {
+      width: 64px;
+      padding: 4px 6px;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      background: #1a1a2e;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .variance-modal .vrn-iters input[type="number"]:focus {
+      outline: none;
+      border-color: #f6ad55;
+    }
+    .variance-modal .vrn-random {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      color: #a0aec0;
+      cursor: pointer;
+      user-select: none;
+      padding: 0 4px 4px;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .variance-modal .vrn-random input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #f6ad55;
+      flex: 0 0 auto;
+      margin-top: 2px;
+    }
+    .variance-modal .vrn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .variance-modal .vrn-opt {
+      padding: 14px 8px;
+      border: 1px solid #2d2d3f;
+      border-radius: 12px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      .variance-modal .vrn-opt:hover { border-color: #f6ad55; color: #f6ad55; }
+    }
+    .variance-modal .vrn-opt:active { background: rgba(246, 173, 85, 0.18); }
+    .variance-modal .vrn-hint {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      color: #718096;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    /* Variance state on the step chip itself — blinking outline while
+       the pool is being edited; a small ⟳ glyph for committed steps. */
+    @keyframes variance-blink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.35; }
+    }
+    .seq-step.variance-editing {
+      animation: variance-blink 0.6s infinite ease-in-out;
+      outline: 2px solid #f6ad55;
+      outline-offset: -2px;
+      box-shadow: 0 0 14px rgba(246, 173, 85, 0.55);
+    }
+    .seq-step.has-variance {
+      position: relative;
+    }
+    .seq-step.has-variance::after {
+      content: '⟳';
+      position: absolute;
+      top: 1px;
+      right: 3px;
+      font-size: 0.62rem;
+      font-weight: 700;
+      color: #f6ad55;
+      pointer-events: none;
+    }
+    .seq-step.has-variance[data-variance-mode="linear"]::after {
+      content: '↻';
     }
 
     /* SOUND EDITOR MODAL */
@@ -3003,14 +3504,19 @@
     .home-bar-row .undo-redo-pair {
       display: flex;
       justify-self: start;
+      grid-column: 1;
     }
     /* BPM picker tucks into the right column of the home row. The full-
        size 3-digit picker (used elsewhere) is too tall for a compact
        header strip; scale down step buttons + digits so the row stays
-       slim. Outer hidden inputs still drive every tempo* reference. */
+       slim. Outer hidden inputs still drive every tempo* reference.
+       Explicit grid-column: 3 because the home-bar is now absolutely
+       positioned (removed from grid flow), and without an explicit
+       column the auto-placement would put tempo-control into col 2. */
     .home-bar-row .tempo-control {
       justify-self: end;
       gap: 6px;
+      grid-column: 3;
     }
     .home-bar-row .bpm-digits { gap: 3px; }
     .home-bar-row .bpm-digit {
@@ -3033,7 +3539,6 @@
       display: none;
     }
     .home-bar {
-      display: block;
       box-sizing: border-box;
       text-align: center;
       padding: 4px 12px;
@@ -3047,13 +3552,19 @@
       text-transform: uppercase;
       text-shadow: 0 0 10px rgba(79, 209, 197, 0.5);
       transition: color 0.15s ease, text-shadow 0.15s ease;
-      flex-shrink: 0;
-      justify-self: center;
-      /* Pin to the middle grid column so it stays centered even when
-         the undo/redo (col 1) and BPM (col 3) clusters are display:none
-         in the Listen view — without this, grid auto-placement would
-         shift the home-bar into the first empty track. */
-      grid-column: 2;
+      /* Pin to the row's true horizontal center. The grid layout
+         (1fr auto 1fr) used to put it in the auto middle column, but
+         when the right (BPM) cluster grew wider than the left
+         (undo/redo) the 1fr columns expanded asymmetrically and the
+         middle drifted off page-center. Absolute centering is
+         independent of the side columns. The grid still positions
+         the side clusters; this just floats the title over the row. */
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      white-space: nowrap;
     }
     .home-bar:hover {
       color: #81e6d9;

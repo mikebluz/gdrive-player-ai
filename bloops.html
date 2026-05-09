@@ -34,6 +34,7 @@
            legacy slider + number input live on hidden, kept in DOM so
            every existing tempoSlider.value / tempoInput.value reference
            keeps working. -->
+      <button type="button" id="metronome-btn" title="Metronome — toggle a click at the current BPM so you can hear the rhythm" aria-label="Toggle metronome click">●</button>
       <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
         <button type="button" class="bpm-digit" id="bpm-d-h" data-place="100" aria-label="BPM hundreds — press to pick a digit">1</button>
         <button type="button" class="bpm-digit" id="bpm-d-t" data-place="10"  aria-label="BPM tens — press to pick a digit">2</button>
@@ -222,16 +223,29 @@
     <button type="button" class="size-chip" data-sub="0.125" title="Add a 1/32 slot">1/32</button>
   </div>
 
-  <div class="step-pan-bar" id="step-pan-bar" hidden>
-    <span class="step-pan-label" id="step-pan-label">Pan</span>
-    <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
-    <span class="step-pan-val" id="step-pan-val">C</span>
-  </div>
-
-  <div class="step-vol-bar" id="step-vol-bar" hidden>
-    <span class="step-vol-label" id="step-vol-label">Vol</span>
-    <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
-    <span class="step-vol-val" id="step-vol-val">100%</span>
+  <!-- Pan / Vol sliders + the Edit button live in one row so the
+       button can span both slider heights on the left while the
+       sliders stack on the right. The wrapper hides when neither
+       bar is being shown. -->
+  <div class="step-edit-row" id="step-edit-row" hidden>
+    <button type="button" id="step-edit-btn" hidden title="Open the step edit menu for the selected step">Edit</button>
+    <div class="step-edit-bars">
+      <div class="step-pan-bar" id="step-pan-bar" hidden>
+        <span class="step-pan-label" id="step-pan-label">Pan</span>
+        <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
+        <span class="step-pan-val" id="step-pan-val">C</span>
+      </div>
+      <div class="step-vol-bar" id="step-vol-bar" hidden>
+        <span class="step-vol-label" id="step-vol-label">Vol</span>
+        <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
+        <span class="step-vol-val" id="step-vol-val">100%</span>
+      </div>
+      <div class="step-slip-bar" id="step-slip-bar" hidden>
+        <span class="step-slip-label" id="step-slip-label">Slip</span>
+        <input type="range" id="step-slip-slider" min="-50" max="50" value="0" step="1" aria-label="Step slip — shift fire time backwards/forwards as a percent of step duration" />
+        <span class="step-slip-val" id="step-slip-val">0%</span>
+      </div>
+    </div>
   </div>
 
   <div id="subedit-banner">
@@ -246,6 +260,7 @@
   <div class="clear-riff-row">
     <button id="save-btn" disabled>Save</button>
     <button id="clear-btn">Clear</button>
+    <button id="poly-mode-btn" type="button" title="Mono = single sequence (default). Poly = N parallel lanes that all play together; Keep-mode note presses go to the selected lane. Lane count follows the Grid rows setting.">Mono</button>
     <div class="riff-wrapper">
       <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
       <div class="riff-panel" id="riff-panel">
@@ -320,6 +335,7 @@
       <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
       <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
       <button id="loop-btn" title="Loop the current sequence">Loop</button>
+      <button id="drift-btn" type="button" hidden title="Drift: pick a millisecond factor; the active lane's loop iteration N is delayed by factor × N. Click again on a drifting lane to clear and re-sync at the next iteration.">Drift</button>
     </div>
 
   </div>
@@ -395,6 +411,17 @@
     let _playBaseTime  = 0;
     let _playOffsetSec = 0;
     let sequence = []; // [{ freq, label, cellIndex }] — freq null = rest; chord: [{...}]
+    // ---- Poly mode (multi-lane sequencer) -----------------------------
+    // In Mono (default), the workspace is a single `sequence`. In Poly,
+    // the workspace splits into N parallel lanes (one per grid row);
+    // the active lane's `steps` is aliased to `sequence` so all
+    // existing add/edit code keeps working. Mute/Solo are per-lane.
+    // _stashedLanes preserves the lanes when we drop back to Mono so
+    // re-entering Poly restores them.
+    let polyMode = false;
+    let lanes = [];           // [{ name, steps: [], muted: false, solo: false }]
+    let activeLaneIdx = 0;
+    let _stashedLanes = null; // saved while in Mono; populated on Poly→Mono
     let chordMode = false;
     // Grid playback mode — drives what a cell click does.
     //   'sequencer' (default): existing behavior (add note / start sustain).
@@ -855,7 +882,12 @@
             document.getElementById('loop-btn').classList.toggle('active', loopMode);
           }
 
-          sequence = [...saved.steps];
+          // Deep-clone every step so the loaded sequence doesn't share
+          // references with the bank entry (or with any other lane that
+          // loaded the same saved sequence). Without this, editing a
+          // step in one lane would silently mutate the matching step
+          // in every other lane that ever loaded the same bank entry.
+          sequence = saved.steps.map(cloneStep);
           insertionPoint = null;
           if (saved.bpm) {
             tempoInput.value = saved.bpm;
@@ -942,6 +974,7 @@
       tempoInput.value = tempoSlider.value;
       updateBpmAccent();
       refreshBpmDigits();
+      if (typeof _restartMetronomeIfActive === 'function') _restartMetronomeIfActive();
       persistWorkspace();
     });
 
@@ -950,7 +983,75 @@
       tempoSlider.value = v;
       updateBpmAccent();
       refreshBpmDigits();
+      if (typeof _restartMetronomeIfActive === 'function') _restartMetronomeIfActive();
       persistWorkspace();
+    });
+
+    // ---- BPM metronome ------------------------------------------------
+    // Toggleable click track that fires a short percussive sound at the
+    // current BPM. Independent of sequence playback — useful for the
+    // user to feel the cadence while editing. Restarts whenever the
+    // BPM changes (tempo digits / slider / number input all funnel to
+    // tempoInput.value).
+    let _metronomeOn    = false;
+    let _metronomeTimer = null;
+    let _metronomeSynth = null;
+    function _getMetronomeSynth() {
+      if (_metronomeSynth) return _metronomeSynth;
+      try {
+        _metronomeSynth = new Tone.MembraneSynth({
+          pitchDecay: 0.008,
+          octaves:    2,
+          envelope:   { attack: 0.001, decay: 0.04, sustain: 0, release: 0.05 },
+          volume:     -8,
+        }).toDestination();
+      } catch (e) {}
+      return _metronomeSynth;
+    }
+    function _stopMetronomeTimer() {
+      if (_metronomeTimer !== null) {
+        clearInterval(_metronomeTimer);
+        _metronomeTimer = null;
+      }
+    }
+    function _startMetronomeTimer() {
+      _stopMetronomeTimer();
+      if (!_metronomeOn) return;
+      const bpm = parseInt(tempoInput.value, 10) || 120;
+      if (bpm <= 0) return;
+      const intervalMs = Math.max(50, 60000 / bpm);
+      const btn = document.getElementById('metronome-btn');
+      const tick = () => {
+        if (!_metronomeOn) return;
+        const synth = _getMetronomeSynth();
+        if (synth) {
+          try { synth.triggerAttackRelease('C5', '32n'); } catch (e) {}
+        }
+        if (btn) {
+          btn.classList.add('tick');
+          setTimeout(() => btn.classList.remove('tick'), 60);
+        }
+      };
+      tick();
+      _metronomeTimer = setInterval(tick, intervalMs);
+    }
+    function _restartMetronomeIfActive() {
+      if (_metronomeOn) _startMetronomeTimer();
+    }
+    function refreshMetronomeBtn() {
+      const btn = document.getElementById('metronome-btn');
+      if (!btn) return;
+      btn.classList.toggle('active', _metronomeOn);
+      btn.title = _metronomeOn
+        ? 'Metronome on — click to silence.'
+        : 'Metronome — toggle a click at the current BPM so you can hear the rhythm.';
+    }
+    document.getElementById('metronome-btn')?.addEventListener('click', async () => {
+      try { await Tone.start(); } catch (e) {}
+      _metronomeOn = !_metronomeOn;
+      refreshMetronomeBtn();
+      if (_metronomeOn) _startMetronomeTimer();
+      else _stopMetronomeTimer();
     });
 
     // ---- 3-digit BPM picker ---------------------------------------------
@@ -970,6 +1071,7 @@
       tempoSlider.value = String(next);
       updateBpmAccent();
       refreshBpmDigits();
+      if (typeof _restartMetronomeIfActive === 'function') _restartMetronomeIfActive();
       persistWorkspace();
     }
     // Restart the bpm-pulse animation across all digits at the next
@@ -2211,7 +2313,7 @@
       };
     }
 
-    function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx) {
+    function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       // Cold-start guard: if the AudioContext hasn't actually resumed yet
       // (very first gesture race — the gesture's resume() is async, the
       // synchronous call into playNote loses), kick the resume now and
@@ -2302,12 +2404,24 @@
 
       // Loaded sample (Tone.Sampler) — pitch-shifts the file to play any note.
       // Per-note effects are skipped on samples (the sampler is shared); pan
-      // and EQ are still applied when called from track playback because we
-      // route through a per-track sampler bound to the track's bus.
+      // and EQ are still applied when called from track playback (per-track
+      // sampler bound to the track's bus) or from a Poly-mode lane stream
+      // (per-lane sampler bound to the lane's bus).
       if (isSampleType(type)) {
         let sampler = null;
         if (Number.isFinite(trackIdx) && tracks[trackIdx]) {
           sampler = getOrCreateTrackSampler(trackIdx, type.slice(7));
+        }
+        // Per-lane sampler is built lazily on first audio call, but its
+        // buffers load asynchronously. While they load, only adopt the
+        // lane sampler if it's actually .loaded — otherwise fall through
+        // to the shared sampler (which is already loaded by app startup)
+        // so the first few notes of a freshly-created lane don't sine-
+        // fallback. Lane pan won't apply during that brief warm-up
+        // window, but the tone and envelope stay correct.
+        if (!sampler && Number.isFinite(laneIdx) && lanes[laneIdx]) {
+          const laneSamp = getOrCreateLaneSampler(laneIdx, type.slice(7));
+          if (laneSamp && laneSamp.loaded) sampler = laneSamp;
         }
         if (!sampler) {
           const entry = getSampleEntry(type);
@@ -2331,15 +2445,17 @@
         // since the default tone is sample:piano. Fall back to a sine
         // synth one-shot so the press is audible; the next press
         // (likely a few hundred ms later) will use the real sample.
-        return playNote(freq, { ...params, type: 'sine' }, durationMs, startTime, destination, trackIdx);
+        return playNote(freq, { ...params, type: 'sine' }, durationMs, startTime, destination, trackIdx, laneIdx);
       }
 
       // Per-note effect chain — order is synth → distortion → delay → reverb
       // → panner → destination. Built backward from the destination so each
       // new node's output is the previous head. `chainHead` becomes the
       // synth's connect target; effect nodes are disposed alongside the
-      // synth so they don't leak.
-      const finalDest = fxOverrideGlobal ? masterLimiter : (destination || masterBus);
+      // synth so they don't leak. In Poly mode, route through the lane's
+      // bus (Volume → Panner → masterBus) so lane-level mix applies.
+      const laneDest = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null;
+      const finalDest = fxOverrideGlobal ? masterLimiter : (destination || laneDest || masterBus);
       let chainHead = finalDest;
       const effectNodes = [];
       // Per-note pan sits closest to the destination so it pans the fully-
@@ -2745,6 +2861,21 @@
     }
 
     function renderSequence(activeIndex = -1) {
+      // In Poly, ensure the active lane's `steps` always points at the
+      // current `sequence` array. Anything that did `sequence = [new array]`
+      // (Clear, Reverse, Shuffle, Random, Seed, etc.) would otherwise
+      // leave the lane referencing the old populated array — switching
+      // lanes after such an op would silently restore the pre-mutation
+      // content.
+      if (polyMode && activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
+        lanes[activeLaneIdx].steps = sequence;
+      }
+      // The chip-highlight caches hold direct DOM refs that this
+      // re-render is about to replace. Clear them so the next
+      // setActiveChipForLane / setActiveSequenceChip looks up fresh
+      // chips instead of holding onto detached ones.
+      _activeChipMono = null;
+      _activeChipsByLane.clear();
       clampSelectionToSequence();
       // Sweep orphan touch-drag chip clones — bindStepDragTouch appends a
       // position:fixed clone to <body> while dragging, and on a few iOS
@@ -2770,17 +2901,139 @@
       const SUBCELL_MULT = 4;
       const SPAN_PER_MEASURE = 32;
       const subCols = cols * SUBCELL_MULT;
-      if (cols > 0) {
-        display.classList.add('grid-mode');
-        display.style.setProperty('--grid-cols', String(subCols));
-      } else {
+
+      // chipHost is where the active sequence's chips render — the
+      // sequence-display itself in Mono, or the active lane's chip
+      // strip in Poly. Built below depending on mode.
+      let chipHost = display;
+
+      if (polyMode) {
+        display.classList.add('polymode');
         display.classList.remove('grid-mode');
         display.style.removeProperty('--grid-cols');
+        display.innerHTML = '';
+
+        let activeLaneChipsEl = null;
+        lanes.forEach((lane, laneIdx) => {
+          const isActiveLane = laneIdx === activeLaneIdx;
+          const row = document.createElement('div');
+          row.className = 'lane-row'
+            + (isActiveLane ? ' active' : '')
+            + (lane.muted   ? ' muted'  : '')
+            + (lane.solo    ? ' soloed' : '')
+            // Drifting OR locked → keep the orange styling so the user
+            // sees the lane has a drift offset. Reset clears both.
+            + (lane.driftMs > 0 || lane.driftLocked ? ' drifting' : '');
+
+          const ctrls = document.createElement('div');
+          ctrls.className = 'lane-controls';
+          // Single status-light button — shows the lane label and its
+          // mute state via background color. Click toggles mute, but
+          // ONLY when the lane is active. On non-active lanes the
+          // click bubbles to the lane-row handler which activates the
+          // lane (a second click then toggles).
+          const status = document.createElement('button');
+          status.type = 'button';
+          status.className = 'lane-status';
+          status.textContent = lane.name;
+          const stateName = lane.muted ? 'muted' : 'off';
+          status.dataset.state = stateName;
+          if (!isActiveLane) status.classList.add('inactive');
+          status.title = isActiveLane
+            ? `Lane ${lane.name} — click to ${lane.muted ? 'unmute' : 'mute'}.`
+            : `Lane ${lane.name} (${lane.muted ? 'muted' : 'on'}) — switch to this lane to mute / unmute.`;
+          status.addEventListener('click', (e) => {
+            // Live active check (not the closure's isActiveLane) so a
+            // stale chip captured before activation can't ever toggle.
+            if (laneIdx !== activeLaneIdx) return;
+            e.stopPropagation();
+            lane.muted = !lane.muted;
+            renderSequence();
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          ctrls.appendChild(status);
+          row.appendChild(ctrls);
+
+          const chipsEl = document.createElement('div');
+          chipsEl.className = 'lane-chips';
+          if (cols > 0) {
+            chipsEl.classList.add('grid-mode');
+            chipsEl.style.setProperty('--grid-cols', String(subCols));
+          }
+          row.appendChild(chipsEl);
+
+          if (isActiveLane) {
+            activeLaneChipsEl = chipsEl;
+          } else {
+            // Non-active lanes render simple read-only preview chips.
+            // Sidescroll is handled by .lane-chips's overflow-x.
+            const steps = lane.steps || [];
+            if (steps.length === 0) {
+              chipsEl.innerHTML = '<span class="seq-empty">Empty</span>';
+            } else {
+              steps.forEach((step, stepIdx) => {
+                const chip = document.createElement('div');
+                const isSub  = !!step.isSub;
+                const isCh   = Array.isArray(step.chord);
+                const isRest = !isSub && !isCh && step.freq == null;
+                chip.className = 'seq-step preview'
+                  + (isSub  ? ' subseq' : '')
+                  + (isCh   ? ' chord'  : '')
+                  + (isRest ? ' rest'   : '');
+                let label = '';
+                if (isSub)       label = '▤';
+                else if (isCh)   label = step.chord.map(n => n.label).join('·');
+                else if (isRest) label = '—';
+                else             label = step.label || '';
+                chip.textContent = label;
+                if (cols > 0) {
+                  const span = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
+                  chip.style.gridColumn = `span ${Math.min(span, subCols)}`;
+                }
+                if (!isSub) {
+                  const pc = stepColorPitchClass(step);
+                  if (pc != null && chipPalette[pc]) {
+                    const c = chipPalette[pc];
+                    chip.style.borderColor = c;
+                    chip.style.background = tintHsl(c, 0.22);
+                    chip.style.color = c;
+                  }
+                }
+                // Suppress browser context menu / text-selection
+                // callout on preview chips so a long-press doesn't
+                // bring up the native menu. The step menu is now
+                // accessed via the Edit button, not via long-press.
+                chip.addEventListener('contextmenu', (e) => e.preventDefault());
+                chip.addEventListener('selectstart',  (e) => e.preventDefault());
+                chipsEl.appendChild(chip);
+              });
+            }
+          }
+
+          row.addEventListener('click', (e) => {
+            if (isActiveLane) return;
+            if (e.target.closest('.lane-btn')) return;
+            activateLane(laneIdx);
+          });
+
+          display.appendChild(row);
+        });
+
+        chipHost = activeLaneChipsEl || display;
+      } else {
+        display.classList.remove('polymode');
+        if (cols > 0) {
+          display.classList.add('grid-mode');
+          display.style.setProperty('--grid-cols', String(subCols));
+        } else {
+          display.classList.remove('grid-mode');
+          display.style.removeProperty('--grid-cols');
+        }
       }
 
       const isEmpty = sequence.length === 0 && pendingChord.length === 0;
       if (isEmpty) {
-        display.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
+        chipHost.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
         const revBtn = document.getElementById('reverse-btn');
         if (revBtn) revBtn.disabled = true;
         const shuffBtn = document.getElementById('shuffle-btn');
@@ -2790,9 +3043,9 @@
         return;
       }
 
-      display.innerHTML = '';
+      if (!polyMode) chipHost.innerHTML = '';
       sequence.forEach((step, i) => {
-        if (insertionPoint === i) display.appendChild(makeInsertCursor());
+        if (insertionPoint === i) chipHost.appendChild(makeInsertCursor());
         const chip = document.createElement('div');
         const durSuffix = (step.duration && step.duration > 1) ? `×${step.duration}` : '';
         const bendDir = step.bend && Number.isFinite(step.bend.semitones) && step.bend.semitones !== 0
@@ -2848,6 +3101,14 @@
           chip.style.width = stepWidthPx(step) + 'px';
         }
         if (!step.isSub && isSelectedStep(step)) chip.classList.add('selected');
+        // Variance markers — blinking outline while editing the pool,
+        // a small ⟳ glyph (via CSS) for committed variance steps.
+        if (_varianceEdit && _varianceEdit.stepRef === step) {
+          chip.classList.add('variance-editing');
+        } else if (step.variance && Array.isArray(step.variance.notes) && step.variance.notes.length > 1) {
+          chip.classList.add('has-variance');
+          chip.dataset.varianceMode = step.variance.mode || 'random';
+        }
         // Click behaviour: in step mode (and only on non-sub chips) toggle
         // the slot between rest and the armed note; otherwise select the
         // step (so the step controls retarget it) and preview its audio.
@@ -2856,6 +3117,14 @@
         // dblclick → duplicate handler can run cleanly without us
         // throwing a duplicate select/deselect into the mix.
         const performSingleClick = () => {
+          // While a variance edit is active, clicking the blinking
+          // chip itself finalizes the edit and locks in whatever
+          // alternates the user added. Clicking other chips falls
+          // through to normal selection behavior.
+          if (_varianceEdit && _varianceEdit.stepRef === step) {
+            finalizeVarianceEdit();
+            return;
+          }
           if (stepMode && !step.isSub) {
             // Each slot carries the subdivision/duration the size-chip
             // assigned at append time — preserve that when toggling the
@@ -2957,10 +3226,10 @@
             ? step.params.pan : 0;
           if (savedPan !== 0) applyPanTint(chip, chipBaseColor, savedPan);
         }
-        display.appendChild(chip);
+        chipHost.appendChild(chip);
       });
       if (insertionPoint != null && insertionPoint >= sequence.length) {
-        display.appendChild(makeInsertCursor());
+        chipHost.appendChild(makeInsertCursor());
       }
 
       // Show in-progress chord as a dashed pending chip
@@ -2972,12 +3241,12 @@
         const chip = document.createElement('div');
         chip.className = 'seq-step chord-pending';
         chip.textContent = pendingChord.map(n => n.label).join('·') + '…';
-        display.appendChild(chip);
+        chipHost.appendChild(chip);
         chip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 
       if (activeIndex >= 0) {
-        const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
+        const chips = chipHost.querySelectorAll('.seq-step:not(.chord-pending)');
         chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 
@@ -3194,37 +3463,93 @@
       // Selected-step pan slider: hide when nothing is selected; show
       // and sync to the primary's pan value when there is. Multi-mode
       // ignores any divergence and just shows the primary's value.
+      // In Poly mode the active lane counts as an implicit selection —
+      // bars stay visible and read the lane's last eligible step so
+      // the user can shape the whole lane at once without manually
+      // selecting every chip.
+      const editRow = document.getElementById('step-edit-row');
+      const editBtn = document.getElementById('step-edit-btn');
       const panBar = document.getElementById('step-pan-bar');
       const panSlider = document.getElementById('step-pan-slider');
       const panVal = document.getElementById('step-pan-val');
       const volBar = document.getElementById('step-vol-bar');
       const volSlider = document.getElementById('step-vol-slider');
       const volVal = document.getElementById('step-vol-val');
-      const eligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
+      const slipBar = document.getElementById('step-slip-bar');
+      const slipSlider = document.getElementById('step-slip-slider');
+      const slipVal = document.getElementById('step-slip-val');
+      const selEligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
+      // In Poly with no selection the bars reflect the active lane's
+      // own pan / volume (the lane bus values), not any individual
+      // step's. Switch the source accordingly so the slider position
+      // matches what dragging it will actually edit.
+      const polyLaneScope = (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]);
+      const laneEligible = polyLaneScope
+        ? (lanes[activeLaneIdx].steps || []).filter(s => s && !s.isSub && s.freq != null)
+        : [];
+      const eligible = selEligible.length > 0 ? selEligible : laneEligible;
+      const showBars = polyLaneScope ? !!lanes[activeLaneIdx] : eligible.length > 0;
       if (panBar) {
-        if (eligible.length === 0) {
+        if (!showBars) {
           panBar.hidden = true;
         } else {
           panBar.hidden = false;
-          const primary = eligible[eligible.length - 1];
-          const p = (primary.params && Number.isFinite(primary.params.pan))
-            ? primary.params.pan : 0;
+          let p;
+          if (polyLaneScope) {
+            const lane = lanes[activeLaneIdx];
+            p = Number.isFinite(lane.pan) ? lane.pan : 0;
+          } else {
+            const primary = eligible[eligible.length - 1];
+            p = (primary.params && Number.isFinite(primary.params.pan))
+              ? primary.params.pan : 0;
+          }
           if (panSlider) panSlider.value = String(p);
           if (panVal) panVal.textContent = formatPanLabel(p);
         }
       }
       if (volBar) {
-        if (eligible.length === 0) {
+        if (!showBars) {
           volBar.hidden = true;
         } else {
           volBar.hidden = false;
-          const primary = eligible[eligible.length - 1];
-          const v = (primary.params && Number.isFinite(primary.params.volume))
-            ? primary.params.volume : 100;
+          let v;
+          if (polyLaneScope) {
+            const lane = lanes[activeLaneIdx];
+            v = Number.isFinite(lane.volume) ? lane.volume : 100;
+          } else {
+            const primary = eligible[eligible.length - 1];
+            v = (primary.params && Number.isFinite(primary.params.volume))
+              ? primary.params.volume : 100;
+          }
           if (volSlider) volSlider.value = String(v);
           if (volVal) volVal.textContent = v + '%';
         }
       }
+      if (slipBar) {
+        if (!showBars) {
+          slipBar.hidden = true;
+        } else {
+          slipBar.hidden = false;
+          let s;
+          if (polyLaneScope) {
+            const lane = lanes[activeLaneIdx];
+            s = Number.isFinite(lane.slip) ? lane.slip : 0;
+          } else {
+            const primary = eligible[eligible.length - 1];
+            s = (primary.params && Number.isFinite(primary.params.slip))
+              ? primary.params.slip
+              : (Number.isFinite(primary.slip) ? primary.slip : 0);
+          }
+          if (slipSlider) slipSlider.value = String(s);
+          if (slipVal) slipVal.textContent = (s > 0 ? '+' : '') + s + '%';
+        }
+      }
+      // Edit row wraps both sliders + the Edit button; hide when no
+      // bar is up. The Edit button itself is shown only when at least
+      // one chip is selected (so the menu has a concrete target —
+      // lane-scope edits don't have one).
+      if (editRow) editRow.hidden = !showBars;
+      if (editBtn) editBtn.hidden = !(showBars && selEligible.length > 0);
     }
     // Hold is meaningful only when Step Div is 1/1 (value=4). Below 1/1 the
     // step is already shorter than a beat, so multiplying its length leads
@@ -3270,6 +3595,13 @@
       // Drop any step refs that no longer live in the sequence (e.g., after
       // Random / Condense / load-saved replaced the array entirely).
       selectedStepRefs = selectedStepRefs.filter(ref => sequence.indexOf(ref) >= 0 && !ref.isSub);
+      // Variance edit: drop the edit state if its step is gone, and
+      // re-sync stepIdx if the sequence reordered.
+      if (_varianceEdit) {
+        const idx = sequence.indexOf(_varianceEdit.stepRef);
+        if (idx < 0) _varianceEdit = null;
+        else _varianceEdit.stepIdx = idx;
+      }
       // If multi was on but we're down to 0 or 1 selected, the toggle stays
       // wherever the user last left it — but we resync the editor.
       syncStepEditorFromSelection();
@@ -3360,21 +3692,21 @@
       modal.className = 'step-div-modal';
       modal.innerHTML = `
         <div class="sdiv-title">Step size for this note</div>
-        <div class="sdiv-grid">
-          <button type="button" class="sdiv-opt" data-sub="16">4/1</button>
-          <button type="button" class="sdiv-opt" data-sub="12">3/1</button>
-          <button type="button" class="sdiv-opt" data-sub="8">2/1</button>
-          <button type="button" class="sdiv-opt" data-sub="4">1/1</button>
-          <button type="button" class="sdiv-opt" data-sub="2">1/2</button>
-          <button type="button" class="sdiv-opt" data-sub="1">1/4</button>
-          <button type="button" class="sdiv-opt" data-sub="0.5">1/8</button>
-          <button type="button" class="sdiv-opt" data-sub="0.25">1/16</button>
-          <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
-        </div>
         <label class="sdiv-lock">
           <input type="checkbox" id="sdiv-lock-cb" />
           Use this size for the rest of this Keep session
         </label>
+        <div class="sdiv-grid">
+          <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
+          <button type="button" class="sdiv-opt" data-sub="0.25">1/16</button>
+          <button type="button" class="sdiv-opt" data-sub="0.5">1/8</button>
+          <button type="button" class="sdiv-opt" data-sub="1">1/4</button>
+          <button type="button" class="sdiv-opt" data-sub="2">1/2</button>
+          <button type="button" class="sdiv-opt" data-sub="4">1/1</button>
+          <button type="button" class="sdiv-opt" data-sub="8">2/1</button>
+          <button type="button" class="sdiv-opt" data-sub="12">3/1</button>
+          <button type="button" class="sdiv-opt" data-sub="16">4/1</button>
+        </div>
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
@@ -3399,6 +3731,522 @@
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) overlay.remove();
       });
+    }
+
+    // ---- Step variance (Random / Linear) ------------------------------
+    // While a variance edit is active, _varianceEdit.stepRef points at
+    // the step being edited and the next note presses are appended to
+    // its variance.notes pool instead of being added as new steps.
+    // The blinking chip click finalizes the edit.
+    let _varianceEdit = null; // { stepRef, stepIdx } | null
+
+    // Pitch ramp dialog — picks a target note (as a semitone offset
+    // from the step's pitch) and how far through the step duration
+    // the bend should complete (atFraction). Saves to step.bend, the
+    // same shape the playback path already honors.
+    function showPitchRampDialog(stepIndex) {
+      const step = sequence[stepIndex];
+      if (!step || step.isSub) return;
+      if (step.freq == null && !Array.isArray(step.chord)) return;
+      if (document.querySelector('.pitch-ramp-overlay')) return;
+      const baseFreq = (Array.isArray(step.chord) && step.chord[0]) ? step.chord[0].freq : step.freq;
+      const seedSemis = (step.bend && Number.isFinite(step.bend.semitones)) ? step.bend.semitones : 0;
+      const seedAt    = (step.bend && Number.isFinite(step.bend.atFraction))
+        ? Math.max(5, Math.min(100, Math.round(step.bend.atFraction * 100))) : 50;
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay pitch-ramp-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'pitch-ramp-modal';
+      const targetLabel = (semis) => {
+        if (typeof Tone === 'undefined' || !Number.isFinite(baseFreq)) return '—';
+        try {
+          const f = baseFreq * Math.pow(2, semis / 12);
+          return Tone.Frequency(f).toNote();
+        } catch (e) { return '—'; }
+      };
+      modal.innerHTML = `
+        <div class="pr-title">Pitch ramp</div>
+        <div class="pr-sub">From <strong>${(step.label || '?')}</strong> to <strong id="pr-target">${targetLabel(seedSemis)}</strong></div>
+        <div class="pr-param">
+          <div class="pr-row">Bend by <span class="pr-val" id="pr-bend-v">${seedSemis >= 0 ? '+' : ''}${seedSemis} st</span></div>
+          <input type="range" id="pr-bend" min="-12" max="12" step="1" value="${seedSemis}" />
+        </div>
+        <div class="pr-param">
+          <div class="pr-row">Reach target by <span class="pr-val" id="pr-at-v">${seedAt}%</span> of step</div>
+          <input type="range" id="pr-at" min="5" max="100" step="5" value="${seedAt}" />
+        </div>
+        <div class="pr-actions">
+          <button type="button" class="pr-btn pr-cancel">Cancel</button>
+          <button type="button" class="pr-btn pr-clear">Clear ramp</button>
+          <button type="button" class="pr-btn pr-save">Save</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const bendSlider = modal.querySelector('#pr-bend');
+      const bendVal    = modal.querySelector('#pr-bend-v');
+      const atSlider   = modal.querySelector('#pr-at');
+      const atVal      = modal.querySelector('#pr-at-v');
+      const targetEl   = modal.querySelector('#pr-target');
+      bendSlider.addEventListener('input', () => {
+        const v = parseInt(bendSlider.value, 10) || 0;
+        bendVal.textContent = (v >= 0 ? '+' : '') + v + ' st';
+        targetEl.textContent = targetLabel(v);
+      });
+      atSlider.addEventListener('input', () => {
+        const v = parseInt(atSlider.value, 10) || 50;
+        atVal.textContent = v + '%';
+      });
+      modal.querySelector('.pr-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('.pr-clear').addEventListener('click', () => {
+        snapshotForUndo('Clear pitch ramp');
+        delete step.bend;
+        renderSequence();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        overlay.remove();
+      });
+      modal.querySelector('.pr-save').addEventListener('click', () => {
+        const semis = parseInt(bendSlider.value, 10) || 0;
+        const at    = Math.max(5, Math.min(100, parseInt(atSlider.value, 10) || 50));
+        snapshotForUndo('Pitch ramp');
+        if (semis === 0) {
+          delete step.bend;
+        } else {
+          step.bend = { semitones: semis, atFraction: at / 100 };
+        }
+        renderSequence();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        overlay.remove();
+      });
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+    }
+
+    function showVarianceDialog(stepIndex) {
+      const step = sequence[stepIndex];
+      if (!step || step.isSub) return;
+      // Variance only applies to single-note steps for now. Chord
+      // steps would need each variant to be a full chord array; rest
+      // steps have nothing to swap.
+      if (step.freq == null) return;
+      if (Array.isArray(step.chord)) return;
+      if (document.querySelector('.variance-overlay')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay variance-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'variance-modal';
+      // Pre-fill the iteration count + random toggle from any
+      // existing variance settings on the step so re-opening the
+      // modal shows the user's prior choices.
+      const existing = sequence[stepIndex] && sequence[stepIndex].variance;
+      const seedIters = (existing && Number.isFinite(existing.itersPerVariant) && existing.itersPerVariant > 0)
+        ? existing.itersPerVariant : 1;
+      const seedRandomEach = !!(existing && existing.randomEachIter);
+      modal.innerHTML = `
+        <div class="vrn-title">Variance for this step</div>
+        <label class="vrn-iters">
+          Iterations per variance
+          <input type="number" id="vrn-iters" min="1" max="64" step="1" value="${seedIters}" />
+        </label>
+        <label class="vrn-random">
+          <input type="checkbox" id="vrn-random" ${seedRandomEach ? 'checked' : ''} />
+          Random — pick a variant randomly each loop iteration (overrides Linear sequencing)
+        </label>
+        <div class="vrn-grid">
+          <button type="button" class="vrn-opt" data-mode="random">Random</button>
+          <button type="button" class="vrn-opt" data-mode="linear">Linear</button>
+        </div>
+        <div class="vrn-hint">Press grid notes after picking a mode to add alternates. Tap the blinking chip to finish.</div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const itersInput = modal.querySelector('#vrn-iters');
+      const randomCb   = modal.querySelector('#vrn-random');
+      modal.querySelectorAll('.vrn-opt').forEach(b => {
+        b.addEventListener('click', () => {
+          const baseMode = b.dataset.mode === 'linear' ? 'linear' : 'random';
+          // Random checkbox forces random regardless of which mode
+          // button the user picked; otherwise the button selection wins.
+          const randomEach = !!(randomCb && randomCb.checked);
+          const mode = randomEach ? 'random' : baseMode;
+          let iters = parseInt((itersInput && itersInput.value) || '1', 10);
+          if (!Number.isFinite(iters) || iters < 1) iters = 1;
+          if (iters > 64) iters = 64;
+          beginVarianceEdit(stepIndex, mode, { itersPerVariant: iters, randomEachIter: randomEach });
+          overlay.remove();
+        });
+      });
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+    }
+
+    function beginVarianceEdit(stepIndex, mode, opts) {
+      const step = sequence[stepIndex];
+      if (!step || step.isSub) return;
+      if (step.freq == null) return;
+      if (Array.isArray(step.chord)) return;
+      const itersPerVariant = (opts && Number.isFinite(opts.itersPerVariant) && opts.itersPerVariant > 0)
+        ? Math.min(64, Math.floor(opts.itersPerVariant)) : 1;
+      const randomEachIter = !!(opts && opts.randomEachIter);
+      snapshotForUndo('Variance');
+      if (!step.variance || !Array.isArray(step.variance.notes)) {
+        // Seed the pool with the step's current note so the existing
+        // pitch is one of the variants from the start. Carry the
+        // step's sound + params explicitly so the seed always plays
+        // the same tone as the step itself (without this, a step that
+        // had the cell's tone in step.params but no sibling .sound
+        // could produce a sine fallback when the variant was picked).
+        step.variance = {
+          mode,
+          itersPerVariant,
+          randomEachIter,
+          notes: [{
+            freq: step.freq,
+            label: step.label,
+            cellIndex: step.cellIndex,
+            sound: step.sound || (step.params && step.params.type) || undefined,
+            params: step.params ? { ...step.params } : (step.sound ? { type: step.sound } : undefined),
+          }],
+        };
+      } else {
+        step.variance.mode = mode;
+        step.variance.itersPerVariant = itersPerVariant;
+        step.variance.randomEachIter = randomEachIter;
+      }
+      _varianceEdit = { stepRef: step, stepIdx: stepIndex };
+      renderSequence();
+    }
+
+    function finalizeVarianceEdit() {
+      if (!_varianceEdit) return;
+      const step = _varianceEdit.stepRef;
+      _varianceEdit = null;
+      // If only one variant ended up in the pool, drop the variance —
+      // it'd be a no-op during playback and a misleading marker.
+      if (step && step.variance && Array.isArray(step.variance.notes)
+          && step.variance.notes.length <= 1) {
+        delete step.variance;
+      }
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
+    // Append a note to the active variance pool. Returns true if the
+    // press was consumed; the caller skips its normal note-add logic
+    // when this returns true.
+    function _captureVarianceNote(noteCellIdx) {
+      if (!_varianceEdit || !_varianceEdit.stepRef) return false;
+      if (!Array.isArray(_varianceEdit.stepRef.variance?.notes)) return false;
+      const i = noteCellIdx;
+      if (!Array.isArray(notes) || !notes[i]) return false;
+      const params = { ...cellParams[i] };
+      _varianceEdit.stepRef.variance.notes.push({
+        freq:      notes[i].freq,
+        label:     notes[i].label,
+        cellIndex: i,
+        sound:     params.type,
+        params,
+      });
+      // Audition the note for feedback so the user hears what they're
+      // adding to the pool.
+      try { playNote(notes[i].freq, params); } catch (e) {}
+      renderSequence();
+      return true;
+    }
+
+    // Pick the active variant of a step at a given iteration count.
+    // Linear cycles, random samples uniformly. Returns the step
+    // unchanged when there's no variance pool with multiple entries.
+    function _resolveVariantStep(step, iter) {
+      if (!step || !step.variance) return step;
+      // Variance only swaps single-note steps. Chord steps fall
+      // through unchanged so chord playback (which reads voice-level
+      // params, not step-level) isn't broken by a half-applied swap.
+      if (Array.isArray(step.chord)) return step;
+      const arr = step.variance.notes;
+      if (!Array.isArray(arr) || arr.length < 2) return step;
+      const v = step.variance;
+      // randomEachIter overrides the mode buttons — every iteration
+      // picks uniformly at random from the pool. Otherwise:
+      //   linear → cycle, holding each variant for itersPerVariant
+      //            iterations before advancing.
+      //   random → uniform random pick per iteration.
+      const itersPer = (Number.isFinite(v.itersPerVariant) && v.itersPerVariant > 0)
+        ? Math.floor(v.itersPerVariant) : 1;
+      let pickIdx;
+      if (v.randomEachIter || v.mode !== 'linear') {
+        pickIdx = Math.floor(Math.random() * arr.length);
+      } else {
+        const cycleStep = Math.floor(((iter | 0) / itersPer));
+        pickIdx = ((cycleStep % arr.length) + arr.length) % arr.length;
+      }
+      const variant = arr[pickIdx];
+      if (!variant) return step;
+      // Fall back to the parent step's tone whenever the variant lacks
+      // its own — without this, a variant authored without a sibling
+      // sound/params would silently play a sine on its iteration.
+      const variantParams = variant.params
+        ? { ...variant.params }
+        : (step.params ? { ...step.params } : (variant.sound ? { type: variant.sound } : undefined));
+      const variantSound = variant.sound
+        || (variantParams && variantParams.type)
+        || step.sound
+        || (step.params && step.params.type);
+      return {
+        ...step,
+        freq:      (variant.freq != null) ? variant.freq : step.freq,
+        label:     (variant.label != null) ? variant.label : step.label,
+        cellIndex: (variant.cellIndex != null) ? variant.cellIndex : step.cellIndex,
+        sound:     variantSound,
+        params:    variantParams,
+      };
+    }
+
+    // ---- Poly-mode lane management ------------------------------------
+    // Lane name = letter A..Z, A2..Z2, … so we never run out at 8×8 grids.
+    function _laneName(idx) {
+      const a = idx % 26;
+      const cycle = Math.floor(idx / 26);
+      return String.fromCharCode(65 + a) + (cycle > 0 ? String(cycle + 1) : '');
+    }
+    function _makeLane(idx, steps = []) {
+      return {
+        name: _laneName(idx),
+        steps,
+        muted: false,
+        solo: false,
+        // Drift state machine:
+        //   A: driftMs=0,  driftLocked=false  → button "Drift"
+        //   B: driftMs>0,  driftLocked=false  → button "Lock"   (active drifting)
+        //   C: driftMs=0,  driftLocked=true   → button "Reset"  (offset frozen)
+        // driftOffsetSec preserves the locked accumulated offset so the
+        // lane starts at the same lag on the next playback.
+        driftMs: 0,
+        driftLocked: false,
+        driftOffsetSec: 0,
+        // Lane mix — applied via a dedicated Volume → Panner chain
+        // (built lazily by getLaneBus). pan: -100..100, volume: 0..100.
+        pan: 0,
+        volume: 100,
+        // Slip — shifts every step in this lane's fire time forward
+        // (positive) or backward (negative) by `slip` percent of each
+        // step's duration. Doesn't change the cadence, only the
+        // attack offset within the slot. -50..50.
+        slip: 0,
+      };
+    }
+    // Lazy per-lane audio chain — Volume → Panner → masterBus. Builds
+    // on first access and stays cached on the lane object until disposal.
+    // Mirrors the per-track bus pattern used in Mix so sample voices can
+    // be panned per-lane (the shared sampler path that connects directly
+    // to masterBus would otherwise bypass per-lane routing entirely).
+    function getLaneBus(laneIdx) {
+      const lane = lanes[laneIdx];
+      if (!lane) return masterBus;
+      if (!lane._panner) {
+        const panNorm = Math.max(-1, Math.min(1, (lane.pan || 0) / 100));
+        lane._panner = new Tone.Panner(panNorm).connect(masterBus);
+      }
+      if (!lane._volume) {
+        const volNorm = Math.max(0, Math.min(1, (Number.isFinite(lane.volume) ? lane.volume : 100) / 100));
+        const volDb = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
+        lane._volume = new Tone.Volume(volDb).connect(lane._panner);
+      }
+      return lane._volume;
+    }
+    // Per-lane Tone.Sampler instances bound to each lane's bus, so
+    // sample-based voices flow through the lane's pan / volume instead
+    // of the global sampler that connects straight to masterBus.
+    function getOrCreateLaneSampler(laneIdx, sampleId) {
+      const lane = lanes[laneIdx];
+      if (!lane) return null;
+      if (!lane._samplers) lane._samplers = new Map();
+      if (lane._samplers.has(sampleId)) return lane._samplers.get(sampleId);
+      const info = sampleSamplers.get(sampleId);
+      if (!info || !info.urls) return null;
+      try {
+        const samp = new Tone.Sampler({
+          urls: info.urls,
+          baseUrl: info.baseUrl,
+          release: 1,
+        }).connect(getLaneBus(laneIdx));
+        lane._samplers.set(sampleId, samp);
+        return samp;
+      } catch (e) {
+        console.warn('Failed to create per-lane sampler', sampleId, e);
+        return null;
+      }
+    }
+    function disposeLaneAudio(lane) {
+      if (!lane) return;
+      if (lane._samplers) {
+        lane._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
+        lane._samplers = null;
+      }
+      if (lane._volume) { try { lane._volume.dispose(); } catch (e) {} lane._volume = null; }
+      if (lane._panner) { try { lane._panner.dispose(); } catch (e) {} lane._panner = null; }
+    }
+    function disposeAllLaneAudio(arr) {
+      if (!Array.isArray(arr)) return;
+      arr.forEach(disposeLaneAudio);
+    }
+    // Sync `sequence` with the active lane so all existing add/edit
+    // code (addToSequence, click handlers, undo, etc.) continues to
+    // operate on the lane the user has selected. Lanes hold their own
+    // step arrays — assigning to `sequence = laneSteps` aliases by
+    // reference, so mutations to `sequence` are visible on the lane.
+    function _aliasSequenceToActiveLane() {
+      if (!polyMode || lanes.length === 0) return;
+      if (activeLaneIdx < 0 || activeLaneIdx >= lanes.length) activeLaneIdx = 0;
+      sequence = lanes[activeLaneIdx].steps;
+    }
+    function _resizeLanesToGridRows() {
+      if (!polyMode) return;
+      const target = Math.max(1, gridRows | 0);
+      while (lanes.length < target) lanes.push(_makeLane(lanes.length));
+      if (lanes.length > target) {
+        // Dispose audio nodes on lanes about to be trimmed so they
+        // don't leak Tone.Panner / Tone.Volume / Tone.Sampler instances.
+        const trimmed = lanes.slice(target);
+        if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(trimmed);
+        lanes.length = target;
+      }
+      if (activeLaneIdx >= lanes.length) activeLaneIdx = lanes.length - 1;
+      _aliasSequenceToActiveLane();
+    }
+    function activateLane(idx) {
+      if (!polyMode) return;
+      if (idx == null || idx < 0 || idx >= lanes.length) return;
+      // Sync current `sequence` back to the previously-active lane in
+      // case it was reassigned (e.g., Clear/Reverse/Shuffle/Random
+      // build new arrays). Without this, switching lanes after a
+      // reassignment would resurrect the lane's old content.
+      if (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
+        lanes[activeLaneIdx].steps = sequence;
+      }
+      activeLaneIdx = idx;
+      _aliasSequenceToActiveLane();
+      // Selection is tied to the previous lane's chip refs; clear so
+      // selection state doesn't carry across lanes.
+      selectedStepRefs = [];
+      insertionPoint = null;
+      renderSequence();
+      syncStepEditorFromSelection();
+      // Drift label is per-lane — flip Drift ↔ Clear when switching to
+      // a (non-)drifting lane.
+      if (typeof refreshDriftBtn === 'function') refreshDriftBtn();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function enterPolyMode() {
+      if (polyMode) return;
+      polyMode = true;
+      // Restore stashed lanes if we have them; otherwise seed lane 0
+      // from the current sequence and pad up to the grid-row count.
+      if (Array.isArray(_stashedLanes) && _stashedLanes.length > 0) {
+        lanes = _stashedLanes.map(l => ({ ...l, steps: (l.steps || []).slice() }));
+        _stashedLanes = null;
+        // The user may have edited the sequence while in Mono — drop
+        // those edits onto the last-active lane so re-entering Poly
+        // doesn't silently revert their work.
+        const monoSteps = sequence.slice();
+        if (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
+          lanes[activeLaneIdx].steps = monoSteps;
+        } else if (lanes.length > 0) {
+          activeLaneIdx = 0;
+          lanes[0].steps = monoSteps;
+        }
+      } else {
+        lanes = [];
+        const target = Math.max(1, gridRows | 0);
+        lanes.push(_makeLane(0, sequence.slice()));
+        for (let i = 1; i < target; i++) lanes.push(_makeLane(i));
+        activeLaneIdx = 0;
+      }
+      _resizeLanesToGridRows();
+      activeLaneIdx = Math.min(activeLaneIdx, lanes.length - 1);
+      if (activeLaneIdx < 0) activeLaneIdx = 0;
+      _aliasSequenceToActiveLane();
+      refreshPolyModeBtn();
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function exitPolyMode() {
+      if (!polyMode) return;
+      // Stash lanes for re-entry; keep the active lane's steps as the
+      // Mono `sequence` so the user keeps the lane they were focused on.
+      // Strip the audio nodes from the stash — they live in the live
+      // audio graph and would dangle otherwise; lazy-rebuild on Poly
+      // re-entry from the persisted pan / volume values.
+      _stashedLanes = lanes.map(l => ({
+        name: l.name,
+        steps: (l.steps || []).slice(),
+        muted: !!l.muted,
+        solo:  !!l.solo,
+        driftMs:        Number.isFinite(l.driftMs)        ? l.driftMs        : 0,
+        driftLocked:    !!l.driftLocked,
+        driftOffsetSec: Number.isFinite(l.driftOffsetSec) ? l.driftOffsetSec : 0,
+        pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
+        volume: Number.isFinite(l.volume) ? l.volume : 100,
+        slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+      }));
+      disposeAllLaneAudio(lanes);
+      const activeSteps = (lanes[activeLaneIdx] && lanes[activeLaneIdx].steps) || [];
+      lanes = [];
+      activeLaneIdx = 0;
+      polyMode = false;
+      sequence = activeSteps.slice();
+      refreshPolyModeBtn();
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function refreshPolyModeBtn() {
+      const btn = document.getElementById('poly-mode-btn');
+      if (!btn) return;
+      btn.textContent = polyMode ? 'Poly' : 'Mono';
+      btn.classList.toggle('active', polyMode);
+      // Rows-input enable depends on both stepMode and polyMode —
+      // refresh the step-mode helper so the input flips on/off when
+      // Poly toggles.
+      if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
+      // Footer-transport: tighten Rec / Loop / Drift sizing in Poly so
+      // the four pills fit; show the Drift button only in Poly.
+      const tport = document.querySelector('.footer-transport');
+      if (tport) tport.classList.toggle('poly-mode-on', polyMode);
+      if (typeof refreshDriftBtn === 'function') refreshDriftBtn();
+    }
+    // Drift button — three states keyed off the active lane:
+    //   "Drift" → no drift yet; click prompts for ms factor.
+    //   "Lock"  → lane is actively drifting; click freezes the
+    //             current accumulated offset (no further drift, but
+    //             the lag persists across stops/saves/replays).
+    //   "Reset" → lane is locked; click un-drifts completely (offset
+    //             zeroed, drift styling removed, lane re-syncs at the
+    //             next iteration boundary).
+    function refreshDriftBtn() {
+      const btn = document.getElementById('drift-btn');
+      if (!btn) return;
+      btn.hidden = !polyMode;
+      if (!polyMode) return;
+      const lane = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
+      const drifting = !!(lane && Number.isFinite(lane.driftMs) && lane.driftMs > 0);
+      const locked   = !!(lane && lane.driftLocked);
+      let label, title;
+      if (locked) {
+        label = 'Reset';
+        title = `Reset lane ${lane.name} — clears the locked drift offset entirely and re-syncs with the un-drifted lanes.`;
+      } else if (drifting) {
+        label = 'Lock';
+        title = `Lock the current drift offset on lane ${lane.name} — keeps the existing lag forever, stops adding new drift.`;
+      } else {
+        label = 'Drift';
+        title = 'Drift: pick a millisecond factor; the active lane\'s loop iteration N is delayed by factor × N. Lock to keep the offset; Reset to undo.';
+      }
+      btn.textContent = label;
+      btn.classList.toggle('active', drifting || locked);
+      btn.title = title;
     }
 
     function makeInsertCursor() {
@@ -3461,7 +4309,13 @@
     // makes them appear ~lookAhead ahead of the audio. We delay every
     // highlight update by that same lookAhead so the chip + cell flash
     // line up with the moment the user actually hears the note.
-    let _visualTimers = [];
+    // Pending visual-timer tracker. Was an Array with O(n) filter on
+    // every fire — under heavy load (loop playback at 1/16 notes,
+    // multi-lane Poly), the array could hit hundreds of entries and
+    // each fire ate ~1ms in just the filter, snowballing into the
+    // tens-of-ms tick stalls the debug log was showing. Set gives
+    // O(1) add/delete.
+    const _visualTimers = new Set();
     function visualLookAheadMs() {
       if (typeof Tone === 'undefined' || !Tone.context) return 0;
       const ctx = Tone.context;
@@ -3499,19 +4353,21 @@
       }
       if (ms <= 0) { fn(); return; }
       const t = setTimeout(() => {
-        _visualTimers = _visualTimers.filter(x => x !== t);
+        _visualTimers.delete(t);
         fn();
       }, ms);
-      _visualTimers.push(t);
+      _visualTimers.add(t);
     }
     function clearVisualTimers() {
       _visualTimers.forEach(t => clearTimeout(t));
-      _visualTimers = [];
+      _visualTimers.clear();
     }
 
     function stopSequence() {
       clearTimeout(sequenceTimer);
       sequenceTimer = null;
+      _schedStreams = [];
+      _schedStopping = false;
       clearVisualTimers();
       clearHighlights();
       renderSequence();
@@ -3523,21 +4379,57 @@
     }
 
     // ---- Lookahead scheduler -------------------------------------------
-    // A 25ms tick fills the next ~100ms of audio events on the audio
-    // thread. JS-thread jitter (GC, layout, paint) can no longer push
-    // step starts late, and the next bar's first step is pre-scheduled
-    // before the current bar ends — so wraps are gapless.
+    // A 25ms tick fills the next ~500ms of audio events on the audio
+    // thread. Notes are scheduled with absolute audio times so the audio
+    // clock plays them precisely; the lookahead just needs to exceed the
+    // worst-case JS-thread tick interval. Chrome's setTimeout under load
+    // (DevTools open, background tab heuristics, GC, layout) can balloon
+    // to 200–500ms, so 100ms wasn't enough — notes whose audio time fell
+    // between ticks but past the horizon got scheduled after the audio
+    // clock had already passed them, manifesting as skips/hangs.
     //
-    // Tradeoff: a live edit (BPM change, chord swap, sub change) takes
-    // effect at the next tick boundary instead of the next step boundary,
-    // i.e. up to ~SCHED_LOOKAHEAD_SEC later. Imperceptible at musical BPMs.
+    // Tradeoff: a live edit (BPM, chord swap, sub change, mute/solo)
+    // takes effect at the next tick boundary, i.e. up to ~500ms later.
+    // Imperceptible at musical BPMs and worth the rock-solid timing.
     const SCHED_LOOKAHEAD_SEC = 0.1;
     const SCHED_TICK_MS       = 25;
 
-    let _schedIndex       = 0;
-    let _schedSubStack    = []; // [{ subSteps, idx }] — top is deepest level
+    // Multi-stream scheduler. Each stream is one playable sequence —
+    // a single entry in Mono mode (the global `sequence`), or one entry
+    // per non-muted/solo'd lane in Poly mode. They share `_playBaseTime`
+    // so all streams start in lock-step; each stream advances its own
+    // `idx` / `subStack` / `offsetSec` independently.
+    // Drift fields (Poly only): `iter` counts wraps, `driftAccumSec`
+    // tracks how much extra delay has been injected by the lane's
+    // `driftMs`, and `pendingClearDrift` flags a request to re-sync
+    // with the un-drifted timeline at the next wrap.
+    let _schedStreams     = []; // [{ source, idx, subStack, offsetSec, laneIdx, iter, driftAccumSec, pendingClearDrift }]
     let _schedStopping    = false;
     let _schedTailEndTime = 0;
+
+    // Sum the natural runtime of a step list at the current BPM so the
+    // Drift "Clear" path can snap a drifted stream forward to the next
+    // un-drifted iteration boundary.
+    function _intrinsicLoopSec(steps) {
+      if (!Array.isArray(steps) || steps.length === 0) return 0;
+      const bpm = parseInt(tempoInput?.value, 10) || 120;
+      const beatSec = 60 / bpm;
+      const sumLen = (arr) => {
+        let total = 0;
+        for (const s of arr) {
+          if (!s) continue;
+          const stepDur = s.duration || 1;
+          if (s.isSub && Array.isArray(s.subSteps)) {
+            total += sumLen(s.subSteps);
+          } else {
+            const stepSub = (s.subdivision != null) ? s.subdivision : stepSubdivision;
+            total += beatSec * stepSub * stepDur;
+          }
+        }
+        return total;
+      };
+      return sumLen(steps);
+    }
 
     // Set during scheduleStepAt so playNote skips its flashCellByFreq —
     // we schedule the cell highlight ourselves via scheduleVisual keyed
@@ -3552,41 +4444,117 @@
       return (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
     }
 
-    function currentSchedStep() {
-      if (_schedSubStack.length > 0) {
-        const top = _schedSubStack[_schedSubStack.length - 1];
+    function currentSchedStep(stream) {
+      if (stream.subStack.length > 0) {
+        const top = stream.subStack[stream.subStack.length - 1];
         return top.subSteps[top.idx];
       }
-      return sequence[_schedIndex];
+      return stream.source[stream.idx];
     }
 
-    function advanceSchedLevel() {
-      if (_schedSubStack.length > 0) {
-        _schedSubStack[_schedSubStack.length - 1].idx++;
+    function advanceSchedLevel(stream) {
+      if (stream.subStack.length > 0) {
+        stream.subStack[stream.subStack.length - 1].idx++;
       } else {
-        _schedIndex++;
+        stream.idx++;
       }
     }
 
-    function scheduleStepAt(step, audioTime) {
+    // Returns true when a lane should produce audio at the current
+    // moment — non-muted, or solo'd if any other lane is solo'd.
+    // Read live by the scheduler so toggling mute/solo during playback
+    // takes effect immediately without restarting.
+    function _laneIsAudible(lane) {
+      if (!lane) return true;
+      const anySolo = lanes.some(l => l && l.solo);
+      if (anySolo) return !!lane.solo;
+      return !lane.muted;
+    }
+
+    function scheduleStepAt(step, audioTime, stream, silent = false, laneIdx) {
+      // Variance: swap the step's pitch / sound / params for one of
+      // its alternates per iteration. Linear cycles via stream.iter,
+      // random samples uniformly. Duration / subdivision / bend / etc.
+      // are inherited from the parent step so the rhythmic shape stays
+      // the same across iterations.
+      const origStep = step;
+      const playStep = _resolveVariantStep(step, stream && stream.iter);
+      step = playStep;
+      // Slip shifts the audio fire time forwards or backwards by a
+      // percent of this step's duration. Per-step slip lives on
+      // step.params.slip; lane-level slip lives on the lane and
+      // applies to every step in it. The two stack additively.
+      // stream.offsetSec is NOT shifted, so the next step still fires
+      // at its grid position — only this step's attack moves.
+      const lane = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? lanes[laneIdx] : null;
+      const stepSlip = (step.params && Number.isFinite(step.params.slip))
+        ? step.params.slip
+        : (Number.isFinite(step.slip) ? step.slip : 0);
+      const laneSlip = (lane && Number.isFinite(lane.slip)) ? lane.slip : 0;
+      const slipFrac = Math.max(-1, Math.min(1, (stepSlip + laneSlip) / 100));
+      // Live chip-label update: when a top-level step has variance
+      // applied, replace the chip's first text segment (the note
+      // label) with the variant being played, scheduled at audioTime
+      // so the visual lines up with the audio.
+      const varianceApplied = (playStep !== origStep)
+        && origStep && origStep.variance
+        && Array.isArray(origStep.variance.notes)
+        && origStep.variance.notes.length > 1;
+      if (!silent && varianceApplied
+          && stream && stream.subStack && stream.subStack.length === 0) {
+        const _stepIdxForChip = stream.idx;
+        const _laneIdxForChip = laneIdx;
+        const _variantLabel = playStep && playStep.label != null ? String(playStep.label) : '';
+        scheduleVisual(() => {
+          _updateChipLabelText(_stepIdxForChip, _laneIdxForChip, _variantLabel);
+        }, audioTime);
+      }
       const stepDur = step.duration || 1;
       const stepSub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       const bpm = parseInt(tempoInput.value) || 120;
-      // Storing the exact value in _playOffsetSec keeps the cadence
+      // Storing the exact value in stream.offsetSec keeps the cadence
       // drift-free over many loops — rounding here would accumulate
       // ~0.5ms per step, audible after long runtimes.
       const waitSecExact = (60 / bpm) * stepSub * stepDur;
       const waitMsExact = waitSecExact * 1000;
+      // Slip moves THIS step's attack within its slot but doesn't
+      // shift the cadence — stream.offsetSec still advances by the
+      // full waitSecExact so the next step lands on its grid time.
+      // When slip is 0 the values collapse back to the original
+      // audioTime / waitMsExact so the non-slip path is byte-for-byte
+      // identical to the pre-slip behavior (no surprise timing changes
+      // for projects without slip).
+      let fireTime, durMs;
+      if (slipFrac === 0) {
+        fireTime = audioTime;
+        durMs    = waitMsExact;
+      } else {
+        const slipSec = slipFrac * waitSecExact;
+        fireTime = audioTime + slipSec;
+        durMs    = Math.max(20, waitMsExact - slipSec * 1000);
+      }
+      // Silent path: muted lane keeps its scheduler pointer advancing
+      // so unmuting mid-loop snaps back into the cadence cleanly.
+      if (silent) {
+        stream.offsetSec += waitSecExact;
+        return waitSecExact;
+      }
 
       _suppressCellFlash = true;
       try {
         if (step.chord) {
           const size = step.chord.length;
-          step.chord.forEach(n => {
-            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMsExact, audioTime);
-          });
+          // Capture the chord voices upfront and fire them in a tight
+          // synchronous loop with the SAME fireTime so they hit the
+          // audio context simultaneously. (Originally a forEach with
+          // captured n; same semantics, just makes the intent explicit.)
+          for (let ci = 0; ci < step.chord.length; ci++) {
+            const n = step.chord[ci];
+            if (!n) continue;
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
+          }
         } else if (step.freq != null) {
-          playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMsExact, audioTime);
+          playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, fireTime, undefined, undefined, laneIdx);
         }
       } finally {
         _suppressCellFlash = false;
@@ -3622,61 +4590,145 @@
           _playbackStep = step;
           updateKeepLabel();
         }
-      }, audioTime);
+      }, fireTime);
 
-      _playOffsetSec += waitSecExact;
+      stream.offsetSec += waitSecExact;
       return waitSecExact;
     }
 
+    // Optional scheduler instrumentation — toggle via the browser
+    // console with `localStorage.setItem('bloops_sched_debug','1')`
+    // (and `removeItem` to disable). Logs one line per tick: wall
+    // delta since last tick, audio context time, each stream's
+    // offsetSec, and how many events were scheduled. A healthy run
+    // shows steady ~25ms tick deltas with 0–1 events per tick;
+    // hangs/skips manifest as long deltas or burst event counts.
+    let _schedDebugLastWall = 0;
+    function _schedDebugEnabled() {
+      try { return localStorage.getItem('bloops_sched_debug') === '1'; }
+      catch (e) { return false; }
+    }
+
     function schedulerTick() {
+      const debug = _schedDebugEnabled();
+      const tickWall = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+      const tickDelta = _schedDebugLastWall ? Math.round(tickWall - _schedDebugLastWall) : 0;
+      _schedDebugLastWall = tickWall;
+      let _debugScheduled = 0;
       if (!_schedStopping) {
         const horizon = rawAudioNow() + SCHED_LOOKAHEAD_SEC;
-        let safety = 0;
-        while (_playBaseTime + _playOffsetSec <= horizon) {
-          if (++safety > 1024) break; // pathological-input guard
-          const step = currentSchedStep();
-          if (step === undefined) {
-            // End of current level — pop sub or end main sequence.
-            if (_schedSubStack.length > 0) {
-              _schedSubStack.pop();
-              advanceSchedLevel();
-              continue;
-            }
-            if (loopMode && sequence.length > 0) {
-              // Wrap. If JS fell so far behind that the cadence anchor is
-              // in the past, snap forward to rawNow so we don't try
-              // scheduling into the past.
-              const continuation = _playBaseTime + _playOffsetSec;
-              const rawNow = rawAudioNow();
-              if (continuation < rawNow) {
-                _playBaseTime  = rawNow;
-                _playOffsetSec = 0;
+
+        for (const stream of _schedStreams) {
+          if (stream.ended) continue; // already finished its non-looped run
+          let safety = 0;
+          while (_playBaseTime + stream.offsetSec <= horizon) {
+            if (++safety > 1024) break; // pathological-input guard
+            const step = currentSchedStep(stream);
+            if (step === undefined) {
+              // End of current level — pop sub or end this stream.
+              if (stream.subStack.length > 0) {
+                stream.subStack.pop();
+                advanceSchedLevel(stream);
+                continue;
               }
-              _schedIndex = 0;
+              if (loopMode && stream.source.length > 0) {
+                // Wrap this stream. Per-stream snap-forward keeps each
+                // lane's cadence anchor from sliding into the past on
+                // long loops without disturbing the others.
+                const continuation = _playBaseTime + stream.offsetSec;
+                const rawNow = rawAudioNow();
+                if (continuation < rawNow) {
+                  stream.offsetSec = rawNow - _playBaseTime;
+                }
+                stream.iter = (stream.iter || 0) + 1;
+                const lane = (stream.laneIdx != null) ? lanes[stream.laneIdx] : null;
+                if (stream.pendingClearDrift) {
+                  // Re-sync with the un-drifted timeline: snap forward
+                  // to the next iteration boundary that lines up with
+                  // the lane's natural loop length. Ceil so the lane
+                  // "waits" for the next un-drifted iteration if its
+                  // accumulated drift overshot the current boundary.
+                  const loopSec = _intrinsicLoopSec(stream.source);
+                  if (loopSec > 0) {
+                    const undrifted = stream.offsetSec - (stream.driftAccumSec || 0);
+                    const target = Math.ceil(undrifted / loopSec) * loopSec;
+                    stream.offsetSec = target;
+                  }
+                  stream.driftAccumSec = 0;
+                  stream.iter = 0;
+                  stream.pendingClearDrift = false;
+                } else if (lane && Number.isFinite(lane.driftMs) && lane.driftMs > 0) {
+                  // Each wrap adds `driftMs` to the lane's offset, so
+                  // after N wraps it sits driftMs × N behind the
+                  // un-drifted timeline (matches the user spec:
+                  // "factor multiplied by iteration count").
+                  const inc = lane.driftMs / 1000;
+                  stream.offsetSec += inc;
+                  stream.driftAccumSec = (stream.driftAccumSec || 0) + inc;
+                }
+                stream.idx = 0;
+                continue;
+              }
+              // Non-loop end for this stream — mark ended so future
+              // ticks skip it cleanly. Other streams keep going.
+              stream.ended = true;
+              break;
+            }
+            // Live mute / solo check — read per step so toggles during
+            // playback take effect without rebuilding streams.
+            const lane = (stream.laneIdx != null) ? lanes[stream.laneIdx] : null;
+            const audible = _laneIsAudible(lane);
+            // Top-level chip highlight fires at the start of every
+            // top-level step (regular OR sub); sub children inherit it.
+            // Every lane in Poly highlights its own currently-playing
+            // chip independently, so the user can see all playheads
+            // moving in parallel. Highlight even when muted so the
+            // user can see where the lane's playhead is.
+            if (stream.subStack.length === 0) {
+              const myIdx = stream.idx;
+              const chipAudioTime = _playBaseTime + stream.offsetSec;
+              if (polyMode && stream.laneIdx != null) {
+                const li = stream.laneIdx;
+                scheduleVisual(() => setActiveChipForLane(li, myIdx), chipAudioTime);
+              } else {
+                scheduleVisual(() => setActiveSequenceChip(myIdx), chipAudioTime);
+              }
+            }
+            if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {
+              stream.subStack.push({ subSteps: step.subSteps, idx: 0 });
               continue;
             }
-            // Non-loop end: stop scheduling new audio; the tick keeps
-            // running until the tail of the last scheduled step has
-            // played out, then calls stopSequence.
-            _schedStopping = true;
-            break;
+            const audioTime = _playBaseTime + stream.offsetSec;
+            const waitSec = scheduleStepAt(step, audioTime, stream, !audible, stream.laneIdx);
+            if ((audioTime + waitSec) > _schedTailEndTime) {
+              _schedTailEndTime = audioTime + waitSec;
+            }
+            advanceSchedLevel(stream);
+            _debugScheduled++;
           }
-          // Top-level chip highlight fires at the start of every top-level
-          // step (regular OR sub); sub children inherit it.
-          if (_schedSubStack.length === 0) {
-            const myIdx = _schedIndex;
-            const chipAudioTime = _playBaseTime + _playOffsetSec;
-            scheduleVisual(() => setActiveSequenceChip(myIdx), chipAudioTime);
-          }
-          if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {
-            _schedSubStack.push({ subSteps: step.subSteps, idx: 0 });
-            continue;
-          }
-          const audioTime = _playBaseTime + _playOffsetSec;
-          const waitSec = scheduleStepAt(step, audioTime);
-          _schedTailEndTime = audioTime + waitSec;
-          advanceSchedLevel();
         }
+
+        // Stop only when EVERY stream has hit end-of-source without
+        // looping. Don't infer "stop" from "this tick scheduled
+        // nothing" — between scheduled events the next note's audio
+        // time often hasn't entered the lookahead horizon yet, and
+        // the tick correctly sits idle until it does.
+        const allEnded = _schedStreams.length > 0 && _schedStreams.every(s => s.ended);
+        if (allEnded) _schedStopping = true;
+      }
+      if (debug) {
+        const rawNow = rawAudioNow();
+        const offsetsStr = _schedStreams
+          .map(s => (s.laneIdx == null ? 'M' : ('L' + s.laneIdx)) + ':' + (s.offsetSec || 0).toFixed(3) + (s.ended ? '!' : ''))
+          .join(' ');
+        console.log(
+          '[sched] dt=' + tickDelta + 'ms',
+          'rawNow=' + rawNow.toFixed(3),
+          'base=' + (_playBaseTime || 0).toFixed(3),
+          'sched=' + _debugScheduled,
+          'streams=[' + offsetsStr + ']',
+          (_schedStopping ? '(stopping)' : '')
+        );
       }
       if (_schedStopping && rawAudioNow() >= _schedTailEndTime) {
         sequenceTimer = null;
@@ -4844,47 +5896,241 @@
     // on existing nodes instead of rebuilding the whole sequence-display
     // DOM. The full renderSequence runs only when the sequence structure
     // actually changes (mutations call renderSequence themselves).
+    // Cache the per-mode "currently active chip" refs so playback
+    // highlight can swap a single class instead of running
+    // querySelectorAll + forEach over every chip on every note. The
+    // querySelectorAll path was responsible for ~100ms per tick on
+    // medium-sized sequences and was starving the scheduler tick.
+    let _activeChipMono = null;
+    const _activeChipsByLane = new Map(); // laneIdx -> chip element
+
+    function _findChipInScope(scope, stepIdx) {
+      if (!scope) return null;
+      // Iterate immediate children (chips are direct kids of the
+      // scope) — much cheaper than querySelectorAll. Skip pending
+      // chord chips just like the old selector did.
+      let n = 0;
+      for (const el of scope.children) {
+        if (!el.classList.contains('seq-step')) continue;
+        if (el.classList.contains('chord-pending')) continue;
+        if (n === stepIdx) return el;
+        n++;
+      }
+      return null;
+    }
+
     function setActiveSequenceChip(index) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
-      const chips = display.querySelectorAll('.seq-step:not(.chord-pending)');
-      chips.forEach((c, i) => c.classList.toggle('active', i === index));
-      if (index >= 0 && chips[index]) {
-        chips[index].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // In Poly, scope the playback highlight to the active lane's
+      // chip strip — at the top level we still target Mono's chip
+      // strip, which is just #sequence-display itself.
+      let scope;
+      if (polyMode) {
+        let activeRow = null;
+        for (const c of display.children) {
+          if (c.classList && c.classList.contains('active')) { activeRow = c; break; }
+        }
+        scope = activeRow ? activeRow.querySelector(':scope > .lane-chips') : null;
+      } else {
+        scope = display;
       }
+      const newChip = _findChipInScope(scope, index);
+      if (_activeChipMono && _activeChipMono !== newChip) {
+        _activeChipMono.classList.remove('active');
+      }
+      if (newChip) {
+        newChip.classList.add('active');
+        // Only scroll when the chip is actually outside its scroll
+        // container, and use instant scroll. Smooth scroll spawned a
+        // long-running animation per step (8/sec at 1/16 120 BPM) that
+        // never settled because each step retargeted it — layout / paint
+        // ate the JS thread and stalled the scheduler tick.
+        if (!polyMode && scope) {
+          const cRect = scope.getBoundingClientRect();
+          const nRect = newChip.getBoundingClientRect();
+          if (nRect.right > cRect.right || nRect.left < cRect.left) {
+            newChip.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+          }
+        }
+      }
+      _activeChipMono = newChip;
+    }
+
+    // Update just the label segment of a chip's text without rebuilding
+    // the whole chip — used by the variance scheduler to show which
+    // alternate note will play next. The chip's text format is
+    //   `${label}\n${sound abbr?}\n${dur suffix?}`
+    // so replacing only the first \n-delimited segment preserves the
+    // sound abbreviation and duration suffix.
+    function _updateChipLabelText(stepIdx, laneIdx, label) {
+      const display = document.getElementById('sequence-display');
+      if (!display) return;
+      let chip;
+      if (polyMode && Number.isFinite(laneIdx)) {
+        // Children are .lane-row; pick the laneIdx-th one and walk
+        // its immediate .lane-chips descendant for the chip.
+        const row = display.children[laneIdx];
+        if (!row) return;
+        const chipsScope = row.querySelector(':scope > .lane-chips');
+        chip = _findChipInScope(chipsScope, stepIdx);
+      } else {
+        chip = _findChipInScope(display, stepIdx);
+      }
+      if (!chip) return;
+      const parts = (chip.textContent || '').split('\n');
+      parts[0] = String(label || '');
+      chip.textContent = parts.join('\n');
+    }
+
+    // Highlight the currently-playing chip inside a specific lane.
+    // Each lane's chip strip is independent in Poly mode, so the
+    // 'active' class is scoped per-lane and multiple lanes can have
+    // their own active chip simultaneously.
+    function setActiveChipForLane(laneIdx, index) {
+      if (!polyMode) return;
+      const display = document.getElementById('sequence-display');
+      if (!display) return;
+      const row = display.children[laneIdx];
+      if (!row) return;
+      const chipsScope = row.querySelector(':scope > .lane-chips');
+      const newChip = _findChipInScope(chipsScope, index);
+      const prev = _activeChipsByLane.get(laneIdx);
+      if (prev && prev !== newChip) prev.classList.remove('active');
+      if (newChip) newChip.classList.add('active');
+      if (newChip) _activeChipsByLane.set(laneIdx, newChip);
+      else         _activeChipsByLane.delete(laneIdx);
     }
 
     function playSequence(index = 0, freshStart = true) {
-      if (sequence.length === 0) { stopSequence(); return; }
+      // In Mono we need at least one step. In Poly we need at least
+      // one playable lane (non-muted, or solo'd if any lane is solo'd)
+      // with content; otherwise stop right away so we don't spin a tick
+      // loop with no streams.
+      if (polyMode) {
+        // Need at least one non-empty lane to play. Mute / solo state
+        // is honored live per-tick so the user can flip lanes on and
+        // off without restarting.
+        const playable = lanes.filter(l => (l.steps || []).length > 0);
+        if (playable.length === 0) { stopSequence(); return; }
+      } else {
+        if (sequence.length === 0) { stopSequence(); return; }
+      }
       document.getElementById('play-btn').textContent = '■';
+      // Build the streams array FIRST so any synchronous setup work
+      // (per-lane Tone.Sampler creation, lane-bus node creation,
+      // collect() walks of the sources for prefetch) doesn't push
+      // _playBaseTime into the past — that was making the very first
+      // scheduler tick try to schedule events at audio times already
+      // behind rawAudioNow(), which Tone fires "soonest possible" all
+      // at once and produces a rushed catch-up at start of play.
+      // Mono = one stream over the global sequence; Poly = one stream
+      // per playable lane, all sharing the (post-build) _playBaseTime
+      // so they start together.
+      if (polyMode) {
+        // Include every non-empty lane as its own stream — mute / solo
+        // are checked LIVE per step inside the scheduler so the user
+        // can toggle them during playback without restarting.
+        // Lanes with a locked drift offset start their stream at that
+        // offset so the lag persists across stop / play cycles and
+        // round-trips through save/load.
+        _schedStreams = lanes
+          .map((lane, laneIdx) => ({ lane, laneIdx }))
+          .filter(({ lane }) => (lane.steps || []).length > 0)
+          .map(({ lane, laneIdx }) => {
+            const baseOffset = Number.isFinite(lane.driftOffsetSec) ? lane.driftOffsetSec : 0;
+            // Warm up the lane's per-sample Tone.Samplers eagerly so
+            // their async buffer loads kick off before the first
+            // scheduler tick. Without this prefetch, the first few
+            // events on a freshly-created lane would have to fall
+            // back to the shared sampler (or sine) until the lane
+            // sampler finishes loading.
+            try {
+              const sampleTypes = new Set();
+              const collect = (arr) => {
+                if (!Array.isArray(arr)) return;
+                for (const s of arr) {
+                  if (!s) continue;
+                  if (s.isSub && Array.isArray(s.subSteps)) { collect(s.subSteps); continue; }
+                  if (Array.isArray(s.chord)) {
+                    s.chord.forEach(n => {
+                      const t = (n && n.params && n.params.type) || (n && n.sound);
+                      if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
+                    });
+                  } else {
+                    const t = (s.params && s.params.type) || s.sound;
+                    if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
+                  }
+                  if (s.variance && Array.isArray(s.variance.notes)) {
+                    s.variance.notes.forEach(v => {
+                      const t = (v && v.params && v.params.type) || (v && v.sound);
+                      if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
+                    });
+                  }
+                }
+              };
+              collect(lane.steps);
+              sampleTypes.forEach(id => { try { getOrCreateLaneSampler(laneIdx, id); } catch (e) {} });
+            } catch (e) {}
+            return {
+              source:           lane.steps,
+              idx:              0,
+              subStack:         [],
+              offsetSec:        baseOffset,
+              laneIdx,
+              iter:             0,
+              driftAccumSec:    baseOffset,
+              pendingClearDrift: false,
+              ended:            false,
+            };
+          });
+      } else {
+        _schedStreams = [{
+          source:           sequence,
+          idx:              index | 0,
+          subStack:         [],
+          offsetSec:        0,
+          laneIdx:          null,
+          iter:             0,
+          driftAccumSec:    0,
+          pendingClearDrift: false,
+          ended:            false,
+        }];
+      }
       if (freshStart) {
-        // Fresh start: anchor with the full Tone lookAhead so the
-        // audio thread has comfortable scheduling head-room before
-        // the first note.
-        _playBaseTime  = Tone.now();
+        // Anchor _playBaseTime AFTER all stream-building synchronous
+        // work so the first scheduler tick lines up with the actual
+        // current audio time. Tone.now() includes the scheduling
+        // lookAhead so the audio thread still has its usual head-room.
+        _playBaseTime = Tone.now();
         _playOffsetSec = 0;
-        // Re-phase the BPM digit pulse so its cycle begins (the red
-        // peak in the keyframes) at the same moment the first note
-        // attacks. scheduleVisual maps audio-time → wall-clock time
-        // accounting for Tone's lookAhead and audio-context latency.
+        // Re-phase the BPM digit pulse so its red-peak frame lands on
+        // the first note attack.
         scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
       }
-      _schedIndex       = index;
-      _schedSubStack    = [];
       _schedStopping    = false;
-      _schedTailEndTime = _playBaseTime + _playOffsetSec;
+      _schedTailEndTime = _playBaseTime;
       // Synchronous first tick so the first batch of audio events lands
       // immediately rather than waiting one SCHED_TICK_MS.
       schedulerTick();
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {
-      if (sequence.length === 0) return;
+      // Stop-toggle FIRST. The "is anything playable?" check has to
+      // come after — in Poly mode `sequence` is aliased to the active
+      // lane, and that lane can be empty while OTHER lanes are still
+      // running, in which case the user still needs to be able to stop.
       await Tone.start();
       if (sequenceTimer !== null) {
         stopSequence();
         return;
       }
+      // Need at least one playable source to start. Mono = sequence;
+      // Poly = any lane with content (the active lane may be empty).
+      const playable = polyMode
+        ? lanes.some(l => (l.steps || []).length > 0)
+        : (sequence.length > 0);
+      if (!playable) return;
       // Wait for any pending sample buffers — without this the first
       // sample-based attack would be silent on a cold load.
       try { await Tone.loaded(); } catch (e) {}
@@ -4895,7 +6141,11 @@
       const ac = Tone.context && Tone.context.rawContext;
       const warm = !!(ac && ac.state === 'running');
       const startNow = () => {
-        if (sequenceTimer === null && sequence.length > 0) playSequence(0);
+        if (sequenceTimer !== null) return;
+        const stillPlayable = polyMode
+          ? lanes.some(l => (l.steps || []).length > 0)
+          : (sequence.length > 0);
+        if (stillPlayable) playSequence(0);
       };
       if (warm) startNow();
       else setTimeout(startNow, 60);
@@ -5043,10 +6293,20 @@
     }
     function applyGridDimsChange() {
       readGridDimsFromInputs();
+      // In Poly mode, the rows count drives the lane count — resize
+      // the lanes array up/down accordingly so changing Grid rows
+      // adds or trims lanes.
+      if (polyMode) _resizeLanesToGridRows();
       renderSequence();
     }
     document.getElementById('grid-rows-input')?.addEventListener('change', applyGridDimsChange);
     document.getElementById('grid-cols-input')?.addEventListener('change', applyGridDimsChange);
+
+    // ---- Mono / Poly toggle -------------------------------------------
+    document.getElementById('poly-mode-btn')?.addEventListener('click', () => {
+      if (polyMode) exitPolyMode();
+      else          enterPolyMode();
+    });
 
     // ---- Fixed-mode size chips ----
     // Each chip appends a programmable rest slot of its Step Div size
@@ -5069,11 +6329,11 @@
       if (!btn) return;
       btn.textContent = stepMode ? 'Fixed' : 'Free';
       btn.classList.toggle('active', stepMode);
-      // Rows control only matters in Fixed (step-sequencer) mode where
-      // the workspace lays slots out as a fixed rows × cols visual grid.
-      // In Free mode the sequence wraps as it grows so rows is meaningless.
+      // Rows is meaningful in Fixed (slot grid) and in Poly (lane
+      // count). Free + Mono is the only combo where rows does nothing,
+      // so disable it only there.
       const rowsEl = document.getElementById('grid-rows-input');
-      if (rowsEl) rowsEl.disabled = !stepMode;
+      if (rowsEl) rowsEl.disabled = !stepMode && !polyMode;
       // Size-chip row is the slot builder — only meaningful in Fixed mode.
       const sizeRow = document.getElementById('size-chips-row');
       if (sizeRow) sizeRow.hidden = !stepMode;
@@ -5136,6 +6396,13 @@
       octaveCount = 1;
       masterFreqA = 440;
       currentScale = 'chromatic';
+      // Wipe Poly-mode state too — fresh project starts in Mono.
+      polyMode = false;
+      if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
+      lanes = [];
+      activeLaneIdx = 0;
+      _stashedLanes = null;
+      if (typeof refreshPolyModeBtn === 'function') refreshPolyModeBtn();
       palette = [...DEFAULT_PALETTE];
       chipPalette = [...palette];
       restColor = DEFAULT_REST_COLOR;
@@ -5162,7 +6429,7 @@
       document.getElementById('save-btn').disabled = true;
       refreshHoldEnabled();
 
-      rebuildGrid();
+      rebuildGrid({ resetTones: true });
       renderSequence();
       renderSavedSequences();
     }
@@ -5587,7 +6854,12 @@
 
     function currentSequenceSnapshot(extra = {}) {
       return {
-        steps: [...sequence],
+        // Deep-clone every step so saved bank entries don't share
+        // references with the live workspace — without this, editing
+        // a step after saving silently mutates the saved sequence too,
+        // and any other lane that later loads the same bank entry
+        // inherits the same shared refs.
+        steps: sequence.map(cloneStep),
         bpm: parseInt(tempoInput.value) || 120,
         rootIdx,
         baseOctave,
@@ -6052,6 +7324,57 @@
       persistWorkspace();
     });
 
+    // ---- Drift button (Poly only) -------------------------------------
+    // Picks a millisecond factor for the active lane and applies it on
+    // every loop wrap, so iteration N is delayed by factor × N. Clicking
+    // a drifting lane's button clears the drift and re-syncs the lane
+    // at the next iteration boundary. Each lane carries its own factor,
+    // so multiple lanes can drift by different amounts.
+    document.getElementById('drift-btn')?.addEventListener('click', () => {
+      if (!polyMode) return;
+      const lane = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
+      if (!lane) return;
+      // State C → A: Reset. Drop offset entirely and re-sync the live
+      // stream (if any) at its next iteration boundary.
+      if (lane.driftLocked) {
+        lane.driftLocked = false;
+        lane.driftOffsetSec = 0;
+        lane.driftMs = 0;
+        const stream = _schedStreams.find(s => s.laneIdx === activeLaneIdx);
+        if (stream) stream.pendingClearDrift = true;
+        renderSequence();
+        refreshDriftBtn();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        return;
+      }
+      // State B → C: Lock. Capture the current accumulated drift on
+      // the live stream (or the persisted offset if not playing) so
+      // future plays start with the same lag, then stop adding more.
+      if (Number.isFinite(lane.driftMs) && lane.driftMs > 0) {
+        const stream = _schedStreams.find(s => s.laneIdx === activeLaneIdx);
+        const liveOffset = stream ? (stream.driftAccumSec || 0) : 0;
+        lane.driftOffsetSec = liveOffset || (lane.driftOffsetSec || 0);
+        lane.driftLocked = true;
+        lane.driftMs = 0;
+        renderSequence();
+        refreshDriftBtn();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        return;
+      }
+      // State A → B: prompt for factor and start drifting.
+      const raw = prompt(`Drift factor for lane ${lane.name} (ms per iteration). Iteration N will be delayed by factor × N.`, '10');
+      if (raw == null) return;
+      const ms = parseFloat(raw);
+      if (!Number.isFinite(ms) || ms <= 0) return;
+      lane.driftMs = ms;
+      lane.driftLocked = false;
+      const stream = _schedStreams.find(s => s.laneIdx === activeLaneIdx);
+      if (stream) stream.pendingClearDrift = false;
+      renderSequence();
+      refreshDriftBtn();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    });
+
     document.getElementById('chord-btn').addEventListener('click', () => {
       // Multi-select grouping: when 2+ steps are selected, fold them into a
       // single chord at the earliest selected slot and drop the rest. This
@@ -6247,6 +7570,19 @@
       if (s.params) copy.params = { ...s.params };
       if (s.subSteps) copy.subSteps = s.subSteps.map(cloneStep);
       if (s.bend) copy.bend = { ...s.bend };
+      // Variance: deep-copy the alternates pool so duplicated steps
+      // don't share references with the original.
+      if (s.variance && Array.isArray(s.variance.notes)) {
+        copy.variance = {
+          mode: s.variance.mode,
+          itersPerVariant: Number.isFinite(s.variance.itersPerVariant) ? s.variance.itersPerVariant : 1,
+          randomEachIter: !!s.variance.randomEachIter,
+          notes: s.variance.notes.map(n => ({
+            ...n,
+            params: n.params ? { ...n.params } : undefined,
+          })),
+        };
+      }
       return copy;
     }
 
@@ -8056,6 +9392,34 @@
           stepMode:  !!stepMode,
           multiSelectMode: !!multiSelectMode,
           activeSeqIndex,
+          // Poly-mode state — clone lane step arrays deep so storage
+          // doesn't share references with the live workspace.
+          polyMode: !!polyMode,
+          activeLaneIdx,
+          lanes: lanes.map(l => ({
+            name: l.name,
+            steps: (l.steps || []).map(cloneStep),
+            muted: !!l.muted,
+            solo:  !!l.solo,
+            driftMs:        Number.isFinite(l.driftMs)        ? l.driftMs        : 0,
+            driftLocked:    !!l.driftLocked,
+            driftOffsetSec: Number.isFinite(l.driftOffsetSec) ? l.driftOffsetSec : 0,
+            pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
+            volume: Number.isFinite(l.volume) ? l.volume : 100,
+            slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+          })),
+          stashedLanes: Array.isArray(_stashedLanes) ? _stashedLanes.map(l => ({
+            name: l.name,
+            steps: (l.steps || []).map(cloneStep),
+            muted: !!l.muted,
+            solo:  !!l.solo,
+            driftMs:        Number.isFinite(l.driftMs)        ? l.driftMs        : 0,
+            driftLocked:    !!l.driftLocked,
+            driftOffsetSec: Number.isFinite(l.driftOffsetSec) ? l.driftOffsetSec : 0,
+            pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
+            volume: Number.isFinite(l.volume) ? l.volume : 100,
+            slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+          })) : null,
         },
         grid: {
           rootIdx,
@@ -8998,6 +10362,52 @@
       stepMode        = !!w.stepMode;
       multiSelectMode = !!w.multiSelectMode;
 
+      // Poly-mode state. Restoring lanes BEFORE refreshing the toggle
+      // pill so the post-restore renderSequence sees the right state.
+      // Dispose any live lane audio nodes from the previous workspace
+      // so the snapshot doesn't leak orphan Tone nodes; the new lanes
+      // lazy-build their bus on first audio access.
+      if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
+      polyMode = !!w.polyMode;
+      activeLaneIdx = Number.isFinite(w.activeLaneIdx) ? w.activeLaneIdx : 0;
+      lanes = Array.isArray(w.lanes) ? w.lanes.map((l, i) => ({
+        name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
+        steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],
+        muted: !!l?.muted,
+        solo:  !!l?.solo,
+        driftMs:        Number.isFinite(l?.driftMs)        ? l.driftMs        : 0,
+        driftLocked:    !!l?.driftLocked,
+        driftOffsetSec: Number.isFinite(l?.driftOffsetSec) ? l.driftOffsetSec : 0,
+        pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
+        volume: Number.isFinite(l?.volume) ? l.volume : 100,
+        slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+      })) : [];
+      _stashedLanes = Array.isArray(w.stashedLanes) ? w.stashedLanes.map((l, i) => ({
+        name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
+        steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],
+        muted: !!l?.muted,
+        solo:  !!l?.solo,
+        driftMs:        Number.isFinite(l?.driftMs)        ? l.driftMs        : 0,
+        driftLocked:    !!l?.driftLocked,
+        driftOffsetSec: Number.isFinite(l?.driftOffsetSec) ? l.driftOffsetSec : 0,
+        pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
+        volume: Number.isFinite(l?.volume) ? l.volume : 100,
+        slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+      })) : null;
+      if (polyMode) {
+        if (lanes.length === 0) {
+          // Snapshot reported polyMode but no lanes — recover with a
+          // single lane containing the restored sequence.
+          lanes = [_makeLane(0, sequence)];
+        }
+        activeLaneIdx = Math.min(activeLaneIdx, lanes.length - 1);
+        if (activeLaneIdx < 0) activeLaneIdx = 0;
+        // Alias `sequence` to the active lane's steps so all add/edit
+        // code reads/writes the right lane.
+        sequence = lanes[activeLaneIdx].steps;
+      }
+      refreshPolyModeBtn();
+
       const bpm = Number.isFinite(w.bpm) ? w.bpm : 120;
       if (typeof tempoInput  !== 'undefined' && tempoInput)  tempoInput.value  = String(bpm);
       if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = String(bpm);
@@ -9707,11 +11117,11 @@
             document.getElementById('save-btn').disabled = sequence.length === 0;
         }},
         'hr',
-        { label: 'Reset sound → Piano', fn: () => {
-            cellSounds[noteIndex] = 'sample:piano';
-            cellParams[noteIndex] = { type: 'sample:piano', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 };
+        { label: 'Reset sound → Sawtooth', fn: () => {
+            cellSounds[noteIndex] = 'sawtooth';
+            cellParams[noteIndex] = _defaultCellParams();
             const sel = cells[noteIndex].querySelector('.cell-sound-select');
-            if (sel) sel.value = 'sample:piano';
+            if (sel) sel.value = 'sawtooth';
             updateScaleBanner();
         }},
       ];
@@ -10183,10 +11593,35 @@
     function applyPanToSelectedSteps(panValue) {
       const v = Math.max(-100, Math.min(100, Math.round(panValue)));
       const display = document.getElementById('sequence-display');
+      // Poly + no selection: the slider drives the active lane's
+      // dedicated pan node (Volume → Panner → masterBus). This makes
+      // sample-type tones pan correctly — the shared sampler skips
+      // the per-note panner so per-step pan never reached the audio
+      // path on samples. Routing through the lane bus fixes that.
+      if (selectedStepRefs.length === 0 && polyMode && lanes[activeLaneIdx]) {
+        const lane = lanes[activeLaneIdx];
+        lane.pan = v;
+        // Lazy-create the bus and live-update the panner; `getLaneBus`
+        // returns the Volume entry but the panner sits between Volume
+        // and masterBus.
+        getLaneBus(activeLaneIdx);
+        try { lane._panner.pan.value = Math.max(-1, Math.min(1, v / 100)); } catch (e) {}
+        return;
+      }
+      // Selection-scoped pan (existing Mono behavior, also reachable
+      // from Poly when chips are selected). Step-level params; chord
+      // voices mirror the value so chord playback honors it too.
       selectedStepRefs.forEach(step => {
         if (!step || step.isSub) return;
         if (!step.params) step.params = {};
         step.params.pan = v;
+        if (Array.isArray(step.chord)) {
+          step.chord.forEach(voice => {
+            if (!voice) return;
+            if (!voice.params) voice.params = {};
+            voice.params.pan = v;
+          });
+        }
         if (!display) return;
         const idx = sequence.indexOf(step);
         if (idx < 0) return;
@@ -10530,107 +11965,91 @@
       return false;
     }
 
-    function bindStepLongPress(chip, stepIndex) {
-      let lpt = null;
-      let startX = 0, startY = 0;
-      const MOVE_TOLERANCE = 8; // matches the drag system; ignores finger jitter
-      // Right-click / long-press-on-desktop fires contextmenu before our
-      // timer; suppress it so the browser's native menu doesn't compete
-      // with the chip menu and steal focus.
-      chip.addEventListener('contextmenu', (e) => e.preventDefault());
-      // iOS / some browsers can still try to start a text-selection on
-      // long-press despite user-select: none — selectstart preventDefault
-      // covers the residual case.
-      chip.addEventListener('selectstart', (e) => e.preventDefault());
-      chip.addEventListener('pointerdown', (e) => {
-        startX = e.clientX;
-        startY = e.clientY;
-        lpt = setTimeout(() => {
-          lpt = null;
-          navigator.vibrate?.(40);
-          // Long-press fired — abort any in-flight HTML5 / touch drag so
-          // the menu doesn't show alongside a drag ghost. HTML5 drag is
-          // suppressed by clearing draggable; the touch-drag pipeline
-          // listens for the synthetic pointercancel below.
-          chip.draggable = false;
-          try { chip.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true })); } catch (e2) {}
-          const step = sequence[stepIndex];
-          const actions = [];
-          if (step && step.isSub) {
-            actions.push({ label: 'Edit subsequence…', fn: () => enterSubEditMode(stepIndex) });
-            actions.push({ label: 'Combine to chord', fn: () => chordifyStep(stepIndex) });
-            if (Array.isArray(step.subSteps) && step.subSteps.length > 1) {
-              actions.push({ label: 'Reverse', fn: () => reverseSubseq(stepIndex) });
-              actions.push({ label: 'Shuffle', fn: () => shuffleSubseq(stepIndex) });
+    // Build the context-menu action list for the step at `stepIndex`
+    // in the active workspace `sequence`. Extracted so preview chips
+    // in non-active Poly lanes can show the same menu after switching
+    // to that lane on long-press.
+    function _buildStepCtxActions(stepIndex) {
+      const step = sequence[stepIndex];
+      const actions = [];
+      if (step && step.isSub) {
+        actions.push({ label: 'Edit subsequence…', fn: () => enterSubEditMode(stepIndex) });
+        actions.push({ label: 'Combine to chord', fn: () => chordifyStep(stepIndex) });
+        if (Array.isArray(step.subSteps) && step.subSteps.length > 1) {
+          actions.push({ label: 'Reverse', fn: () => reverseSubseq(stepIndex) });
+          actions.push({ label: 'Shuffle', fn: () => shuffleSubseq(stepIndex) });
+        }
+        actions.push('hr');
+      } else {
+        if (step && (step.chord || step.freq !== null)) {
+          actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
+        }
+        if (step && Array.isArray(step.chord) && step.chord.length > 1) {
+          actions.push({ label: 'Arpeggiate', fn: () => arpeggiateStep(stepIndex) });
+          actions.push({ label: 'Split',      fn: () => splitChord(stepIndex) });
+        }
+        if (actions.length > 0) actions.push('hr');
+      }
+      if (stepHasNotes(step)) {
+        actions.push({ label: 'Modulate ↑½', fn: () => { snapshotForUndo('Modulate ↑½'); modulateStepRec(step, 1);  renderSequence(); } });
+        actions.push({ label: 'Modulate ↓½', fn: () => { snapshotForUndo('Modulate ↓½'); modulateStepRec(step, -1); renderSequence(); } });
+        actions.push({ label: 'Transpose…', fn: () => showTransposeDialog(stepIndex) });
+        actions.push({ label: step.variance ? 'Edit variance…' : 'Variance…', fn: () => showVarianceDialog(stepIndex) });
+        // Pitch ramp — quick access to the existing step.bend
+        // controls (semitones + atFraction) without opening the full
+        // Sound editor.
+        const hasBend = step.bend && Number.isFinite(step.bend.semitones) && step.bend.semitones !== 0;
+        actions.push({ label: hasBend ? 'Edit pitch ramp…' : 'Pitch ramp…', fn: () => showPitchRampDialog(stepIndex) });
+        actions.push('hr');
+      }
+      actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
+      actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
+      actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
+      actions.push('hr');
+      // Multi-select aware delete: when 2+ chips are selected and the
+      // long-pressed chip is one of them, "Remove step" turns into
+      // "Remove N steps" and wipes the entire selection in one shot.
+      const selectedIdxs = (multiSelectMode || selectedStepRefs.length > 1)
+        ? selectedStepIndices().slice().sort((a, b) => a - b)
+        : [];
+      const longPressedSelected = selectedIdxs.includes(stepIndex);
+      const multiDelete = selectedIdxs.length >= 2 && longPressedSelected;
+      actions.push({
+        label: multiDelete ? `Remove ${selectedIdxs.length} steps` : 'Remove step',
+        danger: true,
+        fn: () => {
+          if (multiDelete) {
+            snapshotForUndo('Remove steps');
+            for (let i = selectedIdxs.length - 1; i >= 0; i--) {
+              const idx = selectedIdxs[i];
+              sequence.splice(idx, 1);
+              if (insertionPoint !== null && idx < insertionPoint) insertionPoint--;
             }
-            actions.push('hr');
+            clearSelection();
           } else {
-            if (step && (step.chord || step.freq !== null)) {
-              actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
-            }
-            if (step && Array.isArray(step.chord) && step.chord.length > 1) {
-              actions.push({ label: 'Arpeggiate', fn: () => arpeggiateStep(stepIndex) });
-              actions.push({ label: 'Split',      fn: () => splitChord(stepIndex) });
-            }
-            if (actions.length > 0) actions.push('hr');
+            snapshotForUndo('Remove step');
+            sequence.splice(stepIndex, 1);
+            if (insertionPoint !== null && stepIndex < insertionPoint) insertionPoint--;
           }
-          if (stepHasNotes(step)) {
-            actions.push({ label: 'Modulate ↑½', fn: () => { snapshotForUndo('Modulate ↑½'); modulateStepRec(step, 1);  renderSequence(); } });
-            actions.push({ label: 'Modulate ↓½', fn: () => { snapshotForUndo('Modulate ↓½'); modulateStepRec(step, -1); renderSequence(); } });
-            actions.push({ label: 'Transpose…', fn: () => showTransposeDialog(stepIndex) });
-            actions.push('hr');
+          if (insertionPoint !== null) {
+            if (insertionPoint > sequence.length) insertionPoint = sequence.length;
+            if (sequence.length === 0) insertionPoint = null;
           }
-          actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
-          actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
-          actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
-          actions.push('hr');
-          // Multi-select aware delete: when 2+ chips are selected and the
-          // long-pressed chip is one of them, "Remove step" turns into
-          // "Remove N steps" and wipes the entire selection in one shot.
-          const selectedIdxs = (multiSelectMode || selectedStepRefs.length > 1)
-            ? selectedStepIndices().slice().sort((a, b) => a - b)
-            : [];
-          const longPressedSelected = selectedIdxs.includes(stepIndex);
-          const multiDelete = selectedIdxs.length >= 2 && longPressedSelected;
-          actions.push({
-            label: multiDelete ? `Remove ${selectedIdxs.length} steps` : 'Remove step',
-            danger: true,
-            fn: () => {
-              if (multiDelete) {
-                snapshotForUndo('Remove steps');
-                // Walk descending so splices don't shift later indices.
-                for (let i = selectedIdxs.length - 1; i >= 0; i--) {
-                  const idx = selectedIdxs[i];
-                  sequence.splice(idx, 1);
-                  if (insertionPoint !== null && idx < insertionPoint) insertionPoint--;
-                }
-                clearSelection();
-              } else {
-                snapshotForUndo('Remove step');
-                sequence.splice(stepIndex, 1);
-                if (insertionPoint !== null && stepIndex < insertionPoint) insertionPoint--;
-              }
-              if (insertionPoint !== null) {
-                if (insertionPoint > sequence.length) insertionPoint = sequence.length;
-                if (sequence.length === 0) insertionPoint = null;
-              }
-              renderSequence();
-              document.getElementById('save-btn').disabled = sequence.length === 0;
-            }
-          });
-          showCtxMenu(e.clientX, e.clientY, actions);
-        }, 500);
+          renderSequence();
+          document.getElementById('save-btn').disabled = sequence.length === 0;
+        }
       });
-      const cancel = () => { clearTimeout(lpt); lpt = null; };
-      chip.addEventListener('pointerup',     cancel);
-      chip.addEventListener('pointercancel', cancel);
-      chip.addEventListener('pointermove', (e) => {
-        if (!lpt) return;
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-        if (Math.abs(dx) > MOVE_TOLERANCE || Math.abs(dy) > MOVE_TOLERANCE) cancel();
-      });
-      chip.addEventListener('contextmenu',   (e) => e.preventDefault());
+      return actions;
+    }
+
+    // The step edit menu is now opened via the dedicated Edit button
+    // (left of the Pan/Vol sliders), not by long-pressing a chip.
+    // bindStepLongPress is reduced to suppressing the browser's native
+    // context menu / text-selection callout so a long-press still
+    // doesn't trigger Copy/Look-up overlays on top of the workspace.
+    function bindStepLongPress(chip, stepIndex) {
+      chip.addEventListener('contextmenu', (e) => e.preventDefault());
+      chip.addEventListener('selectstart', (e) => e.preventDefault());
     }
 
     function buildInlineSoundPanel(params, onChange) {
@@ -11567,6 +12986,12 @@
       // step to land. Reproduce the click-handler's default add path
       // here, gated by the same conditions, when click hasn't already
       // committed it.
+      // Variance edit: a sustained press without a click event still
+      // counts as "next note pressed" for the variance pool.
+      if (voices.length === 1 && _varianceEdit && _varianceEdit.stepRef
+          && Number.isFinite(voices[0].cellIndex)) {
+        if (_captureVarianceNote(voices[0].cellIndex)) return;
+      }
       if (voices.length === 1 && !tapAlreadyAdded
           && keepMode
           && !chordMode
@@ -11968,13 +13393,36 @@
       cells.forEach((_, idx) => updateCellFreqLabel(idx));
     }
 
-    function rebuildGrid() {
+    function _defaultCellParams() {
+      return { type: 'sawtooth', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 };
+    }
+
+    function rebuildGrid(opts) {
+      // Snapshot pre-rebuild tones so they survive root/octave/scale/A4
+      // changes — without this every grid setting tweak resets every
+      // cell back to piano. resetTones=true skips preservation for the
+      // explicit-reset paths (Reset button / New project).
+      const resetTones = !!(opts && opts.resetTones);
+      const prevSounds = resetTones ? [] : cellSounds.slice();
+      const prevParams = resetTones ? [] : cellParams.map(p => ({ ...p }));
+      // For new cells beyond the previous grid size (octave count grew),
+      // fall back to the last existing cell's tone so the user's pick
+      // extends across the new range instead of injecting piano cells
+      // mid-grid.
+      const fallbackParams = (!resetTones && prevParams.length > 0)
+        ? prevParams[prevParams.length - 1]
+        : null;
+
       notes = computeNotes();
       const grid = document.getElementById('grid');
       grid.innerHTML = '';
       cells.length = 0;
-      cellSounds = new Array(notes.length).fill('sample:piano');
-      cellParams = notes.map(() => ({ type: 'sample:piano', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 }));
+      cellParams = notes.map((_, i) => {
+        if (prevParams[i]) return { ...prevParams[i] };
+        if (fallbackParams) return { ...fallbackParams };
+        return _defaultCellParams();
+      });
+      cellSounds = cellParams.map(p => p.type || 'sawtooth');
 
       notes.forEach((note, i) => {
         const cell = document.createElement('div');
@@ -12122,6 +13570,15 @@
         // events on the original cell only. See the listener installed
         // alongside document.pointerup above.
         cell.addEventListener('click', () => {
+          // Variance edit: cell presses go into the active step's
+          // variance pool instead of becoming new steps. Captured here
+          // BEFORE any of the other gates so it works regardless of
+          // Keep / wrap / Spell mode (the user is editing one step's
+          // alternates, not appending to the sequence).
+          if (_captureVarianceNote(i)) {
+            _cellTapAdded = true;
+            return;
+          }
           // Clicks that ride a multi-press session get folded into a
           // chord at session-end — skip the per-cell single-note path
           // here so we don't double-add. Single presses fall through
@@ -12264,6 +13721,15 @@
         else s.params = { type };
       };
       sequence.forEach(retuneStep);
+      // In Poly mode, retune every lane (sequence is the active one,
+      // so handle the rest explicitly). Otherwise picking a tone would
+      // only update the lane the user has selected.
+      if (polyMode) {
+        lanes.forEach((lane, idx) => {
+          if (idx === activeLaneIdx) return; // already covered via sequence alias
+          (lane.steps || []).forEach(retuneStep);
+        });
+      }
       pendingChord.forEach(n => {
         n.sound = type;
         if (n.params) n.params.type = type;
@@ -12276,6 +13742,10 @@
       if (wrapTemplate) retuneStep(wrapTemplate);
       renderSequence();
       updateScaleBanner();
+      // Persist so the tone selection survives any later workspace
+      // restore — without this, an Unwrap or any path that reloads
+      // workspace state would revert every cell back to piano.
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     // ---- Tone families -- two-level menu (top: family list, drilldown:
     // family's tones). Keeps the panel short and lets us add more
@@ -13177,7 +14647,7 @@
       if (freqIn)    freqIn.value    = '440';
       if (scaleSel)  scaleSel.value  = 'chromatic';
 
-      rebuildGrid();
+      rebuildGrid({ resetTones: true });
     }
 
     // ---- Grid controls ----
@@ -13366,6 +14836,24 @@
       });
     })();
 
+    // ---- Step Edit button ----
+    // Opens the step ctx menu for the primary selected step. Uses the
+    // same action list as the (now-removed) press-and-hold menu, just
+    // anchored to the button's position.
+    document.getElementById('step-edit-btn')?.addEventListener('click', (e) => {
+      const eligible = selectedStepRefs.filter(s => s && !s.isSub);
+      const step = eligible[eligible.length - 1];
+      if (!step) return;
+      const stepIdx = sequence.indexOf(step);
+      if (stepIdx < 0) return;
+      const actions = _buildStepCtxActions(stepIdx);
+      const btn = e.currentTarget;
+      const rect = btn.getBoundingClientRect();
+      // Anchor the menu at the button's right edge so it opens
+      // alongside the sliders rather than overlapping the button.
+      showCtxMenu(rect.right + 6, rect.top, actions);
+    });
+
     // ---- Selected-step pan slider ----
     // Live-updates the pan of every selected step as the user drags;
     // the row's visibility is driven by syncStepEditorFromSelection.
@@ -13384,21 +14872,80 @@
     })();
 
     // ---- Selected-step volume slider ----
-    // Edits only the primary (last-selected) step's volume so users can
-    // shape dynamics without retouching every chip in a multi-selection.
+    // Edits the primary (last-selected) step's volume in Mono so users
+    // can shape dynamics without retouching every chip in a multi-
+    // selection. In Poly with no selection, the active lane is the
+    // implicit target — applies to every step in that lane.
     (function bindStepVolSlider() {
       const slider = document.getElementById('step-vol-slider');
       const valEl  = document.getElementById('step-vol-val');
       if (!slider) return;
       slider.addEventListener('input', () => {
         const v = Math.max(0, Math.min(100, parseInt(slider.value, 10) || 0));
-        const eligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
-        const primary = eligible[eligible.length - 1];
-        if (primary) {
-          if (!primary.params) primary.params = {};
-          primary.params.volume = v;
+        const selEligible = selectedStepRefs.filter(s => s && !s.isSub && s.freq != null);
+        // Poly + no selection: drive the lane's Volume node directly.
+        // Same reasoning as pan — sample-type tones bypass per-note
+        // volume baked into params, but the lane Volume node sits
+        // upstream of the lane's Panner so it scales every voice.
+        if (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]) {
+          const lane = lanes[activeLaneIdx];
+          lane.volume = v;
+          getLaneBus(activeLaneIdx);
+          try {
+            const volNorm = Math.max(0, Math.min(1, v / 100));
+            lane._volume.volume.value = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
+          } catch (e) {}
+          if (valEl) valEl.textContent = v + '%';
+          return;
         }
+        // Selection-scoped volume — primary chip in Mono / Poly+selection.
+        const targets = selEligible.length > 0 ? [selEligible[selEligible.length - 1]] : [];
+        targets.forEach(step => {
+          if (!step.params) step.params = {};
+          step.params.volume = v;
+          if (Array.isArray(step.chord)) {
+            step.chord.forEach(voice => {
+              if (!voice) return;
+              if (!voice.params) voice.params = {};
+              voice.params.volume = v;
+            });
+          }
+        });
         if (valEl) valEl.textContent = v + '%';
+      });
+      slider.addEventListener('change', () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
+    // ---- Selected-step slip slider ----
+    // Slip shifts each step's fire time forward (positive) or
+    // backwards (negative) within its slot, expressed as a percent of
+    // the step's duration. The slot itself doesn't move, so the next
+    // step still fires at its original grid position — only the
+    // slipped step's attack is offset.
+    (function bindStepSlipSlider() {
+      const slider = document.getElementById('step-slip-slider');
+      const valEl  = document.getElementById('step-slip-val');
+      if (!slider) return;
+      slider.addEventListener('input', () => {
+        const v = Math.max(-50, Math.min(50, parseInt(slider.value, 10) || 0));
+        const selEligible = selectedStepRefs.filter(s => s && !s.isSub);
+        if (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]) {
+          // Lane-scope slip — shifts every step in the active lane by
+          // the same percent. Stored on the lane so selection-level
+          // edits don't fight it.
+          lanes[activeLaneIdx].slip = v;
+        } else if (selEligible.length > 0) {
+          // Selection-scope slip — per-step. Stored on step.params
+          // so it survives clones / persistence the same as pan/vol.
+          selEligible.forEach(step => {
+            if (!step) return;
+            if (!step.params) step.params = {};
+            step.params.slip = v;
+          });
+        }
+        if (valEl) valEl.textContent = (v > 0 ? '+' : '') + v + '%';
       });
       slider.addEventListener('change', () => {
         if (typeof persistWorkspace === 'function') persistWorkspace();

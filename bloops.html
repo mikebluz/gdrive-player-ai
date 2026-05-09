@@ -7693,6 +7693,44 @@
       if (saveBtn) saveBtn.disabled = sequence.length === 0;
     }
 
+    // Fold: replace the step at stepIndex with two copies, each half
+    // its original playtime. Equivalent to "halve, then duplicate" —
+    // a 1/4 note becomes two 1/8 notes; a held quarter (duration: 2)
+    // becomes two 1/4 notes; a 1/16 step becomes two 1/32 steps. Sub
+    // and chord steps fold as a whole because the scheduler reads
+    // duration/subdivision off the parent.
+    //
+    // Halving rule: when duration > 1 we halve duration (keeps the
+    // step on a quantized subdivision), otherwise we halve subdivision
+    // (so a 1/4 → 1/8 split stays musically clean instead of producing
+    // a duration:0.5 step). Both paths preserve the wider time math
+    // because (60/bpm) * subdivision * duration scales linearly.
+    function foldStep(stepIndex) {
+      if (!Array.isArray(sequence) || stepIndex < 0 || stepIndex >= sequence.length) return;
+      const original = sequence[stepIndex];
+      if (!original) return;
+      snapshotForUndo('Fold step');
+      const halved = cloneStep(original);
+      const dur = halved.duration || 1;
+      if (dur > 1) {
+        halved.duration = dur / 2;
+      } else {
+        const sub = (halved.subdivision != null) ? halved.subdivision : stepSubdivision;
+        halved.subdivision = sub / 2;
+      }
+      sequence[stepIndex] = halved;
+      sequence.splice(stepIndex + 1, 0, cloneStep(halved));
+      if (insertionPoint !== null && insertionPoint > stepIndex) insertionPoint++;
+      // Clear selection: the original step ref no longer exists in the
+      // sequence (we replaced it with `halved`), so any selection that
+      // pointed at it would reference an orphan.
+      selectedStepRefs = [];
+      syncStepEditorFromSelection();
+      renderSequence();
+      const saveBtn = document.getElementById('save-btn');
+      if (saveBtn) saveBtn.disabled = sequence.length === 0;
+    }
+
     // When a saved sequence is overwritten via Save, sync the new contents into
     // every track item that was sourced from it (matched by name, since track
     // items snapshot the name at add-time). Keeps the saved bank and any track
@@ -8949,7 +8987,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -12100,6 +12138,7 @@
         actions.push('hr');
       }
       actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
+      actions.push({ label: '⇕ Fold',        fn: () => foldStep(stepIndex) });
       actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
       actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
       actions.push('hr');

@@ -415,6 +415,14 @@
     // sequence (per the active note mode). When off (default), the note
     // is auditioned only — sequence is not modified.
     let keepMode = false;
+    // Per-Keep-session step-div lock. While Keep is on, the step-div
+    // picker pops up after each note added in Spell or Stack mode so
+    // the user picks the size for that note. Toggling the "use for the
+    // rest of this Keep session" checkbox sets these flags so further
+    // notes adopt the chosen size without re-prompting; both reset when
+    // Keep is toggled off.
+    let _keepStepDivLocked = false;
+    let _keepStepDivLockedValue = null;
     // Saved "form" from the most recent Wrap commit (chord step or
     // subsequence step). While set, cell clicks audition this form
     // transposed so the clicked note becomes its first note. With
@@ -1166,7 +1174,7 @@
       return Math.round(60000 / (parseInt(tempoInput.value) || 120) * stepSubdivision);
     }
 
-    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','duo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
+    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
 
     // ---- Tone.js v14 URL double-encode patch ----------------------------
     // ToneAudioBuffer.load() does
@@ -2125,6 +2133,30 @@
           filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.3, release: 2,
                             baseFrequency: 200, octaves: 3 },
         }).connect(finalDest);
+      } else if (type === 'bass') {
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'square' }, envelope: env,
+          filterEnvelope: { attack: 0.005, decay: 0.18, sustain: 0.4, release: 0.4,
+                            baseFrequency: 80, octaves: 3.2 },
+          filter: { Q: 4, type: 'lowpass', rolloff: -24 },
+        }).connect(finalDest);
+      } else if (type === 'pad') {
+        synth = new Tone.AMSynth({
+          harmonicity: 1.5,
+          oscillator: { type: 'sine' },
+          envelope: { attack: 1.2, decay: 0.5, sustain: 0.7, release: 2.5 },
+          modulation: { type: 'sine' },
+          modulationEnvelope: { attack: 1.0, decay: 0.5, sustain: 0.5, release: 2.0 },
+        }).connect(finalDest);
+      } else if (type === 'xylo') {
+        synth = new Tone.FMSynth({
+          harmonicity: 7,
+          modulationIndex: 4,
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 },
+          modulation: { type: 'sine' },
+          modulationEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
+        }).connect(finalDest);
       } else if (type === 'bell') {
         synth = new Tone.FMSynth({
           harmonicity: 2.14, modulationIndex: 4,
@@ -2497,6 +2529,41 @@
             baseFrequency: 200, octaves: 3,
           },
           filter: { Q: 6, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'bass') {
+        // Bass preset — square sub-oscillator through a snappy lowpass
+        // filter envelope for a thick, punchy low end.
+        synth = new Tone.MonoSynth({
+          oscillator: { type: 'square' },
+          envelope: env,
+          filterEnvelope: {
+            attack: 0.005, decay: 0.18, sustain: 0.4, release: 0.4,
+            baseFrequency: 80, octaves: 3.2,
+          },
+          filter: { Q: 4, type: 'lowpass', rolloff: -24 },
+        }).connect(chainHead);
+      } else if (type === 'pad') {
+        // Pad preset — slow-attack AM voice. Hardcoded envelope so the
+        // pad character lands without the user having to dial in long
+        // attack/release times themselves; per-step params can still
+        // shape volume/detune/etc.
+        synth = new Tone.AMSynth({
+          harmonicity: 1.5,
+          oscillator: { type: 'sine' },
+          envelope: { attack: 1.2, decay: 0.5, sustain: 0.7, release: 2.5 },
+          modulation: { type: 'sine' },
+          modulationEnvelope: { attack: 1.0, decay: 0.5, sustain: 0.5, release: 2.0 },
+        }).connect(chainHead);
+      } else if (type === 'xylo') {
+        // Xylophone-ish — high-harmonicity FM with a short percussive
+        // envelope so each note pings and decays quickly.
+        synth = new Tone.FMSynth({
+          harmonicity: 7,
+          modulationIndex: 4,
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 },
+          modulation: { type: 'sine' },
+          modulationEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
         }).connect(chainHead);
       } else if (type === 'kick') {
         synth = new Tone.MembraneSynth({
@@ -3260,6 +3327,78 @@
       }
       renderSequence();
       document.getElementById('save-btn').disabled = false;
+    }
+
+    // Step-div prompt for the Keep flow. Called after a note/chord is
+    // appended in Spell or Stack mode while Keep is on. Skipped in Run
+    // (arpeggio) mode per the user spec, and skipped while a session
+    // lock is active — instead the lock value is applied directly.
+    function maybePromptStepDiv(stepRef) {
+      if (!stepRef || !keepMode) return;
+      if (gridMode === 'arpeggio') return;
+      if (_keepStepDivLocked) {
+        if (Number.isFinite(_keepStepDivLockedValue) && _keepStepDivLockedValue > 0) {
+          stepRef.subdivision = _keepStepDivLockedValue;
+          renderSequence();
+        }
+        return;
+      }
+      showStepDivPicker(stepRef);
+    }
+
+    // Modal that asks the user to pick a step-div size (4/1 → 1/32) for
+    // the just-added note. The "Use for…" checkbox locks the chosen
+    // value for the rest of the current Keep session so subsequent
+    // notes don't re-prompt.
+    function showStepDivPicker(stepRef) {
+      // Don't stack pickers — if one is already up, dismiss and the
+      // newer note just keeps its default subdivision.
+      if (document.querySelector('.step-div-overlay')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay step-div-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'step-div-modal';
+      modal.innerHTML = `
+        <div class="sdiv-title">Step size for this note</div>
+        <div class="sdiv-grid">
+          <button type="button" class="sdiv-opt" data-sub="16">4/1</button>
+          <button type="button" class="sdiv-opt" data-sub="12">3/1</button>
+          <button type="button" class="sdiv-opt" data-sub="8">2/1</button>
+          <button type="button" class="sdiv-opt" data-sub="4">1/1</button>
+          <button type="button" class="sdiv-opt" data-sub="2">1/2</button>
+          <button type="button" class="sdiv-opt" data-sub="1">1/4</button>
+          <button type="button" class="sdiv-opt" data-sub="0.5">1/8</button>
+          <button type="button" class="sdiv-opt" data-sub="0.25">1/16</button>
+          <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
+        </div>
+        <label class="sdiv-lock">
+          <input type="checkbox" id="sdiv-lock-cb" />
+          Use this size for the rest of this Keep session
+        </label>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const lockCb = modal.querySelector('#sdiv-lock-cb');
+      modal.querySelectorAll('.sdiv-opt').forEach(b => {
+        b.addEventListener('click', () => {
+          const v = parseFloat(b.dataset.sub);
+          if (Number.isFinite(v) && v > 0) {
+            stepRef.subdivision = v;
+            if (lockCb && lockCb.checked) {
+              _keepStepDivLocked = true;
+              _keepStepDivLockedValue = v;
+            }
+            renderSequence();
+          }
+          overlay.remove();
+        });
+      });
+      // Click outside dismisses without changing the size — the step
+      // keeps whatever subdivision it already had (the global default).
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
     }
 
     function makeInsertCursor() {
@@ -4270,6 +4409,29 @@
             synth = new Tone.AMSynth({ oscillator: { type: 'sine' }, envelope: env });
           } else if (p.type === 'mono') {
             synth = new Tone.MonoSynth({ oscillator: { type: 'sawtooth' }, envelope: env });
+          } else if (p.type === 'bass') {
+            synth = new Tone.MonoSynth({
+              oscillator: { type: 'square' }, envelope: env,
+              filterEnvelope: { attack: 0.005, decay: 0.18, sustain: 0.4, release: 0.4,
+                                baseFrequency: 80, octaves: 3.2 },
+              filter: { Q: 4, type: 'lowpass', rolloff: -24 },
+            });
+          } else if (p.type === 'pad') {
+            synth = new Tone.AMSynth({
+              harmonicity: 1.5,
+              oscillator: { type: 'sine' },
+              envelope: { attack: 1.2, decay: 0.5, sustain: 0.7, release: 2.5 },
+              modulation: { type: 'sine' },
+              modulationEnvelope: { attack: 1.0, decay: 0.5, sustain: 0.5, release: 2.0 },
+            });
+          } else if (p.type === 'xylo') {
+            synth = new Tone.FMSynth({
+              harmonicity: 7, modulationIndex: 4,
+              oscillator: { type: 'sine' },
+              envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 },
+              modulation: { type: 'sine' },
+              modulationEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
+            });
           } else if (p.type === 'bell') {
             synth = new Tone.FMSynth({
               harmonicity: 2.14, modulationIndex: 4,
@@ -4493,6 +4655,7 @@
         if (keepMode) {
           let baseIdx = sequence.findIndex(s => s && Array.isArray(s.chord));
           snapshotForUndo('Add voice in Stack');
+          let _promptStep = null;
           if (baseIdx === -1) {
             const firstNoteIdx = sequence.findIndex(s => s && s.freq != null && !s.isSub);
             if (firstNoteIdx >= 0) {
@@ -4510,8 +4673,9 @@
                 subdivision: (first.subdivision != null) ? first.subdivision : stepSubdivision,
               };
               sequence.splice(firstNoteIdx, 1, chordStep);
+              _promptStep = chordStep;
             } else {
-              sequence.push({
+              const seed = {
                 freq: note.freq,
                 label: note.label,
                 cellIndex: cellIdx,
@@ -4519,14 +4683,18 @@
                 params,
                 duration: 1,
                 subdivision: stepSubdivision,
-              });
+              };
+              sequence.push(seed);
+              _promptStep = seed;
             }
           } else {
             const baseChord = sequence[baseIdx];
             baseChord.chord.push(newVoice);
             baseChord.label = baseChord.chord.map(v => v.label).join('·');
+            _promptStep = baseChord;
           }
           renderSequence();
+          maybePromptStepDiv(_promptStep);
         }
         playNote(note.freq, params);
         return;
@@ -4547,6 +4715,7 @@
           snapshotForUndo('Seed chord');
           sequence.push(seed);
           renderSequence();
+          maybePromptStepDiv(seed);
         }
         playNote(note.freq, params);
         return;
@@ -4585,6 +4754,7 @@
         snapshotForUndo('Add chord');
         sequence.push(newStep);
         renderSequence();
+        maybePromptStepDiv(newStep);
       }
 
       // Play the new chord + highlight matching cells.
@@ -4715,13 +4885,20 @@
         stopSequence();
         return;
       }
-      // Wait for any pending sample buffers + warm-up before the first
-      // note, so sample-based tones aren't silent and the first attack
-      // doesn't get clipped on a cold audio context.
+      // Wait for any pending sample buffers — without this the first
+      // sample-based attack would be silent on a cold load.
       try { await Tone.loaded(); } catch (e) {}
-      setTimeout(() => {
+      // Skip the warmup pad when the audio context is already running;
+      // the 60ms cushion is only needed on a true cold-start where the
+      // first attack can otherwise clip. Warm-state taps now play
+      // immediately.
+      const ac = Tone.context && Tone.context.rawContext;
+      const warm = !!(ac && ac.state === 'running');
+      const startNow = () => {
         if (sequenceTimer === null && sequence.length > 0) playSequence(0);
-      }, 60);
+      };
+      if (warm) startNow();
+      else setTimeout(startNow, 60);
     });
 
     document.getElementById('clear-btn').addEventListener('click', () => {
@@ -7345,7 +7522,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -11368,7 +11545,7 @@
             ...voices.map(v => _holdStepDurationForVoice(v))
           );
           snapshotForUndo('Add chord');
-          addToSequence({
+          const chordStep = {
             chord: voices.map(v => ({
               freq: v.freq, label: v.label, cellIndex: v.cellIndex,
               sound: v.sound,
@@ -11377,7 +11554,9 @@
             label: voices.map(v => v.label).join('·'),
             duration: chordHold,
             subdivision: stepSubdivision,
-          });
+          };
+          addToSequence(chordStep);
+          maybePromptStepDiv(chordStep);
         }
         _polySession.suppressClickUntil = performance.now() + 250;
         return;
@@ -11398,7 +11577,7 @@
         const v = voices[0];
         const _heldMs = _holdMsForVoice(v);
         const _heldParams = _holdAdjustedParams(v.params ? { ...v.params } : undefined, _heldMs);
-        addToSequence(_radialBendApplyToStep(v.cellIndex, {
+        const _newStep = _radialBendApplyToStep(v.cellIndex, {
           freq:       v.freq,
           label:      v.label,
           cellIndex:  v.cellIndex,
@@ -11406,7 +11585,9 @@
           params:     _heldParams,
           duration:   _holdStepDurationForVoice(v),
           subdivision: stepSubdivision,
-        }));
+        });
+        addToSequence(_newStep);
+        maybePromptStepDiv(_newStep);
       }
     }
     document.addEventListener('pointerup',     (e) => polyEndPointer(e.pointerId));
@@ -12010,8 +12191,10 @@
           } else {
             const _holdMs = _holdMsForCell(i);
             const _heldParams = _holdAdjustedParams(params, _holdMs);
-            addToSequence(_radialBendApplyToStep(i, { freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: _heldParams.type, params: _heldParams, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision }));
+            const _newStep = _radialBendApplyToStep(i, { freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: _heldParams.type, params: _heldParams, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision });
+            addToSequence(_newStep);
             _cellTapAdded = true;
+            maybePromptStepDiv(_newStep);
           }
         });
         // Editor opens via the .cell-edit-carrot button installed above —
@@ -12110,7 +12293,7 @@
       samples: 'Samples',
       other:   'Other',
     };
-    const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'fm', 'am', 'mono']);
+    const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'fm', 'am', 'mono', 'duo', 'bass', 'pad', 'xylo']);
     const _SAMPLE_KEYS_IDS    = new Set(['piano', 'organ', 'rhodes', 'epiano2', 'harpsichord', 'clavinet']);
     const _SAMPLE_MALLETS_IDS = new Set(['celesta', 'vibraphone', 'marimba']);
     const _SAMPLE_STRINGS_IDS = new Set(['guitar', 'violin', 'cello', 'eguitar']);
@@ -13120,7 +13303,12 @@
       rb.addEventListener('click', () => {
         restBars.forEach(b => b.classList.add('flash'));
         setTimeout(() => restBars.forEach(b => b.classList.remove('flash')), 80);
-        addToSequence({ freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision });
+        const restStep = { freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision };
+        addToSequence(restStep);
+        // Same Keep-flow step-div picker as note presses — gated by
+        // maybePromptStepDiv to Spell/Stack + Keep on (Run is skipped
+        // and Keep-off REST presses fall through with no prompt).
+        maybePromptStepDiv(restStep);
       });
     });
 
@@ -13169,6 +13357,11 @@
           return;
         }
         keepMode = !keepMode;
+        // Resetting on every Keep flip means a fresh on-cycle always
+        // re-prompts for step-div on the first note (per the user's
+        // session-lock semantics).
+        _keepStepDivLocked = false;
+        _keepStepDivLockedValue = null;
         refresh();
       });
     })();

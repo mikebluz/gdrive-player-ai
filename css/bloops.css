@@ -416,6 +416,28 @@
       flex-shrink: 1;
       touch-action: manipulation;
     }
+    /* Kill the iOS 300ms double-tap-to-zoom delay on every interactive
+       button in the workspace — KEEP/Wrap/REST, the size chips, the
+       transport pills, the Save/Clear/Riff row, the Free/Fixed pill,
+       and the saved-sequence bank. touch-action: manipulation tells
+       the browser the gesture is a tap, so the click event fires on
+       pointerup with no synthetic delay. */
+    #play-lock-btn,
+    #chord-btn,
+    #rest-bar,
+    #play-btn,
+    #rec-btn,
+    #loop-btn,
+    #clear-btn,
+    #save-btn,
+    #riff-menu-btn,
+    #step-mode-btn,
+    #clear-bank-btn,
+    .size-chip,
+    .riff-panel button,
+    .saved-block {
+      touch-action: manipulation;
+    }
     @media (hover: none) and (pointer: coarse) {
       /* Bigger thumb + taller hit area so a fingertip can grab and drag the
          slider on touch devices. iOS in particular makes the native thumb
@@ -2645,6 +2667,66 @@
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.8rem;
       grid-column: 1 / -1;
+    }
+
+    /* STEP-DIV PICKER (Keep flow) — modal that asks for a chip's size
+       after a note is added in Spell or Stack mode. */
+    .step-div-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 1200;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
+    }
+    .step-div-modal {
+      background: #050510;
+      border: 1px solid #2d2d3f;
+      border-radius: 14px;
+      padding: 18px 18px 16px;
+      width: min(360px, 92vw);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(0, 191, 255, 0.06);
+    }
+    .step-div-modal .sdiv-title {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
+      color: #f0f4ff; margin-bottom: 14px;
+      text-align: center;
+    }
+    .step-div-modal .sdiv-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .step-div-modal .sdiv-opt {
+      padding: 12px 8px;
+      border: 1px solid #2d2d3f;
+      border-radius: 12px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      .step-div-modal .sdiv-opt:hover { border-color: #4299e1; color: #4299e1; }
+    }
+    .step-div-modal .sdiv-opt:active { background: rgba(66,153,225,0.18); }
+    .step-div-modal .sdiv-lock {
+      display: flex; align-items: center; gap: 8px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      color: #a0aec0;
+      cursor: pointer;
+      user-select: none;
+      padding: 6px 4px 0;
+    }
+    .step-div-modal .sdiv-lock input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #4299e1;
     }
 
     /* SOUND EDITOR MODAL */

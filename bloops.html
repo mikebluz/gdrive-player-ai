@@ -2738,6 +2738,9 @@
         // startTime too, and skipping disposal there leaked synths every
         // step — the resulting voice pile-up showed up as glitchy /
         // distorted audio after a few seconds of playback.
+        // Skip the dispose / register dance during offline export
+        // (same reasoning as the main synth path below).
+        if (_offlineSamplerOverride) return;
         const pluckLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
@@ -2759,6 +2762,7 @@
           envelope: env,
         }).connect(chainHead);
         try { ns.triggerAttackRelease(preReleaseDur, startTime, velocity); } catch (e) {}
+        if (_offlineSamplerOverride) return;
         const noiseLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
@@ -2892,6 +2896,18 @@
         } catch (e) {}
       }
 
+      // Skip voice tracking + dispose scheduling during offline export
+      // rendering. Both are live-playback machinery (steal-cap keeps
+      // overlapping release tails from crunching the limiter; the
+      // dispose setTimeout reclaims nodes on wall-clock pacing). In
+      // an offline render the synth's envelope drives its own release
+      // tail, the synth becomes silent after that, and the offline
+      // context is destroyed when the render completes — synths get
+      // GC'd then. The wall-clock dispose timer would otherwise fire
+      // mid-render and call safeDisposeSynth, which ramps volume to
+      // -80 dB starting at offline-current-time and silences voices
+      // that haven't played yet.
+      if (_offlineSamplerOverride) return;
       // Always dispose. Sequence playback now passes a startTime and the
       // pre-fix gate (`if (startTime === undefined)`) silently skipped
       // cleanup, leaking a fresh synth + effect chain on every note.

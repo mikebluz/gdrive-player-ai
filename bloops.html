@@ -2501,6 +2501,47 @@
           modulation: { type: 'sine' },
           modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
         }).connect(finalDest);
+      } else if (type === 'wavetable') {
+        // Wavetable in the sustain path: build the same osc-stack +
+        // AmplitudeEnvelope structure playNote uses, but driven via
+        // triggerAttack / triggerRelease so the press is held. The
+        // default Tone.Synth fallback below would be silent here
+        // because Tone.OmniOscillator rejects type='wavetable'.
+        const wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
+          ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+          : [1.0, 0.5, 0.3];
+        const ampEnv = new Tone.AmplitudeEnvelope({
+          attack: env.attack, decay: env.decay,
+          sustain: env.sustain, release: env.release,
+        }).connect(finalDest);
+        const wtOscs = [];
+        const wtGains = [];
+        ['sine', 'sawtooth', 'triangle'].forEach((t, i) => {
+          const osc = new Tone.Oscillator({ type: t, frequency: freq, detune });
+          const g = new Tone.Gain(wt[i]);
+          osc.connect(g);
+          g.connect(ampEnv);
+          wtOscs.push(osc);
+          wtGains.push(g);
+        });
+        const _triggerAt = startAt != null ? startAt : (_coldStartAt != null ? _coldStartAt : Tone.now());
+        try { ampEnv.triggerAttack(_triggerAt, velocity); } catch (e) {}
+        wtOscs.forEach(o => { try { o.start(_triggerAt); } catch (e) {} });
+        let released = false;
+        return {
+          release: () => {
+            if (released) return; released = true;
+            const releaseAt = Tone.now();
+            try { ampEnv.triggerRelease(releaseAt); } catch (e) {}
+            const stopAt = releaseAt + (env.release || 0.5) + 0.05;
+            wtOscs.forEach(o => { try { o.stop(stopAt); } catch (e) {} });
+            setTimeout(() => {
+              wtOscs.forEach(o => { try { o.dispose(); } catch (e) {} });
+              wtGains.forEach(g => { try { g.dispose(); } catch (e) {} });
+              try { ampEnv.dispose(); } catch (e) {}
+            }, ((env.release || 0.5) + 0.5) * 1000);
+          },
+        };
       } else {
         let oscOpts;
         if      (type === 'pulse') oscOpts = { type: 'pulse', width: 0.4 };
@@ -4389,6 +4430,7 @@
         ${sliderRows}
         <div class="pr-footer">
           <button class="pr-cancel">Cancel</button>
+          <button class="sm-wave" id="wt-test">▶ Test</button>
           <button class="pr-apply">Apply</button>
         </div>
       `;
@@ -4396,10 +4438,60 @@
       document.body.appendChild(overlay);
       const sliders = labels.map((_, i) => modal.querySelector(`#wt-${i}`));
       const valEls  = labels.map((_, i) => modal.querySelector(`#wt-v-${i}`));
+      const testBtn = modal.querySelector('#wt-test');
+      // Test mode: snapshot current cellSounds + cellParams, apply
+      // 'wavetable' + the modal's mix live to every cell. Sliders /
+      // presets re-apply while test is on so each tweak retunes the
+      // grid immediately. Test again or Cancel reverts; Apply commits.
+      let testActive = false;
+      let previousSnap = null;
+      const captureSnap = () => ({
+        cellSounds: cellSounds.slice(),
+        cellParams: cellParams.map(p => ({ ...p })),
+      });
+      const refreshCellSelects = () => {
+        cells.forEach((cell, idx) => {
+          const sel = cell.querySelector('.cell-sound-select');
+          if (sel) sel.value = cellSounds[idx];
+        });
+        if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels();
+        if (typeof updateScaleBanner === 'function') updateScaleBanner();
+      };
+      const applyTestNow = () => {
+        cellParams.forEach((p, i) => {
+          p.type = 'wavetable';
+          cellSounds[i] = 'wavetable';
+          p.wavetableMix = mix.slice();
+        });
+        refreshCellSelects();
+      };
+      const revertTest = () => {
+        if (!previousSnap) return;
+        cellSounds = previousSnap.cellSounds.slice();
+        cellParams = previousSnap.cellParams.map(p => ({ ...p }));
+        refreshCellSelects();
+        previousSnap = null;
+      };
+      const setTestActive = (active) => {
+        testActive = active;
+        testBtn.textContent = active ? '■ Stop' : '▶ Test';
+        testBtn.classList.toggle('active', active);
+      };
+      testBtn.addEventListener('click', () => {
+        if (testActive) {
+          revertTest();
+          setTestActive(false);
+        } else {
+          previousSnap = captureSnap();
+          applyTestNow();
+          setTestActive(true);
+        }
+      });
       const writeSlider = (i, v) => {
         mix[i] = v;
         sliders[i].value = String(v);
         valEls[i].textContent = v.toFixed(2);
+        if (testActive) applyTestNow();
       };
       sliders.forEach((s, i) => {
         s.addEventListener('input', () => {
@@ -4414,11 +4506,18 @@
           p.forEach((v, i) => writeSlider(i, v));
         });
       });
-      const close = () => { try { overlay.remove(); } catch (e) {} };
-      modal.querySelector('.pr-cancel').addEventListener('click', close);
+      const close = (opts) => {
+        const keepTest = !!(opts && opts.keepTest);
+        if (testActive && !keepTest) {
+          revertTest();
+          testActive = false;
+        }
+        try { overlay.remove(); } catch (e) {}
+      };
+      modal.querySelector('.pr-cancel').addEventListener('click', () => close());
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       modal.querySelector('.pr-apply').addEventListener('click', () => {
-        close();
+        close({ keepTest: true });
         onApply(mix.slice());
       });
     }

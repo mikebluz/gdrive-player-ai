@@ -2899,14 +2899,19 @@
       } else if (type === 'wavetable') {
         // Wavetable: stack three native oscillators (sine + sawtooth
         // + triangle) blended at user-defined amplitudes, gated by
-        // a single Tone.AmplitudeEnvelope. Each oscillator type is
-        // natively supported by Tone — no custom-partials gymnastics
-        // that Tone v14 was rejecting silently. The "wavetable"
-        // character comes from the relative blend; the user picks
-        // the amplitudes via showWavetableEditor.
+        // a single Tone.AmplitudeEnvelope.
         const wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
           ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
           : [1.0, 0.5, 0.3];
+        try {
+          console.log('[wavetable] fire freq=', freq,
+            'mix=', wt,
+            'velocity=', velocity,
+            'preReleaseDur=', preReleaseDur,
+            'startTime=', startTime,
+            'destination=', destination ? 'set' : 'null',
+            'laneIdx=', laneIdx);
+        } catch (e) {}
         const ampEnv = new Tone.AmplitudeEnvelope({
           attack:  env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,

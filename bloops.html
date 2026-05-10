@@ -2372,6 +2372,49 @@
 
       // Sample types — Tone.Sampler supports triggerAttack/Release.
       if (isSampleType(type)) {
+        // Grain is a special sample type: granular playback via
+        // Tone.GrainPlayer rather than Tone.Sampler. Press-and-hold
+        // sustains the player; release() stops + disposes it.
+        if (type === 'sample:grain') {
+          const grainInfo = sampleSamplers.get('grain');
+          if (!grainInfo || !grainInfo.buffer) {
+            return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
+          }
+          const baseFreq = grainInfo.baseFreq || 440;
+          const cents = (typeof freq === 'number' && freq > 0)
+            ? 1200 * Math.log2(freq / baseFreq) + (detune || 0)
+            : (detune || 0);
+          const rawRate = Number.isFinite(params.grainRate) ? params.grainRate : 1;
+          const playbackRate = (Math.abs(rawRate) < 0.05) ? 0.05 * Math.sign(rawRate || 1) : rawRate;
+          const rawBuffer = (grainInfo.buffer && typeof grainInfo.buffer.get === 'function')
+            ? grainInfo.buffer.get() : null;
+          const playerOpts = {
+            grainSize: (params.grainSize != null) ? params.grainSize : 0.1,
+            overlap:   (params.grainOverlap != null) ? params.grainOverlap : 0.05,
+            playbackRate,
+            detune: cents,
+            loop: true,
+            volume: Tone.gainToDb(Math.max(0.001, velocity)),
+          };
+          playerOpts.url = rawBuffer || 'https://tonejs.github.io/audio/salamander/A4.mp3';
+          const player = new Tone.GrainPlayer(playerOpts).connect(
+            fxOverrideGlobal ? masterLimiter : masterBus
+          );
+          const triggerAt = _coldStartAt != null ? _coldStartAt : Tone.now();
+          const fire = () => { try { player.start(triggerAt); } catch (e) {} };
+          if (player.loaded) fire();
+          else if (typeof grainInfo.buffer?.loaded?.then === 'function') {
+            grainInfo.buffer.loaded.then(fire, () => {});
+          } else {
+            setTimeout(fire, 50);
+          }
+          let released = false;
+          return { release: () => {
+            if (released) return; released = true;
+            try { player.stop(); } catch (e) {}
+            setTimeout(() => { try { player.dispose(); } catch (e) {} }, 500);
+          }};
+        }
         const entry = getSampleEntry(type);
         if (!entry || !entry.sampler || !entry.sampler.loaded) {
           // Sampler hasn't finished its network fetch yet — the most

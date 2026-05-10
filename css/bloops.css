@@ -946,6 +946,20 @@
     }
     .riff-panel > button:hover:not(:disabled) { border-color: #4299e1; color: #4299e1; }
     .riff-panel > button:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Random + Seed are pushed to the bottom of the Riff menu and
+       tinted purple to flag that they replace the sequence wholesale,
+       unlike Reverse / Shuffle / Repeat which just rearrange existing
+       steps. Hover state matches the rest of the panel's color logic
+       (border + text shift to the same accent). */
+    .riff-panel > button.riff-generative {
+      border-color: rgba(159, 122, 234, 0.55);
+      color: #b794f4;
+    }
+    .riff-panel > button.riff-generative:hover:not(:disabled) {
+      border-color: #9f7aea;
+      color: #d6bcfa;
+      background: rgba(159, 122, 234, 0.10);
+    }
     .voices-panel {
       display: none;
       flex-direction: column;

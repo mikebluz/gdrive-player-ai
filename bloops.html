@@ -288,13 +288,16 @@
     <!-- Mono / Poly toggle removed — the workspace is always lane-based. -->
     <button id="poly-mode-btn" type="button" hidden aria-hidden="true" tabindex="-1">Poly</button>
     <div class="riff-wrapper">
-      <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
+      <button type="button" id="riff-menu-btn" title="Riff: Reverse / Shuffle / Repeat / Random / Seed. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
       <div class="riff-panel" id="riff-panel">
-        <button id="random-btn" title="Generate a random sequence using the current voice's scale + tones">Random</button>
-        <button id="seed-btn" title="Seed the sequence from a built-in song or from text">Seed</button>
         <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
         <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
         <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+        <!-- Random + Seed are pushed to the end of the menu and tinted
+             differently because they're the destructive / generative
+             actions — they replace (not just transform) the sequence. -->
+        <button id="random-btn" class="riff-generative" title="Generate a random sequence using the current voice's scale + tones">Random</button>
+        <button id="seed-btn" class="riff-generative" title="Seed the sequence from a built-in song or from text">Seed</button>
       </div>
     </div>
   </div>
@@ -6312,7 +6315,12 @@
       const display = document.getElementById('sequence-display');
       if (!display) return;
       const li = Number.isFinite(laneIdx) ? laneIdx : activeLaneIdx;
-      const row = display.children[li];
+      // Use `.lane-row` queries (not display.children[i]) because
+      // the lane-expander sits as a SIBLING of the lane rows when
+      // it's docked above the active lane — children[i] would pick
+      // up the expander and shift every lane's index after it.
+      const rows = display.querySelectorAll(':scope > .lane-row');
+      const row = rows[li];
       if (!row) return;
       const chipsScope = row.querySelector(':scope > .lane-chips');
       const chip = _findChipInScope(chipsScope, stepIdx);
@@ -6329,7 +6337,10 @@
     function setActiveChipForLane(laneIdx, index) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
-      const row = display.children[laneIdx];
+      // Skip the lane-expander when indexing — it sits between rows
+      // when docked. Index by `.lane-row` instead of children[i].
+      const rows = display.querySelectorAll(':scope > .lane-row');
+      const row = rows[laneIdx];
       if (!row) return;
       const chipsScope = row.querySelector(':scope > .lane-chips');
       const newChip = _findChipInScope(chipsScope, index);

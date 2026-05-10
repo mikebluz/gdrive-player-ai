@@ -2912,12 +2912,19 @@
           attack: env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,
         }).connect(chainHead);
-        const osc = new Tone.Oscillator({
-          type: 'custom',
-          partials,
+        // Tone.OmniOscillator (not the base Tone.Oscillator) is the
+        // class that supports 'custom' as a type. The base
+        // Tone.Oscillator only knows sine/square/sawtooth/triangle
+        // and silently fails when given type='custom'. Build with a
+        // sine seed first because some Tone v14 builds also reject
+        // 'custom' in the constructor — then assign partials, which
+        // flips the underlying OscillatorNode to a periodic wave.
+        const osc = new Tone.OmniOscillator({
+          type: 'sine',
           frequency: freq,
           detune,
         });
+        try { osc.partials = partials; } catch (e) {}
         osc.connect(ampEnv);
         // Trigger the envelope and start the oscillator at the same
         // (offline-aware) time. osc.stop() is scheduled past the

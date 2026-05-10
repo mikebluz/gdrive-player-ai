@@ -8233,9 +8233,25 @@
       if (item.type === 'audio' || item.type === 'silent') return (item.durationSec || 0) * 1000;
       const bpm = item.bpm || 120;
       const itemSub = item.subdivision || 1;
-      let totalMs = 0;
-      (item.steps || []).forEach(s => { totalMs += stepDurationMs(s, bpm, itemSub); });
-      return totalMs;
+      const stepListMs = (steps) => {
+        let ms = 0;
+        (steps || []).forEach(s => { ms += stepDurationMs(s, bpm, itemSub); });
+        return ms;
+      };
+      // Multi-lane items: duration is the LONGEST lane (matching live
+      // playback, where the item only advances after every lane has
+      // run out of steps). Mute / solo are honored so a soloed lane
+      // drives duration alone.
+      if (Array.isArray(item.lanes) && item.lanes.length > 0) {
+        const anySolo = item.lanes.some(l => l && l.solo);
+        const playable = item.lanes.filter(l => l && Array.isArray(l.steps)
+          && l.steps.length > 0
+          && (anySolo ? !!l.solo : !l.muted));
+        if (playable.length > 0) {
+          return Math.max(...playable.map(l => stepListMs(l.steps)));
+        }
+      }
+      return stepListMs(item.steps);
     }
     // Flatten a step list into leaf steps for track playback/export. Sub
     // wrappers carry no audio of their own (duration 1, no subdivision), and
@@ -9308,11 +9324,17 @@
           const teq = track.eq || { low: 0, mid: 0, high: 0 };
           const tpan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
           const trackPanner = new Tone.Panner(tpan).connect(bus);
-          const trackBus = new Tone.EQ3({
-            low:  teq.low  || 0,
-            mid:  teq.mid  || 0,
-            high: teq.high || 0,
-          }).connect(trackPanner);
+          // Mirror getTrackBus: skip the EQ3 when bands are all flat
+          // so the offline render doesn't get the same crossover-sum
+          // loss that was making live tracks sound quieter than Bloops.
+          const tEqFlat = !(teq.low || 0) && !(teq.mid || 0) && !(teq.high || 0);
+          const trackBus = tEqFlat
+            ? new Tone.Gain(1).connect(trackPanner)
+            : new Tone.EQ3({
+                low:  teq.low  || 0,
+                mid:  teq.mid  || 0,
+                high: teq.high || 0,
+              }).connect(trackPanner);
           let time = 0;
           (track.items || []).forEach(item => {
             if (item.type === 'audio') {
@@ -9327,19 +9349,51 @@
             }
             const itemBpm = item.bpm || 120;
             const itemSub = item.subdivision || 1;
-            flattenItemSteps(item.steps).forEach(step => {
-              const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
-              const stepMs = Math.round(60000 / itemBpm * stepSub);
-              const durMs  = stepMs * (step.duration || 1);
-              const durSec = durMs / 1000;
-              if (step.chord) {
-                const size = step.chord.length;
-                step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, time, trackBus));
-              } else if (step.freq !== null && step.freq !== undefined) {
-                playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, time, trackBus);
+            // Schedule one lane's flat-step list at `baseTime`, all
+            // routed through the offline trackBus. Returns the total
+            // seconds the lane consumed so the multi-lane case can
+            // pick the longest to advance `time`.
+            const scheduleLane = (steps, baseTime) => {
+              let t = baseTime;
+              flattenItemSteps(steps).forEach(step => {
+                const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
+                const stepMs = Math.round(60000 / itemBpm * stepSub);
+                const durMs  = stepMs * (step.duration || 1);
+                const durSec = durMs / 1000;
+                if (step.chord) {
+                  const size = step.chord.length;
+                  step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus));
+                } else if (step.freq !== null && step.freq !== undefined) {
+                  playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, trackBus);
+                }
+                t += durSec;
+              });
+              return t - baseTime;
+            };
+            // Multi-lane items: schedule every audible lane in parallel
+            // starting at `time`, route them all through the same
+            // trackBus so they superimpose, then advance time by the
+            // longest lane (matches live playback's "wait for the last
+            // lane to finish before next item" rule).
+            if (Array.isArray(item.lanes) && item.lanes.length > 0) {
+              const anySolo = item.lanes.some(l => l && l.solo);
+              const playableLanes = item.lanes.filter(l => l
+                && Array.isArray(l.steps) && l.steps.length > 0
+                && (anySolo ? !!l.solo : !l.muted));
+              if (playableLanes.length > 0) {
+                let longestSec = 0;
+                playableLanes.forEach(lane => {
+                  const laneSec = scheduleLane(lane.steps, time);
+                  if (laneSec > longestSec) longestSec = laneSec;
+                });
+                time += longestSec;
+                return;
               }
-              time += durSec;
-            });
+            }
+            // Legacy single-stream item: no lanes array, fall back to
+            // item.steps the same way old exports did.
+            const used = scheduleLane(item.steps, time);
+            time += used;
           });
         });
         // Wait for any audio-item Tone.Player buffers to decode (offline

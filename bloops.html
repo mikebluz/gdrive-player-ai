@@ -2038,14 +2038,7 @@
             name: inst.label,
             rootNote: 'C4',
             remote: true,
-            // Drum kits are the same Tone.Sampler shape as melodic
-            // instruments, but each grid pitch class should trigger a
-            // *specific* drum hit at native pitch instead of pitch-shifting
-            // a single sample across the keyboard. Flag them so playback
-            // can snap the play freq to the C2 row at runtime.
             drumKit: !!inst.drumKit,
-            // Stash the original URL map so the offline export can recreate
-            // a parallel sampler bound to the offline audio context.
             urls: inst.urls,
             baseUrl: inst.baseUrl,
           });
@@ -2053,6 +2046,29 @@
           console.warn('Failed to register remote instrument', inst.id, e);
         }
       });
+      // Grain entry — preload the source buffer so per-note GrainPlayer
+      // instances (built lazily in playNote when the user picks Grain)
+      // see a cached buffer and start producing audio without the
+      // first-note silence the URL-fetch path would otherwise have.
+      // The buffer is shared by reference across every grain voice;
+      // each player owns its own grain settings + scheduling.
+      if (!sampleSamplers.has('grain')) {
+        try {
+          const buffer = new Tone.ToneAudioBuffer(
+            'https://tonejs.github.io/audio/salamander/A4.mp3'
+          );
+          sampleSamplers.set('grain', {
+            kind: 'grain',
+            name: 'Grain',
+            buffer,
+            // Salamander A4 sample → 440 Hz at native playback rate.
+            // Used to compute detune so other pitches play in tune.
+            baseFreq: 440,
+          });
+        } catch (e) {
+          console.warn('Failed to register grain instrument', e);
+        }
+      }
     }
 
     async function loadSampleManifest() {
@@ -2583,6 +2599,69 @@
       // sampler bound to the track's bus) or from a Poly-mode lane stream
       // (per-lane sampler bound to the lane's bus).
       if (isSampleType(type)) {
+        // Grain is a special sample type — uses Tone.GrainPlayer (a
+        // granular sampler, monophonic per instance) instead of the
+        // shared Tone.Sampler. Each voice gets its own player so we
+        // can play simultaneous notes; they share the cached buffer
+        // by reference so the second-and-onward note's player picks
+        // up the audio data without re-fetching.
+        if (type === 'sample:grain') {
+          const grainInfo = sampleSamplers.get('grain');
+          if (!grainInfo || !grainInfo.buffer) {
+            // Buffer registry missing — fall back to a sine so the
+            // note is at least audible while we wait for grain to
+            // initialize on the next tick.
+            return playNote(freq, { ...params, type: 'sine' }, durationMs, startTime, destination, trackIdx, laneIdx);
+          }
+          const baseFreq = grainInfo.baseFreq || 440;
+          const cents = (typeof freq === 'number' && freq > 0)
+            ? 1200 * Math.log2(freq / baseFreq) + (detune || 0)
+            : (detune || 0);
+          // Same destination resolution as the synth path — voice
+          // routes through the lane bus (live poly) or trackBus
+          // (track playback) so per-lane / per-track mix applies.
+          const laneDest = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null;
+          const finalDest = destination || laneDest || masterBus;
+          const player = new Tone.GrainPlayer({
+            url: grainInfo.buffer,
+            grainSize: (params.grainSize != null) ? params.grainSize : 0.1,
+            overlap:   (params.grainOverlap != null) ? params.grainOverlap : 0.05,
+            playbackRate: 1,
+            detune: cents,
+            loop: true,
+            volume: Tone.gainToDb(Math.max(0.001, velocity)),
+          }).connect(finalDest);
+          const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime))
+            ? startTime : Tone.now();
+          const dur = Math.max(0.05, targetDur);
+          // Tone.GrainPlayer.start(time, offset, duration) plays
+          // for `duration` seconds starting at `time` from `offset`
+          // into the buffer. Loop is on so a duration longer than
+          // the buffer wraps within itself, matching the "sustained
+          // grain texture" expectation.
+          const fire = () => {
+            try { player.start(triggerAt, 0, dur); } catch (e) {}
+          };
+          if (player.loaded) fire();
+          else if (typeof grainInfo.buffer.loaded?.then === 'function') {
+            grainInfo.buffer.loaded.then(fire, () => {});
+          } else {
+            fire();
+          }
+          // Lifecycle — same offline-skip / live-dispose pattern as
+          // every other voice. Voice gets parked in the offline ref
+          // pool during export; live path schedules a wall-clock
+          // dispose past the duration tail.
+          if (_offlineSamplerOverride) {
+            if (Array.isArray(_offlineVoiceRefs)) _offlineVoiceRefs.push(player);
+            return;
+          }
+          const grainLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+            ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
+          setTimeout(() => { try { player.dispose(); } catch (e) {} },
+            grainLeadMs + (dur + 0.5) * 1000);
+          return;
+        }
         let sampler = null;
         // Per-track sampler is built lazily on first audio call too —
         // gate adoption on .loaded the same way the per-lane path does

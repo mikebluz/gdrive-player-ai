@@ -5730,6 +5730,10 @@
         snapshotForUndo('Wrap form');
         sequence.push(transposed);
         renderSequence();
+        // Match the Keep-flow note-add prompt: every transposed wrap
+        // append is a fresh user-driven step, so ask for its step div
+        // (or apply the session-lock value if one's set).
+        if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
       }
       return true;
     }
@@ -5772,6 +5776,10 @@
         snapshotForUndo('Wrap form');
         sequence.push(transposed);
         renderSequence();
+        // Same Keep-flow step-div prompt as the click-only wrap path —
+        // press-and-hold wrap auditioning still appends a step, so
+        // honor the session lock or pop the picker on first use.
+        if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
       }
 
       if (transposed.isSub && Array.isArray(transposed.subSteps)) {
@@ -7881,6 +7889,13 @@
         wrapTemplate = newStep;
         if (keepMode) {
           addToSequence(newStep);
+          // Mirror the Keep-flow note-add prompt: after a wrap commits
+          // into the sequence with Keep on, ask the user to pick a
+          // step-div size for the new step (or apply the session-lock
+          // value if one's set). Without this, wrapped chord / sub
+          // steps inherit whatever stepSubdivision was active and the
+          // user has to retune them via the step Edit menu instead.
+          if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(newStep);
         }
         pendingChord = [];
         refreshWrapVisuals();

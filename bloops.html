@@ -260,7 +260,8 @@
   <div class="clear-riff-row">
     <button id="save-btn" disabled>Save</button>
     <button id="clear-btn">Clear</button>
-    <button id="poly-mode-btn" type="button" title="Mono = single sequence (default). Poly = N parallel lanes that all play together; Keep-mode note presses go to the selected lane. Lane count follows the Grid rows setting.">Mono</button>
+    <!-- Mono / Poly toggle removed — the workspace is always lane-based. -->
+    <button id="poly-mode-btn" type="button" hidden aria-hidden="true" tabindex="-1">Poly</button>
     <div class="riff-wrapper">
       <button type="button" id="riff-menu-btn" title="Riff: Save / Random / Seed / Reverse / Shuffle / Repeat. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
       <div class="riff-panel" id="riff-panel">
@@ -416,12 +417,15 @@
     // the workspace splits into N parallel lanes (one per grid row);
     // the active lane's `steps` is aliased to `sequence` so all
     // existing add/edit code keeps working. Mute/Solo are per-lane.
-    // _stashedLanes preserves the lanes when we drop back to Mono so
-    // re-entering Poly restores them.
-    let polyMode = false;
-    let lanes = [];           // [{ name, steps: [], muted: false, solo: false }]
+    // Mono mode has been removed — the workspace is always poly with
+    // at least one lane. `polyMode` stays as a constant flag so the
+    // dozens of `if (polyMode)` reads scattered through the codebase
+    // still resolve true; `_stashedLanes` stays as a no-op to avoid
+    // breaking save / load files written by older builds.
+    const polyMode = true;
+    let lanes = [];           // [{ name, steps: [], muted: false, solo: false, voice }]
     let activeLaneIdx = 0;
-    let _stashedLanes = null; // saved while in Mono; populated on Poly→Mono
+    let _stashedLanes = null; // legacy field — never written under always-poly
     let chordMode = false;
     // Grid playback mode — drives what a cell click does.
     //   'sequencer' (default): existing behavior (add note / start sustain).
@@ -925,7 +929,6 @@
           // unchanged.
           if (Array.isArray(saved.lanes) && saved.lanes.length > 0) {
             if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
-            polyMode = true;
             lanes = saved.lanes.map((l, li) => ({
               name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(li),
               steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],
@@ -2972,11 +2975,12 @@
       const subCols = cols * SUBCELL_MULT;
 
       // chipHost is where the active sequence's chips render — the
-      // sequence-display itself in Mono, or the active lane's chip
-      // strip in Poly. Built below depending on mode.
+      // sequence-display always renders the lane rows; the active
+      // lane's chip strip is the chip host for the workspace's
+      // chip-level operations below.
       let chipHost = display;
 
-      if (polyMode) {
+      {
         display.classList.add('polymode');
         display.classList.remove('grid-mode');
         display.style.removeProperty('--grid-cols');
@@ -3100,15 +3104,6 @@
         });
 
         chipHost = activeLaneChipsEl || display;
-      } else {
-        display.classList.remove('polymode');
-        if (cols > 0) {
-          display.classList.add('grid-mode');
-          display.style.setProperty('--grid-cols', String(subCols));
-        } else {
-          display.classList.remove('grid-mode');
-          display.style.removeProperty('--grid-cols');
-        }
       }
 
       const isEmpty = sequence.length === 0 && pendingChord.length === 0;
@@ -3123,7 +3118,6 @@
         return;
       }
 
-      if (!polyMode) chipHost.innerHTML = '';
       sequence.forEach((step, i) => {
         if (insertionPoint === i) chipHost.appendChild(makeInsertCursor());
         const chip = document.createElement('div');
@@ -4300,12 +4294,11 @@
     // step arrays — assigning to `sequence = laneSteps` aliases by
     // reference, so mutations to `sequence` are visible on the lane.
     function _aliasSequenceToActiveLane() {
-      if (!polyMode || lanes.length === 0) return;
+      if (lanes.length === 0) return;
       if (activeLaneIdx < 0 || activeLaneIdx >= lanes.length) activeLaneIdx = 0;
       sequence = lanes[activeLaneIdx].steps;
     }
     function _resizeLanesToGridRows() {
-      if (!polyMode) return;
       const target = Math.max(1, gridRows | 0);
       while (lanes.length < target) lanes.push(_makeLane(lanes.length));
       if (lanes.length > target) {
@@ -4357,7 +4350,6 @@
     }
 
     function activateLane(idx) {
-      if (!polyMode) return;
       if (idx == null || idx < 0 || idx >= lanes.length) return;
       // Sync current `sequence` back to the previously-active lane in
       // case it was reassigned (e.g., Clear/Reverse/Shuffle/Random
@@ -4392,97 +4384,38 @@
       if (typeof refreshDriftBtn === 'function') refreshDriftBtn();
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
-    function enterPolyMode() {
-      if (polyMode) return;
-      polyMode = true;
-      // Restore stashed lanes if we have them; otherwise seed lane 0
-      // from the current sequence and pad up to the grid-row count.
-      if (Array.isArray(_stashedLanes) && _stashedLanes.length > 0) {
-        lanes = _stashedLanes.map(l => ({ ...l, steps: (l.steps || []).slice() }));
-        _stashedLanes = null;
-        // The user may have edited the sequence while in Mono — drop
-        // those edits onto the last-active lane so re-entering Poly
-        // doesn't silently revert their work.
-        const monoSteps = sequence.slice();
-        if (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
-          lanes[activeLaneIdx].steps = monoSteps;
-        } else if (lanes.length > 0) {
-          activeLaneIdx = 0;
-          lanes[0].steps = monoSteps;
-        }
-      } else {
-        lanes = [];
-        const target = Math.max(1, gridRows | 0);
-        lanes.push(_makeLane(0, sequence.slice()));
-        for (let i = 1; i < target; i++) lanes.push(_makeLane(i));
-        activeLaneIdx = 0;
-      }
-      _resizeLanesToGridRows();
-      activeLaneIdx = Math.min(activeLaneIdx, lanes.length - 1);
-      if (activeLaneIdx < 0) activeLaneIdx = 0;
+    // Lazy-init lanes on first use so the always-poly invariant holds
+    // even before any user action: lanes always has at least one entry
+    // matching gridRows and `sequence` is aliased to lanes[0].steps.
+    // Called from boot + every render path that might run before the
+    // user explicitly creates a lane (renderSequence, playSequence,
+    // applyProjectSnapshot fall-back).
+    function ensureLanesInitialized() {
+      if (Array.isArray(lanes) && lanes.length > 0) return;
+      lanes = [];
+      const target = Math.max(1, gridRows | 0);
+      lanes.push(_makeLane(0, Array.isArray(sequence) ? sequence.slice() : []));
+      for (let i = 1; i < target; i++) lanes.push(_makeLane(i));
+      activeLaneIdx = 0;
       _aliasSequenceToActiveLane();
-      // Seed the active lane's voice from current globals so the
-      // existing instrument carries into Poly. Other lanes get a
-      // copy of the same voice — the user can then evolve each lane
-      // independently. Stashed lanes keep whatever voice they had.
+      // Seed every lane's voice from the current globals so a fresh
+      // workspace doesn't show empty grids when the user clicks
+      // through lanes for the first time.
       const seedVoice = _captureVoiceGlobals();
       lanes.forEach(l => { if (!l.voice) l.voice = JSON.parse(JSON.stringify(seedVoice)); });
-      refreshPolyModeBtn();
-      renderSequence();
-      if (typeof persistWorkspace === 'function') persistWorkspace();
     }
-    function exitPolyMode() {
-      if (!polyMode) return;
-      // Capture the active lane's voice into the globals one last
-      // time before stashing so the Mono workspace inherits whatever
-      // instrument the user was working with on that lane. Without
-      // this, leaving Poly while editing a lane that hadn't been
-      // re-activated since its last voice change would silently revert
-      // the globals to the lane's stored voice.
-      if (lanes[activeLaneIdx]) {
-        lanes[activeLaneIdx].voice = _captureVoiceGlobals();
-      }
-      // Stash lanes for re-entry; keep the active lane's steps as the
-      // Mono `sequence` so the user keeps the lane they were focused on.
-      // Strip the audio nodes from the stash — they live in the live
-      // audio graph and would dangle otherwise; lazy-rebuild on Poly
-      // re-entry from the persisted pan / volume values.
-      _stashedLanes = lanes.map(l => ({
-        name: l.name,
-        steps: (l.steps || []).slice(),
-        muted: !!l.muted,
-        solo:  !!l.solo,
-        driftMs:        Number.isFinite(l.driftMs)        ? l.driftMs        : 0,
-        driftLocked:    !!l.driftLocked,
-        driftOffsetSec: Number.isFinite(l.driftOffsetSec) ? l.driftOffsetSec : 0,
-        pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
-        volume: Number.isFinite(l.volume) ? l.volume : 100,
-        slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
-        voice:  l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
-      }));
-      disposeAllLaneAudio(lanes);
-      const activeSteps = (lanes[activeLaneIdx] && lanes[activeLaneIdx].steps) || [];
-      lanes = [];
-      activeLaneIdx = 0;
-      polyMode = false;
-      sequence = activeSteps.slice();
-      refreshPolyModeBtn();
-      renderSequence();
-      if (typeof persistWorkspace === 'function') persistWorkspace();
-    }
+    // Mono mode has been removed; these stay as no-ops so call sites
+    // (legacy buttons, save/load fall-throughs) don't need surgery.
+    function enterPolyMode() { ensureLanesInitialized(); }
+    function exitPolyMode()  { /* always poly — no-op */ }
     function refreshPolyModeBtn() {
-      const btn = document.getElementById('poly-mode-btn');
-      if (!btn) return;
-      btn.textContent = polyMode ? 'Poly' : 'Mono';
-      btn.classList.toggle('active', polyMode);
-      // Rows-input enable depends on both stepMode and polyMode —
-      // refresh the step-mode helper so the input flips on/off when
-      // Poly toggles.
+      // The Mono / Poly toggle is gone — this stays so legacy callers
+      // (load paths, init code) don't have to be edited. Still nudges
+      // the step-mode helper + footer-transport class + drift button
+      // because those used to be triggered indirectly via the pill.
       if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
-      // Footer-transport: tighten Rec / Loop / Drift sizing in Poly so
-      // the four pills fit; show the Drift button only in Poly.
       const tport = document.querySelector('.footer-transport');
-      if (tport) tport.classList.toggle('poly-mode-on', polyMode);
+      if (tport) tport.classList.add('poly-mode-on');
       if (typeof refreshDriftBtn === 'function') refreshDriftBtn();
     }
     // Drift button — three states keyed off the active lane:
@@ -4496,8 +4429,7 @@
     function refreshDriftBtn() {
       const btn = document.getElementById('drift-btn');
       if (!btn) return;
-      btn.hidden = !polyMode;
-      if (!polyMode) return;
+      btn.hidden = false;
       const lane = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
       const drifting = !!(lane && Number.isFinite(lane.driftMs) && lane.driftMs > 0);
       const locked   = !!(lane && lane.driftLocked);
@@ -6216,38 +6148,17 @@
     function setActiveSequenceChip(index) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
-      // In Poly, scope the playback highlight to the active lane's
-      // chip strip — at the top level we still target Mono's chip
-      // strip, which is just #sequence-display itself.
-      let scope;
-      if (polyMode) {
-        let activeRow = null;
-        for (const c of display.children) {
-          if (c.classList && c.classList.contains('active')) { activeRow = c; break; }
-        }
-        scope = activeRow ? activeRow.querySelector(':scope > .lane-chips') : null;
-      } else {
-        scope = display;
+      // Scope the playback highlight to the active lane's chip strip.
+      let activeRow = null;
+      for (const c of display.children) {
+        if (c.classList && c.classList.contains('active')) { activeRow = c; break; }
       }
+      const scope = activeRow ? activeRow.querySelector(':scope > .lane-chips') : null;
       const newChip = _findChipInScope(scope, index);
       if (_activeChipMono && _activeChipMono !== newChip) {
         _activeChipMono.classList.remove('active');
       }
-      if (newChip) {
-        newChip.classList.add('active');
-        // Only scroll when the chip is actually outside its scroll
-        // container, and use instant scroll. Smooth scroll spawned a
-        // long-running animation per step (8/sec at 1/16 120 BPM) that
-        // never settled because each step retargeted it — layout / paint
-        // ate the JS thread and stalled the scheduler tick.
-        if (!polyMode && scope) {
-          const cRect = scope.getBoundingClientRect();
-          const nRect = newChip.getBoundingClientRect();
-          if (nRect.right > cRect.right || nRect.left < cRect.left) {
-            newChip.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
-          }
-        }
-      }
+      if (newChip) newChip.classList.add('active');
       _activeChipMono = newChip;
     }
 
@@ -6260,17 +6171,11 @@
     function _updateChipLabelText(stepIdx, laneIdx, label) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
-      let chip;
-      if (polyMode && Number.isFinite(laneIdx)) {
-        // Children are .lane-row; pick the laneIdx-th one and walk
-        // its immediate .lane-chips descendant for the chip.
-        const row = display.children[laneIdx];
-        if (!row) return;
-        const chipsScope = row.querySelector(':scope > .lane-chips');
-        chip = _findChipInScope(chipsScope, stepIdx);
-      } else {
-        chip = _findChipInScope(display, stepIdx);
-      }
+      const li = Number.isFinite(laneIdx) ? laneIdx : activeLaneIdx;
+      const row = display.children[li];
+      if (!row) return;
+      const chipsScope = row.querySelector(':scope > .lane-chips');
+      const chip = _findChipInScope(chipsScope, stepIdx);
       if (!chip) return;
       const parts = (chip.textContent || '').split('\n');
       parts[0] = String(label || '');
@@ -6282,7 +6187,6 @@
     // 'active' class is scoped per-lane and multiple lanes can have
     // their own active chip simultaneously.
     function setActiveChipForLane(laneIdx, index) {
-      if (!polyMode) return;
       const display = document.getElementById('sequence-display');
       if (!display) return;
       const row = display.children[laneIdx];
@@ -6297,19 +6201,11 @@
     }
 
     function playSequence(index = 0, freshStart = true) {
-      // In Mono we need at least one step. In Poly we need at least
-      // one playable lane (non-muted, or solo'd if any lane is solo'd)
-      // with content; otherwise stop right away so we don't spin a tick
-      // loop with no streams.
-      if (polyMode) {
-        // Need at least one non-empty lane to play. Mute / solo state
-        // is honored live per-tick so the user can flip lanes on and
-        // off without restarting.
-        const playable = lanes.filter(l => (l.steps || []).length > 0);
-        if (playable.length === 0) { stopSequence(); return; }
-      } else {
-        if (sequence.length === 0) { stopSequence(); return; }
-      }
+      // Always-poly: need at least one non-empty lane to play. Mute /
+      // solo are honored live per-tick so the user can flip lanes on
+      // and off without restarting.
+      const playable = lanes.filter(l => (l.steps || []).length > 0);
+      if (playable.length === 0) { stopSequence(); return; }
       document.getElementById('play-btn').textContent = '■';
       // Build the streams array FIRST so any synchronous setup work
       // (per-lane Tone.Sampler creation, lane-bus node creation,
@@ -6318,10 +6214,9 @@
       // scheduler tick try to schedule events at audio times already
       // behind rawAudioNow(), which Tone fires "soonest possible" all
       // at once and produces a rushed catch-up at start of play.
-      // Mono = one stream over the global sequence; Poly = one stream
-      // per playable lane, all sharing the (post-build) _playBaseTime
-      // so they start together.
-      if (polyMode) {
+      // One stream per playable lane, all sharing the (post-build)
+      // _playBaseTime so they start together.
+      {
         // Include every non-empty lane as its own stream — mute / solo
         // are checked LIVE per step inside the scheduler so the user
         // can toggle them during playback without restarting.
@@ -6378,18 +6273,6 @@
               ended:            false,
             };
           });
-      } else {
-        _schedStreams = [{
-          source:           sequence,
-          idx:              index | 0,
-          subStack:         [],
-          offsetSec:        0,
-          laneIdx:          null,
-          iter:             0,
-          driftAccumSec:    0,
-          pendingClearDrift: false,
-          ended:            false,
-        }];
       }
       if (freshStart) {
         // Anchor _playBaseTime AFTER all stream-building synchronous
@@ -6426,11 +6309,9 @@
         stopSequence();
         return;
       }
-      // Need at least one playable source to start. Mono = sequence;
-      // Poly = any lane with content (the active lane may be empty).
-      const playable = polyMode
-        ? lanes.some(l => (l.steps || []).length > 0)
-        : (sequence.length > 0);
+      // Need at least one playable source to start — any lane with
+      // content (the active lane may be empty while another plays).
+      const playable = lanes.some(l => (l.steps || []).length > 0);
       if (!playable) return;
       // Wait for any pending sample buffers — without this the first
       // sample-based attack would be silent on a cold load.
@@ -6443,9 +6324,7 @@
       const warm = !!(ac && ac.state === 'running');
       const startNow = () => {
         if (sequenceTimer !== null) return;
-        const stillPlayable = polyMode
-          ? lanes.some(l => (l.steps || []).length > 0)
-          : (sequence.length > 0);
+        const stillPlayable = lanes.some(l => (l.steps || []).length > 0);
         if (stillPlayable) playSequence(0);
       };
       if (warm) startNow();
@@ -6594,20 +6473,17 @@
     }
     function applyGridDimsChange() {
       readGridDimsFromInputs();
-      // In Poly mode, the rows count drives the lane count — resize
-      // the lanes array up/down accordingly so changing Grid rows
-      // adds or trims lanes.
-      if (polyMode) _resizeLanesToGridRows();
+      // The rows count drives the lane count — resize the lanes array
+      // up/down accordingly so changing Grid rows adds or trims lanes.
+      _resizeLanesToGridRows();
       renderSequence();
     }
     document.getElementById('grid-rows-input')?.addEventListener('change', applyGridDimsChange);
     document.getElementById('grid-cols-input')?.addEventListener('change', applyGridDimsChange);
 
-    // ---- Mono / Poly toggle -------------------------------------------
-    document.getElementById('poly-mode-btn')?.addEventListener('click', () => {
-      if (polyMode) exitPolyMode();
-      else          enterPolyMode();
-    });
+    // Mono / Poly toggle removed — workspace is always lane-based.
+    // Button stays in the DOM (hidden) so any lingering selectors that
+    // expect to find it don't error out on a missing element.
 
     // ---- Fixed-mode size chips ----
     // Each chip appends a programmable rest slot of its Step Div size
@@ -6630,11 +6506,10 @@
       if (!btn) return;
       btn.textContent = stepMode ? 'Fixed' : 'Free';
       btn.classList.toggle('active', stepMode);
-      // Rows is meaningful in Fixed (slot grid) and in Poly (lane
-      // count). Free + Mono is the only combo where rows does nothing,
-      // so disable it only there.
+      // Rows controls lane count (always-poly) and Fixed-mode slot
+      // grid count. Always enabled now.
       const rowsEl = document.getElementById('grid-rows-input');
-      if (rowsEl) rowsEl.disabled = !stepMode && !polyMode;
+      if (rowsEl) rowsEl.disabled = false;
       // Size-chip row is the slot builder — only meaningful in Fixed mode.
       const sizeRow = document.getElementById('size-chips-row');
       if (sizeRow) sizeRow.hidden = !stepMode;
@@ -6697,12 +6572,13 @@
       octaveCount = 1;
       masterFreqA = 440;
       currentScale = 'chromatic';
-      // Wipe Poly-mode state too — fresh project starts in Mono.
-      polyMode = false;
+      // Fresh project: dispose existing lane audio nodes, then seed a
+      // single empty lane (always-poly invariant — lanes is never []).
       if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
       lanes = [];
       activeLaneIdx = 0;
       _stashedLanes = null;
+      ensureLanesInitialized();
       if (typeof refreshPolyModeBtn === 'function') refreshPolyModeBtn();
       palette = [...DEFAULT_PALETTE];
       chipPalette = [...palette];
@@ -7661,7 +7537,6 @@
     // at the next iteration boundary. Each lane carries its own factor,
     // so multiple lanes can drift by different amounts.
     document.getElementById('drift-btn')?.addEventListener('click', () => {
-      if (!polyMode) return;
       const lane = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
       if (!lane) return;
       // State C → A: Reset. Drop offset entirely and re-sync the live
@@ -10741,13 +10616,11 @@
       stepMode        = !!w.stepMode;
       multiSelectMode = !!w.multiSelectMode;
 
-      // Poly-mode state. Restoring lanes BEFORE refreshing the toggle
-      // pill so the post-restore renderSequence sees the right state.
-      // Dispose any live lane audio nodes from the previous workspace
-      // so the snapshot doesn't leak orphan Tone nodes; the new lanes
-      // lazy-build their bus on first audio access.
+      // Poly-only world: restore lanes from the snapshot. Older
+      // snapshots may have stored polyMode=false with no lanes — the
+      // fall-through below seeds a single lane from the restored
+      // sequence so we never end up with an empty lanes[].
       if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
-      polyMode = !!w.polyMode;
       activeLaneIdx = Number.isFinite(w.activeLaneIdx) ? w.activeLaneIdx : 0;
       lanes = Array.isArray(w.lanes) ? w.lanes.map((l, i) => ({
         name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
@@ -10777,25 +10650,23 @@
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
       })) : null;
-      if (polyMode) {
-        if (lanes.length === 0) {
-          // Snapshot reported polyMode but no lanes — recover with a
-          // single lane containing the restored sequence.
-          lanes = [_makeLane(0, sequence)];
-        }
-        activeLaneIdx = Math.min(activeLaneIdx, lanes.length - 1);
-        if (activeLaneIdx < 0) activeLaneIdx = 0;
-        // Alias `sequence` to the active lane's steps so all add/edit
-        // code reads/writes the right lane.
-        sequence = lanes[activeLaneIdx].steps;
-        // Apply the active lane's voice on top of the grid restore
-        // that already ran above (snap.grid → globals → rebuildGrid).
-        // Lanes that lack a stored voice fall through and inherit
-        // whatever's in the globals — first activate-out will freeze
-        // it onto the lane.
-        if (lanes[activeLaneIdx] && lanes[activeLaneIdx].voice) {
-          _applyVoiceToGlobals(lanes[activeLaneIdx].voice);
-        }
+      // Always-poly invariant: if the restored snapshot had no lanes
+      // (older Mono-mode save), seed one from the restored sequence.
+      if (lanes.length === 0) {
+        lanes = [_makeLane(0, sequence)];
+      }
+      activeLaneIdx = Math.min(activeLaneIdx, lanes.length - 1);
+      if (activeLaneIdx < 0) activeLaneIdx = 0;
+      // Alias `sequence` to the active lane's steps so all add/edit
+      // code reads/writes the right lane.
+      sequence = lanes[activeLaneIdx].steps;
+      // Apply the active lane's voice on top of the grid restore
+      // that already ran above (snap.grid → globals → rebuildGrid).
+      // Lanes that lack a stored voice fall through and inherit
+      // whatever's in the globals — first activate-out will freeze
+      // it onto the lane.
+      if (lanes[activeLaneIdx] && lanes[activeLaneIdx].voice) {
+        _applyVoiceToGlobals(lanes[activeLaneIdx].voice);
       }
       refreshPolyModeBtn();
 
@@ -14066,6 +13937,12 @@
 
     rebuildGrid();
     refreshHoldEnabled();
+    // Always-poly invariant: ensure lanes[] has at least one lane on
+    // boot so the very first render / playback path doesn't hit empty
+    // lane state. applyProjectSnapshot may overwrite this with a
+    // restored snapshot moments later — that's fine, the snapshot
+    // path also calls into the same invariant.
+    ensureLanesInitialized();
     loadSampleManifest();
     loadImportedSamples();
     loadRemoteInstruments();

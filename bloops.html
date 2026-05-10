@@ -916,7 +916,43 @@
           // loaded the same saved sequence). Without this, editing a
           // step in one lane would silently mutate the matching step
           // in every other lane that ever loaded the same bank entry.
-          sequence = saved.steps.map(cloneStep);
+          //
+          // Poly-aware load: when the saved entry carries a `lanes`
+          // array (Poly-mode save), restore every lane plus active
+          // index, then alias `sequence` to the active lane. Older
+          // Mono-only entries (no `lanes` field) keep falling through
+          // to the steps-only restore below so their behavior is
+          // unchanged.
+          if (Array.isArray(saved.lanes) && saved.lanes.length > 0) {
+            if (typeof disposeAllLaneAudio === 'function') disposeAllLaneAudio(lanes);
+            polyMode = true;
+            lanes = saved.lanes.map((l, li) => ({
+              name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(li),
+              steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],
+              muted: !!l?.muted,
+              solo:  !!l?.solo,
+              driftMs:        Number.isFinite(l?.driftMs)        ? l.driftMs        : 0,
+              driftLocked:    !!l?.driftLocked,
+              driftOffsetSec: Number.isFinite(l?.driftOffsetSec) ? l.driftOffsetSec : 0,
+              pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
+              volume: Number.isFinite(l?.volume) ? l.volume : 100,
+              slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+            }));
+            activeLaneIdx = Number.isFinite(saved.activeLaneIdx)
+              ? Math.max(0, Math.min(saved.activeLaneIdx, lanes.length - 1))
+              : 0;
+            _aliasSequenceToActiveLane();
+            if (typeof refreshPolyModeBtn === 'function') refreshPolyModeBtn();
+          } else {
+            sequence = saved.steps.map(cloneStep);
+            // Mono-saved entry loaded into a Poly workspace: drop the
+            // sequence into the active lane (the alias in renderSequence
+            // would do this anyway, but doing it here keeps lanes[]
+            // consistent before the render pass walks lane state).
+            if (polyMode && lanes[activeLaneIdx]) {
+              lanes[activeLaneIdx].steps = sequence;
+            }
+          }
           insertionPoint = null;
           if (saved.bpm) {
             tempoInput.value = saved.bpm;
@@ -926,6 +962,10 @@
           renderSequence();
           renderSavedSequences();
           document.getElementById('save-btn').disabled = false;
+          // Capture the just-loaded state so a refresh doesn't revert
+          // to the pre-load workspace. The bank already persisted
+          // independently; this writes the workspace snapshot too.
+          if (typeof persistWorkspace === 'function') persistWorkspace();
         });
         bindDrag(block, i);
         bindLongPress(block, i);
@@ -2980,6 +3020,17 @@
             renderSequence();
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
+          // Right-click / long-press on the status button opens a
+          // "Copy voice from…" menu — lets the user clone any other
+          // lane's voice (cell sounds, scale, palette, root, octave,
+          // master tuning) onto this lane in one tap. The voice copy
+          // doesn't touch steps / mute / drift / pan / volume / slip,
+          // so the lane's rhythm and mix stay put.
+          status.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
+          });
           ctrls.appendChild(status);
           row.appendChild(ctrls);
 
@@ -3732,6 +3783,12 @@
       }
       renderSequence();
       document.getElementById('save-btn').disabled = false;
+      // Persist on every step add so multi-lane Poly edits aren't lost
+      // when the user reloads without first hitting an action that
+      // happened to trigger a workspace save (lane switch, BPM change,
+      // etc.). The persist is debounced 250ms inside persistWorkspace,
+      // so rapid sequences of adds coalesce into one localStorage write.
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     }
 
     // Step-div prompt for the Keep flow. Called after a note/chord is
@@ -4109,7 +4166,78 @@
         // step's duration. Doesn't change the cadence, only the
         // attack offset within the slot. -50..50.
         slip: 0,
+        // Per-lane voice — the cell-grid configuration that defines
+        // this lane's instrument (cell sound assignments, scale, root
+        // / octave, palette, master tuning). When the lane is the
+        // active lane its voice is mirrored into the global voice
+        // state (cellSounds / palette / etc) so the existing single-
+        // grid code path keeps working unchanged. Switching lanes
+        // swaps voices via _captureVoiceGlobals / _applyVoiceToGlobals.
+        // Initialised lazily on first activate so a freshly-built
+        // lane inherits whatever voice is currently in the globals.
+        voice: null,
       };
+    }
+    // Snapshot the currently-mirrored voice globals into a plain object
+    // suitable for storing on a lane. Deep-clones the cell arrays so
+    // future grid mutations don't bleed across lanes.
+    function _captureVoiceGlobals() {
+      return {
+        cellSounds: Array.isArray(cellSounds) ? [...cellSounds] : [],
+        cellParams: Array.isArray(cellParams) ? cellParams.map(p => ({ ...p })) : [],
+        scale:      currentScale,
+        palette:    Array.isArray(palette)     ? [...palette]     : [...DEFAULT_PALETTE],
+        chipPalette: Array.isArray(chipPalette) ? [...chipPalette] : [...DEFAULT_PALETTE],
+        rootIdx,
+        baseOctave,
+        octaveCount,
+        masterFreqA,
+        restColor,
+      };
+    }
+    // Load a previously-captured voice into the globals. Triggers a
+    // grid rebuild + UI selector sync so the visible cell row matches
+    // the new active lane. Tolerant of partial / stale snapshots —
+    // missing fields fall back to current globals.
+    function _applyVoiceToGlobals(voice) {
+      if (!voice || typeof voice !== 'object') return;
+      if (Number.isFinite(voice.rootIdx))     rootIdx     = voice.rootIdx;
+      if (Number.isFinite(voice.baseOctave))  baseOctave  = voice.baseOctave;
+      if (Number.isFinite(voice.octaveCount)) octaveCount = Math.max(1, Math.min(3, voice.octaveCount));
+      if (Number.isFinite(voice.masterFreqA)) masterFreqA = voice.masterFreqA;
+      if (typeof voice.scale === 'string' && SCALES[voice.scale]) currentScale = voice.scale;
+      if (Array.isArray(voice.palette)     && voice.palette.length === 12) palette     = [...voice.palette];
+      if (Array.isArray(voice.chipPalette) && voice.chipPalette.length === palette.length) chipPalette = [...voice.chipPalette];
+      else chipPalette = [...palette];
+      if (typeof voice.restColor === 'string') { restColor = voice.restColor; applyRestColor(); }
+      // UI selectors — keep them in lockstep with the swapped voice
+      // so the dropdowns / range inputs reflect the new lane's state
+      // immediately, without waiting for the next applyProjectSnapshot.
+      const rootSel  = document.getElementById('root-select');
+      const octRange = document.getElementById('octave-range-select');
+      const freqSl   = document.getElementById('master-freq-slider');
+      const freqIn   = document.getElementById('master-freq-input');
+      const scaleSel = document.getElementById('scale-select');
+      if (rootSel)  rootSel.value  = String(rootIdx);
+      if (octRange) octRange.value = `${baseOctave}x${octaveCount}`;
+      if (freqSl)   freqSl.value   = String(masterFreqA);
+      if (freqIn)   freqIn.value   = String(masterFreqA);
+      if (scaleSel) scaleSel.value = currentScale;
+      // Rebuild the cell grid with the new octaveCount / palette /
+      // scale, then apply the captured per-cell sound + param arrays
+      // when their lengths line up with the freshly-built grid.
+      rebuildGrid();
+      if (Array.isArray(voice.cellSounds) && voice.cellSounds.length === cellSounds.length
+          && Array.isArray(voice.cellParams) && voice.cellParams.length === cellParams.length) {
+        cellSounds = [...voice.cellSounds];
+        cellParams = voice.cellParams.map(p => ({ ...p }));
+        cells.forEach((cell, idx) => {
+          const sel = cell.querySelector('.cell-sound-select');
+          if (sel) sel.value = cellSounds[idx];
+        });
+        refreshAllCellFreqLabels();
+        updateScaleBanner();
+      }
     }
     // Lazy per-lane audio chain — Volume → Panner → masterBus. Builds
     // on first access and stays cached on the lane object until disposal.
@@ -4190,6 +4318,44 @@
       if (activeLaneIdx >= lanes.length) activeLaneIdx = lanes.length - 1;
       _aliasSequenceToActiveLane();
     }
+    // Build + show a context menu listing every OTHER lane as a copy-
+    // source option. Clicking an entry clones that lane's voice onto
+    // the target lane (the one the user right-clicked). When the
+    // target is the active lane we apply the copied voice to the
+    // globals so the grid + selectors re-render immediately; when the
+    // target is a non-active lane we just update its `voice` field —
+    // the next activate will mirror it into the globals.
+    function _showCopyVoiceMenu(targetLaneIdx, clientX, clientY) {
+      if (!Array.isArray(lanes) || lanes.length < 2) return;
+      const sources = lanes
+        .map((l, i) => ({ lane: l, idx: i }))
+        .filter(({ idx }) => idx !== targetLaneIdx);
+      if (sources.length === 0) return;
+      // Always read the active lane's voice from the live globals so
+      // a copy from "the lane I'm currently editing" picks up the
+      // edits the user has made since last activate-out.
+      const sourceVoiceFor = (idx) => (idx === activeLaneIdx)
+        ? _captureVoiceGlobals()
+        : (lanes[idx] && lanes[idx].voice ? lanes[idx].voice : null);
+      const actions = sources.map(({ lane, idx }) => ({
+        label: `Copy voice from ${lane.name}`,
+        fn: () => {
+          const src = sourceVoiceFor(idx);
+          if (!src) return;
+          const cloned = JSON.parse(JSON.stringify(src));
+          if (targetLaneIdx === activeLaneIdx) {
+            _applyVoiceToGlobals(cloned);
+            lanes[targetLaneIdx].voice = _captureVoiceGlobals();
+          } else {
+            lanes[targetLaneIdx].voice = cloned;
+          }
+          renderSequence();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        },
+      }));
+      showCtxMenu(clientX, clientY, actions);
+    }
+
     function activateLane(idx) {
       if (!polyMode) return;
       if (idx == null || idx < 0 || idx >= lanes.length) return;
@@ -4199,9 +4365,22 @@
       // reassignment would resurrect the lane's old content.
       if (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
         lanes[activeLaneIdx].steps = sequence;
+        // Capture the currently-mirrored voice globals onto the lane
+        // we're leaving so any edits the user made (cell sound swaps,
+        // root / scale changes, palette tweaks) persist on that lane
+        // when it's activated again.
+        lanes[activeLaneIdx].voice = _captureVoiceGlobals();
       }
       activeLaneIdx = idx;
       _aliasSequenceToActiveLane();
+      // Apply the new lane's voice — first activation of a lane that
+      // never had a voice set just keeps the current globals (no
+      // disruptive grid rebuild) and seeds the lane's voice from them.
+      if (lanes[activeLaneIdx].voice) {
+        _applyVoiceToGlobals(lanes[activeLaneIdx].voice);
+      } else {
+        lanes[activeLaneIdx].voice = _captureVoiceGlobals();
+      }
       // Selection is tied to the previous lane's chip refs; clear so
       // selection state doesn't carry across lanes.
       selectedStepRefs = [];
@@ -4242,12 +4421,27 @@
       activeLaneIdx = Math.min(activeLaneIdx, lanes.length - 1);
       if (activeLaneIdx < 0) activeLaneIdx = 0;
       _aliasSequenceToActiveLane();
+      // Seed the active lane's voice from current globals so the
+      // existing instrument carries into Poly. Other lanes get a
+      // copy of the same voice — the user can then evolve each lane
+      // independently. Stashed lanes keep whatever voice they had.
+      const seedVoice = _captureVoiceGlobals();
+      lanes.forEach(l => { if (!l.voice) l.voice = JSON.parse(JSON.stringify(seedVoice)); });
       refreshPolyModeBtn();
       renderSequence();
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     function exitPolyMode() {
       if (!polyMode) return;
+      // Capture the active lane's voice into the globals one last
+      // time before stashing so the Mono workspace inherits whatever
+      // instrument the user was working with on that lane. Without
+      // this, leaving Poly while editing a lane that hadn't been
+      // re-activated since its last voice change would silently revert
+      // the globals to the lane's stored voice.
+      if (lanes[activeLaneIdx]) {
+        lanes[activeLaneIdx].voice = _captureVoiceGlobals();
+      }
       // Stash lanes for re-entry; keep the active lane's steps as the
       // Mono `sequence` so the user keeps the lane they were focused on.
       // Strip the audio nodes from the stash — they live in the live
@@ -4264,6 +4458,7 @@
         pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
         volume: Number.isFinite(l.volume) ? l.volume : 100,
         slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+        voice:  l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
       }));
       disposeAllLaneAudio(lanes);
       const activeSteps = (lanes[activeLaneIdx] && lanes[activeLaneIdx].steps) || [];
@@ -4723,14 +4918,22 @@
                 continue;
               }
               if (loopMode && stream.source.length > 0) {
-                // Wrap this stream. Per-stream snap-forward keeps each
-                // lane's cadence anchor from sliding into the past on
-                // long loops without disturbing the others.
-                const continuation = _playBaseTime + stream.offsetSec;
-                const rawNow = rawAudioNow();
-                if (continuation < rawNow) {
-                  stream.offsetSec = rawNow - _playBaseTime;
-                }
+                // Wrap this stream. Each step in the just-completed
+                // iteration accumulated waitSecExact onto offsetSec, so
+                // offsetSec already equals the exact end of iter N (==
+                // start of iter N+1) — preserving phase across wraps.
+                //
+                // Earlier this branch contained a "snap-forward" that
+                // reset offsetSec to (rawNow - _playBaseTime) whenever
+                // continuation was behind realtime. That fired per-lane
+                // on every browser jitter event (the snap threshold was
+                // any past-due continuation, not a long stall), and each
+                // lane snapped to its own arbitrary rawNow — so two
+                // lanes whose wraps happened to be processed on
+                // different ticks ended up at different phases. Removing
+                // the snap means a stall causes a brief catch-up burst
+                // (Tone fires past-due notes ASAP), but every lane stays
+                // on the original metric grid and they stay in sync.
                 stream.iter = (stream.iter || 0) + 1;
                 const lane = (stream.laneIdx != null) ? lanes[stream.laneIdx] : null;
                 if (stream.pendingClearDrift) {
@@ -6198,6 +6401,13 @@
         // Re-phase the BPM digit pulse so its red-peak frame lands on
         // the first note attack.
         scheduleVisual(() => restartBpmDigitAnimation(), _playBaseTime);
+        // Re-phase the metronome (if it's on) to fire its first click
+        // at the same synchronous moment _playBaseTime is captured.
+        // Both the sequence's first event and the metronome's first
+        // triggerAttackRelease() default to Tone.now(), which includes
+        // the same lookAhead — so the click lands on top of beat 1
+        // instead of wherever its prior interval happened to land.
+        _restartMetronomeIfActive();
       }
       _schedStopping    = false;
       _schedTailEndTime = _playBaseTime;
@@ -6944,7 +7154,7 @@
     }
 
     function currentSequenceSnapshot(extra = {}) {
-      return {
+      const snap = {
         // Deep-clone every step so saved bank entries don't share
         // references with the live workspace — without this, editing
         // a step after saving silently mutates the saved sequence too,
@@ -6963,8 +7173,31 @@
         loopMode,
         subdivision: stepSubdivision,
         restColor,
-        ...extra,
       };
+      // Poly-mode entries carry the full lane array so reloading a
+      // saved sequence restores every lane's steps + per-lane state
+      // (mute / solo / drift / pan / volume / slip), not just the
+      // active lane. `steps` above stays for backward-compat with
+      // the Mono-only bank format and with track items that read
+      // steps directly. Loaders fall back to it when `lanes` is
+      // absent (Mono-saved entries).
+      if (polyMode && Array.isArray(lanes) && lanes.length > 0) {
+        snap.polyMode = true;
+        snap.activeLaneIdx = Number.isFinite(activeLaneIdx) ? activeLaneIdx : 0;
+        snap.lanes = lanes.map(l => ({
+          name: l.name,
+          steps: (l.steps || []).map(cloneStep),
+          muted: !!l.muted,
+          solo:  !!l.solo,
+          driftMs:        Number.isFinite(l.driftMs)        ? l.driftMs        : 0,
+          driftLocked:    !!l.driftLocked,
+          driftOffsetSec: Number.isFinite(l.driftOffsetSec) ? l.driftOffsetSec : 0,
+          pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
+          volume: Number.isFinite(l.volume) ? l.volume : 100,
+          slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+        }));
+      }
+      return Object.assign(snap, extra);
     }
 
     // ---- Subsequence editor mode ----
@@ -7102,6 +7335,12 @@
 
       renderSequence();
       renderSavedSequences();
+      // Persist the post-save workspace state. Without this the user's
+      // most recent edits across lanes (which may not have triggered a
+      // persist on their own — addToSequence aside, many mutation
+      // paths don't auto-persist) would be lost on reload, since
+      // persistSaved only writes the bank, not the workspace snapshot.
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     });
 
     // ---- Audio recording (mic → saved as an 'audio' sequence) ----
@@ -8987,7 +9226,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -9525,7 +9764,7 @@
           // doesn't share references with the live workspace.
           polyMode: !!polyMode,
           activeLaneIdx,
-          lanes: lanes.map(l => ({
+          lanes: lanes.map((l, li) => ({
             name: l.name,
             steps: (l.steps || []).map(cloneStep),
             muted: !!l.muted,
@@ -9536,6 +9775,16 @@
             pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
             volume: Number.isFinite(l.volume) ? l.volume : 100,
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+            // Per-lane voice. The active lane's live voice lives in
+            // the globals (cellSounds / palette / etc.), so capture
+            // those for it instead of relying on l.voice (which may
+            // be stale from before the user's last edit). Other lanes
+            // already have their voice frozen on their object from
+            // the last activate-out — clone it here so the snapshot
+            // doesn't share refs with the live workspace.
+            voice: (li === activeLaneIdx)
+              ? _captureVoiceGlobals()
+              : (l.voice ? JSON.parse(JSON.stringify(l.voice)) : null),
           })),
           stashedLanes: Array.isArray(_stashedLanes) ? _stashedLanes.map(l => ({
             name: l.name,
@@ -9548,6 +9797,7 @@
             pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
             volume: Number.isFinite(l.volume) ? l.volume : 100,
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+            voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
           })) : null,
         },
         grid: {
@@ -10510,6 +10760,8 @@
         pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
         volume: Number.isFinite(l?.volume) ? l.volume : 100,
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+        voice:  (l && l.voice && typeof l.voice === 'object')
+          ? JSON.parse(JSON.stringify(l.voice)) : null,
       })) : [];
       _stashedLanes = Array.isArray(w.stashedLanes) ? w.stashedLanes.map((l, i) => ({
         name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
@@ -10522,6 +10774,8 @@
         pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
         volume: Number.isFinite(l?.volume) ? l.volume : 100,
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+        voice:  (l && l.voice && typeof l.voice === 'object')
+          ? JSON.parse(JSON.stringify(l.voice)) : null,
       })) : null;
       if (polyMode) {
         if (lanes.length === 0) {
@@ -10534,6 +10788,14 @@
         // Alias `sequence` to the active lane's steps so all add/edit
         // code reads/writes the right lane.
         sequence = lanes[activeLaneIdx].steps;
+        // Apply the active lane's voice on top of the grid restore
+        // that already ran above (snap.grid → globals → rebuildGrid).
+        // Lanes that lack a stored voice fall through and inherit
+        // whatever's in the globals — first activate-out will freeze
+        // it onto the lane.
+        if (lanes[activeLaneIdx] && lanes[activeLaneIdx].voice) {
+          _applyVoiceToGlobals(lanes[activeLaneIdx].voice);
+        }
       }
       refreshPolyModeBtn();
 

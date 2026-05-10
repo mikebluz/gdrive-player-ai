@@ -8847,12 +8847,20 @@
           const i = track.timers.indexOf(t);
           if (i >= 0) track.timers.splice(i, 1);
         }
-        const nextStep = stepIdx + 1;
-        if (nextStep < flatSteps.length) {
-          _trackLaneTick(track, trackIdx, item, flatSteps, nextStep, onLaneEnd, laneState);
-        } else {
+        // Loop until the lane has covered laneState.targetSec — short
+        // lanes wrap to the start so they fill the same window the
+        // longest lane occupies, matching Bloops poly playback's
+        // independent-loops behavior. End of one pass through the
+        // step list (nextStep === flatSteps.length) loops back to 0
+        // when there's still target time left.
+        const reachedTarget = Number.isFinite(laneState.targetSec)
+          && laneState.offsetSec >= laneState.targetSec - 1e-6;
+        if (reachedTarget) {
           onLaneEnd();
+          return;
         }
+        const nextStep = (stepIdx + 1) % flatSteps.length;
+        _trackLaneTick(track, trackIdx, item, flatSteps, nextStep, onLaneEnd, laneState);
       }, delay);
       if (!Array.isArray(track.timers)) track.timers = [];
       track.timers.push(t);
@@ -8944,14 +8952,30 @@
       };
       // Every lane shares the same baseAudioTime + startWallMs so they
       // start in sync; each carries its own offsetSec accumulator so
-      // they advance independently after that.
+      // they advance independently after that. Compute the longest
+      // lane's natural one-pass duration — every lane loops up to
+      // that target so shorter lanes wrap and fill the item's window
+      // (matches Bloops poly playback / the offline-export logic).
       const baseAudioTime = (typeof Tone !== 'undefined' && typeof Tone.now === 'function')
         ? Tone.now() : 0;
       const startWallMs = performance.now();
+      const itemBpmL = item.bpm || 120;
+      const itemSubL = item.subdivision || 1;
+      const onePassSec = (flat) => {
+        let s = 0;
+        flat.forEach(step => {
+          const ss = (step.subdivision != null) ? step.subdivision : itemSubL;
+          const sm = Math.round(60000 / itemBpmL * ss);
+          s += (sm * (step.duration || 1)) / 1000;
+        });
+        return s;
+      };
+      const targetSec = Math.max(...laneStepLists.map(onePassSec));
       laneStepLists.forEach(flatSteps => {
         _trackLaneTick(track, trackIdx, item, flatSteps, 0, onLaneEnd, {
           baseAudioTime,
           startWallMs,
+          targetSec,
           offsetSec: 0,
         });
       });
@@ -9377,50 +9401,79 @@
             }
             const itemBpm = item.bpm || 120;
             const itemSub = item.subdivision || 1;
-            // Schedule one lane's flat-step list at `baseTime`, all
-            // routed through the offline trackBus. Returns the total
-            // seconds the lane consumed so the multi-lane case can
-            // pick the longest to advance `time`.
-            const scheduleLane = (steps, baseTime) => {
-              let t = baseTime;
+            // Total seconds for one pass through a lane's flat steps —
+            // used both by the loop bound and to pick the item's
+            // overall duration (longest lane). Pure math, no audio.
+            const laneOnePassSec = (steps) => {
+              let s = 0;
               flattenItemSteps(steps).forEach(step => {
                 const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
                 const stepMs = Math.round(60000 / itemBpm * stepSub);
-                const durMs  = stepMs * (step.duration || 1);
-                const durSec = durMs / 1000;
-                if (step.chord) {
-                  const size = step.chord.length;
-                  step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus));
-                } else if (step.freq !== null && step.freq !== undefined) {
-                  playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, trackBus);
-                }
-                t += durSec;
+                s += (stepMs * (step.duration || 1)) / 1000;
               });
+              return s;
+            };
+            // Schedule a lane's flat-step list, looping back to the
+            // start until cumulative time reaches `targetSec`. This
+            // matches Bloops poly playback where every lane loops
+            // independently — shorter lanes wrap to fill the same
+            // window the longest lane occupies. Without this, a 4-
+            // step lane finished 2 s in while an 8-step lane was
+            // still going, leaving the rest of the item silent on
+            // that lane.
+            const scheduleLane = (steps, baseTime, targetSec) => {
+              const flat = flattenItemSteps(steps);
+              if (flat.length === 0) return 0;
+              const onePass = laneOnePassSec(steps);
+              if (onePass <= 0) return 0;
+              const safeTarget = Math.max(targetSec, onePass);
+              let t = baseTime;
+              const endTime = baseTime + safeTarget;
+              // Hard cap at 1024 step fires to guard against pathological
+              // float math (e.g. onePass == 0 due to weird step data).
+              let safety = 0;
+              while (t < endTime && safety < 1024) {
+                for (let i = 0; i < flat.length; i++) {
+                  if (t >= endTime) break;
+                  if (++safety > 1024) break;
+                  const step = flat[i];
+                  const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
+                  const stepMs = Math.round(60000 / itemBpm * stepSub);
+                  const durMs  = stepMs * (step.duration || 1);
+                  const durSec = durMs / 1000;
+                  if (step.chord) {
+                    const size = step.chord.length;
+                    step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus));
+                  } else if (step.freq !== null && step.freq !== undefined) {
+                    playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, trackBus);
+                  }
+                  t += durSec;
+                }
+              }
               return t - baseTime;
             };
             // Multi-lane items: schedule every audible lane in parallel
             // starting at `time`, route them all through the same
-            // trackBus so they superimpose, then advance time by the
-            // longest lane (matches live playback's "wait for the last
-            // lane to finish before next item" rule).
+            // trackBus so they superimpose. The item's duration is
+            // the LONGEST lane's natural one-pass length; shorter
+            // lanes loop within that window so the item plays as a
+            // continuous bed instead of a sparse single-pass.
             if (Array.isArray(item.lanes) && item.lanes.length > 0) {
               const anySolo = item.lanes.some(l => l && l.solo);
               const playableLanes = item.lanes.filter(l => l
                 && Array.isArray(l.steps) && l.steps.length > 0
                 && (anySolo ? !!l.solo : !l.muted));
               if (playableLanes.length > 0) {
-                let longestSec = 0;
-                playableLanes.forEach(lane => {
-                  const laneSec = scheduleLane(lane.steps, time);
-                  if (laneSec > longestSec) longestSec = laneSec;
-                });
+                const longestSec = Math.max(...playableLanes.map(l => laneOnePassSec(l.steps)));
+                playableLanes.forEach(lane => scheduleLane(lane.steps, time, longestSec));
                 time += longestSec;
                 return;
               }
             }
             // Legacy single-stream item: no lanes array, fall back to
-            // item.steps the same way old exports did.
-            const used = scheduleLane(item.steps, time);
+            // a single pass through item.steps (one iteration, no
+            // looping) — matches the pre-multi-lane behavior.
+            const used = scheduleLane(item.steps, time, laneOnePassSec(item.steps));
             time += used;
           });
         });

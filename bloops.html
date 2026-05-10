@@ -4482,6 +4482,7 @@
         </div>
         <div class="pr-footer">
           <button class="pr-cancel">Cancel</button>
+          <button class="sm-wave" id="g-test">▶ Test</button>
           <button class="pr-apply">Apply</button>
         </div>
       `;
@@ -4490,17 +4491,75 @@
       const sizeS  = modal.querySelector('#g-size'),  sizeV  = modal.querySelector('#g-size-v');
       const ovS    = modal.querySelector('#g-ov'),    ovV    = modal.querySelector('#g-ov-v');
       const rateS  = modal.querySelector('#g-rate'),  rateV  = modal.querySelector('#g-rate-v');
+      const testBtn = modal.querySelector('#g-test');
+      // Test mode: snapshot the grid's current cellSounds + cellParams,
+      // then apply 'sample:grain' + the modal's current settings live.
+      // Adjusting any slider while test is on re-applies, so the user
+      // hears every tweak without re-clicking. Cancelling the modal or
+      // clicking Test again reverts to the snapshot. Apply commits the
+      // settings (no revert needed — they're already on the grid).
+      let testActive = false;
+      let previousSnap = null;
+      const captureSnap = () => ({
+        cellSounds: cellSounds.slice(),
+        cellParams: cellParams.map(p => ({ ...p })),
+      });
+      const refreshCellSelects = () => {
+        cells.forEach((cell, idx) => {
+          const sel = cell.querySelector('.cell-sound-select');
+          if (sel) sel.value = cellSounds[idx];
+        });
+        if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels();
+        if (typeof updateScaleBanner === 'function') updateScaleBanner();
+      };
+      const applyTestNow = () => {
+        cellParams.forEach((p, i) => {
+          p.type = 'sample:grain';
+          cellSounds[i] = 'sample:grain';
+          p.grainSize    = cur.grainSize;
+          p.grainOverlap = cur.grainOverlap;
+          p.grainRate    = cur.grainRate;
+        });
+        refreshCellSelects();
+      };
+      const revertTest = () => {
+        if (!previousSnap) return;
+        // Reassign the module-level arrays (let-bound) so playNote /
+        // startSustainedNote read the restored values.
+        cellSounds = previousSnap.cellSounds.slice();
+        cellParams = previousSnap.cellParams.map(p => ({ ...p }));
+        refreshCellSelects();
+        previousSnap = null;
+      };
+      const setTestActive = (active) => {
+        testActive = active;
+        testBtn.textContent = active ? '■ Stop' : '▶ Test';
+        testBtn.classList.toggle('active', active);
+      };
+      testBtn.addEventListener('click', () => {
+        if (testActive) {
+          revertTest();
+          setTestActive(false);
+        } else {
+          previousSnap = captureSnap();
+          applyTestNow();
+          setTestActive(true);
+        }
+      });
       sizeS.addEventListener('input', () => {
         cur.grainSize = parseFloat(sizeS.value) || 0.1;
         sizeV.textContent = cur.grainSize.toFixed(3) + ' s';
+        if (testActive) applyTestNow();
       });
       ovS.addEventListener('input', () => {
         cur.grainOverlap = parseFloat(ovS.value) || 0;
         ovV.textContent = cur.grainOverlap.toFixed(2);
+        if (testActive) applyTestNow();
       });
       rateS.addEventListener('input', () => {
         cur.grainRate = parseFloat(rateS.value) || 1;
         rateV.textContent = cur.grainRate.toFixed(2) + '×';
+        if (testActive) applyTestNow();
       });
       modal.querySelectorAll('[data-grain-preset]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -4509,6 +4568,7 @@
           cur.grainSize = p[0]; sizeS.value = String(p[0]); sizeV.textContent = p[0].toFixed(3) + ' s';
           cur.grainOverlap = p[1]; ovS.value = String(p[1]); ovV.textContent = p[1].toFixed(2);
           cur.grainRate = p[2]; rateS.value = String(p[2]); rateV.textContent = p[2].toFixed(2) + '×';
+          if (testActive) applyTestNow();
         });
       });
       // Record-input wiring. Captures mic audio via MediaRecorder,
@@ -4610,17 +4670,27 @@
         setSourceLabel('Default sample');
         resetBtn.disabled = true;
       });
-      const close = () => {
+      // Cancel / dismiss path: revert any test-mode changes so the
+      // grid lands on whatever it was before the modal opened.
+      const close = (opts) => {
+        const keepTest = !!(opts && opts.keepTest);
+        if (testActive && !keepTest) {
+          revertTest();
+          testActive = false;
+        }
         if (recState.recording) {
           try { recState.recorder?.stop(); } catch (e) {}
         }
         stopMicStream();
         try { overlay.remove(); } catch (e) {}
       };
-      modal.querySelector('.pr-cancel').addEventListener('click', close);
+      modal.querySelector('.pr-cancel').addEventListener('click', () => close());
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       modal.querySelector('.pr-apply').addEventListener('click', () => {
-        close();
+        // Apply commits — settings already match the grid if test was
+        // on; otherwise the picker's onApply callback will write them
+        // now. Pass keepTest so close() doesn't revert.
+        close({ keepTest: true });
         onApply({ ...cur });
       });
     }

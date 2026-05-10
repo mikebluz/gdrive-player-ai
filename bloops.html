@@ -4453,19 +4453,15 @@
         `<button type="button" class="sm-wave" data-grain-preset="${k}">${k}</button>`
       ).join('');
       const grainInfo0 = sampleSamplers.get('grain');
-      const isCustom = !!(grainInfo0 && grainInfo0.userRecorded);
-      const sourceLabel0 = isCustom
-        ? `Custom recording${Number.isFinite(grainInfo0.recordedDurSec) ? ` (${grainInfo0.recordedDurSec.toFixed(2)} s)` : ''}`
-        : 'Default sample';
       modal.innerHTML = `
         <div class="pr-title">Grain</div>
         <div class="pr-sub">Set grain window, overlap, and playback speed.</div>
         <div class="sm-waves" id="grain-presets">${presetButtons}</div>
         <div class="pr-param">
-          <div class="pr-row">Source <span class="pr-val" id="g-source">${sourceLabel0}</span></div>
-          <div class="grain-record-row" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+          <div class="pr-row">Source</div>
+          <select id="g-source-sel" style="width:100%;padding:6px;background:#0a0a14;color:#cbd5e0;border:1px solid #2d2d3f;border-radius:6px;font-family:'Segoe UI',sans-serif;font-size:0.85rem;"></select>
+          <div class="grain-record-row" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
             <button type="button" class="sm-wave" id="g-record">● Record</button>
-            <button type="button" class="sm-wave" id="g-reset" ${isCustom ? '' : 'disabled'}>Use default</button>
           </div>
         </div>
         <div class="pr-param">
@@ -4571,17 +4567,103 @@
           if (testActive) applyTestNow();
         });
       });
-      // Record-input wiring. Captures mic audio via MediaRecorder,
-      // decodes the blob into an AudioBuffer, wraps in
-      // Tone.ToneAudioBuffer, and replaces sampleSamplers.get('grain').buffer
-      // so subsequent grain voices read from the recorded sample.
-      // The original default URL stays in grainInfo.defaultUrl so
-      // "Use default" can rebuild a fresh buffer pointing at it.
+      // Source-selection wiring. The dropdown lists every available
+      // grain source: the default Salamander A4, every loaded
+      // sample-based instrument (and imported samples), the user's
+      // custom recording if they made one, and an "Import…" entry
+      // that triggers the file picker. Picking any option swaps
+      // grainInfo.buffer so subsequent voices play from the new
+      // sample. Test-mode listens to grainInfo.buffer so live
+      // preview retunes immediately.
       const recordBtn = modal.querySelector('#g-record');
-      const resetBtn  = modal.querySelector('#g-reset');
-      const sourceEl  = modal.querySelector('#g-source');
+      const sourceSel = modal.querySelector('#g-source-sel');
+      const DEFAULT_GRAIN_URL = 'https://tonejs.github.io/audio/salamander/A4.mp3';
+      // Stash the user's recorded buffer separately so picking other
+      // sources doesn't lose it; it's restored when the user picks
+      // "Custom recording" from the dropdown.
+      let recordedBuffer = (grainInfo0 && grainInfo0.userRecorded) ? grainInfo0.buffer : null;
+      let recordedDur    = (grainInfo0 && grainInfo0.recordedDurSec) || 0;
+      const populateSourceSelect = (selectedValue) => {
+        sourceSel.innerHTML = '';
+        const opts = [];
+        opts.push({ value: '__default', label: 'Default (Piano A4)' });
+        // Loaded sample-based instruments (each has a urls map). Skip
+        // grain itself to avoid recursion. Drum kits get a "(kit)"
+        // hint since playing them granularly chops the kit's mapped
+        // hits into texture.
+        sampleSamplers.forEach((info, id) => {
+          if (id === 'grain' || !info.urls) return;
+          const lbl = info.name + (info.drumKit ? ' (kit)' : info.imported ? ' (imported)' : '');
+          opts.push({ value: id, label: lbl });
+        });
+        if (recordedBuffer) {
+          opts.push({ value: '__recorded', label: `Custom recording (${recordedDur.toFixed(2)} s)` });
+        }
+        opts.push({ value: '__import', label: '— Import a file… —' });
+        opts.forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = o.value;
+          opt.textContent = o.label;
+          sourceSel.appendChild(opt);
+        });
+        if (selectedValue) sourceSel.value = selectedValue;
+      };
+      const swapGrainBuffer = (urlOrBuffer) => {
+        const grainInfo = sampleSamplers.get('grain');
+        if (!grainInfo) return;
+        try { grainInfo.buffer?.dispose?.(); } catch (e) {}
+        if (urlOrBuffer instanceof Tone.ToneAudioBuffer) {
+          grainInfo.buffer = urlOrBuffer;
+        } else if (typeof urlOrBuffer === 'string') {
+          grainInfo.buffer = new Tone.ToneAudioBuffer(urlOrBuffer);
+        }
+        // If test mode is on, re-apply settings now so the new buffer
+        // gets reflected on cellParams (which playNote re-reads on
+        // every voice fire — no per-cell change needed, but force a
+        // refresh anyway for any UI bits that key off cellParams).
+        if (testActive) applyTestNow();
+      };
+      const onSourceChange = () => {
+        const v = sourceSel.value;
+        if (v === '__default') {
+          swapGrainBuffer(DEFAULT_GRAIN_URL);
+        } else if (v === '__recorded') {
+          if (recordedBuffer) {
+            // Reuse the stashed recorded buffer rather than disposing.
+            const grainInfo = sampleSamplers.get('grain');
+            if (grainInfo) grainInfo.buffer = recordedBuffer;
+            if (testActive) applyTestNow();
+          }
+        } else if (v === '__import') {
+          if (typeof triggerImportSample !== 'function') return;
+          triggerImportSample((id, name) => {
+            // The new sample is now in sampleSamplers — repopulate
+            // the dropdown so it shows up, and select it as the
+            // active grain source.
+            populateSourceSelect(id);
+            onSourceChange();
+          });
+        } else {
+          // sample-instrument id — load its first URL. Drum kits and
+          // multi-note samplers have many entries; pick the first
+          // for a representative buffer.
+          const info = sampleSamplers.get(v);
+          if (info && info.urls) {
+            const noteKey = Object.keys(info.urls)[0];
+            const file = info.urls[noteKey];
+            const url = (info.baseUrl || '') + file;
+            swapGrainBuffer(url);
+          }
+        }
+      };
+      // Resolve the initial dropdown selection from the existing
+      // grainInfo.buffer state so reopening the modal lands on the
+      // right entry.
+      let initialSel = '__default';
+      if (recordedBuffer) initialSel = '__recorded';
+      populateSourceSelect(initialSel);
+      sourceSel.addEventListener('change', onSourceChange);
       let recState = { recording: false, recorder: null, stream: null, chunks: [] };
-      const setSourceLabel = (text) => { sourceEl.textContent = text; };
       const setRecordBtn = (text, active) => {
         recordBtn.textContent = text;
         recordBtn.classList.toggle('active', !!active);
@@ -4619,31 +4701,26 @@
           recState.recording = false;
           setRecordBtn('● Record', false);
           stopMicStream();
-          if (recState.chunks.length === 0) {
-            setSourceLabel('No audio captured');
-            return;
-          }
-          setSourceLabel('Decoding…');
+          if (recState.chunks.length === 0) return;
           try {
             const blob = new Blob(recState.chunks, { type: recorder.mimeType || 'audio/webm' });
             const arrayBuffer = await blob.arrayBuffer();
             const audioCtx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : new AudioContext();
             const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+            // Stash as the new recorded buffer; dropdown picks it up
+            // on next populate. Don't dispose the previous recorded
+            // buffer yet — the swap below will if it's still active.
+            recordedBuffer = new Tone.ToneAudioBuffer(decoded);
+            recordedDur    = decoded.duration;
             const grainInfo = sampleSamplers.get('grain');
             if (grainInfo) {
-              // Wrap the decoded AudioBuffer in a Tone.ToneAudioBuffer
-              // — Tone.GrainPlayer's `url` option accepts a buffer
-              // instance directly.
-              try { grainInfo.buffer.dispose?.(); } catch (e) {}
-              grainInfo.buffer = new Tone.ToneAudioBuffer(decoded);
               grainInfo.userRecorded = true;
               grainInfo.recordedDurSec = decoded.duration;
             }
-            setSourceLabel(`Custom recording (${decoded.duration.toFixed(2)} s)`);
-            resetBtn.disabled = false;
+            populateSourceSelect('__recorded');
+            onSourceChange();
           } catch (e) {
             console.warn('Grain recording decode failed', e);
-            setSourceLabel('Decode failed');
           }
         };
         try {
@@ -4656,20 +4733,8 @@
           alert('Recorder start failed: ' + (e.message || e));
         }
       });
-      resetBtn.addEventListener('click', () => {
-        if (recState.recording) {
-          try { recState.recorder?.stop(); } catch (e) {}
-        }
-        const grainInfo = sampleSamplers.get('grain');
-        if (grainInfo) {
-          try { grainInfo.buffer?.dispose?.(); } catch (e) {}
-          grainInfo.buffer = new Tone.ToneAudioBuffer('https://tonejs.github.io/audio/salamander/A4.mp3');
-          grainInfo.userRecorded = false;
-          grainInfo.recordedDurSec = null;
-        }
-        setSourceLabel('Default sample');
-        resetBtn.disabled = true;
-      });
+      // (Reset is folded into the dropdown — the "Default (Piano A4)"
+      // option does the same thing the old Reset button did.)
       // Cancel / dismiss path: revert any test-mode changes so the
       // grid lands on whatever it was before the modal opened.
       const close = (opts) => {

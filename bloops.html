@@ -8323,24 +8323,68 @@
       if (!track._bus) {
         const eq  = track.eq || { low: 0, mid: 0, high: 0 };
         const pan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
-        // Chain order: EQ → [Mono] → Panner → master. The Mono node sums L+R
-        // before the panner so the source's stereo image collapses, then the
-        // panner places the mono'd signal in the field. Going Panner → Mono
-        // would clobber hard pans (one channel would be silent before the
-        // sum). Skip Mono entirely on stereo tracks to avoid an idle pass.
+        const eqIsFlat = !(eq.low || 0) && !(eq.mid || 0) && !(eq.high || 0);
+        // Chain order: [EQ →] [Mono →] Panner → master. Tone.EQ3 splits the
+        // signal into three frequency bands and sums them — at flat 0/0/0
+        // the reconstruction has small crossover dips, audibly quieter
+        // than the lane bus's transparent Volume node used in Bloops
+        // playback. Skip the EQ3 when the user hasn't set any EQ;
+        // setTrackEq below routes through it directly via track._bus
+        // either way so the on-demand path still works after dialing
+        // in a band. The Mono node optionally sums L+R before the
+        // panner; skip it entirely on stereo tracks.
         track._panner = new Tone.Panner(pan).connect(masterBus);
         if (track.stereo === false) {
           track._mono = new Tone.Mono().connect(track._panner);
         } else {
           track._mono = null;
         }
+        if (eqIsFlat) {
+          // Plain unity Gain — same node type that lane buses use as
+          // their entry point. Transparent at default settings.
+          track._bus = new Tone.Gain(1).connect(track._mono || track._panner);
+          track._busIsEq = false;
+        } else {
+          track._bus = new Tone.EQ3({
+            low:  eq.low  || 0,
+            mid:  eq.mid  || 0,
+            high: eq.high || 0,
+          }).connect(track._mono || track._panner);
+          track._busIsEq = true;
+        }
+      }
+      return track._bus;
+    }
+    // Swap a track's bus node between Gain (flat) and EQ3 (any band
+    // non-zero). Called after a Mix dialog edit so we only carry the
+    // EQ3 cost when the user actually wants tone shaping. Existing
+    // panner stays put; we only swap the entry-point bus node and
+    // dispose any per-track samplers that pointed at the old bus.
+    function _retuneTrackBus(trackIdx) {
+      const track = tracks[trackIdx];
+      if (!track || !track._bus) return;
+      const eq  = track.eq || { low: 0, mid: 0, high: 0 };
+      const eqIsFlat = !(eq.low || 0) && !(eq.mid || 0) && !(eq.high || 0);
+      if (track._busIsEq === !eqIsFlat) return; // already the right kind
+      const downstream = track._mono || track._panner;
+      try { track._bus.dispose(); } catch (e) {}
+      if (eqIsFlat) {
+        track._bus = new Tone.Gain(1).connect(downstream);
+        track._busIsEq = false;
+      } else {
         track._bus = new Tone.EQ3({
           low:  eq.low  || 0,
           mid:  eq.mid  || 0,
           high: eq.high || 0,
-        }).connect(track._mono || track._panner);
+        }).connect(downstream);
+        track._busIsEq = true;
       }
-      return track._bus;
+      // Per-track samplers were connected to the disposed bus node —
+      // rebuild on next playNote call by clearing the cache.
+      if (track._samplers) {
+        track._samplers.forEach(s => { try { s.dispose(); } catch (e) {} });
+        track._samplers = null;
+      }
     }
     function isTrackMixActive(track) {
       if (!track) return false;
@@ -8362,12 +8406,20 @@
         mid:  Number.isFinite(eq.mid)  ? eq.mid  : 0,
         high: Number.isFinite(eq.high) ? eq.high : 0,
       };
+      // Lazily build the bus first; then upgrade Gain → EQ3 (or
+      // downgrade EQ3 → Gain) if the user dialed the EQ in or
+      // zeroed it back out. Live-update the EQ band gains only when
+      // the bus is the EQ3 variant (the flat Gain has no .low/.mid/.high).
+      getTrackBus(trackIdx);
+      _retuneTrackBus(trackIdx);
       const bus = getTrackBus(trackIdx);
-      try {
-        bus.low.value  = track.eq.low;
-        bus.mid.value  = track.eq.mid;
-        bus.high.value = track.eq.high;
-      } catch (e) {}
+      if (track._busIsEq) {
+        try {
+          bus.low.value  = track.eq.low;
+          bus.mid.value  = track.eq.mid;
+          bus.high.value = track.eq.high;
+        } catch (e) {}
+      }
       persistTracks();
       refreshTrackMixButton(trackIdx);
     }

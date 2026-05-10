@@ -2627,15 +2627,35 @@
           // value so a rate of exactly 0 doesn't lock the buffer.
           const rawRate = Number.isFinite(params.grainRate) ? params.grainRate : 1;
           const playbackRate = (Math.abs(rawRate) < 0.05) ? 0.05 * Math.sign(rawRate || 1) : rawRate;
-          const player = new Tone.GrainPlayer({
-            url: grainInfo.buffer,
+          // Tone v14's GrainPlayer constructor wants the buffer as a
+          // raw AudioBuffer or string URL — passing a wrapping
+          // Tone.ToneAudioBuffer to `url` was producing silent voices.
+          // Resolve to the underlying AudioBuffer when we have one
+          // loaded; fall back to the source URL string so GrainPlayer
+          // can do its own fetch (browser-cached after first time).
+          const rawBuffer = (grainInfo.buffer && typeof grainInfo.buffer.get === 'function')
+            ? grainInfo.buffer.get() : null;
+          const playerOpts = {
             grainSize: (params.grainSize != null) ? params.grainSize : 0.1,
             overlap:   (params.grainOverlap != null) ? params.grainOverlap : 0.05,
             playbackRate,
             detune: cents,
             loop: true,
             volume: Tone.gainToDb(Math.max(0.001, velocity)),
-          }).connect(finalDest);
+          };
+          if (rawBuffer) {
+            playerOpts.url = rawBuffer;
+          } else {
+            playerOpts.url = 'https://tonejs.github.io/audio/salamander/A4.mp3';
+          }
+          const player = new Tone.GrainPlayer(playerOpts).connect(finalDest);
+          try {
+            console.log('[grain] fire freq=', freq,
+              'cents=', cents.toFixed(1),
+              'rate=', playbackRate,
+              'rawBuffer=', !!rawBuffer,
+              'bufferDur=', grainInfo.buffer?.duration);
+          } catch (e) {}
           const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime))
             ? startTime : Tone.now();
           const dur = Math.max(0.05, targetDur);
@@ -2645,13 +2665,19 @@
           // the buffer wraps within itself, matching the "sustained
           // grain texture" expectation.
           const fire = () => {
-            try { player.start(triggerAt, 0, dur); } catch (e) {}
+            try { player.start(triggerAt, 0, dur); }
+            catch (e) { console.warn('[grain] start failed', e); }
           };
+          // Use the player's own loaded state; Tone.GrainPlayer
+          // exposes `.loaded` once its internal buffer is ready.
           if (player.loaded) fire();
-          else if (typeof grainInfo.buffer.loaded?.then === 'function') {
-            grainInfo.buffer.loaded.then(fire, () => {});
+          else if (typeof grainInfo.buffer?.loaded?.then === 'function') {
+            grainInfo.buffer.loaded.then(fire, (e) => console.warn('[grain] buffer load err', e));
           } else {
-            fire();
+            // No clean readiness signal — schedule a slight delay so
+            // the GrainPlayer has a tick to wire up its internal
+            // source-from-URL.
+            setTimeout(fire, 50);
           }
           // Lifecycle — same offline-skip / live-dispose pattern as
           // every other voice. Voice gets parked in the offline ref

@@ -8157,7 +8157,24 @@
         snapshot.durationSec = saved.durationSec || 0;
         snapshot.steps = [];
       } else {
+        // Steps stay for backward compat — older render / duration
+        // helpers read item.steps. For multi-lane saves we ALSO carry
+        // lanes so playTrackItem can fan out one timer per lane and
+        // play them simultaneously into the track bus, instead of
+        // collapsing the whole sequence onto the single active-lane
+        // step list.
         snapshot.steps = (saved.steps || []).map(cloneStep);
+        if (Array.isArray(saved.lanes) && saved.lanes.length > 0) {
+          snapshot.lanes = saved.lanes.map(l => ({
+            name: l.name,
+            steps: Array.isArray(l.steps) ? l.steps.map(cloneStep) : [],
+            muted: !!l.muted,
+            solo:  !!l.solo,
+            pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
+            volume: Number.isFinite(l.volume) ? l.volume : 100,
+            slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+          }));
+        }
       }
       tracks[trackIdx].items.push(snapshot);
       persistTracks();
@@ -8254,6 +8271,14 @@
       if (!track) return;
       if (track.timer) clearTimeout(track.timer);
       track.timer = null;
+      // Multi-lane track items run one setTimeout chain per lane, all
+      // tracked in track.timers. Cancel every one so a stop mid-item
+      // doesn't leave orphan voices firing in the background.
+      if (Array.isArray(track.timers)) {
+        track.timers.forEach(t => { try { clearTimeout(t); } catch (e) {} });
+      }
+      track.timers = null;
+      track._lanesRemaining = 0;
       track.playing = false;
       track.currentItemIdx = null;
       renderTracks();
@@ -8658,12 +8683,45 @@
       }
     }
 
-    function playTrackItem(trackIdx, itemIdx, stepIdx) {
+    // Plays one step from a lane's flat-step array, schedules the
+    // next step via setTimeout, and calls onLaneEnd when the lane runs
+    // out. Used by playTrackItem's multi-lane fan-out so every lane
+    // advances independently while sharing the track's bus.
+    function _trackLaneTick(track, trackIdx, item, flatSteps, stepIdx, onLaneEnd) {
+      if (!track || !track.playing) return;
+      const step = flatSteps[stepIdx];
+      const stepSub = (step.subdivision != null) ? step.subdivision : (item.subdivision || 1);
+      const stepMs = Math.round(60000 / (item.bpm || 120) * stepSub);
+      const waitMs = stepMs * (step.duration || 1);
+      const trackBus = getTrackBus(trackIdx);
+      if (step.chord) {
+        const size = step.chord.length;
+        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, undefined, trackBus, trackIdx));
+      } else if (step.freq !== null && step.freq !== undefined) {
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, undefined, trackBus, trackIdx);
+      }
+      const t = setTimeout(() => {
+        if (Array.isArray(track.timers)) {
+          const i = track.timers.indexOf(t);
+          if (i >= 0) track.timers.splice(i, 1);
+        }
+        const nextStep = stepIdx + 1;
+        if (nextStep < flatSteps.length) {
+          _trackLaneTick(track, trackIdx, item, flatSteps, nextStep, onLaneEnd);
+        } else {
+          onLaneEnd();
+        }
+      }, waitMs);
+      if (!Array.isArray(track.timers)) track.timers = [];
+      track.timers.push(t);
+    }
+
+    function playTrackItem(trackIdx, itemIdx) {
       const track = tracks[trackIdx];
       if (!track || !track.playing) return;
       if (itemIdx >= track.items.length) {
         if (track.loopMode && track.items.length > 0) {
-          playTrackItem(trackIdx, 0, 0);
+          playTrackItem(trackIdx, 0);
         } else {
           stopTrack(trackIdx, true);
         }
@@ -8678,40 +8736,45 @@
         playSilentItem(trackIdx, itemIdx, item);
         return;
       }
-      if (!item || !item.steps || item.steps.length === 0) {
-        playTrackItem(trackIdx, itemIdx + 1, 0);
+      // Resolve which step lists make up this item. Multi-lane saves
+      // include `item.lanes` (one per Bloops lane); honor mute/solo
+      // exactly the same way Bloops playback does so the track plays
+      // every audible lane simultaneously. Legacy single-stream items
+      // fall through to wrapping `item.steps` as a single lane.
+      let laneStepLists;
+      if (Array.isArray(item.lanes) && item.lanes.length > 0) {
+        const anySolo = item.lanes.some(l => l && l.solo);
+        laneStepLists = item.lanes
+          .filter(l => l && Array.isArray(l.steps) && l.steps.length > 0
+            && (anySolo ? !!l.solo : !l.muted))
+          .map(l => flattenItemSteps(l.steps))
+          .filter(arr => arr.length > 0);
+      } else if (item && Array.isArray(item.steps) && item.steps.length > 0) {
+        const flat = flattenItemSteps(item.steps);
+        laneStepLists = flat.length > 0 ? [flat] : [];
+      } else {
+        laneStepLists = [];
+      }
+      if (laneStepLists.length === 0) {
+        playTrackItem(trackIdx, itemIdx + 1);
         return;
       }
-      const flatSteps = flattenItemSteps(item.steps);
-      if (flatSteps.length === 0) {
-        playTrackItem(trackIdx, itemIdx + 1, 0);
-        return;
-      }
-      const step = flatSteps[stepIdx];
-      const stepSub = (step.subdivision != null) ? step.subdivision : (item.subdivision || 1);
-      const stepMs = Math.round(60000 / (item.bpm || 120) * stepSub);
-      const waitMs = stepMs * (step.duration || 1);
-
-      // Audio first, before any DOM work — at the loop wrap especially we
-      // want the next note to fire the moment its turn arrives, not after
-      // the tracks pane redraws.
-      const trackBus = getTrackBus(trackIdx);
-      if (step.chord) {
-        const size = step.chord.length;
-        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, undefined, trackBus, trackIdx));
-      } else if (step.freq !== null && step.freq !== undefined) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, undefined, trackBus, trackIdx);
-      }
-
-      track.timer = setTimeout(() => {
-        const nextStep = stepIdx + 1;
-        if (nextStep < flatSteps.length) {
-          playTrackItem(trackIdx, itemIdx, nextStep);
-        } else {
-          playTrackItem(trackIdx, itemIdx + 1, 0);
+      // One setTimeout chain per lane; advance to the next item only
+      // after every chain has finished (the LONGEST lane drives the
+      // item's effective duration). _trackLaneTick pushes its timers
+      // onto track.timers so stopTrack can cancel them all in one go.
+      track.timers = [];
+      track._lanesRemaining = laneStepLists.length;
+      const onLaneEnd = () => {
+        if (!track.playing) return;
+        track._lanesRemaining = Math.max(0, (track._lanesRemaining || 0) - 1);
+        if (track._lanesRemaining === 0) {
+          playTrackItem(trackIdx, itemIdx + 1);
         }
-      }, waitMs);
-
+      };
+      laneStepLists.forEach(flatSteps => {
+        _trackLaneTick(track, trackIdx, item, flatSteps, 0, onLaneEnd);
+      });
       if (track.currentItemIdx !== itemIdx) {
         track.currentItemIdx = itemIdx;
         setActiveTrackItem(trackIdx, itemIdx);

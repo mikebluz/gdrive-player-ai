@@ -1435,7 +1435,7 @@
       return Math.round(60000 / (parseInt(tempoInput.value) || 120) * stepSubdivision);
     }
 
-    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
+    const SOUNDS = ['sine','square','triangle','sawtooth','pulse','fat','wavetable','fm','am','mono','duo','bass','pad','xylo','bell','pluck','kick','metal','noise:white','noise:pink','noise:brown'];
 
     // ---- Tone.js v14 URL double-encode patch ----------------------------
     // ToneAudioBuffer.load() does
@@ -2897,12 +2897,25 @@
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
         }).connect(chainHead);
       } else {
-        // Sustainable waves: sine / square / triangle / sawtooth / pulse / fat
-        const oscOpts = type === 'fat'
-          ? { type: 'fatsawtooth', count: 3, spread: 30 }
-          : type === 'pulse'
-            ? { type: 'pulse', width: 0.4 }
-            : { type };
+        // Sustainable waves: sine / square / triangle / sawtooth /
+        // pulse / fat / wavetable. Wavetable is a custom-partials
+        // OmniOscillator — the default partials produce a warm
+        // organ-like timbre (odd harmonics with quick decay). When
+        // params include a `partials` array we honor that instead so
+        // the eventual sound editor can edit the wavetable shape.
+        let oscOpts;
+        if (type === 'fat') {
+          oscOpts = { type: 'fatsawtooth', count: 3, spread: 30 };
+        } else if (type === 'pulse') {
+          oscOpts = { type: 'pulse', width: 0.4 };
+        } else if (type === 'wavetable') {
+          const partials = (Array.isArray(params.partials) && params.partials.length > 0)
+            ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+            : [1, 0.5, 0.25, 0.15, 0.08, 0.04, 0.02, 0.01];
+          oscOpts = { type: 'custom', partials };
+        } else {
+          oscOpts = { type };
+        }
         synth = new Tone.Synth({
           oscillator: oscOpts,
           envelope: env,
@@ -14786,7 +14799,7 @@
       samples: 'Samples',
       other:   'Other',
     };
-    const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'fm', 'am', 'mono', 'duo', 'bass', 'pad', 'xylo']);
+    const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'wavetable', 'fm', 'am', 'mono', 'duo', 'bass', 'pad', 'xylo']);
     const _SAMPLE_KEYS_IDS    = new Set(['piano', 'organ', 'rhodes', 'epiano2', 'harpsichord', 'clavinet']);
     const _SAMPLE_MALLETS_IDS = new Set(['celesta', 'vibraphone', 'marimba']);
     const _SAMPLE_STRINGS_IDS = new Set(['guitar', 'violin', 'cello', 'eguitar']);

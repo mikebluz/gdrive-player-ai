@@ -9296,7 +9296,7 @@
       // what's heard live. Without this, Tone.Offline can fall back to a
       // different rate than the live context.
       const sampleRate = (Tone.getContext && Tone.getContext().sampleRate) || 44100;
-      return await Tone.Offline(async () => {
+      const offlineBuffer = await Tone.Offline(async () => {
         const limiter = new Tone.Limiter(-1).toDestination();
         // Mirror the live global FX chain so the exported WAV matches what
         // the user hears in the browser.
@@ -9442,6 +9442,35 @@
           _offlineSamplerOverride = null;
         }
       }, totalSec, 2, sampleRate);
+      // Peak-check the rendered buffer so we can tell whether the
+      // offline render produced audio. Logs a max-amplitude reading
+      // and the first / last frames where audio is non-zero.
+      try {
+        const raw = (offlineBuffer && offlineBuffer.get) ? offlineBuffer.get() : offlineBuffer;
+        const ch0 = raw && raw.getChannelData ? raw.getChannelData(0) : null;
+        if (ch0 && ch0.length) {
+          let peak = 0, firstNonZero = -1, lastNonZero = -1;
+          for (let i = 0; i < ch0.length; i++) {
+            const v = Math.abs(ch0[i]);
+            if (v > peak) peak = v;
+            if (v > 0.001) {
+              if (firstNonZero < 0) firstNonZero = i;
+              lastNonZero = i;
+            }
+          }
+          const sr = raw.sampleRate || sampleRate;
+          console.log('[export] buffer length=', ch0.length,
+            'duration=', (ch0.length / sr).toFixed(3), 's',
+            'peak=', peak.toFixed(4),
+            'first audio at', firstNonZero >= 0 ? (firstNonZero / sr).toFixed(3) + 's' : 'NEVER',
+            'last audio at',  lastNonZero  >= 0 ? (lastNonZero  / sr).toFixed(3) + 's' : 'NEVER');
+        } else {
+          console.warn('[export] could not inspect buffer channel 0');
+        }
+      } catch (e) {
+        console.warn('[export] peak-check failed', e);
+      }
+      return offlineBuffer;
     }
 
     // Google Drive auth + upload (lazy-loads gapi/GIS via <script> on demand)

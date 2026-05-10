@@ -951,6 +951,23 @@
             palette = [...saved.palette];
             chipPalette = [...palette];
           }
+          // Grid layout — bank entries saved before this field land
+          // here as undefined; fall back to the sensible defaults
+          // instead of clamping a multi-lane sequence into 1 row.
+          // For multi-lane saves we additionally snap rows to at
+          // least the lane count so every lane is visible.
+          if (Number.isFinite(saved.gridColumns)) {
+            gridColumns = Math.max(1, Math.min(8, saved.gridColumns | 0));
+          }
+          if (Number.isFinite(saved.gridRows)) {
+            gridRows = Math.max(1, Math.min(8, saved.gridRows | 0));
+          } else if (Array.isArray(saved.lanes) && saved.lanes.length > 1) {
+            gridRows = Math.max(gridRows, Math.min(8, saved.lanes.length));
+          }
+          const colsEl = document.getElementById('grid-cols-input');
+          if (colsEl) colsEl.value = String(gridColumns);
+          const rowsEl = document.getElementById('grid-rows-input');
+          if (rowsEl) rowsEl.value = String(gridRows);
 
           const rootSel   = document.getElementById('root-select');
           const octRange  = document.getElementById('octave-range-select');
@@ -7300,6 +7317,13 @@
         loopMode,
         subdivision: stepSubdivision,
         restColor,
+        // Grid layout — rows drive the lane count when this entry is
+        // loaded back into a poly workspace. Saving them means a
+        // multi-lane bank entry restores with its lanes intact (not
+        // collapsed to gridRows=1). Default cols=8 so a Mono-saved
+        // entry still loads cleanly.
+        gridColumns: Math.max(1, Math.min(8, gridColumns | 0) || 8),
+        gridRows:    Math.max(1, Math.min(8, gridRows    | 0) || 1),
       };
       // Poly-mode entries carry the full lane array so reloading a
       // saved sequence restores every lane's steps + per-lane state

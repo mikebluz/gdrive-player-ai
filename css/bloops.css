@@ -1641,14 +1641,11 @@
       scrollbar-width: thin;
       scrollbar-color: #2d2d3f #0a0a14;
     }
-    /* Collapsed lane: trim back to a single visible chip row, with
-       horizontal scroll for overflow. The collapse-toggle button on
-       the lane-controls strip drives this. */
+    /* Collapsed lane: hide the chip strip entirely so just the lane
+       controls (status pill + collapse + grid toggles) remain visible.
+       Driven by the collapse button on lane-controls. */
     .lane-row.collapsed .lane-chips {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      overflow-y: hidden;
-      max-height: 44px;
+      display: none;
     }
     .lane-chips::-webkit-scrollbar { height: 4px; }
     .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }

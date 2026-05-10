@@ -1759,6 +1759,14 @@
     // takes precedence over the live sampleSamplers map. When null, normal
     // live playback resolves through the registered live samplers.
     let _offlineSamplerOverride = null;
+    // Strong references to synth wrappers created during an offline
+    // export render. Without these the wrappers fall out of scope
+    // immediately after playNote returns; Tone.js' audio nodes
+    // appear to lose their scheduled events when the wrapper is
+    // GC'd mid-render, manifesting as a silent WAV. Filled by playNote
+    // when _offlineSamplerOverride is set; cleared in the export's
+    // finally block alongside _offlineSamplerOverride.
+    let _offlineVoiceRefs = null;
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;
       const id = type.slice(7);
@@ -2739,8 +2747,15 @@
         // step — the resulting voice pile-up showed up as glitchy /
         // distorted audio after a few seconds of playback.
         // Skip the dispose / register dance during offline export
-        // (same reasoning as the main synth path below).
-        if (_offlineSamplerOverride) return;
+        // (same reasoning as the main synth path below). Park a
+        // strong ref so the wrapper survives until the render ends.
+        if (_offlineSamplerOverride) {
+          if (Array.isArray(_offlineVoiceRefs)) {
+            _offlineVoiceRefs.push(synth);
+            effectNodes.forEach(n => _offlineVoiceRefs.push(n));
+          }
+          return;
+        }
         const pluckLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
@@ -2762,7 +2777,13 @@
           envelope: env,
         }).connect(chainHead);
         try { ns.triggerAttackRelease(preReleaseDur, startTime, velocity); } catch (e) {}
-        if (_offlineSamplerOverride) return;
+        if (_offlineSamplerOverride) {
+          if (Array.isArray(_offlineVoiceRefs)) {
+            _offlineVoiceRefs.push(ns);
+            effectNodes.forEach(n => _offlineVoiceRefs.push(n));
+          }
+          return;
+        }
         const noiseLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
@@ -2907,7 +2928,20 @@
       // mid-render and call safeDisposeSynth, which ramps volume to
       // -80 dB starting at offline-current-time and silences voices
       // that haven't played yet.
-      if (_offlineSamplerOverride) return;
+      //
+      // Park a strong ref to the synth (and any per-note FX nodes)
+      // in _offlineVoiceRefs so the wrappers survive until the
+      // render's finally block clears them. Without this, the
+      // wrappers would fall out of scope immediately and Tone.js'
+      // scheduled events get dropped when the wrapper is GC'd
+      // mid-render — the WAV came out silent.
+      if (_offlineSamplerOverride) {
+        if (Array.isArray(_offlineVoiceRefs)) {
+          _offlineVoiceRefs.push(synth);
+          effectNodes.forEach(n => _offlineVoiceRefs.push(n));
+        }
+        return;
+      }
       // Always dispose. Sequence playback now passes a startTime and the
       // pre-fix gate (`if (startTime === undefined)`) silently skipped
       // cleanup, leaking a fresh synth + effect chain on every note.
@@ -9389,6 +9423,9 @@
         // loads also drain through this same await.
         await Tone.loaded();
         _offlineSamplerOverride = offlineSamplerMap;
+        // Strong-ref park for synth wrappers playNote creates during
+        // this render. See the offline-mode early-return in playNote.
+        _offlineVoiceRefs = [];
 
         const players = [];
         try {
@@ -9502,10 +9539,19 @@
         } finally {
           // Drop the override regardless of whether scheduling threw —
           // otherwise live playback after a failed export would keep
-          // resolving to disposed offline samplers.
+          // resolving to disposed offline samplers. Voice refs stay
+          // pinned through the actual render (which Tone.Offline
+          // performs after this callback returns) — they get
+          // released after the render completes via the outer cleanup
+          // below.
           _offlineSamplerOverride = null;
         }
       }, totalSec, 2, sampleRate);
+      // Drop the strong synth refs now that the offline render has
+      // produced its buffer. Holding them until after the render
+      // ensures Tone.js' scheduled events stayed wired up; releasing
+      // them now lets GC reclaim the wrappers.
+      _offlineVoiceRefs = null;
       // Peak-check the rendered buffer so we can tell whether the
       // offline render produced audio. Logs a max-amplitude reading
       // and the first / last frames where audio is non-zero.

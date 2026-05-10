@@ -2899,20 +2899,22 @@
       } else {
         // Sustainable waves: sine / square / triangle / sawtooth /
         // pulse / fat / wavetable. Wavetable is a custom-partials
-        // OmniOscillator — the default partials produce a warm
-        // organ-like timbre (odd harmonics with quick decay). When
-        // params include a `partials` array we honor that instead so
-        // the eventual sound editor can edit the wavetable shape.
+        // OmniOscillator built post-construction (the option-bag
+        // form was producing a silent oscillator on Tone v14 — the
+        // type=custom + partials route through OmniOscillator only
+        // settles correctly when assigned via `.partials = [...]`
+        // after the synth exists). Defaults to a warm sawtooth-ish
+        // harmonic series; step.params.partials overrides for the
+        // future per-cell wavetable editor.
         let oscOpts;
         if (type === 'fat') {
           oscOpts = { type: 'fatsawtooth', count: 3, spread: 30 };
         } else if (type === 'pulse') {
           oscOpts = { type: 'pulse', width: 0.4 };
         } else if (type === 'wavetable') {
-          const partials = (Array.isArray(params.partials) && params.partials.length > 0)
-            ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
-            : [1, 0.5, 0.25, 0.15, 0.08, 0.04, 0.02, 0.01];
-          oscOpts = { type: 'custom', partials };
+          // Build the synth with a sine base (a known-good type that
+          // always produces audio) and overwrite partials below.
+          oscOpts = { type: 'sine' };
         } else {
           oscOpts = { type };
         }
@@ -2920,6 +2922,16 @@
           oscillator: oscOpts,
           envelope: env,
         }).connect(chainHead);
+        if (type === 'wavetable') {
+          // Apply the wavetable's harmonic series after the synth
+          // exists. OmniOscillator accepts a partials array that
+          // overrides the base waveform's harmonics — sine + custom
+          // partials becomes an additive synth voice.
+          const partials = (Array.isArray(params.partials) && params.partials.length > 0)
+            ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+            : [1, 0.5, 0.25, 0.15, 0.08, 0.04, 0.02, 0.01];
+          try { synth.oscillator.partials = partials; } catch (e) {}
+        }
       }
 
       if (synth.detune) synth.detune.value = detune;

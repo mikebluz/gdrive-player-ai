@@ -13196,7 +13196,8 @@
         ...n,
         params: n.params ? { ...n.params } : { type: n.sound || 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 },
       }));
-      let expandedIdx = null;
+      let expandedIdx = null;       // 'sound' panel index
+      let pitchExpandedIdx = null;  // 'pitch' picker index
       let chordDuration = step.duration ?? 1;
       let chordSubdivision = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       let chordBendSemitones = step.bend?.semitones ?? 0;
@@ -13306,6 +13307,10 @@
           badge.className = 'se-wave-badge';
           badge.textContent = (n.params?.type || n.sound || 'sine').slice(0, 3);
 
+          const pitchBtn = document.createElement('button');
+          pitchBtn.className = 'se-edit-btn';
+          pitchBtn.textContent = pitchExpandedIdx === ni ? 'Pitch ▲' : 'Pitch ▾';
+
           const editBtn = document.createElement('button');
           editBtn.className = 'se-edit-btn';
           editBtn.textContent = expandedIdx === ni ? 'Sound ▲' : 'Sound ▾';
@@ -13315,8 +13320,31 @@
           removeBtn.textContent = '×';
 
           row.appendChild(lbl); row.appendChild(badge);
-          row.appendChild(editBtn); row.appendChild(removeBtn);
+          row.appendChild(pitchBtn); row.appendChild(editBtn); row.appendChild(removeBtn);
           listEl.appendChild(row);
+
+          // Inline pitch picker — clicking any cell label retunes this
+          // voice in place (preserves its sound / params / cellIndex
+          // mapping). Sized to the same `.sm-waves` button row used by
+          // the Add picker so the layout matches.
+          if (pitchExpandedIdx === ni) {
+            const picker = document.createElement('div');
+            picker.className = 'sm-waves';
+            notes.forEach((note, idx) => {
+              const pb = document.createElement('button');
+              pb.className = 'sm-wave' + (n.cellIndex === idx ? ' active' : '');
+              pb.textContent = note.label;
+              pb.addEventListener('click', () => {
+                chordNotes[ni].freq      = note.freq;
+                chordNotes[ni].label     = note.label;
+                chordNotes[ni].cellIndex = idx;
+                pitchExpandedIdx = null;
+                renderList();
+              });
+              picker.appendChild(pb);
+            });
+            listEl.appendChild(picker);
+          }
 
           if (expandedIdx === ni) {
             const panel = buildInlineSoundPanel(n.params, (updated) => {
@@ -13327,14 +13355,24 @@
             listEl.appendChild(panel);
           }
 
+          pitchBtn.addEventListener('click', () => {
+            pitchExpandedIdx = pitchExpandedIdx === ni ? null : ni;
+            // Collapse the sound panel for this row when opening pitch
+            // so the two expansions don't stack and crowd the modal.
+            if (pitchExpandedIdx === ni && expandedIdx === ni) expandedIdx = null;
+            renderList();
+          });
           editBtn.addEventListener('click', () => {
             expandedIdx = expandedIdx === ni ? null : ni;
+            if (expandedIdx === ni && pitchExpandedIdx === ni) pitchExpandedIdx = null;
             renderList();
           });
           removeBtn.addEventListener('click', () => {
             chordNotes.splice(ni, 1);
             if (expandedIdx === ni) expandedIdx = null;
             else if (expandedIdx > ni) expandedIdx--;
+            if (pitchExpandedIdx === ni) pitchExpandedIdx = null;
+            else if (pitchExpandedIdx > ni) pitchExpandedIdx--;
             renderList();
           });
         });

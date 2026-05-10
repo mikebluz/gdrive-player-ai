@@ -9349,15 +9349,22 @@
           // exported WAV matches what the user hears in the browser.
           const teq = track.eq || { low: 0, mid: 0, high: 0 };
           const tpan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
-          // DEBUG: bypass per-track EQ + panner entirely. Voices
-          // route directly to `bus` (the offline compressor) so we
-          // can tell if the silent export is caused by trackBus
-          // vs. something further downstream. Restore the proper
-          // chain once the silent-export bug is fixed.
+          // DEBUG: still bypassing per-track bus.
           const trackBus = bus;
-          // Reference teq + tpan to keep the linter happy; they
-          // get reapplied once we restore the per-track chain.
           void teq; void tpan;
+          // DEBUG: drop a known-good tone directly into `bus` at
+          // offline t=5 so we can tell if the basic offline synth
+          // path produces audio at all. If THIS doesn't show up in
+          // the buffer around 5–6 s, the silence is downstream
+          // (global FX chain or limiter). If it DOES, the bug is
+          // specific to our track-voice scheduling code path.
+          try {
+            const testSynth = new Tone.Synth({
+              oscillator: { type: 'sine' },
+              envelope: { attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.1 },
+            }).connect(bus);
+            testSynth.triggerAttackRelease('A4', 0.5, 5, 0.8);
+          } catch (e) { console.warn('[export] test-tone failed', e); }
           let time = 0;
           (track.items || []).forEach(item => {
             if (item.type === 'audio') {

@@ -2897,21 +2897,57 @@
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
         }).connect(chainHead);
       } else if (type === 'wavetable') {
-        // Wavetable: an FMSynth with a square-wave modulator and
-        // moderate modulation index. The square modulator sweeps the
-        // carrier through a complex harmonic series that reads as
-        // "wavetable" — much richer than sawtooth, less metallic
-        // than the bell preset. Going through FMSynth instead of
-        // OmniOscillator-with-custom-partials because Tone v14's
-        // option-bag partials path was producing silent voices.
-        synth = new Tone.FMSynth({
-          harmonicity: 1.5,
-          modulationIndex: 6,
-          oscillator: { type: 'sine' },
-          envelope: env,
-          modulation: { type: 'square' },
-          modulationEnvelope: { attack: 0.01, decay: 0.5, sustain: 0.5, release: 0.5 },
+        // Wavetable: build the voice manually as a Tone.Oscillator
+        // with custom partials gated by a Tone.AmplitudeEnvelope.
+        // Bypasses Tone.Synth's OmniOscillator wrapper because
+        // routing custom partials through that wrapper produces
+        // silent voices on Tone v14. The base oscillator IS audible
+        // with type='custom' + partials — this path proves that.
+        // Defaults to a sawtooth-ish additive series; per-cell
+        // params.partials overrides via showWavetableEditor.
+        const partials = (Array.isArray(params.partials) && params.partials.length > 0)
+          ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+          : [1, 0.5, 0.33, 0.25, 0.2, 0.16, 0.14, 0.12];
+        const ampEnv = new Tone.AmplitudeEnvelope({
+          attack: env.attack, decay: env.decay,
+          sustain: env.sustain, release: env.release,
         }).connect(chainHead);
+        const osc = new Tone.Oscillator({
+          type: 'custom',
+          partials,
+          frequency: freq,
+          detune,
+        });
+        osc.connect(ampEnv);
+        // Trigger the envelope and start the oscillator at the same
+        // (offline-aware) time. osc.stop() is scheduled past the
+        // release tail so the source shuts down naturally.
+        const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime))
+          ? startTime : Tone.now();
+        ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
+        try { osc.start(triggerAt); } catch (e) {}
+        const stopAt = triggerAt + preReleaseDur + (env.release || 0.5) + 0.05;
+        try { osc.stop(stopAt); } catch (e) {}
+        // Lifecycle — match the offline-skip / live-dispose pattern
+        // the rest of playNote uses. Both nodes get parked in
+        // _offlineVoiceRefs during export rendering so they survive
+        // until the buffer is captured.
+        if (_offlineSamplerOverride) {
+          if (Array.isArray(_offlineVoiceRefs)) {
+            _offlineVoiceRefs.push(osc);
+            _offlineVoiceRefs.push(ampEnv);
+            effectNodes.forEach(n => _offlineVoiceRefs.push(n));
+          }
+          return;
+        }
+        const wtLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+          ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
+        setTimeout(() => {
+          try { osc.dispose(); } catch (e) {}
+          try { ampEnv.dispose(); } catch (e) {}
+          disposeEffectChain();
+        }, wtLeadMs + (preReleaseDur + (env.release || 0.5) + 0.5) * 1000);
+        return;
       } else {
         // Sustainable waves: sine / square / triangle / sawtooth /
         // pulse / fat. (Wavetable is handled above as an FMSynth
@@ -4150,6 +4186,82 @@
     // from the step's pitch) and how far through the step duration
     // the bend should complete (atFraction). Saves to step.bend, the
     // same shape the playback path already honors.
+    // Modal that lets the user define a wavetable's partial-amplitude
+    // series (harmonics 1..8). Hands the resulting array to onApply
+    // when the user accepts; cancelling closes without invoking the
+    // callback so the prior tone setting stays in place.
+    function showWavetableEditor(onApply) {
+      if (document.querySelector('.wavetable-overlay')) return;
+      // Seed from any existing wavetable already on cellParams[0]
+      // (which mirrors what the user is editing); fall back to a
+      // gentle sawtooth-ish series.
+      const seed = (Array.isArray(cellParams[0]?.partials) && cellParams[0].partials.length > 0)
+        ? cellParams[0].partials.slice(0, 8)
+        : [1, 0.5, 0.33, 0.25, 0.2, 0.16, 0.14, 0.12];
+      while (seed.length < 8) seed.push(0);
+      const partials = seed.slice(0, 8);
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay wavetable-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'pitch-ramp-modal';
+      const presets = {
+        Sine:     [1, 0, 0, 0, 0, 0, 0, 0],
+        Sawtooth: [1, 0.5, 0.33, 0.25, 0.2, 0.16, 0.14, 0.12],
+        Square:   [1, 0, 0.33, 0, 0.2, 0, 0.14, 0],
+        Triangle: [1, 0, 0.11, 0, 0.04, 0, 0.02, 0],
+        Organ:    [1, 0.7, 0.5, 0.6, 0.3, 0.4, 0.2, 0.3],
+        Bell:     [0.4, 1, 0.6, 0.8, 0.5, 0.7, 0.4, 0.6],
+      };
+      const presetButtons = Object.keys(presets).map(k =>
+        `<button type="button" class="sm-wave" data-wt-preset="${k}">${k}</button>`
+      ).join('');
+      const sliderRows = Array.from({ length: 8 }, (_, i) => `
+        <div class="pr-param">
+          <div class="pr-row">Partial ${i + 1} <span class="pr-val" id="wt-v-${i}">${partials[i].toFixed(2)}</span></div>
+          <input type="range" id="wt-${i}" min="0" max="1" step="0.01" value="${partials[i]}" />
+        </div>
+      `).join('');
+      modal.innerHTML = `
+        <div class="pr-title">Wavetable</div>
+        <div class="pr-sub">Define harmonic partial amplitudes (1 = fundamental).</div>
+        <div class="sm-waves" id="wt-presets">${presetButtons}</div>
+        ${sliderRows}
+        <div class="pr-footer">
+          <button class="pr-cancel">Cancel</button>
+          <button class="pr-apply">Apply</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const sliders = Array.from({ length: 8 }, (_, i) => modal.querySelector(`#wt-${i}`));
+      const valEls  = Array.from({ length: 8 }, (_, i) => modal.querySelector(`#wt-v-${i}`));
+      const writeSlider = (i, v) => {
+        partials[i] = v;
+        sliders[i].value = String(v);
+        valEls[i].textContent = v.toFixed(2);
+      };
+      sliders.forEach((s, i) => {
+        s.addEventListener('input', () => {
+          const v = Math.max(0, Math.min(1, parseFloat(s.value) || 0));
+          writeSlider(i, v);
+        });
+      });
+      modal.querySelectorAll('[data-wt-preset]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const p = presets[btn.dataset.wtPreset];
+          if (!p) return;
+          p.forEach((v, i) => writeSlider(i, v));
+        });
+      });
+      const close = () => { try { overlay.remove(); } catch (e) {} };
+      modal.querySelector('.pr-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      modal.querySelector('.pr-apply').addEventListener('click', () => {
+        close();
+        onApply(partials.slice());
+      });
+    }
+
     function showPitchRampDialog(stepIndex) {
       const step = sequence[stepIndex];
       if (!step || step.isSub) return;
@@ -14979,7 +15091,22 @@
       panel.addEventListener('click', (e) => {
         const opt = e.target.closest('.tone-opt');
         if (!opt || !opt.dataset.tone) return; // skip family / back / custom marker
-        applyToneToAllCells(opt.dataset.tone);
+        const tone = opt.dataset.tone;
+        // Wavetable picks open a partials editor — the user defines
+        // the harmonic series before the tone is applied. Cancelling
+        // the editor leaves the previous tone in place.
+        if (tone === 'wavetable') {
+          setOpen(false);
+          showWavetableEditor((partials) => {
+            applyToneToAllCells('wavetable');
+            // Stash the partials on every cell so playNote uses them.
+            cellParams.forEach(p => { p.partials = [...partials]; });
+            renderSequence();
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          return;
+        }
+        applyToneToAllCells(tone);
         setOpen(false);
       });
       document.addEventListener('click', (e) => {

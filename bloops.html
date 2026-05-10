@@ -2622,11 +2622,16 @@
           // (track playback) so per-lane / per-track mix applies.
           const laneDest = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null;
           const finalDest = destination || laneDest || masterBus;
+          // Negative playback rate = reverse playback. Tone.GrainPlayer
+          // accepts negative rates directly; clamp to a small absolute
+          // value so a rate of exactly 0 doesn't lock the buffer.
+          const rawRate = Number.isFinite(params.grainRate) ? params.grainRate : 1;
+          const playbackRate = (Math.abs(rawRate) < 0.05) ? 0.05 * Math.sign(rawRate || 1) : rawRate;
           const player = new Tone.GrainPlayer({
             url: grainInfo.buffer,
             grainSize: (params.grainSize != null) ? params.grainSize : 0.1,
             overlap:   (params.grainOverlap != null) ? params.grainOverlap : 0.05,
-            playbackRate: 1,
+            playbackRate,
             detune: cents,
             loop: true,
             volume: Tone.gainToDb(Math.max(0.001, velocity)),
@@ -4346,6 +4351,91 @@
       modal.querySelector('.pr-apply').addEventListener('click', () => {
         close();
         onApply(mix.slice());
+      });
+    }
+
+    // Grain editor — modal that defines the grain voice's settings
+    // (window size, overlap, playback rate). Mirrors the wavetable
+    // modal in shape so the two "advanced" presets feel like one
+    // family. Callback receives a settings object that the picker
+    // copies onto every cell's params.
+    function showGrainEditor(onApply) {
+      if (document.querySelector('.grain-overlay')) return;
+      const seed = {
+        grainSize:    Number.isFinite(cellParams[0]?.grainSize)    ? cellParams[0].grainSize    : 0.1,
+        grainOverlap: Number.isFinite(cellParams[0]?.grainOverlap) ? cellParams[0].grainOverlap : 0.05,
+        grainRate:    Number.isFinite(cellParams[0]?.grainRate)    ? cellParams[0].grainRate    : 1.0,
+      };
+      const cur = { ...seed };
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay grain-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'pitch-ramp-modal';
+      const presets = {
+        // [grainSize, overlap, rate]
+        Smooth:   [0.20, 0.30, 1.0],
+        Default:  [0.10, 0.05, 1.0],
+        Pebbles:  [0.04, 0.10, 1.0],
+        Slow:     [0.15, 0.10, 0.5],
+        Fast:     [0.08, 0.05, 2.0],
+        Reverse:  [0.10, 0.10, -1.0],
+      };
+      const presetButtons = Object.keys(presets).map(k =>
+        `<button type="button" class="sm-wave" data-grain-preset="${k}">${k}</button>`
+      ).join('');
+      modal.innerHTML = `
+        <div class="pr-title">Grain</div>
+        <div class="pr-sub">Set grain window, overlap, and playback speed.</div>
+        <div class="sm-waves" id="grain-presets">${presetButtons}</div>
+        <div class="pr-param">
+          <div class="pr-row">Grain size <span class="pr-val" id="g-size-v">${cur.grainSize.toFixed(3)} s</span></div>
+          <input type="range" id="g-size" min="0.01" max="0.5" step="0.005" value="${cur.grainSize}" />
+        </div>
+        <div class="pr-param">
+          <div class="pr-row">Overlap <span class="pr-val" id="g-ov-v">${cur.grainOverlap.toFixed(2)}</span></div>
+          <input type="range" id="g-ov" min="0" max="1" step="0.01" value="${cur.grainOverlap}" />
+        </div>
+        <div class="pr-param">
+          <div class="pr-row">Playback rate <span class="pr-val" id="g-rate-v">${cur.grainRate.toFixed(2)}×</span></div>
+          <input type="range" id="g-rate" min="-2" max="4" step="0.05" value="${cur.grainRate}" />
+        </div>
+        <div class="pr-footer">
+          <button class="pr-cancel">Cancel</button>
+          <button class="pr-apply">Apply</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const sizeS  = modal.querySelector('#g-size'),  sizeV  = modal.querySelector('#g-size-v');
+      const ovS    = modal.querySelector('#g-ov'),    ovV    = modal.querySelector('#g-ov-v');
+      const rateS  = modal.querySelector('#g-rate'),  rateV  = modal.querySelector('#g-rate-v');
+      sizeS.addEventListener('input', () => {
+        cur.grainSize = parseFloat(sizeS.value) || 0.1;
+        sizeV.textContent = cur.grainSize.toFixed(3) + ' s';
+      });
+      ovS.addEventListener('input', () => {
+        cur.grainOverlap = parseFloat(ovS.value) || 0;
+        ovV.textContent = cur.grainOverlap.toFixed(2);
+      });
+      rateS.addEventListener('input', () => {
+        cur.grainRate = parseFloat(rateS.value) || 1;
+        rateV.textContent = cur.grainRate.toFixed(2) + '×';
+      });
+      modal.querySelectorAll('[data-grain-preset]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const p = presets[btn.dataset.grainPreset];
+          if (!p) return;
+          cur.grainSize = p[0]; sizeS.value = String(p[0]); sizeV.textContent = p[0].toFixed(3) + ' s';
+          cur.grainOverlap = p[1]; ovS.value = String(p[1]); ovV.textContent = p[1].toFixed(2);
+          cur.grainRate = p[2]; rateS.value = String(p[2]); rateV.textContent = p[2].toFixed(2) + '×';
+        });
+      });
+      const close = () => { try { overlay.remove(); } catch (e) {} };
+      modal.querySelector('.pr-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      modal.querySelector('.pr-apply').addEventListener('click', () => {
+        close();
+        onApply({ ...cur });
       });
     }
 
@@ -15189,6 +15279,22 @@
             // Stash the oscillator mix amplitudes on every cell so
             // playNote builds the right osc stack.
             cellParams.forEach(p => { p.wavetableMix = [...mix]; });
+            renderSequence();
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          return;
+        }
+        if (tone === 'sample:grain') {
+          setOpen(false);
+          showGrainEditor((settings) => {
+            applyToneToAllCells('sample:grain');
+            // Stash the grain settings on every cell so playNote
+            // reads them when building each GrainPlayer.
+            cellParams.forEach(p => {
+              p.grainSize    = settings.grainSize;
+              p.grainOverlap = settings.grainOverlap;
+              p.grainRate    = settings.grainRate;
+            });
             renderSequence();
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });

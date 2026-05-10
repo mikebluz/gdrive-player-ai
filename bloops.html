@@ -2923,14 +2923,19 @@
           envelope: env,
         }).connect(chainHead);
         if (type === 'wavetable') {
-          // Apply the wavetable's harmonic series after the synth
-          // exists. OmniOscillator accepts a partials array that
-          // overrides the base waveform's harmonics — sine + custom
-          // partials becomes an additive synth voice.
+          // Wavetable: drive the existing OmniOscillator into custom
+          // mode via Tone.Synth's `.set()` — passes the option bag
+          // through to the inner oscillator atomically (type +
+          // partials together). Earlier attempts to set them
+          // separately or as constructor options produced a silent
+          // voice on Tone v14. If `.set()` also fails, fall through
+          // with the synth still on its sine base — at least audible.
           const partials = (Array.isArray(params.partials) && params.partials.length > 0)
             ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
             : [1, 0.5, 0.25, 0.15, 0.08, 0.04, 0.02, 0.01];
-          try { synth.oscillator.partials = partials; } catch (e) {}
+          try {
+            synth.set({ oscillator: { type: 'custom', partials } });
+          } catch (e) { console.warn('wavetable set failed', e); }
         }
       }
 

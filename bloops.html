@@ -8687,19 +8687,35 @@
     // next step via setTimeout, and calls onLaneEnd when the lane runs
     // out. Used by playTrackItem's multi-lane fan-out so every lane
     // advances independently while sharing the track's bus.
-    function _trackLaneTick(track, trackIdx, item, flatSteps, stepIdx, onLaneEnd) {
+    //
+    // Drift correction: each lane carries baseAudioTime (Tone audio
+    // clock at lane start), startWallMs (performance.now() at lane
+    // start), and offsetSec (cumulative musical time so far). Audio
+    // fires at the exact Tone time `baseAudioTime + offsetSec` so
+    // the AUDIO clock stays sample-accurate regardless of JS-thread
+    // jitter. The next setTimeout's delay is computed against the
+    // wall-clock target (startWallMs + nextOffsetSec * 1000), so any
+    // late tick shortens its own delay — drift can't accumulate.
+    // setTimeout-only chains used to slip noticeably slower than the
+    // Bloops scheduler over multi-lane / long-sequence playback.
+    function _trackLaneTick(track, trackIdx, item, flatSteps, stepIdx, onLaneEnd, laneState) {
       if (!track || !track.playing) return;
       const step = flatSteps[stepIdx];
       const stepSub = (step.subdivision != null) ? step.subdivision : (item.subdivision || 1);
-      const stepMs = Math.round(60000 / (item.bpm || 120) * stepSub);
-      const waitMs = stepMs * (step.duration || 1);
+      const bpm = item.bpm || 120;
+      const waitSec = (60 / bpm) * stepSub * (step.duration || 1);
+      const waitMs  = waitSec * 1000;
+      const fireTime = laneState.baseAudioTime + laneState.offsetSec;
       const trackBus = getTrackBus(trackIdx);
       if (step.chord) {
         const size = step.chord.length;
-        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, undefined, trackBus, trackIdx));
+        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, fireTime, trackBus, trackIdx));
       } else if (step.freq !== null && step.freq !== undefined) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, undefined, trackBus, trackIdx);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, fireTime, trackBus, trackIdx);
       }
+      laneState.offsetSec += waitSec;
+      const targetWall = laneState.startWallMs + laneState.offsetSec * 1000;
+      const delay = Math.max(0, targetWall - performance.now());
       const t = setTimeout(() => {
         if (Array.isArray(track.timers)) {
           const i = track.timers.indexOf(t);
@@ -8707,11 +8723,11 @@
         }
         const nextStep = stepIdx + 1;
         if (nextStep < flatSteps.length) {
-          _trackLaneTick(track, trackIdx, item, flatSteps, nextStep, onLaneEnd);
+          _trackLaneTick(track, trackIdx, item, flatSteps, nextStep, onLaneEnd, laneState);
         } else {
           onLaneEnd();
         }
-      }, waitMs);
+      }, delay);
       if (!Array.isArray(track.timers)) track.timers = [];
       track.timers.push(t);
     }
@@ -8772,8 +8788,18 @@
           playTrackItem(trackIdx, itemIdx + 1);
         }
       };
+      // Every lane shares the same baseAudioTime + startWallMs so they
+      // start in sync; each carries its own offsetSec accumulator so
+      // they advance independently after that.
+      const baseAudioTime = (typeof Tone !== 'undefined' && typeof Tone.now === 'function')
+        ? Tone.now() : 0;
+      const startWallMs = performance.now();
       laneStepLists.forEach(flatSteps => {
-        _trackLaneTick(track, trackIdx, item, flatSteps, 0, onLaneEnd);
+        _trackLaneTick(track, trackIdx, item, flatSteps, 0, onLaneEnd, {
+          baseAudioTime,
+          startWallMs,
+          offsetSec: 0,
+        });
       });
       if (track.currentItemIdx !== itemIdx) {
         track.currentItemIdx = itemIdx;

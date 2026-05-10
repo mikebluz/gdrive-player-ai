@@ -10093,17 +10093,10 @@
     }
     document.getElementById('tracks-item-actions-btn')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      console.log('[track-actions] click fired, sel=', _selectedTrackItem);
-      if (!_selectedTrackItem) {
-        console.warn('[track-actions] no selection');
-        return;
-      }
+      if (!_selectedTrackItem) return;
       const { trackIdx, itemIdx } = _selectedTrackItem;
       const item = tracks[trackIdx]?.items[itemIdx];
-      if (!item) {
-        console.warn('[track-actions] item missing', trackIdx, itemIdx);
-        return;
-      }
+      if (!item) return;
       const actions = [
         { label: 'Reverse', fn: () => reverseTrackItem(trackIdx, itemIdx) },
         { label: 'Change speed…', fn: () => {
@@ -10115,16 +10108,7 @@
         } },
       ];
       const r = e.currentTarget.getBoundingClientRect();
-      console.log('[track-actions] opening menu at', r.left, r.bottom + 4, 'actions=', actions.length);
-      // Show the menu just below the button. showCtxMenu has its own
-      // pointerdown click-outside handler that dismisses on any click
-      // outside .ctx-menu — so we let the menu manage its own life.
       showCtxMenu(r.left, r.bottom + 4, actions);
-      // Verify the menu DOM actually got attached.
-      setTimeout(() => {
-        const m = document.querySelector('.ctx-menu');
-        console.log('[track-actions] menu after open:', m ? 'present, items=' + m.querySelectorAll('button').length : 'MISSING');
-      }, 0);
     });
 
     document.getElementById('add-track-btn').addEventListener('click', addTrack);

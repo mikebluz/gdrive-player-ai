@@ -3084,7 +3084,10 @@
       border: 1px solid #2d2d3f;
       border-radius: 10px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      z-index: 999;
+      /* z-index above the codebase's panel ceiling (9000) so the
+         menu paints over modals / FX panels / settings dropdowns
+         no matter what's open behind it. */
+      z-index: 10001;
       overflow: hidden;
       min-width: 140px;
     }

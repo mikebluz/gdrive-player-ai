@@ -1522,13 +1522,45 @@
        Stretches to fill the controls column for max click area. */
     .lane-controls {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       flex: 0 0 auto;
       align-items: stretch;
       justify-content: stretch;
+      gap: 4px;
       padding: 2px;
-      width: 32px;
-      min-width: 32px;
+      /* Width grew from 32px → 64px to fit the new grid-toggle button
+         to the right of the status pill. Both buttons live inside
+         .lane-controls and split the space evenly. */
+      width: 64px;
+      min-width: 64px;
+    }
+    /* Grid-toggle button — opens / closes the lane's voice editor.
+       Sized to match .lane-status so the two buttons sit as a pair.
+       The .open variant flips the chevron and tints to active blue
+       when this lane's editor is currently expanded. */
+    .lane-grid-toggle {
+      flex: 1 1 auto;
+      width: 100%;
+      border: 2px solid #2d2d3f;
+      border-radius: 8px;
+      background: rgba(45, 45, 63, 0.4);
+      color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+      padding: 0;
+    }
+    .lane-grid-toggle:hover {
+      border-color: #4299e1;
+      color: #b3d4ff;
+    }
+    .lane-grid-toggle.open {
+      border-color: #4299e1;
+      color: #b3d4ff;
+      background: rgba(66, 153, 225, 0.18);
     }
     .lane-status {
       flex: 1 1 auto;

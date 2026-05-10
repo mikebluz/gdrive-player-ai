@@ -207,16 +207,48 @@
         <button type="button" id="mode-lock-banner" class="banner-half" title="Note lock mode: when on, switching note modes re-shapes the sequence — flat notes ↔ subsequence ↔ chord — so you can round-trip without losing structure.">○</button>
       </div>
       <div class="grid" id="grid"></div>
+      <!-- Keep / Wrap / Rest live inside the lane voice editor so they
+           dock under the active lane's grid. Same trio as before — just
+           reparented from the old #step-grid-bar position into the
+           per-lane expander, since these actions act on the lane the
+           grid currently belongs to. -->
+      <div class="step-grid-bar">
+        <div class="kwr-pair">
+          <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
+          <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
+          <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
+        </div>
+      </div>
+      <!-- Step Pan / Vol / Slip faders + the Edit button. Sits between
+           the Keep/Wrap/Rest trio and the active lane row, matching
+           the original layout, but now reparented into the per-lane
+           voice editor so it travels with whichever lane is active. -->
+      <div class="step-edit-row" id="step-edit-row" hidden>
+        <button type="button" id="step-edit-btn" hidden title="Open the step edit menu for the selected step">Edit</button>
+        <div class="step-edit-bars">
+          <div class="step-pan-bar" id="step-pan-bar" hidden>
+            <span class="step-pan-label" id="step-pan-label">Pan</span>
+            <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
+            <span class="step-pan-val" id="step-pan-val">C</span>
+          </div>
+          <div class="step-vol-bar" id="step-vol-bar" hidden>
+            <span class="step-vol-label" id="step-vol-label">Vol</span>
+            <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
+            <span class="step-vol-val" id="step-vol-val">100%</span>
+          </div>
+          <div class="step-slip-bar" id="step-slip-bar" hidden>
+            <span class="step-slip-label" id="step-slip-label">Slip</span>
+            <input type="range" id="step-slip-slider" min="-50" max="50" value="0" step="1" aria-label="Step slip — shift fire time backwards/forwards as a percent of step duration" />
+            <span class="step-slip-val" id="step-slip-val">0%</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="step-grid-bar">
-    <div class="kwr-pair">
-      <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
-      <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
-      <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
-    </div>
-  </div>
+  <!-- Keep / Wrap / Rest moved into #lane-expander above so they
+       follow the active lane's voice editor instead of sitting at a
+       fixed top-of-page position. -->
 
   <!-- Fixed-mode slot builder. Each chip appends a programmable rest slot
        of the given Step Div size to the sequence; assign a pitch later
@@ -237,26 +269,9 @@
        button can span both slider heights on the left while the
        sliders stack on the right. The wrapper hides when neither
        bar is being shown. -->
-  <div class="step-edit-row" id="step-edit-row" hidden>
-    <button type="button" id="step-edit-btn" hidden title="Open the step edit menu for the selected step">Edit</button>
-    <div class="step-edit-bars">
-      <div class="step-pan-bar" id="step-pan-bar" hidden>
-        <span class="step-pan-label" id="step-pan-label">Pan</span>
-        <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
-        <span class="step-pan-val" id="step-pan-val">C</span>
-      </div>
-      <div class="step-vol-bar" id="step-vol-bar" hidden>
-        <span class="step-vol-label" id="step-vol-label">Vol</span>
-        <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
-        <span class="step-vol-val" id="step-vol-val">100%</span>
-      </div>
-      <div class="step-slip-bar" id="step-slip-bar" hidden>
-        <span class="step-slip-label" id="step-slip-label">Slip</span>
-        <input type="range" id="step-slip-slider" min="-50" max="50" value="0" step="1" aria-label="Step slip — shift fire time backwards/forwards as a percent of step duration" />
-        <span class="step-slip-val" id="step-slip-val">0%</span>
-      </div>
-    </div>
-  </div>
+  <!-- Step Pan / Vol / Slip faders moved into #lane-expander so they
+       sit between the Keep/Wrap/Rest trio and the lane row that owns
+       the selected step. -->
 
   <div id="subedit-banner">
     <span>Editing subsequence — click <strong>Save</strong> to commit.</span>
@@ -3040,6 +3055,18 @@
         display.classList.add('polymode');
         display.classList.remove('grid-mode');
         display.style.removeProperty('--grid-cols');
+        // Park the lane-expander back into its stash BEFORE wiping the
+        // display. Otherwise display.innerHTML = '' orphans the
+        // expander node — getElementById would no longer find it on
+        // the next _placeLaneExpander call (orphaned nodes are
+        // unreachable via document queries), and the grid + voice
+        // pills would silently drop out. Stashing first preserves
+        // the reference so _placeLaneExpander can re-insert it.
+        const stash0 = document.getElementById('lane-expander-stash');
+        const exp0 = document.getElementById('lane-expander');
+        if (stash0 && exp0 && exp0.parentNode !== stash0) {
+          stash0.appendChild(exp0);
+        }
         display.innerHTML = '';
 
         let activeLaneChipsEl = null;
@@ -3092,6 +3119,37 @@
             _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
           });
           ctrls.appendChild(status);
+          // Grid-toggle button — sits to the right of the status pill
+          // and opens / closes this lane's voice editor (the cell grid
+          // + Scale / Tone / FX / Spell pills). On the active lane it
+          // just toggles the expander; on a non-active lane it activates
+          // that lane and opens its expander, since opening another
+          // lane's grid implies switching to it.
+          const gridBtn = document.createElement('button');
+          gridBtn.type = 'button';
+          gridBtn.className = 'lane-grid-toggle';
+          const showingForThisLane = isActiveLane && _laneExpanderOpen;
+          // Chevron points UP when the grid is currently showing, since
+          // the grid expands above the lane row. Closed → ▾ (down,
+          // hinting "click to drop the grid open above me").
+          gridBtn.textContent = showingForThisLane ? '▴' : '▾';
+          gridBtn.classList.toggle('open', showingForThisLane);
+          gridBtn.title = showingForThisLane
+            ? `Hide ${lane.name}'s note grid`
+            : `Show ${lane.name}'s note grid`;
+          gridBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (laneIdx === activeLaneIdx) {
+              _laneExpanderOpen = !_laneExpanderOpen;
+              _placeLaneExpander();
+              renderSequence();
+            } else {
+              _laneExpanderOpen = true;
+              activateLane(laneIdx);
+            }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          ctrls.appendChild(gridBtn);
           row.appendChild(ctrls);
 
           const chipsEl = document.createElement('div');

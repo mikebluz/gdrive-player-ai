@@ -2840,7 +2840,7 @@
        the top level (forced display:block since it's normally hidden in
        Make view), then hide every #mix-view child except the tracks
        section so the Mixdown bar collapses too. */
-    body.tracks-fullscreen > *:not(#mix-view) { display: none !important; }
+    body.tracks-fullscreen > *:not(#mix-view):not(.ctx-menu) { display: none !important; }
     body.tracks-fullscreen > #mix-view { display: block !important; padding: 0; }
     body.tracks-fullscreen #mix-view > *:not(.tracks-section) { display: none !important; }
     body.tracks-fullscreen {
@@ -3938,7 +3938,7 @@
        all module-scoped JS, so swapping views never resets data. */
     #mix-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; }
     body.view-mix > #mix-view { display: block; }
-    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(script) {
+    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }

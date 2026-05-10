@@ -9956,9 +9956,21 @@
               : isAudio
                 ? `${item.name} · audio · ${itemSeconds}s`
                 : `${item.name} · ${stepCount} step${stepCount !== 1 ? 's' : ''} · ${itemSeconds}s @ ${item.bpm || 120} BPM`;
-            const itemActions = () => [
-              { label: 'Remove from track', danger: true, fn: () => removeTrackItem(trackIdx, itemIdx) },
-            ];
+            const itemActions = () => {
+              const acts = [];
+              if (!isSilent) {
+                acts.push({ label: 'Reverse', fn: () => reverseTrackItem(trackIdx, itemIdx) });
+                acts.push({ label: 'Change speed…', fn: () => {
+                  const raw = prompt('Speed change %  (positive = faster, negative = slower):', '10');
+                  if (raw == null) return;
+                  const v = parseFloat(raw);
+                  if (!Number.isFinite(v)) { alert('Invalid number.'); return; }
+                  changeTrackItemSpeed(trackIdx, itemIdx, v);
+                } });
+              }
+              acts.push({ label: 'Remove from track', danger: true, fn: () => removeTrackItem(trackIdx, itemIdx) });
+              return acts;
+            };
             // Right-click and long-press both open an explicit menu so the
             // delete action is discoverable rather than a hidden gesture.
             block.addEventListener('contextmenu', (e) => {

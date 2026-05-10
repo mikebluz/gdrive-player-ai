@@ -390,6 +390,9 @@
         <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
         <button id="tracks-countin-btn" type="button" title="When on, recording starts after a 4-beat count-in at the workspace tempo">Count-in</button>
         <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
+        <!-- Selected-item actions: hidden until the user clicks a
+             track item. Dropdown opens with Reverse / Change speed. -->
+        <button id="tracks-item-actions-btn" type="button" hidden title="Actions for the selected track item">Item ▾</button>
         <button id="add-track-btn" title="Create a new track">+ New</button>
       </div>
       <div id="tracks-container"></div>
@@ -9614,9 +9617,12 @@
     function playAudioItem(trackIdx, itemIdx, item) {
       const track = tracks[trackIdx];
       if (!track || !track.playing) return;
+      const playbackRate = Number.isFinite(item.playbackRate) && item.playbackRate > 0
+        ? item.playbackRate : 1;
       const player = new Tone.Player({
         url: item.audioDataUrl,
         autostart: false,
+        playbackRate,
         onload: () => { try { player.start(); } catch (e) {} },
       }).connect(getTrackBus(trackIdx));
       const advanceMs = Math.max(50, (item.durationSec || 0) * 1000);
@@ -9927,10 +9933,18 @@
             const isAudio  = item.type === 'audio';
             const isSilent = item.type === 'silent';
             const block = document.createElement('div');
+            const isSelected = !!(_selectedTrackItem
+              && _selectedTrackItem.trackIdx === trackIdx
+              && _selectedTrackItem.itemIdx === itemIdx);
             block.className = 'track-item'
               + (isAudio  ? ' audio-item'  : '')
               + (isSilent ? ' silent-item' : '')
-              + (track.playing && track.currentItemIdx === itemIdx ? ' active' : '');
+              + (track.playing && track.currentItemIdx === itemIdx ? ' active' : '')
+              + (isSelected ? ' selected' : '');
+            block.addEventListener('click', (e) => {
+              e.stopPropagation();
+              selectTrackItem(trackIdx, itemIdx);
+            });
             block.style.gridColumn = `span ${span}`;
             const itemSeconds = (itemDurationMs(item) / 1000).toFixed(1);
             block.textContent = isSilent
@@ -9981,6 +9995,112 @@
         nameEls.forEach(el => { el.style.minWidth = maxW + 'px'; });
       }
     }
+
+    // ---- Track-item selection + actions dropdown ----
+    // Clicking a .track-item toggles a "selected" highlight; the
+    // actions button in tracks-header surfaces only while something
+    // is selected. Reverse + Change speed dropdown actions key off
+    // _selectedTrackItem.
+    let _selectedTrackItem = null; // { trackIdx, itemIdx } | null
+    function refreshTrackItemActionsVisibility() {
+      const btn = document.getElementById('tracks-item-actions-btn');
+      if (!btn) return;
+      btn.hidden = !_selectedTrackItem;
+    }
+    function selectTrackItem(trackIdx, itemIdx) {
+      const same = _selectedTrackItem
+        && _selectedTrackItem.trackIdx === trackIdx
+        && _selectedTrackItem.itemIdx === itemIdx;
+      _selectedTrackItem = same ? null : { trackIdx, itemIdx };
+      refreshTrackItemActionsVisibility();
+      renderTracks();
+    }
+    function reverseTrackItem(trackIdx, itemIdx) {
+      const item = tracks[trackIdx]?.items[itemIdx];
+      if (!item) return;
+      if (item.type === 'audio') return reverseAudioTrackItem(trackIdx, itemIdx);
+      if (item.type === 'silent') return; // nothing to reverse
+      // Step-based: reverse each lane's steps (preserves multi-lane
+      // structure) and the legacy item.steps fallback so old single-
+      // stream playback still gets the reversed order.
+      if (Array.isArray(item.lanes)) {
+        item.lanes.forEach(l => { if (Array.isArray(l.steps)) l.steps.reverse(); });
+      }
+      if (Array.isArray(item.steps)) item.steps.reverse();
+      persistTracks();
+      renderTracks();
+    }
+    function changeTrackItemSpeed(trackIdx, itemIdx, deltaPercent) {
+      const item = tracks[trackIdx]?.items[itemIdx];
+      if (!item) return;
+      const factor = 1 + (Number(deltaPercent) / 100);
+      if (!Number.isFinite(factor) || factor <= 0) return;
+      if (item.type === 'audio') {
+        // Stash a playbackRate the audio playback path applies on
+        // every fire. Compounds with previous speed changes.
+        item.playbackRate = (item.playbackRate || 1) * factor;
+        item.durationSec = (item.durationSec || 0) / factor;
+      } else if (item.type === 'silent') {
+        item.durationSec = (item.durationSec || 0) / factor;
+      } else {
+        item.bpm = Math.max(20, Math.min(999, Math.round((item.bpm || 120) * factor)));
+      }
+      persistTracks();
+      renderTracks();
+    }
+    function reverseAudioTrackItem(trackIdx, itemIdx) {
+      const item = tracks[trackIdx]?.items[itemIdx];
+      if (!item || !item.audioDataUrl) return;
+      // Decode the existing data URL → reverse each channel's PCM
+      // → re-encode as WAV → swap back into item.audioDataUrl. WAV
+      // is the cheapest format to encode in JS (audioBufferToWav)
+      // and works in every browser; the original codec (probably
+      // webm/opus) doesn't survive the round trip but the audio
+      // content is identical.
+      (async () => {
+        try {
+          const resp = await fetch(item.audioDataUrl);
+          const ab = await resp.arrayBuffer();
+          const ctx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : new AudioContext();
+          const decoded = await ctx.decodeAudioData(ab);
+          for (let c = 0; c < decoded.numberOfChannels; c++) {
+            const ch = decoded.getChannelData(c);
+            // In-place reverse — Float32Array supports reverse() in
+            // every modern engine.
+            ch.reverse();
+          }
+          const wavBlob = audioBufferToWav(decoded);
+          const reader = new FileReader();
+          reader.onload = () => {
+            item.audioDataUrl = reader.result;
+            persistTracks();
+            renderTracks();
+          };
+          reader.readAsDataURL(wavBlob);
+        } catch (e) {
+          console.warn('Audio reverse failed', e);
+          alert('Could not reverse this audio: ' + (e.message || e));
+        }
+      })();
+    }
+    document.getElementById('tracks-item-actions-btn')?.addEventListener('click', (e) => {
+      if (!_selectedTrackItem) return;
+      const { trackIdx, itemIdx } = _selectedTrackItem;
+      const item = tracks[trackIdx]?.items[itemIdx];
+      if (!item) return;
+      const actions = [
+        { label: 'Reverse', fn: () => reverseTrackItem(trackIdx, itemIdx) },
+        { label: 'Change speed…', fn: () => {
+          const raw = prompt('Speed change %  (positive = faster, negative = slower):', '10');
+          if (raw == null) return;
+          const v = parseFloat(raw);
+          if (!Number.isFinite(v)) { alert('Invalid number.'); return; }
+          changeTrackItemSpeed(trackIdx, itemIdx, v);
+        } },
+      ];
+      const r = e.currentTarget.getBoundingClientRect();
+      showCtxMenu(r.left, r.bottom + 4, actions);
+    });
 
     document.getElementById('add-track-btn').addEventListener('click', addTrack);
     document.getElementById('tracks-play-all').addEventListener('click', () => {

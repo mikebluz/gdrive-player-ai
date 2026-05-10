@@ -3045,6 +3045,14 @@
       background: linear-gradient(135deg, #2b6cb0, #4299e1);
       border-color: #4299e1;
     }
+    /* Selected track item — opens the Item ▾ actions dropdown in
+       the tracks header. Distinguished from .active (currently
+       playing) with a magenta outline so the two states can stack. */
+    .track-item.selected {
+      outline: 2px solid #d91e7c;
+      outline-offset: -3px;
+      box-shadow: 0 0 12px rgba(217, 30, 124, 0.45);
+    }
     /* Silent placeholder — left behind when a saved sequence is deleted so
        items after it keep their absolute time position in the track. */
     .track-item.silent-item {

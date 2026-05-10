@@ -4383,10 +4383,22 @@
       const presetButtons = Object.keys(presets).map(k =>
         `<button type="button" class="sm-wave" data-grain-preset="${k}">${k}</button>`
       ).join('');
+      const grainInfo0 = sampleSamplers.get('grain');
+      const isCustom = !!(grainInfo0 && grainInfo0.userRecorded);
+      const sourceLabel0 = isCustom
+        ? `Custom recording${Number.isFinite(grainInfo0.recordedDurSec) ? ` (${grainInfo0.recordedDurSec.toFixed(2)} s)` : ''}`
+        : 'Default sample';
       modal.innerHTML = `
         <div class="pr-title">Grain</div>
         <div class="pr-sub">Set grain window, overlap, and playback speed.</div>
         <div class="sm-waves" id="grain-presets">${presetButtons}</div>
+        <div class="pr-param">
+          <div class="pr-row">Source <span class="pr-val" id="g-source">${sourceLabel0}</span></div>
+          <div class="grain-record-row" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+            <button type="button" class="sm-wave" id="g-record">● Record</button>
+            <button type="button" class="sm-wave" id="g-reset" ${isCustom ? '' : 'disabled'}>Use default</button>
+          </div>
+        </div>
         <div class="pr-param">
           <div class="pr-row">Grain size <span class="pr-val" id="g-size-v">${cur.grainSize.toFixed(3)} s</span></div>
           <input type="range" id="g-size" min="0.01" max="0.5" step="0.005" value="${cur.grainSize}" />
@@ -4430,7 +4442,112 @@
           cur.grainRate = p[2]; rateS.value = String(p[2]); rateV.textContent = p[2].toFixed(2) + '×';
         });
       });
-      const close = () => { try { overlay.remove(); } catch (e) {} };
+      // Record-input wiring. Captures mic audio via MediaRecorder,
+      // decodes the blob into an AudioBuffer, wraps in
+      // Tone.ToneAudioBuffer, and replaces sampleSamplers.get('grain').buffer
+      // so subsequent grain voices read from the recorded sample.
+      // The original default URL stays in grainInfo.defaultUrl so
+      // "Use default" can rebuild a fresh buffer pointing at it.
+      const recordBtn = modal.querySelector('#g-record');
+      const resetBtn  = modal.querySelector('#g-reset');
+      const sourceEl  = modal.querySelector('#g-source');
+      let recState = { recording: false, recorder: null, stream: null, chunks: [] };
+      const setSourceLabel = (text) => { sourceEl.textContent = text; };
+      const setRecordBtn = (text, active) => {
+        recordBtn.textContent = text;
+        recordBtn.classList.toggle('active', !!active);
+      };
+      const stopMicStream = () => {
+        try { recState.stream?.getTracks().forEach(t => t.stop()); } catch (e) {}
+        recState.stream = null;
+      };
+      recordBtn.addEventListener('click', async () => {
+        if (recState.recording) {
+          // Stop — onstop handler decodes the blob below.
+          try { recState.recorder?.stop(); } catch (e) {}
+          return;
+        }
+        if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+          alert('Recording is not supported in this browser.');
+          return;
+        }
+        try { await Tone.start(); } catch (e) {}
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+          alert('Could not access microphone: ' + (e.message || e));
+          return;
+        }
+        recState.stream = stream;
+        recState.chunks = [];
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+        const mimeType = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        recState.recorder = recorder;
+        recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recState.chunks.push(e.data); };
+        recorder.onstop = async () => {
+          recState.recording = false;
+          setRecordBtn('● Record', false);
+          stopMicStream();
+          if (recState.chunks.length === 0) {
+            setSourceLabel('No audio captured');
+            return;
+          }
+          setSourceLabel('Decoding…');
+          try {
+            const blob = new Blob(recState.chunks, { type: recorder.mimeType || 'audio/webm' });
+            const arrayBuffer = await blob.arrayBuffer();
+            const audioCtx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : new AudioContext();
+            const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+            const grainInfo = sampleSamplers.get('grain');
+            if (grainInfo) {
+              // Wrap the decoded AudioBuffer in a Tone.ToneAudioBuffer
+              // — Tone.GrainPlayer's `url` option accepts a buffer
+              // instance directly.
+              try { grainInfo.buffer.dispose?.(); } catch (e) {}
+              grainInfo.buffer = new Tone.ToneAudioBuffer(decoded);
+              grainInfo.userRecorded = true;
+              grainInfo.recordedDurSec = decoded.duration;
+            }
+            setSourceLabel(`Custom recording (${decoded.duration.toFixed(2)} s)`);
+            resetBtn.disabled = false;
+          } catch (e) {
+            console.warn('Grain recording decode failed', e);
+            setSourceLabel('Decode failed');
+          }
+        };
+        try {
+          recorder.start();
+          recState.recording = true;
+          setRecordBtn('■ Stop', true);
+          setSourceLabel('Recording…');
+        } catch (e) {
+          stopMicStream();
+          alert('Recorder start failed: ' + (e.message || e));
+        }
+      });
+      resetBtn.addEventListener('click', () => {
+        if (recState.recording) {
+          try { recState.recorder?.stop(); } catch (e) {}
+        }
+        const grainInfo = sampleSamplers.get('grain');
+        if (grainInfo) {
+          try { grainInfo.buffer?.dispose?.(); } catch (e) {}
+          grainInfo.buffer = new Tone.ToneAudioBuffer('https://tonejs.github.io/audio/salamander/A4.mp3');
+          grainInfo.userRecorded = false;
+          grainInfo.recordedDurSec = null;
+        }
+        setSourceLabel('Default sample');
+        resetBtn.disabled = true;
+      });
+      const close = () => {
+        if (recState.recording) {
+          try { recState.recorder?.stop(); } catch (e) {}
+        }
+        stopMicStream();
+        try { overlay.remove(); } catch (e) {}
+      };
       modal.querySelector('.pr-cancel').addEventListener('click', close);
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       modal.querySelector('.pr-apply').addEventListener('click', () => {

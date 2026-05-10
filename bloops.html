@@ -3153,6 +3153,12 @@
         display.innerHTML = '';
 
         let activeLaneChipsEl = null;
+        // Pack consecutive collapsed lanes into a single horizontal
+        // strip so they read as a row of "minimized" lanes instead of
+        // each consuming a full-width row. Non-collapsed lanes flush
+        // the current strip and render their own row beneath it.
+        let collapsedStrip = null;
+        const flushCollapsedStrip = () => { collapsedStrip = null; };
         lanes.forEach((lane, laneIdx) => {
           const isActiveLane = laneIdx === activeLaneIdx;
           const row = document.createElement('div');
@@ -3344,7 +3350,21 @@
             }
           });
 
-          display.appendChild(row);
+          if (lane.collapsed) {
+            // Collapsed lanes share a horizontal strip. Open one if
+            // we don't already have a current strip to add to.
+            if (!collapsedStrip) {
+              collapsedStrip = document.createElement('div');
+              collapsedStrip.className = 'lane-row-collapsed-strip';
+              display.appendChild(collapsedStrip);
+            }
+            collapsedStrip.appendChild(row);
+          } else {
+            // Expanded lane: end the current strip (next collapsed
+            // lane starts a new one) and append as its own row.
+            flushCollapsedStrip();
+            display.appendChild(row);
+          }
         });
 
         chipHost = activeLaneChipsEl || display;
@@ -4611,6 +4631,10 @@
         lanes[activeLaneIdx].voice = _captureVoiceGlobals();
       }
       activeLaneIdx = idx;
+      // The active lane's chip strip is the workspace's working
+      // surface — uncollapse it so its chips are visible and the
+      // voice expander has a row to dock above.
+      if (lanes[activeLaneIdx]) lanes[activeLaneIdx].collapsed = false;
       _aliasSequenceToActiveLane();
       // Apply the new lane's voice — first activation of a lane that
       // never had a voice set just keeps the current globals (no
@@ -6432,11 +6456,12 @@
       const display = document.getElementById('sequence-display');
       if (!display) return;
       const li = Number.isFinite(laneIdx) ? laneIdx : activeLaneIdx;
-      // Use `.lane-row` queries (not display.children[i]) because
-      // the lane-expander sits as a SIBLING of the lane rows when
-      // it's docked above the active lane — children[i] would pick
-      // up the expander and shift every lane's index after it.
-      const rows = display.querySelectorAll(':scope > .lane-row');
+      // Lane rows can be direct children OR nested inside a
+      // .lane-row-collapsed-strip wrapper (consecutive collapsed
+      // lanes share a horizontal strip). Document order still
+      // matches lane order, so a flat .lane-row query indexes
+      // correctly regardless.
+      const rows = display.querySelectorAll('.lane-row');
       const row = rows[li];
       if (!row) return;
       const chipsScope = row.querySelector(':scope > .lane-chips');
@@ -6454,9 +6479,11 @@
     function setActiveChipForLane(laneIdx, index) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
-      // Skip the lane-expander when indexing — it sits between rows
-      // when docked. Index by `.lane-row` instead of children[i].
-      const rows = display.querySelectorAll(':scope > .lane-row');
+      // Skip the lane-expander when indexing AND look inside
+      // .lane-row-collapsed-strip wrappers for collapsed lanes. A
+      // flat `.lane-row` query returns rows in document order which
+      // matches lane order regardless of nesting.
+      const rows = display.querySelectorAll('.lane-row');
       const row = rows[laneIdx];
       if (!row) return;
       const chipsScope = row.querySelector(':scope > .lane-chips');

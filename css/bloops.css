@@ -1647,6 +1647,26 @@
     .lane-row.collapsed .lane-chips {
       display: none;
     }
+    /* Consecutive collapsed lanes pack horizontally into a single
+       strip (renderSequence groups them) so 3 minimized lanes read
+       as one slim row instead of three full-width ones. */
+    .lane-row-collapsed-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 0 6px;
+    }
+    .lane-row-collapsed-strip > .lane-row.collapsed {
+      flex: 0 0 auto;
+      min-height: 0;
+      padding: 2px;
+    }
+    /* Inside the strip the controls cluster shrinks since there's
+       no chip strip to balance against. */
+    .lane-row-collapsed-strip > .lane-row.collapsed .lane-controls {
+      width: auto;
+      min-width: auto;
+    }
     .lane-chips::-webkit-scrollbar { height: 4px; }
     .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }
     .lane-chips::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }

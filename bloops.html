@@ -2897,51 +2897,47 @@
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
         }).connect(chainHead);
       } else if (type === 'wavetable') {
-        // Wavetable: build the voice manually as a Tone.Oscillator
-        // with custom partials gated by a Tone.AmplitudeEnvelope.
-        // Bypasses Tone.Synth's OmniOscillator wrapper because
-        // routing custom partials through that wrapper produces
-        // silent voices on Tone v14. The base oscillator IS audible
-        // with type='custom' + partials — this path proves that.
-        // Defaults to a sawtooth-ish additive series; per-cell
-        // params.partials overrides via showWavetableEditor.
-        const partials = (Array.isArray(params.partials) && params.partials.length > 0)
-          ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
-          : [1, 0.5, 0.33, 0.25, 0.2, 0.16, 0.14, 0.12];
+        // Wavetable: stack three native oscillators (sine + sawtooth
+        // + triangle) blended at user-defined amplitudes, gated by
+        // a single Tone.AmplitudeEnvelope. Each oscillator type is
+        // natively supported by Tone — no custom-partials gymnastics
+        // that Tone v14 was rejecting silently. The "wavetable"
+        // character comes from the relative blend; the user picks
+        // the amplitudes via showWavetableEditor.
+        const wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
+          ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+          : [1.0, 0.5, 0.3];
         const ampEnv = new Tone.AmplitudeEnvelope({
-          attack: env.attack, decay: env.decay,
+          attack:  env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,
         }).connect(chainHead);
-        // Tone.OmniOscillator (not the base Tone.Oscillator) is the
-        // class that supports 'custom' as a type. The base
-        // Tone.Oscillator only knows sine/square/sawtooth/triangle
-        // and silently fails when given type='custom'. Build with a
-        // sine seed first because some Tone v14 builds also reject
-        // 'custom' in the constructor — then assign partials, which
-        // flips the underlying OscillatorNode to a periodic wave.
-        const osc = new Tone.OmniOscillator({
-          type: 'sine',
-          frequency: freq,
-          detune,
+        const oscTypes = ['sine', 'sawtooth', 'triangle'];
+        const oscs = [];
+        const gains = [];
+        oscTypes.forEach((t, i) => {
+          const osc = new Tone.Oscillator({
+            type: t,
+            frequency: freq,
+            detune,
+          });
+          const g = new Tone.Gain(wt[i]);
+          osc.connect(g);
+          g.connect(ampEnv);
+          oscs.push(osc);
+          gains.push(g);
         });
-        try { osc.partials = partials; } catch (e) {}
-        osc.connect(ampEnv);
-        // Trigger the envelope and start the oscillator at the same
-        // (offline-aware) time. osc.stop() is scheduled past the
-        // release tail so the source shuts down naturally.
         const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? startTime : Tone.now();
         ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
-        try { osc.start(triggerAt); } catch (e) {}
+        oscs.forEach(o => { try { o.start(triggerAt); } catch (e) {} });
         const stopAt = triggerAt + preReleaseDur + (env.release || 0.5) + 0.05;
-        try { osc.stop(stopAt); } catch (e) {}
-        // Lifecycle — match the offline-skip / live-dispose pattern
-        // the rest of playNote uses. Both nodes get parked in
-        // _offlineVoiceRefs during export rendering so they survive
-        // until the buffer is captured.
+        oscs.forEach(o => { try { o.stop(stopAt); } catch (e) {} });
+        // Lifecycle — same offline-skip / live-dispose pattern as
+        // every other synth path. All nodes get parked / disposed.
         if (_offlineSamplerOverride) {
           if (Array.isArray(_offlineVoiceRefs)) {
-            _offlineVoiceRefs.push(osc);
+            oscs.forEach(o => _offlineVoiceRefs.push(o));
+            gains.forEach(g => _offlineVoiceRefs.push(g));
             _offlineVoiceRefs.push(ampEnv);
             effectNodes.forEach(n => _offlineVoiceRefs.push(n));
           }
@@ -2950,7 +2946,8 @@
         const wtLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
         setTimeout(() => {
-          try { osc.dispose(); } catch (e) {}
+          oscs.forEach(o => { try { o.dispose(); } catch (e) {} });
+          gains.forEach(g => { try { g.dispose(); } catch (e) {} });
           try { ampEnv.dispose(); } catch (e) {}
           disposeEffectChain();
         }, wtLeadMs + (preReleaseDur + (env.release || 0.5) + 0.5) * 1000);
@@ -4199,38 +4196,37 @@
     // callback so the prior tone setting stays in place.
     function showWavetableEditor(onApply) {
       if (document.querySelector('.wavetable-overlay')) return;
-      // Seed from any existing wavetable already on cellParams[0]
-      // (which mirrors what the user is editing); fall back to a
-      // gentle sawtooth-ish series.
-      const seed = (Array.isArray(cellParams[0]?.partials) && cellParams[0].partials.length > 0)
-        ? cellParams[0].partials.slice(0, 8)
-        : [1, 0.5, 0.33, 0.25, 0.2, 0.16, 0.14, 0.12];
-      while (seed.length < 8) seed.push(0);
-      const partials = seed.slice(0, 8);
+      // Seed from any existing wavetable mix already on cellParams[0];
+      // fall back to a sine-dominant default.
+      const seed = (Array.isArray(cellParams[0]?.wavetableMix) && cellParams[0].wavetableMix.length === 3)
+        ? cellParams[0].wavetableMix.slice()
+        : [1.0, 0.5, 0.3];
+      const mix = seed.map(v => Math.max(0, Math.min(1, Number(v) || 0)));
       const overlay = document.createElement('div');
       overlay.className = 'modal-overlay wavetable-overlay';
       const modal = document.createElement('div');
       modal.className = 'pitch-ramp-modal';
+      const labels = ['Sine', 'Sawtooth', 'Triangle'];
       const presets = {
-        Sine:     [1, 0, 0, 0, 0, 0, 0, 0],
-        Sawtooth: [1, 0.5, 0.33, 0.25, 0.2, 0.16, 0.14, 0.12],
-        Square:   [1, 0, 0.33, 0, 0.2, 0, 0.14, 0],
-        Triangle: [1, 0, 0.11, 0, 0.04, 0, 0.02, 0],
-        Organ:    [1, 0.7, 0.5, 0.6, 0.3, 0.4, 0.2, 0.3],
-        Bell:     [0.4, 1, 0.6, 0.8, 0.5, 0.7, 0.4, 0.6],
+        Sine:     [1.0, 0.0, 0.0],
+        Saw:      [0.0, 1.0, 0.0],
+        Tri:      [0.0, 0.0, 1.0],
+        Hollow:   [0.0, 0.5, 1.0],
+        Warm:     [1.0, 0.4, 0.6],
+        Bright:   [0.4, 1.0, 0.2],
       };
       const presetButtons = Object.keys(presets).map(k =>
         `<button type="button" class="sm-wave" data-wt-preset="${k}">${k}</button>`
       ).join('');
-      const sliderRows = Array.from({ length: 8 }, (_, i) => `
+      const sliderRows = labels.map((lbl, i) => `
         <div class="pr-param">
-          <div class="pr-row">Partial ${i + 1} <span class="pr-val" id="wt-v-${i}">${partials[i].toFixed(2)}</span></div>
-          <input type="range" id="wt-${i}" min="0" max="1" step="0.01" value="${partials[i]}" />
+          <div class="pr-row">${lbl} <span class="pr-val" id="wt-v-${i}">${mix[i].toFixed(2)}</span></div>
+          <input type="range" id="wt-${i}" min="0" max="1" step="0.01" value="${mix[i]}" />
         </div>
       `).join('');
       modal.innerHTML = `
         <div class="pr-title">Wavetable</div>
-        <div class="pr-sub">Define harmonic partial amplitudes (1 = fundamental).</div>
+        <div class="pr-sub">Blend sine + sawtooth + triangle oscillators.</div>
         <div class="sm-waves" id="wt-presets">${presetButtons}</div>
         ${sliderRows}
         <div class="pr-footer">
@@ -4240,10 +4236,10 @@
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      const sliders = Array.from({ length: 8 }, (_, i) => modal.querySelector(`#wt-${i}`));
-      const valEls  = Array.from({ length: 8 }, (_, i) => modal.querySelector(`#wt-v-${i}`));
+      const sliders = labels.map((_, i) => modal.querySelector(`#wt-${i}`));
+      const valEls  = labels.map((_, i) => modal.querySelector(`#wt-v-${i}`));
       const writeSlider = (i, v) => {
-        partials[i] = v;
+        mix[i] = v;
         sliders[i].value = String(v);
         valEls[i].textContent = v.toFixed(2);
       };
@@ -4265,7 +4261,7 @@
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       modal.querySelector('.pr-apply').addEventListener('click', () => {
         close();
-        onApply(partials.slice());
+        onApply(mix.slice());
       });
     }
 
@@ -15104,10 +15100,11 @@
         // the editor leaves the previous tone in place.
         if (tone === 'wavetable') {
           setOpen(false);
-          showWavetableEditor((partials) => {
+          showWavetableEditor((mix) => {
             applyToneToAllCells('wavetable');
-            // Stash the partials on every cell so playNote uses them.
-            cellParams.forEach(p => { p.partials = [...partials]; });
+            // Stash the oscillator mix amplitudes on every cell so
+            // playNote builds the right osc stack.
+            cellParams.forEach(p => { p.wavetableMix = [...mix]; });
             renderSequence();
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });

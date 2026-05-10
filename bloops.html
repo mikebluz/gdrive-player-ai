@@ -2263,6 +2263,14 @@
     const _activeVoices = []; // FIFO; oldest at index 0
     function _registerVoice(entry) {
       _activeVoices.push(entry);
+      // Voice stealing is meaningful only during LIVE playback, where
+      // overlapping release tails can drive the master limiter into
+      // IM crunch. During offline export rendering we schedule every
+      // voice up front (no real-time pacing), so capping at 24 just
+      // ramps every voice past the cap to -80 dB at offline t=0 —
+      // which silently kills the entire render except the last 24
+      // voices. Bypass the cap when an offline render is in flight.
+      if (_offlineSamplerOverride) return;
       while (_activeVoices.length > VOICE_CAP) {
         _stealVoice(_activeVoices.shift());
       }
@@ -9349,22 +9357,12 @@
           // exported WAV matches what the user hears in the browser.
           const teq = track.eq || { low: 0, mid: 0, high: 0 };
           const tpan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
-          // DEBUG: still bypassing per-track bus.
-          const trackBus = bus;
-          void teq; void tpan;
-          // DEBUG: drop a known-good tone directly into `bus` at
-          // offline t=5 so we can tell if the basic offline synth
-          // path produces audio at all. If THIS doesn't show up in
-          // the buffer around 5–6 s, the silence is downstream
-          // (global FX chain or limiter). If it DOES, the bug is
-          // specific to our track-voice scheduling code path.
-          try {
-            const testSynth = new Tone.Synth({
-              oscillator: { type: 'sine' },
-              envelope: { attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.1 },
-            }).connect(bus);
-            testSynth.triggerAttackRelease('A4', 0.5, 5, 0.8);
-          } catch (e) { console.warn('[export] test-tone failed', e); }
+          const trackPanner = new Tone.Panner(tpan).connect(bus);
+          const trackBus = new Tone.EQ3({
+            low:  teq.low  || 0,
+            mid:  teq.mid  || 0,
+            high: teq.high || 0,
+          }).connect(trackPanner);
           let time = 0;
           (track.items || []).forEach(item => {
             if (item.type === 'audio') {
@@ -9385,7 +9383,6 @@
             // pick the longest to advance `time`.
             const scheduleLane = (steps, baseTime) => {
               let t = baseTime;
-              let scheduledCount = 0;
               flattenItemSteps(steps).forEach(step => {
                 const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
                 const stepMs = Math.round(60000 / itemBpm * stepSub);
@@ -9393,17 +9390,12 @@
                 const durSec = durMs / 1000;
                 if (step.chord) {
                   const size = step.chord.length;
-                  step.chord.forEach(n => {
-                    playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus);
-                    scheduledCount++;
-                  });
+                  step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus));
                 } else if (step.freq !== null && step.freq !== undefined) {
                   playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, trackBus);
-                  scheduledCount++;
                 }
                 t += durSec;
               });
-              try { console.log('[export] scheduled', scheduledCount, 'voices over', (t - baseTime).toFixed(3), 's starting at', baseTime.toFixed(3)); } catch (e) {}
               return t - baseTime;
             };
             // Multi-lane items: schedule every audible lane in parallel

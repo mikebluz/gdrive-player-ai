@@ -822,27 +822,23 @@
       if (!btn) return;
       const span = btn.querySelector('span');
       if (!span) return;
-      // Poly + active per-lane playback: render one chord/note name
-      // per lane, joined with spaces in lane order. Each lane gets
-      // its own naming pass so chord shapes stay correct (e.g. lane
-      // A's "C" and lane B's "Dm" become "C Dm" rather than the
-      // confusing stacked-name you'd get from concatenated freqs).
-      // Falls through to the single-step path below when nothing is
-      // playing in any lane.
-      if (polyMode && _playbackStepsByLane.size > 0) {
-        const indices = Array.from(_playbackStepsByLane.keys()).sort((a, b) => a - b);
-        const parts = [];
-        for (const li of indices) {
-          const lstep = _playbackStepsByLane.get(li);
-          const lfreqs = collectStepFreqs(lstep);
-          if (!lfreqs || lfreqs.length === 0) continue;
-          const lname = chordNameFromFreqs(lfreqs, null);
-          if (lname) parts.push(lname);
-        }
-        if (parts.length > 0) {
-          span.textContent = parts.join(' ');
-          btn.classList.add('show-chord');
-          return;
+      // During playback, surface only the active lane's currently-
+      // playing step. Earlier this joined the names from every
+      // lane ("C Dm Em" etc.), but that turned the Keep label into
+      // a moving wall of text. Reading just the lane the user has
+      // selected matches the rest of the UI's per-lane focus.
+      if (_playbackStepsByLane.size > 0) {
+        const activeStep = _playbackStepsByLane.get(activeLaneIdx);
+        if (activeStep) {
+          const lfreqs = collectStepFreqs(activeStep);
+          if (lfreqs && lfreqs.length > 0) {
+            const lname = chordNameFromFreqs(lfreqs, null);
+            if (lname) {
+              span.textContent = lname;
+              btn.classList.add('show-chord');
+              return;
+            }
+          }
         }
       }
       let freqs = null;
@@ -3099,9 +3095,18 @@
             ? `Lane ${lane.name} — click to ${lane.muted ? 'unmute' : 'mute'}.`
             : `Lane ${lane.name} (${lane.muted ? 'muted' : 'on'}) — switch to this lane to mute / unmute.`;
           status.addEventListener('click', (e) => {
-            // Live active check (not the closure's isActiveLane) so a
-            // stale chip captured before activation can't ever toggle.
-            if (laneIdx !== activeLaneIdx) return;
+            // Non-active lane: first click on the status button just
+            // activates the lane (matches the "click a lane to select
+            // it" model used everywhere else). The user can then
+            // click again to toggle mute. The row-level click handler
+            // bails on .lane-status, so without this branch the click
+            // would be silently consumed.
+            if (laneIdx !== activeLaneIdx) {
+              e.stopPropagation();
+              _laneExpanderOpen = true;
+              activateLane(laneIdx);
+              return;
+            }
             e.stopPropagation();
             lane.muted = !lane.muted;
             renderSequence();
@@ -3722,17 +3727,15 @@
       const slipVal = document.getElementById('step-slip-val');
       // Eligibility is now "step has any playable content" — chord
       // chips (no freq, has chord[]) and sub-sequence chips (isSub,
-      // has subSteps[]) qualify alongside plain notes. The bars'
-      // displayed values come from the step's first leaf so subs
-      // surface a representative value; writers fan out to every
-      // leaf so the edit actually reaches each voice.
+      // has subSteps[]) qualify alongside plain notes. The Pan / Vol
+      // / Slip bars only show when at least one such step is
+      // selected; the older "fall through to lane-scope when no
+      // selection" behavior is gone (per user — these faders are
+      // step-level controls, not lane-level).
       const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
-      const polyLaneScope = (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]);
-      const laneEligible = polyLaneScope
-        ? (lanes[activeLaneIdx].steps || []).filter(_stepHasPlayableContent)
-        : [];
-      const eligible = selEligible.length > 0 ? selEligible : laneEligible;
-      const showBars = polyLaneScope ? !!lanes[activeLaneIdx] : eligible.length > 0;
+      const polyLaneScope = false;
+      const eligible = selEligible;
+      const showBars = eligible.length > 0;
       // Read the slider's display value from the primary step's first
       // playable leaf — collapses chord and sub cases to the same
       // lookup. For chord steps the leaf IS the chord step (chord
@@ -4514,6 +4517,11 @@
       // Drift label is per-lane — flip Drift ↔ Clear when switching to
       // a (non-)drifting lane.
       if (typeof refreshDriftBtn === 'function') refreshDriftBtn();
+      // Keep label is now scoped to the active lane's playing step
+      // (see updateKeepLabel) — refresh on lane switch so the readout
+      // jumps to the new lane's current step instead of holding the
+      // last-painted value from the previous lane.
+      if (typeof updateKeepLabel === 'function') updateKeepLabel();
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     // Lazy-init lanes on first use so the always-poly invariant holds
@@ -14143,15 +14151,11 @@
         else s.params = { type };
       };
       sequence.forEach(retuneStep);
-      // In Poly mode, retune every lane (sequence is the active one,
-      // so handle the rest explicitly). Otherwise picking a tone would
-      // only update the lane the user has selected.
-      if (polyMode) {
-        lanes.forEach((lane, idx) => {
-          if (idx === activeLaneIdx) return; // already covered via sequence alias
-          (lane.steps || []).forEach(retuneStep);
-        });
-      }
+      // Tone changes are scoped to the active lane only — each lane
+      // owns its own voice (cellSounds / cellParams) on lane.voice,
+      // so picking a new tone on lane A must not silently retune
+      // lane B's steps. The previous behavior fanned out across every
+      // lane regardless of voice ownership.
       pendingChord.forEach(n => {
         n.sound = type;
         if (n.params) n.params.type = type;

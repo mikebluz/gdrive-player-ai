@@ -188,17 +188,27 @@
     <div class="tone-panel" id="tone-panel"></div>
   </div>
 
-  <div class="banner-row">
-    <button type="button" id="radial-tone-btn" class="radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖</button>
-    <button type="button" id="scale-banner-half" class="banner-half" title="Click to change root, scale, octaves, A4 tuning, and saved grid states"></button>
-    <button type="button" id="tone-banner-half"  class="banner-half" title="Click to pick a tone applied to all notes"></button>
+  <!-- Lane voice editor — the cell grid plus the Scale / Tone / FX /
+       Spell pills. Renders ABOVE the active lane in #sequence-display
+       (renderSequence reparents this node into the active lane row).
+       Hidden via .collapsed when no lane has its expander open;
+       parked in #lane-expander-stash so the bindings stay alive. -->
+  <div id="lane-expander-stash" hidden>
+    <div id="lane-expander">
+      <button type="button" id="lane-expander-close" class="lane-expander-close" aria-label="Close voice editor" title="Close voice editor (Esc)">×</button>
+      <div class="banner-row">
+        <button type="button" id="radial-tone-btn" class="radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖</button>
+        <button type="button" id="scale-banner-half" class="banner-half" title="Click to change root, scale, octaves, A4 tuning, and saved grid states"></button>
+        <button type="button" id="tone-banner-half"  class="banner-half" title="Click to pick a tone applied to all notes"></button>
+      </div>
+      <div class="banner-row banner-row--fx">
+        <button type="button" id="fx-banner" class="banner-half" title="Click to adjust global reverb / delay / distortion">FX</button>
+        <button type="button" id="mode-banner" class="banner-half" data-mode="sequencer" title="Note mode: click to cycle Spell → Run → Stack">Spell</button>
+        <button type="button" id="mode-lock-banner" class="banner-half" title="Note lock mode: when on, switching note modes re-shapes the sequence — flat notes ↔ subsequence ↔ chord — so you can round-trip without losing structure.">○</button>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
   </div>
-  <div class="banner-row banner-row--fx">
-    <button type="button" id="fx-banner" class="banner-half" title="Click to adjust global reverb / delay / distortion">FX</button>
-    <button type="button" id="mode-banner" class="banner-half" data-mode="sequencer" title="Note mode: click to cycle Spell → Run → Stack">Spell</button>
-    <button type="button" id="mode-lock-banner" class="banner-half" title="Note lock mode: when on, switching note modes re-shapes the sequence — flat notes ↔ subsequence ↔ chord — so you can round-trip without losing structure.">○</button>
-  </div>
-  <div class="grid" id="grid"></div>
 
   <div class="step-grid-bar">
     <div class="kwr-pair">
@@ -426,6 +436,52 @@
     let lanes = [];           // [{ name, steps: [], muted: false, solo: false, voice }]
     let activeLaneIdx = 0;
     let _stashedLanes = null; // legacy field — never written under always-poly
+    // The voice editor (#lane-expander) is reparented above the active
+    // lane row when this flag is true; parked in #lane-expander-stash
+    // (display:none) when false. Default true so a fresh workspace
+    // shows the grid + Scale / Tone / FX / Spell controls right away.
+    let _laneExpanderOpen = true;
+    // Move the #lane-expander DOM node either above the active lane
+    // row (open) or back into the hidden stash (closed). Called from
+    // renderSequence after the lane rows are built and from the
+    // toggle / Esc handlers. Idempotent — safe to call repeatedly.
+    function _placeLaneExpander() {
+      const exp = document.getElementById('lane-expander');
+      const stash = document.getElementById('lane-expander-stash');
+      if (!exp || !stash) return;
+      const display = document.getElementById('sequence-display');
+      const activeRow = display
+        ? display.querySelector(':scope > .lane-row.active')
+        : null;
+      if (_laneExpanderOpen && activeRow && display) {
+        if (exp.parentNode !== display || exp.nextSibling !== activeRow) {
+          display.insertBefore(exp, activeRow);
+        }
+        stash.hidden = true;
+      } else {
+        if (exp.parentNode !== stash) stash.appendChild(exp);
+        stash.hidden = true; // stash itself is always display:none via [hidden]
+      }
+    }
+    // Close button + Esc collapse the voice editor. Bound here at
+    // module scope so a single listener serves every render — the
+    // expander DOM node persists across renderSequence calls so its
+    // close button binding survives.
+    document.getElementById('lane-expander-close')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _laneExpanderOpen = false;
+      _placeLaneExpander();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (!_laneExpanderOpen) return;
+      _laneExpanderOpen = false;
+      _placeLaneExpander();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    });
     let chordMode = false;
     // Grid playback mode — drives what a cell click does.
     //   'sequencer' (default): existing behavior (add note / start sustain).
@@ -3095,15 +3151,33 @@
           }
 
           row.addEventListener('click', (e) => {
-            if (isActiveLane) return;
-            if (e.target.closest('.lane-btn')) return;
-            activateLane(laneIdx);
+            // Don't intercept clicks that land on the lane-status
+            // button (mute toggle), step chips inside the lane, or
+            // the lane-expander itself when it's been reparented
+            // into this row's neighborhood.
+            if (e.target.closest('.lane-status')) return;
+            if (e.target.closest('.seq-step')) return;
+            if (e.target.closest('#lane-expander')) return;
+            if (isActiveLane) {
+              // Click on the active lane → toggle the voice editor
+              // open / closed. Lets the user collapse the grid to
+              // see more lanes at once.
+              _laneExpanderOpen = !_laneExpanderOpen;
+              _placeLaneExpander();
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            } else {
+              // Activating a different lane always shows its voice
+              // editor — that's the whole point of activating.
+              _laneExpanderOpen = true;
+              activateLane(laneIdx);
+            }
           });
 
           display.appendChild(row);
         });
 
         chipHost = activeLaneChipsEl || display;
+        _placeLaneExpander();
       }
 
       const isEmpty = sequence.length === 0 && pendingChord.length === 0;
@@ -9635,6 +9709,9 @@
           stepMode:  !!stepMode,
           multiSelectMode: !!multiSelectMode,
           activeSeqIndex,
+          // Voice-editor open state — restored on reload so the user
+          // doesn't have to re-open the grid every session.
+          laneExpanderOpen: !!_laneExpanderOpen,
           // Poly-mode state — clone lane step arrays deep so storage
           // doesn't share references with the live workspace.
           polyMode: !!polyMode,
@@ -10615,6 +10692,9 @@
       loopMode        = !!w.loopMode;
       stepMode        = !!w.stepMode;
       multiSelectMode = !!w.multiSelectMode;
+      // laneExpanderOpen defaults true (legacy snapshots predate the
+      // field) so reloading an older project still shows the grid.
+      _laneExpanderOpen = (w.laneExpanderOpen != null) ? !!w.laneExpanderOpen : true;
 
       // Poly-only world: restore lanes from the snapshot. Older
       // snapshots may have stored polyMode=false with no lanes — the
@@ -10928,6 +11008,7 @@
     // all come back. The persist-enable flag stays off until the restore
     // completes, so no half-applied snapshot gets written back.
     (async function restoreWorkspaceFromStorage() {
+      let restored = false;
       try {
         const raw = localStorage.getItem(WORKSPACE_LS_KEY);
         if (raw) {
@@ -10936,11 +11017,19 @@
             await applyProjectSnapshot(snap);
             if (snap.currentProjectName) currentProjectName = snap.currentProjectName;
             refreshProjectNameLabel();
+            restored = true;
           }
         }
       } catch (e) {
         console.warn('Could not restore workspace:', e);
       } finally {
+        // Fresh-start fallback render: when there's no localStorage
+        // snapshot, applyProjectSnapshot never runs, so no renderSequence
+        // call ever fires and the lane-expander stays parked in its
+        // hidden stash. Force one render here so the default lane row
+        // (and the voice editor reparented above it) shows up on first
+        // load.
+        if (!restored) renderSequence();
         _workspacePersistEnabled = true;
       }
     })();

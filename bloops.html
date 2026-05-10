@@ -9382,6 +9382,7 @@
             // pick the longest to advance `time`.
             const scheduleLane = (steps, baseTime) => {
               let t = baseTime;
+              let scheduledCount = 0;
               flattenItemSteps(steps).forEach(step => {
                 const stepSub = (step.subdivision != null) ? step.subdivision : itemSub;
                 const stepMs = Math.round(60000 / itemBpm * stepSub);
@@ -9389,12 +9390,17 @@
                 const durSec = durMs / 1000;
                 if (step.chord) {
                   const size = step.chord.length;
-                  step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus));
+                  step.chord.forEach(n => {
+                    playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus);
+                    scheduledCount++;
+                  });
                 } else if (step.freq !== null && step.freq !== undefined) {
                   playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, trackBus);
+                  scheduledCount++;
                 }
                 t += durSec;
               });
+              try { console.log('[export] scheduled', scheduledCount, 'voices over', (t - baseTime).toFixed(3), 's starting at', baseTime.toFixed(3)); } catch (e) {}
               return t - baseTime;
             };
             // Multi-lane items: schedule every audible lane in parallel

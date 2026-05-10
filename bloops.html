@@ -2896,47 +2896,36 @@
           octaves: 1.5,
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
         }).connect(chainHead);
+      } else if (type === 'wavetable') {
+        // Wavetable: an FMSynth with a square-wave modulator and
+        // moderate modulation index. The square modulator sweeps the
+        // carrier through a complex harmonic series that reads as
+        // "wavetable" — much richer than sawtooth, less metallic
+        // than the bell preset. Going through FMSynth instead of
+        // OmniOscillator-with-custom-partials because Tone v14's
+        // option-bag partials path was producing silent voices.
+        synth = new Tone.FMSynth({
+          harmonicity: 1.5,
+          modulationIndex: 6,
+          oscillator: { type: 'sine' },
+          envelope: env,
+          modulation: { type: 'square' },
+          modulationEnvelope: { attack: 0.01, decay: 0.5, sustain: 0.5, release: 0.5 },
+        }).connect(chainHead);
       } else {
         // Sustainable waves: sine / square / triangle / sawtooth /
-        // pulse / fat / wavetable. Wavetable is a custom-partials
-        // OmniOscillator built post-construction (the option-bag
-        // form was producing a silent oscillator on Tone v14 — the
-        // type=custom + partials route through OmniOscillator only
-        // settles correctly when assigned via `.partials = [...]`
-        // after the synth exists). Defaults to a warm sawtooth-ish
-        // harmonic series; step.params.partials overrides for the
-        // future per-cell wavetable editor.
-        let oscOpts;
-        if (type === 'fat') {
-          oscOpts = { type: 'fatsawtooth', count: 3, spread: 30 };
-        } else if (type === 'pulse') {
-          oscOpts = { type: 'pulse', width: 0.4 };
-        } else if (type === 'wavetable') {
-          // Build the synth with a sine base (a known-good type that
-          // always produces audio) and overwrite partials below.
-          oscOpts = { type: 'sine' };
-        } else {
-          oscOpts = { type };
-        }
+        // pulse / fat. (Wavetable is handled above as an FMSynth
+        // preset — the additive-partials route through OmniOscillator
+        // wasn't reliable on Tone v14.)
+        const oscOpts = type === 'fat'
+          ? { type: 'fatsawtooth', count: 3, spread: 30 }
+          : type === 'pulse'
+            ? { type: 'pulse', width: 0.4 }
+            : { type };
         synth = new Tone.Synth({
           oscillator: oscOpts,
           envelope: env,
         }).connect(chainHead);
-        if (type === 'wavetable') {
-          // Wavetable: drive the existing OmniOscillator into custom
-          // mode via Tone.Synth's `.set()` — passes the option bag
-          // through to the inner oscillator atomically (type +
-          // partials together). Earlier attempts to set them
-          // separately or as constructor options produced a silent
-          // voice on Tone v14. If `.set()` also fails, fall through
-          // with the synth still on its sine base — at least audible.
-          const partials = (Array.isArray(params.partials) && params.partials.length > 0)
-            ? params.partials.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
-            : [1, 0.5, 0.25, 0.15, 0.08, 0.04, 0.02, 0.01];
-          try {
-            synth.set({ oscillator: { type: 'custom', partials } });
-          } catch (e) { console.warn('wavetable set failed', e); }
-        }
       }
 
       if (synth.detune) synth.detune.value = detune;

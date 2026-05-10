@@ -14810,7 +14810,12 @@
       if (value === 'pluck' || value === 'bell') return 'strings';
       return 'other';
     }
-    let _toneMenuView = 'top'; // 'top' or a family id
+    // Top-level bucket: 'synths' (oscillator-based, no sample buffer)
+    // or 'samples' (sample-buffer based, played via Tone.Sampler /
+    // GrainPlayer). The string 'sample:' prefix is the discriminator.
+    const _toneTopBucketFor = (value) =>
+      (typeof value === 'string' && value.startsWith('sample:')) ? 'samples' : 'synths';
+    let _toneMenuView = 'top'; // 'top' | 'synths' | 'samples'
     function populateTonePanel() {
       const panel = document.getElementById('tone-panel');
       if (!panel) return;
@@ -14828,87 +14833,96 @@
         marker.tabIndex = -1;
         panel.appendChild(marker);
       }
-      // Bucket every available tone into a family.
-      const grouped = new Map();
-      getAllSoundOptions().forEach(opt => {
-        const fam = toneFamilyFor(opt.value);
-        if (!grouped.has(fam)) grouped.set(fam, []);
-        grouped.get(fam).push(opt);
-      });
-      // Forget a stale drilldown if the family disappeared (e.g. samples
-      // unloaded between opens).
-      if (_toneMenuView !== 'top' && !grouped.has(_toneMenuView)) {
-        _toneMenuView = 'top';
-      }
+      // Bucket every available tone first by Synths / Samples (top
+      // axis the user picks) and then by family (the existing sub-
+      // categorization, used as section headers within each bucket).
+      const allOpts = getAllSoundOptions();
+      const byBucket = { synths: [], samples: [] };
+      allOpts.forEach(opt => byBucket[_toneTopBucketFor(opt.value)].push(opt));
+      const groupByFamily = (opts) => {
+        const m = new Map();
+        opts.forEach(opt => {
+          const fam = toneFamilyFor(opt.value);
+          if (!m.has(fam)) m.set(fam, []);
+          m.get(fam).push(opt);
+        });
+        return m;
+      };
+      const renderRow = (opt) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tone-opt';
+        b.textContent = opt.label;
+        b.dataset.tone = opt.value;
+        panel.appendChild(b);
+      };
+      const renderHeader = (text) => {
+        const h = document.createElement('div');
+        h.className = 'tone-subhead';
+        h.textContent = text;
+        panel.appendChild(h);
+      };
       if (_toneMenuView === 'top') {
-        TONE_FAMILY_ORDER.forEach(fam => {
-          if (!grouped.has(fam)) return;
-          const count = grouped.get(fam).length;
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'tone-opt tone-opt-family';
-          b.innerHTML = `<span>${TONE_FAMILY_LABELS[fam] || fam}</span><span class="tone-opt-count">${count} ▸</span>`;
-          b.addEventListener('click', (e) => {
-            // Re-rendering the panel removes the click target from the DOM
-            // before the document-level click-outside check can confirm
-            // the click was inside the panel — without stopPropagation
-            // that handler closes the menu instead of drilling in.
+        // Two top-level buttons. Each shows the count of tones in
+        // that bucket so the user can see at a glance how many synth
+        // vs sample voices the workspace knows about.
+        [
+          { id: 'synths',  label: 'Synths',  count: byBucket.synths.length },
+          { id: 'samples', label: 'Samples', count: byBucket.samples.length },
+        ].forEach(b => {
+          if (b.count === 0) return;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'tone-opt tone-opt-family';
+          btn.innerHTML = `<span>${b.label}</span><span class="tone-opt-count">${b.count} ▸</span>`;
+          btn.addEventListener('click', (e) => {
+            // Re-rendering removes the click target before the document
+            // click-outside handler runs — stopPropagation keeps the
+            // menu open while we drill in.
             e.stopPropagation();
-            _toneMenuView = fam;
+            _toneMenuView = b.id;
             populateTonePanel();
-            const btn = document.getElementById('tone-banner-half');
-            if (btn && panel.classList.contains('open')) pinPanelToButton(btn, panel);
+            const trigger = document.getElementById('tone-banner-half');
+            if (trigger && panel.classList.contains('open')) pinPanelToButton(trigger, panel);
           });
-          panel.appendChild(b);
+          panel.appendChild(btn);
         });
       } else {
+        const bucket = _toneMenuView === 'synths' ? byBucket.synths : byBucket.samples;
         const back = document.createElement('button');
         back.type = 'button';
         back.className = 'tone-opt tone-opt-back';
-        back.textContent = `← ${TONE_FAMILY_LABELS[_toneMenuView] || _toneMenuView}`;
+        back.textContent = _toneMenuView === 'synths' ? '← Synths' : '← Samples';
         back.addEventListener('click', (e) => {
-          // Same propagation stop as the family rows — see the comment
-          // there. Without it, the click-outside handler closes the panel
-          // because the target was removed mid-flight.
           e.stopPropagation();
           _toneMenuView = 'top';
           populateTonePanel();
-          const btn = document.getElementById('tone-banner-half');
-          if (btn && panel.classList.contains('open')) pinPanelToButton(btn, panel);
+          const trigger = document.getElementById('tone-banner-half');
+          if (trigger && panel.classList.contains('open')) pinPanelToButton(trigger, panel);
         });
         panel.appendChild(back);
-        const items = grouped.get(_toneMenuView);
-        const renderRow = (opt) => {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'tone-opt';
-          b.textContent = opt.label;
-          b.dataset.tone = opt.value;
-          panel.appendChild(b);
-        };
-        const renderHeader = (text) => {
-          const h = document.createElement('div');
-          h.className = 'tone-subhead';
-          h.textContent = text;
-          panel.appendChild(h);
-        };
-        if (_toneMenuView === 'drums') {
-          // Split synth-based one-shot drums from full sample-mapped kits
-          // so the user can tell at a glance which row plays a single
-          // drum vs an entire kit mapped across the chromatic grid.
-          const samples = items.filter(o => o.value === 'kick' || o.value === 'metal');
-          const kits    = items.filter(o => !samples.includes(o));
-          if (samples.length > 0) {
-            renderHeader('Single drums');
-            samples.forEach(renderRow);
+        const grouped = groupByFamily(bucket);
+        // Walk the existing family order; any family with zero tones
+        // in this bucket is skipped. The header text falls back to
+        // the canonical family label.
+        TONE_FAMILY_ORDER.forEach(fam => {
+          const items = grouped.get(fam);
+          if (!items || items.length === 0) return;
+          if (fam === 'drums' && _toneMenuView === 'synths') {
+            // Synths-side drums: kick / metal are the only one-shot
+            // synth drums; render under a "Drums" subhead.
+            renderHeader('Drums');
+            items.forEach(renderRow);
+            return;
           }
-          if (kits.length > 0) {
+          if (fam === 'drums' && _toneMenuView === 'samples') {
             renderHeader('Drum kits');
-            kits.forEach(renderRow);
+            items.forEach(renderRow);
+            return;
           }
-        } else {
+          renderHeader(TONE_FAMILY_LABELS[fam] || fam);
           items.forEach(renderRow);
-        }
+        });
       }
     }
     (function initToneMenu() {

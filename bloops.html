@@ -10006,6 +10006,14 @@
       const btn = document.getElementById('tracks-item-actions-btn');
       if (!btn) return;
       btn.hidden = !_selectedTrackItem;
+      // Surface the selected item's name on the button so the user
+      // sees "MySeq ▾" instead of a generic "Item ▾". Falls back to
+      // "Item" when the selection has no name (silent placeholders).
+      if (_selectedTrackItem) {
+        const item = tracks[_selectedTrackItem.trackIdx]?.items[_selectedTrackItem.itemIdx];
+        const name = (item && (item.name || item.type)) || 'Item';
+        btn.textContent = name + ' ▾';
+      }
     }
     function selectTrackItem(trackIdx, itemIdx) {
       const same = _selectedTrackItem
@@ -10084,10 +10092,17 @@
       })();
     }
     document.getElementById('tracks-item-actions-btn')?.addEventListener('click', (e) => {
-      if (!_selectedTrackItem) return;
+      e.stopPropagation();
+      if (!_selectedTrackItem) {
+        console.warn('[track-actions] no selection');
+        return;
+      }
       const { trackIdx, itemIdx } = _selectedTrackItem;
       const item = tracks[trackIdx]?.items[itemIdx];
-      if (!item) return;
+      if (!item) {
+        console.warn('[track-actions] item missing', trackIdx, itemIdx);
+        return;
+      }
       const actions = [
         { label: 'Reverse', fn: () => reverseTrackItem(trackIdx, itemIdx) },
         { label: 'Change speed…', fn: () => {
@@ -10099,6 +10114,9 @@
         } },
       ];
       const r = e.currentTarget.getBoundingClientRect();
+      // Show the menu just below the button. showCtxMenu has its own
+      // pointerdown click-outside handler that dismisses on any click
+      // outside .ctx-menu — so we let the menu manage its own life.
       showCtxMenu(r.left, r.bottom + 4, actions);
     });
 

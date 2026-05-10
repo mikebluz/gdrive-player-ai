@@ -9306,6 +9306,53 @@
       return new Blob([ab], { type: 'audio/wav' });
     }
 
+    // Lazy-load lamejs (the only practical pure-JS MP3 encoder). The
+    // CDN URL is pinned to a specific version so the build is
+    // reproducible. Loading happens once per page; subsequent export
+    // calls reuse the already-loaded global.
+    async function loadLamejs() {
+      if (typeof window !== 'undefined' && window.lamejs && window.lamejs.Mp3Encoder) return;
+      await loadExternalScript('https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js');
+      if (typeof window === 'undefined' || !window.lamejs || !window.lamejs.Mp3Encoder) {
+        throw new Error('lamejs failed to load');
+      }
+    }
+    // Encode an AudioBuffer as a 192 kbps MP3 Blob. lamejs only does
+    // 16-bit PCM input, so we Float32→Int16 first. Stereo buffers go
+    // through the two-channel encoder; mono falls back to the single-
+    // channel path. Uses 1152-sample frames (the canonical MP3 block
+    // size) and flushes the encoder at the end so the final partial
+    // frame isn't dropped.
+    async function audioBufferToMp3(buffer) {
+      await loadLamejs();
+      const numCh = Math.max(1, Math.min(2, buffer.numberOfChannels));
+      const sampleRate = buffer.sampleRate;
+      const kbps = 192;
+      const encoder = new window.lamejs.Mp3Encoder(numCh, sampleRate, kbps);
+      const floatToInt16 = (f32) => {
+        const out = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++) {
+          const v = Math.max(-1, Math.min(1, f32[i]));
+          out[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+        }
+        return out;
+      };
+      const left  = floatToInt16(buffer.getChannelData(0));
+      const right = numCh === 2 ? floatToInt16(buffer.getChannelData(1)) : null;
+      const blockSize = 1152;
+      const chunks = [];
+      for (let i = 0; i < left.length; i += blockSize) {
+        const lChunk = left.subarray(i, i + blockSize);
+        const mp3buf = (numCh === 2)
+          ? encoder.encodeBuffer(lChunk, right.subarray(i, i + blockSize))
+          : encoder.encodeBuffer(lChunk);
+        if (mp3buf.length > 0) chunks.push(new Uint8Array(mp3buf));
+      }
+      const tail = encoder.flush();
+      if (tail.length > 0) chunks.push(new Uint8Array(tail));
+      return new Blob(chunks, { type: 'audio/mpeg' });
+    }
+
     // Estimate how long an effect tail keeps producing audible signal. Used
     // to size the offline-render buffer so reverb / delay tails don't get
     // chopped off the end of the export.
@@ -10054,6 +10101,16 @@
       const defaultName = `sounds-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
       const filename = prompt('File name for the export (no extension):', defaultName);
       if (!filename) return;
+      // Format picker — text prompt so we don't have to ship a modal
+      // for a single-letter choice. Defaults to wav (uncompressed,
+      // matches prior behavior); mp3 lazy-loads lamejs the first time
+      // it's used. Anything other than 'mp3' (case-insensitive) is
+      // treated as wav so the user doesn't get yelled at for typos.
+      const fmtRaw = prompt('Format — type "mp3" for MP3 or leave as "wav":', 'wav');
+      if (fmtRaw == null) return;
+      const fmt = String(fmtRaw).trim().toLowerCase() === 'mp3' ? 'mp3' : 'wav';
+      const ext = fmt === 'mp3' ? 'mp3' : 'wav';
+      const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
       const folderName = prompt('Google Drive folder to save in:', 'bloops/exports');
       if (!folderName) return;
 
@@ -10062,17 +10119,20 @@
       try {
         btn.textContent = 'Rendering…';
         const buffer = await renderTracksToBuffer();
-        const blob = audioBufferToWav(buffer);
+        btn.textContent = fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…';
+        const blob = fmt === 'mp3'
+          ? await audioBufferToMp3(buffer)
+          : audioBufferToWav(buffer);
 
         btn.textContent = 'Signing in…';
         await googleSignInForDrive();
 
         btn.textContent = 'Uploading…';
         const folderId = await findOrCreateDriveFolder(folderName);
-        const file = await uploadWavToDrive(`${filename}.wav`, blob, folderId);
+        const file = await uploadBlobToDrive(`${filename}.${ext}`, blob, folderId, mime);
 
         btn.textContent = 'Saved';
-        alert(`Saved "${file.name || filename + '.wav'}" to Drive folder "${folderName}".`);
+        alert(`Saved "${file.name || filename + '.' + ext}" to Drive folder "${folderName}".`);
       } catch (e) {
         console.error(e);
         alert(`Export failed: ${e.message || e}`);
@@ -10095,14 +10155,24 @@
         alert('This browser does not support sharing. Use Export to save the file and share it manually.');
         return;
       }
-      const filename = `bloops-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}.wav`;
+      // Same format picker as Drive export — leave blank / type wav
+      // for uncompressed, type mp3 for compressed. mp3 uses lamejs.
+      const fmtRaw = prompt('Format — type "mp3" for MP3 or leave as "wav":', 'wav');
+      if (fmtRaw == null) return;
+      const fmt = String(fmtRaw).trim().toLowerCase() === 'mp3' ? 'mp3' : 'wav';
+      const ext  = fmt === 'mp3' ? 'mp3' : 'wav';
+      const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+      const filename = `bloops-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}.${ext}`;
       const origText = btn.textContent;
       btn.disabled = true;
       try {
         btn.textContent = 'Rendering…';
         const buffer = await renderTracksToBuffer();
-        const blob   = audioBufferToWav(buffer);
-        const file   = new File([blob], filename, { type: 'audio/wav' });
+        btn.textContent = fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…';
+        const blob = fmt === 'mp3'
+          ? await audioBufferToMp3(buffer)
+          : audioBufferToWav(buffer);
+        const file   = new File([blob], filename, { type: mime });
         if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
           alert('This browser cannot share audio files directly. Use Export to save the file and share it manually.');
           return;

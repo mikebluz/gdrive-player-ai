@@ -9324,17 +9324,18 @@
           const teq = track.eq || { low: 0, mid: 0, high: 0 };
           const tpan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
           const trackPanner = new Tone.Panner(tpan).connect(bus);
-          // Mirror getTrackBus: skip the EQ3 when bands are all flat
-          // so the offline render doesn't get the same crossover-sum
-          // loss that was making live tracks sound quieter than Bloops.
-          const tEqFlat = !(teq.low || 0) && !(teq.mid || 0) && !(teq.high || 0);
-          const trackBus = tEqFlat
-            ? new Tone.Gain(1).connect(trackPanner)
-            : new Tone.EQ3({
-                low:  teq.low  || 0,
-                mid:  teq.mid  || 0,
-                high: teq.high || 0,
-              }).connect(trackPanner);
+          // EQ3 always — the Gain shortcut from the live path was
+          // tripping a silent-render edge case in Tone.Offline (the
+          // unity Gain didn't pass signal in the offline graph for
+          // some users). EQ3 with all bands at 0 dB is what the
+          // export rendered cleanly with for the entire history of
+          // this codebase, so keep it here even though the live bus
+          // skips it now.
+          const trackBus = new Tone.EQ3({
+            low:  teq.low  || 0,
+            mid:  teq.mid  || 0,
+            high: teq.high || 0,
+          }).connect(trackPanner);
           let time = 0;
           (track.items || []).forEach(item => {
             if (item.type === 'audio') {

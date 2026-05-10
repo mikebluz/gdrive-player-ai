@@ -1542,19 +1542,16 @@
       justify-content: stretch;
       gap: 4px;
       padding: 2px;
-      /* Width grew from 32px → 64px to fit the new grid-toggle button
-         to the right of the status pill. Both buttons live inside
-         .lane-controls and split the space evenly. */
-      width: 64px;
-      min-width: 64px;
+      /* Three buttons now: collapse | status | grid-toggle.
+         Collapse + grid-toggle are narrow chevron-style buttons,
+         status is the wide colored mute pill. */
+      width: 92px;
+      min-width: 92px;
     }
-    /* Grid-toggle button — opens / closes the lane's voice editor.
-       Sized to match .lane-status so the two buttons sit as a pair.
-       The .open variant flips the chevron and tints to active blue
-       when this lane's editor is currently expanded. */
+    .lane-collapse-toggle,
     .lane-grid-toggle {
-      flex: 1 1 auto;
-      width: 100%;
+      flex: 0 0 22px;
+      width: 22px;
       border: 2px solid #2d2d3f;
       border-radius: 8px;
       background: rgba(45, 45, 63, 0.4);
@@ -1567,10 +1564,12 @@
       touch-action: manipulation;
       padding: 0;
     }
+    .lane-collapse-toggle:hover,
     .lane-grid-toggle:hover {
       border-color: #4299e1;
       color: #b3d4ff;
     }
+    .lane-collapse-toggle.open,
     .lane-grid-toggle.open {
       border-color: #4299e1;
       color: #b3d4ff;
@@ -1629,16 +1628,27 @@
       min-width: 0;
       display: flex;
       flex-direction: row;
-      flex-wrap: nowrap;
+      /* Default: wrap chips so every step is visible without
+         horizontal scrolling. Lane row grows vertically to fit. */
+      flex-wrap: wrap;
       align-items: stretch;
       gap: 4px;
-      overflow-x: auto;
-      overflow-y: hidden;
+      overflow-x: hidden;
+      overflow-y: visible;
       padding: 4px 6px;
       background: rgba(10, 10, 20, 0.55);
       border-radius: 6px;
       scrollbar-width: thin;
       scrollbar-color: #2d2d3f #0a0a14;
+    }
+    /* Collapsed lane: trim back to a single visible chip row, with
+       horizontal scroll for overflow. The collapse-toggle button on
+       the lane-controls strip drives this. */
+    .lane-row.collapsed .lane-chips {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      max-height: 44px;
     }
     .lane-chips::-webkit-scrollbar { height: 4px; }
     .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }
@@ -3554,7 +3564,18 @@
     .se-chord-note-label {
       flex: 1; font-family: 'Segoe UI', sans-serif;
       font-size: 0.85rem; font-weight: 700; color: #e2e8f0;
+      /* Now a clickable <button> — tapping opens the inline pitch
+         picker so the user can retune this voice. Reset the default
+         button chrome so it still reads as a label, with a subtle
+         hover hint to flag the affordance. */
+      background: none;
+      border: none;
+      padding: 0;
+      text-align: left;
+      cursor: pointer;
+      transition: color 0.12s ease;
     }
+    .se-chord-note-label:hover { color: #b3d4ff; }
     .se-wave-badge {
       font-size: 0.63rem; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
       background: #0f0f1a; border: 1px solid #2d2d3f;

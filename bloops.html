@@ -3085,12 +3085,33 @@
             + (isActiveLane ? ' active' : '')
             + (lane.muted   ? ' muted'  : '')
             + (lane.solo    ? ' soloed' : '')
+            + (lane.collapsed ? ' collapsed' : '')
             // Drifting OR locked → keep the orange styling so the user
             // sees the lane has a drift offset. Reset clears both.
             + (lane.driftMs > 0 || lane.driftLocked ? ' drifting' : '');
 
           const ctrls = document.createElement('div');
           ctrls.className = 'lane-controls';
+          // Collapse-toggle button — sits to the LEFT of the status pill.
+          // ▾ when expanded (chips wrap to fill all rows visible);
+          // ▸ when collapsed (chips constrained to a single scrollable
+          // row). Per-lane state so each lane's display can be tuned
+          // independently.
+          const collapseBtn = document.createElement('button');
+          collapseBtn.type = 'button';
+          collapseBtn.className = 'lane-collapse-toggle';
+          collapseBtn.textContent = lane.collapsed ? '▸' : '▾';
+          if (!lane.collapsed) collapseBtn.classList.add('open');
+          collapseBtn.title = lane.collapsed
+            ? `Expand lane ${lane.name} — show every step at once`
+            : `Collapse lane ${lane.name} into a single scrollable row`;
+          collapseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            lane.collapsed = !lane.collapsed;
+            renderSequence();
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          ctrls.appendChild(collapseBtn);
           // Single status-light button — shows the lane label and its
           // mute state via background color. Click toggles mute, but
           // ONLY when the lane is active. On non-active lanes the
@@ -4307,6 +4328,10 @@
         // step's duration. Doesn't change the cadence, only the
         // attack offset within the slot. -50..50.
         slip: 0,
+        // Display: when true, lane chips render as a single
+        // horizontal-scroll row; when false (default) they wrap
+        // vertically so every step is visible at once.
+        collapsed: false,
         // Per-lane voice — the cell-grid configuration that defines
         // this lane's instrument (cell sound assignments, scale, root
         // / octave, palette, master tuning). When the lane is the
@@ -7239,6 +7264,7 @@
           pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
           volume: Number.isFinite(l.volume) ? l.volume : 100,
           slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+          collapsed: !!l.collapsed,
         }));
       }
       return Object.assign(snap, extra);
@@ -10052,6 +10078,7 @@
             pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
             volume: Number.isFinite(l.volume) ? l.volume : 100,
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+            collapsed: !!l.collapsed,
             // Per-lane voice. The active lane's live voice lives in
             // the globals (cellSounds / palette / etc.), so capture
             // those for it instead of relying on l.voice (which may
@@ -10074,6 +10101,7 @@
             pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
             volume: Number.isFinite(l.volume) ? l.volume : 100,
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+            collapsed: !!l.collapsed,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
           })) : null,
         },
@@ -11038,6 +11066,7 @@
         pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
         volume: Number.isFinite(l?.volume) ? l.volume : 100,
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+        collapsed: !!l?.collapsed,
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
       })) : [];
@@ -11052,6 +11081,7 @@
         pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
         volume: Number.isFinite(l?.volume) ? l.volume : 100,
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+        collapsed: !!l?.collapsed,
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
       })) : null;
@@ -13300,17 +13330,21 @@
           const row = document.createElement('div');
           row.className = 'se-chord-row';
 
-          const lbl = document.createElement('span');
+          // Clickable note label — opens the inline pitch picker for
+          // this voice. Doubles as the "change which note this voice
+          // plays" affordance: tapping the label is the natural
+          // gesture, no extra button needed.
+          const lbl = document.createElement('button');
+          lbl.type = 'button';
           lbl.className = 'se-chord-note-label';
-          lbl.textContent = n.label;
+          lbl.textContent = n.label + (pitchExpandedIdx === ni ? ' ▴' : ' ▾');
+          lbl.title = pitchExpandedIdx === ni
+            ? 'Close the pitch picker'
+            : 'Click to change this voice’s pitch';
 
           const badge = document.createElement('span');
           badge.className = 'se-wave-badge';
           badge.textContent = (n.params?.type || n.sound || 'sine').slice(0, 3);
-
-          const pitchBtn = document.createElement('button');
-          pitchBtn.className = 'se-edit-btn';
-          pitchBtn.textContent = pitchExpandedIdx === ni ? 'Pitch ▲' : 'Pitch ▾';
 
           const editBtn = document.createElement('button');
           editBtn.className = 'se-edit-btn';
@@ -13321,7 +13355,7 @@
           removeBtn.textContent = '×';
 
           row.appendChild(lbl); row.appendChild(badge);
-          row.appendChild(pitchBtn); row.appendChild(editBtn); row.appendChild(removeBtn);
+          row.appendChild(editBtn); row.appendChild(removeBtn);
           listEl.appendChild(row);
 
           // Inline pitch picker — clicking any cell label retunes this
@@ -13356,7 +13390,7 @@
             listEl.appendChild(panel);
           }
 
-          pitchBtn.addEventListener('click', () => {
+          lbl.addEventListener('click', () => {
             pitchExpandedIdx = pitchExpandedIdx === ni ? null : ni;
             // Collapse the sound panel for this row when opening pitch
             // so the two expansions don't stack and crowd the modal.

@@ -2551,8 +2551,17 @@
       // (per-lane sampler bound to the lane's bus).
       if (isSampleType(type)) {
         let sampler = null;
+        // Per-track sampler is built lazily on first audio call too —
+        // gate adoption on .loaded the same way the per-lane path does
+        // so the first few track-playback notes don't fall back to a
+        // sine while the sampler's buffers are still fetching. The
+        // shared sampler is already loaded by app startup, so falling
+        // through to it gives the right tone immediately; per-track
+        // EQ + panner won't apply during that brief warm-up window
+        // but the user hears the correct instrument instead of a sine.
         if (Number.isFinite(trackIdx) && tracks[trackIdx]) {
-          sampler = getOrCreateTrackSampler(trackIdx, type.slice(7));
+          const trackSamp = getOrCreateTrackSampler(trackIdx, type.slice(7));
+          if (trackSamp && trackSamp.loaded) sampler = trackSamp;
         }
         // Per-lane sampler is built lazily on first audio call, but its
         // buffers load asynchronously. While they load, only adopt the
@@ -8775,6 +8784,34 @@
         playTrackItem(trackIdx, itemIdx + 1);
         return;
       }
+      // Prefetch every sample type referenced by the item's lanes so
+      // the per-track Tone.Samplers start their async buffer loads
+      // before the first note fires. Without this the first wave of
+      // sample-type voices falls back to the shared sampler (which
+      // routes around per-track EQ / pan) until each per-track
+      // sampler finishes its load. Small JS pass; the audio thread
+      // does the real work.
+      try {
+        const sampleTypes = new Set();
+        const collect = (arr) => {
+          if (!Array.isArray(arr)) return;
+          for (const s of arr) {
+            if (!s) continue;
+            if (s.isSub && Array.isArray(s.subSteps)) { collect(s.subSteps); continue; }
+            if (Array.isArray(s.chord)) {
+              s.chord.forEach(n => {
+                const t = (n && n.params && n.params.type) || (n && n.sound);
+                if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
+              });
+            } else {
+              const t = (s.params && s.params.type) || s.sound;
+              if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
+            }
+          }
+        };
+        laneStepLists.forEach(arr => collect(arr));
+        sampleTypes.forEach(id => { try { getOrCreateTrackSampler(trackIdx, id); } catch (e) {} });
+      } catch (e) {}
       // One setTimeout chain per lane; advance to the next item only
       // after every chain has finished (the LONGEST lane drives the
       // item's effective duration). _trackLaneTick pushes its timers

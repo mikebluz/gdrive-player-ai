@@ -3771,13 +3771,12 @@
           } else {
             setSelectedStep(i);
           }
-          // Lock-mode: clicking a chord/sub chip captures it as the
-          // active wrap form so future cell taps audition that
-          // structure transposed, and the Keep button reads the
-          // shorthand chord name. Single-note steps fall through —
-          // they're not "wrap-shaped" and would lose the existing
-          // wrapTemplate if treated as one.
-          if (lockMode && (step.isSub || Array.isArray(step.chord))) {
+          // Clicking a chord/sub chip captures it as the active wrap
+          // form so future cell taps audition that structure transposed,
+          // and the Keep button reads the shorthand chord name. Single-
+          // note steps fall through — they're not "wrap-shaped" and
+          // would lose the existing wrapTemplate if treated as one.
+          if (step.isSub || Array.isArray(step.chord)) {
             wrapTemplate = cloneStep(step);
             _wrapTransposeDisplayStep = null;
             _wrapTonicShift = 0;
@@ -4295,7 +4294,11 @@
       snapshotForUndo(label);
       if (insertionPoint !== null && insertionPoint >= 0 && insertionPoint <= sequence.length) {
         sequence.splice(insertionPoint, 0, step);
-        insertionPoint++;
+        // One-shot insert: drop the cursor after the first append so the
+        // green bar disappears and the row closes up. Users who want to
+        // insert several steps in a row can re-open Insert before/after
+        // from the step's context menu.
+        insertionPoint = null;
       } else {
         sequence.push(step);
       }
@@ -4313,9 +4316,15 @@
     // appended in Spell or Stack mode while Keep is on. Skipped in Run
     // (arpeggio) mode per the user spec, and skipped while a session
     // lock is active — instead the lock value is applied directly.
-    function maybePromptStepDiv(stepRef) {
+    function maybePromptStepDiv(stepRef, opts = {}) {
       if (!stepRef || !keepMode) return;
       if (gridMode === 'arpeggio') return;
+      // Press-and-hold already conveys size via the hold duration itself
+      // (the step inherits a multi-step length from _holdStepDurationFromMs),
+      // so don't pop the picker on top — that would force the user to
+      // re-specify what they just expressed with the hold time. 200 ms is
+      // the same "genuine hold" threshold _holdAdjustedParams uses.
+      if (Number.isFinite(opts.heldMs) && opts.heldMs > 200) return;
       if (_keepStepDivLocked) {
         if (Number.isFinite(_keepStepDivLockedValue) && _keepStepDivLockedValue > 0) {
           stepRef.subdivision = _keepStepDivLockedValue;
@@ -6582,12 +6591,10 @@
       _wrapTransposeDisplayStep = transposed;
       updateChordDisplay();
       if (keepMode) {
-        snapshotForUndo('Wrap form');
-        sequence.push(transposed);
-        renderSequence();
-        // Match the Keep-flow note-add prompt: every transposed wrap
-        // append is a fresh user-driven step, so ask for its step div
-        // (or apply the session-lock value if one's set).
+        // Route through addToSequence so the Save button enables, the
+        // workspace persists, and any active insertion cursor is honored
+        // — mirrors every other Keep-mode append path.
+        addToSequence(transposed);
         if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
       }
       return true;
@@ -6628,12 +6635,10 @@
       _wrapTransposeDisplayStep = transposed;
       updateChordDisplay();
       if (keepMode) {
-        snapshotForUndo('Wrap form');
-        sequence.push(transposed);
-        renderSequence();
-        // Same Keep-flow step-div prompt as the click-only wrap path —
-        // press-and-hold wrap auditioning still appends a step, so
-        // honor the session lock or pop the picker on first use.
+        // Route through addToSequence so the Save button enables, the
+        // workspace persists, and any active insertion cursor is honored
+        // — mirrors every other Keep-mode append path.
+        addToSequence(transposed);
         if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
       }
 
@@ -14017,6 +14022,9 @@
         <details class="sm-fold">
           <summary>Note</summary>
           <div class="sm-fold-body">
+            <div class="sm-section-label" style="margin-top:0;">Octave</div>
+            <div class="sm-waves" id="se-octave-picker"></div>
+            <div class="sm-section-label">Pitch</div>
             <div class="sm-waves" id="se-note-picker"></div>
           </div>
         </details>
@@ -14197,19 +14205,72 @@
         lenRow.appendChild(btn);
       });
 
-      // Note picker
+      // Note picker — broken into an Octave row and a Pitch row so the
+      // user can retune the step to any octave, not just the octaves the
+      // grid currently exposes. Picking an octave outside the grid range
+      // leaves cellIndex null (no live cell to highlight) but the freq
+      // still plays back correctly via the freq field.
       const notePicker = modal.querySelector('#se-note-picker');
-      notes.forEach((n, idx) => {
-        const btn = document.createElement('button');
-        btn.className = 'sm-wave' + (n.freq === p.freq ? ' active' : '');
-        btn.textContent = n.label;
-        btn.addEventListener('click', () => {
-          p.freq = n.freq; p.label = n.label; p.cellIndex = idx;
-          notePicker.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
+      const octavePicker = modal.querySelector('#se-octave-picker');
+      // Parse the step's current octave from its label ("C4" → 4, "F#-1" → -1).
+      // Falls back to the workspace baseOctave if the label is missing or
+      // doesn't match (e.g., for restored projects with custom labels).
+      const _parseOctave = (lbl) => {
+        const m = (lbl || '').match(/(-?\d+)$/);
+        return m ? parseInt(m[1], 10) : baseOctave;
+      };
+      const OCT_MIN = 0, OCT_MAX = 8;
+      let octavePickerCurrent = Math.max(OCT_MIN, Math.min(OCT_MAX, _parseOctave(p.label)));
+      // Build one octave's worth of chromatic notes anchored at the
+      // workspace's rootIdx (so the row starts on the chosen root, same
+      // ordering as the main grid).
+      const _notesForOctaveAt = (oct) => {
+        const out = [];
+        for (let i = 0; i < 12; i++) {
+          const semi = rootIdx + i;
+          const noteIdx = semi % 12;
+          const octaveNum = oct + Math.floor(semi / 12);
+          const midi = 12 * (octaveNum + 1) + noteIdx;
+          const freq = masterFreqA * Math.pow(2, (midi - 69) / 12);
+          out.push({ freq, label: CHROMATIC[noteIdx] + octaveNum });
+        }
+        return out;
+      };
+      const renderPitchRow = () => {
+        notePicker.innerHTML = '';
+        const octNotes = _notesForOctaveAt(octavePickerCurrent);
+        octNotes.forEach((n) => {
+          const btn = document.createElement('button');
+          btn.className = 'sm-wave' + (Math.abs(n.freq - p.freq) / n.freq < 0.001 ? ' active' : '');
+          btn.textContent = n.label;
+          btn.addEventListener('click', () => {
+            p.freq = n.freq; p.label = n.label;
+            // Map freq back to a grid cell when it lives in range; null
+            // out otherwise so playback doesn't flash a wrong cell.
+            const gridIdx = (typeof _findCellIdxForFreq === 'function') ? _findCellIdxForFreq(n.freq) : -1;
+            p.cellIndex = (gridIdx >= 0) ? gridIdx : null;
+            notePicker.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+          });
+          notePicker.appendChild(btn);
         });
-        notePicker.appendChild(btn);
-      });
+      };
+      const renderOctaveRow = () => {
+        octavePicker.innerHTML = '';
+        for (let o = OCT_MIN; o <= OCT_MAX; o++) {
+          const btn = document.createElement('button');
+          btn.className = 'sm-wave' + (o === octavePickerCurrent ? ' active' : '');
+          btn.textContent = String(o);
+          btn.addEventListener('click', () => {
+            octavePickerCurrent = o;
+            renderOctaveRow();
+            renderPitchRow();
+          });
+          octavePicker.appendChild(btn);
+        }
+      };
+      renderOctaveRow();
+      renderPitchRow();
 
       // Wave type
       const waveRow = modal.querySelector('#se-wave-row');
@@ -14902,7 +14963,7 @@
           subdivision: stepSubdivision,
         });
         addToSequence(_newStep);
-        maybePromptStepDiv(_newStep);
+        maybePromptStepDiv(_newStep, { heldMs: _heldMs });
       }
     }
     document.addEventListener('pointerup',     (e) => polyEndPointer(e.pointerId));
@@ -15541,7 +15602,7 @@
             const _newStep = _radialBendApplyToStep(i, { freq: notes[i].freq, label: notes[i].label, cellIndex: i, sound: _heldParams.type, params: _heldParams, duration: _holdStepDurationForCell(i), subdivision: stepSubdivision });
             addToSequence(_newStep);
             _cellTapAdded = true;
-            maybePromptStepDiv(_newStep);
+            maybePromptStepDiv(_newStep, { heldMs: _holdMs });
           }
         });
         // Editor opens via the .cell-edit-carrot button installed above —

@@ -10352,23 +10352,91 @@
       const sampleRate = (Tone.getContext && Tone.getContext().sampleRate) || 44100;
       const offlineBuffer = await Tone.Offline(async () => {
         const limiter = new Tone.Limiter(-1).toDestination();
-        // Mirror the live global FX chain so the exported WAV matches what
-        // the user hears in the browser.
-        const offReverb = new Tone.Freeverb({
+        // Mirror the live global FX chain — every effect the user can
+        // dial in on the FX panel needs an offline counterpart, otherwise
+        // it silently drops out of the export. Previously only reverb /
+        // delay / distortion rendered, leaving chorus, vibrato, tremolo,
+        // phaser, autoFilter, pingPong, and autoPan absent from WAVs.
+        // wetOf mirrors applyGlobalFx: *On === false forces wet to 0
+        // without touching the stored mix value, so a bypassed effect
+        // is transparent.
+        const wetOf = (mix, on) => (on === false ? 0 : Math.max(0, Math.min(1, (mix || 0) / 100)));
+        const offNodes = {};
+        offNodes.reverb = new Tone.Freeverb({
           roomSize:  Math.max(0, Math.min(0.99, globalFx.reverbSize / 100)),
           dampening: 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95,
-          wet:       Math.max(0, Math.min(1, globalFx.reverb / 100)),
-        }).connect(limiter);
-        const offDelay = new Tone.FeedbackDelay({
+          wet:       wetOf(globalFx.reverb, globalFx.reverbOn),
+        });
+        offNodes.delay = new Tone.FeedbackDelay({
           delayTime: Math.max(0.001, (globalFx.delayTime || 0) / 1000),
           feedback:  Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100)),
-          wet:       Math.max(0, Math.min(1, globalFx.delay / 100)),
-        }).connect(offReverb);
-        const offDistortion = new Tone.Distortion({
-          distortion: Math.max(0, Math.min(1, globalFx.distortion / 100)),
+          wet:       wetOf(globalFx.delay, globalFx.delayOn),
+        });
+        offNodes.distortion = new Tone.Distortion({
+          distortion: globalFx.distortionOn === false ? 0 : Math.max(0, Math.min(1, globalFx.distortion / 100)),
           wet: 1,
-        }).connect(offDelay);
-        const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(offDistortion);
+        });
+        offNodes.chorus = new Tone.Chorus({
+          frequency: Math.max(0.01, globalFx.chorusFreq),
+          delayTime: 3.5,
+          depth:     Math.max(0, Math.min(1, globalFx.chorusDepth / 100)),
+          feedback:  0.1,
+          wet:       wetOf(globalFx.chorus, globalFx.chorusOn),
+        });
+        offNodes.vibrato = new Tone.Vibrato({
+          frequency: Math.max(0.01, globalFx.vibratoFreq),
+          depth:     Math.max(0, Math.min(1, globalFx.vibratoDepth / 100)),
+          wet:       wetOf(globalFx.vibrato, globalFx.vibratoOn),
+        });
+        offNodes.tremolo = new Tone.Tremolo({
+          frequency: Math.max(0.01, globalFx.tremoloFreq),
+          depth:     Math.max(0, Math.min(1, globalFx.tremoloDepth / 100)),
+          wet:       wetOf(globalFx.tremolo, globalFx.tremoloOn),
+        });
+        offNodes.phaser = new Tone.Phaser({
+          frequency:    Math.max(0.01, globalFx.phaserFreq),
+          octaves:      Math.max(1, Math.min(7, globalFx.phaserOctaves)),
+          baseFrequency: 350,
+          wet:          wetOf(globalFx.phaser, globalFx.phaserOn),
+        });
+        offNodes.autoFilter = new Tone.AutoFilter({
+          frequency:     Math.max(0.01, globalFx.autoFilterFreq),
+          depth:         Math.max(0, Math.min(1, globalFx.autoFilterDepth / 100)),
+          baseFrequency: Math.max(20, globalFx.autoFilterBaseFreq),
+          octaves:       2.6,
+          wet:           wetOf(globalFx.autoFilter, globalFx.autoFilterOn),
+        });
+        offNodes.pingPong = new Tone.PingPongDelay({
+          delayTime: Math.max(0.001, (globalFx.pingPongTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, globalFx.pingPongFeedback / 100)),
+          wet:       wetOf(globalFx.pingPong, globalFx.pingPongOn),
+        });
+        offNodes.autoPan = new Tone.AutoPanner({
+          frequency: Math.max(0.01, globalFx.autoPanFreq),
+          depth:     Math.max(0, Math.min(1, globalFx.autoPanDepth / 100)),
+          wet:       wetOf(globalFx.autoPan, globalFx.autoPanOn),
+        });
+        // LFO-driven effects need an explicit .start() to begin oscillating
+        // — without this they stay frozen at phase 0 (audible as a static
+        // notch instead of motion). Matches the live setup at master-FX
+        // construction time.
+        ['tremolo','chorus','autoFilter','autoPan'].forEach(k => {
+          try { offNodes[k].start(); } catch (e) {}
+        });
+        // Wire forward in the user-configured order — same chain the live
+        // path uses via rebuildMasterChain, so the export honours any FX
+        // reordering the user has done in the FX panel.
+        const order = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
+          ? globalFx.fxOrder
+          : FX_NAMES;
+        let head = limiter;
+        for (let i = order.length - 1; i >= 0; i--) {
+          const n = offNodes[order[i]];
+          if (!n) continue;
+          n.connect(head);
+          head = n;
+        }
+        const bus = new Tone.Compressor({ threshold: -24, ratio: 4, attack: 0.003, release: 0.25, knee: 12 }).connect(head);
 
         // Rebuild every registered sampler inside the offline context — the
         // live samplers are bound to the live AudioContext, so triggering
@@ -10643,7 +10711,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;

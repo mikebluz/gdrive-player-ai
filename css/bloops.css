@@ -445,6 +445,10 @@
       padding: 6px 18px;
       background: #050510;
       border-bottom: 1px solid #1a1a2e;
+      /* Sequence-display sits above this bar and may want to grow tall.
+         flex-shrink:0 reserves this row's natural height so it never
+         collapses or gets visually overlapped by chip overflow. */
+      flex-shrink: 0;
     }
     .clear-riff-row > #save-btn,
     .clear-riff-row > #clear-btn,
@@ -1377,7 +1381,6 @@
     /* SEQUENCE DISPLAY */
     .sequence-display {
       min-height: 62px;
-      max-height: 140px;
       background: #0a0a14;
       border-bottom: 3px solid #000;
       display: flex;
@@ -1390,9 +1393,13 @@
          overflow into the next row's chips. column-gap stays tight at 6px. */
       row-gap: 16px;
       column-gap: 6px;
-      overflow-y: auto;
-      scrollbar-width: thin;
-      scrollbar-color: #2d2d3f #0a0a14;
+      /* Take only the natural content height (no max-height + no internal
+         scroll, per CLAUDE.md: wrap, don't scroll). overflow: hidden keeps
+         chips inside the display's box when the body flex layout squeezes
+         it — without this, chips bleed visually into the Play/Rec/Loop bar
+         below. Controls protect their own height via flex-shrink:0. */
+      overflow: hidden;
+      flex-shrink: 1;
       /* Anchor for the absolute-positioned interval markers (.row-interval)
          that label semitone gaps between consecutive chips on the same row. */
       position: relative;
@@ -1430,9 +1437,6 @@
       background: #0a0a14;
       padding: 0 4px;
     }
-    .sequence-display::-webkit-scrollbar { width: 4px; }
-    .sequence-display::-webkit-scrollbar-track { background: #0a0a14; }
-    .sequence-display::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
     /* Grid layout: fixed N columns. Chips drop their explicit pixel width
        and stretch to fill their grid cell. Triggered by JS setting both the
        class and the --grid-cols custom property. */
@@ -1458,9 +1462,19 @@
       align-items: stretch;
       gap: 4px;
       padding: 6px 0 6px 0;
-      max-height: none;
+      /* Polymode reparents the lane-expander (cell grid + voice controls)
+         INTO this container, ABOVE the active lane row. With multi-octave
+         grids the expander gets tall enough to push the active-lane chip
+         strip past the bottom of the body-allocated space. Internal
+         scroll is the only way to keep every lane reachable without
+         clipping or overlapping the Play/Rec/Loop bar below. */
       overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #2d2d3f #0a0a14;
     }
+    .sequence-display.polymode::-webkit-scrollbar { width: 4px; }
+    .sequence-display.polymode::-webkit-scrollbar-track { background: #0a0a14; }
+    .sequence-display.polymode::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
     .sequence-display.polymode.grid-mode {
       /* Override the grid layout so polymode's flex-column wins. */
       display: flex;
@@ -2310,6 +2324,10 @@
       justify-content: center;
       gap: 18px;
       padding: 6px 16px;
+      /* Same protection as .clear-riff-row — keep the Play / Rec / Loop /
+         Grid controls at their natural height regardless of how tall the
+         sequence display grows. */
+      flex-shrink: 0;
     }
     .step-grid-bar-label {
       display: inline-flex;

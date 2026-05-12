@@ -462,14 +462,6 @@
         <button id="tracks-play-all" class="menu-btn" title="Play / stop all tracks">▶</button>
         <button id="tracks-loop-all" title="Loop the whole sequencer — restart all tracks together after the longest track ends">Loop</button>
         <button id="tracks-countin-btn" type="button" title="When on, recording starts after a 4-beat count-in at the workspace tempo">Count-in</button>
-        <!-- Multi-select toggle — when on, clicking a track item adds
-             it to the selection instead of replacing. Lets the user
-             pick multiple sequences without holding ctrl/cmd/shift,
-             which doesn't exist on mobile. -->
-        <label class="tracks-multi-toggle" title="When on, clicking a sequence adds it to the selection instead of replacing it">
-          <input type="checkbox" id="tracks-multi-toggle-input" />
-          <span>Multi</span>
-        </label>
         <button id="tracks-title-btn" type="button" title="Open tracks in fullscreen view">Tracks ⛶</button>
         <!-- Time-resolution zoom — shrinks/grows the visual seconds-
              per-pixel scale across every track row + the loop ruler.
@@ -12342,6 +12334,10 @@
           <button class="track-rec${recCls}" type="button" title="${recTitle}">${recIcon}</button>
           <button class="track-stereo${isMono ? ' mono' : ''}" type="button" title="${stereoTitle}">${stereoLabel}</button>
           <button class="track-eq${mixOn ? ' active' : ''}" type="button" title="Mix — EQ + Pan">Mix</button>
+          <label class="track-multi-toggle" title="When on, clicking a sequence adds it to the selection instead of replacing it">
+            <input type="checkbox" ${_tracksMultiSelect ? 'checked' : ''} />
+            <span>Multi</span>
+          </label>
           <button class="track-clear" type="button" title="Empty this track (keep the track, drop all of its items)">Clear</button>
           <button class="track-remove" title="Remove track">×</button>
         `;
@@ -12359,6 +12355,18 @@
         controls.querySelector('.track-remove').addEventListener('click', () => {
           if (track.items.length === 0 || confirm(`Remove ${track.name}?`)) removeTrack(trackIdx);
         });
+        // Multi-select toggle — global flag, but the checkbox lives on
+        // every track row so it's visible no matter which row the user
+        // is working from. Toggling any row's checkbox flips the flag
+        // and re-syncs every other row's checkbox so the visual state
+        // stays consistent.
+        const multiCb = controls.querySelector('.track-multi-toggle input[type="checkbox"]');
+        if (multiCb) {
+          multiCb.addEventListener('change', () => {
+            _tracksMultiSelect = !!multiCb.checked;
+            _syncTracksMultiCheckboxes();
+          });
+        }
         const nameEl = controls.querySelector('.track-name');
         nameEl.addEventListener('dblclick', () => {
           const name = prompt('Rename track:', track.name);
@@ -13559,21 +13567,15 @@
         try { localStorage.setItem('sounds-countin', JSON.stringify(countInEnabled)); } catch (e) {}
       });
     }
-    // Multi-select toggle. Keeps its own boolean instead of reading the
-    // checkbox on every click so handlers don't have to touch the DOM
-    // in the hot path. Mirrored back to the DOM on each toggle so the
-    // label visually reflects state.
-    (function initTracksMultiToggle() {
-      const cb = document.getElementById('tracks-multi-toggle-input');
-      if (!cb) return;
-      cb.checked = !!_tracksMultiSelect;
-      cb.addEventListener('change', () => {
-        _tracksMultiSelect = !!cb.checked;
-        // Turning Multi off doesn't drop the existing multi-selection —
-        // the user can still review it in the popover. The next plain
-        // click will replace as usual.
-      });
-    })();
+    // The Multi checkbox lives on every track row's controls (see
+    // renderTracks). All rows toggle the same _tracksMultiSelect flag
+    // and stay visually in sync via _syncTracksMultiCheckboxes — that
+    // way "Multi on" is obvious from any row the user happens to be
+    // working in.
+    function _syncTracksMultiCheckboxes() {
+      document.querySelectorAll('.track-multi-toggle input[type="checkbox"]')
+        .forEach(cb => { try { cb.checked = !!_tracksMultiSelect; } catch (e) {} });
+    }
     function playCountIn() {
       const bpm = parseInt(tempoInput?.value, 10) || 120;
       const beatMs = 60000 / bpm;

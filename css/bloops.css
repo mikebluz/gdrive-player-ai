@@ -3361,35 +3361,38 @@
       background: rgba(56,178,172,0.15);
       color: #81e6d9;
     }
-    /* Multi-select toggle in the Mix tracks header — matches the
-       pill chrome of the other header buttons. The native checkbox
-       is hidden but kept for accessibility / keyboard. The label
-       itself is the clickable pill, and gains the active tint when
-       the checkbox is :checked. */
-    .tracks-multi-toggle {
+    /* Multi-select toggle — one on every track-controls row, all
+       wired to the same _tracksMultiSelect flag so flipping any
+       checkbox flips them all. Pill chrome matches the other track
+       buttons (Rec / Stereo / Mix / Clear / ×). The native checkbox
+       is hidden but kept for accessibility / keyboard; the label is
+       the clickable pill and gains a magenta tint when checked so
+       the user can spot Multi mode at a glance. */
+    .track-multi-toggle {
       display: inline-flex;
       align-items: center;
-      padding: 5px 12px;
+      padding: 2px 8px;
       border: 1px solid #2d2d3f;
-      border-radius: 16px;
+      border-radius: 12px;
       background: transparent;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem; font-weight: 600;
+      font-size: 0.66rem; font-weight: 600;
+      letter-spacing: 0.5px;
       cursor: pointer;
       user-select: none;
-      transition: all 0.15s ease;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
     }
-    .tracks-multi-toggle input[type="checkbox"] {
+    .track-multi-toggle input[type="checkbox"] {
       position: absolute;
       width: 1px; height: 1px;
       opacity: 0;
       pointer-events: none;
     }
     @media (hover: hover) {
-      .tracks-multi-toggle:hover { border-color: #d91e7c; color: #f687b3; }
+      .track-multi-toggle:hover { border-color: #d91e7c; color: #f687b3; }
     }
-    .tracks-multi-toggle:has(input:checked) {
+    .track-multi-toggle:has(input:checked) {
       border-color: #d91e7c;
       background: rgba(217, 30, 124, 0.18);
       color: #f687b3;

@@ -173,16 +173,38 @@
     .grid-settings-panel .sounds-utilities #edit-mode-btn {
       flex: 0 0 auto;
     }
+    /* Radial Pitch Bend toggle, when housed inside the Sounds panel,
+       drops the banner-row right border and matches the pill chrome
+       of its row-mates. The body.radial-tone active style (purple
+       gradient) still wins via specificity so the on-state stays
+       legible. */
+    .grid-settings-panel .sounds-utilities #radial-tone-btn {
+      flex: 0 0 auto;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      color: #cbd5e0;
+    }
+    .grid-settings-panel .sounds-utilities #radial-tone-btn:hover:not(:disabled) {
+      border-color: #9f7aea;
+      color: #d6bcfa;
+    }
 
-    /* ± note-shift buttons — sit between the Sounds banner and the
-       Grid/Graph toggle. Compact mono-style buttons that match the
-       banner chrome height. */
+    /* ± note-shift buttons — − sits to the left of the Sounds banner
+       and + sits to the right. Both are 15% wider than the original
+       compact pill chrome (12 px → ~14 px horizontal padding +
+       min-width bump) so they're easier to hit on mobile.
+       Border layout puts a 1 px separator only on the edge that
+       FACES the lane chrome — never on the edge that touches the
+       Sounds button — so both ± buttons visually fuse into the
+       Sounds menu the same way. */
     .note-shift-btn {
       flex: 0 0 auto;
-      padding: 0 10px;
+      min-width: 28px;
+      padding: 0 14px;
       background: transparent;
       border: none;
-      border-left: 1px solid #1a1a2e;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.9rem;
@@ -192,6 +214,14 @@
       user-select: none;
       transition: background 0.15s ease, color 0.15s ease;
     }
+    #note-shift-down { border-left:  1px solid #1a1a2e; }
+    #note-shift-up   { border-right: 1px solid #1a1a2e; }
+    /* Strip the Sounds banner's right border when a note-shift +
+       button follows it (i.e., always, in the current banner-row
+       layout). Combined with the missing border-left on + above,
+       the seam between Sounds and + vanishes — matching the way −
+       already blends into Sounds on the other side. */
+    .banner-row #scale-banner-half { border-right: none; }
     @media (hover: hover) {
       .note-shift-btn:hover { background: #0a0a14; color: #81e6d9; }
     }
@@ -1024,7 +1054,10 @@
       padding: 0 12px;
       background: transparent;
       border: none;
-      border-left: 1px solid #1a1a2e;
+      /* Grid now sits at the LEFT edge of the banner row — drop the
+         outer separator (border-right faces the rest of the row),
+         keep the row-internal one. */
+      border-right: 1px solid #1a1a2e;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
@@ -1034,6 +1067,65 @@
       cursor: pointer;
       user-select: none;
       transition: background 0.15s ease, color 0.15s ease;
+    }
+    /* Master-volume speaker button — sits on the right edge of the
+       banner row, mirroring #fluid-grid-toggle on the left. Width is
+       synced to Grid in JS so the row stays balanced as the Grid
+       label flips between "Grid" and "Graph". Clicking opens the
+       master-vol-panel popover. */
+    .banner-row-vol-btn {
+      flex: 0 0 auto;
+      padding: 0 12px;
+      background: transparent;
+      border: none;
+      border-left: 1px solid #1a1a2e;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s ease, color 0.15s ease;
+      min-width: 48px;
+    }
+    @media (hover: hover) {
+      .banner-row-vol-btn:hover { background: #0a0a14; color: #d6bcfa; }
+    }
+    .banner-row-vol-btn.open {
+      background: rgba(159, 122, 234, 0.18);
+      color: #ede9fe;
+    }
+    /* Master-volume popover. Opens absolutely positioned via pinPanel
+       ToButton — same chrome as the other dropdowns. Slider fills the
+       width so the user can drag with thumb or mouse without aiming. */
+    .master-vol-panel {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 10px;
+      background: #050510;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      padding: 14px 16px;
+      z-index: 1200;
+      min-width: 220px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.55);
+    }
+    .master-vol-panel.open { display: flex; }
+    .master-vol-panel .master-vol {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+    .master-vol-panel .master-vol-icon { font-size: 1rem; }
+    .master-vol-panel input[type="range"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+      accent-color: #9f7aea;
     }
     @media (hover: hover) {
       #fluid-grid-toggle:hover { background: #0a0a14; color: #d6bcfa; }
@@ -2041,11 +2133,44 @@
          `row` (not `row dense`) preserves musical order: a chip that
          can't fit on the current row wraps to the next, instead of
          letting a later short chip backfill the gap and reorder the
-         sequence visually. The gaps are the price of in-order display. */
+         sequence visually. The gaps are the price of in-order display.
+         `minmax(0, 1fr)` lets cells shrink below any pixel floor so
+         high grid-cols values never push the row off-screen on a
+         narrow phone. The previous 8 px minimum × 32 sub-cells × 4 px
+         gaps came out to ~380 px, which overflowed sub-400 px viewports
+         and clipped the right side of the lane. */
       display: grid;
-      grid-template-columns: repeat(var(--grid-cols, 32), minmax(8px, 1fr));
+      grid-template-columns: repeat(var(--grid-cols, 32), minmax(0, 1fr));
       grid-auto-flow: row;
       align-items: stretch;
+      /* Zero gap so chip boundaries land exactly on grid-cell
+         boundaries — any positive gap would shift each successive
+         cell rightward by `(gap × cell-index)` and the time-grid
+         background (which uses straight content-width / grid-cols
+         math) would no longer align with the chip edges. Chip
+         borders give all the visual separation we need. */
+      gap: 0;
+      /* Time-grid background — vertical lines every 1 sub-cell (minor)
+         plus a stronger line every 4 sub-cells (1/8 note major). The
+         pattern stretches with --grid-cols so changing the rows count
+         re-aligns the lines with the actual chip boundaries. Lines
+         sit behind the chips so they read as a subtle ruler.
+         background-origin: content-box + background-clip: content-box
+         shifts the painting area inward by the .lane-chips padding so
+         the lines start at the same x where chip cell 1 starts.
+         Without it, the 100%-width tile included the padding and
+         every cell drifted ~0.4 px / cell to the right, accumulating
+         a visible offset across a long row. */
+      background-image:
+        linear-gradient(to right, rgba(160,174,192,0.08) 1px, transparent 1px),
+        linear-gradient(to right, rgba(160,174,192,0.20) 1px, transparent 1px);
+      background-size:
+        calc(100% / var(--grid-cols, 32)) 100%,
+        calc(400% / var(--grid-cols, 32)) 100%;
+      background-position: 0 0;
+      background-repeat: repeat;
+      background-origin: content-box;
+      background-clip:   content-box;
     }
     .lane-chips .seq-empty {
       color: #4a4a6a;
@@ -2082,6 +2207,34 @@
     }
     .sequence-display.grid-mode .seq-step,
     .lane-chips.grid-mode .seq-step { width: auto; }
+    /* Continuation segments — a step that's too long to fit on one
+       row renders as a leading head chip (.cont-start) plus one or
+       more decorative segments (.cont-mid / .cont-end). Sharp inside
+       edges + dashed seam where the step crosses a row break make the
+       linkage between segments readable without burning a chip per
+       sub-cell. The segments inherit the head chip's color via the
+       cloneNode in renderSequence. */
+    .seq-step.cont-start { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-style: dashed; }
+    .seq-step.cont-mid {
+      border-radius: 0;
+      border-left-style: dashed;
+      border-right-style: dashed;
+      pointer-events: none;
+    }
+    .seq-step.cont-end {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      border-left-style: dashed;
+      pointer-events: none;
+    }
+    /* All continuation segments are visual only — no hover lift, no
+       click target. Reduce their text presence (already blanked in
+       JS, but in case any cloneNode debris slips through) and dim
+       slightly so the head chip reads as the "real" target. */
+    .seq-step.cont-segment {
+      cursor: default;
+      opacity: 0.92;
+    }
     /* Empty pattern slot used while step-mode is on. */
     .seq-step.empty-slot {
       background: rgba(45, 45, 63, 0.35);

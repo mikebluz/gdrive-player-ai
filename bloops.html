@@ -82,11 +82,27 @@
       <button type="button" class="project-opt project-opt-midi" id="project-import-midi-opt" title="Import a .mid file: each track becomes a Bloops lane, each note becomes a step.">Import MIDI…</button>
       <input type="file" id="midi-import-file" accept=".mid,.midi" hidden />
     </div>
+    <!-- Master volume popover — opens from the 🔊 button on the right
+         side of the lane banner row. The fader lives in here so the
+         initMasterVolume wiring (#master-vol-slider) keeps resolving;
+         detachPanelsFromMenubar later reparents this onto <body> so it
+         can open as position:fixed regardless of where the menubar is. -->
+    <div class="master-vol-panel" id="master-vol-panel">
+      <label class="master-vol" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter">
+        <span class="master-vol-icon" aria-hidden="true">🔊</span>
+        <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
+      </label>
+    </div>
     <div class="grid-settings-panel" id="grid-settings-panel">
+      <!-- Root select stays in the DOM (referenced by note-shift,
+           project-snapshot, voice-load, etc.) but moves into a
+           hidden stash so the Sounds menu no longer surfaces it.
+           The new ± buttons next to the Sounds banner are the
+           visible way to change root now. -->
+      <div hidden>
+        <select id="root-select"></select>
+      </div>
       <div class="grid-control">
-        <label title="Starting note of the chromatic grid">Root
-          <select id="root-select"></select>
-        </label>
         <label title="Base octave × number of octaves. e.g. 4×1 = a single octave starting at C4. 7×7 covers the full keyboard from the lowest octave up.">Octaves
           <select id="octave-range-select"></select>
         </label>
@@ -100,21 +116,6 @@
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
         </label>
       </div>
-      <div class="grid-state-row" title="Save and recall the whole grid state — root, scale, octaves, palette, and per-cell sounds.">
-        <label for="grid-state-select">Saved states</label>
-        <select id="grid-state-select">
-          <option value="">— Load a saved state —</option>
-        </select>
-        <div class="grid-state-actions">
-          <button type="button" id="grid-state-save-btn">Save current</button>
-          <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
-        </div>
-      </div>
-      <div class="grid-state-row">
-        <div class="grid-state-actions">
-          <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
-        </div>
-      </div>
       <!-- Nested entry points for the Tone and FX panels. Clicking either
            closes the Sounds panel and opens the corresponding sub-panel
            anchored to the Sounds banner button. Wired in initSoundsSubmenus
@@ -124,14 +125,12 @@
         <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
         <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
       </div>
-      <!-- Master volume + Note Edit toggle — relocated from the top
-           menubar into the Sounds dropdown so the menubar stays
-           focused on the project / panel triggers. -->
+      <!-- Radial Pitch Bend + Note Edit toggles — relocated from the
+           top menubar and lane banner-row into the Sounds dropdown so
+           those rows stay focused on the grid surface. Master volume
+           moved out to its own speaker-icon button in the banner row. -->
       <div class="grid-state-row sounds-utilities">
-        <label class="master-vol" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter">
-          <span class="master-vol-icon" aria-hidden="true">🔊</span>
-          <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
-        </label>
+        <button type="button" id="radial-tone-btn" class="sounds-sub-btn radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖ Pitch bend</button>
         <button type="button" id="edit-mode-btn" class="sounds-sub-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎ Note edit</button>
       </div>
       <!-- XY pad axis settings — only meaningful in Grid Off mode, so
@@ -165,6 +164,25 @@
       </div>
       <div class="grid-state-row sounds-submenus">
         <button type="button" id="sounds-surprise" class="sounds-sub-btn" title="Randomize root, scale, and per-cell tones for a quick creative shuffle">🎲 Surprise me</button>
+      </div>
+      <!-- Saved grid states + Reset — moved to the bottom of the
+           Sounds panel so the more frequently-used controls (root,
+           scale, sub-panels, master vol, note edit) stay near the
+           top. Behaviorally identical; only the DOM order changed. -->
+      <div class="grid-state-row" title="Save and recall the whole grid state — root, scale, octaves, palette, and per-cell sounds.">
+        <label for="grid-state-select">Saved states</label>
+        <select id="grid-state-select">
+          <option value="">— Load a saved state —</option>
+        </select>
+        <div class="grid-state-actions">
+          <button type="button" id="grid-state-save-btn">Save current</button>
+          <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
+        </div>
+      </div>
+      <div class="grid-state-row">
+        <div class="grid-state-actions">
+          <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
+        </div>
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
@@ -249,7 +267,18 @@
     <div id="lane-expander">
       <button type="button" id="lane-expander-close" class="lane-expander-close" aria-label="Close voice editor" title="Close voice editor (Esc)">×</button>
       <div class="banner-row">
-        <button type="button" id="radial-tone-btn" class="radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖</button>
+        <!-- Grid/Graph toggle now sits on the LEFT edge of the row.
+             A same-sized inert spacer mirrors it on the RIGHT so the
+             Sounds menu and the ± shift buttons stay visually centred
+             between them. The spacer is non-interactive (disabled +
+             aria-hidden) — it only exists to balance the row. -->
+        <button type="button" id="fluid-grid-toggle" title="Grid: discrete cells. Graph: continuous pitch field — press anywhere, drag for fluid bends between adjacent notes.">Grid</button>
+        <!-- − sits to the left of the Sounds menu so the two note-
+             shift buttons frame the row. Each shifts the grid one
+             semitone (rootIdx ±1, carrying baseOctave at the C
+             boundary). The Radial Pitch Bend toggle moved into the
+             Sounds dropdown to free banner-row space. -->
+        <button type="button" id="note-shift-down" class="note-shift-btn" title="Shift the grid down 1 semitone">−</button>
         <button type="button" id="scale-banner-half" class="banner-half" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <!-- Tone and FX banner buttons live on as hidden anchors so their
              existing IDs (used by initToneMenu / initFxMenu) keep resolving;
@@ -259,13 +288,12 @@
              re-anchor to scale-banner-half on open from Sounds. -->
         <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
         <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
-        <!-- Note-shift step pair — increment / decrement the grid's
-             root by one semitone. + drops the lowest note and adds
-             one at the top; − adds one at the bottom and drops the
-             top. Wraps rootIdx ↔ baseOctave on overflow. -->
-        <button type="button" id="note-shift-down" class="note-shift-btn" title="Shift the grid down 1 semitone">−</button>
         <button type="button" id="note-shift-up"   class="note-shift-btn" title="Shift the grid up 1 semitone">+</button>
-        <button type="button" id="fluid-grid-toggle" title="Grid: discrete cells. Graph: continuous pitch field — press anywhere, drag for fluid bends between adjacent notes.">Grid</button>
+        <!-- Speaker button mirrors the Grid button on the opposite
+             side so the row stays balanced. Clicking opens a small
+             popover with the master volume fader (relocated out of
+             the Sounds menu). -->
+        <button type="button" id="master-vol-btn" class="banner-row-vol-btn" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter" aria-label="Master volume">🔊</button>
       </div>
       <div class="grid" id="grid"></div>
       <!-- XY pad — replaces the cell grid when Grid Off (fluid mode)
@@ -4008,37 +4036,10 @@
             _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
           });
           ctrls.appendChild(status);
-          // Grid-toggle button — sits to the right of the status pill
-          // and opens / closes this lane's voice editor (the cell grid
-          // + Scale / Tone / FX / Spell pills). On the active lane it
-          // just toggles the expander; on a non-active lane it activates
-          // that lane and opens its expander, since opening another
-          // lane's grid implies switching to it.
-          const gridBtn = document.createElement('button');
-          gridBtn.type = 'button';
-          gridBtn.className = 'lane-grid-toggle';
-          const showingForThisLane = isActiveLane && _laneExpanderOpen;
-          // Chevron points UP when the grid is currently showing, since
-          // the grid expands above the lane row. Closed → ▾ (down,
-          // hinting "click to drop the grid open above me").
-          gridBtn.textContent = showingForThisLane ? '▴' : '▾';
-          gridBtn.classList.toggle('open', showingForThisLane);
-          gridBtn.title = showingForThisLane
-            ? `Hide ${lane.name}'s note grid`
-            : `Show ${lane.name}'s note grid`;
-          gridBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (laneIdx === activeLaneIdx) {
-              _laneExpanderOpen = !_laneExpanderOpen;
-              _placeLaneExpander();
-              renderSequence();
-            } else {
-              _laneExpanderOpen = true;
-              activateLane(laneIdx);
-            }
-            if (typeof persistWorkspace === 'function') persistWorkspace();
-          });
-          ctrls.appendChild(gridBtn);
+          // Per-lane Hide/Show grid toggle was removed — clicking the
+          // lane row already opens / closes the voice editor via the
+          // existing row click handler below, so the explicit chevron
+          // button on the controls cluster was redundant.
           row.appendChild(ctrls);
 
           const chipsEl = document.createElement('div');
@@ -4058,6 +4059,10 @@
             if (steps.length === 0) {
               chipsEl.innerHTML = '<span class="seq-empty">Empty</span>';
             } else {
+              // Preview lanes share the same wrap-aware placement as
+              // the active lane: long steps split across rows with
+              // .cont-start / .cont-mid / .cont-end segments.
+              let _previewCol = 1;
               steps.forEach((step, stepIdx) => {
                 const chip = document.createElement('div');
                 const isSub  = !!step.isSub;
@@ -4073,9 +4078,29 @@
                 else if (isRest) label = '—';
                 else             label = step.label || '';
                 chip.textContent = label;
+                let _previewPlan = null;
                 if (cols > 0) {
-                  const span = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
-                  chip.style.gridColumn = `span ${Math.min(span, subCols)}`;
+                  const naturalSpan = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
+                  const capacity = subCols - (_previewCol - 1);
+                  if (naturalSpan <= capacity) {
+                    chip.style.gridColumn = `span ${naturalSpan}`;
+                    _previewCol += naturalSpan;
+                    if (_previewCol > subCols) _previewCol = 1;
+                  } else {
+                    const firstSpan = capacity;
+                    const conts = [];
+                    let remaining = naturalSpan - capacity;
+                    while (remaining > 0) {
+                      const seg = Math.min(subCols, remaining);
+                      conts.push(seg);
+                      remaining -= seg;
+                    }
+                    chip.style.gridColumn = `span ${firstSpan}`;
+                    chip.classList.add('cont-start');
+                    _previewPlan = conts;
+                    const lastSeg = conts[conts.length - 1];
+                    _previewCol = (lastSeg === subCols) ? 1 : (lastSeg + 1);
+                  }
                 }
                 if (!isSub) {
                   const pc = stepColorPitchClass(step);
@@ -4093,6 +4118,19 @@
                 chip.addEventListener('contextmenu', (e) => e.preventDefault());
                 chip.addEventListener('selectstart',  (e) => e.preventDefault());
                 chipsEl.appendChild(chip);
+                if (_previewPlan && _previewPlan.length > 0) {
+                  _previewPlan.forEach((segSpan, idx) => {
+                    const cont = chip.cloneNode(true);
+                    cont.classList.remove('cont-start');
+                    cont.classList.add(
+                      (idx === _previewPlan.length - 1) ? 'cont-end' : 'cont-mid'
+                    );
+                    cont.classList.add('cont-segment');
+                    cont.style.gridColumn = `span ${segSpan}`;
+                    cont.textContent = '';
+                    chipsEl.appendChild(cont);
+                  });
+                }
               });
             }
           }
@@ -4153,6 +4191,34 @@
         return;
       }
 
+      // Track the next chip's column position within the current grid
+      // row so we can split a step that would overflow into multiple
+      // continuation segments (one per row it spans). Without this,
+      // long steps clamped to span = subCols and visually lied about
+      // their actual duration. Reset on every renderSequence call.
+      let _wrapCurrentCol = 1;
+      const _planChipPlacement = (naturalSpan) => {
+        if (!(cols > 0) || !(subCols > 0)) {
+          return { firstSpan: naturalSpan, continuations: [], newCol: _wrapCurrentCol };
+        }
+        const capacity = subCols - (_wrapCurrentCol - 1);
+        if (naturalSpan <= capacity) {
+          let newCol = _wrapCurrentCol + naturalSpan;
+          if (newCol > subCols) newCol = 1;
+          return { firstSpan: naturalSpan, continuations: [], newCol };
+        }
+        const firstSpan = capacity;
+        const continuations = [];
+        let remaining = naturalSpan - capacity;
+        while (remaining > 0) {
+          const seg = Math.min(subCols, remaining);
+          continuations.push(seg);
+          remaining -= seg;
+        }
+        const lastSeg = continuations[continuations.length - 1];
+        let newCol = (lastSeg === subCols) ? 1 : (lastSeg + 1);
+        return { firstSpan, continuations, newCol };
+      };
       sequence.forEach((step, i) => {
         // Wrap-editor stash: showWrapEditor temporarily parks the
         // wrapTemplate at the end of `sequence` so it can drive the
@@ -4207,10 +4273,18 @@
         // how many chips fit per row, while individual chip widths stay
         // proportional to their step-div. Outside grid mode, pin width
         // directly via stepWidthPx.
+        let _continuationPlan = null;
         if (cols > 0) {
           chip.style.width = '';
-          const span = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
-          chip.style.gridColumn = `span ${Math.min(span, subCols)}`;
+          const naturalSpan = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
+          _continuationPlan = _planChipPlacement(naturalSpan);
+          chip.style.gridColumn = `span ${_continuationPlan.firstSpan}`;
+          if (_continuationPlan.continuations.length > 0) {
+            // First segment of a wrapped step — round-cap the left
+            // edge, dashed right edge (CSS .cont-start).
+            chip.classList.add('cont-start');
+          }
+          _wrapCurrentCol = _continuationPlan.newCol;
         } else {
           chip.style.gridColumn = '';
           chip.style.width = stepWidthPx(step) + 'px';
@@ -4341,6 +4415,26 @@
           if (savedPan !== 0) applyPanTint(chip, chipBaseColor, savedPan);
         }
         chipHost.appendChild(chip);
+        // Long steps spill across rows as continuation chips —
+        // visually identical to the first segment (same color, same
+        // class) but marked .cont-mid / .cont-end so CSS can show
+        // dashed seams at the row breaks. Continuation chips have
+        // no event handlers; the user still clicks the head chip to
+        // interact with the step.
+        if (_continuationPlan && _continuationPlan.continuations.length > 0) {
+          _continuationPlan.continuations.forEach((segSpan, idx) => {
+            const cont = chip.cloneNode(true);
+            cont.classList.remove('cont-start', 'active', 'selected', 'variance-editing');
+            cont.classList.add(
+              (idx === _continuationPlan.continuations.length - 1) ? 'cont-end' : 'cont-mid'
+            );
+            cont.classList.add('cont-segment');
+            cont.style.gridColumn = `span ${segSpan}`;
+            cont.textContent = ''; // visual segment only — no repeated label
+            cont.removeAttribute('id');
+            chipHost.appendChild(cont);
+          });
+        }
       });
       if (insertionPoint != null && insertionPoint >= sequence.length) {
         chipHost.appendChild(makeInsertCursor());
@@ -6287,6 +6381,18 @@
       } else if (!was && want) {
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
       }
+      // Keep the right-side speaker button the same width as the
+      // Grid/Graph button so the Sounds menu + ± buttons stay
+      // visually centred. Width depends on the label ("Grid" vs
+      // "Graph" differ slightly), so re-measure every time the
+      // label flips.
+      try {
+        const vol = document.getElementById('master-vol-btn');
+        if (btn && vol) {
+          const w = btn.getBoundingClientRect().width;
+          if (Number.isFinite(w) && w > 0) vol.style.minWidth = w + 'px';
+        }
+      } catch (e) {}
     }
     function activateLane(idx) {
       if (idx == null || idx < 0 || idx >= lanes.length) return;
@@ -8172,15 +8278,31 @@
       if (!scope) return null;
       // Iterate immediate children (chips are direct kids of the
       // scope) — much cheaper than querySelectorAll. Skip pending
-      // chord chips just like the old selector did.
+      // chord chips and continuation segments of wrapped steps so the
+      // step-index count matches the sequence array's own indexing.
       let n = 0;
       for (const el of scope.children) {
         if (!el.classList.contains('seq-step')) continue;
         if (el.classList.contains('chord-pending')) continue;
+        if (el.classList.contains('cont-segment')) continue;
         if (n === stepIdx) return el;
         n++;
       }
       return null;
+    }
+    // Toggle the .active class on a chip AND every continuation
+    // segment that belongs to the same step. Steps that wrap across
+    // rows render as a head chip plus one or more .cont-segment
+    // clones; this walks the immediately-following siblings so the
+    // whole bar lights up as one unit when its step plays.
+    function _setChipActive(chip, on) {
+      if (!chip) return;
+      chip.classList.toggle('active', on);
+      let next = chip.nextElementSibling;
+      while (next && next.classList && next.classList.contains('cont-segment')) {
+        next.classList.toggle('active', on);
+        next = next.nextElementSibling;
+      }
     }
 
     function setActiveSequenceChip(index) {
@@ -8194,9 +8316,9 @@
       const scope = activeRow ? activeRow.querySelector(':scope > .lane-chips') : null;
       const newChip = _findChipInScope(scope, index);
       if (_activeChipMono && _activeChipMono !== newChip) {
-        _activeChipMono.classList.remove('active');
+        _setChipActive(_activeChipMono, false);
       }
-      if (newChip) newChip.classList.add('active');
+      if (newChip) _setChipActive(newChip, true);
       _activeChipMono = newChip;
     }
 
@@ -8243,8 +8365,8 @@
       const chipsScope = row.querySelector(':scope > .lane-chips');
       const newChip = _findChipInScope(chipsScope, index);
       const prev = _activeChipsByLane.get(laneIdx);
-      if (prev && prev !== newChip) prev.classList.remove('active');
-      if (newChip) newChip.classList.add('active');
+      if (prev && prev !== newChip) _setChipActive(prev, false);
+      if (newChip) _setChipActive(newChip, true);
       if (newChip) _activeChipsByLane.set(laneIdx, newChip);
       else         _activeChipsByLane.delete(laneIdx);
     }
@@ -20184,8 +20306,15 @@
       // Tone-banner-half/fx-banner are kept in DOM as hidden anchors for
       // initToneMenu / initFxMenu — no longer user-visible.
       if (scaleHalf) {
+        // Static label — root / scale / tone live inside the Sounds
+        // dropdown itself, so the banner button just shows "Sounds".
+        // The chevron is rendered by .banner-half::after, which flips
+        // direction automatically via the .open class toggled by
+        // initSoundsMenu. Hover title preserves the previous detail
+        // readout for discoverability without burning row width.
+        scaleHalf.textContent = 'Sounds';
         const tonePart = tone ? ` · ${tone}` : '';
-        scaleHalf.textContent = `Sounds: ${root} ${prettyScaleName(currentScale)}${tonePart}`;
+        scaleHalf.title = `Sounds — ${root} ${prettyScaleName(currentScale)}${tonePart}`;
       }
       refreshAllCellToneLabels();
       refreshAllCellNameLabels();
@@ -20908,11 +21037,49 @@
       const tone    = document.getElementById('tone-panel');
       const fx      = document.getElementById('fx-panel');
       const project = document.getElementById('project-panel');
+      const mvol    = document.getElementById('master-vol-panel');
       if (colors  && colors.parentNode  !== document.body) document.body.appendChild(colors);
       if (grid    && grid.parentNode    !== document.body) document.body.appendChild(grid);
       if (tone    && tone.parentNode    !== document.body) document.body.appendChild(tone);
       if (fx      && fx.parentNode      !== document.body) document.body.appendChild(fx);
       if (project && project.parentNode !== document.body) document.body.appendChild(project);
+      if (mvol    && mvol.parentNode    !== document.body) document.body.appendChild(mvol);
+    })();
+
+    // Master-volume popover — opens from the 🔊 button on the right
+    // side of the lane banner row. Toggles open/close; outside click
+    // and Escape close it. Uses pinPanelToButton so position handling
+    // mirrors every other dropdown.
+    (function initMasterVolMenu() {
+      const btn   = document.getElementById('master-vol-btn');
+      const panel = document.getElementById('master-vol-panel');
+      if (!btn || !panel) return;
+      const TRIGGER_ID = 'master-vol-btn';
+      const setOpen = (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        if (open) pinPanelToButton(btn, panel);
+      };
+      window.addEventListener('resize', () => {
+        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
+      });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target) || e.target === btn) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
     })();
 
     (function initFxMenu() {

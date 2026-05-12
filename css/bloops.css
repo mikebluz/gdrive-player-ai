@@ -2,19 +2,23 @@
 
     body {
       width: 100vw;
-      height: 100vh;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      /* Allow the page to scroll vertically when the sequence display
+         grows past the viewport — chip rows expand to show every step
+         instead of internal scrolling inside .sequence-display. The
+         master-scope is position:fixed so it stays visible regardless
+         of how far the user scrolls. */
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
     }
 
     @media (max-width: 700px) {
-      body {
-        height: auto;
-        min-height: 100vh;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-      }
+      /* Mobile body rules now match the desktop ones (the base body
+         already does min-height: 100vh + overflow-y: auto), so this
+         block only carries mobile-only overrides for inner sizing. */
       .grid {
         flex: none;
         grid-auto-rows: minmax(70px, 1fr);
@@ -905,6 +909,46 @@
     }
     /* Carrots visible only when global edit-mode is on. */
     body:not(.edit-mode) .cell-edit-carrot { display: none; }
+
+    /* Grid On/Off toggle — same pill chrome as the Edit button. Active
+       (fluid) state lights up purple so it reads as a distinct mode
+       rather than another teal-tinted toggle. */
+    #fluid-grid-toggle {
+      padding: 6px 14px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    #fluid-grid-toggle:hover { border-color: #9f7aea; color: #d6bcfa; }
+    body.fluid-grid #fluid-grid-toggle {
+      border-color: #9f7aea; color: #ede9fe;
+      background: rgba(159, 122, 234, 0.18);
+    }
+    /* Fluid mode visuals — drop the cell separators so the grid reads as
+       a continuous surface. Per-cell carrots, freq labels, and the sound
+       picker all hide so nothing breaks the unified field. Note labels
+       stay so the user can still see where each pitch center sits. The
+       cells.grid keeps its column-template intact so cell rects (used
+       by the bilinear pitch interp) line up the same as Grid-On mode. */
+    body.fluid-grid .grid { gap: 0; }
+    body.fluid-grid .cell {
+      border-width: 0;
+      border-radius: 0;
+      /* Cancel the cell's own pointer handling so the grid-level
+         fluid handler owns the gesture and doesn't have to fight the
+         per-cell pointerdown for the pointer. */
+      touch-action: none;
+    }
+    body.fluid-grid .cell-edit-carrot,
+    body.fluid-grid .cell-freq,
+    body.fluid-grid .cell-tone,
+    body.fluid-grid .cell-sound-select { display: none; }
     /* Master volume — a small inline slider in the menubar. The icon is
        a non-interactive label; the slider itself drives the mix gain. */
     .master-vol {
@@ -1531,19 +1575,13 @@
       align-items: stretch;
       gap: 4px;
       padding: 6px 0 6px 0;
-      /* Polymode reparents the lane-expander (cell grid + voice controls)
-         INTO this container, ABOVE the active lane row. With multi-octave
-         grids the expander gets tall enough to push the active-lane chip
-         strip past the bottom of the body-allocated space. Internal
-         scroll is the only way to keep every lane reachable without
-         clipping or overlapping the Play/Rec/Loop bar below. */
-      overflow-y: auto;
-      scrollbar-width: thin;
-      scrollbar-color: #2d2d3f #0a0a14;
+      /* No internal scroll — per CLAUDE.md the display grows to fit
+         every step, and the page scrolls when content exceeds the
+         viewport. Chips inside .lane-chips already wrap via
+         flex-wrap: wrap / grid auto-flow, so multi-row lanes get
+         taller rows instead of a hidden overflow. */
+      overflow-y: visible;
     }
-    .sequence-display.polymode::-webkit-scrollbar { width: 4px; }
-    .sequence-display.polymode::-webkit-scrollbar-track { background: #0a0a14; }
-    .sequence-display.polymode::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
     .sequence-display.polymode.grid-mode {
       /* Override the grid layout so polymode's flex-column wins. */
       display: flex;
@@ -4203,10 +4241,16 @@
        all module-scoped JS, so swapping views never resets data. */
     #mix-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; }
     body.view-mix > #mix-view { display: block; }
-    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(script) {
+    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }
+    /* Hard lockdown: #mix-view is Mix-only. Beats the
+       body.tracks-fullscreen > #mix-view { display: block !important }
+       rule above when the user is on Make/Listen but tracks-fullscreen
+       was left on the body. Without this, the Tracks section (and its
+       Export button) leaked onto Make. */
+    body:not(.view-mix) #mix-view { display: none !important; }
     .sm-copy.open  { border-color: #4299e1; color: #4299e1; }
 
     .sm-copy-panel {

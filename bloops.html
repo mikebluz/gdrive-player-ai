@@ -78,6 +78,7 @@
       <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
     </label>
     <button type="button" id="edit-mode-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎</button>
+    <button type="button" id="fluid-grid-toggle" title="Grid On: discrete cells. Grid Off: continuous pitch field — press anywhere, drag for fluid bends between adjacent notes.">Grid On</button>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
@@ -213,8 +214,8 @@
     <div id="lane-expander">
       <button type="button" id="lane-expander-close" class="lane-expander-close" aria-label="Close voice editor" title="Close voice editor (Esc)">×</button>
       <div class="banner-row">
-        <button type="button" id="scale-banner-half" class="banner-half" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <button type="button" id="radial-tone-btn" class="radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖</button>
+        <button type="button" id="scale-banner-half" class="banner-half" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <!-- Tone and FX banner buttons live on as hidden anchors so their
              existing IDs (used by initToneMenu / initFxMenu) keep resolving;
              clicks now come from the nested Tone… / FX… rows inside the
@@ -2406,14 +2407,23 @@
     // limiter only kisses the very tips. Percussive / sample voices have
     // incoherent peaks that sum more like RMS, so 1/√N is correct there
     // and dropping further would just bury them.
-    function chordVoiceParams(noteParams, chordSize) {
+    function chordVoiceParams(noteParams, chordSize, step) {
       const base = (noteParams && typeof noteParams === 'object') ? noteParams : (typeof noteParams === 'string' ? { type: noteParams } : {});
       const baseVol = base.volume ?? 100;
       const type = base.type || 'sine';
       const N = Math.max(1, chordSize);
       const percussive = type === 'kick' || type === 'pluck' || type === 'metal' || isSampleType(type);
       const scale = percussive ? (1 / Math.sqrt(N)) : (1 / N);
-      return { ...base, volume: baseVol * scale };
+      const out = { ...base, volume: baseVol * scale };
+      // Chord-wide pan override: only applies when explicitly set to a
+      // non-center value. At center (0 or absent), individual voice
+      // pans pass through untouched, so a stereo-spread chord keeps
+      // its per-voice positioning until the user actively dials the
+      // master Pan slider to one side.
+      if (step && Number.isFinite(step.chordPan) && step.chordPan !== 0) {
+        out.pan = step.chordPan;
+      }
+      return out;
     }
 
     // Convert a Tone-style note value ('4n', '8n.', '16t', '2n', '1n', etc.)
@@ -6432,7 +6442,7 @@
           for (let ci = 0; ci < step.chord.length; ci++) {
             const n = step.chord[ci];
             if (!n) continue;
-            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, step), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
           }
         } else if (step.freq != null) {
           playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, fireTime, undefined, undefined, laneIdx);
@@ -6442,26 +6452,35 @@
       }
 
       scheduleVisual(() => {
-        clearHighlights();
-        // Resolve cell index for a voice with a stored cellIndex falling
-        // back to a freq-based lookup. Out-of-scale cells stay in the
-        // cells array (only get pointer-events:none) so the outline still
-        // shows; transposed wrap voices that store cellIndex=null still
-        // light up the closest matching cell.
-        const lightCellByVoice = (n) => {
-          if (!n) return;
-          let idx = (n.cellIndex != null) ? n.cellIndex : -1;
-          if (idx < 0 || idx >= cells.length || !cells[idx]) {
-            idx = _findCellIdxForFreq(n.freq);
+        // The note grid is the active lane's editor — lighting up its
+        // cells for every lane's playback would strobe the active grid
+        // with notes that belong elsewhere. So only the active lane
+        // (or mono playback, where laneIdx is undefined) drives the
+        // cell highlight. Non-active lanes still update the Keep
+        // label below so their chord/note name surfaces.
+        const isActiveLane = !Number.isFinite(laneIdx) || laneIdx === activeLaneIdx;
+        if (isActiveLane) {
+          clearHighlights();
+          // Resolve cell index for a voice with a stored cellIndex
+          // falling back to a freq-based lookup. Out-of-scale cells
+          // stay in the cells array (only get pointer-events:none) so
+          // the outline still shows; transposed wrap voices that
+          // store cellIndex=null still light up the closest cell.
+          const lightCellByVoice = (n) => {
+            if (!n) return;
+            let idx = (n.cellIndex != null) ? n.cellIndex : -1;
+            if (idx < 0 || idx >= cells.length || !cells[idx]) {
+              idx = _findCellIdxForFreq(n.freq);
+            }
+            if (idx >= 0) cells[idx]?.classList.add('active-loop');
+          };
+          if (step.chord) {
+            step.chord.forEach(lightCellByVoice);
+          } else if (step.freq != null) {
+            lightCellByVoice(step);
+          } else {
+            document.querySelectorAll('.rest-bar').forEach(b => b.classList.add('active-loop'));
           }
-          if (idx >= 0) cells[idx]?.classList.add('active-loop');
-        };
-        if (step.chord) {
-          step.chord.forEach(lightCellByVoice);
-        } else if (step.freq != null) {
-          lightCellByVoice(step);
-        } else {
-          document.querySelectorAll('.rest-bar').forEach(b => b.classList.add('active-loop'));
         }
         // Surface the currently-playing step in the Keep button so the
         // user can read the chord/note name as playback advances. Rests
@@ -6672,7 +6691,7 @@
         if (s.chord) {
           const size = s.chord.length;
           s.chord.forEach(n => {
-            if (n.freq != null) playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), s.bend), waitMs);
+            if (n.freq != null) playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, s), s.bend), waitMs);
           });
         } else if (s.freq != null) {
           playNote(s.freq, paramsWithBend(s.params || s.sound || 'sine', s.bend), waitMs);
@@ -7203,7 +7222,7 @@
           const size = s.chord.length;
           s.chord.forEach(n => {
             if (n.freq == null) return;
-            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), s.bend), waitMs, at);
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, s), s.bend), waitMs, at);
           });
         } else if (s.freq != null) {
           playNote(s.freq, paramsWithBend(s.params || s.sound || 'sine', s.bend), waitMs, at);
@@ -7253,7 +7272,7 @@
         const size = transposed.chord.length;
         transposed.chord.forEach(n => {
           if (n && n.freq != null) {
-            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), transposed.bend));
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, transposed), transposed.bend));
           }
         });
       } else if (transposed.freq != null) {
@@ -7344,7 +7363,7 @@
         const size = transposed.chord.length;
         const voices = transposed.chord.map(n => {
           if (!n || n.freq == null) return null;
-          const p = chordVoiceParams(n.params || n.sound || 'sine', size);
+          const p = chordVoiceParams(n.params || n.sound || 'sine', size, transposed);
           const vol = Math.max(0.001, (p.volume ?? 100) / 100);
           // Sample-based instrument (Piano, Organ, etc.) — route via
           // the shared Tone.Sampler instead of constructing a synth.
@@ -7413,6 +7432,26 @@
               modulation: { type: 'sine' },
               modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
             });
+          } else if (p.type === 'duo') {
+            // DuoSynth — Tone.OmniOscillator (used by Tone.Synth) doesn't
+            // accept 'duo' as a type, so the generic fallback below
+            // would silently produce no sound. Mirrors the playNote
+            // and startSustainedNote duo branches.
+            synth = new Tone.DuoSynth({
+              voice0: { oscillator: { type: 'sine'    }, envelope: env },
+              voice1: { oscillator: { type: 'sawtooth'}, envelope: env },
+              harmonicity: 1.5,
+              vibratoAmount: 0.3,
+              vibratoRate: 5,
+            });
+          } else if (typeof p.type === 'string' && p.type.startsWith('noise')) {
+            // NoiseSynth — also rejected by OmniOscillator. Triggered
+            // with (time, velocity) below since NoiseSynth has no freq.
+            const colour = p.type.includes(':') ? p.type.split(':')[1] : 'white';
+            synth = new Tone.NoiseSynth({
+              noise: { type: colour },
+              envelope: env,
+            });
           } else {
             synth = new Tone.Synth({ oscillator: { type: oscType }, envelope: env });
           }
@@ -7420,8 +7459,14 @@
           try { synth.volume.value = Tone.gainToDb(vol); } catch (e) {}
           const baseDetune = Number.isFinite(p.detune) ? p.detune : 0;
           if (synth.detune) synth.detune.value = baseDetune + bendCents;
+          const isNoise = typeof p.type === 'string' && p.type.startsWith('noise');
           return {
-            attack:  (at) => { try { synth.triggerAttack(n.freq, at, 1); } catch (e) {} },
+            attack:  (at) => {
+              try {
+                if (isNoise) synth.triggerAttack(at, 1);
+                else         synth.triggerAttack(n.freq, at, 1);
+              } catch (e) {}
+            },
             release: () => {
               try { synth.triggerRelease(); } catch (e) {}
               setTimeout(() => { try { synth.dispose(); } catch (e) {} }, (env.release + 0.5) * 1000);
@@ -10484,6 +10529,13 @@
         name: saved.name,
         bpm: saved.bpm,
         subdivision: saved.subdivision || 1,
+        // Carry the saved sequence's FX state with it so the item knows
+        // what FX it "should" sound like. The live track bus currently
+        // pulls FX wet from the global FX panel, so a future per-item
+        // FX recall pass can apply this snapshot during playback.
+        globalFx: (saved.globalFx && typeof saved.globalFx === 'object')
+          ? JSON.parse(JSON.stringify(saved.globalFx))
+          : null,
       };
       if (saved.type === 'audio') {
         snapshot.type = 'audio';
@@ -10507,6 +10559,9 @@
             pan:    Number.isFinite(l.pan)    ? l.pan    : 0,
             volume: Number.isFinite(l.volume) ? l.volume : 100,
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
+            // Per-lane FX wet levels follow the sequence onto the
+            // track. Used by per-item FX recall during playback.
+            sends: l.sends ? { ...l.sends } : null,
           }));
         }
       }
@@ -10616,6 +10671,67 @@
 
     let tracksMasterLoop = false;
 
+    // Build a per-track-item lane bus that mirrors Make's getLaneBus —
+    // signal flows synth → head → Volume → Panner → [lazy FX chain] →
+    // destination (trackBus). Pulls volume/pan/sends straight off the
+    // saved lane snapshot, so the user's per-lane mix carried with the
+    // sequence into the track. Returns null for a missing lane (legacy
+    // single-stream item path — handled by routing to trackBus directly).
+    function _buildItemLaneBus(lane, dest) {
+      if (!lane) return null;
+      try {
+        const head    = new Tone.Gain(1);
+        const volNorm = Math.max(0, Math.min(1, (Number.isFinite(lane.volume) ? lane.volume : 100) / 100));
+        const volDb   = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
+        const volume  = new Tone.Volume(volDb);
+        const panNorm = Math.max(-1, Math.min(1, (Number.isFinite(lane.pan) ? lane.pan : 0) / 100));
+        const panner  = new Tone.Panner(panNorm);
+        head.connect(volume);
+        volume.connect(panner);
+        // Build only the FX nodes whose send is > 0 — mirrors the lazy
+        // build in applyLaneSends. Wire in series after panner.
+        const fxNodes = {};
+        const fxChain = [];
+        const sends = (lane.sends && typeof lane.sends === 'object') ? lane.sends : {};
+        FX_NAMES.forEach(name => {
+          const v = Number(sends[name]);
+          if (!Number.isFinite(v) || v <= 0) return;
+          const node = (typeof _buildOneLaneFxNode === 'function') ? _buildOneLaneFxNode(name) : null;
+          if (!node) return;
+          fxNodes[name] = node;
+          fxChain.push({ name, node });
+          // Push shape + wet using the same params helper Make uses —
+          // wet reads from the synthetic lane.sends, shape from globalFx.
+          try { _applyLaneFxNodeParams(name, node, { sends }); } catch (e) {}
+        });
+        let upstream = panner;
+        for (const { node } of fxChain) {
+          try { upstream.connect(node); } catch (e) {}
+          upstream = node;
+        }
+        try { upstream.connect(dest); } catch (e) {}
+        return { head, volume, panner, fxNodes, fxChain };
+      } catch (e) {
+        return null;
+      }
+    }
+    function _disposeItemBuses(buses) {
+      if (!Array.isArray(buses)) return;
+      buses.forEach(b => {
+        if (!b) return;
+        try { b.head?.disconnect(); } catch (e) {}
+        try { b.head?.dispose(); } catch (e) {}
+        try { b.volume?.dispose(); } catch (e) {}
+        try { b.panner?.dispose(); } catch (e) {}
+        if (b.fxNodes) {
+          Object.values(b.fxNodes).forEach(n => {
+            try { n.disconnect(); } catch (e) {}
+            try { n.dispose(); } catch (e) {}
+          });
+        }
+      });
+    }
+
     function stopTrack(trackIdx, natural = false) {
       const track = tracks[trackIdx];
       if (!track) return;
@@ -10629,6 +10745,10 @@
       }
       track.timers = null;
       track._lanesRemaining = 0;
+      // Tear down any per-item lane buses built for the just-ended
+      // (or never-finished) item. Otherwise Tone nodes leak each time
+      // a track is started + stopped.
+      if (track._itemBuses) { _disposeItemBuses(track._itemBuses); track._itemBuses = null; }
       track.playing = false;
       track.currentItemIdx = null;
       renderTracks();
@@ -10650,16 +10770,19 @@
         const eq  = track.eq || { low: 0, mid: 0, high: 0 };
         const pan = Math.max(-1, Math.min(1, Number.isFinite(track.pan) ? track.pan : 0));
         const eqIsFlat = !(eq.low || 0) && !(eq.mid || 0) && !(eq.high || 0);
-        // Chain order: [EQ →] [Mono →] Panner → master. Tone.EQ3 splits the
-        // signal into three frequency bands and sums them — at flat 0/0/0
-        // the reconstruction has small crossover dips, audibly quieter
-        // than the lane bus's transparent Volume node used in Bloops
-        // playback. Skip the EQ3 when the user hasn't set any EQ;
-        // setTrackEq below routes through it directly via track._bus
-        // either way so the on-demand path still works after dialing
-        // in a band. The Mono node optionally sums L+R before the
-        // panner; skip it entirely on stereo tracks.
-        track._panner = new Tone.Panner(pan).connect(masterBus);
+        // Chain order: [EQ →] [Mono →] Panner → globalSendTap. Tone.EQ3
+        // splits the signal into three frequency bands and sums them —
+        // at flat 0/0/0 the reconstruction has small crossover dips,
+        // audibly quieter than the lane bus's transparent Volume node
+        // used in Bloops playback. Skip the EQ3 when the user hasn't
+        // set any EQ; setTrackEq below routes through it directly via
+        // track._bus either way so the on-demand path still works
+        // after dialing in a band. The Mono node optionally sums L+R
+        // before the panner; skip it entirely on stereo tracks.
+        // Routing through globalSendTap (instead of masterBus) puts
+        // track audio on the same FX-return rails as live cell presses
+        // — without this, the master FX panel was silent for tracks.
+        track._panner = new Tone.Panner(pan).connect(globalSendTap);
         if (track.stereo === false) {
           track._mono = new Tone.Mono().connect(track._panner);
         } else {
@@ -11111,12 +11234,16 @@
       const waitSec = (60 / bpm) * stepSub * (step.duration || 1);
       const waitMs  = waitSec * 1000;
       const fireTime = laneState.baseAudioTime + laneState.offsetSec;
-      const trackBus = getTrackBus(trackIdx);
+      // Destination: prefer the lane's own bus (volume + pan + FX from
+      // the saved sequence's per-lane state) so track playback sounds
+      // like Make playback. Falls back to trackBus for legacy single-
+      // stream items that don't carry per-lane state.
+      const dest = laneState.destination || getTrackBus(trackIdx);
       if (step.chord) {
         const size = step.chord.length;
-        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), waitMs, fireTime, trackBus, trackIdx));
+        step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, step), step.bend), waitMs, fireTime, dest, trackIdx));
       } else if (step.freq !== null && step.freq !== undefined) {
-        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, fireTime, trackBus, trackIdx);
+        playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), waitMs, fireTime, dest, trackIdx);
       }
       laneState.offsetSec += waitSec;
       const targetWall = laneState.startWallMs + laneState.offsetSec * 1000;
@@ -11157,6 +11284,31 @@
         return;
       }
       const item = track.items[itemIdx];
+      // Per-item FX recall: if the item carries a captured globalFx
+      // snapshot (set by addSavedToTrack), copy it into the live state
+      // and push it to the audio graph. This is how each saved
+      // sequence's FX actually reaches the track audio — the trackBus
+      // routes through globalSendTap which reads from live globalFx,
+      // so the FX wet you hear is always whatever the most-recently-
+      // started item put there. Restore-on-stop is intentionally NOT
+      // wired up (the user is free to dial the panel back themselves).
+      if (item && item.globalFx && typeof applyGlobalFx === 'function') {
+        try {
+          Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
+            if (k in item.globalFx) globalFx[k] = item.globalFx[k];
+          });
+          applyGlobalFx();
+        } catch (e) {}
+      }
+      // Dispose any per-lane buses left over from a previous item on
+      // this track. Built lazily below when the item turns out to be a
+      // multi-lane sequence so each lane plays through its own
+      // volume + panner + FX chain — identical to Make's per-lane bus
+      // architecture, just rooted at the trackBus instead of masterBus.
+      if (track._itemBuses && track._itemBuses.length > 0) {
+        _disposeItemBuses(track._itemBuses);
+        track._itemBuses = null;
+      }
       if (item && item.type === 'audio') {
         playAudioItem(trackIdx, itemIdx, item);
         return;
@@ -11165,29 +11317,38 @@
         playSilentItem(trackIdx, itemIdx, item);
         return;
       }
-      // Resolve which step lists make up this item. Multi-lane saves
-      // include `item.lanes` (one per Bloops lane); honor mute/solo
-      // exactly the same way Bloops playback does so the track plays
-      // every audible lane simultaneously. Legacy single-stream items
-      // fall through to wrapping `item.steps` as a single lane.
-      let laneStepLists;
+      // Resolve which step lists make up this item, paired with their
+      // source lane so each can route through its own per-lane bus
+      // (volume / panner / FX chain). For legacy single-stream items
+      // (no item.lanes), one stream routes through the trackBus
+      // directly — no per-lane bus needed since there's no per-lane
+      // state to apply.
+      let laneEntries; // [{ flat, lane | null }]
       if (Array.isArray(item.lanes) && item.lanes.length > 0) {
         const anySolo = item.lanes.some(l => l && l.solo);
-        laneStepLists = item.lanes
+        laneEntries = item.lanes
           .filter(l => l && Array.isArray(l.steps) && l.steps.length > 0
             && (anySolo ? !!l.solo : !l.muted))
-          .map(l => flattenItemSteps(l.steps))
-          .filter(arr => arr.length > 0);
+          .map(l => ({ flat: flattenItemSteps(l.steps), lane: l }))
+          .filter(e => e.flat.length > 0);
       } else if (item && Array.isArray(item.steps) && item.steps.length > 0) {
         const flat = flattenItemSteps(item.steps);
-        laneStepLists = flat.length > 0 ? [flat] : [];
+        laneEntries = flat.length > 0 ? [{ flat, lane: null }] : [];
       } else {
-        laneStepLists = [];
+        laneEntries = [];
       }
-      if (laneStepLists.length === 0) {
+      if (laneEntries.length === 0) {
         playTrackItem(trackIdx, itemIdx + 1);
         return;
       }
+      // Build the per-lane buses now that we know which lanes are
+      // playable. Each gets a Gain head → Volume → Panner → lane FX
+      // chain → trackBus. Lanes whose sends are all zero skip the
+      // FX chain entirely; their head connects straight through the
+      // pan/vol pair to trackBus.
+      const trackBusForItem = getTrackBus(trackIdx);
+      const itemBuses = laneEntries.map(e => _buildItemLaneBus(e.lane, trackBusForItem));
+      track._itemBuses = itemBuses;
       // Prefetch every sample type referenced by the item's lanes so
       // the per-track Tone.Samplers start their async buffer loads
       // before the first note fires. Without this the first wave of
@@ -11213,7 +11374,7 @@
             }
           }
         };
-        laneStepLists.forEach(arr => collect(arr));
+        laneEntries.forEach(e => collect(e.flat));
         sampleTypes.forEach(id => { try { getOrCreateTrackSampler(trackIdx, id); } catch (e) {} });
       } catch (e) {}
       // One setTimeout chain per lane; advance to the next item only
@@ -11221,7 +11382,7 @@
       // item's effective duration). _trackLaneTick pushes its timers
       // onto track.timers so stopTrack can cancel them all in one go.
       track.timers = [];
-      track._lanesRemaining = laneStepLists.length;
+      track._lanesRemaining = laneEntries.length;
       const onLaneEnd = () => {
         if (!track.playing) return;
         track._lanesRemaining = Math.max(0, (track._lanesRemaining || 0) - 1);
@@ -11229,12 +11390,6 @@
           playTrackItem(trackIdx, itemIdx + 1);
         }
       };
-      // Every lane shares the same baseAudioTime + startWallMs so they
-      // start in sync; each carries its own offsetSec accumulator so
-      // they advance independently after that. Compute the longest
-      // lane's natural one-pass duration — every lane loops up to
-      // that target so shorter lanes wrap and fill the item's window
-      // (matches Bloops poly playback / the offline-export logic).
       const baseAudioTime = (typeof Tone !== 'undefined' && typeof Tone.now === 'function')
         ? Tone.now() : 0;
       const startWallMs = performance.now();
@@ -11249,13 +11404,17 @@
         });
         return s;
       };
-      const targetSec = Math.max(...laneStepLists.map(onePassSec));
-      laneStepLists.forEach(flatSteps => {
-        _trackLaneTick(track, trackIdx, item, flatSteps, 0, onLaneEnd, {
+      const targetSec = Math.max(...laneEntries.map(e => onePassSec(e.flat)));
+      laneEntries.forEach((e, i) => {
+        // Per-lane destination: the lane's own bus head, or trackBus
+        // for the legacy single-stream case (e.lane = null).
+        const dest = (itemBuses[i] && itemBuses[i].head) || trackBusForItem;
+        _trackLaneTick(track, trackIdx, item, e.flat, 0, onLaneEnd, {
           baseAudioTime,
           startWallMs,
           targetSec,
           offsetSec: 0,
+          destination: dest,
         });
       });
       if (track.currentItemIdx !== itemIdx) {
@@ -11772,7 +11931,7 @@
       return Math.min(60, Math.max(2, tail) + 2);
     }
 
-    async function renderTracksToBuffer() {
+    async function renderTracksToBuffer(opts = {}) {
       const durationsMs = tracks.map(track => {
         let ms = 0;
         (track.items || []).forEach(item => { ms += itemDurationMs(item); });
@@ -11784,11 +11943,12 @@
       const tailSec = estimateExportTailSec();
       const totalSec = (totalMs / 1000) + tailSec;
 
-      // Match the live audio context's sample rate so the exported buffer
-      // (and the resulting WAV) plays back at the same speed and pitch as
-      // what's heard live. Without this, Tone.Offline can fall back to a
-      // different rate than the live context.
-      const sampleRate = (Tone.getContext && Tone.getContext().sampleRate) || 44100;
+      // Sample rate: caller can pass an explicit value (e.g., 22050 for a
+      // faster smaller export). When omitted we mirror the live context
+      // so playback speed/pitch match what the user hears in the browser.
+      const sampleRate = (Number.isFinite(opts.sampleRate) && opts.sampleRate > 0)
+        ? opts.sampleRate
+        : ((Tone.getContext && Tone.getContext().sampleRate) || 44100);
       const offlineBuffer = await Tone.Offline(async () => {
         const limiter = new Tone.Limiter(-1).toDestination();
         // Mirror the live global FX chain — every effect the user can
@@ -11953,7 +12113,7 @@
             // step lane finished 2 s in while an 8-step lane was
             // still going, leaving the rest of the item silent on
             // that lane.
-            const scheduleLane = (steps, baseTime, targetSec) => {
+            const scheduleLane = (steps, baseTime, targetSec, dest) => {
               const flat = flattenItemSteps(steps);
               if (flat.length === 0) return 0;
               const onePass = laneOnePassSec(steps);
@@ -11975,21 +12135,23 @@
                   const durSec = durMs / 1000;
                   if (step.chord) {
                     const size = step.chord.length;
-                    step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size), step.bend), durMs, t, trackBus));
+                    step.chord.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, step), step.bend), durMs, t, dest));
                   } else if (step.freq !== null && step.freq !== undefined) {
-                    playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, trackBus);
+                    playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, t, dest);
                   }
                   t += durSec;
                 }
               }
               return t - baseTime;
             };
-            // Multi-lane items: schedule every audible lane in parallel
-            // starting at `time`, route them all through the same
-            // trackBus so they superimpose. The item's duration is
-            // the LONGEST lane's natural one-pass length; shorter
-            // lanes loop within that window so the item plays as a
-            // continuous bed instead of a sparse single-pass.
+            // Multi-lane items: each playable lane gets its own per-
+            // lane bus (volume + panner + FX chain driven by the lane's
+            // saved sends), routed into trackBus. Matches the live
+            // playback fan-out so the WAV/MP3 sounds like Make/Mix —
+            // per-lane FX, per-lane pan, per-lane volume all preserved.
+            // The buses are scoped to the offline context and torn down
+            // automatically when Tone.Offline disposes its context at
+            // the end of the render.
             if (Array.isArray(item.lanes) && item.lanes.length > 0) {
               const anySolo = item.lanes.some(l => l && l.solo);
               const playableLanes = item.lanes.filter(l => l
@@ -11997,7 +12159,13 @@
                 && (anySolo ? !!l.solo : !l.muted));
               if (playableLanes.length > 0) {
                 const longestSec = Math.max(...playableLanes.map(l => laneOnePassSec(l.steps)));
-                playableLanes.forEach(lane => scheduleLane(lane.steps, time, longestSec));
+                playableLanes.forEach(lane => {
+                  const laneBus = (typeof _buildItemLaneBus === 'function')
+                    ? _buildItemLaneBus(lane, trackBus)
+                    : null;
+                  const laneDest = (laneBus && laneBus.head) || trackBus;
+                  scheduleLane(lane.steps, time, longestSec, laneDest);
+                });
                 time += longestSec;
                 return;
               }
@@ -12005,7 +12173,7 @@
             // Legacy single-stream item: no lanes array, fall back to
             // a single pass through item.steps (one iteration, no
             // looping) — matches the pre-multi-lane behavior.
-            const used = scheduleLane(item.steps, time, laneOnePassSec(item.steps));
+            const used = scheduleLane(item.steps, time, laneOnePassSec(item.steps), trackBus);
             time += used;
           });
         });
@@ -12150,7 +12318,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -12526,31 +12694,102 @@
       } catch (e) { return null; }
     }
 
+    // Unified export options dialog — filename, format (WAV/MP3), sample
+    // rate, optional Drive folder. Resolves with the chosen options or
+    // null on cancel. Used by both the Drive export and Share flows.
+    function showExportOptionsDialog(opts = {}) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'sm-overlay';
+        const modal = document.createElement('div');
+        modal.className = 'sm-modal';
+        const defaultName = opts.defaultName || '';
+        const defaultFolder = opts.defaultFolder || 'bloops/exports';
+        const includeFolder = !!opts.includeFolder;
+        const liveRate = (Tone.getContext && Tone.getContext().sampleRate) || 44100;
+        const rateOptions = [22050, 32000, 44100, 48000];
+        const rateOptionHtml = rateOptions.map(r => {
+          const kHz = (r / 1000).toFixed(r === 22050 ? 2 : (r === 32000 ? 0 : 1));
+          const note = r === 22050 ? ' (faster, smaller)'
+                     : r === 44100 ? ' (CD quality)'
+                     : r === 48000 ? ' (studio)'
+                     : '';
+          return `<option value="${r}">${kHz} kHz${note}</option>`;
+        }).join('');
+        modal.innerHTML = `
+          <div class="sm-title">${opts.title || 'Export'}</div>
+          <div class="sm-section-label">File name</div>
+          <input type="text" id="exp-name" value="${defaultName}" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;" />
+          <div class="sm-section-label">Format</div>
+          <div style="display:flex;gap:14px;margin-bottom:10px;color:#cbd5e0;font-size:0.85rem;">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="exp-fmt" value="wav" checked /> WAV</label>
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="exp-fmt" value="mp3" /> MP3</label>
+          </div>
+          <div class="sm-section-label">Sample rate</div>
+          <select id="exp-rate" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;">
+            ${rateOptionHtml}
+          </select>
+          ${includeFolder ? `
+          <div class="sm-section-label">Google Drive folder</div>
+          <input type="text" id="exp-folder" value="${defaultFolder}" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;" />
+          ` : ''}
+          <div class="sm-footer">
+            <button type="button" class="sm-preview" id="exp-cancel">Cancel</button>
+            <button type="button" class="sm-apply" id="exp-go">${opts.applyLabel || 'Export'}</button>
+          </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        // Pre-select the live rate when it matches a listed option, so
+        // round-tripping the live context's rate is the obvious default.
+        const rateSel = modal.querySelector('#exp-rate');
+        const liveVal = String(Math.round(liveRate));
+        if ([...rateSel.options].some(o => o.value === liveVal)) rateSel.value = liveVal;
+        else rateSel.value = '44100';
+        const cleanup = () => overlay.remove();
+        const dismiss = (val) => { cleanup(); resolve(val); };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(null); });
+        modal.querySelector('#exp-cancel').addEventListener('click', () => dismiss(null));
+        modal.querySelector('#exp-go').addEventListener('click', () => {
+          const filename = (modal.querySelector('#exp-name').value || '').trim() || defaultName;
+          if (!filename) { dismiss(null); return; }
+          const fmt = (modal.querySelector('input[name="exp-fmt"]:checked')?.value === 'mp3') ? 'mp3' : 'wav';
+          const sampleRate = parseInt(rateSel.value, 10) || 44100;
+          const folderEl = modal.querySelector('#exp-folder');
+          const folder = folderEl ? ((folderEl.value || '').trim() || defaultFolder) : null;
+          dismiss({ filename, fmt, sampleRate, folder });
+        });
+      });
+    }
+
     async function exportTracksToDrive() {
+      // Defensive: only run when the Mix view is active. Some
+      // browsers fire a stale click on hidden #mix-view children
+      // (e.g., during a fast tab swap or when a keyboard shortcut
+      // lands on the still-bound button), which would pop the
+      // Export dialog on the Make view.
+      if (!document.body.classList.contains('view-mix')) return;
       const btn = document.getElementById('tracks-export-btn');
       const anyItems = tracks.some(t => (t.items || []).length > 0);
       if (!anyItems) { alert('Add at least one saved sequence to a track before exporting.'); return; }
       const defaultName = `sounds-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
-      const filename = prompt('File name for the export (no extension):', defaultName);
-      if (!filename) return;
-      // Format picker — text prompt so we don't have to ship a modal
-      // for a single-letter choice. Defaults to wav (uncompressed,
-      // matches prior behavior); mp3 lazy-loads lamejs the first time
-      // it's used. Anything other than 'mp3' (case-insensitive) is
-      // treated as wav so the user doesn't get yelled at for typos.
-      const fmtRaw = prompt('Format — type "mp3" for MP3 or leave as "wav":', 'wav');
-      if (fmtRaw == null) return;
-      const fmt = String(fmtRaw).trim().toLowerCase() === 'mp3' ? 'mp3' : 'wav';
-      const ext = fmt === 'mp3' ? 'mp3' : 'wav';
+      const choice = await showExportOptionsDialog({
+        title: 'Export to Drive',
+        defaultName,
+        defaultFolder: 'bloops/exports',
+        includeFolder: true,
+        applyLabel: 'Export',
+      });
+      if (!choice) return;
+      const { filename, fmt, sampleRate, folder } = choice;
+      const ext  = fmt === 'mp3' ? 'mp3' : 'wav';
       const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
-      const folderName = prompt('Google Drive folder to save in:', 'bloops/exports');
-      if (!folderName) return;
 
       const origText = btn.textContent;
       btn.disabled = true;
       try {
         btn.textContent = 'Rendering…';
-        const buffer = await renderTracksToBuffer();
+        const buffer = await renderTracksToBuffer({ sampleRate });
         btn.textContent = fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…';
         const blob = fmt === 'mp3'
           ? await audioBufferToMp3(buffer)
@@ -12560,11 +12799,11 @@
         await googleSignInForDrive();
 
         btn.textContent = 'Uploading…';
-        const folderId = await findOrCreateDriveFolder(folderName);
+        const folderId = await findOrCreateDriveFolder(folder);
         const file = await uploadBlobToDrive(`${filename}.${ext}`, blob, folderId, mime);
 
         btn.textContent = 'Saved';
-        alert(`Saved "${file.name || filename + '.' + ext}" to Drive folder "${folderName}".`);
+        alert(`Saved "${file.name || filename + '.' + ext}" to Drive folder "${folder}".`);
       } catch (e) {
         console.error(e);
         alert(`Export failed: ${e.message || e}`);
@@ -12580,6 +12819,7 @@
     // through Drive. Falls back to a clear message when the browser doesn't
     // implement the Web Share API for files (e.g. desktop Firefox).
     async function shareTracksAudio() {
+      if (!document.body.classList.contains('view-mix')) return;
       const btn = document.getElementById('tracks-share-btn');
       const anyItems = tracks.some(t => (t.items || []).length > 0);
       if (!anyItems) { alert('Add at least one saved sequence to a track before sharing.'); return; }
@@ -12587,24 +12827,28 @@
         alert('This browser does not support sharing. Use Export to save the file and share it manually.');
         return;
       }
-      // Same format picker as Drive export — leave blank / type wav
-      // for uncompressed, type mp3 for compressed. mp3 uses lamejs.
-      const fmtRaw = prompt('Format — type "mp3" for MP3 or leave as "wav":', 'wav');
-      if (fmtRaw == null) return;
-      const fmt = String(fmtRaw).trim().toLowerCase() === 'mp3' ? 'mp3' : 'wav';
+      const defaultName = `bloops-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}`;
+      const choice = await showExportOptionsDialog({
+        title: 'Share mix',
+        defaultName,
+        includeFolder: false,
+        applyLabel: 'Share',
+      });
+      if (!choice) return;
+      const { filename, fmt, sampleRate } = choice;
       const ext  = fmt === 'mp3' ? 'mp3' : 'wav';
       const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
-      const filename = `bloops-mix-${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}.${ext}`;
+      const fullName = `${filename}.${ext}`;
       const origText = btn.textContent;
       btn.disabled = true;
       try {
         btn.textContent = 'Rendering…';
-        const buffer = await renderTracksToBuffer();
+        const buffer = await renderTracksToBuffer({ sampleRate });
         btn.textContent = fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…';
         const blob = fmt === 'mp3'
           ? await audioBufferToMp3(buffer)
           : audioBufferToWav(buffer);
-        const file   = new File([blob], filename, { type: mime });
+        const file   = new File([blob], fullName, { type: mime });
         if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
           alert('This browser cannot share audio files directly. Use Export to save the file and share it manually.');
           return;
@@ -13407,6 +13651,188 @@
       });
     })();
 
+    // ---- Grid On/Off (fluid pitch field) ----------------------------------
+    // Grid On  = discrete cells (current behavior). pointerdown on a cell
+    //            triggers its exact freq.
+    // Grid Off = continuous pitch field across the same cell grid. The DOM
+    //            cells stay in place and supply per-cell freq anchors;
+    //            press position bilinearly interpolates between the four
+    //            surrounding anchors in log-freq space, and the SAME
+    //            persistent synth tracks the pointer for the duration of
+    //            the press. Pointermove ramps frequency over a few ms so
+    //            the bend feels musical instead of stair-stepped.
+    let fluidGridMode = false;
+    let _fluidSynth = null;
+    let _fluidActive = false;
+    let _fluidPointerId = null;
+    // Pitch tracking uses .detune (cents) instead of .frequency (Hz)
+    // because linear ramps in cents = pitch-linear bends. Ramps in Hz
+    // sound stair-stepped — a 100 Hz step is an octave at 100 Hz but a
+    // minor third at 800 Hz, so the perceived rate of pitch change
+    // changes with where on the grid the press is. _fluidBaseFreq is
+    // pinned at attack time; subsequent moves bend detune relative to it.
+    let _fluidBaseFreq = null;
+    function _ensureFluidSynth() {
+      if (_fluidSynth) return _fluidSynth;
+      try {
+        _fluidSynth = new Tone.Synth({
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.005, decay: 0.1, sustain: 0.8, release: 0.4 },
+        }).connect(globalSendTap);
+      } catch (e) { _fluidSynth = null; }
+      return _fluidSynth;
+    }
+    // Bilinear pitch interpolation anchored on the cell DOM rects. The
+    // press's current cell is found via elementFromPoint (so grid
+    // padding / scroll / overflow doesn't skew position math), and the
+    // press position within that cell decides which 3 neighbors join
+    // it in the bilinear patch (right or left, down or up, plus the
+    // diagonal). The patch's (u, v) ∈ [0, 0.5] coordinates put the
+    // current cell's center at (0, 0) and the neighbor centers at
+    // (0.5, 0) etc., so the cell EDGE (u = 0.5) returns the midpoint
+    // pitch — which is continuous across cell boundaries when the
+    // press crosses into the neighbor and re-anchors. The earlier
+    // `u = abs(dx) * 2` made the edge return full neighbor pitch and
+    // produced an audible discontinuity at every boundary.
+    function _fluidFreqFromPoint(clientX, clientY) {
+      if (!Array.isArray(cells) || cells.length === 0 || !Array.isArray(notes)) return null;
+      const el = document.elementFromPoint(clientX, clientY);
+      if (!el) return null;
+      const cellEl = (el.classList && el.classList.contains('cell'))
+        ? el
+        : (el.closest && el.closest('.cell'));
+      if (!cellEl) return null;
+      const cellIdx = cells.indexOf(cellEl);
+      if (cellIdx < 0) return null;
+
+      const cols = 4;
+      const rows = Math.max(1, Math.ceil(notes.length / cols));
+      const row = Math.floor(cellIdx / cols);
+      const col = cellIdx % cols;
+
+      const rect = cellEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+
+      // dx, dy ∈ [-0.5, 0.5] — fractional offset from this cell's center.
+      const dx = (clientX - rect.left) / rect.width  - 0.5;
+      const dy = (clientY - rect.top)  / rect.height - 0.5;
+
+      // u, v ∈ [0, 0.5] — bilinear weight toward x-/y-neighbors.
+      const u = Math.abs(dx);
+      const v = Math.abs(dy);
+
+      // Sign of dx/dy picks which side's neighbor to fold in.
+      const nCol = dx >= 0 ? col + 1 : col - 1;
+      const nRow = dy >= 0 ? row + 1 : row - 1;
+
+      const safeIdx = (r, c) => {
+        if (r < 0 || r >= rows || c < 0 || c >= cols) return -1;
+        const idx = r * cols + c;
+        return idx < notes.length ? idx : -1;
+      };
+      const safeLog = (i) => {
+        if (i < 0) return null;
+        const f = notes[i]?.freq;
+        return (Number.isFinite(f) && f > 0) ? Math.log2(f) : null;
+      };
+
+      const lC = safeLog(cellIdx);
+      if (lC == null) return null;
+      // Off-grid neighbors fall back to the current cell's pitch, so
+      // pressing at the very edge of the grid collapses to "no bend on
+      // that axis" instead of producing a wild jump.
+      const lX  = safeLog(safeIdx(row,  nCol)) ?? lC;
+      const lY  = safeLog(safeIdx(nRow, col))  ?? lC;
+      const lXY = safeLog(safeIdx(nRow, nCol)) ?? lC;
+
+      const t1u = 1 - u, t1v = 1 - v;
+      const lOut = t1u * t1v * lC + u * t1v * lX + t1u * v * lY + u * v * lXY;
+      return Math.pow(2, lOut);
+    }
+    function _startFluidPress(freq) {
+      const s = _ensureFluidSynth();
+      if (!s || _fluidActive) return;
+      _fluidActive = true;
+      _fluidBaseFreq = freq;
+      try {
+        s.frequency.cancelScheduledValues(0); s.frequency.value = freq;
+        s.detune.cancelScheduledValues(0);    s.detune.value    = 0;
+      } catch (e) {}
+      try { s.triggerAttack(freq); } catch (e) {}
+    }
+    function _updateFluidPress(freq) {
+      if (!_fluidActive || !_fluidSynth || !_fluidBaseFreq) return;
+      // Cents offset from the attack frequency. Linear-in-cents ramp =
+      // constant pitch change rate, so the bend feels musical even
+      // across the wide vertical jumps in the grid (4 semitones per row).
+      const cents = 1200 * Math.log2(freq / _fluidBaseFreq);
+      try {
+        const ctx = Tone.context && Tone.context.rawContext;
+        const t = (ctx ? ctx.currentTime : Tone.now()) + 0.005;
+        _fluidSynth.detune.cancelScheduledValues(t);
+        _fluidSynth.detune.setValueAtTime(_fluidSynth.detune.value, t);
+        // 35 ms ramp — longer than the previous 25 ms because the
+        // bend now spans cents instead of Hz, so the bigger step
+        // benefits from a touch more glide. Move events at ~60 fps
+        // (~16 ms apart) still chase the cursor closely.
+        _fluidSynth.detune.linearRampToValueAtTime(cents, t + 0.035);
+      } catch (e) {}
+    }
+    function _endFluidPress() {
+      if (!_fluidActive || !_fluidSynth) return;
+      _fluidActive = false;
+      _fluidBaseFreq = null;
+      try { _fluidSynth.triggerRelease(); } catch (e) {}
+    }
+    // Pointer event wiring on the grid container. The handlers short-
+    // circuit when fluidGridMode is off so they don't fight the per-cell
+    // pointerdown path in normal mode.
+    (function bindFluidGridHandlers() {
+      const gridEl = document.getElementById('grid');
+      if (!gridEl) return;
+      gridEl.addEventListener('pointerdown', (e) => {
+        if (!fluidGridMode) return;
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        const freq = _fluidFreqFromPoint(e.clientX, e.clientY);
+        if (freq == null) return;
+        e.preventDefault();
+        _fluidPointerId = e.pointerId;
+        try { gridEl.setPointerCapture(e.pointerId); } catch (err) {}
+        _startFluidPress(freq);
+      });
+      gridEl.addEventListener('pointermove', (e) => {
+        if (!fluidGridMode || !_fluidActive || e.pointerId !== _fluidPointerId) return;
+        const freq = _fluidFreqFromPoint(e.clientX, e.clientY);
+        if (freq != null) _updateFluidPress(freq);
+      });
+      const endPress = (e) => {
+        if (e.pointerId !== _fluidPointerId) return;
+        _fluidPointerId = null;
+        _endFluidPress();
+      };
+      gridEl.addEventListener('pointerup', endPress);
+      gridEl.addEventListener('pointercancel', endPress);
+    })();
+    // Toggle button — flips body class for the CSS visual change and
+    // ends any in-flight fluid press when leaving fluid mode so a stuck
+    // sustain doesn't ring on indefinitely.
+    (function initFluidGridToggle() {
+      const btn = document.getElementById('fluid-grid-toggle');
+      if (!btn) return;
+      const KEY = 'bloops-fluid-grid';
+      const initial = localStorage.getItem(KEY) === '1';
+      fluidGridMode = initial;
+      document.body.classList.toggle('fluid-grid', initial);
+      btn.textContent = initial ? 'Grid Off' : 'Grid On';
+      btn.addEventListener('click', () => {
+        fluidGridMode = !fluidGridMode;
+        document.body.classList.toggle('fluid-grid', fluidGridMode);
+        btn.textContent = fluidGridMode ? 'Grid Off' : 'Grid On';
+        try { localStorage.setItem(KEY, fluidGridMode ? '1' : '0'); } catch (e) {}
+        if (!fluidGridMode) _endFluidPress();
+      });
+    })();
+
     // ---- Riff dropdown — Save / Random / Seed / Reverse / Shuffle / Repeat ----
     // Mirrors the Project / Voices / Colors menu chrome so the menubar look
     // carries over to the sequence-controls row. Each entry's existing
@@ -14193,7 +14619,11 @@
         sbTab.textContent     = (active === 'serialbox') ? 'Listen' : 'Listen →';
       };
       const showBloops = () => {
-        document.body.classList.remove('view-serialbox', 'view-mix');
+        // tracks-fullscreen is a Mix-internal layout class; clear it on
+        // every view switch so it can't leak the Mix DOM (Export button,
+        // Tracks section) onto Make or Listen via the `body.tracks-
+        // fullscreen > #mix-view { display: block !important }` rule.
+        document.body.classList.remove('view-serialbox', 'view-mix', 'tracks-fullscreen');
         setActive(bloopsTab);
         updateLabels('make');
         // Leaving Listen pauses any background music so the user isn't
@@ -14208,7 +14638,7 @@
         try { window.musicPlayer?.pause(); } catch (e) {}
       };
       const showSerialbox = () => {
-        document.body.classList.remove('view-mix');
+        document.body.classList.remove('view-mix', 'tracks-fullscreen');
         document.body.classList.add('view-serialbox');
         setActive(sbTab);
         updateLabels('serialbox');
@@ -14374,8 +14804,12 @@
       modal.innerHTML = `
         <div class="sm-title">Copy "${seq.name}" to track</div>
         <div class="sm-param">
-          <div class="sm-param-row">Iterations <span class="sm-val" id="copy-n-v">4</span></div>
-          <input type="range" id="copy-n" min="1" max="64" value="4" />
+          <div class="sm-param-row">Iterations</div>
+          <div class="sm-stepper" style="display:flex;align-items:stretch;gap:6px;">
+            <button type="button" id="copy-n-dec" aria-label="Decrease" style="flex:0 0 36px;padding:0;background:#0a0a14;border:1px solid #2d2d3f;border-radius:6px;color:#cbd5e0;font-family:inherit;font-size:1.1rem;font-weight:700;cursor:pointer;">−</button>
+            <input type="number" id="copy-n" min="1" max="64" step="1" value="4" inputmode="numeric" style="flex:1 1 0;min-width:0;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;border-radius:6px;color:#e2e8f0;font-family:inherit;font-size:0.95rem;text-align:center;" />
+            <button type="button" id="copy-n-inc" aria-label="Increase" style="flex:0 0 36px;padding:0;background:#0a0a14;border:1px solid #2d2d3f;border-radius:6px;color:#cbd5e0;font-family:inherit;font-size:1.1rem;font-weight:700;cursor:pointer;">+</button>
+          </div>
         </div>
         <div class="sm-section-label">Destination</div>
         <select id="copy-track" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;">
@@ -14392,8 +14826,22 @@
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
       const nInput = modal.querySelector('#copy-n');
-      const nVal   = modal.querySelector('#copy-n-v');
-      nInput.addEventListener('input', () => { nVal.textContent = nInput.value; });
+      const clampN = (v) => Math.max(1, Math.min(64, Math.floor(Number(v) || 0)));
+      const setN = (v) => { nInput.value = String(clampN(v)); };
+      // Free typing: re-clamp on blur so partial inputs (empty string,
+      // out-of-range) snap back to a valid integer when the user
+      // commits, without fighting them mid-edit.
+      nInput.addEventListener('blur', () => {
+        const v = parseInt(nInput.value, 10);
+        if (!Number.isFinite(v)) { nInput.value = '1'; return; }
+        nInput.value = String(clampN(v));
+      });
+      modal.querySelector('#copy-n-dec').addEventListener('click', () => {
+        setN(clampN(parseInt(nInput.value, 10)) - 1);
+      });
+      modal.querySelector('#copy-n-inc').addEventListener('click', () => {
+        setN(clampN(parseInt(nInput.value, 10)) + 1);
+      });
 
       modal.querySelector('#copy-cancel').addEventListener('click', () => overlay.remove());
       modal.querySelector('#copy-apply').addEventListener('click', async () => {
@@ -15155,38 +15603,106 @@
       return (p > 0 ? 'R' : 'L') + Math.abs(p);
     }
 
+    // Pointer-based click-drag for desktop. Mouse pointerdown captures
+    // the pointer; first move past MOVE_THRESHOLD engages drag and
+    // builds a floating clone that follows the cursor. Drop lands on
+    // whichever chip the pointer is over on pointerup. The clone's
+    // pointer-events: none keeps elementFromPoint reporting the chip
+    // underneath, not the clone itself. Touch path is bindStepDragTouch
+    // below — it owns its own gesture model (280 ms hold to engage so
+    // vertical page scroll over chips still works).
     function bindStepDrag(chip, i) {
-      chip.draggable = true;
-      chip.addEventListener('dragstart', (e) => {
+      let startX = 0, startY = 0;
+      let pointerId = null;
+      let dragging = false;
+      let clone = null;
+      let offX = 0, offY = 0;
+      let dropIdx = null;
+      const MOVE_THRESHOLD = 6;
+
+      const engage = () => {
+        dragging = true;
         _stepDragIdx = i;
-        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-        requestAnimationFrame(() => chip.classList.add('dragging'));
-      });
-      chip.addEventListener('dragenter', (e) => {
-        if (_stepDragIdx === null || _stepDragIdx === i) return;
-        e.preventDefault();
-        clearStepDragOver();
-        chip.classList.add('drag-over');
-      });
-      chip.addEventListener('dragover', (e) => {
-        if (_stepDragIdx === null) return;
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      });
-      chip.addEventListener('dragleave', (e) => {
-        if (!chip.contains(e.relatedTarget)) chip.classList.remove('drag-over');
-      });
-      chip.addEventListener('drop', (e) => {
-        e.preventDefault();
-        clearStepDragOver();
-        if (_stepDragIdx !== null && _stepDragIdx !== i) moveSequenceStep(_stepDragIdx, i);
-        _stepDragIdx = null;
-      });
-      chip.addEventListener('dragend', () => {
+        const rect = chip.getBoundingClientRect();
+        offX = startX - rect.left;
+        offY = startY - rect.top;
+        clone = chip.cloneNode(true);
+        Object.assign(clone.style, {
+          position: 'fixed', left: rect.left + 'px', top: rect.top + 'px',
+          width: rect.width + 'px', height: rect.height + 'px',
+          opacity: '0.85', pointerEvents: 'none', zIndex: '9999',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        });
+        document.body.appendChild(clone);
+        chip.classList.add('dragging');
+      };
+
+      const cleanup = () => {
+        if (clone) { try { clone.remove(); } catch (e) {} clone = null; }
         chip.classList.remove('dragging');
         clearStepDragOver();
+        try { chip.releasePointerCapture(pointerId); } catch (e) {}
+        pointerId = null;
+        dragging = false;
+        dropIdx = null;
         _stepDragIdx = null;
+      };
+
+      chip.addEventListener('pointerdown', (e) => {
+        // Only mouse drives this path — touch falls through to
+        // bindStepDragTouch which has its own gesture model.
+        if (e.pointerType !== 'mouse') return;
+        if (e.button !== 0) return;
+        // Ignore clicks that land on interactive sub-elements (e.g.
+        // inline buttons on subseq chips).
+        if (e.target && e.target.closest && e.target.closest('button')) return;
+        pointerId = e.pointerId;
+        startX = e.clientX;
+        startY = e.clientY;
+        dragging = false;
+        dropIdx = null;
+        try { chip.setPointerCapture(e.pointerId); } catch (err) {}
       });
+
+      chip.addEventListener('pointermove', (e) => {
+        if (e.pointerId !== pointerId) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!dragging) {
+          if (Math.hypot(dx, dy) < MOVE_THRESHOLD) return;
+          engage();
+        }
+        clone.style.left = (e.clientX - offX) + 'px';
+        clone.style.top  = (e.clientY - offY) + 'px';
+        clearStepDragOver();
+        dropIdx = null;
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const target = el && el.closest && el.closest('.seq-step');
+        if (target && target !== chip) {
+          const idx = parseInt(target.dataset.stepIdx, 10);
+          if (Number.isFinite(idx) && idx !== i) {
+            target.classList.add('drag-over');
+            dropIdx = idx;
+          }
+        }
+      });
+
+      const finish = (e) => {
+        if (pointerId == null || (e && e.pointerId !== pointerId)) return;
+        const didDrag = dragging;
+        const target = dropIdx;
+        cleanup();
+        if (didDrag && Number.isFinite(target)) moveSequenceStep(i, target);
+        // Suppress the click that follows pointerup so a drag that
+        // ended on the original chip doesn't also fire the chip's
+        // select/preview click handler.
+        if (didDrag) {
+          const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); chip.removeEventListener('click', swallow, true); };
+          chip.addEventListener('click', swallow, true);
+        }
+      };
+      chip.addEventListener('pointerup', finish);
+      chip.addEventListener('pointercancel', finish);
     }
 
     // Touch drag state machine per chip:
@@ -16094,6 +16610,11 @@
       let chordDuration = step.duration ?? 1;
       let chordSubdivision = (step.subdivision != null) ? step.subdivision : stepSubdivision;
       let chordBendSemitones = step.bend?.semitones ?? 0;
+      // Chord-wide pan override: stays at 0 (center) by default so
+      // individual voice pans pass through. Setting to a non-center
+      // value writes step.chordPan on Apply; chordVoiceParams uses
+      // that to override every voice's pan during playback.
+      let chordPan = Number.isFinite(step.chordPan) ? step.chordPan : 0;
       let chordBendAt = Math.round(((step.bend?.atFraction ?? 1) * 100));
 
       modal.innerHTML = `
@@ -16116,6 +16637,22 @@
             <div class="se-chord-list" id="se-chord-list"></div>
             <div class="sm-section-label">Add note</div>
             <div class="sm-waves" id="se-add-picker"></div>
+          </div>
+        </details>
+        <details class="sm-fold">
+          <summary>Pan / Volume (whole chord)</summary>
+          <div class="sm-fold-body">
+            <div class="sm-param">
+              <div class="sm-param-row">Pan (all voices) <span class="sm-val" id="se-cpan-all-v">C</span></div>
+              <input type="range" id="se-cpan-all" min="-100" max="100" value="0" />
+            </div>
+            <div class="sm-param">
+              <div class="sm-param-row">Volume (all voices) <span class="sm-val" id="se-cvol-all-v">100%</span></div>
+              <input type="range" id="se-cvol-all" min="0" max="100" value="100" />
+            </div>
+            <div class="sm-hint" style="color:#6c7186;font-size:0.72rem;margin-top:6px;">
+              Moving these overrides every voice's pan / volume. Open a voice's <em>Sound ▾</em> for per-voice control.
+            </div>
           </div>
         </details>
         <details class="sm-fold">
@@ -16178,6 +16715,36 @@
         });
         addPicker.appendChild(btn);
       });
+
+      // Chord-wide Pan + Volume. Pan stays per-voice when the slider
+      // is centered (chordPan=0) — only at non-center does playback
+      // override each voice via chordVoiceParams. Volume still
+      // broadcasts to every voice's params.volume directly because
+      // there's no playback-side override path for volume yet.
+      const cpanAll  = modal.querySelector('#se-cpan-all');
+      const cpanAllV = modal.querySelector('#se-cpan-all-v');
+      const cvolAll  = modal.querySelector('#se-cvol-all');
+      const cvolAllV = modal.querySelector('#se-cvol-all-v');
+      const fmtPan = (v) => (v === 0 ? 'C' : (v < 0 ? 'L' : 'R') + Math.abs(v));
+      if (cpanAll && cpanAllV) {
+        cpanAll.value = String(chordPan);
+        cpanAllV.textContent = fmtPan(chordPan);
+        cpanAll.addEventListener('input', () => {
+          const v = parseInt(cpanAll.value, 10) || 0;
+          chordPan = v;
+          cpanAllV.textContent = fmtPan(v);
+        });
+      }
+      if (cvolAll && cvolAllV) {
+        cvolAll.addEventListener('input', () => {
+          const v = Math.max(0, Math.min(100, parseInt(cvolAll.value, 10) || 0));
+          cvolAllV.textContent = v + '%';
+          chordNotes.forEach(n => {
+            if (!n.params) n.params = {};
+            n.params.volume = v;
+          });
+        });
+      }
 
       function renderList() {
         const listEl = modal.querySelector('#se-chord-list');
@@ -16297,7 +16864,11 @@
           ? { semitones: chordBendSemitones, atFraction: chordBendAt / 100 }
           : null;
         const size = chordNotes.length;
-        chordNotes.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params, size), previewBend)));
+        // Synthesize the in-flight step state so chordVoiceParams can
+        // apply the chord-wide pan override during preview, matching
+        // what playback will hear once Apply commits.
+        const previewStep = { chordPan };
+        chordNotes.forEach(n => playNote(n.freq, paramsWithBend(chordVoiceParams(n.params, size, previewStep), previewBend)));
       });
 
       modal.querySelector('.sm-remove-step').addEventListener('click', () => {
@@ -16318,11 +16889,19 @@
           const next = { freq: n.freq, label: n.label, cellIndex: n.cellIndex,
             sound: n.params.type, duration: chordDuration, subdivision: chordSubdivision, params: { ...n.params } };
           if (bendObj) next.bend = bendObj;
+          // Single-voice "chord" — fold chord-wide pan into the voice's
+          // own pan so the override survives even though the step is no
+          // longer a chord. No-op at center.
+          if (chordPan !== 0) next.params.pan = chordPan;
           sequence[stepIndex] = next;
         } else {
           const next = { chord: chordNotes.map(n => ({ ...n, params: { ...n.params } })),
             label: chordNotes.map(n => n.label).join('·'), duration: chordDuration, subdivision: chordSubdivision };
           if (bendObj) next.bend = bendObj;
+          // Only carry chordPan on the step when non-zero — keeps the
+          // saved-step shape minimal and lets chordVoiceParams skip
+          // the override fast path at playback when the field is absent.
+          if (chordPan !== 0) next.chordPan = chordPan;
           sequence[stepIndex] = next;
         }
         renderSequence();
@@ -17076,6 +17655,10 @@
         // presses build a chord step at the end of the press session.
         cell.addEventListener('pointerdown', (e) => {
           if (e.target.closest('.cell-sound-select, .cell-edit-carrot')) return;
+          // Fluid pitch mode owns the gesture — the grid-level pointer
+          // handler at bindFluidGridHandlers handles press / move /
+          // release as a continuous bend.
+          if (fluidGridMode) return;
           // Wrap (chordMode) takes precedence over the note-mode click
           // routing so accumulating notes works the same way regardless
           // of whether the user is in Spell, Run, or Stack. Toggling
@@ -17695,16 +18278,25 @@
         input.addEventListener('input', () => {
           const v = parseFloat(input.value) || 0;
           if (_isLaneSendKey(key)) {
+            // Mix-key sliders dual-write: the value lands on the active
+            // lane's per-lane sends (drives lane FX nodes) AND on
+            // globalFx (drives globalSendTap's wet for cell presses,
+            // untracked sequence playback, and any other non-lane audio
+            // path). Without the globalFx write, dialing in reverb in
+            // the FX panel was silent on note presses since the live-
+            // press path bypasses lane.sends entirely.
             const sends = _activeSends();
-            if (!sends) return;
-            sends[key] = v;
+            if (sends) sends[key] = v;
             label.textContent = v + unit;
             const lane = _activeLane();
             if (lane) {
               if (!lane._volume) getLaneBus(activeLaneIdx);
               applyLaneSends(lane);
             }
+            globalFx[key] = v;
+            try { applyGlobalSendGains(); } catch (e) {}
             if (typeof persistWorkspace === 'function') persistWorkspace();
+            try { persistGlobalFx(); } catch (e) {}
           } else {
             globalFx[key] = v;
             label.textContent = v + unit;

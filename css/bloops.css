@@ -190,6 +190,22 @@
       overflow-y: auto;
     }
     .fx-panel.open { display: flex; }
+    /* Per-lane scope label — shows which lane these sliders edit so
+       there's no confusion about where changes land. Updated by the
+       FX panel's refreshFxSliderUI on every activeLaneChanged event. */
+    .fx-panel-scope {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: #4fd1c5;
+      background: rgba(79, 209, 197, 0.10);
+      border: 1px solid rgba(79, 209, 197, 0.30);
+      border-radius: 6px;
+      padding: 6px 10px;
+      margin-bottom: 4px;
+      text-align: center;
+    }
     .fx-control { display: flex; flex-direction: column; gap: 4px; }
     .fx-control-row {
       display: flex; justify-content: space-between; align-items: baseline;
@@ -365,6 +381,27 @@
        above the step controls. In Mono only three buttons live here;
        in Poly the Drift button takes a fourth slot, so Rec and Loop
        shrink proportionally to keep the row on a single line. */
+    /* Master-bus oscilloscope. Pinned to the very bottom of the viewport
+       as a full-width status strip. body gets a matching padding-bottom
+       so the footer transport and saved-viewer aren't covered. The
+       canvas buffer width is synced to clientWidth in the draw loop
+       (bloops.html initMasterScope) so the waveform stays crisp at any
+       viewport width without per-frame canvas.width churn. */
+    body { padding-bottom: 40px; }
+    .master-scope {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 40px;
+      background: #050510;
+      border-top: 1px solid #1a1a2e;
+      border-radius: 0;
+      margin: 0;
+      display: block;
+      z-index: 100;
+    }
     .footer-transport {
       display: flex;
       align-items: stretch;
@@ -374,7 +411,7 @@
     }
     .footer-transport > #rec-btn,
     .footer-transport > #loop-btn,
-    .footer-transport > #drift-btn {
+    .footer-transport > #audio-reset-btn {
       flex: 1 1 0;
       min-width: 0;
       height: 52px;
@@ -384,13 +421,64 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    /* Poly mode: tighten Rec / Loop / Drift padding + font so all three
-       pills + the Play circle fit on the row without overflow. */
+    /* Poly mode: tighten Rec / Loop padding + font so the pills + Play
+       circle fit on the row without overflow. */
     .footer-transport.poly-mode-on > #rec-btn,
     .footer-transport.poly-mode-on > #loop-btn,
-    .footer-transport.poly-mode-on > #drift-btn {
+    .footer-transport.poly-mode-on > #audio-reset-btn {
       padding: 0 10px;
       font-size: 0.92rem;
+    }
+    /* Reset-Audio pill — neutral by default; .warn turns it amber when
+       schedulerTick detects measurable slip (>25ms); .alarm turns it red
+       when slip crosses ~80ms. driven by refreshAudioResetUI. */
+    #audio-reset-btn {
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      #audio-reset-btn:hover { border-color: #4299e1; color: #90cdf4; }
+    }
+    #audio-reset-btn.warn {
+      border-color: #ed8936;
+      color: #fbd38d;
+      background: rgba(237, 137, 54, 0.12);
+    }
+    /* Mobile: footer-transport packs Play (circle, 52×52) + Rec + Loop
+       + Audio (and Drift in poly) onto one row. At ~375px Audio's full
+       label crowds out the others. Tighten padding + font + shorten
+       its label to just "↻". The visible-state styling (warn/alarm
+       glow, colors) is unchanged. */
+    @media (max-width: 600px) {
+      .footer-transport > #audio-reset-btn {
+        padding: 0 8px;
+        font-size: 0;          /* hide the "↻ Audio" text */
+        position: relative;
+      }
+      .footer-transport > #audio-reset-btn::before {
+        content: '↻';
+        font-size: 1.2rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+    }
+    #audio-reset-btn.alarm {
+      border-color: #fc8181;
+      color: #fed7d7;
+      background: rgba(229, 62, 62, 0.18);
+      box-shadow: 0 0 12px rgba(252, 129, 129, 0.4);
+      animation: audioResetPulse 1.1s ease-in-out infinite;
+    }
+    @keyframes audioResetPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
     }
     .footer-transport > #play-btn {
       width: 52px;
@@ -400,28 +488,18 @@
       font-size: 1.25rem;
       flex: 0 0 auto;
     }
-    /* Drift pill — orange identity to distinguish from the other
-       transport pills. Active state (current lane is drifting) lights
-       up brighter and switches the label to "Clear". */
-    #drift-btn {
-      border: 1px solid #2d2d3f;
-      border-radius: 20px;
-      background: transparent;
-      color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      touch-action: manipulation;
-    }
-    @media (hover: hover) {
-      #drift-btn:hover { border-color: #ed8936; color: #fbd38d; }
-    }
-    #drift-btn.active {
+    /* Drift option inside the Riff dropdown. Inherits the riff-panel
+       button base style; the orange identity only kicks in when the
+       active lane is actively drifting or locked (refreshDriftBtn adds
+       .active in those states). */
+    .riff-panel > #drift-btn.active {
       border-color: #ed8936;
       color: #fbd38d;
       background: rgba(237, 137, 54, 0.18);
       box-shadow: 0 0 12px rgba(237, 137, 54, 0.4);
+    }
+    @media (hover: hover) {
+      .riff-panel > #drift-btn:hover:not(:disabled) { border-color: #ed8936; color: #fbd38d; }
     }
     /* Drifting lane — orange-tinted glow on the lane row so the user
        can see at a glance which lanes are drifting. */
@@ -1050,6 +1128,27 @@
     .grid-state-actions button:hover { border-color: #4299e1; color: #4299e1; }
     .grid-state-actions #grid-state-delete-btn:hover { border-color: #e53e3e; color: #e53e3e; }
     .grid-state-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+    /* Tone… / FX… entries inside the Sounds panel — same chrome as the
+       grid-state action buttons, side-by-side. */
+    .sounds-submenus {
+      display: flex; flex-direction: row; gap: 6px;
+    }
+    .sounds-submenus .sounds-sub-btn {
+      flex: 1;
+      padding: 6px 10px;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: center;
+    }
+    .sounds-submenus .sounds-sub-btn:hover { border-color: #4299e1; color: #4299e1; }
 
     /* NOTE GRID */
     /* Slim clickable banners above the note grid that double as menu
@@ -1160,36 +1259,6 @@
     .banner-half.open::after {
       content: ' ▴';
       color: #81e6d9;
-    }
-    /* Mode banner: chevron suffix doesn't apply (this isn't a dropdown
-       trigger), and active modes get a magenta glow so the user sees at
-       a glance that the grid is in an alternate playback state. The
-       mode-banner shrinks to 7/8 of the row's right half (43.75%) to
-       make room for the lock-mode toggle on its right. */
-    #mode-banner { flex: 0 0 43.75%; }
-    #mode-banner::after { content: ''; display: none; }
-    #mode-banner[data-mode="arpeggio"] {
-      color: #f6ad55;
-      text-shadow: 0 0 10px rgba(246, 173, 85, 0.45);
-    }
-    #mode-banner[data-mode="chord"] {
-      color: #f472b6;
-      text-shadow: 0 0 10px rgba(244, 114, 182, 0.45);
-    }
-    /* Mode-lock toggle: 1/8 the size of the mode banner. When active,
-       a glow and a filled glyph signal that mode switches will perform
-       the round-trip flatten/regroup transformation. */
-    #mode-lock-banner {
-      flex: 0 0 6.25%;
-      padding: 6px 0;
-      font-size: 0.85rem;
-      letter-spacing: 0;
-      color: #4a5568;
-    }
-    #mode-lock-banner::after { content: ''; display: none; }
-    #mode-lock-banner.active {
-      color: #f6e05e;
-      text-shadow: 0 0 8px rgba(246, 224, 94, 0.55);
     }
     .grid {
       flex: 1;
@@ -1561,6 +1630,12 @@
          status is the wide colored mute pill. */
       width: 92px;
       min-width: 92px;
+      /* Pin the controls to a single-row height and vertically center
+         them inside the lane-row, so when the lane's chip area wraps
+         into multiple rows (taller lane-row) the leftmost buttons stay
+         the same size instead of stretching with the row. */
+      height: 40px;
+      align-self: center;
     }
     .lane-collapse-toggle,
     .lane-grid-toggle {
@@ -1686,10 +1761,14 @@
     .lane-chips::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }
     .lane-chips.grid-mode {
       /* Each lane chip strip uses the same sub-cell grid as Mono. The
-         inline grid overrides flex so chips lay out by gridColumn span. */
+         inline grid overrides flex so chips lay out by gridColumn span.
+         `row` (not `row dense`) preserves musical order: a chip that
+         can't fit on the current row wraps to the next, instead of
+         letting a later short chip backfill the gap and reorder the
+         sequence visually. The gaps are the price of in-order display. */
       display: grid;
       grid-template-columns: repeat(var(--grid-cols, 32), minmax(8px, 1fr));
-      grid-auto-flow: row dense;
+      grid-auto-flow: row;
       align-items: stretch;
     }
     .lane-chips .seq-empty {
@@ -2236,7 +2315,8 @@
       width: 100%;
       min-width: 0;
     }
-    .kwr-pair > button {
+    .kwr-pair > button,
+    .kwr-pair > .wrap-segment > button {
       width: 100%;
       min-width: 0;
       height: 52px;
@@ -2246,6 +2326,74 @@
          the inner edges on narrower screens. */
       font-size: 0.85rem;
       letter-spacing: 1.5px;
+    }
+    /* Middle cell of the KEEP / WRAP / REST grid is a flex row so the
+       Edit pill can dock to Wrap's right side at 25% width when the
+       wrap is active. When Edit is hidden, Wrap spans the full cell.
+       The -3px vertical pull-out lives on this WRAPPER so the inner
+       Wrap and Edit buttons can fill it cleanly (no per-child margins
+       to keep in lockstep). Net visual height matches KEEP / REST. */
+    .kwr-pair .wrap-segment {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      width: 100%;
+      min-width: 0;
+      height: 52px;
+      margin: -3px 0;
+    }
+    .kwr-pair .wrap-segment > #chord-btn {
+      flex: 1 1 auto;
+      min-width: 0;
+      /* Cancel chord-btn's own -3px pull (defined below for the
+         no-segment case); the wrapper handles vertical pull now and
+         a doubled pull would extend the button past KEEP/REST. */
+      margin: 0;
+      height: 100%;
+    }
+    .kwr-pair .wrap-segment > #wrap-edit-btn {
+      flex: 0 0 25%;
+      min-width: 0;
+      height: 100%;
+      box-sizing: border-box;
+      padding: 0 4px;
+      border: 2px solid #4fd1c5;
+      border-left: none;
+      border-radius: 0;
+      background: rgba(79, 209, 197, 0.10);
+      color: #b2f5ea;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    @media (hover: hover) {
+      .kwr-pair .wrap-segment > #wrap-edit-btn:hover {
+        background: rgba(79, 209, 197, 0.22);
+        color: #e6fffa;
+      }
+    }
+    .kwr-pair .wrap-segment > #wrap-edit-btn[hidden] { display: none; }
+    /* Mobile: KEEP / WRAP / REST cells get tight on a ~375px viewport.
+       The Wrap text + active button glow can crowd the inline Edit pill
+       to the point where its label clips. Bump Edit to 32% of the
+       segment (still smaller than Wrap) and drop the font size so
+       "Edit" fits without truncating. chord-btn's letter-spacing tightens
+       so "Wrap" / "Unwrap" / "Close" don't overflow the remaining 68%. */
+    @media (max-width: 600px) {
+      .kwr-pair > button,
+      .kwr-pair > .wrap-segment > button {
+        font-size: 0.78rem;
+        letter-spacing: 0.8px;
+        padding: 0 4px;
+      }
+      .kwr-pair .wrap-segment > #wrap-edit-btn {
+        flex: 0 0 32%;
+        font-size: 0.7rem;
+        letter-spacing: 0.5px;
+      }
     }
     /* Left segment — KEEP. Outer-left rounded, inner-right flat. No
        negative margins — each segment fills its 1fr grid cell so the
@@ -3501,6 +3649,105 @@
       cursor: pointer; transition: all 0.15s;
     }
     .sm-apply:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(66,153,225,0.275); }
+
+    /* Wrap-edit modal — narrower than the full step editor since each
+       row holds a single label + one or two buttons. The contents
+       re-render in place after every action (invert / toggle) so the
+       summary line stays accurate without closing the menu. */
+    .wrap-edit-modal { width: min(340px, 92vw); }
+    .wrap-edit-modal .we-summary {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      color: #81e6d9;
+      background: rgba(79, 209, 197, 0.08);
+      border: 1px solid rgba(79, 209, 197, 0.25);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 14px;
+      word-break: break-word;
+    }
+    .wrap-edit-modal .we-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .wrap-edit-modal .we-row:last-of-type { margin-bottom: 0; }
+    .wrap-edit-modal .we-label {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #a0aec0;
+      letter-spacing: 0.5px;
+      flex: 0 0 auto;
+    }
+    .wrap-edit-modal .we-row-btns {
+      display: flex;
+      gap: 6px;
+      flex: 1 1 auto;
+      justify-content: flex-end;
+    }
+    .wrap-edit-modal .we-btn {
+      padding: 6px 14px;
+      border-radius: 18px;
+      background: transparent;
+      border: 1px solid #4fd1c5;
+      color: #b2f5ea;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    @media (hover: hover) {
+      .wrap-edit-modal .we-btn:hover {
+        background: rgba(79, 209, 197, 0.18);
+        color: #e6fffa;
+      }
+    }
+    .wrap-edit-modal .we-btn[disabled] {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .wrap-edit-modal .we-toggle {
+      min-width: 130px;
+      text-align: center;
+    }
+
+    /* Wrap note-by-note editor — tabs at the top let the user pick which
+       chord voice / subStep to edit; the editor body below shows that
+       note's pitch + sound fields. */
+    .wrap-notes-modal { width: min(420px, 94vw); }
+    .wrap-notes-modal .wn-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #2d2d3f;
+    }
+    .wrap-notes-modal .wn-tab {
+      padding: 5px 12px;
+      border-radius: 14px;
+      border: 1px solid #2d2d3f;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    @media (hover: hover) {
+      .wrap-notes-modal .wn-tab:hover { border-color: #4fd1c5; color: #b2f5ea; }
+    }
+    .wrap-notes-modal .wn-tab.active {
+      border-color: #4fd1c5;
+      color: #e6fffa;
+      background: rgba(79, 209, 197, 0.18);
+      box-shadow: 0 0 8px rgba(79, 209, 197, 0.35);
+    }
 
     .rename-input {
       width: 100%;

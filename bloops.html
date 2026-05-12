@@ -10,6 +10,10 @@
   <link rel="stylesheet" href="css/bloops.css" />
   <script src="https://cdn.jsdelivr.net/npm/tone@14.9.17/build/Tone.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tonal/browser/tonal.min.js"></script>
+  <!-- @tonejs/midi parses .mid files into JS objects (tracks → notes
+       with time/duration/midi number). Used by the Import MIDI flow to
+       turn a .mid drop / file pick into Bloops lanes. -->
+  <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.js"></script>
   <script src="js/config.js"></script>
 </head>
 <body class="signin-required bloops-loading">
@@ -67,19 +71,19 @@
   </div>
 
   <div class="menubar">
-    <button id="voices-menu-btn" title="Saved Voices (note grid presets) from Drive">Voices ▾</button>
-    <div class="voices-panel" id="voices-panel"></div>
     <button id="project-menu-btn" title="Project: New, Save, Load">Project ▾</button>
     <span class="project-name-label" id="project-name-label" title="Active project"></span>
     <label class="master-vol" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter">
       <span class="master-vol-icon" aria-hidden="true">🔊</span>
       <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
     </label>
-    <button type="button" id="edit-mode-btn" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">Edit</button>
+    <button type="button" id="edit-mode-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎</button>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
       <button type="button" class="project-opt project-opt-load" id="project-load-opt" title="Load a previously saved project from Google Drive">Load project…</button>
+      <button type="button" class="project-opt project-opt-midi" id="project-import-midi-opt" title="Import a .mid file: each track becomes a Bloops lane, each note becomes a step.">Import MIDI…</button>
+      <input type="file" id="midi-import-file" accept=".mid,.midi" hidden />
     </div>
     <div class="grid-settings-panel" id="grid-settings-panel">
       <div class="grid-control">
@@ -113,6 +117,15 @@
         <div class="grid-state-actions">
           <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
         </div>
+      </div>
+      <!-- Nested entry points for the Tone and FX panels. Clicking either
+           closes the Sounds panel and opens the corresponding sub-panel
+           anchored to the Sounds banner button. Wired in initSoundsSubmenus
+           further down so the open semantics stay co-located with the
+           existing initToneMenu / initFxMenu code. -->
+      <div class="grid-state-row sounds-submenus">
+        <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
+        <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
@@ -197,14 +210,19 @@
     <div id="lane-expander">
       <button type="button" id="lane-expander-close" class="lane-expander-close" aria-label="Close voice editor" title="Close voice editor (Esc)">×</button>
       <div class="banner-row">
+        <button type="button" id="scale-banner-half" class="banner-half" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <button type="button" id="radial-tone-btn" class="radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖</button>
-        <button type="button" id="scale-banner-half" class="banner-half" title="Click to change root, scale, octaves, A4 tuning, and saved grid states"></button>
-        <button type="button" id="tone-banner-half"  class="banner-half" title="Click to pick a tone applied to all notes"></button>
+        <!-- Tone and FX banner buttons live on as hidden anchors so their
+             existing IDs (used by initToneMenu / initFxMenu) keep resolving;
+             clicks now come from the nested Tone… / FX… rows inside the
+             Sounds panel. CSS hides them visually but they retain their
+             initial position in the layout, which is fine since the panels
+             re-anchor to scale-banner-half on open from Sounds. -->
+        <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
+        <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
       </div>
       <div class="banner-row banner-row--fx">
-        <button type="button" id="fx-banner" class="banner-half" title="Click to adjust global reverb / delay / distortion">FX</button>
-        <button type="button" id="mode-banner" class="banner-half" data-mode="sequencer" title="Note mode: click to cycle Spell → Run → Stack">Spell</button>
-        <button type="button" id="mode-lock-banner" class="banner-half" title="Note lock mode: when on, switching note modes re-shapes the sequence — flat notes ↔ subsequence ↔ chord — so you can round-trip without losing structure.">○</button>
+        <button type="button" id="surprise-banner" class="banner-half" title="Randomize root, scale, and per-cell tones for a quick creative shuffle">🎲 Surprise</button>
       </div>
       <div class="grid" id="grid"></div>
       <!-- Keep / Wrap / Rest live inside the lane voice editor so they
@@ -215,7 +233,15 @@
       <div class="step-grid-bar">
         <div class="kwr-pair">
           <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
-          <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
+          <!-- Wrap segment: holds the Wrap/Unwrap button and (when a wrap
+               is active) a small Edit pill that opens the wrap-edit menu
+               for invert / run-stack / full edit. Edit takes 25% of the
+               segment's width; Wrap shrinks to 75% when Edit is visible
+               and otherwise spans the whole segment. -->
+          <div class="wrap-segment">
+            <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
+            <button id="wrap-edit-btn" type="button" hidden aria-label="Edit" title="Edit current wrap — invert, switch chord/subsequence, edit fields">✎</button>
+          </div>
           <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
         </div>
       </div>
@@ -224,7 +250,7 @@
            the original layout, but now reparented into the per-lane
            voice editor so it travels with whichever lane is active. -->
       <div class="step-edit-row" id="step-edit-row" hidden>
-        <button type="button" id="step-edit-btn" hidden title="Open the step edit menu for the selected step">Edit</button>
+        <button type="button" id="step-edit-btn" hidden aria-label="Edit" title="Open the step edit menu for the selected step">✎</button>
         <div class="step-edit-bars">
           <div class="step-pan-bar" id="step-pan-bar" hidden>
             <span class="step-pan-label" id="step-pan-label">Pan</span>
@@ -293,6 +319,11 @@
         <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
         <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
         <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
+        <!-- Drift only meaningful with 2+ lanes (the whole point is one
+             lane lagging behind another). refreshDriftBtn disables it
+             when there's just one lane and updates the label between
+             Drift / Lock / Reset for the active lane's drift state. -->
+        <button id="drift-btn" type="button" title="Drift: pick a millisecond factor; the active lane's loop iteration N is delayed by factor × N. Lock to keep the offset; Reset to undo.">Drift</button>
         <!-- Random + Seed are pushed to the end of the menu and tinted
              differently because they're the destructive / generative
              actions — they replace (not just transform) the sequence. -->
@@ -312,23 +343,14 @@
       <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
       <button type="button" class="colors-opt" data-mode="piano">Piano</button>
     </div>
-    <div class="btn-group btn-group--step" title="Step controls — set Size, multi-select, grid layout, and append/fixed mode">
-      <label class="note-length-label" title="Length of the selected step (or the next note added when nothing is selected). Whole-multiples (2/1+) replace the old Hold dropdown.">
-        <select id="subdivision-select">
-          <option value="16">4/1</option>
-          <option value="12">3/1</option>
-          <option value="8">2/1</option>
-          <option value="4">1/1</option>
-          <option value="2">1/2</option>
-          <option value="1">1/4</option>
-          <option value="0.5" selected>1/8</option>
-          <option value="0.25">1/16</option>
-          <option value="0.125">1/32</option>
-        </select>
-      </label>
+    <div class="btn-group btn-group--step" title="Step controls — multi-select, grid layout, and append/fixed mode">
       <label class="step-multi-toggle" title="Multi-select: clicking step chips adds them to the selection so Size edits them all at once.">
         <input type="checkbox" id="multi-select-toggle" />
         Multi
+      </label>
+      <label class="step-multi-toggle" title="Quantize held notes: when on, a press's duration rounds to the NEAREST step division. With it off, holds round UP to the next whole step (the original behavior).">
+        <input type="checkbox" id="quantize-holds-toggle" />
+        Quantize
       </label>
       <label class="step-grid-bar-label" title="Lay the sequence out as a fixed grid: rows × steps per row">
         <span class="grid-dim-input">
@@ -362,12 +384,16 @@
   <div class="footer-bar">
     <div class="footer-transport">
       <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
-      <button id="rec-btn" title="Record audio from the microphone into the sequence bank">● Rec</button>
+      <button id="rec-btn" aria-label="Record" title="Record audio from the microphone into the sequence bank">●</button>
       <button id="loop-btn" title="Loop the current sequence">Loop</button>
-      <button id="drift-btn" type="button" hidden title="Drift: pick a millisecond factor; the active lane's loop iteration N is delayed by factor × N. Click again on a drifting lane to clear and re-sync at the next iteration.">Drift</button>
+      <button id="audio-reset-btn" type="button" title="Reset audio engine — disposes all active voices, clears scheduling state, resumes the AudioContext. Use when notes start to lag behind their chip highlights.">↻ Audio</button>
     </div>
-
   </div>
+  <!-- Master-bus oscilloscope. Pinned to the very bottom of the viewport
+       as a full-width status strip — see .master-scope CSS. Position is
+       fixed so it stays visible regardless of scroll; body has a matching
+       padding-bottom so nothing slides under it. -->
+  <canvas id="master-scope" class="master-scope" width="240" height="40" title="Master bus waveform"></canvas>
 
   <div class="saved-viewer">
     <div class="saved-grid" id="saved-grid">
@@ -504,6 +530,14 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     });
     let chordMode = false;
+    // Shape chosen at the start of the current wrap session ('run' or
+    // 'stack'). Set by the Wrap-press picker; consulted by the commit
+    // path so the wrap turns into the user's chosen shape regardless of
+    // the global note-mode banner. Null between wraps. The pre-prompt
+    // behaviour (fall back to gridMode === 'arpeggio') still applies if
+    // _wrapShape is null at commit time — defensive against state-restore
+    // paths that bring back chordMode=true without populating this var.
+    let _wrapShape = null;
     // Grid playback mode — drives what a cell click does.
     //   'sequencer' (default): existing behavior (add note / start sustain).
     //   'arpeggio':  play the saved sequence transposed so its first note
@@ -554,6 +588,15 @@
       }
       if (group) {
         group.classList.toggle('chord-active', !!chordMode || !!wrapTemplate);
+      }
+      // Edit pill only makes sense when there's something to edit: a
+      // committed wrapTemplate (chord/sub) OR an in-progress chordMode
+      // session with at least one note collected. Hidden otherwise so
+      // the Wrap button gets the whole segment.
+      const editBtn = document.getElementById('wrap-edit-btn');
+      if (editBtn) {
+        const hasWrapToEdit = !!wrapTemplate || (chordMode && pendingChord.length > 0);
+        editBtn.hidden = !hasWrapToEdit;
       }
       // Chord readout follows the same lifecycle as the Wrap visuals,
       // so update it from the same source of truth.
@@ -1546,6 +1589,53 @@
     }).connect(masterDistortion);
     const masterBus = new Tone.Gain(1).connect(masterCompressor);
 
+    // ---- Master-bus oscilloscope ----
+    // Single Tone.Analyser tapped on masterBus (post all sources, pre
+    // compressor / FX / volume / limiter). Draws a thin waveform in the
+    // footer transport so the user has a live visual confirmation that
+    // audio is flowing — handy for spotting dropouts the moment they
+    // happen instead of inferring them from silence. Uses rAF so the
+    // canvas only redraws when the tab is visible; size is set in CSS.
+    (function initMasterScope() {
+      const canvas = document.getElementById('master-scope');
+      if (!canvas || typeof Tone === 'undefined') return;
+      const analyser = new Tone.Analyser('waveform', 512);
+      try { masterBus.connect(analyser); } catch (e) {}
+      const ctx = canvas.getContext('2d');
+      let raf = 0;
+      const draw = () => {
+        // Sync canvas buffer width to its displayed width so the
+        // waveform stays sharp when the viewport resizes. Only
+        // re-set when it changes — assigning canvas.width clears
+        // the canvas, so per-frame churn would also kill drawing.
+        if (canvas.width !== canvas.clientWidth) canvas.width = canvas.clientWidth;
+        const data = analyser.getValue();
+        const W = canvas.width, H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#4fd1c5';
+        ctx.beginPath();
+        const step = W / data.length;
+        for (let i = 0; i < data.length; i++) {
+          const v = data[i]; // -1..1
+          const x = i * step;
+          const y = (1 - v) * 0.5 * H;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        raf = requestAnimationFrame(draw);
+      };
+      // Pause draw when tab hidden (rAF already throttles, but this
+      // prevents the analyser node from being polled when nobody's
+      // looking — small CPU saving).
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) cancelAnimationFrame(raf);
+        else if (!raf) draw();
+      });
+      draw();
+    })();
+
     // ---- Configurable FX order ----
     // Single ordered list of effect IDs that drives both the master chain
     // (routed via rebuildMasterChain below) and each per-note chain
@@ -1564,31 +1654,46 @@
       delay: masterDelay, pingPong: masterPingPong, reverb: masterReverb,
       autoPan: masterAutoPan,
     };
-    // Wire (or rewire) the master chain end-to-end in the configured order.
-    // Pre-chain (masterBus → masterCompressor) and post-chain (masterVolume
-    // → masterLimiter → destination) are fixed; the 10 FX nodes are slotted
-    // in between in whatever order globalFx.fxOrder dictates. Safe to call
-    // any time — disconnects each node first to clear stale routing.
+    // Per-FX send bus. Lanes connect their per-lane send Gain nodes into
+    // these buses; each bus feeds into its master FX node, which returns
+    // to masterBus. Built lazily by rebuildMasterChain on first call.
+    const fxSendBus = {};
+    // Send/return wiring. Master chain is short and contains NO FX:
+    //   masterBus → masterCompressor → masterVolume → masterLimiter → destination
+    // Each master FX is a parallel return: per-lane send gains accumulate
+    // into fxSendBus[name], which feeds the FX with wet=1 (always fully
+    // wet — the per-lane send level controls how much of the lane signal
+    // gets processed), and the FX output returns to masterBus to be summed
+    // with dry signals. This avoids the multi-second graph-compile freeze
+    // that happens when a new audio source connects into a deep, never-
+    // used FX chain.
+    //
+    // fxOrder no longer affects audio (it had meaning only when FX were
+    // in series). The order list UI is kept for backward compat but is
+    // effectively cosmetic.
     function rebuildMasterChain() {
       try {
-        const order = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
-          ? globalFx.fxOrder
-          : FX_NAMES;
-        // Disconnect everything we're about to re-route.
         try { masterCompressor.disconnect(); } catch (e) {}
         FX_NAMES.forEach(name => {
           const n = _masterFxNodes[name];
           if (n) { try { n.disconnect(); } catch (e) {} }
         });
-        // Build forward: compressor → first FX → … → last FX → volume.
-        let head = masterCompressor;
-        order.forEach(name => {
-          const n = _masterFxNodes[name];
-          if (!n) return;
-          head.connect(n);
-          head = n;
+        // Master series: compressor → volume (limiter / destination are
+        // already wired downstream of volume at construction).
+        masterCompressor.connect(masterVolume);
+        // Parallel FX returns. Each FX is hard-wired wet=1 (the per-lane
+        // send gain controls the wet AMOUNT now). Send bus → FX → masterBus.
+        FX_NAMES.forEach(name => {
+          const fx = _masterFxNodes[name];
+          if (!fx) return;
+          if (!fxSendBus[name]) fxSendBus[name] = new Tone.Gain(1);
+          try { fxSendBus[name].disconnect(); } catch (e) {}
+          try { fxSendBus[name].connect(fx); } catch (e) {}
+          // Force the FX to always be fully wet; mix is controlled by the
+          // per-lane send gain instead of the FX's wet param.
+          try { if (fx.wet) fx.wet.value = 1; } catch (e) {}
+          try { fx.connect(masterBus); } catch (e) {}
         });
-        head.connect(masterVolume);
       } catch (e) {}
     }
 
@@ -1672,55 +1777,96 @@
       }
     })();
     function applyGlobalFx() {
-      // Helper: when *On is false, force the wet/amount to 0 without
-      // touching the stored mix value, so flipping back on restores
-      // exactly the previous setting.
-      const wetOf = (mix, on) => (on === false ? 0 : Math.max(0, Math.min(1, (mix || 0) / 100)));
+      // Send/return: master FX wets stay at 1 (always fully wet); the
+      // per-lane send Gain controls how much signal goes IN to each FX.
+      // applyGlobalFx now only writes FX shape parameters (room size,
+      // delay time, LFO frequency, etc.) — those are still shared across
+      // all lanes, since one project usually wants a consistent reverb
+      // character even if each lane has its own send level.
       try {
         masterReverb.roomSize.value      = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
         masterReverb.dampening.value     = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
-        masterReverb.wet.value           = wetOf(globalFx.reverb, globalFx.reverbOn);
         masterDelay.delayTime.value      = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
         masterDelay.feedback.value       = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
-        masterDelay.wet.value            = wetOf(globalFx.delay, globalFx.delayOn);
-        masterDistortion.distortion      = globalFx.distortionOn === false ? 0 : Math.max(0, Math.min(1, globalFx.distortion / 100));
+        // Distortion amount — kept at a moderate fixed value so the per-
+        // lane "distortion send" slider behaves as a wet-mix amount.
+        // Users who want softer / harder distortion can override via
+        // globalFx.distortionDrive in a future iteration; for now this
+        // is shared across all lanes.
+        masterDistortion.distortion      = 0.4;
 
         masterChorus.frequency.value     = Math.max(0.01, globalFx.chorusFreq);
         masterChorus.depth               = Math.max(0, Math.min(1, globalFx.chorusDepth / 100));
-        masterChorus.wet.value           = wetOf(globalFx.chorus, globalFx.chorusOn);
 
         masterVibrato.frequency.value    = Math.max(0.01, globalFx.vibratoFreq);
         masterVibrato.depth.value        = Math.max(0, Math.min(1, globalFx.vibratoDepth / 100));
-        masterVibrato.wet.value          = wetOf(globalFx.vibrato, globalFx.vibratoOn);
 
         masterTremolo.frequency.value    = Math.max(0.01, globalFx.tremoloFreq);
         masterTremolo.depth.value        = Math.max(0, Math.min(1, globalFx.tremoloDepth / 100));
-        masterTremolo.wet.value          = wetOf(globalFx.tremolo, globalFx.tremoloOn);
 
         masterPhaser.frequency.value     = Math.max(0.01, globalFx.phaserFreq);
         masterPhaser.octaves             = Math.max(1, Math.min(7, globalFx.phaserOctaves));
-        masterPhaser.wet.value           = wetOf(globalFx.phaser, globalFx.phaserOn);
 
         masterAutoFilter.frequency.value = Math.max(0.01, globalFx.autoFilterFreq);
         masterAutoFilter.depth.value     = Math.max(0, Math.min(1, globalFx.autoFilterDepth / 100));
         masterAutoFilter.baseFrequency   = Math.max(20, globalFx.autoFilterBaseFreq);
-        masterAutoFilter.wet.value       = wetOf(globalFx.autoFilter, globalFx.autoFilterOn);
 
         masterPingPong.delayTime.value   = Math.max(0.001, (globalFx.pingPongTime || 0) / 1000);
         masterPingPong.feedback.value    = Math.max(0, Math.min(0.95, globalFx.pingPongFeedback / 100));
-        masterPingPong.wet.value         = wetOf(globalFx.pingPong, globalFx.pingPongOn);
 
         masterAutoPan.frequency.value    = Math.max(0.01, globalFx.autoPanFreq);
         masterAutoPan.depth.value        = Math.max(0, Math.min(1, globalFx.autoPanDepth / 100));
-        masterAutoPan.wet.value          = wetOf(globalFx.autoPan, globalFx.autoPanOn);
+      } catch (e) {}
+      // Push live mix values to the live-press send gains so FX panel
+      // sliders propagate to non-lane signals (cell presses, untracked
+      // sequence playback). Lane sends are driven separately by
+      // applyLaneSends and aren't affected.
+      try { applyGlobalSendGains(); } catch (e) {}
+      // Shape-param changes (room size, delay time, LFO freq, etc.) need
+      // to reach every lane's already-built FX nodes too — wet stays the
+      // same, but the FX character should update live. applyLaneSends
+      // short-circuits cheaply when a lane has no active FX nodes.
+      try {
+        if (Array.isArray(lanes)) lanes.forEach(applyLaneSends);
       } catch (e) {}
     }
     function persistGlobalFx() {
       localStorage.setItem('sounds-global-fx', JSON.stringify(globalFx));
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // Live-press send tap. After the master chain refactored to a
+    // send/return model, only signals that pass through a lane bus
+    // reach the FX returns — live cell presses (no laneIdx) hit
+    // masterBus directly and play fully dry. globalSendTap mirrors
+    // the per-lane structure for non-lane signals: a dry path to
+    // masterBus plus per-FX wet sends fed from globalFx[name] mix
+    // values. Driven by applyGlobalSendGains, which applyGlobalFx
+    // calls so FX panel slider changes propagate live.
+    const globalSendTap = new Tone.Gain(1);
+    globalSendTap.connect(masterBus);
+    const _globalSendGains = {};
+    function applyGlobalSendGains() {
+      FX_NAMES.forEach(name => {
+        const g = _globalSendGains[name];
+        if (!g || !g.gain) return;
+        const v = Math.max(0, Math.min(100, globalFx[name] || 0)) / 100;
+        try { g.gain.value = v; } catch (e) {}
+      });
+    }
+
     applyGlobalFx();
     rebuildMasterChain();
+    // Wire the global send gains AFTER rebuildMasterChain has populated
+    // fxSendBus[name] with the actual return-bus Gain nodes.
+    FX_NAMES.forEach(name => {
+      const g = new Tone.Gain(0);
+      try { globalSendTap.connect(g); } catch (e) {}
+      if (fxSendBus[name]) {
+        try { g.connect(fxSendBus[name]); } catch (e) {}
+      }
+      _globalSendGains[name] = g;
+    });
+    applyGlobalSendGains();
 
     // ---- Master volume slider ----
     // Slider value is 0..100 percent. 100 → 0 dB (unity), 0 → silenced
@@ -2289,6 +2435,164 @@
       } catch (e) {}
     }
 
+    // === Voice pool (Phase 1: synth bodies only) ===
+    // Bloops's hot path builds a fresh Tone synth per trigger, then disposes
+    // ~100ms after the release tail ends. At Poly-mode density (multi-lane
+    // × chord × 1/16) that's tens of constructions/sec — GC pressure that
+    // shows up as the "audio gets weird the longer it loops" drift behind
+    // ↻ Audio. Phase 1 pools the synth body for 14 common preset types; FX
+    // chains stay per-note for now. Pluck/Noise/Duo/Wavetable/Grain/Kick/
+    // Metal still construct per note — they're rarer or have unique APIs.
+    // Pool is bypassed during offline export rendering since the offline
+    // AudioContext can't host synths constructed in the live context.
+    //
+    // KILL SWITCH: set to false to bypass the pool entirely (back to the
+    // pre-pool behavior — fresh synth per note). Live debug toggle.
+    const VOICE_POOL_ENABLED = true;
+    const VOICE_POOL_MAX_PER_PRESET = 8;
+    const voicePools = new Map(); // preset key → { idle: [Tone synth] }
+    function _ensurePool(key) {
+      let p = voicePools.get(key);
+      if (!p) { p = { idle: [] }; voicePools.set(key, p); }
+      return p;
+    }
+    function _acquirePooledSynth(key, factory) {
+      const v = _ensurePool(key).idle.pop();
+      if (v) return v;
+      try { return factory(); }
+      catch (e) { console.warn('voice factory failed', key, e); return null; }
+    }
+    function _releasePooledSynth(key, synth) {
+      if (!synth) return;
+      const p = _ensurePool(key);
+      try {
+        if (synth.volume) { synth.volume.cancelScheduledValues(0); synth.volume.value = 0; }
+        if (synth.detune) { synth.detune.cancelScheduledValues(0); synth.detune.value = 0; }
+      } catch (e) {}
+      try { synth.disconnect(); } catch (e) {}
+      if (p.idle.length < VOICE_POOL_MAX_PER_PRESET) p.idle.push(synth);
+      else { try { synth.dispose(); } catch (e) {} }
+    }
+    // Mirrors safeDisposeSynth, but releases to the pool instead of disposing.
+    // Same -80 dB ramp + 60 ms wait so the disconnect lands at near-silence
+    // (otherwise the FX-chain disconnect that follows clicks).
+    function safeReleaseSynth(key, synth) {
+      if (!synth) return;
+      try {
+        if (synth.volume && typeof synth.volume.rampTo === 'function') {
+          synth.volume.rampTo(-80, 0.03);
+          setTimeout(() => { _releasePooledSynth(key, synth); }, 60);
+        } else {
+          _releasePooledSynth(key, synth);
+        }
+      } catch (e) {}
+    }
+    function _isPooledPreset(type) {
+      switch (type) {
+        case 'bell': case 'fm': case 'xylo':
+        case 'am': case 'pad':
+        case 'mono': case 'bass':
+        case 'sine': case 'square': case 'triangle': case 'sawtooth': case 'pulse': case 'fat':
+          return true;
+        default:
+          return false;
+      }
+    }
+    // Acquire a pre-configured synth for the given preset. Returns null
+    // when the preset isn't pooled. Each preset gets its own pool key so
+    // the only per-trigger work is setting envelope/detune for the note —
+    // modulation/filter/oscillator config is reused across acquisitions.
+    function _buildPooledSynthForPreset(preset, env) {
+      switch (preset) {
+        case 'bell': {
+          const s = _acquirePooledSynth('bell', () => new Tone.FMSynth());
+          if (!s) return null;
+          s.harmonicity.value = 2.14;
+          s.modulationIndex.value = 4;
+          s.oscillator.type = 'sine';
+          s.modulation.type = 'sine';
+          s.envelope.set({ attack: 0.001, decay: 2.0, sustain: 0, release: 0.8 });
+          s.modulationEnvelope.set({ attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 });
+          return s;
+        }
+        case 'fm': {
+          const s = _acquirePooledSynth('fm', () => new Tone.FMSynth());
+          if (!s) return null;
+          s.harmonicity.value = 3;
+          s.modulationIndex.value = 10;
+          s.oscillator.type = 'sine';
+          s.modulation.type = 'square';
+          s.envelope.set(env);
+          s.modulationEnvelope.set({ attack: 0.5, decay: 0, sustain: 1, release: 0.5 });
+          return s;
+        }
+        case 'xylo': {
+          const s = _acquirePooledSynth('xylo', () => new Tone.FMSynth());
+          if (!s) return null;
+          s.harmonicity.value = 7;
+          s.modulationIndex.value = 4;
+          s.oscillator.type = 'sine';
+          s.modulation.type = 'sine';
+          s.envelope.set({ attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 });
+          s.modulationEnvelope.set({ attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 });
+          return s;
+        }
+        case 'am': {
+          const s = _acquirePooledSynth('am', () => new Tone.AMSynth());
+          if (!s) return null;
+          s.harmonicity.value = 2;
+          s.oscillator.type = 'sine';
+          s.modulation.type = 'square';
+          s.envelope.set(env);
+          s.modulationEnvelope.set({ attack: 0.5, decay: 0, sustain: 1, release: 0.5 });
+          return s;
+        }
+        case 'pad': {
+          const s = _acquirePooledSynth('pad', () => new Tone.AMSynth());
+          if (!s) return null;
+          s.harmonicity.value = 1.5;
+          s.oscillator.type = 'sine';
+          s.modulation.type = 'sine';
+          s.envelope.set({ attack: 1.2, decay: 0.5, sustain: 0.7, release: 2.5 });
+          s.modulationEnvelope.set({ attack: 1.0, decay: 0.5, sustain: 0.5, release: 2.0 });
+          return s;
+        }
+        case 'mono': {
+          const s = _acquirePooledSynth('mono', () => new Tone.MonoSynth());
+          if (!s) return null;
+          s.oscillator.type = 'sawtooth';
+          s.envelope.set(env);
+          s.filterEnvelope.set({ attack: 0.01, decay: 0.3, sustain: 0.3, release: 2, baseFrequency: 200, octaves: 3 });
+          s.filter.set({ Q: 6, type: 'lowpass', rolloff: -24 });
+          return s;
+        }
+        case 'bass': {
+          const s = _acquirePooledSynth('bass', () => new Tone.MonoSynth());
+          if (!s) return null;
+          s.oscillator.type = 'square';
+          s.envelope.set(env);
+          s.filterEnvelope.set({ attack: 0.005, decay: 0.18, sustain: 0.4, release: 0.4, baseFrequency: 80, octaves: 3.2 });
+          s.filter.set({ Q: 4, type: 'lowpass', rolloff: -24 });
+          return s;
+        }
+        case 'sine':
+        case 'square':
+        case 'triangle':
+        case 'sawtooth':
+        case 'pulse':
+        case 'fat': {
+          const s = _acquirePooledSynth('basic:' + preset, () => new Tone.Synth());
+          if (!s) return null;
+          if (preset === 'fat')        s.oscillator.set({ type: 'fatsawtooth', count: 3, spread: 30 });
+          else if (preset === 'pulse') s.oscillator.set({ type: 'pulse', width: 0.4 });
+          else                          s.oscillator.type = preset;
+          s.envelope.set(env);
+          return s;
+        }
+      }
+      return null;
+    }
+
     // Voice cap — limits simultaneous synth voices to keep the master
     // limiter from being driven into IM artifacts by overlapping release
     // tails. When a new voice would push the count over the cap, the
@@ -2330,7 +2634,11 @@
         clearTimeout(entry.disposeTimer);
         entry.disposeTimer = null;
       }
-      try { safeDisposeSynth(entry.synth); } catch (e) {}
+      if (entry.pooledPreset) {
+        try { safeReleaseSynth(entry.pooledPreset, entry.synth); } catch (e) {}
+      } else {
+        try { safeDisposeSynth(entry.synth); } catch (e) {}
+      }
       // Wait out safeDisposeSynth's fade (~60ms) before tearing down the
       // effect chain so the rampTo doesn't ring through a dead chain.
       setTimeout(() => {
@@ -2401,7 +2709,7 @@
           };
           playerOpts.url = rawBuffer || 'https://tonejs.github.io/audio/salamander/A4.mp3';
           const player = new Tone.GrainPlayer(playerOpts).connect(
-            fxOverrideGlobal ? masterLimiter : masterBus
+            fxOverrideGlobal ? masterLimiter : globalSendTap
           );
           const triggerAt = _coldStartAt != null ? _coldStartAt : Tone.now();
           const fire = () => { try { player.start(triggerAt); } catch (e) {} };
@@ -2450,7 +2758,7 @@
         return { release: () => {} };
       }
 
-      const finalDest = fxOverrideGlobal ? masterLimiter : masterBus;
+      const finalDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
       let synth;
       if (type === 'fm') {
         synth = new Tone.FMSynth({
@@ -2545,6 +2853,19 @@
             }, ((env.release || 0.5) + 0.5) * 1000);
           },
         };
+      } else if (typeof type === 'string' && type.startsWith('noise')) {
+        // NoiseSynth — Tone.OmniOscillator (used by Tone.Synth) doesn't
+        // accept 'noise:white' as a type, so the generic fallback below
+        // silently produced no sound on cell PRESS even though sequence
+        // playback (playNote) handled noise correctly. Mirror playNote's
+        // noise branch: parse the colour, build a NoiseSynth, and trigger
+        // without a frequency argument since NoiseSynth.triggerAttack
+        // takes (time, velocity) only.
+        const colour = type.includes(':') ? type.split(':')[1] : 'white';
+        synth = new Tone.NoiseSynth({
+          noise: { type: colour },
+          envelope: env,
+        }).connect(finalDest);
       } else {
         let oscOpts;
         if      (type === 'pulse') oscOpts = { type: 'pulse', width: 0.4 };
@@ -2555,9 +2876,14 @@
       if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
       // Trigger at the caller's pinned startAt (wrap chord audition) or
       // the cold-start-shifted _coldStartAt; falls back to Tone.now() at
-      // call time when both are undefined.
+      // call time when both are undefined. NoiseSynth's signature is
+      // (time, velocity) — no freq — so it gets its own trigger call.
       const _triggerAt = startAt != null ? startAt : _coldStartAt;
-      try { synth.triggerAttack(freq, _triggerAt, velocity); } catch (e) {}
+      const isNoise = typeof type === 'string' && type.startsWith('noise');
+      try {
+        if (isNoise) synth.triggerAttack(_triggerAt, velocity);
+        else         synth.triggerAttack(freq, _triggerAt, velocity);
+      } catch (e) {}
 
       let released = false;
       return {
@@ -2708,7 +3034,7 @@
           // routes through the lane bus (live poly) or trackBus
           // (track playback) so per-lane / per-track mix applies.
           const laneDest = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null;
-          const finalDest = destination || laneDest || masterBus;
+          const finalDest = destination || laneDest || globalSendTap;
           // Negative playback rate = reverse playback. Tone.GrainPlayer
           // accepts negative rates directly; clamp to a small absolute
           // value so a rate of exactly 0 doesn't lock the buffer.
@@ -2834,9 +3160,10 @@
       // new node's output is the previous head. `chainHead` becomes the
       // synth's connect target; effect nodes are disposed alongside the
       // synth so they don't leak. In Poly mode, route through the lane's
-      // bus (Volume → Panner → masterBus) so lane-level mix applies.
+      // bus (Volume → Panner → masterBus + parallel FX sends) so lane-
+      // level mix and per-lane FX sends apply.
       const laneDest = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null;
-      const finalDest = fxOverrideGlobal ? masterLimiter : (destination || laneDest || masterBus);
+      const finalDest = fxOverrideGlobal ? masterLimiter : (destination || laneDest || globalSendTap);
       let chainHead = finalDest;
       const effectNodes = [];
       // Per-note pan sits closest to the destination so it pans the fully-
@@ -2934,7 +3261,25 @@
 
       let synth;
 
-      if (type === 'bell') {
+      // Phase 1 voice pool — acquire a pre-configured synth body for
+      // pooled presets instead of constructing one. Bypassed during
+      // offline render (separate AudioContext) and for presets that
+      // have their own lifecycle below (pluck/noise/wavetable early-
+      // return; duo/kick/metal aren't pooled yet). pooledPreset gets
+      // recorded on the voice entry so the dispose timer + steal path
+      // route the synth back to the pool instead of disposing it.
+      let pooledPreset = null;
+      if (VOICE_POOL_ENABLED && !_offlineSamplerOverride && _isPooledPreset(type)) {
+        synth = _buildPooledSynthForPreset(type, env);
+        if (synth) {
+          pooledPreset = type;
+          try { synth.connect(chainHead); } catch (e) { synth = null; pooledPreset = null; }
+        }
+      }
+
+      if (synth) {
+        // Already provided by the pool — skip the construction chain.
+      } else if (type === 'bell') {
         synth = new Tone.FMSynth({
           harmonicity: 2.14,
           modulationIndex: 4,
@@ -3226,10 +3571,11 @@
       const synthLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
-      const voiceEntry = { synth, effectNodes, disposeTimer: null };
+      const voiceEntry = { synth, effectNodes, pooledPreset, disposeTimer: null };
       voiceEntry.disposeTimer = setTimeout(() => {
         _unregisterVoice(voiceEntry);
-        safeDisposeSynth(synth);
+        if (pooledPreset) safeReleaseSynth(pooledPreset, synth);
+        else              safeDisposeSynth(synth);
         disposeEffectChain();
       }, synthLeadMs + disposeMs);
       _registerVoice(voiceEntry);
@@ -3645,6 +3991,12 @@
       }
 
       sequence.forEach((step, i) => {
+        // Wrap-editor stash: showWrapEditor temporarily parks the
+        // wrapTemplate at the end of `sequence` so it can drive the
+        // existing showStepEditor flow without writing a parallel
+        // chord-editor for wraps. Skip the chip render so the stash
+        // never visibly appears in the sequence display.
+        if (step && step._wrapEditing) return;
         if (insertionPoint === i) chipHost.appendChild(makeInsertCursor());
         const chip = document.createElement('div');
         const durSuffix = (step.duration && step.duration > 1) ? `×${step.duration}` : '';
@@ -3700,7 +4052,7 @@
           chip.style.gridColumn = '';
           chip.style.width = stepWidthPx(step) + 'px';
         }
-        if (!step.isSub && isSelectedStep(step)) chip.classList.add('selected');
+        if (isSelectedStep(step)) chip.classList.add('selected');
         // Variance markers — blinking outline while editing the pool,
         // a small ⟳ glyph (via CSS) for committed variance steps.
         if (_varianceEdit && _varianceEdit.stepRef === step) {
@@ -4235,7 +4587,11 @@
     function clampSelectionToSequence() {
       // Drop any step refs that no longer live in the sequence (e.g., after
       // Random / Condense / load-saved replaced the array entirely).
-      selectedStepRefs = selectedStepRefs.filter(ref => sequence.indexOf(ref) >= 0 && !ref.isSub);
+      // Subs are now allowed in the selection so the user can highlight a
+      // sub chip and Unwrap it via the dissolve path; downstream
+      // multi-select operations (Wrap/group) still skip subs at their
+      // own gather sites.
+      selectedStepRefs = selectedStepRefs.filter(ref => sequence.indexOf(ref) >= 0);
       // Variance edit: drop the edit state if its step is gone, and
       // re-sync stepIdx if the sequence reordered.
       if (_varianceEdit) {
@@ -4316,6 +4672,19 @@
     // appended in Spell or Stack mode while Keep is on. Skipped in Run
     // (arpeggio) mode per the user spec, and skipped while a session
     // lock is active — instead the lock value is applied directly.
+    // Apply a Step Div value to a step. For Run wraps (isSub + subSteps)
+    // the picked value applies to EACH subStep so the run's per-note
+    // cadence updates uniformly; the outer wrap's subdivision stays at
+    // its own value (typically 1). For chord / single-note steps the
+    // value lands on the step itself, as before.
+    function _applyStepDivToStep(stepRef, v) {
+      if (!stepRef) return;
+      if (stepRef.isSub && Array.isArray(stepRef.subSteps) && stepRef.subSteps.length > 0) {
+        stepRef.subSteps.forEach(s => { if (s) s.subdivision = v; });
+      } else {
+        stepRef.subdivision = v;
+      }
+    }
     function maybePromptStepDiv(stepRef, opts = {}) {
       if (!stepRef || !keepMode) return;
       if (gridMode === 'arpeggio') return;
@@ -4327,7 +4696,7 @@
       if (Number.isFinite(opts.heldMs) && opts.heldMs > 200) return;
       if (_keepStepDivLocked) {
         if (Number.isFinite(_keepStepDivLockedValue) && _keepStepDivLockedValue > 0) {
-          stepRef.subdivision = _keepStepDivLockedValue;
+          _applyStepDivToStep(stepRef, _keepStepDivLockedValue);
           renderSequence();
         }
         return;
@@ -4373,7 +4742,10 @@
         b.addEventListener('click', () => {
           const v = parseFloat(b.dataset.sub);
           if (Number.isFinite(v) && v > 0) {
-            stepRef.subdivision = v;
+            // Route through the helper so Run wraps spread the value
+            // across their subSteps instead of landing on the outer
+            // wrap (which is a no-op for the audible cadence).
+            _applyStepDivToStep(stepRef, v);
             if (lockCb && lockCb.checked) {
               _keepStepDivLocked = true;
               _keepStepDivLockedValue = v;
@@ -5139,6 +5511,16 @@
       const cycle = Math.floor(idx / 26);
       return String.fromCharCode(65 + a) + (cycle > 0 ? String(cycle + 1) : '');
     }
+    // Deep-clone an FX state object (globalFx or lane.fx). Preserves
+    // numeric / boolean fields and the fxOrder array. Used when seeding
+    // a new lane's fx from the current globalFx (so existing tuning
+    // carries forward to per-lane edit) or when persisting a workspace
+    // snapshot.
+    function _cloneFxState(src) {
+      if (!src) return null;
+      try { return JSON.parse(JSON.stringify(src)); }
+      catch (e) { return null; }
+    }
     function _makeLane(idx, steps = []) {
       return {
         name: _laneName(idx),
@@ -5177,6 +5559,13 @@
         // Initialised lazily on first activate so a freshly-built
         // lane inherits whatever voice is currently in the globals.
         voice: null,
+        // Per-lane FX wet levels. Each entry is 0-100 — the lazy lane FX
+        // graph in applyLaneSends maps these to a per-lane Tone FX node
+        // built only when non-zero (disposed when returned to zero), so
+        // lanes with no FX dialed in cost nothing beyond volume + panner.
+        // Seeded from globalFx so any tuning carries forward as the lane's
+        // starting point.
+        sends: (typeof _defaultLaneSends === 'function') ? _defaultLaneSends() : null,
       };
     }
     // Snapshot the currently-mirrored voice globals into a plain object
@@ -5240,25 +5629,220 @@
         updateScaleBanner();
       }
     }
-    // Lazy per-lane audio chain — Volume → Panner → masterBus. Builds
-    // on first access and stays cached on the lane object until disposal.
-    // Mirrors the per-track bus pattern used in Mix so sample voices can
-    // be panned per-lane (the shared sampler path that connects directly
-    // to masterBus would otherwise bypass per-lane routing entirely).
+    // Lazy per-lane audio chain — Volume → Panner → [active FX in series] →
+    // masterBus. The FX chain is empty at lane creation: each FX node is
+    // built only when its lane.sends[name] crosses above 0, and disposed
+    // again when it returns to 0. A lane with every FX at 0 = zero FX
+    // nodes = zero CPU beyond the volume/panner pair. Tone's wet/dry is
+    // used inside each FX node so the lane.sends value (0–100) maps to
+    // the FX's wet parameter; chained in series in FX_NAMES order (or
+    // lane.fx.fxOrder if the user has reordered).
     function getLaneBus(laneIdx) {
       const lane = lanes[laneIdx];
       if (!lane) return masterBus;
-      if (!lane._panner) {
-        const panNorm = Math.max(-1, Math.min(1, (lane.pan || 0) / 100));
-        lane._panner = new Tone.Panner(panNorm).connect(masterBus);
-      }
-      if (!lane._volume) {
-        const volNorm = Math.max(0, Math.min(1, (Number.isFinite(lane.volume) ? lane.volume : 100) / 100));
-        const volDb = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
-        lane._volume = new Tone.Volume(volDb).connect(lane._panner);
-      }
+      if (lane._volume) return lane._volume;
+      if (!lane.sends) lane.sends = _defaultLaneSends();
+      const panNorm = Math.max(-1, Math.min(1, (lane.pan || 0) / 100));
+      const volNorm = Math.max(0, Math.min(1, (Number.isFinite(lane.volume) ? lane.volume : 100) / 100));
+      const volDb = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
+      const panner = new Tone.Panner(panNorm);
+      const volume = new Tone.Volume(volDb);
+      volume.connect(panner);
+      panner.connect(masterBus);
+      lane._panner    = panner;
+      lane._volume    = volume;
+      lane._fxNodes   = {};   // name → Tone FX node, only entries with non-zero send exist
+      lane._fxChain   = [];   // [{ name, node }] in current signal-flow order
+      // Sync any non-zero sends now so lanes restored from saved state
+      // come up with their FX chain already populated.
+      applyLaneSends(lane);
       return lane._volume;
     }
+    // Default per-lane sends. Seeded from globalFx mix values so users
+    // who had global FX dialed in before the send/return refactor keep
+    // hearing those same effects on each lane (now as per-lane send
+    // levels). New lanes inherit the user's current globalFx defaults.
+    function _defaultLaneSends() {
+      const out = {};
+      FX_NAMES.forEach(name => {
+        const v = (globalFx && Number.isFinite(globalFx[name])) ? globalFx[name] : 0;
+        out[name] = Math.max(0, Math.min(100, v));
+      });
+      return out;
+    }
+    // Pull send levels out of a persisted lane object. Handles three
+    // generations of state: new `sends`, mid-refactor `fx`, and
+    // pre-per-lane (no field at all).
+    function _migrateLaneSends(l) {
+      if (l && l.sends && typeof l.sends === 'object') {
+        const out = {};
+        FX_NAMES.forEach(name => {
+          const v = Number(l.sends[name]);
+          out[name] = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+        });
+        return out;
+      }
+      if (l && l.fx && typeof l.fx === 'object') {
+        const out = {};
+        FX_NAMES.forEach(name => {
+          const v = Number(l.fx[name]);
+          out[name] = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+        });
+        return out;
+      }
+      return _defaultLaneSends();
+    }
+    // Build one per-lane FX node on demand. Wet starts at 0; applyLaneSends
+    // pushes the real value immediately after. LFO-driven nodes get an
+    // explicit .start() — Tremolo/Chorus/AutoFilter/AutoPanner need it to
+    // begin oscillating, same as the master nodes do.
+    function _buildOneLaneFxNode(name) {
+      try {
+        switch (name) {
+          case 'reverb':     return new Tone.Freeverb({ roomSize: 0.7, dampening: 3000, wet: 0 });
+          case 'delay':      return new Tone.FeedbackDelay({ delayTime: 0.25, feedback: 0.4, wet: 0 });
+          case 'distortion': return new Tone.Distortion({ distortion: 0.4, wet: 0 });
+          case 'chorus':     { const n = new Tone.Chorus({ frequency: 4, delayTime: 3.5, depth: 0.7, feedback: 0.1, wet: 0 }); try { n.start(); } catch (e) {} return n; }
+          case 'vibrato':    return new Tone.Vibrato({ frequency: 5, depth: 0.3, wet: 0 });
+          case 'tremolo':    { const n = new Tone.Tremolo({ frequency: 5, depth: 0.7, wet: 0 }); try { n.start(); } catch (e) {} return n; }
+          case 'phaser':     return new Tone.Phaser({ frequency: 0.5, octaves: 3, baseFrequency: 350, wet: 0 });
+          case 'autoFilter': { const n = new Tone.AutoFilter({ frequency: 1, depth: 1, baseFrequency: 200, octaves: 2.6, wet: 0 }); try { n.start(); } catch (e) {} return n; }
+          case 'pingPong':   return new Tone.PingPongDelay({ delayTime: 0.25, feedback: 0.3, wet: 0 });
+          case 'autoPan':    { const n = new Tone.AutoPanner({ frequency: 1, depth: 1, wet: 0 }); try { n.start(); } catch (e) {} return n; }
+        }
+      } catch (e) { console.warn('[lane-fx] build failed for', name, e); }
+      return null;
+    }
+    // Find the splice index that keeps the lane chain ordered by FX_NAMES
+    // (or lane.fx.fxOrder when the user has reordered). Lazy insert/remove
+    // walks this position rather than rebuilding the whole order array.
+    function _laneFxInsertPos(lane, chain, name) {
+      const order = (lane && lane.fx && Array.isArray(lane.fx.fxOrder) && lane.fx.fxOrder.length === FX_NAMES.length)
+        ? lane.fx.fxOrder
+        : FX_NAMES;
+      const targetIdx = order.indexOf(name);
+      if (targetIdx < 0) return chain.length;
+      for (let i = 0; i < chain.length; i++) {
+        if (order.indexOf(chain[i].name) > targetIdx) return i;
+      }
+      return chain.length;
+    }
+    // Re-wire panner → chain[0] → chain[1] → … → masterBus. Called once
+    // per applyLaneSends invocation that changed the chain (insert/remove).
+    // Param-only updates skip this and just push values to existing nodes.
+    function _wireLaneFxChain(lane) {
+      if (!lane || !lane._panner) return;
+      try { lane._panner.disconnect(); } catch (e) {}
+      lane._fxChain.forEach(({ node }) => { try { node.disconnect(); } catch (e) {} });
+      let upstream = lane._panner;
+      for (const { node } of lane._fxChain) {
+        try { upstream.connect(node); } catch (e) {}
+        upstream = node;
+      }
+      try { upstream.connect(masterBus); } catch (e) {}
+    }
+    // Push shape params + wet to one lane FX node. FX shape (size, freq,
+    // depth, etc.) reads from globalFx — a single project-wide character
+    // shared across lanes. Wet reads from lane.sends[name] — the per-lane
+    // amount. Per-lane shape overrides via lane.fx are a future iteration.
+    function _applyLaneFxNodeParams(name, node, lane) {
+      if (!node || !lane) return;
+      const wet = Math.max(0, Math.min(1, (lane.sends[name] || 0) / 100));
+      try {
+        switch (name) {
+          case 'reverb':
+            node.roomSize.value  = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
+            node.dampening.value = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
+            node.wet.value       = wet;
+            break;
+          case 'delay':
+            node.delayTime.value = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
+            node.feedback.value  = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
+            node.wet.value       = wet;
+            break;
+          case 'distortion':
+            node.distortion = 0.4;
+            node.wet.value  = wet;
+            break;
+          case 'chorus':
+            node.frequency.value = Math.max(0.01, globalFx.chorusFreq);
+            node.depth           = Math.max(0, Math.min(1, globalFx.chorusDepth / 100));
+            node.wet.value       = wet;
+            break;
+          case 'vibrato':
+            node.frequency.value = Math.max(0.01, globalFx.vibratoFreq);
+            node.depth.value     = Math.max(0, Math.min(1, globalFx.vibratoDepth / 100));
+            node.wet.value       = wet;
+            break;
+          case 'tremolo':
+            node.frequency.value = Math.max(0.01, globalFx.tremoloFreq);
+            node.depth.value     = Math.max(0, Math.min(1, globalFx.tremoloDepth / 100));
+            node.wet.value       = wet;
+            break;
+          case 'phaser':
+            node.frequency.value = Math.max(0.01, globalFx.phaserFreq);
+            node.octaves         = Math.max(1, Math.min(7, globalFx.phaserOctaves));
+            node.wet.value       = wet;
+            break;
+          case 'autoFilter':
+            node.frequency.value = Math.max(0.01, globalFx.autoFilterFreq);
+            node.depth.value     = Math.max(0, Math.min(1, globalFx.autoFilterDepth / 100));
+            node.baseFrequency   = Math.max(20, globalFx.autoFilterBaseFreq);
+            node.wet.value       = wet;
+            break;
+          case 'pingPong':
+            node.delayTime.value = Math.max(0.001, (globalFx.pingPongTime || 0) / 1000);
+            node.feedback.value  = Math.max(0, Math.min(0.95, globalFx.pingPongFeedback / 100));
+            node.wet.value       = wet;
+            break;
+          case 'autoPan':
+            node.frequency.value = Math.max(0.01, globalFx.autoPanFreq);
+            node.depth.value     = Math.max(0, Math.min(1, globalFx.autoPanDepth / 100));
+            node.wet.value       = wet;
+            break;
+        }
+      } catch (e) {}
+    }
+    // Lazy/teardown sync from lane.sends to the audio graph. Walks every
+    // FX name and reconciles:
+    //   send>0 + no node → build node + splice into chain
+    //   send=0 + node    → remove from chain + dispose
+    //   send>0 + node    → push current params (wet + shape)
+    //   send=0 + no node → no-op (zero cost)
+    // A lane with every send at 0 holds zero FX nodes; "per-lane FX without
+    // performance impact when not used" is enforced at this layer.
+    function applyLaneSends(lane) {
+      if (!lane || !lane.sends) return;
+      if (!lane._fxNodes) lane._fxNodes = {};
+      if (!lane._fxChain) lane._fxChain = [];
+      let chainChanged = false;
+      for (const name of FX_NAMES) {
+        const sendVal = Math.max(0, Math.min(100, lane.sends[name] || 0));
+        const existing = lane._fxNodes[name];
+        if (sendVal > 0 && !existing) {
+          const node = _buildOneLaneFxNode(name);
+          if (!node) continue;
+          lane._fxNodes[name] = node;
+          const pos = _laneFxInsertPos(lane, lane._fxChain, name);
+          lane._fxChain.splice(pos, 0, { name, node });
+          _applyLaneFxNodeParams(name, node, lane);
+          chainChanged = true;
+        } else if (sendVal === 0 && existing) {
+          const idx = lane._fxChain.findIndex(e => e.name === name);
+          if (idx >= 0) lane._fxChain.splice(idx, 1);
+          try { existing.disconnect(); } catch (e) {}
+          try { existing.dispose(); } catch (e) {}
+          delete lane._fxNodes[name];
+          chainChanged = true;
+        } else if (existing) {
+          _applyLaneFxNodeParams(name, existing, lane);
+        }
+      }
+      if (chainChanged) _wireLaneFxChain(lane);
+    }
+    // applyLaneFx is retained as an alias so any call site that reaches
+    // for the "FX" name (rather than "sends") works without churn.
+    const applyLaneFx = applyLaneSends;
     // Per-lane Tone.Sampler instances bound to each lane's bus, so
     // sample-based voices flow through the lane's pan / volume instead
     // of the global sampler that connects straight to masterBus.
@@ -5290,6 +5874,13 @@
       }
       if (lane._volume) { try { lane._volume.dispose(); } catch (e) {} lane._volume = null; }
       if (lane._panner) { try { lane._panner.dispose(); } catch (e) {} lane._panner = null; }
+      // Per-lane FX nodes built lazily by applyLaneSends. Dispose every
+      // active one so a lane swap or project load doesn't leak Tone nodes.
+      if (lane._fxNodes) {
+        Object.values(lane._fxNodes).forEach(n => { try { n.disconnect(); } catch (e) {} try { n.dispose(); } catch (e) {} });
+        lane._fxNodes = null;
+      }
+      lane._fxChain = null;
     }
     function disposeAllLaneAudio(arr) {
       if (!Array.isArray(arr)) return;
@@ -5384,6 +5975,9 @@
       } else {
         lanes[activeLaneIdx].voice = _captureVoiceGlobals();
       }
+      // Per-lane FX sends: notify the FX panel its source-of-truth
+      // changed so Mix sliders + bypass UI re-read from the new lane.
+      try { document.dispatchEvent(new CustomEvent('activeLaneChanged', { detail: { idx } })); } catch (e) {}
       // Selection is tied to the previous lane's chip refs; clear so
       // selection state doesn't carry across lanes.
       selectedStepRefs = [];
@@ -5445,12 +6039,20 @@
     function refreshDriftBtn() {
       const btn = document.getElementById('drift-btn');
       if (!btn) return;
-      btn.hidden = false;
+      // Drift is only meaningful relative to a sibling lane — disable
+      // the button when there's just one lane. The Riff menu open
+      // handler calls this so the disabled state is fresh whenever
+      // the menu is shown.
+      const hasSiblings = Array.isArray(lanes) && lanes.length >= 2;
+      btn.disabled = !hasSiblings;
       const lane = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
       const drifting = !!(lane && Number.isFinite(lane.driftMs) && lane.driftMs > 0);
       const locked   = !!(lane && lane.driftLocked);
       let label, title;
-      if (locked) {
+      if (!hasSiblings) {
+        label = 'Drift';
+        title = 'Drift needs at least 2 lanes — add another lane first.';
+      } else if (locked) {
         label = 'Reset';
         title = `Reset lane ${lane.name} — clears the locked drift offset entirely and re-syncs with the un-drifted lanes.`;
       } else if (drifting) {
@@ -5623,6 +6225,17 @@
     let _schedStreams     = []; // [{ source, idx, subStack, offsetSec, laneIdx, iter, driftAccumSec, pendingClearDrift }]
     let _schedStopping    = false;
     let _schedTailEndTime = 0;
+
+    // ---- Audio slippage tracking ---------------------------------------
+    // Worst-case "how late we scheduled a note" measurement in ms, with
+    // exponential decay so a brief stall doesn't permanently glow the
+    // Reset-Audio button. Read by refreshAudioResetUI() to drive the
+    // warning state. Decay applies per-tick; spikes overwrite a higher
+    // value immediately.
+    let _slipMs = 0;
+    const SLIP_DECAY = 0.9;
+    const SLIP_WARN_MS  = 25;
+    const SLIP_ALARM_MS = 80;
 
     // Sum the natural runtime of a step list at the current BPM so the
     // Drift "Clear" path can snap a drifted stream forward to the next
@@ -5849,8 +6462,14 @@
       const tickDelta = _schedDebugLastWall ? Math.round(tickWall - _schedDebugLastWall) : 0;
       _schedDebugLastWall = tickWall;
       let _debugScheduled = 0;
+      // Decay slip each tick so a one-off stall doesn't keep the warning
+      // glowing forever. Spikes below overwrite the decayed value, so
+      // sustained drift still surfaces.
+      _slipMs *= SLIP_DECAY;
+      let _slipThisTickMs = 0;
+      const _rawNowForSlip = rawAudioNow();
       if (!_schedStopping) {
-        const horizon = rawAudioNow() + SCHED_LOOKAHEAD_SEC;
+        const horizon = _rawNowForSlip + SCHED_LOOKAHEAD_SEC;
 
         for (const stream of _schedStreams) {
           if (stream.ended) continue; // already finished its non-looped run
@@ -5941,6 +6560,16 @@
               continue;
             }
             const audioTime = _playBaseTime + stream.offsetSec;
+            // Slip = how far this note's intended audio time is behind
+            // the raw audio clock. Positive means we couldn't schedule
+            // in time and Tone has to fire ASAP / catch up. Persistent
+            // positive slip is what causes the "sound lags behind chip
+            // highlight" symptom — chips fire on wall-clock setTimeout
+            // while audio fires at audioTime that already passed.
+            if (audioTime < _rawNowForSlip) {
+              const ms = (_rawNowForSlip - audioTime) * 1000;
+              if (ms > _slipThisTickMs) _slipThisTickMs = ms;
+            }
             const waitSec = scheduleStepAt(step, audioTime, stream, !audible, stream.laneIdx);
             if ((audioTime + waitSec) > _schedTailEndTime) {
               _schedTailEndTime = audioTime + waitSec;
@@ -5972,6 +6601,11 @@
           (_schedStopping ? '(stopping)' : '')
         );
       }
+      // Surface this tick's slip — overwrite the decayed value if larger
+      // so sustained drift latches the warning state until the user resets
+      // or the scheduler catches back up.
+      if (_slipThisTickMs > _slipMs) _slipMs = _slipThisTickMs;
+      if (typeof refreshAudioResetUI === 'function') refreshAudioResetUI();
       if (_schedStopping && rawAudioNow() >= _schedTailEndTime) {
         sequenceTimer = null;
         stopSequence();
@@ -7237,7 +7871,7 @@
       // and off without restarting.
       const playable = lanes.filter(l => (l.steps || []).length > 0);
       if (playable.length === 0) { stopSequence(); return; }
-      document.getElementById('play-btn').textContent = '■';
+      document.getElementById('play-btn').textContent = '⏹';
       // Build the streams array FIRST so any synchronous setup work
       // (per-lane Tone.Sampler creation, lane-bus node creation,
       // collect() walks of the sources for prefetch) doesn't push
@@ -7362,6 +7996,85 @@
       else setTimeout(startNow, 60);
     });
 
+    // ---- WebMIDI input ----
+    // Listens for MIDI note-on events on every connected device and
+    // routes them into the workspace. Each note auditions through
+    // playNote so the user always hears the pressed key. When Keep is
+    // on, the note is ALSO appended to the active lane via the same
+    // addToSequence path a cell tap would use — turning a hardware
+    // keyboard into a hands-free step entry tool.
+    //
+    // No UI toggle: just plug in a controller and play. The request
+    // happens on the first user gesture so the prompt isn't surprising.
+    let _midiBound = false;
+    function bindWebMidi() {
+      if (_midiBound) return;
+      if (!navigator.requestMIDIAccess) return;
+      _midiBound = true;
+      navigator.requestMIDIAccess({ sysex: false }).then(access => {
+        const wire = (input) => {
+          if (!input || input._bloopsBound) return;
+          input._bloopsBound = true;
+          input.onmidimessage = (e) => {
+            const [status, d1, d2] = e.data;
+            const cmd = status & 0xf0;
+            // Note-on with velocity > 0 = real attack. Note-on with
+            // velocity 0 is a "release" disguise some controllers send.
+            if (cmd !== 0x90 || !d2) return;
+            const midi = d1;
+            const freq = 440 * Math.pow(2, (midi - 69) / 12);
+            try {
+              let label;
+              try { label = Tone.Frequency(freq).toNote(); } catch (_) { label = 'M' + midi; }
+              // Use the closest grid cell for sound + params; fall back
+              // to cellParams[0] when nothing's in range (out-of-octave
+              // note from the controller).
+              const cellIdx = _findCellIdxForFreq(freq);
+              const baseParams = (cellIdx >= 0 && cellParams[cellIdx])
+                ? cellParams[cellIdx]
+                : (cellParams[0] || { type: 'sine' });
+              const params = { ...baseParams };
+              // Scale velocity into the existing 0-100 volume domain so
+              // a hard-hit key is louder than a feather-tap.
+              const vel = Math.max(1, Math.min(127, d2)) / 127;
+              params.volume = Math.max(1, Math.min(100, Math.round((baseParams.volume ?? 100) * vel)));
+              // Audition.
+              try { playNote(freq, params, 250); } catch (_) {}
+              // Append to the sequence only when Keep is on. Matches the
+              // cell-tap append semantics so the user's "is my sequence
+              // mutating" mental model is the same for keyboard + grid.
+              if (keepMode) {
+                const step = {
+                  freq,
+                  label,
+                  cellIndex: cellIdx >= 0 ? cellIdx : null,
+                  sound: params.type,
+                  params,
+                  duration: noteLength,
+                  subdivision: stepSubdivision,
+                };
+                addToSequence(step);
+                if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(step);
+              }
+            } catch (err) { console.warn('[midi] note handling failed', err); }
+          };
+        };
+        access.inputs.forEach(wire);
+        access.onstatechange = (e) => {
+          if (e.port && e.port.type === 'input' && e.port.state === 'connected') wire(e.port);
+        };
+      }).catch(() => { /* user denied or no MIDI — silent fall-back */ });
+    }
+    // Defer binding to the first user gesture so the permission prompt
+    // doesn't fire before the user has interacted with the page.
+    const _bindMidiOnce = () => {
+      bindWebMidi();
+      document.removeEventListener('pointerdown', _bindMidiOnce);
+      document.removeEventListener('keydown',     _bindMidiOnce);
+    };
+    document.addEventListener('pointerdown', _bindMidiOnce, { once: true });
+    document.addEventListener('keydown',     _bindMidiOnce, { once: true });
+
     document.getElementById('clear-btn').addEventListener('click', () => {
       if (sequence.length === 0) return;
       // While Step Mode is on, Clear empties the cells but keeps the grid:
@@ -7448,7 +8161,7 @@
     // Step Div: edits the selected steps' subdivisions (all of them when
     // Multi is on; just the primary otherwise). With no selection, sets
     // the global next-note default.
-    document.getElementById('subdivision-select').addEventListener('change', (e) => {
+    document.getElementById('subdivision-select')?.addEventListener('change', (e) => {
       const v = parseFloat(e.target.value) || 1;
       if (selectedStepRefs.length > 0) {
         const targets = (multiSelectMode ? selectedStepRefs : [lastSelectedStep()]).filter(Boolean);
@@ -7484,6 +8197,25 @@
       }
       renderSequence();
     });
+
+    // ---- Quantize-holds toggle ----------------------------------------
+    // When on, _holdStepDurationFromMs rounds press durations to the
+    // NEAREST step division instead of the original round-UP behavior.
+    // Persisted across reloads via localStorage so the user's preference
+    // sticks; default off so existing behavior doesn't shift on upgrade.
+    let quantizeHolds = (() => {
+      try { return JSON.parse(localStorage.getItem('sounds-quantize-holds') || 'false') === true; }
+      catch (e) { return false; }
+    })();
+    (function initQuantizeHoldsToggle() {
+      const cb = document.getElementById('quantize-holds-toggle');
+      if (!cb) return;
+      cb.checked = quantizeHolds;
+      cb.addEventListener('change', (e) => {
+        quantizeHolds = !!e.target.checked;
+        try { localStorage.setItem('sounds-quantize-holds', JSON.stringify(quantizeHolds)); } catch (e) {}
+      });
+    })();
 
     // Grid dimension inputs (rows × cols). `change` fires on commit
      // (Enter / blur), `input` fires per keystroke; we re-render on
@@ -7551,35 +8283,78 @@
       stepMode = !stepMode;
       refreshStepModeBtn();
       if (stepMode) {
-        // No auto-padding — the user adds slots explicitly via the
-        // size-chip row that opens with Fixed mode. Starts from whatever
-        // sequence already exists.
+        // Fixed-mode entry: pad EVERY lane with rest slots up to the
+        // current gridColumns so the user sees a populated step grid on
+        // each lane immediately. Lanes that already have steps keep
+        // them and only get topped up — content is never trimmed at
+        // entry. Uses the current stepSubdivision (same shape the size-
+        // chip slot builder uses) so freshly added slots play at the
+        // user's currently-selected step size.
+        const cols = Math.max(1, gridColumns | 0);
+        const makeRest = () => ({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: stepSubdivision });
+        let mutated = false;
+        if (Array.isArray(lanes) && lanes.length > 0) {
+          lanes.forEach(lane => {
+            if (!Array.isArray(lane.steps)) lane.steps = [];
+            while (lane.steps.length < cols) {
+              lane.steps.push(makeRest());
+              mutated = true;
+            }
+          });
+          _aliasSequenceToActiveLane();
+        } else {
+          while (sequence.length < cols) {
+            sequence.push(makeRest());
+            mutated = true;
+          }
+        }
+        if (mutated && typeof persistWorkspace === 'function') persistWorkspace();
       } else {
         clearStepModeArm();
-        if (sequence.length > 0 && sequence.every(isRestStep)) {
-          // Empty rest pattern — drop the whole sequence so the user
-          // doesn't leave Fixed with a workspace full of placeholders.
+        // Fixed-mode exit: trim trailing rest slots from EVERY lane so
+        // the cleanup mirrors the entry's all-lanes padding. Lanes that
+        // contain only rests get fully cleared (no leftover placeholder
+        // chips); lanes with real notes just lose trailing silences.
+        const trimLane = (steps) => {
+          if (!Array.isArray(steps)) return steps;
+          if (steps.length > 0 && steps.every(isRestStep)) return [];
+          let trimEnd = steps.length;
+          while (trimEnd > 0 && isRestStep(steps[trimEnd - 1])) trimEnd--;
+          if (trimEnd < steps.length) steps.length = trimEnd;
+          return steps;
+        };
+        if (Array.isArray(lanes) && lanes.length > 0) {
           stopSequence();
-          sequence = [];
+          lanes.forEach(lane => { lane.steps = trimLane(lane.steps || []); });
+          _aliasSequenceToActiveLane();
           pendingChord = [];
           insertionPoint = null;
-          document.getElementById('save-btn').disabled = true;
+          if (sequence.length === 0) {
+            const saveBtn = document.getElementById('save-btn');
+            if (saveBtn) saveBtn.disabled = true;
+          }
         } else {
-          // Trim any trailing rest slots so the sequence ends on the
-          // last actual note. Leading and middle rests are kept since
-          // they're musically meaningful (held silences inside a phrase).
-          let trimEnd = sequence.length;
-          while (trimEnd > 0 && isRestStep(sequence[trimEnd - 1])) trimEnd--;
-          if (trimEnd < sequence.length) {
+          if (sequence.length > 0 && sequence.every(isRestStep)) {
             stopSequence();
-            sequence.length = trimEnd;
-            if (insertionPoint != null && insertionPoint > sequence.length) {
-              insertionPoint = sequence.length;
+            sequence = [];
+            pendingChord = [];
+            insertionPoint = null;
+            document.getElementById('save-btn').disabled = true;
+          } else {
+            let trimEnd = sequence.length;
+            while (trimEnd > 0 && isRestStep(sequence[trimEnd - 1])) trimEnd--;
+            if (trimEnd < sequence.length) {
+              stopSequence();
+              sequence.length = trimEnd;
+              if (insertionPoint != null && insertionPoint > sequence.length) {
+                insertionPoint = sequence.length;
+              }
             }
           }
         }
       }
       renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     });
 
     function resetUIToDefault() {
@@ -8110,6 +8885,9 @@
           volume: Number.isFinite(l.volume) ? l.volume : 100,
           slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
           collapsed: !!l.collapsed,
+          // Per-lane FX send levels — deep clone so future mutations on
+          // the live lane.sends don't bleed into the snapshot.
+          sends: l.sends ? { ...l.sends } : null,
         }));
       }
       return Object.assign(snap, extra);
@@ -8282,7 +9060,7 @@
         recordingStream = null;
         mediaRecorder = null;
         btn.classList.remove('counting');
-        btn.textContent = '● Rec';
+        btn.textContent = '●';
         return;
       }
       if (typeof MediaRecorder === 'undefined') {
@@ -8316,7 +9094,7 @@
         recordingChunks = [];
         btn.classList.remove('recording');
         btn.classList.remove('counting');
-        btn.textContent = '● Rec';
+        btn.textContent = '●';
         const reader = new FileReader();
         reader.onload = () => saveRecordingToLibrary(reader.result, durationSec);
         reader.readAsDataURL(blob);
@@ -8335,7 +9113,7 @@
         }
         // If user cancelled (mediaRecorder cleared / stream stopped), bail.
         if (!mediaRecorder || !recordingStream) {
-          btn.textContent = '● Rec';
+          btn.textContent = '●';
           return;
         }
       }
@@ -8343,7 +9121,7 @@
       mediaRecorder.start();
       recordingStartMs = performance.now();
       btn.classList.add('recording');
-      btn.textContent = '■ Stop';
+      btn.textContent = '⏹';
     }
 
     // Cross-view bridge: the Player's long-press menu calls into Bloops
@@ -8569,6 +9347,47 @@
       persistWorkspace();
     });
 
+    // ---- Reset Audio --------------------------------------------------
+    // Recovery path for the "sound trails behind chip highlight" symptom.
+    // Causes are usually some mix of: AudioContext underrun on a busy
+    // browser tab, voices piling up past the live cap, or a long JS-thread
+    // stall pushing the scheduler past notes that then fire in a catch-up
+    // burst. This button is the user-visible escape hatch — it stops
+    // playback, force-disposes every tracked voice, clears pending visual
+    // timers, resumes the AudioContext if it suspended, and zeros the
+    // slip meter. _slipMs is driven by schedulerTick (slip = how far past
+    // its intended audio time a note was when scheduled); the button's
+    // .warn / .alarm classes glow when slip crosses thresholds.
+    function resetAudioEngine() {
+      try { if (sequenceTimer != null) stopSequence(); } catch (e) {}
+      // Snapshot + clear the active-voice list so _stealVoice can dispose
+      // each entry without re-entering through _activeVoices mutation.
+      const victims = _activeVoices.splice(0, _activeVoices.length);
+      victims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
+      try { clearVisualTimers(); } catch (e) {}
+      try {
+        const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+          ? Tone.context.rawContext : null;
+        if (ac && ac.state === 'suspended') ac.resume();
+      } catch (e) {}
+      _playBaseTime = 0;
+      _playOffsetSec = 0;
+      _slipMs = 0;
+      refreshAudioResetUI();
+    }
+    function refreshAudioResetUI() {
+      const btn = document.getElementById('audio-reset-btn');
+      if (!btn) return;
+      const slip = Math.round(_slipMs);
+      const voices = _activeVoices.length;
+      btn.classList.toggle('warn',  slip >= SLIP_WARN_MS  && slip < SLIP_ALARM_MS);
+      btn.classList.toggle('alarm', slip >= SLIP_ALARM_MS);
+      btn.title = `Reset audio engine — slip ${slip} ms, ${voices}/${VOICE_CAP} voices. `
+                + `Click to dispose stuck voices and re-sync.`;
+    }
+    document.getElementById('audio-reset-btn')?.addEventListener('click', resetAudioEngine);
+    refreshAudioResetUI();
+
     // ---- Drift button (Poly only) -------------------------------------
     // Picks a millisecond factor for the active lane and applies it on
     // every loop wrap, so iteration N is delayed by factor × N. Clicking
@@ -8619,21 +9438,51 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     });
 
+    // Modal: ask the user whether multi-selected notes should be wrapped
+    // as a chord (Stack, simultaneous) or a subsequence (Run, sequential).
+    // Resolves the choice via callback so the calling code stays linear.
+    function showRunStackPrompt(onPick) {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Wrap as…</div>
+        <div style="display:flex; gap:10px; margin-bottom:14px;">
+          <button type="button" class="we-btn" id="rs-stack" style="flex:1 1 0;">Stack (chord)</button>
+          <button type="button" class="we-btn" id="rs-run"   style="flex:1 1 0;">Run (subsequence)</button>
+        </div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="rs-cancel">Cancel</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const dismiss = (choice) => {
+        overlay.remove();
+        if (choice != null && typeof onPick === 'function') onPick(choice);
+      };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(null); });
+      modal.querySelector('#rs-stack').addEventListener('click', () => dismiss('stack'));
+      modal.querySelector('#rs-run').addEventListener('click',   () => dismiss('run'));
+      modal.querySelector('#rs-cancel').addEventListener('click', () => dismiss(null));
+    }
+
     document.getElementById('chord-btn').addEventListener('click', () => {
       // Multi-select grouping: when 2+ steps are selected, fold them into a
-      // single chord at the earliest selected slot and drop the rest. This
-      // wins over the toggle behavior so the user doesn't accidentally enter
-      // chord-mode while their intent is to combine an existing selection.
+      // single chord/sub at the earliest selected slot and drop the rest.
+      // This wins over the toggle behavior so the user doesn't accidentally
+      // enter chord-mode while their intent is to combine an existing
+      // selection. With 2+ voices we PROMPT for Stack vs Run instead of
+      // inferring from gridMode — the multi-select wrap is the inverse of
+      // the dissolve-sub flow below, so the user gets to pick the shape
+      // each time without having to flip the Spell/Run/Stack banner first.
       if (multiSelectMode && selectedStepRefs.length >= 2) {
         const indices = selectedStepRefs
           .map(ref => sequence.indexOf(ref))
           .filter(i => i >= 0)
           .sort((a, b) => a - b);
         if (indices.length >= 2) {
-          // Walk the selection in sequence order, gathering every playable
-          // voice. Single-note steps contribute their own pitch; chord steps
-          // contribute every voice. Rests and subsequences contribute nothing
-          // but still get removed below since the user picked them.
           const voices = [];
           const seen = new Set();
           const pushVoice = (n) => {
@@ -8653,70 +9502,99 @@
             if (Array.isArray(s.chord)) s.chord.forEach(pushVoice);
             else                        pushVoice(s);
           });
-          if (voices.length === 0) return; // nothing playable to group
-
-          snapshotForUndo('Wrap');
-          stopSequence();
-          const firstIdx  = indices[0];
-          const firstStep = sequence[firstIdx];
-          const baseDur = firstStep.duration || 1;
-          const baseSub = (firstStep.subdivision != null) ? firstStep.subdivision : stepSubdivision;
-          let newStep;
-          if (voices.length === 1) {
-            newStep = { ...voices[0], duration: baseDur, subdivision: baseSub };
-          } else if (gridMode === 'arpeggio') {
-            // Run note mode: wrap as a subsequence so the voices play in order.
-            newStep = {
-              isSub: true,
-              subSteps: voices.map(v => ({
-                freq: v.freq, label: v.label,
-                cellIndex: v.cellIndex,
-                sound: v.sound,
-                params: v.params ? { ...v.params } : undefined,
-                duration: 1,
+          if (voices.length === 0) return;
+          const commitWrap = (shape) => {
+            snapshotForUndo('Wrap');
+            stopSequence();
+            const firstIdx  = indices[0];
+            const firstStep = sequence[firstIdx];
+            const baseDur = firstStep.duration || 1;
+            const baseSub = (firstStep.subdivision != null) ? firstStep.subdivision : stepSubdivision;
+            let newStep;
+            if (voices.length === 1) {
+              newStep = { ...voices[0], duration: baseDur, subdivision: baseSub };
+            } else if (shape === 'run') {
+              newStep = {
+                isSub: true,
+                subSteps: voices.map(v => ({
+                  freq: v.freq, label: v.label,
+                  cellIndex: v.cellIndex,
+                  sound: v.sound,
+                  params: v.params ? { ...v.params } : undefined,
+                  duration: 1,
+                  subdivision: baseSub,
+                })),
+                label: '▤',
+                duration: baseDur,
+                subdivision: 1,
+              };
+            } else {
+              newStep = {
+                chord: voices,
+                label: voices.map(n => n.label).join('·'),
+                duration: baseDur,
                 subdivision: baseSub,
-              })),
-              label: '▤',
-              duration: baseDur,
-              subdivision: 1,
-            };
-          } else {
-            newStep = {
-              chord: voices,
-              label: voices.map(n => n.label).join('·'),
-              duration: baseDur,
-              subdivision: baseSub,
-            };
-          }
-          // Splice the trailing selected indices out first (reverse order so
-          // earlier indices keep their position), then overwrite firstIdx.
-          indices.slice(1).reverse().forEach(i => sequence.splice(i, 1));
-          sequence[firstIdx] = newStep;
-          selectedStepRefs = [newStep];
-          insertionPoint = null;
-          pendingChord = [];
-          // Treat the multi-select wrap as a committed wrapTemplate so the
-          // button flips to "Unwrap" and subsequent cell taps audition the
-          // wrapped form transposed (matching how the toggle-mode commit
-          // path behaves at the end of a Close).
-          wrapTemplate = newStep;
-          // Drop multi-select mode — the user just collapsed their multi-
-          // selection into a single wrapped step, so leaving Multi armed
-          // would invite an accidental bulk-edit on the next chip click.
-          multiSelectMode = false;
-          const multiCb = document.getElementById('multi-select-toggle');
-          if (multiCb) multiCb.checked = false;
-          refreshWrapVisuals();
-          renderSequence();
+              };
+            }
+            indices.slice(1).reverse().forEach(i => sequence.splice(i, 1));
+            sequence[firstIdx] = newStep;
+            selectedStepRefs = [newStep];
+            insertionPoint = null;
+            pendingChord = [];
+            wrapTemplate = newStep;
+            multiSelectMode = false;
+            const multiCb = document.getElementById('multi-select-toggle');
+            if (multiCb) multiCb.checked = false;
+            refreshWrapVisuals();
+            renderSequence();
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          };
+          // Single-voice case: no shape ambiguity, just commit.
+          if (voices.length === 1) { commitWrap('stack'); return; }
+          showRunStackPrompt(commitWrap);
           return;
         }
       }
 
-      // Unwrap: when there's an active wrapTemplate and we're not in
-      // build mode, the button label reads "Unwrap" — clicking clears
-      // the template and any pending notes, then drops back to the
-      // default note-mode behavior.
+      // Unwrap: button shows "Unwrap" when there's a committed wrapTemplate
+      // and we're not in build mode. Two behaviours:
+      //   (a) If the wrapTemplate is the currently-SELECTED sub step in
+      //       the sequence, DISSOLVE it: splice the step out and replace
+      //       in place with its constituent subSteps. All resulting steps
+      //       are selected (multi-select on) so the inverse "Wrap" press
+      //       re-groups them via the multi-select branch above.
+      //   (b) Otherwise just clear the wrapTemplate (legacy unwrap).
       if (wrapTemplate && !chordMode) {
+        // Dissolve path: when a sub step in the sequence is the current
+        // selection AND a wrap is active (chip click captured it), Unwrap
+        // splits the sub in place. The chip-click handler stored a CLONE
+        // in wrapTemplate, so identity won't match the selected step —
+        // check via the sequence array instead.
+        const selectedSub = selectedStepRefs[0];
+        const idx = (selectedSub && selectedSub.isSub && Array.isArray(selectedSub.subSteps))
+          ? sequence.indexOf(selectedSub) : -1;
+        if (idx >= 0) {
+          snapshotForUndo('Dissolve subsequence');
+          // Splice in the constituent steps. Clone to break refs.
+          const dissolved = selectedSub.subSteps.map(s => ({
+            ...s,
+            params: s.params ? { ...s.params } : undefined,
+          }));
+          sequence.splice(idx, 1, ...dissolved);
+          // Select all the new chips and arm multi-select so the next
+          // Wrap press re-groups them via the multi-select branch.
+          selectedStepRefs = dissolved.slice();
+          multiSelectMode = true;
+          const multiCb = document.getElementById('multi-select-toggle');
+          if (multiCb) multiCb.checked = true;
+          wrapTemplate = null;
+          pendingChord = [];
+          clearWrapPendingHighlights();
+          refreshWrapVisuals();
+          renderSequence();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          return;
+        }
         wrapTemplate = null;
         pendingChord = [];
         clearWrapPendingHighlights();
@@ -8725,18 +9603,32 @@
         return;
       }
 
-      chordMode = !chordMode;
+      // Entering a fresh wrap: show the Run/Stack picker so the user
+      // commits to a shape upfront. The choice lives in _wrapShape and
+      // overrides gridMode at commit time, so the result no longer
+      // depends on the global note-mode banner being set correctly.
+      // Cancel closes the modal without entering chord mode.
+      if (!chordMode) {
+        showRunStackPrompt((shape) => {
+          if (!shape) return;
+          _wrapShape = shape;
+          chordMode = true;
+          refreshWrapVisuals();
+        });
+        return;
+      }
+
+      // Exiting an active wrap — commit accumulated notes (if any) using
+      // the shape picked at entry. The gridMode fallback handles any
+      // state-restore path that re-enters chordMode without going
+      // through the picker.
+      chordMode = false;
       refreshWrapVisuals();
-      if (!chordMode) clearWrapPendingHighlights();
-      if (!chordMode && pendingChord.length > 0) {
-        // Commit the accumulated notes. Run note mode wraps them as a
-        // subsequence (each note becomes a subStep so they play in
-        // sequence); Spell and Stack wrap them as a single chord step.
-        // The committed step always becomes the wrapTemplate so future
-        // cell clicks can audition it transposed; sequence-append is
-        // gated by Keep.
+      clearWrapPendingHighlights();
+      if (pendingChord.length > 0) {
+        const useRun = (_wrapShape === 'run') || (_wrapShape == null && gridMode === 'arpeggio');
         let newStep;
-        if (gridMode === 'arpeggio') {
+        if (useRun) {
           const subSteps = pendingChord.map(n => ({
             freq: n.freq,
             label: n.label,
@@ -8771,7 +9663,7 @@
         pendingChord = [];
         refreshWrapVisuals();
         renderSequence();
-      } else if (!chordMode) {
+      } else {
         // Wrap toggled off with no notes accumulated → clear any
         // existing template so cell clicks fall back to the active
         // note-mode handlers.
@@ -8780,7 +9672,507 @@
         refreshWrapVisuals();
         renderSequence();
       }
+      _wrapShape = null;
     });
+
+    // ---- Wrap Edit menu ------------------------------------------------
+    // Pulls together the in-flight-wrap operations the user needs without
+    // having to unwrap-and-recommit: invert the voicing up/down, switch
+    // the wrap's shape between chord (Stack) and subsequence (Run), and
+    // pop the existing step editor on the wrap's contents.
+
+    // Returns the live note list for the active wrap, plus a tag that
+    // tells the caller which structure it came from so callers can refresh
+    // the right surface. Pending (chordMode in-progress) and committed
+    // chord wraps share the chord-style invert math; sub wraps invert
+    // their subSteps array directly.
+    function _activeWrapNoteList() {
+      if (chordMode && Array.isArray(pendingChord) && pendingChord.length > 0) {
+        return { kind: 'pending', notes: pendingChord };
+      }
+      if (wrapTemplate) {
+        if (Array.isArray(wrapTemplate.chord)) {
+          return { kind: 'chord', notes: wrapTemplate.chord };
+        }
+        if (wrapTemplate.isSub && Array.isArray(wrapTemplate.subSteps)) {
+          return { kind: 'sub', notes: wrapTemplate.subSteps };
+        }
+      }
+      return null;
+    }
+    function _wrapNoteHasFreq(n) { return n && Number.isFinite(n.freq) && n.freq > 0; }
+    // Invert up: lowest note jumps an octave above the current top and the
+    // previous lowest disappears. Mutates the passed array in place so
+    // wrapTemplate / pendingChord references stay valid.
+    function _invertNotesUp(notes) {
+      if (!Array.isArray(notes) || notes.length < 2) return false;
+      const playable = notes.filter(_wrapNoteHasFreq);
+      if (playable.length < 2) return false;
+      const sorted = [...notes].sort((a, b) => (a.freq || 0) - (b.freq || 0));
+      const lowest = sorted.find(_wrapNoteHasFreq);
+      if (!lowest) return false;
+      const newFreq = lowest.freq * 2;
+      let newLabel = lowest.label;
+      try { newLabel = Tone.Frequency(newFreq).toNote(); } catch (e) {}
+      const newTop = {
+        ...lowest,
+        freq:      newFreq,
+        label:     newLabel,
+        cellIndex: null,
+        params:    lowest.params ? { ...lowest.params } : undefined,
+      };
+      // Rewrite the array in place: drop the original lowest, append
+      // newTop. Re-sort so the result stays freq-ascending — keeps
+      // playback ordering consistent with the visual readout.
+      const next = sorted.filter(n => n !== lowest);
+      next.push(newTop);
+      next.sort((a, b) => (a.freq || 0) - (b.freq || 0));
+      notes.length = 0;
+      next.forEach(n => notes.push(n));
+      return true;
+    }
+    function _invertNotesDown(notes) {
+      if (!Array.isArray(notes) || notes.length < 2) return false;
+      const playable = notes.filter(_wrapNoteHasFreq);
+      if (playable.length < 2) return false;
+      const sorted = [...notes].sort((a, b) => (a.freq || 0) - (b.freq || 0));
+      const highest = [...sorted].reverse().find(_wrapNoteHasFreq);
+      if (!highest) return false;
+      const newFreq = highest.freq / 2;
+      let newLabel = highest.label;
+      try { newLabel = Tone.Frequency(newFreq).toNote(); } catch (e) {}
+      const newBottom = {
+        ...highest,
+        freq:      newFreq,
+        label:     newLabel,
+        cellIndex: null,
+        params:    highest.params ? { ...highest.params } : undefined,
+      };
+      const next = sorted.filter(n => n !== highest);
+      next.unshift(newBottom);
+      next.sort((a, b) => (a.freq || 0) - (b.freq || 0));
+      notes.length = 0;
+      next.forEach(n => notes.push(n));
+      return true;
+    }
+    // After invert, the wrapTemplate's display label needs to track the
+    // new voicing so the Keep readout / sequence chip stay accurate.
+    function _refreshWrapLabel() {
+      if (!wrapTemplate) return;
+      if (Array.isArray(wrapTemplate.chord)) {
+        wrapTemplate.label = wrapTemplate.chord.map(n => n.label).join('·');
+      }
+      // Sub wraps keep their "▤" badge — the subStep labels render
+      // separately when the sub-chip expands.
+    }
+    function invertActiveWrap(direction) {
+      const ref = _activeWrapNoteList();
+      if (!ref) return;
+      const ok = (direction > 0) ? _invertNotesUp(ref.notes) : _invertNotesDown(ref.notes);
+      if (!ok) return;
+      snapshotForUndo(direction > 0 ? 'Invert wrap up' : 'Invert wrap down');
+      _refreshWrapLabel();
+      refreshWrapVisuals();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Convert wrapTemplate between chord (simultaneous) and sub
+    // (sequential) shapes in place. Pending (uncommitted) wraps are
+    // controlled by gridMode at commit time — toggle a flag there so
+    // the next Close lands in the chosen shape.
+    function toggleWrapRunStack() {
+      // Committed wrap — restructure wrapTemplate.
+      if (wrapTemplate) {
+        snapshotForUndo('Toggle wrap chord/sub');
+        if (Array.isArray(wrapTemplate.chord)) {
+          // Chord → Sub: each voice becomes a subStep at 1-step duration.
+          const baseSub = (wrapTemplate.subdivision != null) ? wrapTemplate.subdivision : stepSubdivision;
+          const subSteps = wrapTemplate.chord.map(n => ({
+            freq:        n.freq,
+            label:       n.label,
+            cellIndex:   n.cellIndex,
+            sound:       n.sound,
+            params:      n.params ? { ...n.params } : undefined,
+            duration:    1,
+            subdivision: baseSub,
+          }));
+          wrapTemplate = {
+            isSub:       true,
+            subSteps,
+            label:       '▤',
+            duration:    wrapTemplate.duration || 1,
+            subdivision: 1,
+          };
+        } else if (wrapTemplate.isSub && Array.isArray(wrapTemplate.subSteps)) {
+          // Sub → Chord: collapse subSteps that have a freq into chord
+          // voices. Inner durations / subdivisions don't apply to chords.
+          const chord = wrapTemplate.subSteps
+            .filter(s => Number.isFinite(s.freq))
+            .map(s => ({
+              freq:      s.freq,
+              label:     s.label,
+              cellIndex: s.cellIndex,
+              sound:     s.sound,
+              params:    s.params ? { ...s.params } : undefined,
+            }));
+          wrapTemplate = {
+            chord,
+            label:       chord.map(n => n.label).join('·'),
+            duration:    wrapTemplate.duration || 1,
+            subdivision: wrapTemplate.subdivision || stepSubdivision,
+          };
+        }
+        refreshWrapVisuals();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        return;
+      }
+      // Pending wrap (build in progress) — flip the wrap shape so the
+      // next Close commits the opposite form. _wrapShape was set by the
+      // Wrap-press picker and is what the commit path reads.
+      if (chordMode) {
+        _wrapShape = (_wrapShape === 'run') ? 'stack' : 'run';
+        refreshWrapVisuals();
+      }
+    }
+    function _wrapIsSubLike() {
+      if (chordMode) return _wrapShape === 'run' || (_wrapShape == null && gridMode === 'arpeggio');
+      return !!(wrapTemplate && wrapTemplate.isSub);
+    }
+    // Open the existing step editor on the wrap by parking a deep copy
+    // of wrapTemplate at the end of `sequence` (flagged _wrapEditing so
+    // renderSequence skips drawing a chip for it). When the editor's
+    // overlay is removed, copy any edits back to wrapTemplate and
+    // unstash. Sub-wraps that don't have a chord/freq fall through to
+    // the note editor on the first subStep — a constraint of the
+    // existing editor, not this code.
+    // Per-note wrap editor. Cloned from the step editor's Note / Sound
+    // fields but reshaped around the wrap's structure: a chord wrap has
+    // one tab per chord voice, a subsequence wrap has one tab per sub-
+    // step, a single-note wrap has one tab. Each tab is its own self-
+    // contained note editor (pitch + octave + wave + ADSR + vol/tune/pan)
+    // operating on a working copy; Save commits the working copies back
+    // to wrapTemplate, Cancel discards.
+    function openWrapEditor() {
+      if (!wrapTemplate) return;
+      let notes, kind;
+      if (Array.isArray(wrapTemplate.chord)) {
+        notes = wrapTemplate.chord.map(n => ({
+          ...n,
+          params: n.params ? { ...n.params } : {},
+        }));
+        kind = 'chord';
+      } else if (wrapTemplate.isSub && Array.isArray(wrapTemplate.subSteps)) {
+        notes = wrapTemplate.subSteps.map(s => ({
+          ...s,
+          params: s.params ? { ...s.params } : {},
+        }));
+        kind = 'sub';
+      } else {
+        notes = [{
+          ...wrapTemplate,
+          params: wrapTemplate.params ? { ...wrapTemplate.params } : {},
+        }];
+        kind = 'single';
+      }
+      if (notes.length === 0) return;
+      let activeNoteIdx = 0;
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay wrap-notes-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal wrap-notes-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const _parseOct = (lbl) => {
+        const m = (lbl || '').match(/(-?\d+)$/);
+        return m ? parseInt(m[1], 10) : baseOctave;
+      };
+      const OCT_MIN = 0, OCT_MAX = 8;
+      const notesForOctaveAt = (oct) => {
+        const out = [];
+        for (let i = 0; i < 12; i++) {
+          const semi = rootIdx + i;
+          const noteIdx = semi % 12;
+          const octaveNum = oct + Math.floor(semi / 12);
+          const midi = 12 * (octaveNum + 1) + noteIdx;
+          const freq = masterFreqA * Math.pow(2, (midi - 69) / 12);
+          out.push({ freq, label: CHROMATIC[noteIdx] + octaveNum });
+        }
+        return out;
+      };
+
+      const render = () => {
+        const n = notes[activeNoteIdx];
+        if (!n.params) n.params = {};
+        const p = n.params;
+        // Fill defaults so sliders always have a starting value.
+        if (!Number.isFinite(p.attack))  p.attack  = 10;
+        if (!Number.isFinite(p.decay))   p.decay   = 100;
+        if (!Number.isFinite(p.sustain)) p.sustain = 50;
+        if (!Number.isFinite(p.release)) p.release = 1400;
+        if (!Number.isFinite(p.volume))  p.volume  = 100;
+        if (!Number.isFinite(p.detune))  p.detune  = 0;
+        if (!Number.isFinite(p.pan))     p.pan     = 0;
+        if (!p.type) p.type = n.sound || 'sine';
+
+        const tabsHtml = notes.map((nn, i) =>
+          `<button type="button" class="wn-tab${i === activeNoteIdx ? ' active' : ''}" data-idx="${i}">${(nn.label || ('Note ' + (i+1)))}</button>`
+        ).join('');
+        const titleLabel = kind === 'chord' ? 'chord' : (kind === 'sub' ? 'subsequence' : 'note');
+        // Step Div section only makes sense for subsequence wraps —
+        // each subStep has its own subdivision controlling its slice
+        // of the run's cadence. Chord wraps share one subdivision via
+        // the parent step (all voices fire simultaneously), and single-
+        // note wraps don't need a per-note picker either.
+        const stepDivHtml = kind === 'sub' ? `
+          <details class="sm-fold">
+            <summary>Step Div</summary>
+            <div class="sm-fold-body">
+              <div class="sm-waves" id="wn-stepdiv-row"></div>
+            </div>
+          </details>` : '';
+        modal.innerHTML = `
+          <div class="sm-title">Edit wrap ${titleLabel}</div>
+          <div class="wn-tabs">${tabsHtml}</div>
+          <details class="sm-fold" open>
+            <summary>Note</summary>
+            <div class="sm-fold-body">
+              <div class="sm-section-label" style="margin-top:0;">Octave</div>
+              <div class="sm-waves" id="wn-octave-picker"></div>
+              <div class="sm-section-label">Pitch</div>
+              <div class="sm-waves" id="wn-note-picker"></div>
+            </div>
+          </details>
+          ${stepDivHtml}
+          <details class="sm-fold">
+            <summary>Sound</summary>
+            <div class="sm-fold-body">
+              <div class="sm-waves" id="wn-wave-row" style="margin-bottom:14px;"></div>
+              <div class="sm-param"><div class="sm-param-row">Attack <span class="sm-val" id="wn-atk-v">${p.attack} ms</span></div><input type="range" id="wn-atk" min="1" max="500" value="${p.attack}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Decay <span class="sm-val" id="wn-dec-v">${p.decay} ms</span></div><input type="range" id="wn-dec" min="10" max="1000" value="${p.decay}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Sustain <span class="sm-val" id="wn-sus-v">${p.sustain}%</span></div><input type="range" id="wn-sus" min="0" max="100" value="${p.sustain}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Release <span class="sm-val" id="wn-rel-v">${p.release} ms</span></div><input type="range" id="wn-rel" min="100" max="3000" value="${p.release}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Volume <span class="sm-val" id="wn-vol-v">${p.volume}%</span></div><input type="range" id="wn-vol" min="0" max="100" value="${p.volume}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Tune <span class="sm-val" id="wn-tune-v">${p.detune} ¢</span></div><input type="range" id="wn-tune" min="-100" max="100" value="${p.detune}" /></div>
+              <div class="sm-param"><div class="sm-param-row">Pan <span class="sm-val" id="wn-pan-v">${p.pan === 0 ? 'C' : (p.pan < 0 ? 'L' : 'R') + Math.abs(p.pan)}</span></div><input type="range" id="wn-pan" min="-100" max="100" value="${p.pan}" /></div>
+            </div>
+          </details>
+          <div class="sm-footer">
+            <button type="button" class="sm-preview" id="wn-cancel">Cancel</button>
+            <button type="button" class="sm-apply" id="wn-save">Save</button>
+          </div>
+        `;
+
+        // Tabs — switch active note (working copies retain their edits).
+        modal.querySelectorAll('.wn-tab').forEach(t => {
+          t.addEventListener('click', () => {
+            const i = parseInt(t.dataset.idx, 10);
+            if (Number.isFinite(i) && i >= 0 && i < notes.length) {
+              activeNoteIdx = i;
+              render();
+            }
+          });
+        });
+
+        // Octave + pitch pickers.
+        const octavePicker = modal.querySelector('#wn-octave-picker');
+        const notePicker   = modal.querySelector('#wn-note-picker');
+        let octavePickerCurrent = Math.max(OCT_MIN, Math.min(OCT_MAX, _parseOct(n.label)));
+        const renderPitchRow = () => {
+          notePicker.innerHTML = '';
+          const octNotes = notesForOctaveAt(octavePickerCurrent);
+          octNotes.forEach((nn) => {
+            const btn = document.createElement('button');
+            btn.className = 'sm-wave' + (Number.isFinite(n.freq) && Math.abs(nn.freq - n.freq) / nn.freq < 0.001 ? ' active' : '');
+            btn.textContent = nn.label;
+            btn.addEventListener('click', () => {
+              n.freq = nn.freq;
+              n.label = nn.label;
+              const gridIdx = (typeof _findCellIdxForFreq === 'function') ? _findCellIdxForFreq(nn.freq) : -1;
+              n.cellIndex = (gridIdx >= 0) ? gridIdx : null;
+              // Update the tab label to match the new pitch.
+              const tab = modal.querySelector(`.wn-tab[data-idx="${activeNoteIdx}"]`);
+              if (tab) tab.textContent = nn.label;
+              notePicker.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+              btn.classList.add('active');
+            });
+            notePicker.appendChild(btn);
+          });
+        };
+        const renderOctaveRow = () => {
+          octavePicker.innerHTML = '';
+          for (let o = OCT_MIN; o <= OCT_MAX; o++) {
+            const btn = document.createElement('button');
+            btn.className = 'sm-wave' + (o === octavePickerCurrent ? ' active' : '');
+            btn.textContent = String(o);
+            btn.addEventListener('click', () => {
+              octavePickerCurrent = o;
+              renderOctaveRow();
+              renderPitchRow();
+            });
+            octavePicker.appendChild(btn);
+          }
+        };
+        renderOctaveRow();
+        renderPitchRow();
+
+        // Step Div row (sub wraps only). Buttons map to the same
+        // subdivision values used by the Step Div picker elsewhere.
+        // Mutates n.subdivision so each subStep's playback length
+        // can be tuned independently.
+        if (kind === 'sub') {
+          const stepDivRow = modal.querySelector('#wn-stepdiv-row');
+          if (stepDivRow) {
+            const STEP_DIVS = [
+              ['1/32', 0.125], ['1/16', 0.25], ['1/8', 0.5],
+              ['1/4',  1],     ['1/2',  2],    ['1/1', 4],
+              ['2/1',  8],     ['3/1',  12],   ['4/1', 16],
+            ];
+            const currentSub = (n.subdivision != null) ? n.subdivision : stepSubdivision;
+            STEP_DIVS.forEach(([label, v]) => {
+              const btn = document.createElement('button');
+              btn.className = 'sm-wave' + (Math.abs(currentSub - v) < 0.0001 ? ' active' : '');
+              btn.textContent = label;
+              btn.addEventListener('click', () => {
+                n.subdivision = v;
+                stepDivRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+              });
+              stepDivRow.appendChild(btn);
+            });
+          }
+        }
+
+        // Wave type row.
+        const waveRow = modal.querySelector('#wn-wave-row');
+        SOUNDS.forEach(s => {
+          const btn = document.createElement('button');
+          btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
+          btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+          btn.addEventListener('click', () => {
+            p.type = s;
+            n.sound = s;
+            waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+          });
+          waveRow.appendChild(btn);
+        });
+
+        // Sliders mutate p (n.params) directly.
+        const sliderDefs = [
+          ['wn-atk',  'wn-atk-v',  'attack',  ' ms'],
+          ['wn-dec',  'wn-dec-v',  'decay',   ' ms'],
+          ['wn-sus',  'wn-sus-v',  'sustain', '%'],
+          ['wn-rel',  'wn-rel-v',  'release', ' ms'],
+          ['wn-vol',  'wn-vol-v',  'volume',  '%'],
+          ['wn-tune', 'wn-tune-v', 'detune',  ' ¢'],
+          ['wn-pan',  'wn-pan-v',  'pan',     'pan'],
+        ];
+        sliderDefs.forEach(([id, valId, key, unit]) => {
+          const input = modal.querySelector(`#${id}`);
+          const label = modal.querySelector(`#${valId}`);
+          if (!input) return;
+          input.addEventListener('input', () => {
+            const v = parseFloat(input.value);
+            p[key] = v;
+            if (!label) return;
+            if (unit === 'pan') {
+              label.textContent = v === 0 ? 'C' : (v < 0 ? 'L' : 'R') + Math.abs(v);
+            } else {
+              label.textContent = v + unit;
+            }
+          });
+        });
+
+        // Footer
+        modal.querySelector('#wn-cancel').addEventListener('click', () => overlay.remove());
+        modal.querySelector('#wn-save').addEventListener('click', () => {
+          if (kind === 'chord') {
+            wrapTemplate.chord = notes.map(nn => ({ ...nn, params: { ...(nn.params || {}) } }));
+            wrapTemplate.label = wrapTemplate.chord.map(nn => nn.label).join('·');
+          } else if (kind === 'sub') {
+            wrapTemplate.subSteps = notes.map(nn => ({ ...nn, params: { ...(nn.params || {}) } }));
+          } else {
+            const nn = notes[0];
+            wrapTemplate.freq      = nn.freq;
+            wrapTemplate.label     = nn.label;
+            wrapTemplate.cellIndex = nn.cellIndex;
+            wrapTemplate.sound     = nn.sound;
+            wrapTemplate.params    = { ...(nn.params || {}) };
+          }
+          if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
+          if (typeof renderSequence === 'function') renderSequence();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          overlay.remove();
+        });
+      };
+      render();
+    }
+    function showWrapEditMenu() {
+      if (!_activeWrapNoteList() && !wrapTemplate) return;
+      // Click-outside / OK both close. The menu re-reads wrap state
+      // every render so subsequent operations show the latest counts.
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay wrap-edit-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal wrap-edit-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      const render = () => {
+        const ref = _activeWrapNoteList();
+        const count = ref ? ref.notes.filter(_wrapNoteHasFreq).length : 0;
+        const summary = ref
+          ? ref.notes.map(n => n.label || '—').join(' · ')
+          : '(no active wrap)';
+        const isSub = _wrapIsSubLike();
+        modal.innerHTML = `
+          <div class="sm-title">Edit wrap</div>
+          <div class="we-summary">${summary}</div>
+          <div class="we-row">
+            <span class="we-label">Invert</span>
+            <div class="we-row-btns">
+              <button type="button" class="we-btn" id="we-inv-up"${count < 2 ? ' disabled' : ''}>Up +</button>
+              <button type="button" class="we-btn" id="we-inv-dn"${count < 2 ? ' disabled' : ''}>Down −</button>
+            </div>
+          </div>
+          <div class="we-row">
+            <span class="we-label">Shape</span>
+            <button type="button" class="we-btn we-toggle" id="we-runstack">${isSub ? 'Run (sub)' : 'Stack (chord)'}</button>
+          </div>
+          <div class="we-row">
+            <span class="we-label">Edit</span>
+            <button type="button" class="we-btn" id="we-open-editor"${wrapTemplate ? '' : ' disabled'} title="${wrapTemplate ? 'Open the full step editor on this wrap' : 'Commit the wrap (Close) before editing fields'}">Open editor…</button>
+          </div>
+          <div class="sm-footer">
+            <button type="button" class="sm-apply we-ok" id="we-ok">OK</button>
+          </div>
+        `;
+        modal.querySelector('#we-inv-up')?.addEventListener('click', () => {
+          invertActiveWrap(+1);
+          render();
+        });
+        modal.querySelector('#we-inv-dn')?.addEventListener('click', () => {
+          invertActiveWrap(-1);
+          render();
+        });
+        modal.querySelector('#we-runstack')?.addEventListener('click', () => {
+          toggleWrapRunStack();
+          render();
+        });
+        modal.querySelector('#we-open-editor')?.addEventListener('click', () => {
+          // Close this menu first — the step editor stacks its own
+          // overlay and we don't want both modals open at once.
+          overlay.remove();
+          openWrapEditor();
+        });
+        modal.querySelector('#we-ok')?.addEventListener('click', () => {
+          overlay.remove();
+        });
+      };
+      render();
+    }
+    document.getElementById('wrap-edit-btn')?.addEventListener('click', showWrapEditMenu);
 
     // ---- Tracks (multi-track sequencer) ----
 
@@ -9846,7 +11238,7 @@
 
       const playAllBtn = document.getElementById('tracks-play-all');
       const anyPlaying = tracks.some(t => t.playing);
-      if (playAllBtn) playAllBtn.textContent = anyPlaying ? '■' : '▶';
+      if (playAllBtn) playAllBtn.textContent = anyPlaying ? '⏹' : '▶';
 
       if (tracks.length === 0) {
         const empty = document.createElement('div');
@@ -9863,7 +11255,7 @@
         const mixOn = isTrackMixActive(track);
         const recOn = !!track._recording;
         const counting = !!track._countingIn;
-        const recIcon = counting ? '…' : (recOn ? '■' : '●');
+        const recIcon = counting ? '…' : (recOn ? '⏹' : '●');
         const recCls  = counting ? ' counting' : (recOn ? ' recording' : '');
         const recTitle = counting
           ? 'Counting in… click to cancel'
@@ -11223,33 +12615,45 @@
     const WORKSPACE_LS_KEY = 'bloops-workspace';
     let _workspacePersistTimer = null;
     let _workspacePersistEnabled = false;
+    // Synchronous persist — used by beforeunload and pagehide so the
+    // very last edit lands before the browser tears the tab down. The
+    // debounced persistWorkspace path skips persists that haven't fired
+    // their 250 ms timer yet, which is the common case for "user makes
+    // one edit and closes the tab."
+    function persistWorkspaceNow() {
+      if (!_workspacePersistEnabled) return;
+      clearTimeout(_workspacePersistTimer);
+      _workspacePersistTimer = null;
+      const buildSnap = () => {
+        const s = buildProjectSnapshot();
+        s.currentProjectName = currentProjectName;
+        return s;
+      };
+      try {
+        localStorage.setItem(WORKSPACE_LS_KEY, JSON.stringify(buildSnap()));
+      } catch (e) {
+        try {
+          const slim = buildSnap();
+          (slim.savedSequences || []).forEach(s => { if (s && s.type === 'audio') delete s.audioDataUrl; });
+          (slim.tracks || []).forEach(t => (t.items || []).forEach(it => {
+            if (it && it.type === 'audio') delete it.audioDataUrl;
+          }));
+          localStorage.setItem(WORKSPACE_LS_KEY, JSON.stringify(slim));
+        } catch (e2) { /* per-store persists still cover the basics */ }
+      }
+    }
     function persistWorkspace() {
       if (!_workspacePersistEnabled) return;
       clearTimeout(_workspacePersistTimer);
-      _workspacePersistTimer = setTimeout(() => {
-        const buildSnap = () => {
-          const s = buildProjectSnapshot();
-          s.currentProjectName = currentProjectName;
-          return s;
-        };
-        try {
-          localStorage.setItem(WORKSPACE_LS_KEY, JSON.stringify(buildSnap()));
-        } catch (e) {
-          // Quota overflow (recordings can be MB-scale). Retry with audio
-          // data URLs stripped — workspace state still survives, the actual
-          // recordings just won't carry over reloads. The Drive-backed save
-          // path is the durable home for those.
-          try {
-            const slim = buildSnap();
-            (slim.savedSequences || []).forEach(s => { if (s && s.type === 'audio') delete s.audioDataUrl; });
-            (slim.tracks || []).forEach(t => (t.items || []).forEach(it => {
-              if (it && it.type === 'audio') delete it.audioDataUrl;
-            }));
-            localStorage.setItem(WORKSPACE_LS_KEY, JSON.stringify(slim));
-          } catch (e2) { /* per-store persists still cover the basics */ }
-        }
-      }, 250);
+      _workspacePersistTimer = setTimeout(persistWorkspaceNow, 250);
     }
+    // Auto-serialize on tab close. `pagehide` is the reliable event in
+    // modern browsers (beforeunload is suppressed in some cases —
+    // mobile Safari, bfcache); we listen for both. The pending debounce
+    // is flushed synchronously so the workspace snapshot includes the
+    // user's very last edit.
+    window.addEventListener('beforeunload', () => { try { persistWorkspaceNow(); } catch (e) {} });
+    window.addEventListener('pagehide',     () => { try { persistWorkspaceNow(); } catch (e) {} });
 
     function buildProjectSnapshot() {
       return {
@@ -11297,6 +12701,9 @@
             voice: (li === activeLaneIdx)
               ? _captureVoiceGlobals()
               : (l.voice ? JSON.parse(JSON.stringify(l.voice)) : null),
+            // Per-lane FX send levels — shallow clone so snapshot edits
+            // don't share refs with the live lane.sends.
+            sends: l.sends ? { ...l.sends } : null,
           })),
           stashedLanes: Array.isArray(_stashedLanes) ? _stashedLanes.map(l => ({
             name: l.name,
@@ -11311,6 +12718,7 @@
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
             collapsed: !!l.collapsed,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
+            sends: l.sends ? { ...l.sends } : null,
           })) : null,
         },
         grid: {
@@ -11702,7 +13110,116 @@
       loadBtn?.addEventListener('click', async () => {
         await loadProjectFromDrive(loadBtn);
       });
+      // Import MIDI: open file picker, then run importMidiFile().
+      const midiBtn  = document.getElementById('project-import-midi-opt');
+      const midiFile = document.getElementById('midi-import-file');
+      midiBtn?.addEventListener('click', () => {
+        setOpen(false);
+        midiFile?.click();
+      });
+      midiFile?.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try { await importMidiFile(file); }
+        catch (err) { console.error(err); alert('MIDI import failed: ' + (err.message || err)); }
+        finally { midiFile.value = ''; }
+      });
     })();
+
+    // ---- MIDI file import ----
+    // Reads a .mid via @tonejs/midi (loaded as a global Midi class from
+    // the CDN at the top of the page). Each MIDI track becomes a lane
+    // (capped at 8 — the existing lane row limit) and each note becomes
+    // a single-note step. Step subdivision is approximated from the
+    // note's duration in beats so the playback rhythm matches the
+    // imported file at the current BPM.
+    async function importMidiFile(file) {
+      if (typeof Midi === 'undefined') {
+        alert('MIDI parser unavailable (Midi.js not loaded).');
+        return;
+      }
+      const buf = await file.arrayBuffer();
+      const midi = new Midi(buf);
+      const tracks = (midi.tracks || []).filter(t => t.notes && t.notes.length > 0);
+      if (tracks.length === 0) { alert('No notes found in MIDI file.'); return; }
+      const LANE_CAP = 8;
+      const useTracks = tracks.slice(0, LANE_CAP);
+      // Map a note duration in beats to a subdivision in Bloops' units
+      // (4 = whole, 2 = half, 1 = quarter, 0.5 = 1/8, 0.25 = 1/16, ...).
+      // Bloops subdivision is in quarter-note multiples (sub = beats).
+      const SUB_VALUES = [0.125, 0.25, 0.5, 1, 2, 4, 8, 12, 16];
+      const quantizeSub = (beats) => {
+        if (!Number.isFinite(beats) || beats <= 0) return 1;
+        let best = SUB_VALUES[0], bestDiff = Infinity;
+        SUB_VALUES.forEach(v => {
+          const d = Math.abs(beats - v);
+          if (d < bestDiff) { bestDiff = d; best = v; }
+        });
+        return best;
+      };
+      stopSequence();
+      snapshotForUndo('Import MIDI');
+      // Resize the lane count to the smaller of (tracks, cap). The
+      // existing grid-rows setter trims lanes; recreate lanes from
+      // scratch via _makeLane so the per-lane state starts clean.
+      const targetLanes = useTracks.length;
+      // Trim if needed (preserve existing lanes if user wanted to
+      // merge — but for now overwrite cleanly).
+      if (Array.isArray(lanes) && lanes.length > 0 && typeof disposeAllLaneAudio === 'function') {
+        disposeAllLaneAudio(lanes);
+      }
+      lanes = [];
+      for (let i = 0; i < targetLanes; i++) lanes.push(_makeLane(i));
+      // BPM from the MIDI header (use first tempo); falls back to current.
+      const tempo = midi.header && Array.isArray(midi.header.tempos) && midi.header.tempos[0];
+      if (tempo && Number.isFinite(tempo.bpm)) {
+        const bpmEl = tempoInput;
+        if (bpmEl) bpmEl.value = String(Math.round(tempo.bpm));
+      }
+      // Build each lane's step list. Notes are read in time order;
+      // gaps between notes become rest steps so timing roughly aligns.
+      useTracks.forEach((trk, li) => {
+        const lane = lanes[li];
+        if (!lane) return;
+        const notes = (trk.notes || []).slice().sort((a, b) => a.time - b.time);
+        const steps = [];
+        let cursor = 0; // beats
+        const bpm = Number.isFinite(midi.header.tempos[0]?.bpm) ? midi.header.tempos[0].bpm : 120;
+        const beatSec = 60 / bpm;
+        notes.forEach(n => {
+          const startBeats = n.time / beatSec;
+          const durBeats = (n.duration || beatSec * 0.25) / beatSec;
+          // Gap before this note → insert rest.
+          if (startBeats > cursor + 0.0625) {
+            const restBeats = startBeats - cursor;
+            steps.push({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: quantizeSub(restBeats) });
+          }
+          const freq = 440 * Math.pow(2, ((n.midi || 0) - 69) / 12);
+          let label;
+          try { label = (typeof Tone !== 'undefined') ? Tone.Frequency(freq).toNote() : ('M' + n.midi); }
+          catch (_) { label = 'M' + n.midi; }
+          steps.push({
+            freq, label,
+            cellIndex: (typeof _findCellIdxForFreq === 'function') ? (_findCellIdxForFreq(freq) || null) : null,
+            sound: (cellParams[0]?.type) || 'sine',
+            params: { ...(cellParams[0] || { type: 'sine' }) },
+            duration: 1,
+            subdivision: quantizeSub(durBeats),
+          });
+          cursor = startBeats + durBeats;
+        });
+        lane.steps = steps;
+        lane.name = trk.name || _laneName(li);
+      });
+      activeLaneIdx = 0;
+      _aliasSequenceToActiveLane();
+      // Sync the rows input to the new lane count.
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.value = String(targetLanes);
+      gridRows = targetLanes;
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
 
     // ---- Radial Tone — press-position-sensitive pitch bend per cell ----
     // When on, the cell pointerdown samples the press location and detunes
@@ -11853,6 +13370,11 @@
       if (!btn || !panel) return;
       const TRIGGER_ID = 'riff-menu-btn';
       const setOpen = (open) => {
+        // Refresh Drift label + disabled state right before the panel
+        // shows, so its enabled-ness reflects the current lane count
+        // (Drift needs ≥2 lanes) without needing a separate hook on
+        // every lane add/remove path.
+        if (open && typeof refreshDriftBtn === 'function') refreshDriftBtn();
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
         btn.textContent = open ? 'Riff ▴' : 'Riff ▾';
@@ -12277,6 +13799,13 @@
         collapsed: !!l?.collapsed,
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
+        // Per-lane FX send levels. Migration:
+        // (a) New schema: l.sends present → use it.
+        // (b) Old per-lane-FX schema: l.fx had reverb/delay/... mix
+        //     values → harvest those as the send seeds.
+        // (c) Pre-per-lane-FX schema: no l.fx, no l.sends → fall back
+        //     to globalFx mix values.
+        sends: _migrateLaneSends(l),
       })) : [];
       _stashedLanes = Array.isArray(w.stashedLanes) ? w.stashedLanes.map((l, i) => ({
         name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
@@ -12292,6 +13821,7 @@
         collapsed: !!l?.collapsed,
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
+        sends: _migrateLaneSends(l),
       })) : null;
       // Always-poly invariant: if the restored snapshot had no lanes
       // (older Mono-mode save), seed one from the restored sequence.
@@ -12639,13 +14169,34 @@
       bloopsTab.addEventListener('click', showBloops);
       if (mixTab) mixTab.addEventListener('click', showMix);
       sbTab.addEventListener('click', showSerialbox);
-      // The pre-body inline script may have already applied
-      // body.view-serialbox via the #player deep-link; sync the tab
-      // state to whatever class the body has now.
-      const cls = document.body.classList;
-      const initial = cls.contains('view-serialbox') ? 'serialbox'
+      // Pick the initial view in this order of preference:
+      //   1. URL hash (#player / #mix) — survives mobile browsers that
+      //      run the pre-body inline classList write too late, or in-app
+      //      browser shells that strip body-class mutations during
+      //      hand-off. This is the deep-link contract index.html uses,
+      //      so we re-honor it here as the authoritative source.
+      //   2. body class — set by the pre-body inline script, by the
+      //      project loader, or by any other code path before init.
+      //   3. Default to Make.
+      const cls  = document.body.classList;
+      const hash = (location.hash || '').toLowerCase();
+      const initial = hash === '#player' ? 'serialbox'
+                    : hash === '#mix'    ? 'mix'
+                    : cls.contains('view-serialbox') ? 'serialbox'
                     : cls.contains('view-mix')       ? 'mix'
                     : 'make';
+      // Ensure the body class reflects the chosen view (the pre-body
+      // script handled this for #player on the happy path, but some
+      // mobile contexts skip that — apply unconditionally here).
+      if (initial === 'serialbox') {
+        cls.add('view-serialbox');
+        cls.remove('view-mix');
+      } else if (initial === 'mix') {
+        cls.add('view-mix');
+        cls.remove('view-serialbox');
+      } else {
+        cls.remove('view-serialbox', 'view-mix');
+      }
       setActive(initial === 'serialbox' ? sbTab
               : initial === 'mix'       ? mixTab
               : bloopsTab);
@@ -14896,6 +16447,13 @@
       const bpm = parseInt(tempoInput?.value, 10) || 120;
       const stepSec = (60 / bpm) * stepSubdivision;
       const heldSec = Math.max(0, holdMs) / 1000;
+      // Quantize on: round to the NEAREST step (minimum 1), uniformly.
+      // Off (default): keep the original "quick tap ⇒ noteLength, longer
+      // hold ⇒ round UP" rule so users who relied on the upward bias
+      // don't see a behavior change.
+      if (quantizeHolds) {
+        return Math.max(1, Math.round(heldSec / stepSec));
+      }
       // Quick tap (under ~40% of a step's duration) → noteLength.
       if (heldSec < stepSec * 0.4) return noteLength;
       // Chip width = press time, rounded up to a whole step. The release
@@ -15290,11 +16848,16 @@
     }
     function updateScaleBanner() {
       const scaleHalf = document.getElementById('scale-banner-half');
-      const toneHalf  = document.getElementById('tone-banner-half');
       const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[rootIdx]) || 'C';
       const tone = getCurrentToneLabel();
-      if (scaleHalf) scaleHalf.textContent = `${root} · ${prettyScaleName(currentScale)}`;
-      if (toneHalf)  toneHalf.textContent  = tone || '—';
+      // The Sounds banner replaces the old Scale + Tone pair. Show a
+      // compact readout: scale info, then the current tone in parens.
+      // Tone-banner-half/fx-banner are kept in DOM as hidden anchors for
+      // initToneMenu / initFxMenu — no longer user-visible.
+      if (scaleHalf) {
+        const tonePart = tone ? ` · ${tone}` : '';
+        scaleHalf.textContent = `Sounds: ${root} ${prettyScaleName(currentScale)}${tonePart}`;
+      }
       refreshAllCellToneLabels();
       refreshAllCellNameLabels();
       if (typeof refreshRadialToneAvailability === 'function') refreshRadialToneAvailability();
@@ -16011,103 +17574,12 @@
       const grid    = document.getElementById('grid-settings-panel');
       const tone    = document.getElementById('tone-panel');
       const fx      = document.getElementById('fx-panel');
-      const voices  = document.getElementById('voices-panel');
       const project = document.getElementById('project-panel');
       if (colors  && colors.parentNode  !== document.body) document.body.appendChild(colors);
       if (grid    && grid.parentNode    !== document.body) document.body.appendChild(grid);
       if (tone    && tone.parentNode    !== document.body) document.body.appendChild(tone);
       if (fx      && fx.parentNode      !== document.body) document.body.appendChild(fx);
-      if (voices  && voices.parentNode  !== document.body) document.body.appendChild(voices);
       if (project && project.parentNode !== document.body) document.body.appendChild(project);
-    })();
-
-    // ---- Grid mode banner cycle (Sequencer ↔ Arpeggio ↔ Chord) -------
-    (function initGridModeBanner() {
-      const btn = document.getElementById('mode-banner');
-      if (!btn) return;
-      const ORDER = ['sequencer', 'arpeggio', 'chord'];
-      // User-facing names: Spell (default sequencer), Run (arpeggio
-      // playback), Stack (chord build). Internal IDs kept as-is so all
-      // the existing branching code stays untouched.
-      const LABELS = { sequencer: 'Spell', arpeggio: 'Run', chord: 'Stack' };
-      const refresh = () => {
-        btn.textContent = LABELS[gridMode] || gridMode;
-        btn.dataset.mode = gridMode;
-      };
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const prev = gridMode;
-        const i = ORDER.indexOf(gridMode);
-        gridMode = ORDER[(i + 1) % ORDER.length];
-        refresh();
-        clearHighlights();
-        if (lockMode) {
-          // Lock-mode round-trip: every transition first flattens the
-          // workspace into single-note steps, then rebuilds the grouping
-          // for the new mode — except Run, which lifts each existing
-          // chord to its own ▤ sub so chord-by-chord structure survives
-          // the Stack → Run transition (was: everything collapsed into
-          // a single mega-sub).
-          let changed = false;
-          if (gridMode === 'arpeggio'
-              && sequence.some(s => s && Array.isArray(s.chord))) {
-            if (chordsToSubsInPlace()) changed = true;
-          } else {
-            if (flattenSequenceForLock()) changed = true;
-            if (gridMode === 'chord' && sequence.length > 0) {
-              if (consolidateSequenceToChord()) changed = true;
-            } else if (gridMode === 'arpeggio' && sequence.length > 0) {
-              if (consolidateSequenceToSub()) changed = true;
-            }
-          }
-          if (changed) renderSequence();
-          return;
-        }
-        // Unlocked mode: the workspace stays exactly as the user left
-        // it. Cycling Spell / Run / Stack only changes how new cell
-        // clicks behave going forward — runModeOnCell / chordModeOnCell
-        // / Spell-mode appending all operate on whatever's already in
-        // the sequence without reshaping existing steps.
-        // Wrap template DOES reshape with the active note mode so the
-        // form being auditioned matches "what Wrap would build right
-        // now": Run → ▤ subsequence, Stack → chord, Spell stays as-is.
-        if (wrapTemplate) {
-          if (gridMode === 'arpeggio' && !wrapTemplate.isSub) {
-            wrapTemplate = wrapStepAsSub(wrapTemplate);
-          } else if (gridMode === 'chord' && wrapTemplate.isSub) {
-            wrapTemplate = wrapStepAsChord(wrapTemplate);
-          }
-        }
-      });
-      refresh();
-
-      // Lock-mode toggle button — sits to the right of the mode banner.
-      // When flipped on with an existing sequence, immediately reshape
-      // the workspace to match the current mode so the user sees the
-      // round-trip rule taking effect.
-      const lockBtn = document.getElementById('mode-lock-banner');
-      if (lockBtn) {
-        const refreshLock = () => {
-          lockBtn.classList.toggle('active', lockMode);
-          lockBtn.textContent = lockMode ? '●' : '○';
-        };
-        refreshLock();
-        lockBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          lockMode = !lockMode;
-          try { localStorage.setItem('lock-mode', lockMode ? '1' : '0'); } catch (e2) {}
-          refreshLock();
-          if (lockMode && sequence.length > 0) {
-            let changed = flattenSequenceForLock();
-            if (gridMode === 'chord' && sequence.length > 0) {
-              if (consolidateSequenceToChord()) changed = true;
-            } else if (gridMode === 'arpeggio' && sequence.length > 0) {
-              if (consolidateSequenceToSub()) changed = true;
-            }
-            if (changed) renderSequence();
-          }
-        });
-      }
     })();
 
     (function initFxMenu() {
@@ -16151,54 +17623,110 @@
         ['fx-apan-freq',   'fx-apan-freq-v',   'autoPanFreq',        ' Hz'],
         ['fx-apan-depth',  'fx-apan-depth-v',  'autoPanDepth',       '%'],
       ];
+      // Send/return: "Mix" sliders (key === one of the FX names) write
+      // per-lane send levels; shape sliders (size, time, rate, depth,
+      // etc.) write the shared globalFx params. `activeLaneChanged`
+      // refreshes the Mix sliders so swapping lanes reads the new lane's
+      // sends; shape sliders stay constant.
+      const _isLaneSendKey = (k) => FX_NAMES.indexOf(k) !== -1;
+      const _activeLane = () => lanes[activeLaneIdx] || null;
+      const _activeSends = () => {
+        const l = _activeLane();
+        if (!l) return null;
+        if (!l.sends) l.sends = _defaultLaneSends();
+        return l.sends;
+      };
       sliders.forEach(([id, valId, key, unit]) => {
         const input = panel.querySelector('#' + id);
         const label = panel.querySelector('#' + valId);
         if (!input || !label) return;
-        input.value = String(globalFx[key]);
-        label.textContent = globalFx[key] + unit;
+        const readVal = () => _isLaneSendKey(key)
+          ? ((_activeSends() && _activeSends()[key]) || 0)
+          : globalFx[key];
+        input.value = String(readVal());
+        label.textContent = readVal() + unit;
         input.addEventListener('input', () => {
-          // parseFloat so step=0.1 / step=0.05 sliders (Hz) keep precision;
-          // integer-stepped sliders unaffected since input.value is already
-          // an integer string.
-          globalFx[key] = parseFloat(input.value) || 0;
-          label.textContent = globalFx[key] + unit;
-          applyGlobalFx();
-          persistGlobalFx();
+          const v = parseFloat(input.value) || 0;
+          if (_isLaneSendKey(key)) {
+            const sends = _activeSends();
+            if (!sends) return;
+            sends[key] = v;
+            label.textContent = v + unit;
+            const lane = _activeLane();
+            if (lane) {
+              if (!lane._volume) getLaneBus(activeLaneIdx);
+              applyLaneSends(lane);
+            }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          } else {
+            globalFx[key] = v;
+            label.textContent = v + unit;
+            applyGlobalFx();
+            persistGlobalFx();
+          }
         });
       });
-      // Per-effect bypass toggles — each ON/OFF button forces its own wet
-      // to 0 without touching the slider value, so the user can dip an
-      // effect out of the mix and bring it right back.
+      // Bypass toggles: per-lane for FX mix keys (zero the lane send),
+      // shared for params (no-op for sends architecture). All 10 toggles
+      // are mix-keyed, so they're all per-lane in practice.
       const bypassToggles = [
-        ['fx-rev-on',  'reverbOn'],
-        ['fx-dly-on',  'delayOn'],
-        ['fx-dst-on',  'distortionOn'],
-        ['fx-cho-on',  'chorusOn'],
-        ['fx-vib-on',  'vibratoOn'],
-        ['fx-trm-on',  'tremoloOn'],
-        ['fx-phs-on',  'phaserOn'],
-        ['fx-af-on',   'autoFilterOn'],
-        ['fx-pp-on',   'pingPongOn'],
-        ['fx-apan-on', 'autoPanOn'],
+        ['fx-rev-on',  'reverb',     'reverbOn'],
+        ['fx-dly-on',  'delay',      'delayOn'],
+        ['fx-dst-on',  'distortion', 'distortionOn'],
+        ['fx-cho-on',  'chorus',     'chorusOn'],
+        ['fx-vib-on',  'vibrato',    'vibratoOn'],
+        ['fx-trm-on',  'tremolo',    'tremoloOn'],
+        ['fx-phs-on',  'phaser',     'phaserOn'],
+        ['fx-af-on',   'autoFilter', 'autoFilterOn'],
+        ['fx-pp-on',   'pingPong',   'pingPongOn'],
+        ['fx-apan-on', 'autoPan',    'autoPanOn'],
       ];
+      // Per-lane bypass memo so each lane has its own restore-state.
+      const _fxBypassByLane = new WeakMap();
       const refreshFxBypassUI = () => {
-        bypassToggles.forEach(([id, key]) => {
+        const lane = _activeLane();
+        const memo = lane ? (_fxBypassByLane.get(lane) || {}) : {};
+        bypassToggles.forEach(([id, , onKey]) => {
           const tgl = panel.querySelector('#' + id);
           if (!tgl) return;
-          const on = globalFx[key] !== false;
+          const on = !memo[onKey];
           tgl.classList.toggle('off', !on);
           tgl.textContent = on ? 'ON' : 'OFF';
         });
       };
-      bypassToggles.forEach(([id, key]) => {
+      bypassToggles.forEach(([id, fxKey, onKey]) => {
         const tgl = panel.querySelector('#' + id);
         if (!tgl) return;
         tgl.addEventListener('click', () => {
-          globalFx[key] = (globalFx[key] === false) ? true : false;
+          const lane = _activeLane();
+          if (!lane) return;
+          const sends = _activeSends();
+          if (!sends) return;
+          let memo = _fxBypassByLane.get(lane);
+          if (!memo) { memo = {}; _fxBypassByLane.set(lane, memo); }
+          if (memo[onKey]) {
+            // Un-bypass: restore stashed mix.
+            sends[fxKey] = memo[onKey + '_mix'] ?? 0;
+            delete memo[onKey];
+            delete memo[onKey + '_mix'];
+          } else {
+            // Bypass: stash current mix and zero the send.
+            memo[onKey + '_mix'] = sends[fxKey] || 0;
+            memo[onKey] = true;
+            sends[fxKey] = 0;
+          }
+          if (!lane._volume) getLaneBus(activeLaneIdx);
+          applyLaneSends(lane);
           refreshFxBypassUI();
-          applyGlobalFx();
-          persistGlobalFx();
+          // Mix slider may need a refresh to reflect the new zero / restored value.
+          const slider = sliders.find(s => s[2] === fxKey);
+          if (slider) {
+            const inp = panel.querySelector('#' + slider[0]);
+            const lbl = panel.querySelector('#' + slider[1]);
+            if (inp) inp.value = String(sends[fxKey] || 0);
+            if (lbl) lbl.textContent = (sends[fxKey] || 0) + slider[3];
+          }
+          if (typeof persistWorkspace === 'function') persistWorkspace();
         });
       });
       refreshFxBypassUI();
@@ -16241,25 +17769,28 @@
       };
       renderFxOrder();
 
-      // Helper — push current globalFx values into the slider UI.
       const refreshFxSliderUI = () => {
+        const sends = _activeSends();
         sliders.forEach(([id, valId, key, unit]) => {
           const input = panel.querySelector('#' + id);
           const label = panel.querySelector('#' + valId);
-          if (input) input.value = String(globalFx[key]);
-          if (label) label.textContent = globalFx[key] + unit;
+          const v = _isLaneSendKey(key)
+            ? (sends ? (sends[key] || 0) : 0)
+            : globalFx[key];
+          if (input) input.value = String(v);
+          if (label) label.textContent = v + unit;
         });
         refreshFxBypassUI();
         renderFxOrder();
       };
+      // Reload Mix sliders + bypass UI whenever the user switches lanes.
+      document.addEventListener('activeLaneChanged', refreshFxSliderUI);
       // Bypass — toggle. First click stashes the three mix levels and zeros
       // them; second click restores them. Size/tone/time/feedback are never
       // touched, so the underlying character of each effect is preserved
       // across the round-trip.
       let _fxBypassMemo = null;
       panel.querySelector('#fx-reset').addEventListener('click', () => {
-        // Bypass = zero every mix-level (snapshot first so the button
-        // toggles back to the prior values on a second click).
         const MIX_KEYS = ['reverb', 'delay', 'distortion', 'chorus', 'vibrato', 'tremolo', 'phaser', 'autoFilter', 'pingPong', 'autoPan'];
         const allZero = MIX_KEYS.every(k => (globalFx[k] || 0) === 0);
         if (allZero && _fxBypassMemo) {
@@ -16274,13 +17805,9 @@
         applyGlobalFx();
         persistGlobalFx();
       });
-      // Reset — restore every FX parameter (mix levels and the underlying
-      // size/tone/time/feedback knobs) to its initial default.
       panel.querySelector('#fx-reset-all').addEventListener('click', () => {
         Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
           const v = GLOBAL_FX_DEFAULTS[k];
-          // Clone arrays so future mutations on globalFx.fxOrder don't
-          // bleed back into the defaults.
           globalFx[k] = Array.isArray(v) ? v.slice() : v;
         });
         rebuildMasterChain();
@@ -16513,9 +18040,10 @@
       if (rootSel)  rootSel.value  = String(rootIdx);
       if (scaleSel) scaleSel.value = currentScale;
       rebuildGrid();
-      // Random tones — sample-based instruments are skipped so the grid
-      // doesn't pin a heavy sampler to every cell.
-      const tonePool = getAllSoundOptions().map(o => o.value).filter(v => !isSampleType(v));
+      // Random tones — every available sound is fair game, including
+      // samples. Each cell rolls independently, so the grid can end up
+      // a mix of synth + sample tones.
+      const tonePool = getAllSoundOptions().map(o => o.value);
       if (tonePool.length > 0 && cellSounds.length > 0) {
         for (let i = 0; i < cellSounds.length; i++) {
           const type = tonePool[Math.floor(Math.random() * tonePool.length)];
@@ -16528,55 +18056,15 @@
       updateScaleBanner();
     }
 
-    (function initVoicesMenu() {
-      const btn = document.getElementById('voices-menu-btn');
-      const panel = document.getElementById('voices-panel');
-      if (!btn || !panel) return;
-      const TRIGGER_ID = 'voices-menu-btn';
-
-      // Static panel — three top-level actions instead of the scrollable
-      // voice list. "Load Voice…" opens a picker dialog so the panel
-      // itself stays compact regardless of how many voices the user has.
-      panel.innerHTML = '';
-      const mkBtn = (label, onClick, accentClass) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'voice-opt' + (accentClass ? ' ' + accentClass : '');
-        b.innerHTML = `<span>${label}</span>`;
-        b.addEventListener('click', () => { setOpen(false); onClick(); });
-        return b;
-      };
-      panel.appendChild(mkBtn('Save Voice…',  () => saveVoiceToDrive()));
-      panel.appendChild(mkBtn('Load Voice…',  () => showVoicePickerDialog()));
-      panel.appendChild(mkBtn('Surprise Me',  () => surpriseMeVoice(), 'voice-opt-surprise'));
-
-      const setOpen = (open) => {
-        panel.classList.toggle('open', open);
-        btn.classList.toggle('open', open);
-        btn.textContent = open ? 'Voices ▴' : 'Voices ▾';
-        if (open) pinPanelToButton(btn, panel);
-      };
-      window.addEventListener('resize', () => {
-        if (panel.classList.contains('open')) pinPanelToButton(btn, panel);
-      });
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const willOpen = !panel.classList.contains('open');
-        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
-        setOpen(willOpen);
-      });
-      document.addEventListener('menubar-panel-open', (e) => {
-        if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
-      });
-      document.addEventListener('click', (e) => {
-        if (!panel.classList.contains('open')) return;
-        if (panel.contains(e.target) || e.target === btn) return;
-        setOpen(false);
-      });
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
-      });
-    })();
+    // Surprise banner — sits left of FX in the banner-row. The old
+    // Voices dropdown also offered Save / Load Voice, but those flows
+    // were rarely used and have been removed from the UI (their
+    // saveVoiceToDrive / showVoicePickerDialog functions remain
+    // available if a future surface needs them).
+    document.getElementById('surprise-banner')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      surpriseMeVoice();
+    });
 
     // ---- Saved grid states (root, scale, octaves, palette, cell sounds) ----
     let savedGridStates = JSON.parse(localStorage.getItem('sounds-grid-states') || '[]');
@@ -16796,6 +18284,49 @@
     })();
 
     // ---- Grid settings dropdown toggle ----
+    // Sounds panel = Scale settings + nested entry points to Tone and FX.
+    // The Sounds banner doubles as the trigger; the Tone… / FX… rows
+    // inside the panel close Sounds and re-anchor the corresponding
+    // sub-panel to the Sounds button.
+    (function initSoundsSubmenus() {
+      const soundsPanel = document.getElementById('grid-settings-panel');
+      const banner = document.getElementById('scale-banner-half');
+      const toneSubBtn = document.getElementById('sounds-open-tone');
+      const fxSubBtn = document.getElementById('sounds-open-fx');
+      const tonePanel = document.getElementById('tone-panel');
+      const fxPanel = document.getElementById('fx-panel');
+      if (!banner) return;
+      const openSubPanel = (subPanel, triggerId) => {
+        // Close Sounds and any other sibling menubar panels — same event
+        // the existing tone/fx menus listen for.
+        if (soundsPanel) {
+          soundsPanel.classList.remove('open');
+          banner.classList.remove('open');
+        }
+        document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: triggerId } }));
+        if (!subPanel) return;
+        // For Tone, the panel needs its option list re-populated each
+        // time it opens (mirrors initToneMenu's setOpen). populateTonePanel
+        // is hoisted in module scope so we can call it directly.
+        if (triggerId === 'tone-banner-half' && typeof populateTonePanel === 'function') {
+          try { populateTonePanel(); } catch (e) {}
+        }
+        subPanel.classList.add('open');
+        pinPanelToButton(banner, subPanel);
+      };
+      if (toneSubBtn) toneSubBtn.addEventListener('click', (e) => {
+        // Stop propagation so the document-level "click outside ⇒ close"
+        // handlers on the tone-panel don't immediately re-close it after
+        // we open it.
+        e.stopPropagation();
+        openSubPanel(tonePanel, 'tone-banner-half');
+      });
+      if (fxSubBtn) fxSubBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSubPanel(fxPanel, 'fx-banner');
+      });
+    })();
+
     // The left half of the scale banner doubles as the trigger — it already
     // shows the live root + scale, so making it clickable gives the user one
     // obvious place to open the panel that adjusts those.
@@ -16840,7 +18371,12 @@
       rb.addEventListener('click', () => {
         restBars.forEach(b => b.classList.add('flash'));
         setTimeout(() => restBars.forEach(b => b.classList.remove('flash')), 80);
-        const restStep = { freq: null, label: '—', cellIndex: null, duration: noteLength, subdivision: stepSubdivision };
+        // duration:1 matches makeRestStep + every cell-add path. Earlier
+        // this read `noteLength` (the legacy Hold multiplier), so any
+        // session that inherited a saved noteLength > 1 would render
+        // rests wider than notes — chips downstream got pushed onto the
+        // wrong sub-cells in the grid layout.
+        const restStep = { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: stepSubdivision };
         addToSequence(restStep);
         // Same Keep-flow step-div picker as note presses — gated by
         // maybePromptStepDiv to Spell/Stack + Keep on (Run is skipped

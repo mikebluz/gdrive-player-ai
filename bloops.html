@@ -71,6 +71,10 @@
   </div>
 
   <div class="menubar">
+    <!-- Collapsed lanes move here so they don't take up vertical
+         space in the editor area below. Populated by renderSequence;
+         hidden when no lane is collapsed. -->
+    <div class="menubar-lanes" id="menubar-lanes" hidden></div>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
@@ -3913,12 +3917,18 @@
         display.innerHTML = '';
 
         let activeLaneChipsEl = null;
-        // Pack consecutive collapsed lanes into a single horizontal
-        // strip so they read as a row of "minimized" lanes instead of
-        // each consuming a full-width row. Non-collapsed lanes flush
-        // the current strip and render their own row beneath it.
+        // Collapsed lanes get parked into a single strip up in the
+        // menubar so the editor area below only carries expanded
+        // lanes — minimised lanes shouldn't burn vertical space when
+        // there's empty menubar room above. The strip is created
+        // lazily on the first collapsed lane and the slot is hidden
+        // when no lane is collapsed.
+        const menubarLanes = document.getElementById('menubar-lanes');
+        if (menubarLanes) {
+          menubarLanes.innerHTML = '';
+          menubarLanes.hidden = true;
+        }
         let collapsedStrip = null;
-        const flushCollapsedStrip = () => { collapsedStrip = null; };
         lanes.forEach((lane, laneIdx) => {
           const isActiveLane = laneIdx === activeLaneIdx;
           const row = document.createElement('div');
@@ -4111,18 +4121,18 @@
           });
 
           if (lane.collapsed) {
-            // Collapsed lanes share a horizontal strip. Open one if
-            // we don't already have a current strip to add to.
-            if (!collapsedStrip) {
+            // Collapsed lanes route up to the menubar strip. One
+            // strip holds every collapsed lane; expanded lanes still
+            // render below in the editor in their original order.
+            if (!collapsedStrip && menubarLanes) {
               collapsedStrip = document.createElement('div');
               collapsedStrip.className = 'lane-row-collapsed-strip';
-              display.appendChild(collapsedStrip);
+              menubarLanes.appendChild(collapsedStrip);
+              menubarLanes.hidden = false;
             }
-            collapsedStrip.appendChild(row);
+            (collapsedStrip || display).appendChild(row);
           } else {
-            // Expanded lane: end the current strip (next collapsed
-            // lane starts a new one) and append as its own row.
-            flushCollapsedStrip();
+            // Expanded lane: append as its own row in the editor.
             display.appendChild(row);
           }
         });
@@ -21207,19 +21217,37 @@
       const rect = btn.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const top = rect.bottom + 4;
       panel.style.position = 'fixed';
-      panel.style.top = top + 'px';
 
-      // Cap the panel height to whatever's left below the trigger. The
-      // shared CSS rule (`max-height: calc(100vh - 80px)`) was a fixed
-      // estimate that ignored the trigger's actual y-position — on mobile
-      // (especially with the URL bar visible) tall panels could spill past
-      // the viewport, leaving the bottom options unreachable. Recomputing
-      // here means the panel always fits inside the viewport regardless of
-      // where it's anchored.
-      const maxH = Math.max(160, vh - top - 12);
-      panel.style.maxHeight = maxH + 'px';
+      // Flip the panel above the trigger when there isn't enough room
+      // below. Important for triggers that live near the bottom of the
+      // viewport (e.g., the Project ▾ button on the new bottom bar):
+      // a panel anchored below would either be clipped by the master-
+      // scope strip or pushed off-screen entirely. Measure the panel
+      // by clearing constraints first so the natural content height
+      // drives the decision.
+      panel.style.maxHeight = '';
+      panel.style.top    = '0px';
+      panel.style.bottom = 'auto';
+      const naturalH = Math.min(
+        panel.scrollHeight || panel.offsetHeight || 200,
+        vh - 24
+      );
+      const spaceBelow = vh - rect.bottom - 12;
+      const spaceAbove = rect.top - 12;
+      const flipUp = (spaceBelow < naturalH) && (spaceAbove > spaceBelow);
+
+      if (flipUp) {
+        // Anchor by the bottom of the viewport so the panel grows
+        // upward from the trigger.
+        panel.style.top    = 'auto';
+        panel.style.bottom = (vh - rect.top + 4) + 'px';
+        panel.style.maxHeight = Math.max(160, spaceAbove) + 'px';
+      } else {
+        panel.style.bottom = 'auto';
+        panel.style.top    = (rect.bottom + 4) + 'px';
+        panel.style.maxHeight = Math.max(160, spaceBelow) + 'px';
+      }
       panel.style.overflowY = 'auto';
       // Smooth, momentum-based scrolling on iOS Safari — without this the
       // panel's internal scroll on mobile felt sticky / abrupt.

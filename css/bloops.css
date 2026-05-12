@@ -50,6 +50,13 @@
       position: relative;
       overflow-x: hidden;
     }
+    /* Hide the menubar entirely when no lane is collapsed. The
+       dropdown panels (project, sounds, fx, etc.) have already been
+       reparented to <body> by detachPanelsFromMenubar at init, so
+       hiding the menubar doesn't touch their open / close behavior.
+       :has() lets the rule re-evaluate the moment renderSequence
+       removes the [hidden] attribute on the menubar-lanes slot. */
+    .menubar:has(.menubar-lanes[hidden]) { display: none; }
     /* Voices / Project / Edit grow to share any leftover row space so
        the row stays full when the master-vol slider is capped. They
        still won't shrink below their content (flex-shrink: 0) so the
@@ -90,6 +97,24 @@
         padding: 6px 8px;
         font-size: 0.72rem;
       }
+    }
+
+    /* Menubar lane slot — every collapsed lane (single or many)
+       parks here so the editor area below stays focused on the
+       expanded lanes. Holds a single .lane-row-collapsed-strip that
+       lays its lane rows out horizontally and wraps when there are
+       too many to fit. Hidden when no lane is collapsed so the
+       menubar doesn't grow for nothing. */
+    .menubar-lanes {
+      display: block;
+      width: 100%;
+      padding: 4px 8px;
+      background: #050510;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .menubar-lanes[hidden] { display: none; }
+    .menubar-lanes .lane-row-collapsed-strip {
+      margin: 0;
     }
 
     /* Project bar — sits between the saved-sequence bank and the

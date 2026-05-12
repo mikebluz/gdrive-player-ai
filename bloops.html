@@ -127,6 +127,9 @@
         <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
         <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
       </div>
+      <div class="grid-state-row sounds-submenus">
+        <button type="button" id="sounds-surprise" class="sounds-sub-btn" title="Randomize root, scale, and per-cell tones for a quick creative shuffle">🎲 Surprise me</button>
+      </div>
     </div>
     <div class="fx-panel" id="fx-panel">
       <div class="fx-group-label fx-group-head"><span>Reverb</span><button type="button" class="fx-bypass" id="fx-rev-on" title="Bypass reverb">ON</button></div>
@@ -220,9 +223,6 @@
              re-anchor to scale-banner-half on open from Sounds. -->
         <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
         <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
-      </div>
-      <div class="banner-row banner-row--fx">
-        <button type="button" id="surprise-banner" class="banner-half" title="Randomize root, scale, and per-cell tones for a quick creative shuffle">🎲 Surprise</button>
       </div>
       <div class="grid" id="grid"></div>
       <!-- Keep / Wrap / Rest live inside the lane voice editor so they
@@ -986,6 +986,17 @@
             previewSavedAudio(saved);
             return;
           }
+          // Per-saved-sequence FX: restore the captured globalFx if
+          // present. applyGlobalFx() runs at the end of the load block
+          // to push these into the master + per-lane FX nodes (lanes
+          // that have already been wired) and the live-press send
+          // gains. Older bank entries without globalFx leave the live
+          // values untouched.
+          if (saved.globalFx && typeof saved.globalFx === 'object') {
+            Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
+              if (k in saved.globalFx) globalFx[k] = saved.globalFx[k];
+            });
+          }
           if (saved.rootIdx != null)     rootIdx     = saved.rootIdx;
           if (saved.baseOctave != null)  baseOctave  = saved.baseOctave;
           if (saved.octaveCount != null) octaveCount = saved.octaveCount;
@@ -1073,6 +1084,14 @@
               pan:    Number.isFinite(l?.pan)    ? l.pan    : 0,
               volume: Number.isFinite(l?.volume) ? l.volume : 100,
               slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
+              collapsed: !!l?.collapsed,
+              // Restore per-lane FX wet levels. _migrateLaneSends handles
+              // the three save-generations (new `sends`, mid-refactor
+              // `fx`, none → default-seeded from globalFx). getLaneBus
+              // will lazily build the FX nodes on first audio routing.
+              sends: (typeof _migrateLaneSends === 'function')
+                ? _migrateLaneSends(l)
+                : (l?.sends ? { ...l.sends } : null),
             }));
             activeLaneIdx = Number.isFinite(saved.activeLaneIdx)
               ? Math.max(0, Math.min(saved.activeLaneIdx, lanes.length - 1))
@@ -1097,6 +1116,16 @@
           activeSeqIndex = i;
           renderSequence();
           renderSavedSequences();
+          // Push the just-restored globalFx into the audio graph. Runs
+          // AFTER lanes are reconstructed so the lanes loop inside
+          // applyGlobalFx can find them; lanes with already-built FX
+          // nodes get their wet/shape pushed, lazy lanes inherit the
+          // new state on first getLaneBus call. Persisted so the FX
+          // shape sticks across reloads.
+          if (saved.globalFx && typeof applyGlobalFx === 'function') {
+            try { applyGlobalFx(); } catch (e) {}
+            try { if (typeof persistGlobalFx === 'function') persistGlobalFx(); } catch (e) {}
+          }
           document.getElementById('save-btn').disabled = false;
           // Capture the just-loaded state so a refresh doesn't revert
           // to the pre-load workspace. The bank already persisted
@@ -2766,6 +2795,18 @@
           oscillator: { type: 'sine' }, envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
+        }).connect(finalDest);
+      } else if (type === 'duo') {
+        // DuoSynth — Tone.OmniOscillator (used by Tone.Synth) doesn't
+        // accept 'duo' as a type, so the generic fallback below silently
+        // produced no sound on cell PRESS even though playNote handled
+        // it correctly. Same params as the playNote duo branch.
+        synth = new Tone.DuoSynth({
+          voice0: { oscillator: { type: 'sine'    }, envelope: env },
+          voice1: { oscillator: { type: 'sawtooth'}, envelope: env },
+          harmonicity: 1.5,
+          vibratoAmount: 0.3,
+          vibratoRate: 5,
         }).connect(finalDest);
       } else if (type === 'am') {
         synth = new Tone.AMSynth({
@@ -8862,6 +8903,12 @@
         // entry still loads cleanly.
         gridColumns: Math.max(1, Math.min(8, gridColumns | 0) || 8),
         gridRows:    Math.max(1, Math.min(8, gridRows    | 0) || 1),
+        // Per-saved-sequence FX state: capture the live globalFx so
+        // reloading this entry restores its FX shape and live-press
+        // send levels. Lane sends are captured separately in the
+        // poly snap below. Deep clone so future edits to globalFx
+        // don't mutate the snapshot.
+        globalFx: (typeof globalFx === 'object' && globalFx) ? JSON.parse(JSON.stringify(globalFx)) : null,
       };
       // Poly-mode entries carry the full lane array so reloading a
       // saved sequence restores every lane's steps + per-lane state
@@ -12103,7 +12150,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -18056,14 +18103,16 @@
       updateScaleBanner();
     }
 
-    // Surprise banner — sits left of FX in the banner-row. The old
-    // Voices dropdown also offered Save / Load Voice, but those flows
-    // were rarely used and have been removed from the UI (their
-    // saveVoiceToDrive / showVoicePickerDialog functions remain
-    // available if a future surface needs them).
-    document.getElementById('surprise-banner')?.addEventListener('click', (e) => {
+    // Surprise lives inside the Sounds dropdown now (below Tone… / FX…).
+    // Clicking it fires the randomizer and collapses the Sounds panel —
+    // same close-after-pick pattern as other items in the menu.
+    document.getElementById('sounds-surprise')?.addEventListener('click', (e) => {
       e.stopPropagation();
       surpriseMeVoice();
+      const soundsPanel = document.getElementById('grid-settings-panel');
+      const banner = document.getElementById('scale-banner-half');
+      if (soundsPanel) soundsPanel.classList.remove('open');
+      if (banner) banner.classList.remove('open');
     });
 
     // ---- Saved grid states (root, scale, octaves, palette, cell sounds) ----

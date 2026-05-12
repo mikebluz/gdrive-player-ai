@@ -92,6 +92,85 @@
       }
     }
 
+    /* Project bar — sits between the saved-sequence bank and the
+       master-scope waveform. Hosts the Project ▾ button + the active
+       project name label. The Project panel itself lives back up in
+       the menubar; pinPanelToButton positions it absolutely under the
+       button when opened. */
+    .project-bottom-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: #050510;
+      border-top: 1px solid #1a1a2e;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .project-bottom-bar #project-menu-btn {
+      flex: 0 0 auto;
+    }
+    .project-bottom-bar .project-name-label {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+    }
+
+    /* Master volume + Note Edit pill — moved into the Sounds panel.
+       Lays them out on a single row that mirrors the .sounds-submenus
+       chrome. Slider stretches; the edit button stays a fixed pill on
+       the right. */
+    .grid-settings-panel .sounds-utilities {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .grid-settings-panel .sounds-utilities .master-vol {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .grid-settings-panel .sounds-utilities .master-vol input[type="range"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+    }
+    .grid-settings-panel .sounds-utilities .master-vol-icon {
+      font-size: 0.9rem;
+      flex: 0 0 auto;
+    }
+    .grid-settings-panel .sounds-utilities #edit-mode-btn {
+      flex: 0 0 auto;
+    }
+
+    /* ± note-shift buttons — sit between the Sounds banner and the
+       Grid/Graph toggle. Compact mono-style buttons that match the
+       banner chrome height. */
+    .note-shift-btn {
+      flex: 0 0 auto;
+      padding: 0 10px;
+      background: transparent;
+      border: none;
+      border-left: 1px solid #1a1a2e;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    @media (hover: hover) {
+      .note-shift-btn:hover { background: #0a0a14; color: #81e6d9; }
+    }
+
     .tone-panel {
       display: none;
       flex-direction: column;

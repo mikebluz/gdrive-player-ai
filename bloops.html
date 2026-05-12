@@ -71,13 +71,6 @@
   </div>
 
   <div class="menubar">
-    <button id="project-menu-btn" title="Project: New, Save, Load">Project ▾</button>
-    <span class="project-name-label" id="project-name-label" title="Active project"></span>
-    <label class="master-vol" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter">
-      <span class="master-vol-icon" aria-hidden="true">🔊</span>
-      <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
-    </label>
-    <button type="button" id="edit-mode-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎</button>
     <div class="project-panel" id="project-panel">
       <button type="button" class="project-opt project-opt-new"  id="project-new-opt" title="Start a fresh default project (offers to save the current one first)">+ New project</button>
       <button type="button" class="project-opt project-opt-save" id="project-save-opt" title="Save the whole workspace (notes, steps, sequences, tracks, settings) to Google Drive as JSON">Save project…</button>
@@ -126,6 +119,16 @@
       <div class="grid-state-row sounds-submenus">
         <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
         <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
+      </div>
+      <!-- Master volume + Note Edit toggle — relocated from the top
+           menubar into the Sounds dropdown so the menubar stays
+           focused on the project / panel triggers. -->
+      <div class="grid-state-row sounds-utilities">
+        <label class="master-vol" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter">
+          <span class="master-vol-icon" aria-hidden="true">🔊</span>
+          <input type="range" id="master-vol-slider" min="0" max="100" step="1" value="100" aria-label="Master volume" />
+        </label>
+        <button type="button" id="edit-mode-btn" class="sounds-sub-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎ Note edit</button>
       </div>
       <!-- XY pad axis settings — only meaningful in Grid Off mode, so
            shown only when body.fluid-grid is on. Scale + Tone are
@@ -252,6 +255,12 @@
              re-anchor to scale-banner-half on open from Sounds. -->
         <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
         <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
+        <!-- Note-shift step pair — increment / decrement the grid's
+             root by one semitone. + drops the lowest note and adds
+             one at the top; − adds one at the bottom and drops the
+             top. Wraps rootIdx ↔ baseOctave on overflow. -->
+        <button type="button" id="note-shift-down" class="note-shift-btn" title="Shift the grid down 1 semitone">−</button>
+        <button type="button" id="note-shift-up"   class="note-shift-btn" title="Shift the grid up 1 semitone">+</button>
         <button type="button" id="fluid-grid-toggle" title="Grid: discrete cells. Graph: continuous pitch field — press anywhere, drag for fluid bends between adjacent notes.">Grid</button>
       </div>
       <div class="grid" id="grid"></div>
@@ -449,6 +458,16 @@
     <div class="clear-bank-row">
       <button type="button" id="clear-bank-btn" title="Delete every saved sequence in the bank">Clear bank</button>
     </div>
+  </div>
+
+  <!-- Project bar — sits between the sequence bank and the master
+       waveform. The button anchors the project-panel dropdown (which
+       lives back up in the menubar); pinPanelToButton repositions it
+       absolutely when opened, so DOM location is decoupled from
+       visual anchor. -->
+  <div class="project-bottom-bar">
+    <button id="project-menu-btn" title="Project: New, Save, Load">Project ▾</button>
+    <span class="project-name-label" id="project-name-label" title="Active project"></span>
   </div>
 
   <!-- Mix view: holds the multi-track sequencer (Tracks) and the Mixdown
@@ -16372,6 +16391,37 @@
         _syncFluidGridToActiveLane();
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
+    })();
+    // ± note-shift buttons (next to Sounds in the lane banner). Each
+    // click shifts the grid's root by 1 semitone, carrying baseOctave
+    // when rootIdx wraps across the C boundary. Pushes the result back
+    // through the Root / Octave selects + rebuildGrid so every label,
+    // saved-state preview, scale overlay, and persist hook picks up
+    // the new state via the same path the Sounds-panel selects use.
+    (function initNoteShiftButtons() {
+      const upBtn   = document.getElementById('note-shift-up');
+      const downBtn = document.getElementById('note-shift-down');
+      if (!upBtn && !downBtn) return;
+      const MIN_OCT = 0, MAX_OCT = 9;
+      const applyShift = (delta) => {
+        snapshotForUndo(delta > 0 ? 'Shift grid up' : 'Shift grid down');
+        let r = rootIdx + (delta > 0 ? 1 : -1);
+        let oct = baseOctave;
+        if (r >= 12) { r = 0;  oct = Math.min(MAX_OCT, oct + 1); }
+        if (r < 0)   { r = 11; oct = Math.max(MIN_OCT, oct - 1); }
+        rootIdx    = r;
+        baseOctave = oct;
+        const rootSel  = document.getElementById('root-select');
+        const octRange = document.getElementById('octave-range-select');
+        if (rootSel)  rootSel.value  = String(rootIdx);
+        if (octRange) octRange.value = `${baseOctave}x${octaveCount}`;
+        rebuildGrid();
+        if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels();
+        if (typeof updateScaleBanner === 'function') updateScaleBanner();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      if (upBtn)   upBtn.addEventListener('click',   () => applyShift(+1));
+      if (downBtn) downBtn.addEventListener('click', () => applyShift(-1));
     })();
 
     // ---- Riff dropdown — Save / Random / Seed / Reverse / Shuffle / Repeat ----

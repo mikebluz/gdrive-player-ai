@@ -993,6 +993,57 @@
       if (!btn) return;
       const span = btn.querySelector('span');
       if (!span) return;
+      // In Graph mode, surface the numeric frequency next to the note
+      // name (e.g. "C4 · 261.6 Hz"). Graph mode is the XY pad world
+      // where the user is dialing freely along a continuous axis, so
+      // the exact value is informative — Grid mode steps are always
+      // on-grid pitches and the Hz suffix would just be noise.
+      const fmtFreq = (f) => {
+        if (!isFinite(f) || f <= 0) return '';
+        const v = f >= 1000 ? f.toFixed(0) : f.toFixed(1);
+        return `${v} Hz`;
+      };
+      const decorate = (name, freqs) => {
+        if (!fluidGridMode || !freqs || freqs.length !== 1) return name;
+        const hz = fmtFreq(freqs[0]);
+        return hz ? `${name} · ${hz}` : name;
+      };
+      // Live XY drag wins over everything else in Graph mode — when
+      // the user is touching the pad, the Keep label should track the
+      // current freq so they can read pitch ↔ Hz at a glance. Without
+      // this branch, dragging the pad never moves the Keep button off
+      // "KEEP" because none of the wrap/playback state below is set
+      // mid-gesture.
+      if (fluidGridMode && _liveXyParams && Number.isFinite(_liveXyParams.freq)) {
+        const lf = [_liveXyParams.freq];
+        const ln = chordNameFromFreqs(lf, null) || '';
+        const hz = fmtFreq(_liveXyParams.freq);
+        span.textContent = ln ? `${ln} · ${hz}` : hz;
+        btn.classList.add('show-chord');
+        return;
+      }
+      // Fluid-step playback for the active lane (mono fallback: -1).
+      // Interpolate the current freq within the gesture so the readout
+      // glides smoothly with the audible pitch instead of snapping to
+      // the first sample's value and staying there.
+      if (fluidGridMode && _fluidPlaybackByLane.size > 0) {
+        const key = _fluidPlaybackByLane.has(activeLaneIdx) ? activeLaneIdx
+                  : (_fluidPlaybackByLane.has(-1) ? -1 : null);
+        if (key !== null) {
+          const entry = _fluidPlaybackByLane.get(key);
+          const ctx = Tone.context && Tone.context.rawContext;
+          const now = ctx ? ctx.currentTime : Tone.now();
+          const elapsed = Math.max(0, now - entry.audioStartedAt);
+          const f = _fluidFreqAt(entry.step, elapsed);
+          if (Number.isFinite(f) && f > 0) {
+            const ln = chordNameFromFreqs([f], null) || '';
+            const hz = fmtFreq(f);
+            span.textContent = ln ? `${ln} · ${hz}` : hz;
+            btn.classList.add('show-chord');
+            return;
+          }
+        }
+      }
       // During playback, surface only the active lane's currently-
       // playing step. Earlier this joined the names from every
       // lane ("C Dm Em" etc.), but that turned the Keep label into
@@ -1005,7 +1056,7 @@
           if (lfreqs && lfreqs.length > 0) {
             const lname = chordNameFromFreqs(lfreqs, null);
             if (lname) {
-              span.textContent = lname;
+              span.textContent = decorate(lname, lfreqs);
               btn.classList.add('show-chord');
               return;
             }
@@ -1040,7 +1091,7 @@
         ? chordNameFromFreqs(freqs, forcedRootPc)
         : '';
       if (name) {
-        span.textContent = name;
+        span.textContent = decorate(name, freqs);
         btn.classList.add('show-chord');
       } else {
         span.textContent = 'KEEP';
@@ -6643,6 +6694,8 @@
       // to the wrap state (or "KEEP" if no wrap is active).
       _playbackStep = null;
       _playbackStepsByLane.clear();
+      _fluidPlaybackByLane.clear();
+      if (_fluidPlaybackRaf) { cancelAnimationFrame(_fluidPlaybackRaf); _fluidPlaybackRaf = 0; }
       updateKeepLabel();
     }
 
@@ -6835,6 +6888,22 @@
           // Fluid XY recording — replay the captured gesture as a
           // single sustained voice that ramps through every sample.
           _playFluidStep(step, fireTime);
+          // Register the fluid playback so the Keep label can glide
+          // through the gesture's frequencies in lockstep with the
+          // audio (drives _ensureFluidPlaybackRaf below). Indexed by
+          // laneIdx — mono playback (laneIdx undefined) uses -1.
+          //
+          // No paired scheduled-delete: the rAF loop expires stale
+          // entries by elapsed time. A scheduled delete would race
+          // against the next loop iteration's add (looped sequences
+          // re-fire the same step before the prior iteration's natural
+          // end) and wipe the fresh entry just after it lands.
+          const _flKey = Number.isFinite(laneIdx) ? laneIdx : -1;
+          scheduleVisual(() => {
+            _fluidPlaybackByLane.set(_flKey, { step, audioStartedAt: fireTime });
+            _ensureFluidPlaybackRaf();
+            try { updateKeepLabel(); } catch (e) {}
+          }, fireTime);
         } else if (step.chord) {
           const size = step.chord.length;
           // Capture the chord voices upfront and fire them in a tight
@@ -14421,7 +14490,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -15850,6 +15919,15 @@
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;
+    // Live params from the in-flight XY pad gesture (or null when no
+    // press is active). Read by updateKeepLabel so the Keep button can
+    // surface the current freq while the user is dragging in Graph mode.
+    let _liveXyParams = null;
+    // Per-lane fluid-step playback tracker. Records {step, audioStartedAt}
+    // so a rAF loop can interpolate the current freq within the gesture
+    // and surface it on the Keep button as playback advances.
+    const _fluidPlaybackByLane = new Map();
+    let _fluidPlaybackRaf = 0;
     // Press recording (Grid Off + Keep). Captures one gesture worth of
     // (t, freq, volume, pan, xFrac, yFrac) samples; flushed to the
     // active lane's sequence as a single fluid step on release. The
@@ -16164,6 +16242,8 @@
       const s = _ensureFluidSynth();
       if (!s || _fluidActive || !params) return;
       _fluidActive = true;
+      _liveXyParams = params;
+      try { updateKeepLabel(); } catch (e) {}
       const startFreq = Math.max(1, Number(params.freq) || 440);
       const volGain = Math.max(0, Math.min(1, (Number(params.volume) || 0) / 100));
       const panNorm = Math.max(-1, Math.min(1, (Number(params.pan) || 0) / 100));
@@ -16195,6 +16275,8 @@
         _applyFluidParams(p);
         _setXyDot(p.xFrac, p.yFrac);
         _updateXyReadout(p);
+        _liveXyParams = p;
+        try { updateKeepLabel(); } catch (e) {}
       });
     }
     function _applyFluidParams(params) {
@@ -16227,8 +16309,62 @@
     function _endFluidPress() {
       if (!_fluidActive || !_fluidSynth) return;
       _fluidActive = false;
+      _liveXyParams = null;
+      try { updateKeepLabel(); } catch (e) {}
       try { _fluidSynth.triggerRelease(); } catch (e) {}
       _hideXyDot();
+    }
+    // Linear interpolate the current freq inside a fluid step's
+    // sample stream at a given elapsed-time offset. Mirrors the same
+    // exponentialRampToValueAtTime curve the audio graph follows — we
+    // interpolate in log-space so the Keep readout matches what the
+    // ear hears, instead of drifting from the audible pitch on long
+    // glides.
+    function _fluidFreqAt(step, elapsed) {
+      if (!step || !Array.isArray(step.samples) || step.samples.length === 0) return null;
+      const s = step.samples;
+      if (elapsed <= s[0].t) return Number(s[0].freq) || null;
+      const last = s[s.length - 1];
+      if (elapsed >= last.t) return Number(last.freq) || null;
+      for (let i = 1; i < s.length; i++) {
+        if (elapsed <= s[i].t) {
+          const a = s[i - 1], b = s[i];
+          const af = Math.max(1, Number(a.freq) || 1);
+          const bf = Math.max(1, Number(b.freq) || 1);
+          const span = Math.max(1e-6, b.t - a.t);
+          const t = (elapsed - a.t) / span;
+          return af * Math.pow(bf / af, t);
+        }
+      }
+      return Number(last.freq) || null;
+    }
+    // rAF loop driving live freq updates on the Keep label during
+    // fluid-step playback. Reads each lane's recorded (step, audioStart)
+    // entry from _fluidPlaybackByLane, interpolates the current freq
+    // for the active lane only (the Keep button is per-lane), and
+    // calls updateKeepLabel so the readout glides with the gesture.
+    function _ensureFluidPlaybackRaf() {
+      if (_fluidPlaybackRaf) return;
+      const tick = () => {
+        if (_fluidPlaybackByLane.size === 0) {
+          _fluidPlaybackRaf = 0;
+          return;
+        }
+        const ctx = Tone.context && Tone.context.rawContext;
+        const now = ctx ? ctx.currentTime : Tone.now();
+        // Expire any entries whose gesture has ended — keeps the map
+        // bounded if a scheduled-removal visual is dropped for any
+        // reason (tab backgrounded, lookahead jitter).
+        for (const [lane, entry] of _fluidPlaybackByLane) {
+          const dur = Number(entry.step?.fluidDuration) || 0;
+          if (now - entry.audioStartedAt > dur + 0.25) {
+            _fluidPlaybackByLane.delete(lane);
+          }
+        }
+        try { updateKeepLabel(); } catch (e) {}
+        _fluidPlaybackRaf = requestAnimationFrame(tick);
+      };
+      _fluidPlaybackRaf = requestAnimationFrame(tick);
     }
     // Append a finished XY recording as a single fluid step on the
     // active lane. step.duration is chosen so the sequencer waits for

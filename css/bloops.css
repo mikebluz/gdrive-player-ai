@@ -2337,7 +2337,24 @@
       box-shadow: 0 0 12px rgba(66, 153, 225, 0.4);
     }
     .sequence-display.grid-mode .seq-step,
-    .lane-chips.grid-mode .seq-step { width: auto; }
+    .lane-chips.grid-mode .seq-step {
+      width: auto;
+      /* Grid items default to min-width: auto, which resolves to the
+         content's min-content size — for a chord chip's "C4·E4·G4"
+         that's the full unbreakable string, so the chip ignored its
+         assigned grid-column span and pushed siblings off. Forcing
+         min-width: 0 lets the chip honor its track size; overflow:
+         hidden (inherited from .seq-step) clips the chord label so
+         the visible text truncates to whatever fits the step-div
+         width. */
+      min-width: 0;
+      min-height: 0;
+      /* Let long chord strings wrap inside the chip box too, so very
+         narrow steps show stacked note names rather than a single
+         hard-clipped row. */
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     /* Continuation segments — a step that's too long to fit on one
        row renders as a leading head chip (.cont-start) plus one or
        more decorative segments (.cont-mid / .cont-end). Sharp inside

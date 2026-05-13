@@ -102,18 +102,23 @@
       <div hidden>
         <select id="root-select"></select>
       </div>
-      <div class="grid-control">
-        <label title="Base octave × number of octaves. e.g. 4×1 = a single octave starting at C4. 7×7 covers the full keyboard from the lowest octave up.">Octaves
+      <!-- Tuning row — Scale always visible; Octaves + A4 only matter
+           when the cell grid is in use. body.fluid-grid hides the
+           .grid-only labels so the XY pad doesn't carry unrelated
+           controls. -->
+      <div class="grid-control sounds-tuning-row">
+        <label class="grid-only" title="Base octave × number of octaves. e.g. 4×1 = a single octave starting at C4. 7×7 covers the full keyboard from the lowest octave up.">Octaves
           <select id="octave-range-select"></select>
         </label>
-      </div>
-      <div class="grid-control grid-control-row2">
         <label title="Highlight a scale — non-scale notes are blacked out">Scale
           <select id="scale-select"></select>
         </label>
-        <label title="Master tuning: frequency of A4 (Hz)">A4
-          <input type="range" id="master-freq-slider" min="400" max="480" value="440" step="1" />
+        <label class="grid-only" title="Master tuning: frequency of A4 (Hz)">A4
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
+          <!-- Slider element removed in favor of just the numeric
+               input. Kept as a hidden range so any existing JS that
+               reads / writes #master-freq-slider keeps resolving. -->
+          <input type="range" id="master-freq-slider" min="400" max="480" value="440" step="1" hidden />
         </label>
       </div>
       <!-- Nested entry points for the Tone and FX panels. Clicking either
@@ -125,18 +130,15 @@
         <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
         <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
       </div>
-      <!-- Radial Pitch Bend + Note Edit toggles — relocated from the
-           top menubar and lane banner-row into the Sounds dropdown so
-           those rows stay focused on the grid surface. Master volume
-           moved out to its own speaker-icon button in the banner row. -->
-      <div class="grid-state-row sounds-utilities">
+      <!-- Radial Pitch Bend + Note Edit toggles — Grid-mode only.
+           Both options are meaningless inside the XY pad, so the row
+           hides when body.fluid-grid is set. -->
+      <div class="grid-state-row sounds-utilities grid-only">
         <button type="button" id="radial-tone-btn" class="sounds-sub-btn radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖ Pitch bend</button>
         <button type="button" id="edit-mode-btn" class="sounds-sub-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎ Note edit</button>
       </div>
-      <!-- XY pad axis settings — only meaningful in Grid Off mode, so
-           shown only when body.fluid-grid is on. Scale + Tone are
-           shared with Grid On via the controls above; this section
-           only carries the bits unique to the XY pad. -->
+      <!-- XY pad axis settings — only meaningful in Graph mode. Hidden
+           in Grid mode by .xy-settings's default display: none. -->
       <div class="grid-state-row xy-settings" id="xy-settings">
         <div class="xy-settings-label">XY pad</div>
         <div class="xy-settings-row">
@@ -162,13 +164,8 @@
           <label>max <input type="number" id="xy-y-max" value="100" /></label>
         </div>
       </div>
-      <div class="grid-state-row sounds-submenus">
-        <button type="button" id="sounds-surprise" class="sounds-sub-btn" title="Randomize root, scale, and per-cell tones for a quick creative shuffle">🎲 Surprise me</button>
-      </div>
-      <!-- Saved grid states + Reset — moved to the bottom of the
-           Sounds panel so the more frequently-used controls (root,
-           scale, sub-panels, master vol, note edit) stay near the
-           top. Behaviorally identical; only the DOM order changed. -->
+      <!-- Saved grid states + Reset live above the Surprise-me dice
+           so the bottom of the panel reads: state → reset → dice. -->
       <div class="grid-state-row" title="Save and recall the whole grid state — root, scale, octaves, palette, and per-cell sounds.">
         <label for="grid-state-select">Saved states</label>
         <select id="grid-state-select">
@@ -179,10 +176,11 @@
           <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
         </div>
       </div>
-      <div class="grid-state-row">
+      <div class="grid-state-row sounds-bottom-row">
         <div class="grid-state-actions">
           <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
         </div>
+        <button type="button" id="sounds-surprise" class="sounds-dice-btn" title="Surprise me — randomize root, scale, and per-cell tones for a quick creative shuffle" aria-label="Surprise me">🎲</button>
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
@@ -15823,9 +15821,21 @@
       const KEY = 'bloops-edit-mode';
       const initial = localStorage.getItem(KEY) === '1';
       document.body.classList.toggle('edit-mode', initial);
+      // Mirror the on-state onto the button itself so the highlight
+      // doesn't depend on body-scoped CSS cascading through deeper
+      // selectors. Without this, the in-Sounds-panel button override
+      // wins on specificity for some properties and the toggle's
+      // visual state appeared stuck on after the first click.
+      btn.classList.toggle('active', initial);
+      btn.setAttribute('aria-pressed', initial ? 'true' : 'false');
       btn.addEventListener('click', () => {
         const on = !document.body.classList.contains('edit-mode');
         document.body.classList.toggle('edit-mode', on);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        // Drop tap focus so the button doesn't retain a focus-ring
+        // glow on mobile after the user releases.
+        try { btn.blur(); } catch (e) {}
         try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {}
       });
     })();
@@ -20707,6 +20717,19 @@
       });
       applyPalette();
       applyScale();
+      // Publish the grid's natural rendered height as a CSS variable
+      // so the XY pad (#xy-pad / .xy-surface) can size to the same
+      // pixel footprint when Graph mode is active — no visible
+      // resize on Grid ↔ Graph toggle. Grid uses 4 columns with
+      // grid-auto-rows: minmax(70px, 1fr), so rows = ceil(cells / 4)
+      // and each row is at least 70 px tall.
+      try {
+        const expander = document.getElementById('lane-expander');
+        if (expander) {
+          const rows = Math.max(1, Math.ceil(cells.length / 4));
+          expander.style.setProperty('--grid-natural-h', (rows * 70) + 'px');
+        }
+      } catch (e) {}
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
 

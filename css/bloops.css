@@ -19,7 +19,8 @@
       /* Mobile body rules now match the desktop ones (the base body
          already does min-height: 100vh + overflow-y: auto), so this
          block only carries mobile-only overrides for inner sizing. */
-      .grid {
+      .grid,
+      #xy-pad {
         flex: none;
         grid-auto-rows: minmax(70px, 1fr);
         min-height: 55vh;
@@ -124,15 +125,24 @@
        button when opened. */
     .project-bottom-bar {
       display: flex;
+      flex-direction: row;
       align-items: center;
       gap: 10px;
       padding: 8px 16px;
       background: #050510;
       border-top: 1px solid #1a1a2e;
       border-bottom: 1px solid #1a1a2e;
+      /* Reserve enough height so the Project button + label are
+         visibly centred. Without a min-height, the bar collapsed to
+         exactly button height + 16 px padding, and the button looked
+         flush with the top edge because the project-name-label below
+         it picked up a smaller intrinsic line height. */
+      min-height: 48px;
+      line-height: 1;
     }
     .project-bottom-bar #project-menu-btn {
       flex: 0 0 auto;
+      align-self: center;
     }
     .project-bottom-bar .project-name-label {
       flex: 1 1 auto;
@@ -140,6 +150,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      align-self: center;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.78rem;
@@ -151,7 +162,11 @@
        the right. */
     .grid-settings-panel .sounds-utilities {
       display: flex;
+      flex-direction: row;
       align-items: center;
+      /* Center the Pitch bend + Note edit pair horizontally in the
+         row so they sit symmetrically rather than left-aligned. */
+      justify-content: center;
       gap: 10px;
     }
     .grid-settings-panel .sounds-utilities .master-vol {
@@ -438,18 +453,29 @@
       position: absolute;
       top: calc(100% + 4px);
       right: 10px;
-      background: #1a1a2e;
-      border: 1px solid #2d2d3f;
-      border-radius: 10px;
+      /* Subtle vertical gradient + teal-tinted accent so the panel
+         reads as its own "Sounds" space rather than a generic
+         dropdown. Cyan/violet shadow gives it a hint of motion. */
+      background:
+        linear-gradient(180deg, #1f1f33 0%, #15152a 60%, #10101c 100%);
+      border: 1px solid #2f3550;
+      border-radius: 12px;
       padding: 14px;
       z-index: 9000;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      box-shadow:
+        0 18px 48px rgba(0, 0, 0, 0.55),
+        0 0 24px rgba(79, 209, 197, 0.10);
       max-width: calc(100vw - 20px);
       max-height: calc(100vh - 80px);
       overflow-y: auto;
       box-sizing: border-box;
     }
     .grid-settings-panel.open { display: flex; }
+    /* When the active lane is in Graph mode, .grid-only rows / labels
+       hide so the Sounds panel only shows controls that apply to the
+       XY pad. .xy-settings handles its own reverse case via the
+       existing body.fluid-grid .xy-settings { display: flex } rule. */
+    body.fluid-grid .grid-settings-panel .grid-only { display: none !important; }
 
     .menubar a {
       color: #a0aec0;
@@ -897,6 +923,7 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      flex-wrap: wrap;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.8rem;
@@ -1036,11 +1063,27 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
-    #edit-mode-btn:hover { border-color: #4fd1c5; color: #4fd1c5; }
-    body.edit-mode #edit-mode-btn {
+    /* Hover-only highlight kept inside @media (hover: hover) so a tap
+       on mobile doesn't stick the button in the teal state — without
+       this guard, mobile browsers retain :hover after release and the
+       button kept looking "on" even after the user tapped to turn
+       edit mode back off. */
+    @media (hover: hover) {
+      #edit-mode-btn:hover { border-color: #4fd1c5; color: #4fd1c5; }
+    }
+    /* Highlight binds to the button's own .active class so the toggle
+       state is decoupled from any deeper-cascade selectors that might
+       beat the body-scoped rule on specificity. body.edit-mode also
+       still applies for back-compat with older callers that read the
+       body class for unrelated CSS. */
+    body.edit-mode #edit-mode-btn,
+    #edit-mode-btn.active {
       border-color: #4fd1c5; color: #4fd1c5;
       background: rgba(79, 209, 197, 0.12);
     }
+    /* Suppress sticky tap-focus on the in-Sounds version so a click
+       doesn't leave the highlight glued on via :focus on mobile. */
+    .grid-settings-panel .sounds-utilities #edit-mode-btn:focus { outline: none; }
     /* Carrots visible only when global edit-mode is on. */
     body:not(.edit-mode) .cell-edit-carrot { display: none; }
 
@@ -1165,11 +1208,16 @@
     body.fluid-grid #grid { display: none; }
     body.fluid-grid #xy-pad { display: flex; }
     /* XY pad axis controls — folded into the Sounds dropdown. Hidden
-       in Grid On mode so the panel stays clean; revealed when Grid
-       Off via body.fluid-grid. Scale + Tone reuse the panel's
-       existing controls — no duplicates. */
-    .xy-settings { display: none; flex-direction: column; gap: 6px; }
-    body.fluid-grid .xy-settings { display: flex; }
+       in Grid mode so the panel stays clean; revealed in Graph mode
+       via body.fluid-grid. Scale + Tone reuse the panel's existing
+       controls — no duplicates.
+       Selector matches BOTH the .grid-state-row and .xy-settings
+       classes so it outranks the generic `.grid-state-row { display:
+       flex }` rule that lives later in this file. Without that, the
+       later display:flex won the cascade and the XY pad section kept
+       appearing in Grid mode. */
+    .grid-state-row.xy-settings { display: none; flex-direction: column; gap: 6px; }
+    body.fluid-grid .grid-state-row.xy-settings { display: flex; }
     .xy-settings-label {
       color: #a0aec0; font-size: 0.78rem; font-weight: 600;
     }
@@ -1192,7 +1240,11 @@
     .xy-settings-row input[type="number"] { width: 70px; }
     .xy-surface {
       flex: 1;
-      min-height: 200px;
+      /* Floor matches one octave's worth of cell-grid rows
+         (3 rows × 70 px from .grid's grid-auto-rows). For taller
+         octaveCount lanes JS bumps --grid-natural-h on #lane-expander
+         so the XY surface tracks the grid's actual rendered height. */
+      min-height: var(--grid-natural-h, 210px);
       position: relative;
       background: #050510;
       border: 1px solid #2d2d3f;
@@ -1502,27 +1554,105 @@
     .grid-state-actions button:hover { border-color: #4299e1; color: #4299e1; }
     .grid-state-actions #grid-state-delete-btn:hover { border-color: #e53e3e; color: #e53e3e; }
     .grid-state-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
-    /* Tone… / FX… entries inside the Sounds panel — same chrome as the
-       grid-state action buttons, side-by-side. */
+    /* Reset button gets a subtle red accent so it reads as a destructive
+       action vs. the neutral Save/Delete/Load buttons above it. */
+    .grid-state-actions #grid-reset-btn {
+      border-color: #4a2c3a;
+      color: #fda4a4;
+    }
+    @media (hover: hover) {
+      .grid-state-actions #grid-reset-btn:hover {
+        border-color: #e53e3e;
+        color: #fc8181;
+        background: rgba(229, 62, 62, 0.12);
+      }
+    }
+    /* Tone… / FX… entries inside the Sounds panel. Teal gradient lifts
+       them as the primary entry points into deeper sub-panels. */
     .sounds-submenus {
-      display: flex; flex-direction: row; gap: 6px;
+      display: flex; flex-direction: row; gap: 8px;
     }
     .sounds-submenus .sounds-sub-btn {
       flex: 1;
-      padding: 6px 10px;
-      background: transparent;
-      border: 1px solid #2d2d3f;
-      border-radius: 6px;
-      color: #cbd5e0;
+      padding: 8px 12px;
+      background: linear-gradient(180deg, rgba(45, 212, 191, 0.10) 0%, rgba(45, 212, 191, 0.04) 100%);
+      border: 1px solid rgba(45, 212, 191, 0.35);
+      border-radius: 8px;
+      color: #b9e9e1;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.82rem;
+      font-size: 0.84rem;
       font-weight: 700;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.6px;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
       text-align: center;
     }
-    .sounds-submenus .sounds-sub-btn:hover { border-color: #4299e1; color: #4299e1; }
+    @media (hover: hover) {
+      .sounds-submenus .sounds-sub-btn:hover {
+        border-color: #4fd1c5;
+        color: #d6f5f1;
+        background: linear-gradient(180deg, rgba(45, 212, 191, 0.18) 0%, rgba(45, 212, 191, 0.08) 100%);
+        box-shadow: 0 0 12px rgba(79, 209, 197, 0.20);
+      }
+    }
+    /* Bottom row of the Sounds panel — Reset + Surprise-me dice
+       centered together. The dice button is icon-only (label moved
+       to title attr) so the row stays tight.
+       `flex-direction: row` has to be explicit because the parent's
+       .grid-state-row rule sets `flex-direction: column` and stacks
+       its children otherwise. */
+    .sounds-bottom-row {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    /* The Reset wrapper is a .grid-state-actions stub; flatten its
+       flex so Reset itself sits centered next to the dice rather
+       than stretching across the row. */
+    .sounds-bottom-row .grid-state-actions {
+      flex: 0 0 auto;
+    }
+    .sounds-dice-btn {
+      flex: 0 0 auto;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6b46c1, #9f7aea);
+      border: 1px solid rgba(159, 122, 234, 0.65);
+      color: #fff;
+      font-size: 1.05rem;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow:
+        0 0 14px rgba(159, 122, 234, 0.45),
+        0 4px 12px rgba(0, 0, 0, 0.45);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+    @media (hover: hover) {
+      .sounds-dice-btn:hover {
+        filter: brightness(1.15);
+        box-shadow:
+          0 0 22px rgba(159, 122, 234, 0.65),
+          0 4px 16px rgba(0, 0, 0, 0.55);
+        transform: scale(1.06) rotate(-8deg);
+      }
+    }
+    .sounds-dice-btn:active {
+      transform: scale(0.96) rotate(6deg);
+    }
+    /* Tuning row labels in the Sounds panel inherit the new color
+       theme — pale text, accent hairline below for visual rhythm. */
+    .grid-settings-panel .sounds-tuning-row label {
+      color: #cbd5e0;
+    }
+    .grid-settings-panel .grid-control select,
+    .grid-settings-panel .grid-control input[type=number] {
+      background: #0c0c18;
+      border-color: #3a3a55;
+      color: #e2e8f0;
+    }
 
     /* NOTE GRID */
     /* Slim clickable banners above the note grid that double as menu
@@ -1993,11 +2123,12 @@
       justify-content: stretch;
       gap: 4px;
       padding: 2px;
-      /* Three buttons now: collapse | status | grid-toggle.
-         Collapse + grid-toggle are narrow chevron-style buttons,
-         status is the wide colored mute pill. */
-      width: 92px;
-      min-width: 92px;
+      /* Collapse + status pill — the grid-toggle chevron was removed
+         from the controls cluster, leaving just collapse and status.
+         Width trimmed ~30% from the previous 92 px to free room for
+         the chip strip on narrow viewports. */
+      width: 64px;
+      min-width: 64px;
       /* Pin the controls to a single-row height and vertically center
          them inside the lane-row, so when the lane's chip area wraps
          into multiple rows (taller lane-row) the leftmost buttons stay
@@ -3726,7 +3857,10 @@
       color: #e2e8f0;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.76rem; font-weight: 600;
-      padding: 2px 8px;
+      /* ~20% narrower than the previous 2px 8px chrome — the track
+         identifier just holds a 1-2 character index so the wider
+         padding was wasting row space. */
+      padding: 2px 5px;
       border-radius: 6px;
       border: 1px solid transparent;
       cursor: pointer;

@@ -11284,6 +11284,85 @@
       });
       return max;
     }
+    // Visual ranges for the longest-duration track, returning both
+    // audio sec and the cell-aligned pixel offsets (left edge of each
+    // item's first cell, right edge of each item's last cell). The
+    // sec↔px helpers below map sec values through this list so
+    // handle / cursor positions track the real visual cell layout —
+    // necessary because itemStepCount rounds duration to whole cells,
+    // so `sec * TRACK_PX_PER_SEC` drifts from the visual layout when
+    // an item's duration isn't a multiple of TRACK_CELL_MS.
+    function _longestVisualRanges() {
+      let bestTrack = null;
+      let bestEnd = -1;
+      tracks.forEach(t => {
+        const ranges = _trackItemTimeRanges(t);
+        const endSec = ranges.length ? ranges[ranges.length - 1].endSec : 0;
+        if (endSec > bestEnd) { bestEnd = endSec; bestTrack = t; }
+      });
+      if (!bestTrack) return [];
+      let secCum = 0;
+      let cellCum = 0;
+      return (bestTrack.items || []).map(item => {
+        const dur = itemDurationMs(item) / 1000;
+        const span = (typeof itemStepCount === 'function') ? itemStepCount(item) : 1;
+        const r = {
+          startSec: secCum,
+          endSec:   secCum + dur,
+          startPx:  cellCum * TRACK_PX_PER_CELL,
+          endPx:    (cellCum + span) * TRACK_PX_PER_CELL - TRACK_CELL_GAP,
+        };
+        secCum += dur;
+        cellCum += span;
+        return r;
+      });
+    }
+    // Sec → x (offset from pad). `edge` picks the right cell edge at
+    // item boundaries: 'start' uses the next item's first-cell left
+    // edge, 'end' uses the prior item's last-cell right edge.
+    function _secToVisualPx(sec, edge) {
+      const s = Number(sec) || 0;
+      if (s <= 0) return 0;
+      const ranges = _longestVisualRanges();
+      if (!ranges.length) return s * TRACK_PX_PER_SEC;
+      for (const r of ranges) {
+        if (edge === 'end' && Math.abs(s - r.endSec) < 1e-6) return r.endPx;
+        if (edge === 'start' && Math.abs(s - r.startSec) < 1e-6) return r.startPx;
+        if (s > r.startSec && s < r.endSec) {
+          const span = Math.max(1e-9, r.endSec - r.startSec);
+          const t01 = (s - r.startSec) / span;
+          return r.startPx + t01 * (r.endPx - r.startPx);
+        }
+      }
+      const last = ranges[ranges.length - 1];
+      return last.endPx + (s - last.endSec) * TRACK_PX_PER_SEC;
+    }
+    // Inverse: x (offset from pad) → sec. Walks the same visual
+    // ranges so click-to-seek + handle-drag math agree with the
+    // pixel positions used to render the handles.
+    function _visualPxToSec(px) {
+      const p = Number(px) || 0;
+      if (p <= 0) return 0;
+      const ranges = _longestVisualRanges();
+      if (!ranges.length) return p / TRACK_PX_PER_SEC;
+      for (const r of ranges) {
+        if (p <= r.endPx + 1e-6) {
+          const span = Math.max(1e-9, r.endPx - r.startPx);
+          const t01 = Math.max(0, Math.min(1, (p - r.startPx) / span));
+          return r.startSec + t01 * (r.endSec - r.startSec);
+        }
+      }
+      const last = ranges[ranges.length - 1];
+      return last.endSec + (p - last.endPx) / TRACK_PX_PER_SEC;
+    }
+    // Visual end of the longest track (in px, offset from pad). Used
+    // to size the ruler width so the right edge — and the default
+    // end handle at maxSec — line up with the last sequence's right
+    // cell edge instead of overshooting via the linear scale.
+    function _maxTracksVisualPx() {
+      const ranges = _longestVisualRanges();
+      return ranges.length ? ranges[ranges.length - 1].endPx : 0;
+    }
     // Every distinct item boundary time across every track — used as the
     // soft-lock target set when the user drags a loop handle.
     function _allItemBoundarySecs() {
@@ -11447,7 +11526,10 @@
       const sectionRect = section.getBoundingClientRect();
       const gridRect    = firstGrid.getBoundingClientRect();
       const offsetX     = gridRect.left - sectionRect.left + 4;
-      cursor.style.left = (offsetX + sec * TRACK_PX_PER_SEC) + 'px';
+      // Use the piecewise sec→cell-px mapping so the cursor lands on
+      // the actual visual position of `sec` within the current item,
+      // not the drifting linear `sec * TRACK_PX_PER_SEC` projection.
+      cursor.style.left = (offsetX + _secToVisualPx(sec, 'start')) + 'px';
       // Vertical: from just below the loop ruler to the bottom of
       // the last track. Both edges measured live so the cursor
       // tracks layout changes (Mix tracks-fullscreen, scroll, etc.).
@@ -12553,8 +12635,16 @@
       // Snap cursor into the loop region when masterLoop is on so
       // playback always starts inside the loop bounds (and the
       // visual cursor lines up with where audio actually starts).
+      // When the loop end is left at "all the way" (tracksLoopEndSec
+      // null), use maxSec as the effective end — earlier this used
+      // Infinity, so a cursor parked at maxSec from a previous
+      // unlooped play-through never reset and the first loop pass
+      // stayed frozen at the end before snapping back on iteration 2.
       if (tracksMasterLoop) {
-        const loopEnd = (tracksLoopEndSec == null) ? Infinity : tracksLoopEndSec;
+        const maxSecPA = (typeof _maxTracksDurationSec === 'function')
+          ? _maxTracksDurationSec()
+          : 0;
+        const loopEnd = (tracksLoopEndSec == null) ? maxSecPA : tracksLoopEndSec;
         if (_tracksCursorSec < tracksLoopStartSec - 1e-6
           || _tracksCursorSec >= loopEnd - 1e-6) {
           _tracksCursorSec = tracksLoopStartSec;
@@ -12953,14 +13043,14 @@
       // Without matching padding the ruler's tick at 0 sat ~2 px to
       // the right of where the first item actually starts.
       const pad = 4;
-      // TRACK_PX_PER_SEC includes the per-cell trailing gap (stride =
-      // cell_w + gap). The very last cell in the timeline doesn't have
-      // a trailing gap, so the true visual right edge of the rightmost
-      // item sits one gap to the left of `pad + maxSec*PX_PER_SEC`.
-      // Shrink the ruler (and the end-handle math below) by that gap so
-      // the ruler's right edge — and the loop-end handle at maxSec —
-      // line up with the actual end of the last sequence.
-      const rulerW = Math.max(80, maxSec * TRACK_PX_PER_SEC + pad * 2 - TRACK_CELL_GAP);
+      // Ruler spans the visual extent of the longest track in cell
+      // pixels. The linear `sec * TRACK_PX_PER_SEC` math drifts when
+      // an item's duration doesn't divide evenly by TRACK_CELL_MS
+      // (itemStepCount rounds), so use the cell-aligned right edge
+      // instead — the ruler then ends exactly where the last item
+      // ends visually.
+      const maxVisualPx = _maxTracksVisualPx();
+      const rulerW = Math.max(80, maxVisualPx + pad * 2);
       ruler.style.width = rulerW + 'px';
       // Pick a major-tick cadence that keeps the time grid readable
       // across short bars (every 1 s) and long tracks (every 30 s)
@@ -12988,22 +13078,21 @@
         const span = document.createElement('span');
         span.className = 'tracks-loop-label';
         span.textContent = (s % 1 === 0) ? `${s}s` : `${s.toFixed(1)}s`;
-        span.style.left = (pad + s * TRACK_PX_PER_SEC) + 'px';
+        // Labels live at cell-aligned LEFT edges (start of the second)
+        // so they read as "this second begins here".
+        span.style.left = (pad + _secToVisualPx(s, 'start')) + 'px';
         labels.appendChild(span);
       }
       const clampedStart = Math.max(0, Math.min(maxSec, tracksLoopStartSec));
       const explicitEnd  = (tracksLoopEndSec == null) ? maxSec : tracksLoopEndSec;
       const clampedEnd   = Math.max(clampedStart, Math.min(maxSec, explicitEnd));
-      const startPx = pad + clampedStart * TRACK_PX_PER_SEC;
-      // End handle anchors on the right edge of the cell ending at
-      // clampedEnd. Subtract one cell gap so the handle (and the
-      // loop fill's right edge) lines up with item right edges
-      // instead of hovering one gap past them. Skip the offset when
-      // start == end so an empty loop region doesn't drag the handle
-      // behind the start handle.
-      const endPx   = (clampedEnd > clampedStart)
-        ? pad + clampedEnd * TRACK_PX_PER_SEC - TRACK_CELL_GAP
-        : pad + clampedEnd * TRACK_PX_PER_SEC;
+      // Map each handle through the piecewise sec→cell-px helper so
+      // the start handle lands at the LEFT edge of the cell starting
+      // at clampedStart and the end handle lands at the RIGHT edge of
+      // the cell ending at clampedEnd. Direct sec×PX_PER_SEC math
+      // drifts when item spans don't divide evenly by TRACK_CELL_MS.
+      const startPx = pad + _secToVisualPx(clampedStart, 'start');
+      const endPx   = pad + _secToVisualPx(clampedEnd,   'end');
       if (fill) {
         fill.style.left  = startPx + 'px';
         fill.style.width = Math.max(0, endPx - startPx) + 'px';
@@ -13044,7 +13133,7 @@
         try { handle.setPointerCapture(e.pointerId); } catch (err) {}
         const onMove = (ev) => {
           const x = (ev.clientX != null ? ev.clientX : 0) - rect.left - pad;
-          let sec = Math.max(0, Math.min(maxSec, x / TRACK_PX_PER_SEC));
+          let sec = Math.max(0, Math.min(maxSec, _visualPxToSec(x)));
           sec = _snapSecToBoundary(sec, 12);
           if (which === 'start') {
             const upper = (tracksLoopEndSec == null) ? maxSec : tracksLoopEndSec;
@@ -13085,7 +13174,7 @@
         const rect = ruler.getBoundingClientRect();
         const x    = (e.clientX != null ? e.clientX : 0) - rect.left - pad;
         const maxSec = _maxTracksDurationSec() || 0;
-        const sec  = Math.max(0, Math.min(maxSec, x / TRACK_PX_PER_SEC));
+        const sec  = Math.max(0, Math.min(maxSec, _visualPxToSec(x)));
         seekTracksTo(sec);
       });
     })();

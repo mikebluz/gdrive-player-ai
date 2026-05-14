@@ -2336,6 +2336,17 @@
       background: rgba(66, 153, 225, 0.18);
       box-shadow: 0 0 12px rgba(66, 153, 225, 0.4);
     }
+    /* Mobile: drop the chip's text label. Narrow chips on small
+       viewports couldn't fit a useful chunk of "C4·E4·G4 ¼" anyway,
+       and the truncated leading character read as noise more than
+       information. Pseudo-element indicators (bend arrows, variance,
+       active ring) use rem-based font sizes so they survive font-size:0. */
+    @media (max-width: 700px) {
+      .lane-chips .seq-step,
+      .sequence-display .seq-step {
+        font-size: 0;
+      }
+    }
     .sequence-display.grid-mode .seq-step,
     .lane-chips.grid-mode .seq-step {
       width: auto;

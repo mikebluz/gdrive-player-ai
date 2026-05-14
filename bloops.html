@@ -4163,7 +4163,7 @@
                     _previewCol = (lastSeg === subCols) ? 1 : (lastSeg + 1);
                   }
                 }
-                if (!isSub) {
+                {
                   const pc = stepColorPitchClass(step);
                   if (pc != null && chipPalette[pc]) {
                     const c = chipPalette[pc];
@@ -4445,11 +4445,13 @@
         chip.addEventListener('dblclick', () => {
           duplicateStep(i);
         });
-        // Note-coloured chips: tint border + fill from chipPalette by pitch
-        // class. Skip subsequence chips (they keep their green identity) and
-        // skip the active chip so the playback highlight isn't masked.
+        // Note-coloured chips: tint border + fill from chipPalette by
+        // pitch class. Subsequence chips inherit the colour of their
+        // first playable child (resolved by stepColorPitchClass). The
+        // active-chip skip lets the playback highlight read through
+        // without the palette tint masking it.
         let chipBaseColor = null;
-        if (!step.isSub && i !== activeIndex) {
+        if (i !== activeIndex) {
           const pc = stepColorPitchClass(step);
           if (pc != null && chipPalette[pc]) {
             const c = chipPalette[pc];
@@ -10882,13 +10884,27 @@
       const original = sequence[stepIndex];
       if (!original) return;
       snapshotForUndo('Fold step');
-      const halved = cloneStep(original);
-      const dur = halved.duration || 1;
-      if (dur > 1) {
-        halved.duration = dur / 2;
+      const halveTiming = (s) => {
+        const c = cloneStep(s);
+        const d = c.duration || 1;
+        if (d > 1) {
+          c.duration = d / 2;
+        } else {
+          const sub = (c.subdivision != null) ? c.subdivision : stepSubdivision;
+          c.subdivision = sub / 2;
+        }
+        return c;
+      };
+      let halved;
+      if (original.isSub && Array.isArray(original.subSteps)) {
+        // Sub playback unrolls every child's own duration/subdivision —
+        // the parent's timing fields aren't read. Halving the parent
+        // alone produces an identical-sounding fold, so walk the
+        // subSteps and halve each leaf's timing instead.
+        halved = cloneStep(original);
+        halved.subSteps = (halved.subSteps || []).map(halveTiming);
       } else {
-        const sub = (halved.subdivision != null) ? halved.subdivision : stepSubdivision;
-        halved.subdivision = sub / 2;
+        halved = halveTiming(original);
       }
       sequence[stepIndex] = halved;
       sequence.splice(stepIndex + 1, 0, cloneStep(halved));
@@ -20762,11 +20778,19 @@
       const pc = PITCH_CLASS_MAP[m[1]];
       return (typeof pc === 'number') ? pc : null;
     }
-    // Pick the pitch class to colour a chip by — single-note steps use their
-    // own pitch, chords colour by the first note. Returns null for rests and
-    // for steps with no audible notes (subsequence chips opt out below).
+    // Pick the pitch class to colour a chip by — single-note steps use
+    // their own pitch, chords colour by the first note, subsequences
+    // colour by their first playable child (skipping rests). Returns
+    // null for empty / pure-rest steps.
     function stepColorPitchClass(step) {
       if (!step) return null;
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        for (const s of step.subSteps) {
+          const pc = stepColorPitchClass(s);
+          if (pc != null) return pc;
+        }
+        return null;
+      }
       if (step.chord && step.chord[0]) return labelToPitchClass(step.chord[0].label);
       if (step.freq != null) return labelToPitchClass(step.label);
       return null;

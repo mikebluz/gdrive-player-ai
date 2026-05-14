@@ -19776,6 +19776,9 @@
           <div class="sm-fold-body">
             <div class="se-chord-list" id="se-chord-list"></div>
             <div class="sm-section-label">Add note</div>
+            <div class="sm-section-label" style="opacity:0.7;margin-top:4px;">Octave</div>
+            <div class="sm-waves" id="se-add-oct-row"></div>
+            <div class="sm-section-label" style="opacity:0.7;margin-top:6px;">Pitch</div>
             <div class="sm-waves" id="se-add-picker"></div>
           </div>
         </details>
@@ -19842,19 +19845,79 @@
         chordLenRow.appendChild(btn);
       });
 
-      // Add-note picker
+      // Per-octave note table — chord voices can land outside the grid's
+      // current octave by picking a different one in the Add / Pitch
+      // pickers. cellIndex is set to -1 for off-grid voices so the
+      // existing flash-by-cellIndex path doesn't light up the wrong cell.
+      const _octRowVals = [1, 2, 3, 4, 5, 6, 7];
+      function _notesForChordOct(oct) {
+        const out = [];
+        for (let pc = 0; pc < 12; pc++) {
+          const semi = (rootIdx + pc) % 12;
+          const labelOct = oct + Math.floor((rootIdx + pc) / 12);
+          const midi = 12 * (labelOct + 1) + semi;
+          const freq = masterFreqA * Math.pow(2, (midi - 69) / 12);
+          out.push({ freq, label: CHROMATIC[semi] + labelOct });
+        }
+        return out;
+      }
+      function _octaveOfLabel(lbl) {
+        const m = (lbl || '').match(/(-?\d+)$/);
+        return m ? parseInt(m[1], 10) : baseOctave;
+      }
+      function _cellIndexForFreq(freq) {
+        let best = -1, bestDelta = Infinity;
+        for (let i = 0; i < notes.length; i++) {
+          const d = Math.abs(notes[i].freq - freq);
+          if (d < bestDelta) { bestDelta = d; best = i; }
+        }
+        // Only adopt the cell mapping if the freq matches within a few
+        // cents — voices that sit a full semitone away from any grid
+        // cell stay marked off-grid so we don't pull them onto the wrong
+        // cell highlight at playback.
+        return (bestDelta < 0.5) ? best : -1;
+      }
+
+      // Add-note octave row + pitch picker. Both repaint when the
+      // selected octave changes so the pitch buttons reflect the
+      // current octave choice.
+      let addOctave = baseOctave;
+      const addOctRow = modal.querySelector('#se-add-oct-row');
       const addPicker = modal.querySelector('#se-add-picker');
-      notes.forEach((n, idx) => {
-        const btn = document.createElement('button');
-        btn.className = 'sm-wave';
-        btn.textContent = n.label;
-        btn.addEventListener('click', () => {
-          chordNotes.push({ freq: n.freq, label: n.label, cellIndex: idx, sound: cellParams[idx].type,
-            params: { ...cellParams[idx] } });
-          renderList();
+      function _renderAddOctRow() {
+        addOctRow.innerHTML = '';
+        _octRowVals.forEach(v => {
+          const b = document.createElement('button');
+          b.className = 'sm-wave' + (v === addOctave ? ' active' : '');
+          b.textContent = String(v);
+          b.addEventListener('click', () => {
+            addOctave = v;
+            _renderAddOctRow();
+            _renderAddPicker();
+          });
+          addOctRow.appendChild(b);
         });
-        addPicker.appendChild(btn);
-      });
+      }
+      function _renderAddPicker() {
+        addPicker.innerHTML = '';
+        _notesForChordOct(addOctave).forEach(n => {
+          const btn = document.createElement('button');
+          btn.className = 'sm-wave';
+          btn.textContent = n.label;
+          btn.addEventListener('click', () => {
+            const ci = _cellIndexForFreq(n.freq);
+            const baseParams = (ci >= 0 && cellParams[ci])
+              ? cellParams[ci]
+              : { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, distortion: 0 };
+            chordNotes.push({ freq: n.freq, label: n.label, cellIndex: ci, sound: baseParams.type,
+              params: { ...baseParams } });
+            renderList();
+          });
+          addPicker.appendChild(btn);
+        });
+      }
+      _renderAddOctRow();
+      _renderAddPicker();
 
       // Chord-wide Pan + Volume. Pan stays per-voice when the slider
       // is centered (chordPan=0) — only at non-center does playback
@@ -19927,26 +19990,64 @@
           row.appendChild(editBtn); row.appendChild(removeBtn);
           listEl.appendChild(row);
 
-          // Inline pitch picker — clicking any cell label retunes this
-          // voice in place (preserves its sound / params / cellIndex
-          // mapping). Sized to the same `.sm-waves` button row used by
-          // the Add picker so the layout matches.
+          // Inline pitch picker — Octave row + pitch row. Clicking an
+          // octave repaints the pitch row with that octave's chromatic
+          // pitches; clicking a pitch retunes this voice. Voices can
+          // sit outside the grid's current octave (cellIndex = -1) so
+          // the user isn't constrained to the active octave count.
           if (pitchExpandedIdx === ni) {
+            const curOct = _octaveOfLabel(n.label);
+            let pickOct = curOct;
+            const octLabel = document.createElement('div');
+            octLabel.className = 'sm-section-label';
+            octLabel.style.opacity = '0.7';
+            octLabel.style.marginTop = '4px';
+            octLabel.textContent = 'Octave';
+            listEl.appendChild(octLabel);
+            const octRow = document.createElement('div');
+            octRow.className = 'sm-waves';
+            const paintOct = () => {
+              octRow.innerHTML = '';
+              _octRowVals.forEach(v => {
+                const ob = document.createElement('button');
+                ob.className = 'sm-wave' + (v === pickOct ? ' active' : '');
+                ob.textContent = String(v);
+                ob.addEventListener('click', () => {
+                  pickOct = v;
+                  paintOct();
+                  paintPitch();
+                });
+                octRow.appendChild(ob);
+              });
+            };
+            const pitchLabel = document.createElement('div');
+            pitchLabel.className = 'sm-section-label';
+            pitchLabel.style.opacity = '0.7';
+            pitchLabel.style.marginTop = '6px';
+            pitchLabel.textContent = 'Pitch';
             const picker = document.createElement('div');
             picker.className = 'sm-waves';
-            notes.forEach((note, idx) => {
-              const pb = document.createElement('button');
-              pb.className = 'sm-wave' + (n.cellIndex === idx ? ' active' : '');
-              pb.textContent = note.label;
-              pb.addEventListener('click', () => {
-                chordNotes[ni].freq      = note.freq;
-                chordNotes[ni].label     = note.label;
-                chordNotes[ni].cellIndex = idx;
-                pitchExpandedIdx = null;
-                renderList();
+            const paintPitch = () => {
+              picker.innerHTML = '';
+              _notesForChordOct(pickOct).forEach(note => {
+                const pb = document.createElement('button');
+                const isActive = Math.abs(note.freq - n.freq) < 1e-3;
+                pb.className = 'sm-wave' + (isActive ? ' active' : '');
+                pb.textContent = note.label;
+                pb.addEventListener('click', () => {
+                  chordNotes[ni].freq      = note.freq;
+                  chordNotes[ni].label     = note.label;
+                  chordNotes[ni].cellIndex = _cellIndexForFreq(note.freq);
+                  pitchExpandedIdx = null;
+                  renderList();
+                });
+                picker.appendChild(pb);
               });
-              picker.appendChild(pb);
-            });
+            };
+            paintOct();
+            paintPitch();
+            listEl.appendChild(octRow);
+            listEl.appendChild(pitchLabel);
             listEl.appendChild(picker);
           }
 

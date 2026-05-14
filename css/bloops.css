@@ -2349,11 +2349,15 @@
          width. */
       min-width: 0;
       min-height: 0;
-      /* Let long chord strings wrap inside the chip box too, so very
-         narrow steps show stacked note names rather than a single
-         hard-clipped row. */
-      overflow-wrap: anywhere;
-      word-break: break-word;
+      /* Truncate, don't wrap. Earlier this lane allowed multi-line
+         stacking via overflow-wrap: anywhere on narrow chips, but
+         small chord chips on mobile then grew vertically (or the
+         text broke mid-pitch) and the chip stopped matching its
+         assigned grid-track size. Force a single line and let
+         overflow: hidden (inherited from .seq-step base) clip the
+         label to the chip's actual width. */
+      white-space: nowrap;
+      text-overflow: clip;
     }
     /* Continuation segments — a step that's too long to fit on one
        row renders as a leading head chip (.cont-start) plus one or

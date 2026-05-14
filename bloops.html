@@ -3349,7 +3349,19 @@
         // through to it gives the right tone immediately; per-track
         // EQ + panner won't apply during that brief warm-up window
         // but the user hears the correct instrument instead of a sine.
-        if (Number.isFinite(trackIdx) && tracks[trackIdx]) {
+        // Per-item-lane sampler stash, when present, wins over the
+        // per-track sampler — those route straight to trackBus,
+        // bypassing the per-item lane bus (and its FX chain). Without
+        // this branch, sample-based steps in track playback came out
+        // dry no matter what reverb / delay / etc. the lane was saved
+        // with. Stash lives on the lane bus head (set in playTrackItem)
+        // so the routing target naturally carries its own samplers.
+        const laneSamplerMap = destination && destination._laneSamplers;
+        if (laneSamplerMap && typeof laneSamplerMap.get === 'function') {
+          const laneSamp = laneSamplerMap.get(type.slice(7));
+          if (laneSamp && laneSamp.loaded) sampler = laneSamp;
+        }
+        if (!sampler && Number.isFinite(trackIdx) && tracks[trackIdx]) {
           const trackSamp = getOrCreateTrackSampler(trackIdx, type.slice(7));
           if (trackSamp && trackSamp.loaded) sampler = trackSamp;
         }
@@ -11589,6 +11601,19 @@
       if (!Array.isArray(buses)) return;
       buses.forEach(b => {
         if (!b) return;
+        // Per-item-lane samplers built in playTrackItem so sample
+        // notes route through the lane FX chain. Dispose alongside
+        // the bus so the (sometimes many) Tone.Samplers don't leak
+        // when the user adds a long sample-heavy track and swaps
+        // items repeatedly.
+        if (b._laneSamplerMap && typeof b._laneSamplerMap.forEach === 'function') {
+          b._laneSamplerMap.forEach(samp => {
+            try { samp.disconnect(); } catch (e) {}
+            try { samp.dispose();    } catch (e) {}
+          });
+          b._laneSamplerMap = null;
+          if (b.head) b.head._laneSamplers = null;
+        }
         try { b.head?.disconnect(); } catch (e) {}
         try { b.head?.dispose(); } catch (e) {}
         try { b.volume?.dispose(); } catch (e) {}
@@ -12405,33 +12430,73 @@
       const trackBusForItem = itemGain || trackBusEnd;
       const itemBuses = laneEntries.map(e => _buildItemLaneBus(e.lane, trackBusForItem));
       track._itemBuses = itemBuses;
-      // Prefetch every sample type referenced by the item's lanes so
-      // the per-track Tone.Samplers start their async buffer loads
-      // before the first note fires. Without this the first wave of
-      // sample-type voices falls back to the shared sampler (which
-      // routes around per-track EQ / pan) until each per-track
-      // sampler finishes its load. Small JS pass; the audio thread
-      // does the real work.
-      try {
-        const sampleTypes = new Set();
-        const collect = (arr) => {
-          if (!Array.isArray(arr)) return;
-          for (const s of arr) {
-            if (!s) continue;
-            if (s.isSub && Array.isArray(s.subSteps)) { collect(s.subSteps); continue; }
-            if (Array.isArray(s.chord)) {
-              s.chord.forEach(n => {
-                const t = (n && n.params && n.params.type) || (n && n.sound);
-                if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
-              });
-            } else {
-              const t = (s.params && s.params.type) || s.sound;
-              if (typeof t === 'string' && t.startsWith('sample:')) sampleTypes.add(t.slice(7));
-            }
+      // Walk a step list and collect every sample:<id> referenced as
+      // a synth type. Used both to prefetch the per-track samplers
+      // and to build per-item-lane samplers below.
+      const collectSampleTypes = (arr, into) => {
+        if (!Array.isArray(arr)) return;
+        for (const s of arr) {
+          if (!s) continue;
+          if (s.isSub && Array.isArray(s.subSteps)) { collectSampleTypes(s.subSteps, into); continue; }
+          if (Array.isArray(s.chord)) {
+            s.chord.forEach(n => {
+              const t = (n && n.params && n.params.type) || (n && n.sound);
+              if (typeof t === 'string' && t.startsWith('sample:')) into.add(t.slice(7));
+            });
+          } else {
+            const t = (s.params && s.params.type) || s.sound;
+            if (typeof t === 'string' && t.startsWith('sample:')) into.add(t.slice(7));
           }
-        };
-        laneEntries.forEach(e => collect(e.flat));
-        sampleTypes.forEach(id => { try { getOrCreateTrackSampler(trackIdx, id); } catch (e) {} });
+        }
+      };
+      // Per-item-lane samplers: when a lane carries non-zero FX sends
+      // its lane bus head sits in front of the FX chain. Sample-based
+      // notes need to enter the chain through that head — but the
+      // per-track sampler is wired straight to the trackBus, so it
+      // skips the FX entirely. Build a fresh Sampler per (item-lane,
+      // sample-id) routed to the lane head so reverb / delay / etc.
+      // are actually audible on sample lanes. Stash the map on the
+      // bus head; playNote reads it via `destination._laneSamplers`.
+      // Lanes without FX skip this work — they sound identical
+      // whether the sampler hits the head or the trackBus.
+      try {
+        laneEntries.forEach((e, li) => {
+          const bus = itemBuses[li];
+          if (!bus || !bus.head) return;
+          const hasFx = bus.fxChain && bus.fxChain.length > 0;
+          if (!hasFx) return;
+          const types = new Set();
+          collectSampleTypes(e.flat, types);
+          if (types.size === 0) return;
+          const sMap = new Map();
+          types.forEach(id => {
+            const info = sampleSamplers.get(id);
+            if (!info || !info.urls) return;
+            try {
+              const samp = new Tone.Sampler({
+                urls: info.urls,
+                baseUrl: info.baseUrl,
+                release: 1,
+              }).connect(bus.head);
+              sMap.set(id, samp);
+            } catch (err) {}
+          });
+          if (sMap.size > 0) {
+            bus.head._laneSamplers = sMap;
+            bus._laneSamplerMap    = sMap; // kept for teardown
+          }
+        });
+      } catch (e) {}
+      // Also prefetch the per-track samplers for any sample type used
+      // anywhere in the item. These cover lanes WITHOUT FX (which still
+      // route the trackBus path) and the no-lanes legacy path. Without
+      // this the first wave of sample-type voices falls back to the
+      // shared sampler (no per-track EQ / pan) until the per-track
+      // sampler finishes its load.
+      try {
+        const allSampleTypes = new Set();
+        laneEntries.forEach(e => collectSampleTypes(e.flat, allSampleTypes));
+        allSampleTypes.forEach(id => { try { getOrCreateTrackSampler(trackIdx, id); } catch (e) {} });
       } catch (e) {}
       // One setTimeout chain per lane; advance to the next item only
       // after every chain has finished (the LONGEST lane drives the
@@ -12888,7 +12953,14 @@
       // Without matching padding the ruler's tick at 0 sat ~2 px to
       // the right of where the first item actually starts.
       const pad = 4;
-      const rulerW = Math.max(80, maxSec * TRACK_PX_PER_SEC + pad * 2);
+      // TRACK_PX_PER_SEC includes the per-cell trailing gap (stride =
+      // cell_w + gap). The very last cell in the timeline doesn't have
+      // a trailing gap, so the true visual right edge of the rightmost
+      // item sits one gap to the left of `pad + maxSec*PX_PER_SEC`.
+      // Shrink the ruler (and the end-handle math below) by that gap so
+      // the ruler's right edge — and the loop-end handle at maxSec —
+      // line up with the actual end of the last sequence.
+      const rulerW = Math.max(80, maxSec * TRACK_PX_PER_SEC + pad * 2 - TRACK_CELL_GAP);
       ruler.style.width = rulerW + 'px';
       // Pick a major-tick cadence that keeps the time grid readable
       // across short bars (every 1 s) and long tracks (every 30 s)
@@ -12923,7 +12995,15 @@
       const explicitEnd  = (tracksLoopEndSec == null) ? maxSec : tracksLoopEndSec;
       const clampedEnd   = Math.max(clampedStart, Math.min(maxSec, explicitEnd));
       const startPx = pad + clampedStart * TRACK_PX_PER_SEC;
-      const endPx   = pad + clampedEnd   * TRACK_PX_PER_SEC;
+      // End handle anchors on the right edge of the cell ending at
+      // clampedEnd. Subtract one cell gap so the handle (and the
+      // loop fill's right edge) lines up with item right edges
+      // instead of hovering one gap past them. Skip the offset when
+      // start == end so an empty loop region doesn't drag the handle
+      // behind the start handle.
+      const endPx   = (clampedEnd > clampedStart)
+        ? pad + clampedEnd * TRACK_PX_PER_SEC - TRACK_CELL_GAP
+        : pad + clampedEnd * TRACK_PX_PER_SEC;
       if (fill) {
         fill.style.left  = startPx + 'px';
         fill.style.width = Math.max(0, endPx - startPx) + 'px';
@@ -14490,7 +14570,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;

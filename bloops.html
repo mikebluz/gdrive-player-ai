@@ -2982,7 +2982,35 @@
 
       const finalDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
       let synth;
-      if (type === 'fm') {
+      // Voice pool — playNote already pulls pre-built synths for the
+      // basic presets. The sustained-press path used to construct a
+      // fresh Tone.AMSynth / FMSynth / MonoSynth per cell press, which
+      // costs noticeable ms on mobile and shows up as press-to-sound
+      // lag in the note grid. Pool acquisitions reuse a configured
+      // synth body; we set the per-press env / detune below and route
+      // the disconnect through safeReleaseSynth on release so it
+      // returns to the pool instead of being disposed.
+      let pooledPresetKey = null;
+      if (VOICE_POOL_ENABLED && _isPooledPreset(type)) {
+        const s = _buildPooledSynthForPreset(type, env);
+        if (s) {
+          try {
+            s.connect(finalDest);
+            synth = s;
+            pooledPresetKey = (type === 'sine' || type === 'square' || type === 'triangle'
+                              || type === 'sawtooth' || type === 'pulse' || type === 'fat')
+              ? 'basic:' + type
+              : type;
+          } catch (e) {
+            synth = null;
+            pooledPresetKey = null;
+          }
+        }
+      }
+      if (synth) {
+        // Already provided by the pool — skip the construction chain
+        // and fall through to the trigger / handle plumbing below.
+      } else if (type === 'fm') {
         synth = new Tone.FMSynth({
           harmonicity: 3, modulationIndex: 10,
           oscillator: { type: 'sine' }, envelope: env,
@@ -3124,7 +3152,14 @@
         release: () => {
           if (released) return; released = true;
           try { synth.triggerRelease(); } catch (e) {}
-          setTimeout(() => safeDisposeSynth(synth), (rel + 0.5) * 1000);
+          // Pooled voices return to the pool after the release tail so
+          // the next press can reacquire them instantly. Non-pooled
+          // presets keep the original dispose path.
+          if (pooledPresetKey) {
+            setTimeout(() => safeReleaseSynth(pooledPresetKey, synth), (rel + 0.5) * 1000);
+          } else {
+            setTimeout(() => safeDisposeSynth(synth), (rel + 0.5) * 1000);
+          }
         },
         // Used by Radial Tone to bend the live note as the user slides
         // their finger across the cell. Only touches `.detune` — the

@@ -2894,6 +2894,28 @@
       const {
         type = 'sine',
         attack = 10, decay = 100, sustain = 50, release = 1400, volume = 100, detune = 0,
+        pan = 0,
+        // Per-note FX mix levels — sustained cell press was destructuring
+        // only env/volume/detune, so the per-cell reverb / delay / chorus
+        // settings that scheduleStepAt → playNote applies during sequence
+        // playback never reached the press path. Read every effect here
+        // so the chain below can build the same per-note FX nodes (only
+        // for effects with mix > 0 — silent ones cost nothing).
+        reverb     = 0,
+        reverbSize = 70,
+        reverbTone = 50,
+        delay         = 0,
+        delayTime     = 250,
+        delayFeedback = 40,
+        delaySync     = null,
+        distortion = 0,
+        chorus     = 0, chorusFreq    = 4,   chorusDepth   = 70,
+        vibrato    = 0, vibratoFreq   = 5,   vibratoDepth  = 30,
+        tremolo    = 0, tremoloFreq   = 5,   tremoloDepth  = 70,
+        phaser     = 0, phaserFreq    = 0.5, phaserOctaves = 3,
+        autoFilter = 0, autoFilterFreq= 1,   autoFilterDepth = 100, autoFilterBaseFreq = 200,
+        pingPong   = 0, pingPongTime  = 250, pingPongFeedback = 30, pingPongSync = null,
+        autoPan    = 0, autoPanFreq   = 1,   autoPanDepth  = 100,
         fxOverrideGlobal = false,
       } = params;
       const atk = Math.max(attack / 1000, 0.005);
@@ -2981,6 +3003,96 @@
       }
 
       const finalDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
+      // Per-note effect chain — mirrors the chain playNote builds for
+      // sequence playback so a sustained press hears the same reverb,
+      // delay, chorus, etc. the cell's params already specify. Built
+      // backward from finalDest: chainHead is the synth's connect
+      // target. effectNodes get disposed alongside the synth on
+      // release so they don't leak.
+      let chainHead = finalDest;
+      const sustainEffectNodes = [];
+      const panNorm = Math.max(-1, Math.min(1, (pan || 0) / 100));
+      if (Math.abs(panNorm) > 0.001) {
+        const pn = new Tone.Panner(panNorm).connect(chainHead);
+        sustainEffectNodes.unshift(pn);
+        chainHead = pn;
+      }
+      const startLfo = (n) => { try { if (typeof n.start === 'function') n.start(); } catch (e) {} };
+      const _bpm = (typeof tempoInput !== 'undefined' && tempoInput && tempoInput.value)
+        ? (parseInt(tempoInput.value, 10) || 120)
+        : 120;
+      const _fxBuildersSus = {
+        distortion: () => distortion > 0 ? new Tone.Distortion({
+          distortion: Math.max(0, Math.min(1, distortion / 100)), wet: 1,
+        }) : null,
+        autoFilter: () => autoFilter > 0 ? new Tone.AutoFilter({
+          frequency:     Math.max(0.01, autoFilterFreq),
+          depth:         Math.max(0, Math.min(1, autoFilterDepth / 100)),
+          baseFrequency: Math.max(20, autoFilterBaseFreq),
+          octaves: 2.6,
+          wet:     Math.max(0, Math.min(1, autoFilter / 100)),
+        }) : null,
+        phaser: () => phaser > 0 ? new Tone.Phaser({
+          frequency: Math.max(0.01, phaserFreq),
+          octaves:   Math.max(1, Math.min(7, phaserOctaves)),
+          baseFrequency: 350,
+          wet:       Math.max(0, Math.min(1, phaser / 100)),
+        }) : null,
+        vibrato: () => vibrato > 0 ? new Tone.Vibrato({
+          frequency: Math.max(0.01, vibratoFreq),
+          depth:     Math.max(0, Math.min(1, vibratoDepth / 100)),
+          wet:       Math.max(0, Math.min(1, vibrato / 100)),
+        }) : null,
+        chorus: () => chorus > 0 ? new Tone.Chorus({
+          frequency: Math.max(0.01, chorusFreq),
+          depth:     Math.max(0, Math.min(1, chorusDepth / 100)),
+          delayTime: 3.5, feedback: 0.1,
+          wet:       Math.max(0, Math.min(1, chorus / 100)),
+        }) : null,
+        tremolo: () => tremolo > 0 ? new Tone.Tremolo({
+          frequency: Math.max(0.01, tremoloFreq),
+          depth:     Math.max(0, Math.min(1, tremoloDepth / 100)),
+          wet:       Math.max(0, Math.min(1, tremolo / 100)),
+        }) : null,
+        delay: () => delay > 0 ? new Tone.FeedbackDelay({
+          delayTime: delaySync
+            ? noteValueToSec(delaySync, _bpm)
+            : Math.max(0.001, (delayTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, delayFeedback / 100)),
+          wet:       Math.max(0, Math.min(1, delay / 100)),
+        }) : null,
+        pingPong: () => pingPong > 0 ? new Tone.PingPongDelay({
+          delayTime: pingPongSync
+            ? noteValueToSec(pingPongSync, _bpm)
+            : Math.max(0.001, (pingPongTime || 0) / 1000),
+          feedback:  Math.max(0, Math.min(0.95, pingPongFeedback / 100)),
+          wet:       Math.max(0, Math.min(1, pingPong / 100)),
+        }) : null,
+        reverb: () => reverb > 0 ? new Tone.Freeverb({
+          roomSize:  Math.max(0, Math.min(0.99, reverbSize / 100)),
+          dampening: 500 + Math.max(0, Math.min(100, reverbTone)) * 95,
+          wet:       Math.max(0, Math.min(1, reverb / 100)),
+        }) : null,
+        autoPan: () => autoPan > 0 ? new Tone.AutoPanner({
+          frequency: Math.max(0.01, autoPanFreq),
+          depth:     Math.max(0, Math.min(1, autoPanDepth / 100)),
+          wet:       Math.max(0, Math.min(1, autoPan / 100)),
+        }) : null,
+      };
+      const _fxOrderSus = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
+        ? globalFx.fxOrder
+        : FX_NAMES;
+      for (let i = _fxOrderSus.length - 1; i >= 0; i--) {
+        const node = _fxBuildersSus[_fxOrderSus[i]]?.();
+        if (!node) continue;
+        startLfo(node);
+        node.connect(chainHead);
+        sustainEffectNodes.unshift(node);
+        chainHead = node;
+      }
+      const disposeSustainFxChain = () => {
+        sustainEffectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
+      };
       let synth;
       // Voice pool — playNote already pulls pre-built synths for the
       // basic presets. The sustained-press path used to construct a
@@ -2995,7 +3107,7 @@
         const s = _buildPooledSynthForPreset(type, env);
         if (s) {
           try {
-            s.connect(finalDest);
+            s.connect(chainHead);
             synth = s;
             pooledPresetKey = (type === 'sine' || type === 'square' || type === 'triangle'
                               || type === 'sawtooth' || type === 'pulse' || type === 'fat')
@@ -3016,7 +3128,7 @@
           oscillator: { type: 'sine' }, envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'duo') {
         // DuoSynth — Tone.OmniOscillator (used by Tone.Synth) doesn't
         // accept 'duo' as a type, so the generic fallback below silently
@@ -3028,27 +3140,27 @@
           harmonicity: 1.5,
           vibratoAmount: 0.3,
           vibratoRate: 5,
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'am') {
         synth = new Tone.AMSynth({
           harmonicity: 2,
           oscillator: { type: 'sine' }, envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'mono') {
         synth = new Tone.MonoSynth({
           oscillator: { type: 'sawtooth' }, envelope: env,
           filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.3, release: 2,
                             baseFrequency: 200, octaves: 3 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'bass') {
         synth = new Tone.MonoSynth({
           oscillator: { type: 'square' }, envelope: env,
           filterEnvelope: { attack: 0.005, decay: 0.18, sustain: 0.4, release: 0.4,
                             baseFrequency: 80, octaves: 3.2 },
           filter: { Q: 4, type: 'lowpass', rolloff: -24 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'pad') {
         synth = new Tone.AMSynth({
           harmonicity: 1.5,
@@ -3056,7 +3168,7 @@
           envelope: { attack: 1.2, decay: 0.5, sustain: 0.7, release: 2.5 },
           modulation: { type: 'sine' },
           modulationEnvelope: { attack: 1.0, decay: 0.5, sustain: 0.5, release: 2.0 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'xylo') {
         synth = new Tone.FMSynth({
           harmonicity: 7,
@@ -3065,7 +3177,7 @@
           envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 },
           modulation: { type: 'sine' },
           modulationEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'bell') {
         synth = new Tone.FMSynth({
           harmonicity: 2.14, modulationIndex: 4,
@@ -3073,7 +3185,7 @@
           envelope: { attack: 0.001, decay: 2.0, sustain: 0.5, release: 0.8 },
           modulation: { type: 'sine' },
           modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 },
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else if (type === 'wavetable') {
         // Wavetable in the sustain path: build the same osc-stack +
         // AmplitudeEnvelope structure playNote uses, but driven via
@@ -3086,7 +3198,7 @@
         const ampEnv = new Tone.AmplitudeEnvelope({
           attack: env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,
-        }).connect(finalDest);
+        }).connect(chainHead);
         const wtOscs = [];
         const wtGains = [];
         ['sine', 'sawtooth', 'triangle'].forEach((t, i) => {
@@ -3112,6 +3224,7 @@
               wtOscs.forEach(o => { try { o.dispose(); } catch (e) {} });
               wtGains.forEach(g => { try { g.dispose(); } catch (e) {} });
               try { ampEnv.dispose(); } catch (e) {}
+              disposeSustainFxChain();
             }, ((env.release || 0.5) + 0.5) * 1000);
           },
         };
@@ -3127,13 +3240,13 @@
         synth = new Tone.NoiseSynth({
           noise: { type: colour },
           envelope: env,
-        }).connect(finalDest);
+        }).connect(chainHead);
       } else {
         let oscOpts;
         if      (type === 'pulse') oscOpts = { type: 'pulse', width: 0.4 };
         else if (type === 'fat')   oscOpts = { type: 'fatsawtooth', count: 3, spread: 30 };
         else                       oscOpts = { type };
-        synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(finalDest);
+        synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(chainHead);
       }
       if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
       // Trigger at the caller's pinned startAt (wrap chord audition) or
@@ -3154,11 +3267,20 @@
           try { synth.triggerRelease(); } catch (e) {}
           // Pooled voices return to the pool after the release tail so
           // the next press can reacquire them instantly. Non-pooled
-          // presets keep the original dispose path.
+          // presets keep the original dispose path. Per-note FX nodes
+          // (sustainEffectNodes) are disposed alongside the synth so
+          // each press's effect chain doesn't leak.
+          const tailMs = (rel + 0.5) * 1000;
           if (pooledPresetKey) {
-            setTimeout(() => safeReleaseSynth(pooledPresetKey, synth), (rel + 0.5) * 1000);
+            setTimeout(() => {
+              safeReleaseSynth(pooledPresetKey, synth);
+              disposeSustainFxChain();
+            }, tailMs);
           } else {
-            setTimeout(() => safeDisposeSynth(synth), (rel + 0.5) * 1000);
+            setTimeout(() => {
+              safeDisposeSynth(synth);
+              disposeSustainFxChain();
+            }, tailMs);
           }
         },
         // Used by Radial Tone to bend the live note as the user slides

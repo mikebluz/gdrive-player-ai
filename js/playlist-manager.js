@@ -106,9 +106,20 @@ class PlaylistManager {
                 candidates.push(track);
             }
         }
-        // prefetchTrack hydrates _prefetchCache from blobCache when available
-        // and only hits the network as a last resort.
-        Promise.all(candidates.map(t => this.musicPlayer.prefetchTrack(t)));
+        // Serialize prefetches one at a time instead of firing all four
+        // in parallel. Earlier (Promise.all) the radio handled the
+        // outbound CarPlay/AirPlay audio stream alongside four
+        // concurrent multi-megabyte Drive downloads, saturating WiFi
+        // on mobile and producing choppy car-stereo playback. A
+        // serial chain keeps total throughput the same on a clear
+        // connection while leaving headroom for the outbound stream
+        // when bandwidth is tight. prefetchTrack hits the blob cache
+        // first; only cache misses cost a network round trip.
+        (async () => {
+            for (const t of candidates) {
+                try { await this.musicPlayer.prefetchTrack(t); } catch {}
+            }
+        })();
         return windowIds;
     }
 

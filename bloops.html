@@ -2829,7 +2829,13 @@
     // own internal polyphony. Warm-up synths (warmMasterChainOnce) and
     // sustain handles (startSustainedNote) also bypass this — they have
     // their own lifetimes and aren't a sequence-density problem.
-    const VOICE_CAP = 24;
+    // 24 was fine on desktop but multi-lane looped playback at fast
+    // subdivisions piles up enough concurrent voices on mobile Safari
+    // to drive iOS into audio-thread underruns ("chops" over time). 16
+    // still covers a five-voice chord across three lanes with headroom
+    // and keeps the simultaneous-FX node count low enough for iOS to
+    // sustain over long sessions.
+    const VOICE_CAP = 16;
     const _activeVoices = []; // FIFO; oldest at index 0
     function _registerVoice(entry) {
       _activeVoices.push(entry);
@@ -6913,10 +6919,14 @@
     // between ticks but past the horizon got scheduled after the audio
     // clock had already passed them, manifesting as skips/hangs.
     //
-    // Tradeoff: a live edit (BPM, chord swap, sub change, mute/solo)
-    // takes effect at the next tick boundary, i.e. up to ~500ms later.
-    // Imperceptible at musical BPMs and worth the rock-solid timing.
-    const SCHED_LOOKAHEAD_SEC = 0.1;
+    // Mobile Safari throttles foreground tabs more aggressively over
+    // long sessions (low-power, energy heuristics) — multi-lane looped
+    // playback "after a while" goes choppy because the 100 ms cushion
+    // wasn't surviving the longer intervals. Lift the horizon to 500 ms
+    // to absorb those stalls; the audio clock still fires every event
+    // sample-accurately and live-edit lag (~500 ms vs ~100 ms) is
+    // imperceptible at musical BPMs.
+    const SCHED_LOOKAHEAD_SEC = 0.5;
     const SCHED_TICK_MS       = 25;
 
     // Multi-stream scheduler. Each stream is one playable sequence —

@@ -5357,6 +5357,71 @@
       cells.forEach(c => c.classList.remove('step-mode-armed'));
     }
 
+    // ---- Fixed-mode sequential editing ----
+    // When Fixed mode is on AND Keep is on, the next grid press writes
+    // the pressed note onto the currently-selected step and advances
+    // the selection to the next step. The first selection is set up
+    // by _fixedSeqStart (called from both step-mode-btn click and the
+    // Keep toggle). When the last step is written, Fixed mode exits
+    // and the selection clears. _fixedSeqActive guards the cell/REST
+    // handlers so the advance flow only kicks in while the
+    // user-intent state is right.
+    let _fixedSeqActive = false;
+    function _fixedSeqStart() {
+      if (!stepMode || !keepMode) return;
+      if (!Array.isArray(sequence) || sequence.length === 0) {
+        _fixedSeqActive = false;
+        return;
+      }
+      _fixedSeqActive = true;
+      setSelectedStep(0);
+      renderSequence();
+    }
+    function _fixedSeqCancel() {
+      if (!_fixedSeqActive) return;
+      _fixedSeqActive = false;
+      clearSelection();
+      renderSequence();
+    }
+    // Write `step` into the currently-selected slot, then advance the
+    // selection to the next slot (or exit Fixed mode if we just wrote
+    // the last slot). Returns true if the press was consumed by the
+    // sequential flow (so the caller skips the default append path).
+    function _fixedSeqWrite(step) {
+      if (!_fixedSeqActive) return false;
+      if (!stepMode || !keepMode) { _fixedSeqActive = false; return false; }
+      const cur = selectedStepRefs[selectedStepRefs.length - 1];
+      if (!cur) { _fixedSeqActive = false; return false; }
+      const idx = sequence.indexOf(cur);
+      if (idx < 0) { _fixedSeqActive = false; return false; }
+      snapshotForUndo('Fixed: set step ' + (idx + 1));
+      const slotSub = sequence[idx].subdivision;
+      const slotDur = sequence[idx].duration;
+      // Preserve the slot's existing rhythm fields so the lane's
+      // step-div pattern stays intact across writes.
+      sequence[idx] = {
+        ...step,
+        params: step.params ? { ...step.params } : undefined,
+        subdivision: (slotSub != null) ? slotSub : (step.subdivision != null ? step.subdivision : stepSubdivision),
+        duration: (slotDur != null) ? slotDur : (step.duration || 1),
+      };
+      const nextIdx = idx + 1;
+      if (nextIdx >= sequence.length) {
+        // Last slot just got written — exit Fixed mode entirely (per
+        // spec: "when last step is edited, no steps are selected and
+        // leave fixed mode").
+        _fixedSeqActive = false;
+        clearSelection();
+        stepMode = false;
+        if (typeof refreshStepModeBtn === 'function') refreshStepModeBtn();
+      } else {
+        setSelectedStep(nextIdx);
+      }
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      return true;
+    }
+
     function addToSequence(step) {
       const label = step?.chord ? 'Add chord' : (step?.freq == null ? 'Add rest' : ('Add ' + (step?.label || 'note')));
       snapshotForUndo(label);
@@ -5419,7 +5484,10 @@
     // Modal that asks the user to pick a step-div size (4/1 → 1/32) for
     // the just-added note. The "Use for…" checkbox locks the chosen
     // value for the rest of the current Keep session so subsequent
-    // notes don't re-prompt.
+    // notes don't re-prompt. The "Record rests" checkbox flips the
+    // modal into a rest-stamper: each size click appends a rest of
+    // that size to the active lane and the modal stays open until the
+    // user clicks Done or off the modal.
     function showStepDivPicker(stepRef) {
       // Don't stack pickers — if one is already up, dismiss and the
       // newer note just keeps its default subdivision.
@@ -5434,6 +5502,10 @@
           <input type="checkbox" id="sdiv-lock-cb" />
           Use this size for the rest of this Keep session
         </label>
+        <label class="sdiv-lock">
+          <input type="checkbox" id="sdiv-rests-cb" />
+          Record clicks as rests in lane
+        </label>
         <div class="sdiv-grid">
           <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
           <button type="button" class="sdiv-opt" data-sub="0.25">1/16</button>
@@ -5445,30 +5517,56 @@
           <button type="button" class="sdiv-opt" data-sub="12">3/1</button>
           <button type="button" class="sdiv-opt" data-sub="16">4/1</button>
         </div>
+        <div class="sdiv-footer" id="sdiv-footer" hidden>
+          <button type="button" class="sdiv-done" id="sdiv-done">Done</button>
+        </div>
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      const lockCb = modal.querySelector('#sdiv-lock-cb');
+      const lockCb  = modal.querySelector('#sdiv-lock-cb');
+      const restCb  = modal.querySelector('#sdiv-rests-cb');
+      const footer  = modal.querySelector('#sdiv-footer');
+      // Toggle the rest-recording mode: the lock checkbox is meaningless
+      // in rest mode (no step-ref being targeted), so hide it. The Done
+      // button takes over the close action since size clicks no longer
+      // dismiss the modal one at a time.
+      const syncRestMode = () => {
+        const on = !!(restCb && restCb.checked);
+        if (lockCb) lockCb.closest('.sdiv-lock').hidden = on;
+        if (footer) footer.hidden = !on;
+      };
+      if (restCb) restCb.addEventListener('change', syncRestMode);
+      modal.querySelector('#sdiv-done')?.addEventListener('click', () => {
+        overlay.remove();
+      });
       modal.querySelectorAll('.sdiv-opt').forEach(b => {
         b.addEventListener('click', () => {
           const v = parseFloat(b.dataset.sub);
-          if (Number.isFinite(v) && v > 0) {
-            // Route through the helper so Run wraps spread the value
-            // across their subSteps instead of landing on the outer
-            // wrap (which is a no-op for the audible cadence).
-            _applyStepDivToStep(stepRef, v);
-            if (lockCb && lockCb.checked) {
-              _keepStepDivLocked = true;
-              _keepStepDivLockedValue = v;
-            }
+          if (!Number.isFinite(v) || v <= 0) return;
+          if (restCb && restCb.checked) {
+            // Rest-stamping mode — append a rest of size v to the
+            // active lane and keep the modal open so the user can
+            // stamp several sizes in a row.
+            const restStep = { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: v };
+            try { addToSequence(restStep); } catch (e) {}
             renderSequence();
+            return;
           }
+          // Route through the helper so Run wraps spread the value
+          // across their subSteps instead of landing on the outer
+          // wrap (which is a no-op for the audible cadence).
+          _applyStepDivToStep(stepRef, v);
+          if (lockCb && lockCb.checked) {
+            _keepStepDivLocked = true;
+            _keepStepDivLockedValue = v;
+          }
+          renderSequence();
           overlay.remove();
         });
       });
-      // Click outside dismisses without changing the size — the step
-      // keeps whatever subdivision it already had (the global default).
+      // Click outside dismisses — whether in rest mode or not, the
+      // current state stays in place (steps already added survive).
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) overlay.remove();
       });
@@ -9129,35 +9227,20 @@
       stepMode = !stepMode;
       refreshStepModeBtn();
       if (stepMode) {
-        // Fixed-mode entry: pad EVERY lane with rest slots up to the
-        // current gridColumns so the user sees a populated step grid on
-        // each lane immediately. Lanes that already have steps keep
-        // them and only get topped up — content is never trimmed at
-        // entry. Uses the current stepSubdivision (same shape the size-
-        // chip slot builder uses) so freshly added slots play at the
-        // user's currently-selected step size.
-        const cols = Math.max(1, gridColumns | 0);
-        const makeRest = () => ({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: stepSubdivision });
-        let mutated = false;
-        if (Array.isArray(lanes) && lanes.length > 0) {
-          lanes.forEach(lane => {
-            if (!Array.isArray(lane.steps)) lane.steps = [];
-            while (lane.steps.length < cols) {
-              lane.steps.push(makeRest());
-              mutated = true;
-            }
-          });
-          _aliasSequenceToActiveLane();
-        } else {
-          while (sequence.length < cols) {
-            sequence.push(makeRest());
-            mutated = true;
-          }
-        }
-        if (mutated && typeof persistWorkspace === 'function') persistWorkspace();
+        // Fixed-mode entry no longer pre-populates the lane with rests
+        // — the lane keeps whatever it had. Pressing Keep starts the
+        // sequential edit flow (see _fixedSeqAdvance below): the first
+        // step in the active lane gets selected, the next grid press
+        // writes it, selection advances. If the lane is empty when
+        // Keep activates the user can stamp rests via the step-div
+        // modal's "Record clicks as rests" mode to set up slots first.
+        if (keepMode) _fixedSeqStart();
       } else {
         clearStepModeArm();
-        // Fixed-mode exit: trim trailing rest slots from EVERY lane so
+        // Fixed-mode exit: also clear any in-progress sequential edit
+        // so the next entry starts fresh from the first step.
+        _fixedSeqActive = false;
+        // Trim trailing rest slots from EVERY lane so
         // the cleanup mirrors the entry's all-lanes padding. Lanes that
         // contain only rests get fully cleared (no leftover placeholder
         // chips); lanes with real notes just lose trailing silences.
@@ -21201,6 +21284,29 @@
           // handler at bindFluidGridHandlers handles press / move /
           // release as a continuous bend.
           if (fluidGridMode) return;
+          // Fixed-mode sequential write — when Fixed + Keep is on, a
+          // cell press writes the pressed note into the currently
+          // selected slot and advances. Fires audio first so the
+          // press still sounds while the lane writes, then bails out
+          // of the regular wrap / poly handlers below.
+          if (_fixedSeqActive && stepMode && keepMode && notes[i]) {
+            try {
+              const params = { ...cellParams[i] };
+              const prev = _suppressCellFlash;
+              _suppressCellFlash = true;
+              try { playNote(notes[i].freq, params); }
+              finally { _suppressCellFlash = prev; }
+            } catch (err) {}
+            const step = {
+              freq: notes[i].freq,
+              label: notes[i].label,
+              cellIndex: i,
+              sound: cellParams[i].type,
+              params: { ...cellParams[i] },
+            };
+            _fixedSeqWrite(step);
+            return;
+          }
           // Wrap (chordMode) takes precedence over the note-mode click
           // routing so accumulating notes works the same way regardless
           // of whether the user is in Spell, Run, or Stack. Toggling
@@ -22647,6 +22753,15 @@
       rb.addEventListener('click', () => {
         restBars.forEach(b => b.classList.add('flash'));
         setTimeout(() => restBars.forEach(b => b.classList.remove('flash')), 80);
+        // Fixed-mode sequential write — REST counts as a valid "note"
+        // press in the spec ("the next grid press (including rest) sets
+        // that step to be that note"). Writes a rest into the current
+        // slot and advances the selection.
+        if (_fixedSeqActive && stepMode && keepMode) {
+          const restStep = { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: stepSubdivision };
+          _fixedSeqWrite(restStep);
+          return;
+        }
         // duration:1 matches makeRestStep + every cell-add path. Earlier
         // this read `noteLength` (the legacy Hold multiplier), so any
         // session that inherited a saved noteLength > 1 would render
@@ -22711,6 +22826,11 @@
         // session-lock semantics).
         _keepStepDivLocked = false;
         _keepStepDivLockedValue = null;
+        // Fixed-mode sequential edit: Keep-on while stepMode is on
+        // selects the first step in the active lane and starts the
+        // advance flow; Keep-off cancels it (clears selection).
+        if (stepMode && keepMode) _fixedSeqStart();
+        else if (!keepMode) _fixedSeqCancel();
         refresh();
       });
     })();

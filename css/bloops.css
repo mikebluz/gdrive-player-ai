@@ -2450,7 +2450,16 @@
          get eaten whenever the user's thumb landed on a chip. */
       touch-action: pan-y;
     }
-    .seq-step.rest { color: #4a4a6a; }
+    /* Rests get a brighter default outline so the "—" glyph sits in a
+       clearly-visible chip even before the per-step-div tint kicks in
+       (and as a fallback for rests whose subdivision doesn't match any
+       known step-div size). The inline border/background written by
+       renderSequence's rest-tint branch overrides these. */
+    .seq-step.rest {
+      color: #cbd5e0;
+      border-color: #4a5568;
+      background: rgba(74, 85, 104, 0.18);
+    }
     /* Per-step pan glow — blue for right pan, purple for left. Uses
        layered box-shadows so the chip's own border-color (set inline by
        the palette tint) keeps showing through, and the .active /
@@ -4359,6 +4368,31 @@
       .step-div-modal .sdiv-opt:hover { border-color: #4299e1; color: #4299e1; }
     }
     .step-div-modal .sdiv-opt:active { background: rgba(66,153,225,0.18); }
+    /* Size → hue mapping. Mirrors _stepDivColor / _stepDivHue in
+       bloops.html so the modal buttons read at a glance which length
+       each option is, and so the rest chips in the lane share the
+       colour code. Border carries the signal, fill stays light so the
+       row doesn't shout. Hover/active reuses the same hue. */
+    .step-div-modal .sdiv-opt[data-sub="0.125"] { color: hsl(0, 70%, 70%);    border-color: hsl(0, 70%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.25"]  { color: hsl(35, 75%, 70%);   border-color: hsl(35, 70%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.5"]   { color: hsl(60, 75%, 70%);   border-color: hsl(60, 65%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="1"]     { color: hsl(110, 60%, 70%);  border-color: hsl(110, 55%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="2"]     { color: hsl(170, 60%, 70%);  border-color: hsl(170, 55%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="4"]     { color: hsl(210, 70%, 75%);  border-color: hsl(210, 65%, 50%); }
+    .step-div-modal .sdiv-opt[data-sub="8"]     { color: hsl(260, 70%, 75%);  border-color: hsl(260, 60%, 55%); }
+    .step-div-modal .sdiv-opt[data-sub="12"]    { color: hsl(300, 65%, 75%);  border-color: hsl(300, 55%, 55%); }
+    .step-div-modal .sdiv-opt[data-sub="16"]    { color: hsl(330, 70%, 75%);  border-color: hsl(330, 60%, 55%); }
+    @media (hover: hover) {
+      .step-div-modal .sdiv-opt[data-sub="0.125"]:hover { background: hsla(0, 70%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="0.25"]:hover  { background: hsla(35, 70%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="0.5"]:hover   { background: hsla(60, 65%, 50%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="1"]:hover     { background: hsla(110, 55%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="2"]:hover     { background: hsla(170, 55%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="4"]:hover     { background: hsla(210, 65%, 55%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="8"]:hover     { background: hsla(260, 60%, 55%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="12"]:hover    { background: hsla(300, 55%, 55%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="16"]:hover    { background: hsla(330, 60%, 55%, 0.20); }
+    }
     .step-div-modal .sdiv-lock {
       display: flex; align-items: center; gap: 8px;
       font-family: 'Segoe UI', sans-serif;

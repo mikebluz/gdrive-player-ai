@@ -4656,6 +4656,21 @@
             chip.style.borderColor = c;
             chip.style.background = tintHsl(c, 0.5);
             chip.style.color = c;
+          } else if (isRestStep(step)) {
+            // Rests: color the outline + a light wash by step-div size
+            // so the user can read the rhythm at a glance and the dim
+            // "—" glyph sits inside a visible boundary. The fill stays
+            // low-alpha so a rest doesn't compete with note chips for
+            // attention; the border carries the colour signal.
+            const dur = step.duration || 1;
+            const sub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+            const c = _stepDivColor(sub * dur, 60, 70);
+            if (c) {
+              chip.style.borderColor = c;
+              chip.style.background = tintHsl(c, 0.16);
+              chip.style.color = c;
+              chip.classList.add('rest-sized');
+            }
           }
         }
         bindStepLongPress(chip, i);
@@ -21147,6 +21162,36 @@
       if (step.chord && step.chord[0]) return labelToPitchClass(step.chord[0].label);
       if (step.freq != null) return labelToPitchClass(step.label);
       return null;
+    }
+    // Map a step-div size (1/32 … 4/1) to a hue so the step-div
+    // modal buttons and rest chips read at a glance which length
+    // each slot is. Sorted shortest → longest across the rainbow.
+    const _STEP_DIV_HUE_TABLE = {
+      0.125: 0,    // 1/32 — red
+      0.25:  35,   // 1/16 — orange
+      0.5:   60,   // 1/8  — yellow
+      1:     110,  // 1/4  — green
+      2:     170,  // 1/2  — teal
+      4:     210,  // 1/1  — blue
+      8:     260,  // 2/1  — indigo
+      12:    300,  // 3/1  — purple
+      16:    330,  // 4/1  — magenta
+    };
+    function _stepDivHue(sub) {
+      const v = Number(sub);
+      if (!Number.isFinite(v) || v <= 0) return null;
+      // Snap to the nearest known entry — accommodates floats from
+      // saved snapshots that aren't byte-exact (e.g. 0.50000001).
+      let best = null, bestDelta = Infinity;
+      for (const k of Object.keys(_STEP_DIV_HUE_TABLE)) {
+        const d = Math.abs(parseFloat(k) - v);
+        if (d < bestDelta) { bestDelta = d; best = k; }
+      }
+      return best != null ? _STEP_DIV_HUE_TABLE[best] : null;
+    }
+    function _stepDivColor(sub, sat = 70, light = 60) {
+      const h = _stepDivHue(sub);
+      return (h == null) ? null : `hsl(${h}, ${sat}%, ${light}%)`;
     }
     function tintHsl(color, alpha) {
       // Accept either "hsl(h, s%, l%)" or "#rgb"/"#rrggbb" and return a

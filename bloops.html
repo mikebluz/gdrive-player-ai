@@ -5388,6 +5388,23 @@
         _fixedSeqActive = false;
         return;
       }
+      // Defensive: if the user happened to leave All-mode on from a
+      // prior session, sliding any of the Pan/Vol/Slip faders would
+      // broadcast lane-wide instead of editing the currently-selected
+      // step, which is exactly the "one step changes the other"
+      // surprise. Drop the flag (and refresh the editor row's chrome)
+      // so the sequential flow lands in per-step edit mode every
+      // time.
+      if (typeof _allLaneMode !== 'undefined' && _allLaneMode) {
+        _allLaneMode = false;
+        const allBtn = document.getElementById('step-all-btn');
+        if (allBtn) {
+          allBtn.classList.remove('active');
+          allBtn.setAttribute('aria-pressed', 'false');
+        }
+        const editRow = document.getElementById('step-edit-row');
+        if (editRow) editRow.classList.remove('all-mode');
+      }
       _fixedSeqActive = true;
       setSelectedStep(0);
       renderSequence();
@@ -5412,14 +5429,22 @@
       snapshotForUndo('Fixed: set step ' + (idx + 1));
       const slotSub = sequence[idx].subdivision;
       const slotDur = sequence[idx].duration;
+      // Deep-clone the incoming step via cloneStep so the slot's
+      // params (and any nested arrays like wavetableMix) don't share
+      // references with the source step or with prior slots. The
+      // shallow `{ ...step }` spread used here previously preserved
+      // inner-array refs — editing one step's wavetableMix would have
+      // mutated every slot built off the same cellParams entry.
+      const writeStep = cloneStep(step);
       // Preserve the slot's existing rhythm fields so the lane's
       // step-div pattern stays intact across writes.
-      sequence[idx] = {
-        ...step,
-        params: step.params ? { ...step.params } : undefined,
-        subdivision: (slotSub != null) ? slotSub : (step.subdivision != null ? step.subdivision : stepSubdivision),
-        duration: (slotDur != null) ? slotDur : (step.duration || 1),
-      };
+      writeStep.subdivision = (slotSub != null)
+        ? slotSub
+        : (writeStep.subdivision != null ? writeStep.subdivision : stepSubdivision);
+      writeStep.duration = (slotDur != null)
+        ? slotDur
+        : (writeStep.duration || 1);
+      sequence[idx] = writeStep;
       const nextIdx = idx + 1;
       if (nextIdx >= sequence.length) {
         // Last slot just got written — exit Fixed mode entirely (per

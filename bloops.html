@@ -3009,9 +3009,18 @@
       // backward from finalDest: chainHead is the synth's connect
       // target. effectNodes get disposed alongside the synth on
       // release so they don't leak.
+      //
+      // Fast path — when neither pan nor any FX is engaged we skip
+      // the chain build entirely. Cells default to all zeros, so the
+      // common cell-press path pays nothing for the FX support and
+      // press-to-sound latency matches the pre-FX behaviour. The
+      // _fxBuildersSus object below is only allocated when needed.
       let chainHead = finalDest;
       const sustainEffectNodes = [];
       const panNorm = Math.max(-1, Math.min(1, (pan || 0) / 100));
+      const anyFxActive = (distortion > 0 || autoFilter > 0 || phaser > 0
+        || vibrato > 0 || chorus > 0 || tremolo > 0 || delay > 0
+        || pingPong > 0 || reverb > 0 || autoPan > 0);
       if (Math.abs(panNorm) > 0.001) {
         const pn = new Tone.Panner(panNorm).connect(chainHead);
         sustainEffectNodes.unshift(pn);
@@ -3021,76 +3030,79 @@
       const _bpm = (typeof tempoInput !== 'undefined' && tempoInput && tempoInput.value)
         ? (parseInt(tempoInput.value, 10) || 120)
         : 120;
-      const _fxBuildersSus = {
-        distortion: () => distortion > 0 ? new Tone.Distortion({
-          distortion: Math.max(0, Math.min(1, distortion / 100)), wet: 1,
-        }) : null,
-        autoFilter: () => autoFilter > 0 ? new Tone.AutoFilter({
-          frequency:     Math.max(0.01, autoFilterFreq),
-          depth:         Math.max(0, Math.min(1, autoFilterDepth / 100)),
-          baseFrequency: Math.max(20, autoFilterBaseFreq),
-          octaves: 2.6,
-          wet:     Math.max(0, Math.min(1, autoFilter / 100)),
-        }) : null,
-        phaser: () => phaser > 0 ? new Tone.Phaser({
-          frequency: Math.max(0.01, phaserFreq),
-          octaves:   Math.max(1, Math.min(7, phaserOctaves)),
-          baseFrequency: 350,
-          wet:       Math.max(0, Math.min(1, phaser / 100)),
-        }) : null,
-        vibrato: () => vibrato > 0 ? new Tone.Vibrato({
-          frequency: Math.max(0.01, vibratoFreq),
-          depth:     Math.max(0, Math.min(1, vibratoDepth / 100)),
-          wet:       Math.max(0, Math.min(1, vibrato / 100)),
-        }) : null,
-        chorus: () => chorus > 0 ? new Tone.Chorus({
-          frequency: Math.max(0.01, chorusFreq),
-          depth:     Math.max(0, Math.min(1, chorusDepth / 100)),
-          delayTime: 3.5, feedback: 0.1,
-          wet:       Math.max(0, Math.min(1, chorus / 100)),
-        }) : null,
-        tremolo: () => tremolo > 0 ? new Tone.Tremolo({
-          frequency: Math.max(0.01, tremoloFreq),
-          depth:     Math.max(0, Math.min(1, tremoloDepth / 100)),
-          wet:       Math.max(0, Math.min(1, tremolo / 100)),
-        }) : null,
-        delay: () => delay > 0 ? new Tone.FeedbackDelay({
-          delayTime: delaySync
-            ? noteValueToSec(delaySync, _bpm)
-            : Math.max(0.001, (delayTime || 0) / 1000),
-          feedback:  Math.max(0, Math.min(0.95, delayFeedback / 100)),
-          wet:       Math.max(0, Math.min(1, delay / 100)),
-        }) : null,
-        pingPong: () => pingPong > 0 ? new Tone.PingPongDelay({
-          delayTime: pingPongSync
-            ? noteValueToSec(pingPongSync, _bpm)
-            : Math.max(0.001, (pingPongTime || 0) / 1000),
-          feedback:  Math.max(0, Math.min(0.95, pingPongFeedback / 100)),
-          wet:       Math.max(0, Math.min(1, pingPong / 100)),
-        }) : null,
-        reverb: () => reverb > 0 ? new Tone.Freeverb({
-          roomSize:  Math.max(0, Math.min(0.99, reverbSize / 100)),
-          dampening: 500 + Math.max(0, Math.min(100, reverbTone)) * 95,
-          wet:       Math.max(0, Math.min(1, reverb / 100)),
-        }) : null,
-        autoPan: () => autoPan > 0 ? new Tone.AutoPanner({
-          frequency: Math.max(0.01, autoPanFreq),
-          depth:     Math.max(0, Math.min(1, autoPanDepth / 100)),
-          wet:       Math.max(0, Math.min(1, autoPan / 100)),
-        }) : null,
-      };
-      const _fxOrderSus = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
-        ? globalFx.fxOrder
-        : FX_NAMES;
-      for (let i = _fxOrderSus.length - 1; i >= 0; i--) {
-        const node = _fxBuildersSus[_fxOrderSus[i]]?.();
-        if (!node) continue;
-        startLfo(node);
-        node.connect(chainHead);
-        sustainEffectNodes.unshift(node);
-        chainHead = node;
+      if (anyFxActive) {
+        const _fxBuildersSus = {
+          distortion: () => distortion > 0 ? new Tone.Distortion({
+            distortion: Math.max(0, Math.min(1, distortion / 100)), wet: 1,
+          }) : null,
+          autoFilter: () => autoFilter > 0 ? new Tone.AutoFilter({
+            frequency:     Math.max(0.01, autoFilterFreq),
+            depth:         Math.max(0, Math.min(1, autoFilterDepth / 100)),
+            baseFrequency: Math.max(20, autoFilterBaseFreq),
+            octaves: 2.6,
+            wet:     Math.max(0, Math.min(1, autoFilter / 100)),
+          }) : null,
+          phaser: () => phaser > 0 ? new Tone.Phaser({
+            frequency: Math.max(0.01, phaserFreq),
+            octaves:   Math.max(1, Math.min(7, phaserOctaves)),
+            baseFrequency: 350,
+            wet:       Math.max(0, Math.min(1, phaser / 100)),
+          }) : null,
+          vibrato: () => vibrato > 0 ? new Tone.Vibrato({
+            frequency: Math.max(0.01, vibratoFreq),
+            depth:     Math.max(0, Math.min(1, vibratoDepth / 100)),
+            wet:       Math.max(0, Math.min(1, vibrato / 100)),
+          }) : null,
+          chorus: () => chorus > 0 ? new Tone.Chorus({
+            frequency: Math.max(0.01, chorusFreq),
+            depth:     Math.max(0, Math.min(1, chorusDepth / 100)),
+            delayTime: 3.5, feedback: 0.1,
+            wet:       Math.max(0, Math.min(1, chorus / 100)),
+          }) : null,
+          tremolo: () => tremolo > 0 ? new Tone.Tremolo({
+            frequency: Math.max(0.01, tremoloFreq),
+            depth:     Math.max(0, Math.min(1, tremoloDepth / 100)),
+            wet:       Math.max(0, Math.min(1, tremolo / 100)),
+          }) : null,
+          delay: () => delay > 0 ? new Tone.FeedbackDelay({
+            delayTime: delaySync
+              ? noteValueToSec(delaySync, _bpm)
+              : Math.max(0.001, (delayTime || 0) / 1000),
+            feedback:  Math.max(0, Math.min(0.95, delayFeedback / 100)),
+            wet:       Math.max(0, Math.min(1, delay / 100)),
+          }) : null,
+          pingPong: () => pingPong > 0 ? new Tone.PingPongDelay({
+            delayTime: pingPongSync
+              ? noteValueToSec(pingPongSync, _bpm)
+              : Math.max(0.001, (pingPongTime || 0) / 1000),
+            feedback:  Math.max(0, Math.min(0.95, pingPongFeedback / 100)),
+            wet:       Math.max(0, Math.min(1, pingPong / 100)),
+          }) : null,
+          reverb: () => reverb > 0 ? new Tone.Freeverb({
+            roomSize:  Math.max(0, Math.min(0.99, reverbSize / 100)),
+            dampening: 500 + Math.max(0, Math.min(100, reverbTone)) * 95,
+            wet:       Math.max(0, Math.min(1, reverb / 100)),
+          }) : null,
+          autoPan: () => autoPan > 0 ? new Tone.AutoPanner({
+            frequency: Math.max(0.01, autoPanFreq),
+            depth:     Math.max(0, Math.min(1, autoPanDepth / 100)),
+            wet:       Math.max(0, Math.min(1, autoPan / 100)),
+          }) : null,
+        };
+        const _fxOrderSus = (globalFx && Array.isArray(globalFx.fxOrder) && globalFx.fxOrder.length === FX_NAMES.length)
+          ? globalFx.fxOrder
+          : FX_NAMES;
+        for (let i = _fxOrderSus.length - 1; i >= 0; i--) {
+          const node = _fxBuildersSus[_fxOrderSus[i]]?.();
+          if (!node) continue;
+          startLfo(node);
+          node.connect(chainHead);
+          sustainEffectNodes.unshift(node);
+          chainHead = node;
+        }
       }
       const disposeSustainFxChain = () => {
+        if (sustainEffectNodes.length === 0) return;
         sustainEffectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
       };
       let synth;
@@ -3513,9 +3525,17 @@
         // dry no matter what reverb / delay / etc. the lane was saved
         // with. Stash lives on the lane bus head (set in playTrackItem)
         // so the routing target naturally carries its own samplers.
+        // The map carries null placeholders for sample types the lane
+        // might use — `_materialize` builds the Tone.Sampler on first
+        // hit so multi-track item starts don't fire N parallel HTTP
+        // fetches at once (the bulk of the multi-track crash on iOS).
         const laneSamplerMap = destination && destination._laneSamplers;
         if (laneSamplerMap && typeof laneSamplerMap.get === 'function') {
-          const laneSamp = laneSamplerMap.get(type.slice(7));
+          const sampleId = type.slice(7);
+          let laneSamp = laneSamplerMap.get(sampleId);
+          if (!laneSamp && typeof laneSamplerMap._materialize === 'function') {
+            laneSamp = laneSamplerMap._materialize(sampleId);
+          }
           if (laneSamp && laneSamp.loaded) sampler = laneSamp;
         }
         if (!sampler && Number.isFinite(trackIdx) && tracks[trackIdx]) {
@@ -11860,9 +11880,12 @@
         // notes route through the lane FX chain. Dispose alongside
         // the bus so the (sometimes many) Tone.Samplers don't leak
         // when the user adds a long sample-heavy track and swaps
-        // items repeatedly.
+        // items repeatedly. The map carries null placeholders for
+        // sample types that never fired in this item — skip those
+        // so we don't try to dispose a null.
         if (b._laneSamplerMap && typeof b._laneSamplerMap.forEach === 'function') {
           b._laneSamplerMap.forEach(samp => {
+            if (!samp) return;
             try { samp.disconnect(); } catch (e) {}
             try { samp.dispose();    } catch (e) {}
           });
@@ -12714,6 +12737,16 @@
       // bus head; playNote reads it via `destination._laneSamplers`.
       // Lanes without FX skip this work — they sound identical
       // whether the sampler hits the head or the trackBus.
+      //
+      // Lazy creation: instead of constructing every per-item-lane
+      // sampler upfront when the item starts, the maps below carry
+      // null entries that playNote materialises on first use. Eager
+      // construction was firing N parallel HTTP fetches across every
+      // (track, lane, sample) tuple the moment playAllTracks ran —
+      // on a phone with two or more tracks that piled up enough
+      // concurrent decodes to stall (and sometimes crash) Safari /
+      // Chrome iOS. Lazy build spreads the cost across actual note
+      // events and skips samplers whose sample type never fires.
       try {
         laneEntries.forEach((e, li) => {
           const bus = itemBuses[li];
@@ -12724,22 +12757,28 @@
           collectSampleTypes(e.flat, types);
           if (types.size === 0) return;
           const sMap = new Map();
-          types.forEach(id => {
-            const info = sampleSamplers.get(id);
-            if (!info || !info.urls) return;
+          types.forEach(id => { sMap.set(id, null); }); // placeholder
+          sMap._busHead = bus.head;
+          sMap._materialize = (sampleId) => {
+            const existing = sMap.get(sampleId);
+            if (existing) return existing;
+            const info = sampleSamplers.get(sampleId);
+            if (!info || !info.urls) return null;
             try {
               const samp = new Tone.Sampler({
                 urls: info.urls,
                 baseUrl: info.baseUrl,
                 release: 1,
               }).connect(bus.head);
-              sMap.set(id, samp);
-            } catch (err) {}
-          });
-          if (sMap.size > 0) {
-            bus.head._laneSamplers = sMap;
-            bus._laneSamplerMap    = sMap; // kept for teardown
-          }
+              sMap.set(sampleId, samp);
+              return samp;
+            } catch (err) {
+              sMap.delete(sampleId);
+              return null;
+            }
+          };
+          bus.head._laneSamplers = sMap;
+          bus._laneSamplerMap    = sMap; // kept for teardown
         });
       } catch (e) {}
       // Also prefetch the per-track samplers for any sample type used

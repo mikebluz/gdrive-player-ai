@@ -6176,11 +6176,11 @@
     function showVarianceDialog(stepIndex) {
       const step = sequence[stepIndex];
       if (!step || step.isSub) return;
-      // Variance only applies to single-note steps for now. Chord
-      // steps would need each variant to be a full chord array; rest
-      // steps have nothing to swap.
-      if (step.freq == null) return;
-      if (Array.isArray(step.chord)) return;
+      // Variance works on every non-sub step type — single notes,
+      // chords, and rests. Variants are still added as single notes
+      // via cell presses; when picked they override the parent step
+      // (chord array gets cleared, rest freq=null gets a real freq)
+      // so any step in a lane can be made to mutate across loops.
       if (document.querySelector('.variance-overlay')) return;
       const overlay = document.createElement('div');
       overlay.className = 'modal-overlay variance-overlay';
@@ -6235,30 +6235,45 @@
     function beginVarianceEdit(stepIndex, mode, opts) {
       const step = sequence[stepIndex];
       if (!step || step.isSub) return;
-      if (step.freq == null) return;
-      if (Array.isArray(step.chord)) return;
       const itersPerVariant = (opts && Number.isFinite(opts.itersPerVariant) && opts.itersPerVariant > 0)
         ? Math.min(64, Math.floor(opts.itersPerVariant)) : 1;
       const randomEachIter = !!(opts && opts.randomEachIter);
       snapshotForUndo('Variance');
+      // Auto-finalize any in-flight variance edit on another step
+      // before starting a new one — without this the previous step's
+      // pool stayed armed for cell-press capture even after the user
+      // moved on, so a second variance attempt landed variants on the
+      // wrong step (matching the user's "doesn't work for more than
+      // one note in a lane" report).
+      if (_varianceEdit && _varianceEdit.stepRef && _varianceEdit.stepRef !== step) {
+        try { finalizeVarianceEdit(); } catch (e) { _varianceEdit = null; }
+      }
       if (!step.variance || !Array.isArray(step.variance.notes)) {
-        // Seed the pool with the step's current note so the existing
-        // pitch is one of the variants from the start. Carry the
-        // step's sound + params explicitly so the seed always plays
-        // the same tone as the step itself (without this, a step that
-        // had the cell's tone in step.params but no sibling .sound
-        // could produce a sine fallback when the variant was picked).
+        // Seed the pool with the step's current shape so the existing
+        // sound is one of the variants from the start. Carry the
+        // step's chord array if any (chord steps get chord-shaped
+        // seeds), single-note params otherwise, or just freq=null for
+        // rests. _resolveVariantStep below handles each case.
+        const seed = (Array.isArray(step.chord) && step.chord.length > 0)
+          ? {
+              chord: step.chord.map(n => ({
+                ...n,
+                params: n.params ? { ...n.params } : undefined,
+              })),
+              label: step.label,
+            }
+          : {
+              freq: step.freq,
+              label: step.label,
+              cellIndex: step.cellIndex,
+              sound: step.sound || (step.params && step.params.type) || undefined,
+              params: step.params ? { ...step.params } : (step.sound ? { type: step.sound } : undefined),
+            };
         step.variance = {
           mode,
           itersPerVariant,
           randomEachIter,
-          notes: [{
-            freq: step.freq,
-            label: step.label,
-            cellIndex: step.cellIndex,
-            sound: step.sound || (step.params && step.params.type) || undefined,
-            params: step.params ? { ...step.params } : (step.sound ? { type: step.sound } : undefined),
-          }],
+          notes: [seed],
         };
       } else {
         step.variance.mode = mode;
@@ -6311,10 +6326,6 @@
     // unchanged when there's no variance pool with multiple entries.
     function _resolveVariantStep(step, iter) {
       if (!step || !step.variance) return step;
-      // Variance only swaps single-note steps. Chord steps fall
-      // through unchanged so chord playback (which reads voice-level
-      // params, not step-level) isn't broken by a half-applied swap.
-      if (Array.isArray(step.chord)) return step;
       const arr = step.variance.notes;
       if (!Array.isArray(arr) || arr.length < 2) return step;
       const v = step.variance;
@@ -6334,9 +6345,34 @@
       }
       const variant = arr[pickIdx];
       if (!variant) return step;
-      // Fall back to the parent step's tone whenever the variant lacks
-      // its own — without this, a variant authored without a sibling
-      // sound/params would silently play a sine on its iteration.
+      // Strip the parent step's chord array first — if the variant
+      // is a single-note or rest the step should play that pitch (or
+      // silence), not the original chord underneath. Chord variants
+      // re-add their own chord below. Without this, a chord step's
+      // variance would always sound the underlying chord regardless
+      // of which variant the cycler picked.
+      const base = { ...step };
+      delete base.chord;
+      // Chord variant — variant carries a chord[]. Drop the variant
+      // shape on top of the bare step (with chord already cleared).
+      if (Array.isArray(variant.chord) && variant.chord.length > 0) {
+        return {
+          ...base,
+          chord: variant.chord.map(n => ({
+            ...n,
+            params: n.params ? { ...n.params } : undefined,
+          })),
+          label: variant.label != null ? variant.label : step.label,
+          freq:  null,
+          cellIndex: null,
+          sound: undefined,
+          params: undefined,
+        };
+      }
+      // Single-note variant (the original path). Fall back to the
+      // parent step's tone whenever the variant lacks its own — a
+      // variant authored without a sibling sound/params would
+      // otherwise silently play a sine on its iteration.
       const variantParams = variant.params
         ? { ...variant.params }
         : (step.params ? { ...step.params } : (variant.sound ? { type: variant.sound } : undefined));
@@ -6345,7 +6381,7 @@
         || step.sound
         || (step.params && step.params.type);
       return {
-        ...step,
+        ...base,
         freq:      (variant.freq != null) ? variant.freq : step.freq,
         label:     (variant.label != null) ? variant.label : step.label,
         cellIndex: (variant.cellIndex != null) ? variant.cellIndex : step.cellIndex,

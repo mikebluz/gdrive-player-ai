@@ -2529,6 +2529,70 @@
       .step-edit-row > #step-edit-btn:hover { border-color: #4299e1; color: #4299e1; }
     }
     .step-edit-row > #step-edit-btn:active { background: rgba(66,153,225,0.18); }
+    /* "All" toggle — sits between Edit and the Pan/Vol/Slip bars. When
+       active the slider writes broadcast to every step in the active
+       lane (instead of just the selected step). The active style picks
+       a warm amber accent so it reads clearly distinct from per-step
+       cyan editing. */
+    .step-edit-row > #step-all-btn {
+      flex: 0 0 auto;
+      margin: 4px 6px 4px 0;
+      padding: 6px 10px;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    .step-edit-row > #step-all-btn[hidden] { display: none; }
+    @media (hover: hover) {
+      .step-edit-row > #step-all-btn:hover { border-color: #f6ad55; color: #f6ad55; }
+    }
+    .step-edit-row > #step-all-btn.active {
+      background: rgba(246, 173, 85, 0.18);
+      border-color: #f6ad55;
+      color: #fbd38d;
+      box-shadow: 0 0 10px rgba(246, 173, 85, 0.35);
+    }
+    /* All-mode color theme for the whole edit row + sub-bars. Different
+       background tint, warmer accent color on labels and value
+       readouts so the user can see at a glance that the sliders now
+       broadcast lane-wide. */
+    .step-edit-row.all-mode {
+      background: #2a1f10;
+      border-bottom-color: #5a3a14;
+    }
+    .step-edit-row.all-mode .step-pan-bar,
+    .step-edit-row.all-mode .step-vol-bar,
+    .step-edit-row.all-mode .step-slip-bar {
+      background: #2a1f10;
+    }
+    .step-edit-row.all-mode .step-pan-bar,
+    .step-edit-row.all-mode .step-vol-bar {
+      border-bottom-color: #5a3a14;
+    }
+    .step-edit-row.all-mode .step-pan-label,
+    .step-edit-row.all-mode .step-vol-label,
+    .step-edit-row.all-mode .step-slip-label {
+      color: #fbd38d;
+    }
+    .step-edit-row.all-mode .step-pan-bar input[type="range"],
+    .step-edit-row.all-mode .step-vol-bar input[type="range"],
+    .step-edit-row.all-mode .step-slip-bar input[type="range"] {
+      accent-color: #f6ad55;
+    }
+    .step-edit-row.all-mode .step-pan-val,
+    .step-edit-row.all-mode .step-vol-val,
+    .step-edit-row.all-mode .step-slip-val {
+      color: #fbd38d;
+    }
     .step-edit-row > .step-edit-bars {
       flex: 1 1 auto;
       min-width: 0;

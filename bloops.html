@@ -332,6 +332,7 @@
            voice editor so it travels with whichever lane is active. -->
       <div class="step-edit-row" id="step-edit-row" hidden>
         <button type="button" id="step-edit-btn" hidden aria-label="Edit" title="Open the step edit menu for the selected step">✎</button>
+        <button type="button" id="step-all-btn" hidden aria-pressed="false" title="Apply Pan / Vol / Slip to every step in this lane while active. Click again to return to per-step editing.">All</button>
         <div class="step-edit-bars">
           <div class="step-pan-bar" id="step-pan-bar" hidden>
             <span class="step-pan-label" id="step-pan-label">Pan</span>
@@ -4752,6 +4753,12 @@
     // it drives the editor's displayed Hold/Div values.
     let multiSelectMode = false;
     let selectedStepRefs = [];
+    // When true, the Pan / Vol / Slip sliders broadcast their value to
+    // every playable step in the active lane instead of just the
+    // selected chip(s). Toggled by the "All" button next to the Edit
+    // button. The edit row picks up the .all-mode CSS so the user
+    // sees that subsequent drags will retune the whole lane.
+    let _allLaneMode = false;
 
     // ---- Undo / Redo stacks --------------------------------------------
     // Snapshots the chunks of state that user-mutating actions affect so
@@ -5136,7 +5143,10 @@
       const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
       const polyLaneScope = false;
       const eligible = selEligible;
-      const showBars = eligible.length > 0;
+      // Keep the row up while All mode is on — even with no selection,
+      // the user needs the sliders visible to dial in lane-wide values
+      // and the All button itself reachable to deactivate.
+      const showBars = eligible.length > 0 || _allLaneMode;
       // Read the slider's display value from the primary step's first
       // playable leaf — collapses chord and sub cases to the same
       // lookup. For chord steps the leaf IS the chord step (chord
@@ -5204,6 +5214,47 @@
       // lane-scope edits don't have one).
       if (editRow) editRow.hidden = !showBars;
       if (editBtn) editBtn.hidden = !(showBars && selEligible.length > 0);
+      // "All" toggle — visible whenever the bars are. Its active-state
+      // styling is owned by the toggle itself (set in the click
+      // handler below) so just track presence here.
+      const allBtn = document.getElementById('step-all-btn');
+      if (allBtn) {
+        allBtn.hidden = !showBars;
+        allBtn.classList.toggle('active', !!_allLaneMode);
+        allBtn.setAttribute('aria-pressed', _allLaneMode ? 'true' : 'false');
+      }
+      if (editRow) editRow.classList.toggle('all-mode', !!_allLaneMode);
+      // When All mode is on, prefer the active lane's first eligible
+      // step for the slider readouts so the bars reflect the value
+      // that's actually broadcast lane-wide. The single-step path
+      // already does this above when a selection exists.
+      if (_allLaneMode && showBars && Array.isArray(lanes) && lanes[activeLaneIdx]) {
+        const laneSteps = lanes[activeLaneIdx].steps || [];
+        let firstLeaf = null;
+        for (const s of laneSteps) {
+          firstLeaf = _firstStepLeaf(s);
+          if (firstLeaf) break;
+        }
+        if (firstLeaf) {
+          if (panSlider) {
+            const p = (firstLeaf.params && Number.isFinite(firstLeaf.params.pan)) ? firstLeaf.params.pan : 0;
+            panSlider.value = String(p);
+            if (panVal) panVal.textContent = formatPanLabel(p);
+          }
+          if (volSlider) {
+            const v = (firstLeaf.params && Number.isFinite(firstLeaf.params.volume)) ? firstLeaf.params.volume : 100;
+            volSlider.value = String(v);
+            if (volVal) volVal.textContent = v + '%';
+          }
+          if (slipSlider) {
+            const s = (firstLeaf.params && Number.isFinite(firstLeaf.params.slip))
+              ? firstLeaf.params.slip
+              : (Number.isFinite(firstLeaf.slip) ? firstLeaf.slip : 0);
+            slipSlider.value = String(s);
+            if (slipVal) slipVal.textContent = (s > 0 ? '+' : '') + s + '%';
+          }
+        }
+      }
     }
     // Hold is meaningful only when Step Div is 1/1 (value=4). Below 1/1 the
     // step is already shorter than a beat, so multiplying its length leads
@@ -22664,6 +22715,86 @@
       });
     })();
 
+    // ---- All-lane edit mode ----
+    // Walks every step in the active lane and writes the given value
+    // onto the matching leaf params field. Used both at toggle-on
+    // (to broadcast the slider's current value lane-wide) and from
+    // each slider's input handler while All mode is active. Sub /
+    // chord steps fan out via _forEachStepLeaf so nested voices
+    // pick up the same value the leaf-level params do.
+    function _applyValueToAllLaneSteps(field, value) {
+      if (!Array.isArray(lanes) || !lanes[activeLaneIdx]) return;
+      const laneSteps = lanes[activeLaneIdx].steps || [];
+      laneSteps.forEach(top => {
+        if (!top) return;
+        _forEachStepLeaf(top, leaf => {
+          if (!leaf || leaf.isSub) return;
+          if (!leaf.params) leaf.params = {};
+          leaf.params[field] = value;
+          if (Array.isArray(leaf.chord)) {
+            leaf.chord.forEach(voice => {
+              if (!voice) return;
+              if (!voice.params) voice.params = {};
+              voice.params[field] = value;
+            });
+          }
+        });
+      });
+    }
+    // Snapshot for undo when the user *starts* a drag in All mode
+    // (slider 'change' fires on release; we want the pre-drag state
+    // on the stack). Tracks a per-slider flag so we don't push a new
+    // snapshot for every input event during one drag.
+    const _allDragSnapshot = { pan: false, volume: false, slip: false };
+    function _startAllLaneEdit(field) {
+      if (!_allLaneMode) return;
+      if (_allDragSnapshot[field]) return;
+      _allDragSnapshot[field] = true;
+      try { snapshotForUndo('Lane ' + field + ' (All)'); } catch (e) {}
+    }
+    function _endAllLaneEdit(field) {
+      _allDragSnapshot[field] = false;
+    }
+
+    // ---- "All" button — toggle lane-wide slider broadcast ----
+    document.getElementById('step-all-btn')?.addEventListener('click', () => {
+      const turningOn = !_allLaneMode;
+      // Snapshot the pre-broadcast state only when ENABLING — that's
+      // when step values change. Disabling just flips a UI flag with
+      // no audio-data mutation, so undoing past it would be a no-op
+      // on the step array and confuse the redo stack.
+      if (turningOn) {
+        try { snapshotForUndo('Enable All-lane edit'); } catch (e) {}
+      }
+      _allLaneMode = turningOn;
+      if (turningOn) {
+        // Apply the sliders' current values to every step in the
+        // active lane immediately so the broadcast takes effect on
+        // toggle-on (matches "applies current values of those faders
+        // to all steps in that lane").
+        const panSliderEl  = document.getElementById('step-pan-slider');
+        const volSliderEl  = document.getElementById('step-vol-slider');
+        const slipSliderEl = document.getElementById('step-slip-slider');
+        if (panSliderEl) {
+          const v = Math.max(-100, Math.min(100, parseInt(panSliderEl.value, 10) || 0));
+          _applyValueToAllLaneSteps('pan', v);
+        }
+        if (volSliderEl) {
+          const v = Math.max(0, Math.min(100, parseInt(volSliderEl.value, 10) || 0));
+          _applyValueToAllLaneSteps('volume', v);
+        }
+        if (slipSliderEl) {
+          const v = Math.max(-50, Math.min(50, parseInt(slipSliderEl.value, 10) || 0));
+          _applyValueToAllLaneSteps('slip', v);
+        }
+        renderSequence();
+      }
+      // Refresh the editor so the All button paints active + the
+      // edit row picks up the all-mode color theme.
+      try { syncStepEditorFromSelection(); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    });
+
     // ---- Step Edit button ----
     // Opens the step ctx menu for the primary selected step. Uses the
     // same action list as the (now-removed) press-and-hold menu, just
@@ -22694,10 +22825,17 @@
       if (!slider) return;
       slider.addEventListener('input', () => {
         const v = parseInt(slider.value, 10) || 0;
-        applyPanToSelectedSteps(v);
+        if (_allLaneMode) {
+          _startAllLaneEdit('pan');
+          _applyValueToAllLaneSteps('pan', Math.max(-100, Math.min(100, v)));
+          renderSequence();
+        } else {
+          applyPanToSelectedSteps(v);
+        }
         if (valEl) valEl.textContent = formatPanLabel(v);
       });
       slider.addEventListener('change', () => {
+        _endAllLaneEdit('pan');
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
     })();
@@ -22713,6 +22851,12 @@
       if (!slider) return;
       slider.addEventListener('input', () => {
         const v = Math.max(0, Math.min(100, parseInt(slider.value, 10) || 0));
+        if (_allLaneMode) {
+          _startAllLaneEdit('volume');
+          _applyValueToAllLaneSteps('volume', v);
+          if (valEl) valEl.textContent = v + '%';
+          return;
+        }
         // Eligibility now matches the Edit row's: chord and sub-sequence
         // chips qualify too, so the volume slider isn't quietly hidden
         // for them. _forEachStepLeaf below fans the write down to a
@@ -22752,6 +22896,7 @@
         if (valEl) valEl.textContent = v + '%';
       });
       slider.addEventListener('change', () => {
+        _endAllLaneEdit('volume');
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
     })();
@@ -22768,6 +22913,12 @@
       if (!slider) return;
       slider.addEventListener('input', () => {
         const v = Math.max(-50, Math.min(50, parseInt(slider.value, 10) || 0));
+        if (_allLaneMode) {
+          _startAllLaneEdit('slip');
+          _applyValueToAllLaneSteps('slip', v);
+          if (valEl) valEl.textContent = (v > 0 ? '+' : '') + v + '%';
+          return;
+        }
         const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
         if (selEligible.length === 0 && polyMode && lanes[activeLaneIdx]) {
           // Lane-scope slip — shifts every step in the active lane by
@@ -22792,6 +22943,7 @@
         if (valEl) valEl.textContent = (v > 0 ? '+' : '') + v + '%';
       });
       slider.addEventListener('change', () => {
+        _endAllLaneEdit('slip');
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
     })();

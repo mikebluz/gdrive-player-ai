@@ -2879,14 +2879,19 @@
       // (Tone audio time) lets multi-voice wrap auditions pin every
       // voice to the same instant; without it, each voice computes its
       // own Tone.now() during iteration and ends up scheduled a few ms
-      // apart, sounding rolled rather than chordal.
+      // apart, sounding rolled rather than chordal. The cushion only
+      // applies when the context is actually suspended (iOS auto-
+      // suspends after idle time); a warm context fires triggerAttack
+      // at Tone.now() and skips the extra delay so press-to-sound
+      // latency on the second and later presses matches the audio
+      // engine's natural lookAhead.
       let _coldStartAt = startAt;
       try {
         const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
           ? Tone.context.rawContext : null;
         if (ac && ac.state === 'suspended' && _coldStartAt == null) {
           try { ac.resume(); } catch (e) {}
-          if (typeof Tone.now === 'function') _coldStartAt = Tone.now() + 0.08;
+          if (typeof Tone.now === 'function') _coldStartAt = Tone.now() + 0.05;
         }
       } catch (e) {}
 
@@ -3262,10 +3267,18 @@
       }
       if (synth.detune && Number.isFinite(detune)) synth.detune.value = detune;
       // Trigger at the caller's pinned startAt (wrap chord audition) or
-      // the cold-start-shifted _coldStartAt; falls back to Tone.now() at
-      // call time when both are undefined. NoiseSynth's signature is
-      // (time, velocity) — no freq — so it gets its own trigger call.
-      const _triggerAt = startAt != null ? startAt : _coldStartAt;
+      // the cold-start-shifted _coldStartAt; otherwise fire at the raw
+      // AudioContext.currentTime — Tone.now() would add the 25 ms
+      // scheduling lookAhead which is needed for synchronised step
+      // playback but pure overhead for a touch-driven sustained press.
+      // NoiseSynth's signature is (time, velocity) — no freq — so it
+      // gets its own trigger call.
+      let _triggerAt = startAt != null ? startAt : _coldStartAt;
+      if (_triggerAt == null) {
+        const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+          ? Tone.context.rawContext : null;
+        if (ac) _triggerAt = ac.currentTime;
+      }
       const isNoise = typeof type === 'string' && type.startsWith('noise');
       try {
         if (isNoise) synth.triggerAttack(_triggerAt, velocity);
@@ -21386,6 +21399,26 @@
       clearTimeout(_bloopsRevealTimer);
       document.body.classList.remove('bloops-loading');
     });
+
+    // Mobile-Safari fallback: a few iOS reloads land with the page laid
+    // out but the grid empty — usually because a transient parse / Tone
+    // hiccup raced one of the early init blocks before rebuildGrid()
+    // ran. Re-check on the next animation frame, and again after the
+    // loading gate lifts, and rebuild if no cells made it in. Cheap
+    // when the grid is already populated (length check + return).
+    function _safeguardGridRebuild() {
+      try {
+        const g = document.getElementById('grid');
+        if (!g) return;
+        if (g.children.length > 0 && cells.length > 0) return;
+        rebuildGrid();
+      } catch (e) {
+        console.warn('Safeguard rebuildGrid failed:', e);
+      }
+    }
+    requestAnimationFrame(_safeguardGridRebuild);
+    setTimeout(_safeguardGridRebuild, 250);
+    setTimeout(_safeguardGridRebuild, 1500);
 
     // ---- Top-right Tone dropdown: applies a tone to every grid cell ----
     function applyToneToAllCells(type) {

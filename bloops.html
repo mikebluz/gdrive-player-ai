@@ -10513,10 +10513,19 @@
         overlay.remove();
         if (choice != null && typeof onPick === 'function') onPick(choice);
       };
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(null); });
       modal.querySelector('#rs-stack').addEventListener('click', () => dismiss('stack'));
       modal.querySelector('#rs-run').addEventListener('click',   () => dismiss('run'));
       modal.querySelector('#rs-cancel').addEventListener('click', () => dismiss(null));
+      // Bind the click-outside-to-dismiss handler on the next frame
+      // so the click that opened this modal (the Wrap button or the
+      // multi-select wrap path) can't ride its own bubble straight
+      // into the overlay's dismiss handler and close the modal the
+      // instant it lands. Same pattern as showStepDivPicker —
+      // without this guard the modal "appears then immediately
+      // disappears" for the chord-wrap flow.
+      requestAnimationFrame(() => {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(null); });
+      });
     }
 
     document.getElementById('chord-btn').addEventListener('click', () => {

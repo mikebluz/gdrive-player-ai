@@ -2992,6 +2992,23 @@
     .kwr-pair:has(.play-lock:not(.active)) > .rest-bar {
       display: none;
     }
+    /* With REST hidden, WRAP becomes the rightmost button in the row,
+       so its outer-right edge should match the rounded right corner
+       the Rest button normally provides. When the wrap Edit pill is
+       visible the pill is what sits at the right edge, so it gets
+       the rounded corner instead and chord-btn falls back to square. */
+    .kwr-pair:has(.play-lock:not(.active)) #chord-btn {
+      border-top-right-radius: 10px;
+      border-bottom-right-radius: 10px;
+    }
+    .kwr-pair:has(.play-lock:not(.active)) .wrap-segment:has(#wrap-edit-btn:not([hidden])) > #chord-btn {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .kwr-pair:has(.play-lock:not(.active)) .wrap-segment > #wrap-edit-btn:not([hidden]) {
+      border-top-right-radius: 10px;
+      border-bottom-right-radius: 10px;
+    }
     .kwr-pair > button,
     .kwr-pair > .wrap-segment > button {
       width: 100%;

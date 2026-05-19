@@ -10718,7 +10718,17 @@
           // value if one's set). Without this, wrapped chord / sub
           // steps inherit whatever stepSubdivision was active and the
           // user has to retune them via the step Edit menu instead.
-          if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(newStep);
+          //
+          // Defer the prompt to the next macrotask so the Wrap-off
+          // click that triggered the commit is fully done bubbling
+          // before the modal mounts — otherwise the same gesture's
+          // follow-up events (the iOS-synthesised second click,
+          // pointermove on touchend, etc.) can land on the freshly-
+          // mounted overlay and close it before the user can pick.
+          if (typeof maybePromptStepDiv === 'function') {
+            const _toPrompt = newStep;
+            setTimeout(() => { try { maybePromptStepDiv(_toPrompt); } catch (e) {} }, 0);
+          }
         }
         pendingChord = [];
         refreshWrapVisuals();

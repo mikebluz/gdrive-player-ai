@@ -4373,24 +4373,30 @@
        each option is, and so the rest chips in the lane share the
        colour code. Border carries the signal, fill stays light so the
        row doesn't shout. Hover/active reuses the same hue. */
-    .step-div-modal .sdiv-opt[data-sub="0.125"] { color: hsl(0, 70%, 70%);    border-color: hsl(0, 70%, 45%); }
-    .step-div-modal .sdiv-opt[data-sub="0.25"]  { color: hsl(35, 75%, 70%);   border-color: hsl(35, 70%, 45%); }
-    .step-div-modal .sdiv-opt[data-sub="0.5"]   { color: hsl(60, 75%, 70%);   border-color: hsl(60, 65%, 45%); }
-    .step-div-modal .sdiv-opt[data-sub="1"]     { color: hsl(110, 60%, 70%);  border-color: hsl(110, 55%, 45%); }
-    .step-div-modal .sdiv-opt[data-sub="2"]     { color: hsl(170, 60%, 70%);  border-color: hsl(170, 55%, 45%); }
-    .step-div-modal .sdiv-opt[data-sub="4"]     { color: hsl(210, 70%, 75%);  border-color: hsl(210, 65%, 50%); }
-    .step-div-modal .sdiv-opt[data-sub="8"]     { color: hsl(260, 70%, 75%);  border-color: hsl(260, 60%, 55%); }
-    .step-div-modal .sdiv-opt[data-sub="12"]    { color: hsl(300, 65%, 75%);  border-color: hsl(300, 55%, 55%); }
-    .step-div-modal .sdiv-opt[data-sub="16"]    { color: hsl(330, 70%, 75%);  border-color: hsl(330, 60%, 55%); }
+    .step-div-modal .sdiv-opt[data-sub="0.08333333333333333"] { color: hsl(15, 70%, 70%);   border-color: hsl(15, 70%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.125"]               { color: hsl(0, 70%, 70%);    border-color: hsl(0, 70%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.16666666666666666"] { color: hsl(25, 70%, 70%);   border-color: hsl(25, 70%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.25"]                { color: hsl(35, 75%, 70%);   border-color: hsl(35, 70%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.3333333333333333"]  { color: hsl(50, 75%, 70%);   border-color: hsl(50, 65%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="0.5"]                 { color: hsl(60, 75%, 70%);   border-color: hsl(60, 65%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="1"]                   { color: hsl(110, 60%, 70%);  border-color: hsl(110, 55%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="2"]                   { color: hsl(170, 60%, 70%);  border-color: hsl(170, 55%, 45%); }
+    .step-div-modal .sdiv-opt[data-sub="4"]                   { color: hsl(210, 70%, 75%);  border-color: hsl(210, 65%, 50%); }
+    .step-div-modal .sdiv-opt[data-sub="8"]                   { color: hsl(260, 70%, 75%);  border-color: hsl(260, 60%, 55%); }
+    .step-div-modal .sdiv-opt[data-sub="12"]                  { color: hsl(300, 65%, 75%);  border-color: hsl(300, 55%, 55%); }
+    .step-div-modal .sdiv-opt[data-sub="16"]                  { color: hsl(330, 70%, 75%);  border-color: hsl(330, 60%, 55%); }
     @media (hover: hover) {
-      .step-div-modal .sdiv-opt[data-sub="0.125"]:hover { background: hsla(0, 70%, 50%, 0.18); }
-      .step-div-modal .sdiv-opt[data-sub="0.25"]:hover  { background: hsla(35, 70%, 50%, 0.18); }
-      .step-div-modal .sdiv-opt[data-sub="0.5"]:hover   { background: hsla(60, 65%, 50%, 0.20); }
-      .step-div-modal .sdiv-opt[data-sub="1"]:hover     { background: hsla(110, 55%, 50%, 0.18); }
-      .step-div-modal .sdiv-opt[data-sub="2"]:hover     { background: hsla(170, 55%, 50%, 0.18); }
-      .step-div-modal .sdiv-opt[data-sub="4"]:hover     { background: hsla(210, 65%, 55%, 0.20); }
-      .step-div-modal .sdiv-opt[data-sub="8"]:hover     { background: hsla(260, 60%, 55%, 0.20); }
-      .step-div-modal .sdiv-opt[data-sub="12"]:hover    { background: hsla(300, 55%, 55%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="0.08333333333333333"]:hover { background: hsla(15, 70%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="0.125"]:hover               { background: hsla(0, 70%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="0.16666666666666666"]:hover { background: hsla(25, 70%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="0.25"]:hover                { background: hsla(35, 70%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="0.3333333333333333"]:hover  { background: hsla(50, 65%, 50%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="0.5"]:hover                 { background: hsla(60, 65%, 50%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="1"]:hover                   { background: hsla(110, 55%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="2"]:hover                   { background: hsla(170, 55%, 50%, 0.18); }
+      .step-div-modal .sdiv-opt[data-sub="4"]:hover                   { background: hsla(210, 65%, 55%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="8"]:hover                   { background: hsla(260, 60%, 55%, 0.20); }
+      .step-div-modal .sdiv-opt[data-sub="12"]:hover                  { background: hsla(300, 55%, 55%, 0.20); }
       .step-div-modal .sdiv-opt[data-sub="16"]:hover    { background: hsla(330, 60%, 55%, 0.20); }
     }
     .step-div-modal .sdiv-lock {

@@ -4407,30 +4407,6 @@
       cursor: pointer;
       accent-color: #4299e1;
     }
-    .step-div-modal .sdiv-lock[hidden] { display: none; }
-    .step-div-modal .sdiv-footer {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 14px;
-    }
-    .step-div-modal .sdiv-footer[hidden] { display: none; }
-    .step-div-modal .sdiv-done {
-      padding: 8px 18px;
-      border: 1px solid #4fd1c5;
-      border-radius: 12px;
-      background: rgba(79, 209, 197, 0.15);
-      color: #b2f5ea;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      letter-spacing: 0.6px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      touch-action: manipulation;
-    }
-    @media (hover: hover) {
-      .step-div-modal .sdiv-done:hover { background: rgba(79, 209, 197, 0.28); }
-    }
 
     /* PITCH RAMP DIALOG — opens from the step ctx menu, sets the
        step.bend semitones + atFraction the playback path already

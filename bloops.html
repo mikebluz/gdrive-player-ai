@@ -5524,10 +5524,7 @@
     // Modal that asks the user to pick a step-div size (4/1 → 1/32) for
     // the just-added note. The "Use for…" checkbox locks the chosen
     // value for the rest of the current Keep session so subsequent
-    // notes don't re-prompt. The "Record rests" checkbox flips the
-    // modal into a rest-stamper: each size click appends a rest of
-    // that size to the active lane and the modal stays open until the
-    // user clicks Done or off the modal.
+    // notes don't re-prompt.
     function showStepDivPicker(stepRef) {
       // Don't stack pickers — if one is already up, dismiss and the
       // newer note just keeps its default subdivision.
@@ -5542,10 +5539,6 @@
           <input type="checkbox" id="sdiv-lock-cb" />
           Use this size for the rest of this Keep session
         </label>
-        <label class="sdiv-lock">
-          <input type="checkbox" id="sdiv-rests-cb" />
-          Record clicks as rests in lane
-        </label>
         <div class="sdiv-grid">
           <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
           <button type="button" class="sdiv-opt" data-sub="0.25">1/16</button>
@@ -5557,42 +5550,15 @@
           <button type="button" class="sdiv-opt" data-sub="12">3/1</button>
           <button type="button" class="sdiv-opt" data-sub="16">4/1</button>
         </div>
-        <div class="sdiv-footer" id="sdiv-footer" hidden>
-          <button type="button" class="sdiv-done" id="sdiv-done">Done</button>
-        </div>
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      const lockCb  = modal.querySelector('#sdiv-lock-cb');
-      const restCb  = modal.querySelector('#sdiv-rests-cb');
-      const footer  = modal.querySelector('#sdiv-footer');
-      // Toggle the rest-recording mode: the lock checkbox is meaningless
-      // in rest mode (no step-ref being targeted), so hide it. The Done
-      // button takes over the close action since size clicks no longer
-      // dismiss the modal one at a time.
-      const syncRestMode = () => {
-        const on = !!(restCb && restCb.checked);
-        if (lockCb) lockCb.closest('.sdiv-lock').hidden = on;
-        if (footer) footer.hidden = !on;
-      };
-      if (restCb) restCb.addEventListener('change', syncRestMode);
-      modal.querySelector('#sdiv-done')?.addEventListener('click', () => {
-        overlay.remove();
-      });
+      const lockCb = modal.querySelector('#sdiv-lock-cb');
       modal.querySelectorAll('.sdiv-opt').forEach(b => {
         b.addEventListener('click', () => {
           const v = parseFloat(b.dataset.sub);
           if (!Number.isFinite(v) || v <= 0) return;
-          if (restCb && restCb.checked) {
-            // Rest-stamping mode — append a rest of size v to the
-            // active lane and keep the modal open so the user can
-            // stamp several sizes in a row.
-            const restStep = { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: v };
-            try { addToSequence(restStep); } catch (e) {}
-            renderSequence();
-            return;
-          }
           // Route through the helper so Run wraps spread the value
           // across their subSteps instead of landing on the outer
           // wrap (which is a no-op for the audible cadence).
@@ -5605,8 +5571,8 @@
           overlay.remove();
         });
       });
-      // Click outside dismisses — whether in rest mode or not, the
-      // current state stays in place (steps already added survive).
+      // Click outside dismisses — the step keeps whatever subdivision
+      // it already had (the global default).
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) overlay.remove();
       });
@@ -9335,11 +9301,10 @@
       if (stepMode) {
         // Fixed-mode entry no longer pre-populates the lane with rests
         // — the lane keeps whatever it had. Pressing Keep starts the
-        // sequential edit flow (see _fixedSeqAdvance below): the first
+        // sequential edit flow (see _fixedSeqStart below): the first
         // step in the active lane gets selected, the next grid press
-        // writes it, selection advances. If the lane is empty when
-        // Keep activates the user can stamp rests via the step-div
-        // modal's "Record clicks as rests" mode to set up slots first.
+        // writes it, selection advances. Empty lanes need at least
+        // one step in place before Keep arms the flow.
         if (keepMode) _fixedSeqStart();
       } else {
         clearStepModeArm();

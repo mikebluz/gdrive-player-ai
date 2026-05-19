@@ -4896,6 +4896,134 @@
     .sm-modal::-webkit-scrollbar-track { background: transparent; }
     .sm-modal::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 3px; }
 
+    /* "Wrap as…" prompt — colourful pick between Stack (chord) and
+       Run (subsequence). The two options carry the same accents the
+       app already uses for those step types so the visual cue maps
+       to what the resulting chip will look like: magenta/pink for
+       chords (matches .seq-step.chord.active), green/teal for sub-
+       sequences (matches .seq-step.subseq). */
+    .wrap-as-modal {
+      width: min(440px, 92vw);
+      padding: 22px 22px 18px;
+      background: radial-gradient(circle at top right, rgba(216, 30, 124, 0.10), transparent 60%),
+                  radial-gradient(circle at bottom left, rgba(56, 178, 172, 0.10), transparent 60%),
+                  #050510;
+      border: 1px solid #2d2d3f;
+      border-radius: 18px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.65),
+                  0 0 28px rgba(244, 114, 182, 0.10);
+    }
+    .wrap-as-title {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-align: center;
+      margin-bottom: 18px;
+      background: linear-gradient(135deg, #f472b6 0%, #4fd1c5 50%, #68d391 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .wrap-as-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .wrap-as-opt {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 18px 12px 14px;
+      border-radius: 14px;
+      border: 1px solid #2d2d3f;
+      background: rgba(10, 10, 20, 0.65);
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+      touch-action: manipulation;
+    }
+    .wrap-as-glyph {
+      font-size: 1.6rem;
+      line-height: 1;
+    }
+    .wrap-as-name {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    .wrap-as-sub {
+      font-size: 0.72rem;
+      letter-spacing: 0.4px;
+      color: #a0aec0;
+      text-align: center;
+    }
+    /* Stack = chord — magenta / pink theme so it reads like a chord
+       chip's active gradient. */
+    .wrap-as-stack {
+      border-color: rgba(244, 114, 182, 0.55);
+      background: linear-gradient(160deg, rgba(217, 30, 124, 0.18) 0%, rgba(244, 114, 182, 0.10) 100%);
+    }
+    .wrap-as-stack .wrap-as-glyph,
+    .wrap-as-stack .wrap-as-name { color: #f472b6; }
+    @media (hover: hover) {
+      .wrap-as-stack:hover {
+        border-color: #f472b6;
+        transform: translateY(-1px);
+        box-shadow: 0 10px 28px rgba(217, 30, 124, 0.32),
+                    0 0 22px rgba(244, 114, 182, 0.30);
+        background: linear-gradient(160deg, rgba(217, 30, 124, 0.30) 0%, rgba(244, 114, 182, 0.18) 100%);
+      }
+    }
+    .wrap-as-stack:active { transform: translateY(0); }
+    /* Run = subsequence — green / teal theme so it reads like a
+       subseq chip's identity colour. */
+    .wrap-as-run {
+      border-color: rgba(104, 211, 145, 0.55);
+      background: linear-gradient(160deg, rgba(56, 161, 105, 0.18) 0%, rgba(79, 209, 197, 0.10) 100%);
+    }
+    .wrap-as-run .wrap-as-glyph,
+    .wrap-as-run .wrap-as-name { color: #68d391; }
+    @media (hover: hover) {
+      .wrap-as-run:hover {
+        border-color: #68d391;
+        transform: translateY(-1px);
+        box-shadow: 0 10px 28px rgba(56, 161, 105, 0.32),
+                    0 0 22px rgba(79, 209, 197, 0.28);
+        background: linear-gradient(160deg, rgba(56, 161, 105, 0.30) 0%, rgba(79, 209, 197, 0.18) 100%);
+      }
+    }
+    .wrap-as-run:active { transform: translateY(0); }
+    .wrap-as-footer {
+      display: flex;
+      justify-content: center;
+    }
+    .wrap-as-cancel {
+      padding: 8px 22px;
+      border-radius: 14px;
+      border: 1px solid #2d2d3f;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      .wrap-as-cancel:hover {
+        border-color: #4299e1;
+        color: #b3d4ff;
+      }
+    }
+
     /* Collapsible "fold" sections — group related controls under a click-to-
        expand summary header, matching the menubar's panel aesthetic so the
        editor reads as a stack of compact dropdowns rather than a tall list. */

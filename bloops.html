@@ -10486,17 +10486,25 @@
     // Resolves the choice via callback so the calling code stays linear.
     function showRunStackPrompt(onPick) {
       const overlay = document.createElement('div');
-      overlay.className = 'sm-overlay';
+      overlay.className = 'sm-overlay wrap-as-overlay';
       const modal = document.createElement('div');
-      modal.className = 'sm-modal';
+      modal.className = 'sm-modal wrap-as-modal';
       modal.innerHTML = `
-        <div class="sm-title">Wrap as…</div>
-        <div style="display:flex; gap:10px; margin-bottom:14px;">
-          <button type="button" class="we-btn" id="rs-stack" style="flex:1 1 0;">Stack (chord)</button>
-          <button type="button" class="we-btn" id="rs-run"   style="flex:1 1 0;">Run (subsequence)</button>
+        <div class="wrap-as-title">Wrap as…</div>
+        <div class="wrap-as-grid">
+          <button type="button" class="wrap-as-opt wrap-as-stack" id="rs-stack">
+            <span class="wrap-as-glyph" aria-hidden="true">▦</span>
+            <span class="wrap-as-name">Stack</span>
+            <span class="wrap-as-sub">Chord — all at once</span>
+          </button>
+          <button type="button" class="wrap-as-opt wrap-as-run" id="rs-run">
+            <span class="wrap-as-glyph" aria-hidden="true">▤</span>
+            <span class="wrap-as-name">Run</span>
+            <span class="wrap-as-sub">Subsequence — one after another</span>
+          </button>
         </div>
-        <div class="sm-footer">
-          <button type="button" class="sm-preview" id="rs-cancel">Cancel</button>
+        <div class="wrap-as-footer">
+          <button type="button" class="wrap-as-cancel" id="rs-cancel">Cancel</button>
         </div>
       `;
       overlay.appendChild(modal);

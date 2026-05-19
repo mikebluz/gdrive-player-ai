@@ -2981,6 +2981,17 @@
       width: 100%;
       min-width: 0;
     }
+    /* Rest is only useful when Keep is on (a rest tap only adds to the
+       sequence when Keep is active). Hide it otherwise and collapse
+       the row to a 50/50 KEEP / WRAP split so the two remaining
+       buttons fill the full width. :has() lets the grid layout react
+       to the Keep button's .active class without any JS toggle. */
+    .kwr-pair:has(.play-lock:not(.active)) {
+      grid-template-columns: 1fr 1fr;
+    }
+    .kwr-pair:has(.play-lock:not(.active)) > .rest-bar {
+      display: none;
+    }
     .kwr-pair > button,
     .kwr-pair > .wrap-segment > button {
       width: 100%;

@@ -2467,8 +2467,9 @@
        being edited. */
     /* Fixed-mode slot builder. Each chip appends a programmable rest
        slot of the given Step Div size to the sequence; visible only
-       when the Free/Fixed toggle is in Fixed mode. Sits between the
-       KEEP/Wrap/REST row and the sequence chip display. */
+       when the Free/Fixed toggle is in Fixed mode. Sits just above
+       the Free/Fixed toggle bar so the size palette and the gating
+       button stay grouped visually. */
     .size-chips-row {
       display: flex;
       gap: 6px;

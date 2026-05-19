@@ -358,20 +358,6 @@
        follow the active lane's voice editor instead of sitting at a
        fixed top-of-page position. -->
 
-  <!-- Fixed-mode slot builder. Each chip appends a programmable rest slot
-       of the given Step Div size to the sequence; assign a pitch later
-       by arming a note (cell click) and tapping the slot. -->
-  <div class="size-chips-row" id="size-chips-row" hidden>
-    <button type="button" class="size-chip" data-sub="4"                   title="Add a 1/1 slot">1/1</button>
-    <button type="button" class="size-chip" data-sub="2"                   title="Add a 1/2 slot">1/2</button>
-    <button type="button" class="size-chip" data-sub="1"                   title="Add a 1/4 slot">1/4</button>
-    <button type="button" class="size-chip" data-sub="0.5"                 title="Add a 1/8 slot">1/8</button>
-    <button type="button" class="size-chip" data-sub="0.3333333333333333"  title="Add a 1/8 triplet slot (1/3 of a quarter)">1/8t</button>
-    <button type="button" class="size-chip" data-sub="0.25"                title="Add a 1/16 slot">1/16</button>
-    <button type="button" class="size-chip" data-sub="0.16666666666666666" title="Add a 1/16 triplet slot (1/6 of a quarter)">1/16t</button>
-    <button type="button" class="size-chip" data-sub="0.125"               title="Add a 1/32 slot">1/32</button>
-    <button type="button" class="size-chip" data-sub="0.08333333333333333" title="Add a 1/32 triplet slot (1/12 of a quarter)">1/32t</button>
-  </div>
 
   <!-- Pan / Vol sliders + the Edit button live in one row so the
        button can span both slider heights on the left while the
@@ -413,6 +399,23 @@
         <button id="seed-btn" class="riff-generative" title="Seed the sequence from a built-in song or from text">Seed</button>
       </div>
     </div>
+  </div>
+
+  <!-- Fixed-mode slot builder. Each chip appends a programmable rest slot
+       of the given Step Div size to the sequence; assign a pitch later
+       by arming a note (cell click) and tapping the slot. Sits just
+       above the Free/Fixed toggle bar so the size palette and its
+       gating button stay grouped visually. -->
+  <div class="size-chips-row" id="size-chips-row" hidden>
+    <button type="button" class="size-chip" data-sub="4"                   title="Add a 1/1 slot">1/1</button>
+    <button type="button" class="size-chip" data-sub="2"                   title="Add a 1/2 slot">1/2</button>
+    <button type="button" class="size-chip" data-sub="1"                   title="Add a 1/4 slot">1/4</button>
+    <button type="button" class="size-chip" data-sub="0.5"                 title="Add a 1/8 slot">1/8</button>
+    <button type="button" class="size-chip" data-sub="0.3333333333333333"  title="Add a 1/8 triplet slot (1/3 of a quarter)">1/8t</button>
+    <button type="button" class="size-chip" data-sub="0.25"                title="Add a 1/16 slot">1/16</button>
+    <button type="button" class="size-chip" data-sub="0.16666666666666666" title="Add a 1/16 triplet slot (1/6 of a quarter)">1/16t</button>
+    <button type="button" class="size-chip" data-sub="0.125"               title="Add a 1/32 slot">1/32</button>
+    <button type="button" class="size-chip" data-sub="0.08333333333333333" title="Add a 1/32 triplet slot (1/12 of a quarter)">1/32t</button>
   </div>
 
   <div class="seq-grid-bar">

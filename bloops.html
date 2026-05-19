@@ -5578,9 +5578,19 @@
         });
       });
       // Click outside dismisses — the step keeps whatever subdivision
-      // it already had (the global default).
-      overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) overlay.remove();
+      // it already had (the global default). Bind on the next frame
+      // so the click that triggered showStepDivPicker (cell or REST
+      // tap → addToSequence → maybePromptStepDiv) can't ride the
+      // bubble phase straight into the overlay and dismiss it the
+      // instant it lands. iOS Safari in particular has been observed
+      // firing a follow-up synthetic click after touchend on
+      // touch-action: none cells, and that follow-up click was
+      // closing the freshly-mounted overlay before the user could
+      // pick a size.
+      requestAnimationFrame(() => {
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) overlay.remove();
+        });
       });
     }
 
@@ -19306,7 +19316,12 @@
       let clone = null;
       let offX = 0, offY = 0;
       let dropIdx = null;
-      const READY_DELAY = 280;
+      // Shorter hold-to-arm so touch users discover drag-to-reorder
+      // more easily — 280 ms felt sluggish and read as "nothing
+      // happened" before users tried moving the chip. 160 ms still
+      // distinguishes a deliberate hold from a swipe that should be
+      // a scroll.
+      const READY_DELAY = 160;
       const MOVE_THRESHOLD = 8;
 
       const engageDrag = () => {

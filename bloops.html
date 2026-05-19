@@ -5618,6 +5618,11 @@
     // its variance.notes pool instead of being added as new steps.
     // The blinking chip click finalizes the edit.
     let _varianceEdit = null; // { stepRef, stepIdx } | null
+    // Per-variance-pool shuffle queue. Keyed by the variance object on
+    // a step so two different steps each cycle their own pool; entries
+    // are auto-removed when the step (and its variance object) get
+    // garbage-collected.
+    const _varianceShuffleState = new WeakMap();
 
     // Pitch ramp dialog — picks a target note (as a semitone offset
     // from the step's pitch) and how far through the step duration
@@ -6330,15 +6335,40 @@
       if (!Array.isArray(arr) || arr.length < 2) return step;
       const v = step.variance;
       // randomEachIter overrides the mode buttons — every iteration
-      // picks uniformly at random from the pool. Otherwise:
+      // picks at random from the pool. Otherwise:
       //   linear → cycle, holding each variant for itersPerVariant
       //            iterations before advancing.
-      //   random → uniform random pick per iteration.
+      //   random → shuffle the pool, play through once, reshuffle.
+      //            Plain uniform Math.random() per pick produced
+      //            audible streaks of the same variant; shuffle
+      //            guarantees each variant plays once per cycle and
+      //            avoids picking the same variant twice in a row
+      //            across the refill boundary.
       const itersPer = (Number.isFinite(v.itersPerVariant) && v.itersPerVariant > 0)
         ? Math.floor(v.itersPerVariant) : 1;
       let pickIdx;
       if (v.randomEachIter || v.mode !== 'linear') {
-        pickIdx = Math.floor(Math.random() * arr.length);
+        let state = _varianceShuffleState.get(v);
+        if (!state || state.queue.length === 0) {
+          const queue = arr.map((_, i) => i);
+          for (let i = queue.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [queue[i], queue[j]] = [queue[j], queue[i]];
+          }
+          // Swap the head of the new queue if it matches the previous
+          // refill's last pick — keeps streaks from forming at the
+          // boundary between cycles when the pool happens to shuffle
+          // with the same index back-to-back.
+          if (state && state.lastPick != null
+              && queue[0] === state.lastPick
+              && queue.length > 1) {
+            [queue[0], queue[1]] = [queue[1], queue[0]];
+          }
+          state = { queue, lastPick: state ? state.lastPick : null };
+          _varianceShuffleState.set(v, state);
+        }
+        pickIdx = state.queue.shift();
+        state.lastPick = pickIdx;
       } else {
         const cycleStep = Math.floor(((iter | 0) / itersPer));
         pickIdx = ((cycleStep % arr.length) + arr.length) % arr.length;

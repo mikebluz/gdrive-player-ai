@@ -1415,9 +1415,10 @@
     // user to feel the cadence while editing. Restarts whenever the
     // BPM changes (tempo digits / slider / number input all funnel to
     // tempoInput.value).
-    let _metronomeOn    = false;
-    let _metronomeTimer = null;
-    let _metronomeSynth = null;
+    let _metronomeOn      = false;
+    let _metronomeTimer   = null;
+    let _metronomeSynth   = null;
+    let _metronomeNextAt  = 0;   // next click's absolute audio-context time
     function _getMetronomeSynth() {
       if (_metronomeSynth) return _metronomeSynth;
       try {
@@ -1435,27 +1436,57 @@
         clearInterval(_metronomeTimer);
         _metronomeTimer = null;
       }
+      _metronomeNextAt = 0;
+    }
+    // Schedule any clicks falling inside a forward lookahead window
+    // at their exact audio-context times. setInterval used to fire
+    // the tick itself, which drifted on mobile (setInterval intervals
+    // stretch under throttling), causing the metronome to slide out
+    // of phase with the audio-clock-scheduled sequence playback. The
+    // schedule-ahead pattern decouples WHEN we call this function
+    // from WHEN the clicks actually play: events land at their pinned
+    // audio times even if the JS tick is late.
+    function _scheduleMetronomeAhead() {
+      if (!_metronomeOn) return;
+      const bpm = parseInt(tempoInput.value, 10) || 120;
+      if (bpm <= 0) return;
+      const intervalSec = 60 / bpm;
+      const raw = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+      if (!raw) return;
+      const now = raw.currentTime;
+      // Fresh cadence on start or after a long stall. 60 ms lead-in
+      // gives the audio thread time to spin up the first click cleanly
+      // (matches the cold-start cushion used elsewhere).
+      if (_metronomeNextAt === 0 || _metronomeNextAt < now - 0.05) {
+        _metronomeNextAt = now + 0.06;
+      }
+      const horizon = now + 0.5; // 500 ms lookahead, matches the sequence scheduler
+      const synth = _getMetronomeSynth();
+      const btn = document.getElementById('metronome-btn');
+      let safety = 0;
+      while (_metronomeNextAt < horizon && safety++ < 64) {
+        const t = _metronomeNextAt;
+        if (synth) {
+          try { synth.triggerAttackRelease('C5', '32n', t); } catch (e) {}
+        }
+        if (btn) {
+          scheduleVisual(() => {
+            if (!_metronomeOn) return;
+            btn.classList.add('tick');
+            setTimeout(() => btn.classList.remove('tick'), 60);
+          }, t);
+        }
+        _metronomeNextAt += intervalSec;
+      }
     }
     function _startMetronomeTimer() {
       _stopMetronomeTimer();
       if (!_metronomeOn) return;
-      const bpm = parseInt(tempoInput.value, 10) || 120;
-      if (bpm <= 0) return;
-      const intervalMs = Math.max(50, 60000 / bpm);
-      const btn = document.getElementById('metronome-btn');
-      const tick = () => {
-        if (!_metronomeOn) return;
-        const synth = _getMetronomeSynth();
-        if (synth) {
-          try { synth.triggerAttackRelease('C5', '32n'); } catch (e) {}
-        }
-        if (btn) {
-          btn.classList.add('tick');
-          setTimeout(() => btn.classList.remove('tick'), 60);
-        }
-      };
-      tick();
-      _metronomeTimer = setInterval(tick, intervalMs);
+      _scheduleMetronomeAhead();
+      // Tick at 100 ms — well inside the 500 ms lookahead, so even a
+      // mobile-throttled interval (which can stretch to ~300 ms) still
+      // refills the schedule before any audio event runs late.
+      _metronomeTimer = setInterval(_scheduleMetronomeAhead, 100);
     }
     function _restartMetronomeIfActive() {
       if (_metronomeOn) _startMetronomeTimer();
@@ -8377,7 +8408,13 @@
           } else {
             synth = new Tone.Synth({ oscillator: { type: oscType }, envelope: env });
           }
-          synth.connect(masterBus);
+          // Route to globalSendTap (not masterBus) so the master FX
+          // panel — reverb, delay, chorus, etc. — actually colours
+          // the wrap-chord audition. masterBus sits AFTER the FX
+          // returns in the master chain, so connecting straight to
+          // it bypassed every send and the wrap-chord cell press
+          // came out completely dry no matter what the FX panel said.
+          synth.connect(globalSendTap);
           try { synth.volume.value = Tone.gainToDb(vol); } catch (e) {}
           const baseDetune = Number.isFinite(p.detune) ? p.detune : 0;
           if (synth.detune) synth.detune.value = baseDetune + bendCents;
@@ -20259,7 +20296,7 @@
             <div class="sm-waves" id="se-chord-len-row"></div>
           </div>
         </details>
-        <details class="sm-fold" open>
+        <details class="sm-fold">
           <summary>Notes</summary>
           <div class="sm-fold-body">
             <div class="se-chord-list" id="se-chord-list"></div>
@@ -23173,9 +23210,13 @@
           if (valEl) valEl.textContent = v + '%';
           return;
         }
-        // Selection-scoped volume — primary chip in Mono / Poly+selection.
-        const targets = selEligible.length > 0 ? [selEligible[selEligible.length - 1]] : [];
-        targets.forEach(top => {
+        // Selection-scoped volume — applies to every selected chip
+        // (Multi on or off). Previously this only edited the primary
+        // chip (last entry of selEligible), so a Multi-mode volume
+        // drag silently moved one chip while leaving the others put.
+        // Pan and Slip already fan out across every selected ref;
+        // bring Volume in line with them.
+        selEligible.forEach(top => {
           _forEachStepLeaf(top, leaf => {
             if (!leaf || leaf.isSub) return;
             if (!leaf.params) leaf.params = {};

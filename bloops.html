@@ -21579,6 +21579,20 @@
           // here so we don't double-add. Single presses fall through
           // normally.
           if (polyShouldSuppressClick()) return;
+          // Active multi-press detect: clicks from a chord press fire
+          // before polyFinalizeSession runs (and before
+          // suppressClickUntil is set), so polyShouldSuppressClick
+          // above doesn't catch them. _polySession.pressed still
+          // carries every cell in the gesture until the 60 ms
+          // finalize-timer fires, so a size >= 2 here means this
+          // click is one of N from a chord press — bail and let
+          // polyFinalizeSession emit a single chord step (plus its
+          // step-div modal) instead of each cell stamping its own
+          // single-note step and dragging the modal along with it.
+          if (_polySession.pressed.size >= 2) {
+            _cellTapAdded = true;
+            return;
+          }
           // Arpeggio / Chord modes already played their audio on
           // pointerdown — don't append to the workspace sequence.
           if (gridMode !== 'sequencer') return;

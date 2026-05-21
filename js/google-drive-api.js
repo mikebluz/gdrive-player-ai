@@ -4,7 +4,12 @@ class GoogleDriveAPI {
     this.CLIENT_ID = clientId;
     this.API_KEY = apiKey;
     this.DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest";
-    this.SCOPES = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly";
+    // Scopes are a superset of what the player itself needs (readonly +
+    // documents) plus drive.file. The wider set lets a token minted on
+    // this standalone page also satisfy Bloops's write paths (project
+    // folders, sequencer chips) so SharedAuth tokens stay interchangeable
+    // across pages.
+    this.SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly";
 
     this.gapiLoaded = false;
     this.gisTokenClient = null;
@@ -21,6 +26,22 @@ class GoogleDriveAPI {
     });
 
     this.gapiLoaded = true;
+
+    // Cross-page sign-in: hydrate a still-valid token from localStorage
+    // so the user doesn't have to re-auth after navigating between
+    // index/bloops/player. Dispatch authStatusChanged so app.js can pick
+    // up the playlist load path without waiting for a manual click.
+    const stored = window.SharedAuth?.load?.();
+    if (stored?.token) {
+      this.accessToken = stored.token;
+      this._tokenExpiry = stored.expiresAt;
+      gapi.client.setToken({ access_token: this.accessToken });
+      document.dispatchEvent(
+        new CustomEvent("authStatusChanged", { detail: { isSignedIn: true } })
+      );
+      console.log("🔑 Restored cached access token (cross-page)");
+    }
+
     console.log("✅ Google Drive API client initialized");
   }
 
@@ -73,6 +94,7 @@ class GoogleDriveAPI {
         }
         this.accessToken = response.access_token;
         this._tokenExpiry = Date.now() + (response.expires_in || 3600) * 1000;
+        window.SharedAuth?.save?.(response.access_token, response.expires_in);
         gapi.client.setToken({ access_token: response.access_token });
 
         if (this._refreshResolve) {
@@ -125,6 +147,7 @@ class GoogleDriveAPI {
     if (this.accessToken) {
       google.accounts.oauth2.revoke(this.accessToken, () => {
         this.accessToken = null;
+        window.SharedAuth?.clear?.();
         console.log("🚪 Signed out from Google");
         document.dispatchEvent(
           new CustomEvent("authStatusChanged", { detail: { isSignedIn: false } })

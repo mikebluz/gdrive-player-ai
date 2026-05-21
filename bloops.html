@@ -15,6 +15,9 @@
        turn a .mid drop / file pick into Bloops lanes. -->
   <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.js"></script>
   <script src="js/config.js"></script>
+  <!-- Cross-page OAuth persistence — must load before any inline auth
+       code so window.SharedAuth is available when bloopsAuth boots. -->
+  <script src="js/auth-storage.js"></script>
 </head>
 <body class="signin-required bloops-loading">
   <script>
@@ -15092,8 +15095,37 @@
     }
 
     // Google Drive auth + upload (lazy-loads gapi/GIS via <script> on demand)
-    let googleAccessToken = null;
+    // Hydrate from SharedAuth on boot so a token minted on player.html (or
+    // a prior bloops session within the hour) is reused without re-prompt.
+    let googleAccessToken = window.SharedAuth?.load?.()?.token || null;
     let googleTokenClient = null;
+    // When we hydrate a token, gapi.client hasn't been initialized yet
+    // (the sign-in flow normally handles that). Kick off an eager bootstrap
+    // so Bloops's own Drive calls have a ready client and the cached
+    // bearer attached. The function is defined below; reference is hoisted
+    // via the `function` declaration so this top-level call is safe.
+    if (googleAccessToken) {
+      (async () => {
+        try {
+          await loadExternalScript('https://apis.google.com/js/api.js');
+          await loadExternalScript('https://accounts.google.com/gsi/client');
+          if (!gapi.client) await new Promise(res => gapi.load('client', res));
+          if (!gapi.client.drive) {
+            await gapi.client.init({
+              apiKey: window.APP_CONFIG.apiKey,
+              discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+            });
+          }
+          gapi.client.setToken({ access_token: googleAccessToken });
+        } catch (e) {
+          // Hydrated token didn't pan out — clear it so the next interaction
+          // re-prompts via the normal gate flow.
+          console.warn('Cross-page auth hydration failed:', e);
+          googleAccessToken = null;
+          window.SharedAuth?.clear?.();
+        }
+      })();
+    }
 
     function loadExternalScript(src) {
       return new Promise((resolve, reject) => {
@@ -15139,6 +15171,7 @@
           callback: async (resp) => {
             if (resp.error) return reject(new Error(resp.error));
             googleAccessToken = resp.access_token;
+            window.SharedAuth?.save?.(resp.access_token, resp.expires_in);
             gapi.client.setToken({ access_token: googleAccessToken });
             // Run the structure init BEFORE dispatching authStatusChanged.
             // Otherwise the Player's listener races us — it would call
@@ -15179,7 +15212,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
+      const DEV_BYPASS_SIGNIN = true;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;

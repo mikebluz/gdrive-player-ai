@@ -27,6 +27,14 @@
     if ((location.hash || '').toLowerCase() === '#player') {
       document.body.classList.add('view-serialbox');
     }
+    // Same idea for the sign-in gate: if SharedAuth has a fresh token,
+    // drop .signin-required synchronously so the user never sees the
+    // gate flash on a cross-page return trip. The async bloopsAuth init
+    // below would lift the class eventually but only after gapi/GIS
+    // scripts load — a noticeable second on mobile.
+    if (window.SharedAuth?.load?.()?.token) {
+      document.body.classList.remove('signin-required');
+    }
   </script>
 
   <div class="home-bar-row">

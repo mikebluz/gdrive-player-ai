@@ -15118,11 +15118,13 @@
           }
           gapi.client.setToken({ access_token: googleAccessToken });
         } catch (e) {
-          // Hydrated token didn't pan out — clear it so the next interaction
-          // re-prompts via the normal gate flow.
-          console.warn('Cross-page auth hydration failed:', e);
-          googleAccessToken = null;
-          window.SharedAuth?.clear?.();
+          // gapi/GIS loading hiccup — but the cached token may still be
+          // valid for use on other pages. Don't clear SharedAuth here; a
+          // 401 response from a Drive call is the only authoritative
+          // signal that the token is actually dead. Clearing on any load
+          // error caused player → bloops → player to wipe the token and
+          // re-prompt the user on the return trip.
+          console.warn('Cross-page gapi bootstrap failed (keeping cached token):', e);
         }
       })();
     }

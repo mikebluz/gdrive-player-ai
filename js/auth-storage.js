@@ -34,4 +34,18 @@
       try { localStorage.removeItem(KEY); } catch {}
     },
   };
+
+  // One-shot diagnostic on script load — shows up in the console for every
+  // page that includes auth-storage.js. Lets us tell at a glance whether
+  // the cached token survived a cross-page navigation without needing to
+  // hand-poke localStorage in DevTools.
+  try {
+    const stored = window.SharedAuth.load();
+    if (stored?.token) {
+      const minsLeft = Math.round((stored.expiresAt - Date.now()) / 60000);
+      console.info(`🔐 SharedAuth: cached token present (~${minsLeft}m left)`);
+    } else {
+      console.info('🔐 SharedAuth: no cached token');
+    }
+  } catch {}
 })();

@@ -11,26 +11,41 @@
     save(token, expiresInSec) {
       if (!token) return;
       try {
-        localStorage.setItem(KEY, JSON.stringify({
-          token,
-          expiresAt: Date.now() + (Number(expiresInSec) || 3600) * 1000,
-        }));
-      } catch {}
+        const expiresAt = Date.now() + (Number(expiresInSec) || 3600) * 1000;
+        localStorage.setItem(KEY, JSON.stringify({ token, expiresAt }));
+        const mins = Math.round((expiresAt - Date.now()) / 60000);
+        console.info(`🔐 SharedAuth.save → token cached (~${mins}m left)`);
+      } catch (e) {
+        console.warn('🔐 SharedAuth.save failed:', e);
+      }
     },
     load() {
       try {
         const raw = localStorage.getItem(KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
-        if (!parsed?.token || !parsed?.expiresAt) return null;
+        if (!parsed?.token || !parsed?.expiresAt) {
+          console.warn('🔐 SharedAuth.load → entry malformed, dropping');
+          localStorage.removeItem(KEY);
+          return null;
+        }
         if (Date.now() > parsed.expiresAt - SAFETY_MS) {
+          console.info('🔐 SharedAuth.load → token expired, clearing');
           localStorage.removeItem(KEY);
           return null;
         }
         return parsed;
-      } catch { return null; }
+      } catch (e) {
+        console.warn('🔐 SharedAuth.load failed:', e);
+        return null;
+      }
     },
     clear() {
+      // Log the caller so we can identify any unexpected wipe path.
+      try {
+        const stack = new Error().stack?.split('\n').slice(2, 5).join(' | ');
+        console.warn(`🔐 SharedAuth.clear called from: ${stack}`);
+      } catch {}
       try { localStorage.removeItem(KEY); } catch {}
     },
   };

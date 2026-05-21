@@ -450,6 +450,16 @@ body {
     font-size: 1.5rem;
 }
 
+.playlist-duration {
+    margin-left: 10px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #ec4899;
+    opacity: 0.7;
+    letter-spacing: 0.3px;
+}
+.playlist-duration:empty { margin-left: 0; }
+
 .playlist-info {
     display: flex;
     align-items: center;

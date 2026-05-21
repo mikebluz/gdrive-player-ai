@@ -9,6 +9,7 @@ class PlaylistManager {
 
         this.playlistContainer = document.getElementById('playlist-container');
         this.playlistCount = document.getElementById('playlist-count');
+        this.playlistDuration = document.getElementById('playlist-duration');
         // sb- prefix avoids collision with Bloops's own #shuffle-btn /
         // #loop-btn inside the unified page.
         this.shuffleBtn = document.getElementById('sb-shuffle-btn');
@@ -27,6 +28,16 @@ class PlaylistManager {
         document.addEventListener('requestNextTrack', () => this.playNext());
         document.addEventListener('requestPreviousTrack', () => this.playPrevious());
         document.addEventListener('prefetchCacheUpdated', () => this.refreshCacheIndicators());
+        // Backfill durations from the player as tracks decode, then
+        // refresh the running-time display.
+        document.addEventListener('trackDurationKnown', (e) => {
+            const { trackId, durationMs } = e.detail || {};
+            const t = this.tracks.find(t => t.id === trackId);
+            if (t && (!t.durationMs || Math.abs(t.durationMs - durationMs) > 500)) {
+                t.durationMs = durationMs;
+                this.updatePlaylistInfo();
+            }
+        });
     }
 
     setTracks(tracks) {
@@ -47,7 +58,12 @@ class PlaylistManager {
             this.musicPlayer.loadTrack(this.tracks[0]);
             this.updateActiveTrack();
             this._buildPrefetchWindow(0);
-            const onListen = document.body.classList.contains('view-serialbox');
+            // Standalone player.html has no Bloops chrome, so auto-play
+            // applies there too (no other view to disturb). On bloops.html
+            // we still gate on view-serialbox so playback doesn't start
+            // while the user is on the Make or Mix tab.
+            const onListen = document.body.classList.contains('view-serialbox')
+                || !document.getElementById('bloops-tab');
             if (onListen) {
                 const p = this.musicPlayer.play();
                 if (p && typeof p.catch === 'function') p.catch(() => {});
@@ -116,9 +132,21 @@ class PlaylistManager {
         // when bandwidth is tight. prefetchTrack hits the blob cache
         // first; only cache misses cost a network round trip.
         (async () => {
-            for (const t of candidates) {
-                try { await this.musicPlayer.prefetchTrack(t); } catch {}
+            // Skip candidates already in memory — they cost nothing and would
+            // make the status pill flash "1/4" for a no-op.
+            const todo = candidates.filter(t => !this.musicPlayer.isPrefetched(t.id));
+            if (todo.length === 0) return;
+            document.dispatchEvent(new CustomEvent('prefetchStart', { detail: { total: todo.length } }));
+            let done = 0, fetched = 0, cached = 0;
+            for (const t of todo) {
+                let result = 'failed';
+                try { result = await this.musicPlayer.prefetchTrack(t); } catch {}
+                if (result === 'fetched') fetched++;
+                else if (result === 'cached') cached++;
+                done++;
+                document.dispatchEvent(new CustomEvent('prefetchProgress', { detail: { done, total: todo.length, result } }));
             }
+            document.dispatchEvent(new CustomEvent('prefetchComplete', { detail: { total: todo.length, fetched, cached } }));
         })();
         return windowIds;
     }
@@ -621,6 +649,32 @@ class PlaylistManager {
         const count = this.tracks.length;
         const text = count === 1 ? '1 track' : `${count} tracks`;
         this.playlistCount.textContent = text;
+
+        if (this.playlistDuration) {
+            let totalMs = 0, known = 0;
+            for (const t of this.tracks) {
+                if (t.durationMs > 0) { totalMs += t.durationMs; known++; }
+            }
+            // Prefix with ~ when any track's duration is still unknown
+            // (Drive hadn't probed it and the user hasn't played it yet),
+            // so the displayed total reads as a floor estimate.
+            if (totalMs > 0) {
+                const prefix = known < count ? '~ ' : '';
+                this.playlistDuration.textContent = `${prefix}${this._formatTotalDuration(totalMs)}`;
+            } else {
+                this.playlistDuration.textContent = '';
+            }
+        }
+    }
+
+    _formatTotalDuration(ms) {
+        const totalSec = Math.round(ms / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s.toString().padStart(2, '0')}s`;
+        return `${s}s`;
     }
 
     formatFileSize(bytes) {

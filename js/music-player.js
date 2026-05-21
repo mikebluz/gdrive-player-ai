@@ -95,7 +95,7 @@ class MusicPlayer {
     }
 
     async prefetchTrack(track) {
-        if (!track || this._prefetchCache.has(track.id)) return;
+        if (!track || this._prefetchCache.has(track.id)) return 'skipped';
         try {
             // Load from persistent blob cache if available — avoids network round-trip
             if (this.blobCache) {
@@ -103,22 +103,50 @@ class MusicPlayer {
                 if (blob) {
                     this._prefetchCache.set(track.id, blob);
                     document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
-                    return;
+                    this._probeBlobDuration(blob, track.id);
+                    return 'cached';
                 }
             }
 
             const token = this.gDrive.accessToken;
-            if (!token) return;
+            if (!token) return 'skipped';
             const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
             const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            if (!response.ok) return;
+            if (!response.ok) return 'failed';
             const blob = await response.blob();
             this._prefetchCache.set(track.id, blob);
             if (this.blobCache) this.blobCache.store(track.id, blob);
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
+            this._probeBlobDuration(blob, track.id);
+            return 'fetched';
         } catch (e) {
             // prefetch failure is non-fatal
+            return 'failed';
         }
+    }
+
+    // Decode just the metadata of an in-memory blob to learn its
+    // duration, then dispatch trackDurationKnown so the playlist can
+    // fold it into the running-time total. Costs no extra network —
+    // the blob is already local. Disposed as soon as duration arrives.
+    _probeBlobDuration(blob, trackId) {
+        try {
+            const url = URL.createObjectURL(blob);
+            const probe = new Audio();
+            probe.preload = 'metadata';
+            const done = () => { try { URL.revokeObjectURL(url); } catch {} };
+            probe.addEventListener('loadedmetadata', () => {
+                const dur = probe.duration;
+                done();
+                if (isFinite(dur) && dur > 0) {
+                    document.dispatchEvent(new CustomEvent('trackDurationKnown', {
+                        detail: { trackId, durationMs: Math.round(dur * 1000) }
+                    }));
+                }
+            }, { once: true });
+            probe.addEventListener('error', done, { once: true });
+            probe.src = url;
+        } catch {}
     }
 
     // Persist a track's blob to blobCache for offline playback.
@@ -280,6 +308,15 @@ class MusicPlayer {
     onLoadedMetadata() {
         this.totalTimeEl.textContent = this.formatTime(this.audio.duration);
         this.progressSlider.disabled = false;
+        // Surface the decoded duration so the playlist can backfill its
+        // total-running-time tally for tracks Drive didn't report metadata
+        // for (e.g. WAVs Drive hasn't finished probing).
+        const dur = this.audio.duration;
+        if (this.currentTrack && isFinite(dur) && dur > 0) {
+            document.dispatchEvent(new CustomEvent('trackDurationKnown', {
+                detail: { trackId: this.currentTrack.id, durationMs: Math.round(dur * 1000) }
+            }));
+        }
     }
 
     onTimeUpdate() {

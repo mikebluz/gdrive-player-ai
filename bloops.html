@@ -15179,7 +15179,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -23363,7 +23363,7 @@
 
         <section class="playlist-section">
           <div class="playlist-header">
-            <h2 id="playlist-heading">Playlist</h2>
+            <h2 id="playlist-heading"><span id="playlist-heading-name">Playlist</span><span id="playlist-duration" class="playlist-duration"></span></h2>
             <div class="playlist-info">
               <span id="playlist-count">0 tracks</span>
               <button id="sb-shuffle-btn" class="btn btn-small">🔀 Shuffle</button>

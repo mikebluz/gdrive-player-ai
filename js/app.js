@@ -189,7 +189,7 @@ document.addEventListener("DOMContentLoaded", () => {
       downloadUrl: `https://www.googleapis.com/drive/v3/files/${t.id}?alt=media`,
     }));
     player.defaultArtist = null;
-    document.getElementById("playlist-heading").textContent = name.trim();
+    document.getElementById("playlist-heading-name").textContent = name.trim();
     setAlbumArt(null);
     playlist.setTracks(tracks);
     showPlayerSections();
@@ -251,7 +251,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       showLoading("Preparing first track...");
       player.defaultArtist = artistName || null;
-      document.getElementById("playlist-heading").textContent = folderName;
+      document.getElementById("playlist-heading-name").textContent = folderName;
       setAlbumArt(artworkBlobUrl);
       playlist.setTracks(musicFiles);
       showPlayerSections();
@@ -320,7 +320,7 @@ document.addEventListener("DOMContentLoaded", () => {
           size: null,
         }));
         player.defaultArtist = null;
-        document.getElementById("playlist-heading").textContent = "In Cache";
+        document.getElementById("playlist-heading-name").textContent = "In Cache";
         setAlbumArt(null);
         playlist.setTracks(tracks);
         cachePlaylistBtn.textContent = "Clear cache";
@@ -418,4 +418,64 @@ document.addEventListener("DOMContentLoaded", () => {
   function showSuccess(msg) {
     showMessage(msg, "success");
   }
+
+  // Small status pill that surfaces auto-prefetch activity. Useful when
+  // playing in the car — lets the user see when the player is actively
+  // downloading upcoming tracks (which can compete with the phone↔car
+  // audio link on a weak connection).
+  (function initPrefetchStatus() {
+    const pill = document.createElement("div");
+    pill.id = "prefetch-status";
+    Object.assign(pill.style, {
+      position: "fixed",
+      bottom: "16px",
+      left: "16px",
+      background: "rgba(20,20,28,0.82)",
+      color: "rgba(255,255,255,0.92)",
+      padding: "6px 12px",
+      borderRadius: "999px",
+      fontSize: "12px",
+      fontWeight: "500",
+      letterSpacing: "0.2px",
+      zIndex: 9998,
+      opacity: "0",
+      transform: "translateY(4px)",
+      transition: "opacity 0.2s ease, transform 0.2s ease",
+      pointerEvents: "none",
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+    });
+    document.body.appendChild(pill);
+
+    let hideTimer = null;
+    const show = (text) => {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      pill.textContent = text;
+      pill.style.opacity = "1";
+      pill.style.transform = "translateY(0)";
+    };
+    const hideAfter = (ms) => {
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        pill.style.opacity = "0";
+        pill.style.transform = "translateY(4px)";
+      }, ms);
+    };
+
+    document.addEventListener("prefetchStart", (e) => {
+      show(`Prefetching upcoming tracks · 0/${e.detail.total}`);
+    });
+    document.addEventListener("prefetchProgress", (e) => {
+      show(`Prefetching upcoming tracks · ${e.detail.done}/${e.detail.total}`);
+    });
+    document.addEventListener("prefetchComplete", (e) => {
+      const { total, fetched, cached } = e.detail;
+      const parts = [];
+      if (fetched) parts.push(`${fetched} downloaded`);
+      if (cached) parts.push(`${cached} from cache`);
+      const detail = parts.length ? ` · ${parts.join(", ")}` : "";
+      show(`Prefetch complete${detail}`);
+      hideAfter(2200);
+    });
+  })();
 });

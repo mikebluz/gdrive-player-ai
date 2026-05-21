@@ -194,16 +194,21 @@ class GoogleDriveAPI {
     do {
       const res = await gapi.client.drive.files.list({
         q: `'${folderId}' in parents and trashed=false`,
-        fields: "nextPageToken, files(id, name, size, mimeType)",
+        // videoMediaMetadata is also populated for many audio files
+        // (Drive probes them as media regardless of MIME) — use it to
+        // compute a playlist running-time without decoding each blob.
+        fields: "nextPageToken, files(id, name, size, mimeType, videoMediaMetadata)",
         pageToken,
       });
 
       for (const file of res.result.files || []) {
         if (this.isAudioFile(file.name)) {
+          const durMs = Number(file.videoMediaMetadata?.durationMillis) || 0;
           musicFiles.push({
             id: file.id,
             name: this.cleanFileName(file.name),
             size: file.size,
+            durationMs: durMs,
             downloadUrl: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
           });
         }

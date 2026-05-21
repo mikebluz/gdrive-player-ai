@@ -68,6 +68,17 @@ document.addEventListener("DOMContentLoaded", () => {
       // Exposed so the Bloops/Make side of the unified page can pause
       // playback when the user switches away from the Listen view.
       window.musicPlayer = player;
+
+      // Pre-set the UI from cached auth before gapi/GIS scripts load —
+      // otherwise mobile users see the "Connect to Google Drive" header
+      // for the seconds it takes initialize() to finish on a slow link,
+      // which reads as a re-prompt even though no popup will actually
+      // fire. The hydrate inside initialize() then dispatches the real
+      // event so loadQuickLoadOptions runs.
+      if (window.SharedAuth?.load?.()) {
+        updateUIAuthState(true);
+      }
+
       await driveAPI.initialize();
 
       hideLoading();

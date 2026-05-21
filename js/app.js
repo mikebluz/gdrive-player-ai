@@ -71,7 +71,11 @@ document.addEventListener("DOMContentLoaded", () => {
       await driveAPI.initialize();
 
       hideLoading();
-      updateUIAuthState(false);
+      // Reflect the real auth state — initialize() may have hydrated a
+      // cached token (via SharedAuth) and already dispatched signed-in.
+      // Unconditionally clobbering to false here flips the UI back to
+      // the Connect button after the listener just lifted it.
+      updateUIAuthState(!!driveAPI.accessToken);
 
       console.log("✅ App initialized successfully");
     } catch (err) {

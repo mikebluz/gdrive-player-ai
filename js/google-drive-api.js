@@ -112,6 +112,16 @@ class GoogleDriveAPI {
   }
 
   async signIn() {
+    // Already authenticated (e.g., hydrated from SharedAuth on init) —
+    // just re-broadcast and return. Otherwise the GIS request below
+    // would surface Google's consent popup even though we already hold
+    // a valid token.
+    if (this.accessToken) {
+      document.dispatchEvent(
+        new CustomEvent("authStatusChanged", { detail: { isSignedIn: true } })
+      );
+      return;
+    }
     // When embedded inside the unified Bloops + Serialbox page, delegate
     // to the shared sign-in so both views use the same access token.
     if (typeof window !== 'undefined' && window.bloopsAuth && typeof window.bloopsAuth.signIn === 'function') {

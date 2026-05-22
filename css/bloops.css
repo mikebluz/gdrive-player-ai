@@ -3001,6 +3001,88 @@
       border-top-right-radius: 10px;
       border-bottom-right-radius: 10px;
     }
+
+    /* Wrap bank — horizontal chip strip directly under the Wrap button.
+       Each chip recalls a previously-committed wrap as the active
+       template. The label glyph mirrors the in-sequence display: a
+       dotted note-name chain for stacks, ▤ for runs. */
+    .wrap-bank {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 4px 2px;
+      flex-wrap: wrap;
+    }
+    .wrap-bank-label {
+      font-size: 0.65rem;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: #c026d3;
+      opacity: 0.7;
+      flex-shrink: 0;
+    }
+    .wrap-bank-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      min-width: 0;
+      flex: 1;
+    }
+    .wrap-bank-chip {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(159, 122, 234, 0.10);
+      border: 1px solid rgba(159, 122, 234, 0.32);
+      border-radius: 999px;
+      overflow: hidden;
+      transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    .wrap-bank-chip:hover {
+      background: rgba(159, 122, 234, 0.22);
+      border-color: rgba(159, 122, 234, 0.55);
+    }
+    .wrap-bank-chip.active {
+      background: rgba(192, 38, 211, 0.35);
+      border-color: #c026d3;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
+    }
+    .wrap-bank-chip-recall {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: transparent;
+      border: none;
+      color: #e2bdf6;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .wrap-bank-chip.active .wrap-bank-chip-recall { color: #fff; }
+    .wrap-bank-chip-name {
+      font-size: 0.62rem;
+      opacity: 0.7;
+      letter-spacing: 0.6px;
+    }
+    .wrap-bank-chip-label {
+      font-size: 0.78rem;
+      max-width: 14ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .wrap-bank-chip-x {
+      background: transparent;
+      border: none;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 0.95rem;
+      line-height: 1;
+      padding: 0 6px 2px 2px;
+      cursor: pointer;
+    }
+    .wrap-bank-chip-x:hover { color: #f472b6; }
     .kwr-pair:has(.play-lock:not(.active)) .wrap-segment:has(#wrap-edit-btn:not([hidden])) > #chord-btn {
       border-top-right-radius: 0;
       border-bottom-right-radius: 0;

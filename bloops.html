@@ -337,6 +337,14 @@
           <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
         </div>
       </div>
+      <!-- Wrap bank: every committed wrap lands here as a recallable chip.
+           Hidden until the bank has at least one entry; chips populate via
+           renderWrapBank(). Click a chip to re-arm wrapTemplate with that
+           saved shape; tap × to drop the chip. -->
+      <div class="wrap-bank" id="wrap-bank" hidden>
+        <span class="wrap-bank-label">Wraps</span>
+        <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
+      </div>
       <!-- Step Pan / Vol / Slip faders + the Edit button. Sits between
            the Keep/Wrap/Rest trio and the active lane row, matching
            the original layout, but now reparented into the per-lane
@@ -1126,6 +1134,20 @@
     let savedSequences = JSON.parse(localStorage.getItem('sounds-saved') || '[]');
     let activeSeqIndex = null;
 
+    // Saved wraps — independent bank of recently-committed Wrap steps so
+    // the user can swap between recent chord / subsequence shapes without
+    // re-building them. Persisted under its own localStorage key; each
+    // entry holds a deep-cloned step (so editing the live wrapTemplate
+    // never mutates the bank) plus an auto-name (A, B, C, …).
+    let savedWraps = (() => {
+      try { return JSON.parse(localStorage.getItem('wraps-saved') || '[]'); }
+      catch { return []; }
+    })();
+    // ID of the bank entry currently mirrored by wrapTemplate, so the
+    // matching chip stays highlighted. Cleared whenever wrapTemplate
+    // changes to something not minted by this bank.
+    let activeWrapBankId = null;
+
     function seqName(index) {
       let name = '';
       let n = index;
@@ -1335,6 +1357,129 @@
       if (typeof refreshSavedActionsBar === 'function') {
         try { refreshSavedActionsBar(); } catch (e) {}
       }
+    }
+
+    // ---- Wrap bank ----
+    // Stores every committed Wrap (chord / stack / run) as a recallable
+    // chip beside the Wrap button. Clicking a chip re-arms wrapTemplate
+    // with a clone of the saved step so the user can swap shapes without
+    // re-building them. Independent from savedSequences — different
+    // shape, different cadence of creation, different lifecycle.
+    function persistSavedWraps() {
+      try { localStorage.setItem('wraps-saved', JSON.stringify(savedWraps)); }
+      catch (e) {}
+    }
+
+    // Next unused single-letter name in A, B, C, … AA, AB, …
+    // Mirrors seqName but skips any name already in the bank so deletes
+    // don't make the visible labels regress.
+    function wrapBankNextName() {
+      const used = new Set(savedWraps.map(w => w.name));
+      let n = 0;
+      while (true) {
+        let s = '', m = n;
+        while (true) {
+          s = String.fromCharCode(65 + (m % 26)) + s;
+          if (m < 26) break;
+          m = Math.floor(m / 26) - 1;
+        }
+        if (!used.has(s)) return s;
+        n++;
+      }
+    }
+
+    // Compact one-glance preview for a chip. Stack chords get dot-joined
+    // note names; subsequence "run" gets the same ▤ glyph used elsewhere;
+    // a unison wrap just gets its single label.
+    function wrapBankChipLabel(step) {
+      if (!step) return '·';
+      if (step.isSub) return '▤';
+      if (Array.isArray(step.chord)) {
+        return step.chord.map(n => (n && n.label) || '·').join('·');
+      }
+      return step.label || '·';
+    }
+
+    function pushWrapToBank(step) {
+      if (!step) return;
+      const entry = {
+        id: 'w-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name: wrapBankNextName(),
+        step: cloneStep(step),
+      };
+      savedWraps.push(entry);
+      activeWrapBankId = entry.id;
+      persistSavedWraps();
+      renderWrapBank();
+    }
+
+    function recallWrapFromBank(id) {
+      const entry = savedWraps.find(w => w.id === id);
+      if (!entry) return;
+      if (typeof snapshotForUndo === 'function') {
+        try { snapshotForUndo('Recall wrap'); } catch (e) {}
+      }
+      // Exit any in-progress build so the recalled shape stays put —
+      // otherwise the eventual Close click would overwrite wrapTemplate
+      // with whatever the user was building when they tapped the chip.
+      chordMode = false;
+      pendingChord = [];
+      if (typeof clearWrapPendingHighlights === 'function') {
+        try { clearWrapPendingHighlights(); } catch (e) {}
+      }
+      wrapTemplate = cloneStep(entry.step);
+      activeWrapBankId = entry.id;
+      if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
+      renderWrapBank();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
+    function removeWrapFromBank(id) {
+      const i = savedWraps.findIndex(w => w.id === id);
+      if (i < 0) return;
+      savedWraps.splice(i, 1);
+      if (activeWrapBankId === id) activeWrapBankId = null;
+      persistSavedWraps();
+      renderWrapBank();
+    }
+
+    function renderWrapBank() {
+      const bank = document.getElementById('wrap-bank');
+      const chips = document.getElementById('wrap-bank-chips');
+      if (!bank || !chips) return;
+      if (savedWraps.length === 0) {
+        bank.hidden = true;
+        chips.innerHTML = '';
+        return;
+      }
+      bank.hidden = false;
+      chips.innerHTML = '';
+      savedWraps.forEach((entry) => {
+        const chip = document.createElement('div');
+        chip.className = 'wrap-bank-chip' + (entry.id === activeWrapBankId ? ' active' : '');
+        const label = wrapBankChipLabel(entry.step);
+        chip.title = `Recall wrap ${entry.name}: ${label}`;
+        const recall = document.createElement('button');
+        recall.type = 'button';
+        recall.className = 'wrap-bank-chip-recall';
+        recall.innerHTML =
+          `<span class="wrap-bank-chip-name">${entry.name}</span>` +
+          `<span class="wrap-bank-chip-label">${label}</span>`;
+        recall.addEventListener('click', () => recallWrapFromBank(entry.id));
+        chip.appendChild(recall);
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'wrap-bank-chip-x';
+        close.setAttribute('aria-label', `Delete wrap ${entry.name}`);
+        close.title = `Delete wrap ${entry.name}`;
+        close.textContent = '×';
+        close.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeWrapFromBank(entry.id);
+        });
+        chip.appendChild(close);
+        chips.appendChild(chip);
+      });
     }
 
     // ---- Clear bank ----
@@ -4670,9 +4815,15 @@
           // would lose the existing wrapTemplate if treated as one.
           if (step.isSub || Array.isArray(step.chord)) {
             wrapTemplate = cloneStep(step);
+            // This wrap was sourced from a sequence chip, not from the
+            // bank — drop the bank highlight so the user can tell at a
+            // glance that the live wrap doesn't correspond to a bank
+            // entry. They can re-save it with a fresh Wrap commit.
+            activeWrapBankId = null;
             _wrapTransposeDisplayStep = null;
             _wrapTonicShift = 0;
             refreshWrapVisuals();
+            renderWrapBank();
           }
           renderSequence();
           previewStep(sequence[i]);
@@ -9465,7 +9616,9 @@
       document.getElementById('tempo-slider').value     = '120';
       document.getElementById('tempo-input').value      = '120';
       wrapTemplate = null;
+      activeWrapBankId = null;
       refreshWrapVisuals();
+      renderWrapBank();
       clearWrapPendingHighlights();
       document.getElementById('loop-btn').classList.remove('active');
       document.getElementById('subdivision-select').value = '0.5';
@@ -10653,6 +10806,10 @@
             multiSelectMode = false;
             const multiCb = document.getElementById('multi-select-toggle');
             if (multiCb) multiCb.checked = false;
+            // Save the just-committed wrap to the bank so the user can
+            // recall it later. pushWrapToBank also sets activeWrapBankId
+            // → the new chip gets the active highlight automatically.
+            try { pushWrapToBank(newStep); } catch (e) { console.warn('pushWrapToBank failed:', e); }
             refreshWrapVisuals();
             renderSequence();
             if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -10696,17 +10853,21 @@
           const multiCb = document.getElementById('multi-select-toggle');
           if (multiCb) multiCb.checked = true;
           wrapTemplate = null;
+          activeWrapBankId = null;
           pendingChord = [];
           clearWrapPendingHighlights();
           refreshWrapVisuals();
+          renderWrapBank();
           renderSequence();
           if (typeof persistWorkspace === 'function') persistWorkspace();
           return;
         }
         wrapTemplate = null;
+        activeWrapBankId = null;
         pendingChord = [];
         clearWrapPendingHighlights();
         refreshWrapVisuals();
+        renderWrapBank();
         renderSequence();
         return;
       }
@@ -10758,6 +10919,10 @@
           newStep = { chord: [...pendingChord], label, duration: noteLength, subdivision: stepSubdivision };
         }
         wrapTemplate = newStep;
+        // Mirror the multi-select commit path: every freshly closed
+        // Wrap lands in the bank for later recall. activeWrapBankId is
+        // set by pushWrapToBank so the new chip lights up.
+        try { pushWrapToBank(newStep); } catch (e) { console.warn('pushWrapToBank failed:', e); }
         if (keepMode) {
           addToSequence(newStep);
           // Mirror the Keep-flow note-add prompt: after a wrap commits
@@ -10787,7 +10952,9 @@
         // note-mode handlers.
         pendingChord = [];
         wrapTemplate = null;
+        activeWrapBankId = null;
         refreshWrapVisuals();
+        renderWrapBank();
         renderSequence();
       }
       _wrapShape = null;
@@ -16216,7 +16383,9 @@
       if (typeof tempoInput  !== 'undefined' && tempoInput)  tempoInput.value  = '120';
       if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = '120';
       wrapTemplate = null;
+      activeWrapBankId = null;
       refreshWrapVisuals();
+      renderWrapBank();
       clearWrapPendingHighlights();
       document.getElementById('loop-btn')?.classList.remove('active');
       const noteSel  = document.getElementById('note-length');        if (noteSel)  noteSel.value  = '1';
@@ -21797,6 +21966,8 @@
 
     rebuildGrid();
     refreshHoldEnabled();
+    // Render any persisted Wrap-bank entries from a previous session.
+    try { renderWrapBank(); } catch (e) { console.warn('renderWrapBank failed:', e); }
     // Always-poly invariant: ensure lanes[] has at least one lane on
     // boot so the very first render / playback path doesn't hit empty
     // lane state. applyProjectSnapshot may overwrite this with a

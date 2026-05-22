@@ -147,6 +147,7 @@
       <div class="grid-state-row sounds-utilities grid-only">
         <button type="button" id="radial-tone-btn" class="sounds-sub-btn radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖ Pitch bend</button>
         <button type="button" id="edit-mode-btn" class="sounds-sub-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎ Note edit</button>
+        <button type="button" id="jump-mode-btn" class="sounds-sub-btn" aria-label="Jump mode" title="Jump — pressing a cell shifts the grid so that note becomes the lowest cell. Press the same note again and the grid jumps down an octave so it becomes the highest cell; press once more to return to lowest.">⇅ Jump</button>
       </div>
       <!-- XY pad axis settings — only meaningful in Graph mode. Hidden
            in Grid mode by .xy-settings's default display: none. -->
@@ -16810,6 +16811,95 @@
       });
     })();
 
+    // ---- Jump mode -------------------------------------------------------
+    // When on, every cell press shifts the grid so the pressed note is
+    // the new lowest cell. Pressing the same note again drops the grid
+    // an octave so that note is now the highest cell; a third press
+    // returns it to lowest. Lets the user navigate pitch space by
+    // playing rather than fiddling with the ± shift buttons.
+    let jumpMode = false;
+    let _lastJumpMidi = null;        // MIDI of the last pressed note in jump mode
+    let _jumpState = 'low';          // 'low' = pressed note at cell 0; 'high' = at last cell
+
+    // Adjust rootIdx + baseOctave so the cell at `cellIdx` (0 for low,
+    // last for high) lands on targetMidi. Snaps the grid into place via
+    // rebuildGrid + the usual ancillary refreshes.
+    function jumpGridTo(targetMidi, state) {
+      const total = 12 * Math.max(1, octaveCount);
+      const lastIdx = total - 1;
+      let lowMidi = (state === 'high') ? (targetMidi - lastIdx) : targetMidi;
+      const MIN_OCT = 0, MAX_OCT = 9;
+      const minLow = 12 * (MIN_OCT + 1);          // C at MIN_OCT
+      const maxLow = 12 * (MAX_OCT + 1) - lastIdx; // last cell still ≤ B of MAX_OCT
+      lowMidi = Math.max(minLow, Math.min(maxLow, lowMidi));
+      const newRoot = ((lowMidi % 12) + 12) % 12;
+      const newBase = Math.floor(lowMidi / 12) - 1;
+      if (newRoot === rootIdx && newBase === baseOctave) return;
+      rootIdx = newRoot;
+      baseOctave = newBase;
+      const rootSel = document.getElementById('root-select');
+      const octRange = document.getElementById('octave-range-select');
+      if (rootSel)  rootSel.value  = String(rootIdx);
+      if (octRange) octRange.value = `${baseOctave}x${octaveCount}`;
+      try { rebuildGrid(); } catch (e) { console.warn('jump rebuildGrid failed:', e); }
+      if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels();
+      if (typeof updateScaleBanner === 'function') updateScaleBanner();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
+    // Called by the cell-press handler. Plays the pressed note (audio
+    // first per the no-lag rule) and then jumps the grid. Returns true
+    // when the press was handled — the regular wrap / keep / poly path
+    // is skipped in jump mode.
+    function handleJumpModePress(cellIdx) {
+      if (!jumpMode) return false;
+      const note = notes[cellIdx];
+      if (!note) return false;
+      // Fire audio synchronously before the rebuild. The cell that just
+      // got pressed will be replaced in rebuildGrid, but the note is
+      // already scheduled so the user hears it without lag.
+      try {
+        const params = (Array.isArray(cellParams) && cellParams[cellIdx])
+          ? { ...cellParams[cellIdx] }
+          : undefined;
+        playNote(note.freq, params);
+      } catch (e) {}
+      // Derive MIDI from freq using the same A4 reference the grid uses.
+      // Round to nearest semitone — bent / off-tune cells (e.g. radial
+      // tone bend) still snap to a clean MIDI for state tracking.
+      const midi = Math.round(12 * Math.log2(note.freq / masterFreqA) + 69);
+      if (midi === _lastJumpMidi) {
+        _jumpState = (_jumpState === 'low') ? 'high' : 'low';
+      } else {
+        _jumpState = 'low';
+        _lastJumpMidi = midi;
+      }
+      jumpGridTo(midi, _jumpState);
+      return true;
+    }
+
+    (function initJumpModeToggle() {
+      const btn = document.getElementById('jump-mode-btn');
+      if (!btn) return;
+      const KEY = 'bloops-jump-mode';
+      const initial = localStorage.getItem(KEY) === '1';
+      jumpMode = initial;
+      btn.classList.toggle('active', initial);
+      btn.setAttribute('aria-pressed', initial ? 'true' : 'false');
+      btn.addEventListener('click', () => {
+        jumpMode = !jumpMode;
+        btn.classList.toggle('active', jumpMode);
+        btn.setAttribute('aria-pressed', jumpMode ? 'true' : 'false');
+        // Reset jump tracking whenever the mode itself is toggled so the
+        // very first press after enabling always lands as "low" instead
+        // of inheriting whatever state was left from a prior session.
+        _lastJumpMidi = null;
+        _jumpState = 'low';
+        try { btn.blur(); } catch (e) {}
+        try { localStorage.setItem(KEY, jumpMode ? '1' : '0'); } catch (e) {}
+      });
+    })();
+
     // ---- Grid On/Off — XY pad fluid mode ----------------------------------
     // Grid On  = discrete cells (current behavior).
     // Grid Off = a blank XY pad. Each axis maps to a configurable param
@@ -21695,6 +21785,13 @@
           // handler at bindFluidGridHandlers handles press / move /
           // release as a continuous bend.
           if (fluidGridMode) return;
+          // Jump mode — takes precedence over every other press behavior.
+          // The handler fires audio for the pressed note and then shifts
+          // the grid so that note becomes the lowest (or, on a repeat
+          // press, the highest) cell. Wrap, Keep, Fixed, etc. all yield.
+          if (jumpMode && notes[i]) {
+            if (handleJumpModePress(i)) return;
+          }
           // Fixed-mode sequential write — when Fixed + Keep is on, a
           // cell press writes the pressed note into the currently
           // selected slot and advances. Fires audio first so the

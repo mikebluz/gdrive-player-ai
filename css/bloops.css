@@ -205,6 +205,35 @@
       border-color: #9f7aea;
       color: #d6bcfa;
     }
+    /* Jump-mode toggle inherits the same neutral pill chrome as the
+       other utility toggles. The .active state lights up amber so it's
+       obvious whether a cell press will navigate the grid (jump on) or
+       behave normally (jump off). */
+    .grid-settings-panel .sounds-utilities #jump-mode-btn {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #cbd5e0;
+      cursor: pointer;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    }
+    @media (hover: hover) {
+      .grid-settings-panel .sounds-utilities #jump-mode-btn:hover {
+        border-color: #f6ad55;
+        color: #fbd38d;
+      }
+    }
+    .grid-settings-panel .sounds-utilities #jump-mode-btn.active {
+      background: rgba(246, 173, 85, 0.18);
+      border-color: #f6ad55;
+      color: #fbd38d;
+      box-shadow: 0 0 8px rgba(246, 173, 85, 0.35);
+    }
+    .grid-settings-panel .sounds-utilities #jump-mode-btn:focus { outline: none; }
 
     /* ± note-shift buttons — − sits to the left of the Sounds banner
        and + sits to the right. Both are 15% wider than the original

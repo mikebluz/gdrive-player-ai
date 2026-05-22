@@ -11394,6 +11394,51 @@
       };
       render();
     }
+    // Maps a signed semitone delta into a short interval name. Anything
+    // beyond our explicit table falls back to "Nst" so wrap drone
+    // bursts a few octaves apart still render something. Direction is
+    // marked with a leading ↓ for descending intervals so Run wraps
+    // (where order is musical, not just enumeration) read correctly.
+    function intervalNameFromSemis(semitones) {
+      const abs = Math.abs(semitones);
+      const dir = semitones < 0 ? '↓' : '';
+      const NAMES = [
+        'P1', 'min2', 'maj2', 'min3', 'maj3', 'P4',
+        'TT', 'P5', 'min6', 'maj6', 'min7', 'maj7',
+        'P8',
+        'min9', 'maj9', 'min10', 'maj10', 'P11', 'TT11', 'P12',
+        'min13', 'maj13', 'min14', 'maj14', '2P8',
+      ];
+      if (abs < NAMES.length) return dir + NAMES[abs];
+      return dir + abs + 'st';
+    }
+
+    // Build the wrap-notes summary in either plain (dot-joined) or
+    // interval-aware form. In interval mode each adjacent note pair gets
+    // a small interval token between them; a "?" stands in for any pair
+    // missing a frequency so the layout doesn't collapse.
+    function wrapNotesSummary(notes, withIntervals) {
+      if (!Array.isArray(notes) || notes.length === 0) return '';
+      if (!withIntervals) {
+        return notes.map(n => (n && n.label) || '—').join(' · ');
+      }
+      const parts = [];
+      for (let i = 0; i < notes.length; i++) {
+        const cur = notes[i];
+        parts.push((cur && cur.label) || '—');
+        if (i < notes.length - 1) {
+          const nxt = notes[i + 1];
+          if (_wrapNoteHasFreq(cur) && _wrapNoteHasFreq(nxt)) {
+            const semis = Math.round(12 * Math.log2(nxt.freq / cur.freq));
+            parts.push(`<span class="we-int">${intervalNameFromSemis(semis)}</span>`);
+          } else {
+            parts.push('<span class="we-int">?</span>');
+          }
+        }
+      }
+      return parts.join(' ');
+    }
+
     function showWrapEditMenu() {
       if (!_activeWrapNoteList() && !wrapTemplate) return;
       // Click-outside / OK both close. The menu re-reads wrap state
@@ -11405,16 +11450,24 @@
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      // Per-user preference: persisted so the Int view sticks across
+      // re-opens. The pressed button mirrors the persisted state.
+      const INT_KEY = 'bloops-wrap-edit-intervals';
+      let showIntervals = false;
+      try { showIntervals = localStorage.getItem(INT_KEY) === '1'; } catch (e) {}
       const render = () => {
         const ref = _activeWrapNoteList();
         const count = ref ? ref.notes.filter(_wrapNoteHasFreq).length : 0;
         const summary = ref
-          ? ref.notes.map(n => n.label || '—').join(' · ')
+          ? wrapNotesSummary(ref.notes, showIntervals)
           : '(no active wrap)';
         const isSub = _wrapIsSubLike();
         modal.innerHTML = `
           <div class="sm-title">Edit wrap</div>
-          <div class="we-summary">${summary}</div>
+          <div class="we-summary-row">
+            <div class="we-summary">${summary}</div>
+            <button type="button" class="we-int-toggle${showIntervals ? ' active' : ''}" id="we-int-toggle" aria-pressed="${showIntervals ? 'true' : 'false'}" title="Show interval names between consecutive notes">(Int)</button>
+          </div>
           <div class="we-row">
             <span class="we-label">Invert</span>
             <div class="we-row-btns">
@@ -11434,6 +11487,11 @@
             <button type="button" class="sm-apply we-ok" id="we-ok">OK</button>
           </div>
         `;
+        modal.querySelector('#we-int-toggle')?.addEventListener('click', () => {
+          showIntervals = !showIntervals;
+          try { localStorage.setItem(INT_KEY, showIntervals ? '1' : '0'); } catch (e) {}
+          render();
+        });
         modal.querySelector('#we-inv-up')?.addEventListener('click', () => {
           invertActiveWrap(+1);
           render();

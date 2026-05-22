@@ -3033,38 +3033,57 @@
       align-items: center;
       background: rgba(159, 122, 234, 0.10);
       border: 1px solid rgba(159, 122, 234, 0.32);
-      border-radius: 999px;
+      border-radius: 6px;
       overflow: hidden;
-      transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+      transition: background-color 0.12s ease, border-color 0.12s ease,
+                  box-shadow 0.12s ease, border-radius 0.18s ease;
     }
     .wrap-bank-chip:hover {
       background: rgba(159, 122, 234, 0.22);
       border-color: rgba(159, 122, 234, 0.55);
     }
+    /* Active chip expands to a pill and reveals the constituent-note
+       label + delete control. Inactive chips collapse to a 30×30 square
+       showing only their bank letter so a long bank stays scannable. */
     .wrap-bank-chip.active {
       background: rgba(192, 38, 211, 0.35);
       border-color: #c026d3;
       box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
+      border-radius: 999px;
     }
     .wrap-bank-chip-recall {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
-      padding: 4px 8px;
       background: transparent;
       border: none;
       color: #e2bdf6;
-      font-size: 0.75rem;
       font-weight: 600;
       letter-spacing: 0.3px;
       cursor: pointer;
       line-height: 1;
+      transition: padding 0.18s ease, width 0.18s ease, height 0.18s ease;
     }
-    .wrap-bank-chip.active .wrap-bank-chip-recall { color: #fff; }
+    .wrap-bank-chip:not(.active) .wrap-bank-chip-recall {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+    }
+    .wrap-bank-chip.active .wrap-bank-chip-recall {
+      padding: 4px 8px;
+      color: #fff;
+    }
     .wrap-bank-chip-name {
       font-size: 0.62rem;
       opacity: 0.7;
       letter-spacing: 0.6px;
+    }
+    /* When collapsed, the bank letter is the only readout, so promote
+       it to the chip's primary glyph. */
+    .wrap-bank-chip:not(.active) .wrap-bank-chip-name {
+      font-size: 0.82rem;
+      opacity: 1;
     }
     .wrap-bank-chip-label {
       font-size: 0.78rem;
@@ -3072,6 +3091,13 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    /* Hide the constituent-note label + delete button while the chip is
+       collapsed. The label still ships in the DOM so it can fade back
+       in instantly on activation without a re-render. */
+    .wrap-bank-chip:not(.active) .wrap-bank-chip-label,
+    .wrap-bank-chip:not(.active) .wrap-bank-chip-x {
+      display: none;
     }
     .wrap-bank-chip-x {
       background: transparent;
@@ -4873,6 +4899,16 @@
        re-render in place after every action (invert / toggle) so the
        summary line stays accurate without closing the menu. */
     .wrap-edit-modal { width: min(340px, 92vw); }
+    /* Summary row hosts the dot-joined notes (or interval-aware variant)
+       on the left and the (Int) toggle on the right. The summary itself
+       keeps its existing styling; the row just adds the side-by-side
+       layout. */
+    .wrap-edit-modal .we-summary-row {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
     .wrap-edit-modal .we-summary {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.82rem;
@@ -4881,8 +4917,41 @@
       border: 1px solid rgba(79, 209, 197, 0.25);
       border-radius: 8px;
       padding: 8px 10px;
-      margin-bottom: 14px;
       word-break: break-word;
+      flex: 1;
+      min-width: 0;
+    }
+    .wrap-edit-modal .we-int {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #f472b6;
+      opacity: 0.85;
+      padding: 0 4px;
+      letter-spacing: 0.2px;
+    }
+    .wrap-edit-modal .we-int-toggle {
+      flex: 0 0 auto;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      color: #f472b6;
+      background: rgba(244, 114, 182, 0.08);
+      border: 1px solid rgba(244, 114, 182, 0.35);
+      border-radius: 8px;
+      padding: 0 10px;
+      cursor: pointer;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    }
+    .wrap-edit-modal .we-int-toggle:hover {
+      background: rgba(244, 114, 182, 0.18);
+      border-color: rgba(244, 114, 182, 0.65);
+    }
+    .wrap-edit-modal .we-int-toggle.active {
+      background: rgba(244, 114, 182, 0.32);
+      border-color: #f472b6;
+      color: #fff;
     }
     .wrap-edit-modal .we-row {
       display: flex;

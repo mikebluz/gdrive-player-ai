@@ -164,10 +164,16 @@
       display: flex;
       flex-direction: row;
       align-items: center;
-      /* Center the Pitch bend + Note edit pair horizontally in the
-         row so they sit symmetrically rather than left-aligned. */
+      /* Center the Pitch bend + Note edit + Jump trio horizontally in
+         the row so they sit symmetrically rather than left-aligned. */
       justify-content: center;
       gap: 10px;
+      /* Three toggles + their gaps can crowd a ~360 px viewport once
+         system text scaling is in play. flex-wrap lets the trio drop
+         to a second row instead of overflowing the panel; row-gap
+         keeps the wrapped row breathing. */
+      flex-wrap: wrap;
+      row-gap: 6px;
     }
     .grid-settings-panel .sounds-utilities .master-vol {
       flex: 1 1 auto;
@@ -3034,12 +3040,14 @@
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active
        template. The label glyph mirrors the in-sequence display: a
-       dotted note-name chain for stacks, ▤ for runs. */
+       dotted note-name chain for stacks, ▤ for runs.
+       Horizontal padding matches the 16 px gutters of .step-grid-bar
+       above so the strip lines up with the Keep / Wrap / Rest pills. */
     .wrap-bank {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 4px 2px;
+      padding: 6px 16px 4px;
       flex-wrap: wrap;
     }
     .wrap-bank-label {
@@ -3053,7 +3061,7 @@
     .wrap-bank-chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
+      gap: 6px;
       min-width: 0;
       flex: 1;
     }
@@ -3067,13 +3075,17 @@
       transition: background-color 0.12s ease, border-color 0.12s ease,
                   box-shadow 0.12s ease, border-radius 0.18s ease;
     }
-    .wrap-bank-chip:hover {
-      background: rgba(159, 122, 234, 0.22);
-      border-color: rgba(159, 122, 234, 0.55);
+    @media (hover: hover) {
+      .wrap-bank-chip:hover {
+        background: rgba(159, 122, 234, 0.22);
+        border-color: rgba(159, 122, 234, 0.55);
+      }
     }
     /* Active chip expands to a pill and reveals the constituent-note
-       label + delete control. Inactive chips collapse to a 30×30 square
-       showing only their bank letter so a long bank stays scannable. */
+       label + delete control. Inactive chips collapse to a square
+       showing only their bank letter so a long bank stays scannable.
+       34×34 keeps the square small enough that a row of ~8 still fits
+       on a 360 px viewport but big enough to tap without misfiring. */
     .wrap-bank-chip.active {
       background: rgba(192, 38, 211, 0.35);
       border-color: #c026d3;
@@ -3095,13 +3107,14 @@
       transition: padding 0.18s ease, width 0.18s ease, height 0.18s ease;
     }
     .wrap-bank-chip:not(.active) .wrap-bank-chip-recall {
-      width: 30px;
-      height: 30px;
+      width: 34px;
+      height: 34px;
       padding: 0;
     }
     .wrap-bank-chip.active .wrap-bank-chip-recall {
-      padding: 4px 8px;
+      padding: 6px 10px;
       color: #fff;
+      min-height: 34px;
     }
     .wrap-bank-chip-name {
       font-size: 0.62rem;
@@ -3132,12 +3145,28 @@
       background: transparent;
       border: none;
       color: rgba(255, 255, 255, 0.45);
-      font-size: 0.95rem;
+      font-size: 1.05rem;
       line-height: 1;
-      padding: 0 6px 2px 2px;
+      padding: 4px 8px 4px 2px;
       cursor: pointer;
     }
     .wrap-bank-chip-x:hover { color: #f472b6; }
+    /* Mobile tweaks — keep the strip tap-friendly without letting a
+       long active label dominate a 360 px viewport. The Wraps label
+       drops a notch and the active label cap tightens so a long stack
+       (e.g. "C·E·G·B♭") truncates rather than pushing the × off-row. */
+    @media (max-width: 600px) {
+      .wrap-bank {
+        padding: 6px 12px 4px;
+        gap: 6px;
+      }
+      .wrap-bank-label {
+        font-size: 0.6rem;
+        letter-spacing: 1px;
+      }
+      .wrap-bank-chip-label { max-width: 10ch; }
+      .wrap-bank-chip.active .wrap-bank-chip-recall { padding: 6px 8px; }
+    }
     .kwr-pair:has(.play-lock:not(.active)) .wrap-segment:has(#wrap-edit-btn:not([hidden])) > #chord-btn {
       border-top-right-radius: 0;
       border-bottom-right-radius: 0;
@@ -4929,12 +4958,14 @@
        summary line stays accurate without closing the menu. */
     .wrap-edit-modal { width: min(340px, 92vw); }
     /* Summary row hosts the dot-joined notes (or interval-aware variant)
-       on the left and the (Int) toggle on the right. The summary itself
-       keeps its existing styling; the row just adds the side-by-side
-       layout. */
+       on the left and the (Int) toggle on the right. align-items is
+       flex-start (not stretch) so when the summary wraps to multiple
+       lines on a narrow viewport the (Int) toggle stays its natural
+       compact height anchored to the top, instead of stretching into a
+       tall narrow column. */
     .wrap-edit-modal .we-summary-row {
       display: flex;
-      align-items: stretch;
+      align-items: flex-start;
       gap: 8px;
       margin-bottom: 14px;
     }
@@ -4969,13 +5000,19 @@
       background: rgba(244, 114, 182, 0.08);
       border: 1px solid rgba(244, 114, 182, 0.35);
       border-radius: 8px;
-      padding: 0 10px;
+      /* Own vertical padding (rather than relying on align-items:
+         stretch) so the button keeps a sensible height regardless of
+         how tall the summary grows. */
+      padding: 6px 10px;
+      line-height: 1.2;
       cursor: pointer;
       transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
     }
-    .wrap-edit-modal .we-int-toggle:hover {
-      background: rgba(244, 114, 182, 0.18);
-      border-color: rgba(244, 114, 182, 0.65);
+    @media (hover: hover) {
+      .wrap-edit-modal .we-int-toggle:hover {
+        background: rgba(244, 114, 182, 0.18);
+        border-color: rgba(244, 114, 182, 0.65);
+      }
     }
     .wrap-edit-modal .we-int-toggle.active {
       background: rgba(244, 114, 182, 0.32);

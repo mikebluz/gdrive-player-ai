@@ -7459,20 +7459,39 @@
           try { entry.fn(ev.audioTime != null ? ev.audioTime : entry.audioTime); }
           catch (err) { console.error('[bloops-scheduler] dispatch threw:', err); }
         }
+        return;
       }
-      // 'topUp' is currently a no-op on the main side — the existing
-      // 500 ms walk lookahead already keeps the queue padded. Hook
-      // here later if we tighten the lookahead window.
+      if (msg.type === 'topUp') {
+        // Background-tab resilience: the walk's self-rearm
+        // (setTimeout(schedulerTick, 25 ms)) throttles to ~1 Hz when
+        // the tab loses focus, so without help the queue runs dry and
+        // audio dies a few seconds after Make-mode playback is
+        // backgrounded. The worklet's process() keeps running at audio
+        // rate regardless, so its periodic topUp pulse drives a walk
+        // beat directly. Only pulse when playback is actually active —
+        // an idle tab shouldn't trigger spurious walks.
+        if (sequenceTimer !== null && !_schedStopping
+            && Array.isArray(_schedStreams) && _schedStreams.length > 0) {
+          try { schedulerTick(); }
+          catch (err) { console.error('[bloops-scheduler] topUp walk threw:', err); }
+        }
+        return;
+      }
     }
 
     // Schedule a dispatch via the worklet when one is available, fall
     // back to direct call otherwise. The walk doesn't care which path
     // is used — both result in fn(audioTime) running before audioTime,
     // letting it call playNote(...) with the correct schedule time.
-    function _scheduleDispatch(audioTime, fn) {
+    //
+    // `stream` and `walkSnapshot` are optional and only consumed by
+    // _invalidateScheduledFrom — when set, a future cancel can rewind
+    // the stream to the snapshot's pre-walk state so the walk re-walks
+    // the cancelled span from scratch on its next tick.
+    function _scheduleDispatch(audioTime, fn, stream, walkSnapshot) {
       if (_bloopsSchedulerNode) {
         const id = _nextDispatchId++;
-        _pendingDispatches.set(id, { audioTime, fn });
+        _pendingDispatches.set(id, { audioTime, fn, stream, walkSnapshot });
         try {
           _bloopsSchedulerNode.port.postMessage({
             type: 'schedule',
@@ -7502,6 +7521,99 @@
         try { _bloopsSchedulerNode.port.postMessage({ type: 'clear' }); }
         catch (e) {}
       }
+    }
+
+    // Restore a stream object's mutable state from a snapshot captured
+    // at walk time. Called by _invalidateScheduledFrom when cancelling
+    // future dispatches — winding back the stream so the walk re-walks
+    // from the earliest cancelled step's pre-state.
+    // Note: source / laneIdx are not part of the snapshot (they don't
+    // change during playback). subStack is deep-copied so restoring
+    // doesn't tie the live stream to the snapshot's array (subsequent
+    // pushes / pops should not mutate the snapshot's record).
+    function _restoreStreamFromSnapshot(stream, snap) {
+      if (!stream || !snap) return;
+      stream.idx           = snap.idx;
+      stream.offsetSec     = snap.offsetSec;
+      stream.iter          = snap.iter;
+      stream.driftAccumSec = snap.driftAccumSec;
+      stream.ended         = false;
+      stream.subStack.length = 0;
+      for (let i = 0; i < snap.subStack.length; i++) {
+        const s = snap.subStack[i];
+        stream.subStack.push({ subSteps: s.subSteps, idx: s.idx });
+      }
+    }
+
+    // Cancel every pending dispatch whose audioTime falls on or after
+    // `cutoffAudioTime`, then rewind each affected stream to the
+    // EARLIEST cancelled dispatch's snapshot. The walk's next tick
+    // re-walks the cancelled span from that snapshot, picking up
+    // whatever the user just edited (added / removed / replaced steps,
+    // changed BPM, toggled loop, etc.).
+    //
+    // Notes already inside the 50 ms Tone lookahead are intentionally
+    // preserved by callers (which pass cutoff = Tone.now() + 0.05)
+    // since Tone has likely already committed them to the audio graph;
+    // cancelling them via the worklet wouldn't actually un-fire them
+    // and just risks audible glitching.
+    function _invalidateScheduledFrom(cutoffAudioTime) {
+      if (!Number.isFinite(cutoffAudioTime)) return;
+      if (_pendingDispatches.size === 0) {
+        // Still send the worklet cancel so a stale queued event past
+        // cutoff (e.g. one whose closure-side entry was already
+        // consumed) doesn't fire after the edit.
+        if (_bloopsSchedulerNode) {
+          try { _bloopsSchedulerNode.port.postMessage({ type: 'cancelAfter', audioTime: cutoffAudioTime }); }
+          catch (e) {}
+        }
+        return;
+      }
+      // First pass: find the earliest cancelled entry per stream
+      // (lowest audioTime). That's the snapshot we'll rewind to —
+      // the rest of the cancelled entries for the same stream
+      // describe later states that the walk will re-derive anyway.
+      const earliestByStream = new Map();
+      const toDelete = [];
+      for (const [id, entry] of _pendingDispatches) {
+        if (!entry || entry.audioTime < cutoffAudioTime) continue;
+        toDelete.push(id);
+        if (!entry.stream || !entry.walkSnapshot) continue;
+        const cur = earliestByStream.get(entry.stream);
+        if (!cur || entry.audioTime < cur.audioTime) {
+          earliestByStream.set(entry.stream, entry);
+        }
+      }
+      if (toDelete.length === 0) return;
+      // Rewind affected streams. Doing this BEFORE removing from the
+      // pending map keeps the snapshot reachable if something throws.
+      for (const [stream, entry] of earliestByStream) {
+        _restoreStreamFromSnapshot(stream, entry.walkSnapshot);
+      }
+      // Drop the cancelled entries from the main-thread map.
+      for (let i = 0; i < toDelete.length; i++) {
+        _pendingDispatches.delete(toDelete[i]);
+      }
+      // Tell the worklet to drop its queued copies. Using cancelAfter
+      // is cheaper than cancel-by-id-list and naturally handles any
+      // events the worklet has accepted but main hasn't seen yet.
+      if (_bloopsSchedulerNode) {
+        try { _bloopsSchedulerNode.port.postMessage({ type: 'cancelAfter', audioTime: cutoffAudioTime }); }
+        catch (e) {}
+      }
+    }
+
+    // Thin convenience wrapper — invalidate everything scheduled past
+    // a small safety window. Callers use this after a structural edit
+    // to in-flight lane.steps (add / remove / replace). In-place
+    // mutations (e.g. step.freq = newFreq on an existing step object)
+    // don't need this — the dispatched closures already hold a live
+    // reference to the step object and pick up mutations automatically.
+    function _invalidatePlayback() {
+      if (sequenceTimer === null) return; // not playing
+      const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function')
+        ? Tone.now() : 0;
+      _invalidateScheduledFrom(now + 0.05);
     }
 
     // ---- Audio slippage tracking ---------------------------------------
@@ -7926,6 +8038,20 @@
               source:   stream.source,
               laneIdx:  stream.laneIdx,
             };
+            // Walk-state snapshot for live-edit cancellation. If the
+            // user mutates lane.steps before this dispatch fires, the
+            // invalidate path rewinds the live stream to this exact
+            // pre-walk state and the next tick re-walks the cancelled
+            // span against the new step list. Deep-copy subStack so a
+            // later push / pop on the live array doesn't corrupt the
+            // snapshot.
+            const _walkSnapshot = {
+              idx:           stream.idx,
+              offsetSec:     stream.offsetSec,
+              iter:          stream.iter || 0,
+              driftAccumSec: stream.driftAccumSec || 0,
+              subStack:      stream.subStack.map(s => ({ subSteps: s.subSteps, idx: s.idx })),
+            };
             _scheduleDispatch(audioTime, (fireAudioTime) => {
               const _laneAtFire = (_dispatchLaneIdx != null) ? lanes[_dispatchLaneIdx] : null;
               const _audibleNow = _laneIsAudible(_laneAtFire);
@@ -7936,7 +8062,7 @@
                 !_audibleNow,
                 _dispatchLaneIdx
               );
-            });
+            }, stream, _walkSnapshot);
             stream.offsetSec += waitSec;
             advanceSchedLevel(stream);
             _debugScheduled++;
@@ -16436,6 +16562,19 @@
       if (!_workspacePersistEnabled) return;
       clearTimeout(_workspacePersistTimer);
       _workspacePersistTimer = setTimeout(persistWorkspaceNow, 250);
+      // Live-edit invalidation: persistWorkspace runs after every
+      // structural mutation (step add / remove / replace, lane
+      // shuffle, BPM change, root / scale change, etc.). If a Make-
+      // mode sequence is playing, cancel any dispatches scheduled
+      // past the 50 ms safety window and rewind affected streams so
+      // the walk re-walks from the user's edit. In-place mutations
+      // (changing a single field on an existing step object) don't
+      // strictly need this — closures already see the live object —
+      // but invalidating is cheap (a Map iteration) and correctness
+      // wins over the rare structural edits dominate the cost.
+      if (typeof _invalidatePlayback === 'function') {
+        try { _invalidatePlayback(); } catch (e) {}
+      }
     }
     // Auto-serialize on tab close. `pagehide` is the reliable event in
     // modern browsers (beforeunload is suppressed in some cases —

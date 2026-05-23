@@ -290,7 +290,8 @@
              semitone (rootIdx ±1, carrying baseOctave at the C
              boundary). The Radial Pitch Bend toggle moved into the
              Sounds dropdown to free banner-row space. -->
-        <button type="button" id="note-shift-down" class="note-shift-btn" title="Shift the grid down 1 semitone">−</button>
+        <button type="button" id="note-shift-down" class="note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (− shifts UP a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">−</button>
+        <button type="button" id="note-shift-mode-btn" class="note-shift-mode-btn" aria-label="Note-shift mode" title="Shift step: °=1 scale degree (default, follows the active key), ½=1 semitone (chromatic, the old behavior). Tap to switch.">°</button>
         <button type="button" id="scale-banner-half" class="banner-half" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <!-- Tone and FX banner buttons live on as hidden anchors so their
              existing IDs (used by initToneMenu / initFxMenu) keep resolving;
@@ -300,7 +301,7 @@
              re-anchor to scale-banner-half on open from Sounds. -->
         <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
         <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
-        <button type="button" id="note-shift-up"   class="note-shift-btn" title="Shift the grid up 1 semitone">+</button>
+        <button type="button" id="note-shift-up"   class="note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (+ shifts DOWN a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">+</button>
         <!-- Speaker button mirrors the Grid button on the opposite
              side so the row stays balanced. Clicking opens a small
              popover with the master volume fader (relocated out of
@@ -582,8 +583,18 @@
 
   <script>
     const CHROMATIC = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-    let rootIdx = 0;       // 0 = C
+    let rootIdx = 0;       // 0 = C — pitch class of the grid's lowest cell
     let baseOctave = 4;    // octave number of the root note
+    // Decoupled scale tonic — independent of rootIdx so the user can
+    // shift the grid window by 1 scale degree (only rootIdx moves)
+    // without changing which note the scale is rooted on. Null means
+    // "follows rootIdx" — the default. Set by every path that
+    // explicitly picks a key (root dropdown, scale dropdown, Key
+    // picker), cleared back to null when chromatic.
+    let _scaleTonic = null;
+    function _effectiveScaleTonic() {
+      return (_scaleTonic == null) ? rootIdx : _scaleTonic;
+    }
     let octaveCount = 1;   // 1..3
     let masterFreqA = 440; // Hz — master tuning reference (A4)
 
@@ -2402,6 +2413,172 @@
       return opts;
     }
 
+    // Factory + table for the General MIDI batch. Each row is
+    // [internalId, displayLabel, gmFolderName, octaveTier] — the
+    // helper expands it into the same {id, label, baseUrl, urls}
+    // shape the rest of REMOTE_INSTRUMENTS uses. Octave tiers:
+    //   'high' → C3-C7  (piccolo, glockenspiel, tubular bells)
+    //   'low'  → C1-C5  (basses, tuba, contrabass, timpani)
+    //   'fx'   → C4 only (non-pitched sound effects)
+    //   default → C2-C6 (everything else)
+    function _buildGmInstruments() {
+      const TIERS = {
+        high: ['C3','C4','C5','C6','C7'],
+        low:  ['C1','C2','C3','C4','C5'],
+        fx:   ['C4'],
+        mid:  ['C2','C3','C4','C5','C6'],
+      };
+      const mk = (id, label, gmName, tier = 'mid') => {
+        const points = TIERS[tier] || TIERS.mid;
+        const urls = {};
+        for (const p of points) urls[p] = p + '.mp3';
+        return {
+          id,
+          label,
+          baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/' + gmName + '-mp3/',
+          urls,
+        };
+      };
+      // Note: ids must not collide with the manually-defined entries
+      // above (piano, rhodes, harpsichord, clavinet, celesta,
+      // vibraphone, marimba, eguitar, leadsquare, padpoly, organ,
+      // guitar, violin, cello, flute) — those are handled by either
+      // a different CDN (nbrosowsky) or a different sample source
+      // (Salamander piano).
+      const TABLE = [
+        // KEYS
+        ['pianobr',      'Bright Piano',  'bright_acoustic_piano'],
+        ['pianoeg',      'Elec Grand',    'electric_grand_piano'],
+        ['honkytonk',    'Honkytonk',     'honkytonk_piano'],
+        ['organdrawbar', 'Drawbar Org',   'drawbar_organ'],
+        ['organperc',    'Perc Organ',    'percussive_organ'],
+        ['organrock',    'Rock Organ',    'rock_organ'],
+        ['organchurch',  'Church Organ',  'church_organ'],
+        ['organreed',    'Reed Organ',    'reed_organ'],
+        ['accordion',    'Accordion',     'accordion'],
+        ['harmonica',    'Harmonica',     'harmonica'],
+        ['tangoaccord',  'Tango Accord',  'tango_accordion'],
+        // MALLETS / pitched percussion
+        ['glockenspiel', 'Glockenspiel',  'glockenspiel',   'high'],
+        ['musicbox',     'Music Box',     'music_box',      'high'],
+        ['xylophone',    'Xylophone',     'xylophone',      'high'],
+        ['tubularbells', 'Tubular Bells', 'tubular_bells',  'high'],
+        ['dulcimer',     'Dulcimer',      'dulcimer'],
+        ['steeldrums',   'Steel Drums',   'steel_drums'],
+        ['kalimba',      'Kalimba',       'kalimba'],
+        ['timpani',      'Timpani',       'timpani',        'low'],
+        ['tinklebell',   'Tinkle Bell',   'tinkle_bell',    'high'],
+        ['agogo',        'Agogo',         'agogo'],
+        ['woodblock',    'Woodblock',     'woodblock'],
+        ['taikodrum',    'Taiko Drum',    'taiko_drum',     'low'],
+        ['melodictom',   'Melodic Tom',   'melodic_tom'],
+        ['synthdrum',    'Synth Drum',    'synth_drum'],
+        ['revcymbal',    'Rev Cymbal',    'reverse_cymbal'],
+        // STRINGS — additional guitars
+        ['guitnylon',    'Nylon Gtr',     'acoustic_guitar_nylon'],
+        ['guitsteel',    'Steel Gtr',     'acoustic_guitar_steel'],
+        ['guitjazz',     'Jazz Gtr',      'electric_guitar_jazz'],
+        ['guitclean',    'Clean Gtr',     'electric_guitar_clean'],
+        ['guitmute',     'Muted Gtr',     'electric_guitar_muted'],
+        ['guitod',       'Overdrive Gtr', 'overdriven_guitar'],
+        ['guitdist',     'Dist Gtr',      'distortion_guitar'],
+        ['guitharm',     'Gtr Harmonics', 'guitar_harmonics'],
+        // STRINGS — basses (entirely new family for us)
+        ['bassacoustic', 'Acoustic Bass', 'acoustic_bass',         'low'],
+        ['bassefinger',  'Electric Bass', 'electric_bass_finger',  'low'],
+        ['bassepick',    'Pick Bass',     'electric_bass_pick',    'low'],
+        ['bassfret',     'Fretless Bass', 'fretless_bass',         'low'],
+        ['bassslap1',    'Slap Bass 1',   'slap_bass_1',           'low'],
+        ['bassslap2',    'Slap Bass 2',   'slap_bass_2',           'low'],
+        ['basssynth1',   'Synth Bass 1',  'synth_bass_1',          'low'],
+        ['basssynth2',   'Synth Bass 2',  'synth_bass_2',          'low'],
+        // STRINGS — orchestral
+        ['viola',        'Viola',         'viola'],
+        ['contrabass',   'Contrabass',    'contrabass',     'low'],
+        ['tremolostr',   'Tremolo Str',   'tremolo_strings'],
+        ['pizzstr',      'Pizz Str',      'pizzicato_strings'],
+        ['harp',         'Harp',          'orchestral_harp'],
+        ['strens1',      'Strings',       'string_ensemble_1'],
+        ['strens2',      'Strings 2',     'string_ensemble_2'],
+        ['synstr1',      'Synth Str',     'synth_strings_1'],
+        ['synstr2',      'Synth Str 2',   'synth_strings_2'],
+        // WINDS — saxes
+        ['saxsop',       'Soprano Sax',   'soprano_sax'],
+        ['saxalto',      'Alto Sax',      'alto_sax'],
+        ['saxtenor',     'Tenor Sax',     'tenor_sax'],
+        ['saxbari',      'Baritone Sax',  'baritone_sax',   'low'],
+        // WINDS — other reeds
+        ['oboe',         'Oboe',          'oboe'],
+        ['enghorn',      'English Horn',  'english_horn'],
+        ['bassoon',      'Bassoon',       'bassoon',        'low'],
+        ['clarinet',     'Clarinet',      'clarinet'],
+        // WINDS — pipes
+        ['piccolo',      'Piccolo',       'piccolo',        'high'],
+        ['recorder',     'Recorder',      'recorder'],
+        ['panflute',     'Pan Flute',     'pan_flute'],
+        ['blownbottle',  'Blown Bottle',  'blown_bottle'],
+        ['shakuhachi',   'Shakuhachi',    'shakuhachi'],
+        ['whistle',      'Whistle',       'whistle',        'high'],
+        ['ocarina',      'Ocarina',       'ocarina'],
+        // WINDS — brass
+        ['trumpet',      'Trumpet',       'trumpet'],
+        ['trombone',     'Trombone',      'trombone'],
+        ['tuba',         'Tuba',          'tuba',           'low'],
+        ['trumpetmute',  'Muted Trumpet', 'muted_trumpet'],
+        ['frenchhorn',   'French Horn',   'french_horn'],
+        ['brasssec',     'Brass Section', 'brass_section'],
+        ['brasssyn1',    'Synth Brass',   'synth_brass_1'],
+        ['brasssyn2',    'Synth Brass 2', 'synth_brass_2'],
+        // LEADS — synth leads (we already have leadsquare)
+        ['leadsaw',      'Saw Lead',      'lead_2_sawtooth'],
+        ['leadcal',      'Calliope Lead', 'lead_3_calliope'],
+        ['leadchiff',    'Chiff Lead',    'lead_4_chiff'],
+        ['leadchar',     'Charang Lead',  'lead_5_charang'],
+        ['leadvoice',    'Voice Lead',    'lead_6_voice'],
+        ['leadfifths',   'Fifths Lead',   'lead_7_fifths'],
+        ['leadbass',     'Bass + Lead',   'lead_8_bass__lead'],
+        // PADS — synth pads (we already have padpoly)
+        ['padnew',       'New Age Pad',   'pad_1_new_age'],
+        ['padwarm',      'Warm Pad',      'pad_2_warm'],
+        ['padchoir',     'Choir Pad',     'pad_4_choir'],
+        ['padbowed',     'Bowed Pad',     'pad_5_bowed'],
+        ['padmetal',     'Metal Pad',     'pad_6_metallic'],
+        ['padhalo',      'Halo Pad',      'pad_7_halo'],
+        ['padsweep',     'Sweep Pad',     'pad_8_sweep'],
+        // SYNTH FX
+        ['fxrain',       'FX Rain',       'fx_1_rain'],
+        ['fxsoundtrack', 'FX Soundtrack', 'fx_2_soundtrack'],
+        ['fxcrystal',    'FX Crystal',    'fx_3_crystal'],
+        ['fxatmos',      'FX Atmosphere', 'fx_4_atmosphere'],
+        ['fxbright',     'FX Brightness', 'fx_5_brightness'],
+        ['fxgoblins',    'FX Goblins',    'fx_6_goblins'],
+        ['fxechoes',     'FX Echoes',     'fx_7_echoes'],
+        ['fxscifi',      'FX Sci-Fi',     'fx_8_scifi'],
+        // ENSEMBLE & VOICE
+        ['choir',        'Choir Aahs',    'choir_aahs'],
+        ['voiceoohs',    'Voice Oohs',    'voice_oohs'],
+        ['orchhit',      'Orch Hit',      'orchestra_hit'],
+        // ETHNIC
+        ['sitar',        'Sitar',         'sitar'],
+        ['banjo',        'Banjo',         'banjo'],
+        ['shamisen',     'Shamisen',      'shamisen'],
+        ['koto',         'Koto',          'koto'],
+        ['bagpipe',      'Bagpipe',       'bagpipe'],
+        ['fiddle',       'Fiddle',        'fiddle'],
+        ['shanai',       'Shanai',        'shanai'],
+        // SOUND EFFECTS — single-pitch, often non-tonal
+        ['fretnoise',    'Fret Noise',    'guitar_fret_noise', 'fx'],
+        ['breathnoise',  'Breath Noise',  'breath_noise',      'fx'],
+        ['seashore',     'Seashore',      'seashore',          'fx'],
+        ['bird',         'Bird Tweet',    'bird_tweet',        'fx'],
+        ['phone',        'Telephone',     'telephone_ring',    'fx'],
+        ['helicopter',   'Helicopter',    'helicopter',        'fx'],
+        ['applause',     'Applause',      'applause',          'fx'],
+        ['gunshot',      'Gunshot',       'gunshot',           'fx'],
+      ];
+      return TABLE.map(row => mk(row[0], row[1], row[2], row[3]));
+    }
+
     // Open-source sample-based instruments. Each loads as a Tone.Sampler
     // connected to the master bus, then surfaces as a 'sample:<id>' tone
     // option alongside any local samples. Ranges are intentionally sparse —
@@ -2531,6 +2708,16 @@
         baseUrl: 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/pad_3_polysynth-mp3/',
         urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
       },
+      // ---- General MIDI bank batch — every MusyngKite GM voice we
+      // weren't already shipping. Each entry follows the exact
+      // pattern above (id / label / baseUrl / urls). Octave coverage
+      // tiers: HIGH (C3-C7) for piccolo / glockenspiel / tubular
+      // bells, LOW (C1-C5) for basses / tuba / contrabass / timpani,
+      // FX (just C4) for non-pitched sound-effects samples, MID
+      // (C2-C6) for everything else — matches the existing entries'
+      // density and lets Tone.Sampler pitch-shift between anchors.
+      // CDN: gleitz.github.io/midi-js-soundfonts/MusyngKite (CC-BY).
+      ..._buildGmInstruments(),
       // ---- Drum kits — CC0 / public-domain from tidalcycles/dirt-samples.
       // Each kit fans out 12 distinct hits across the chromatic C2-B2 row
       // (kick → C, rim → C#, snare → D, clap → D#, closed hat → E, open
@@ -4716,6 +4903,64 @@
         let newCol = (lastSeg === subCols) ? 1 : (lastSeg + 1);
         return { firstSpan, continuations, newCol };
       };
+      // ---- Pre-compute key groups for visual containers (Round 1 / Phase B) ----
+      // Walk the sequence once to find runs of steps with matching
+      // keyContext, sum their natural spans, and keep a lookup so the
+      // chip-creation loop below can wrap each run inside a real
+      // <div.key-group-container> with the correct grid-column span.
+      // The container uses CSS subgrid so chips inside it still align
+      // to the outer chip-strip grid lines — but the container itself
+      // can carry the user-visible "thin container" border around the
+      // group. Also self-heals out-of-key keyContexts (the same check
+      // the per-chip render did before) so an edited step that
+      // drifted out of its key ejects to its own (no-group) slot.
+      const _keyGroupSpansByStart = new Map();   // startIdx → totalSpan
+      const _stepGroupStartByIdx  = new Map();   // stepIdx  → startIdx of containing group
+      {
+        let _curStart = -1;
+        let _curKc    = null;
+        let _curTotal = 0;
+        const _flush = () => {
+          if (_curStart >= 0 && _curTotal > 0 && _curKc) {
+            _keyGroupSpansByStart.set(_curStart, { kc: _curKc, total: _curTotal });
+          }
+        };
+        for (let _gi = 0; _gi < sequence.length; _gi++) {
+          const _gs = sequence[_gi];
+          if (!_gs || _gs._wrapEditing) continue;
+          // Out-of-key edit ejection — same self-heal the previous
+          // per-chip path did, hoisted up so the group-span sum
+          // matches what we'll actually render.
+          if (_gs.keyContext && typeof _stepIsAllInKey === 'function') {
+            try { if (!_stepIsAllInKey(_gs, _gs.keyContext)) _gs.keyContext = null; }
+            catch (e) {}
+          }
+          const _kc = _gs.keyContext || null;
+          const _span = Math.max(1, Math.round(stepLengthFactor(_gs) * SPAN_PER_MEASURE));
+          if (_kc && _curStart >= 0 && _keyContextsMatch(_curKc, _kc)) {
+            _curTotal += _span;
+            _stepGroupStartByIdx.set(_gi, _curStart);
+          } else {
+            _flush();
+            if (_kc) {
+              _curStart = _gi;
+              _curKc    = _kc;
+              _curTotal = _span;
+              _stepGroupStartByIdx.set(_gi, _curStart);
+            } else {
+              _curStart = -1;
+              _curKc    = null;
+              _curTotal = 0;
+            }
+          }
+        }
+        _flush();
+      }
+      // Tracks the live container element per group startIdx so
+      // continuation chips + every step in the run all land inside
+      // the same wrapper.
+      const _keyGroupContainerByStart = new Map();
+
       sequence.forEach((step, i) => {
         // Wrap-editor stash: showWrapEditor temporarily parks the
         // wrapTemplate at the end of `sequence` so it can drive the
@@ -4944,65 +5189,35 @@
             ? step.params.pan : 0;
           if (savedPan !== 0) applyPanTint(chip, chipBaseColor, savedPan);
         }
-        // ---- Visual key grouping ----
-        // Steps stamped with a keyContext (anything other than chromatic)
-        // get a colored top + bottom border. The first and last steps in
-        // each run of same-key steps additionally get left / right
-        // borders, forming a per-row visual container that the user can
-        // scan to see which steps belong together.
-        // Skips _wrapEditing stash entries when computing neighbors so
-        // an in-flight wrap edit doesn't fragment the visible group.
-        //
-        // Out-of-key edit ejection (Round 2 / Phase F): if the step's
-        // notes have drifted out of its declared keyContext (e.g. user
-        // edited a wrap's pitch in the wrap-notes modal and added an
-        // F# to a step claiming C major), null the keyContext so the
-        // step ejects from its visual group on this and every future
-        // render. Self-healing: render is the canonical "look at the
-        // truth" pass and runs after every edit via the existing
-        // renderSequence call sites.
-        if (step.keyContext && typeof _stepIsAllInKey === 'function') {
-          try {
-            if (!_stepIsAllInKey(step, step.keyContext)) {
-              step.keyContext = null;
-            }
-          } catch (e) {}
+        // ---- Visual key grouping (real container) ----
+        // Look up the key-group this step belongs to (precomputed
+        // above). Each run of same-key steps gets ONE <div.key-group-
+        // container> wrapper, created on the first step of the run
+        // and reused for the rest. The container is a real CSS Grid
+        // subgrid child of the chip strip so chips inside it still
+        // align to the outer column lines — but the container itself
+        // carries the thin purple border that wraps the whole group.
+        const _stepGroupStart = _stepGroupStartByIdx.get(i);
+        let _appendTarget = chipHost;
+        if (_stepGroupStart != null) {
+          let _container = _keyGroupContainerByStart.get(_stepGroupStart);
+          if (!_container) {
+            const _gInfo = _keyGroupSpansByStart.get(_stepGroupStart);
+            _container = document.createElement('div');
+            _container.className = 'key-group-container';
+            _container.style.gridColumn = 'span ' + (_gInfo && _gInfo.total ? _gInfo.total : 1);
+            const _rootName  = (typeof CHROMATIC !== 'undefined' && CHROMATIC[step.keyContext.root]) || '?';
+            const _scaleName = (typeof prettyScaleName === 'function')
+              ? prettyScaleName(step.keyContext.scale)
+              : step.keyContext.scale;
+            _container.dataset.keyLabel = `${_rootName} ${_scaleName}`;
+            _container.title = `Key: ${_rootName} ${_scaleName}`;
+            chipHost.appendChild(_container);
+            _keyGroupContainerByStart.set(_stepGroupStart, _container);
+          }
+          _appendTarget = _container;
         }
-        if (step.keyContext) {
-          let _prevKey = null;
-          for (let j = i - 1; j >= 0; j--) {
-            const s = sequence[j];
-            if (!s || s._wrapEditing) continue;
-            _prevKey = s.keyContext || null;
-            break;
-          }
-          let _nextKey = null;
-          for (let j = i + 1; j < sequence.length; j++) {
-            const s = sequence[j];
-            if (!s || s._wrapEditing) continue;
-            _nextKey = s.keyContext || null;
-            break;
-          }
-          const _isStart = !_keyContextsMatch(step.keyContext, _prevKey);
-          const _isEnd   = !_keyContextsMatch(step.keyContext, _nextKey);
-          chip.classList.add('in-key-group');
-          if (_isStart && _isEnd) chip.classList.add('key-group-solo');
-          else if (_isStart)      chip.classList.add('key-group-start');
-          else if (_isEnd)        chip.classList.add('key-group-end');
-          else                    chip.classList.add('key-group-mid');
-          const _rootName  = (typeof CHROMATIC !== 'undefined' && CHROMATIC[step.keyContext.root]) || '?';
-          const _scaleName = (typeof prettyScaleName === 'function')
-            ? prettyScaleName(step.keyContext.scale)
-            : step.keyContext.scale;
-          chip.dataset.keyLabel = `${_rootName} ${_scaleName}`;
-          // Append a key-context note to the existing chip title so
-          // hovering still surfaces the original step details first.
-          if (_isStart) {
-            const _prev = chip.title ? chip.title + ' · ' : '';
-            chip.title = _prev + `Key: ${_rootName} ${_scaleName}`;
-          }
-        }
-        chipHost.appendChild(chip);
+        _appendTarget.appendChild(chip);
         // Long steps spill across rows as continuation chips —
         // visually identical to the first segment (same color, same
         // class) but marked .cont-mid / .cont-end so CSS can show
@@ -5013,12 +5228,6 @@
           _continuationPlan.continuations.forEach((segSpan, idx) => {
             const cont = chip.cloneNode(true);
             cont.classList.remove('cont-start', 'active', 'selected', 'variance-editing');
-            // Continuation segments belong to the same step as the head,
-            // so they shouldn't carry boundary markers — only the head
-            // chip is the "start" or "end" of a key group. Stripping
-            // these prevents a mid-step continuation from drawing a
-            // spurious left / right border at row breaks.
-            cont.classList.remove('key-group-start', 'key-group-end', 'key-group-solo', 'key-group-mid');
             cont.classList.add(
               (idx === _continuationPlan.continuations.length - 1) ? 'cont-end' : 'cont-mid'
             );
@@ -5026,7 +5235,11 @@
             cont.style.gridColumn = `span ${segSpan}`;
             cont.textContent = ''; // visual segment only — no repeated label
             cont.removeAttribute('id');
-            chipHost.appendChild(cont);
+            // Continuation chips belong inside the same key-group
+            // container as their head chip (if any) so the wrapper
+            // sees a continuous run of chips and its subgrid sizing
+            // remains correct across row wraps.
+            _appendTarget.appendChild(cont);
           });
         }
       });
@@ -5788,8 +6001,14 @@
     // grid's root / scale later change.
     function _captureKeyContext() {
       if (typeof currentScale !== 'string' || currentScale === 'chromatic') return null;
-      if (!Number.isFinite(rootIdx)) return null;
-      return { root: rootIdx, scale: currentScale };
+      const tonic = _effectiveScaleTonic();
+      if (!Number.isFinite(tonic)) return null;
+      // Stamp the SCALE's tonic, not the grid view's lowest cell. After
+      // a scale-degree shift those diverge — the user is still "in
+      // C major" even if the grid window is scrolled so D is at the
+      // bottom. Visual key-grouping and saved-wrap rebasing both want
+      // the original tonic.
+      return { root: tonic, scale: currentScale };
     }
     // Pitch classes (0-11) covered by a keyContext. Returns null for
     // anything unresolvable so callers can short-circuit cleanly.
@@ -6070,9 +6289,14 @@
       const targetRoot  = Math.max(0, Math.min(11, kc.root | 0));
       const targetScale = (typeof kc.scale === 'string' && SCALES[kc.scale])
         ? kc.scale : 'chromatic';
-      if (targetRoot === rootIdx && targetScale === currentScale) return false;
+      if (targetRoot === rootIdx && targetScale === currentScale
+          && _effectiveScaleTonic() === targetRoot) return false;
       rootIdx = targetRoot;
       currentScale = targetScale;
+      // Restore the scale's tonic to the clicked step's key — a chip
+      // click should always reset any degree-shift-induced divergence
+      // between rootIdx and _scaleTonic. Chromatic clears the tonic.
+      _scaleTonic = (targetScale === 'chromatic') ? null : targetRoot;
       const rootSel  = document.getElementById('root-select');
       const scaleSel = document.getElementById('scale-select');
       if (rootSel)  rootSel.value  = String(rootIdx);
@@ -6143,10 +6367,13 @@
       const changed = (r !== rootIdx) || (s !== currentScale);
       if (!changed) return false;
       const oldKc = (currentScale && currentScale !== 'chromatic')
-        ? { root: rootIdx, scale: currentScale } : null;
+        ? { root: _effectiveScaleTonic(), scale: currentScale } : null;
       const newKc = (s && s !== 'chromatic') ? { root: r, scale: s } : null;
       rootIdx = r;
       currentScale = s;
+      // Explicit key pick — both grid root AND scale tonic move to
+      // the new root. Any prior degree-shift divergence is cleared.
+      _scaleTonic = (s === 'chromatic') ? null : r;
       if (s !== 'chromatic') _writeLastKeyScale(s);
       const rootSel  = document.getElementById('root-select');
       const scaleSel = document.getElementById('scale-select');
@@ -9995,17 +10222,32 @@
 
     function _findChipInScope(scope, stepIdx) {
       if (!scope) return null;
-      // Iterate immediate children (chips are direct kids of the
-      // scope) — much cheaper than querySelectorAll. Skip pending
-      // chord chips and continuation segments of wrapped steps so the
+      // Iterate immediate children for speed (chips are usually
+      // direct kids of the scope). Descend once into any
+      // .key-group-container child so chips wrapped in a visual
+      // key-group still get counted at the right step index.
+      // Skip pending chord chips and continuation segments so the
       // step-index count matches the sequence array's own indexing.
       let n = 0;
-      for (const el of scope.children) {
-        if (!el.classList.contains('seq-step')) continue;
-        if (el.classList.contains('chord-pending')) continue;
-        if (el.classList.contains('cont-segment')) continue;
+      const visit = (el) => {
+        if (!el.classList) return null;
+        if (el.classList.contains('key-group-container')) {
+          for (const child of el.children) {
+            const hit = visit(child);
+            if (hit) return hit;
+          }
+          return null;
+        }
+        if (!el.classList.contains('seq-step')) return null;
+        if (el.classList.contains('chord-pending')) return null;
+        if (el.classList.contains('cont-segment')) return null;
         if (n === stepIdx) return el;
         n++;
+        return null;
+      };
+      for (const el of scope.children) {
+        const hit = visit(el);
+        if (hit) return hit;
       }
       return null;
     }
@@ -10230,16 +10472,93 @@
     });
 
     // ---- WebMIDI input ----
-    // Listens for MIDI note-on events on every connected device and
-    // routes them into the workspace. Each note auditions through
-    // playNote so the user always hears the pressed key. When Keep is
-    // on, the note is ALSO appended to the active lane via the same
-    // addToSequence path a cell tap would use — turning a hardware
-    // keyboard into a hands-free step entry tool.
+    // A MIDI key press should behave identically to clicking the
+    // matching grid cell — including chord-mode wrap building, smart
+    // wrap diatonic triads, jump mode, wrap-template auditioning,
+    // sustain, and Keep-mode step capture. The simplest way to
+    // achieve that parity is to find the cell whose pitch matches
+    // the incoming MIDI note and dispatch a synthetic pointerdown
+    // on it. Note-off dispatches pointerup. Out-of-window notes
+    // (the user played a key the visible grid doesn't show) fall
+    // back to a direct audition via playNote so MIDI input is
+    // always audible.
     //
-    // No UI toggle: just plug in a controller and play. The request
-    // happens on the first user gesture so the prompt isn't surprising.
+    // No UI toggle: just plug in a controller and play. The MIDI
+    // permission request happens on the first user gesture so the
+    // browser prompt isn't surprising.
     let _midiBound = false;
+    // Track which cell each live MIDI note is "pressing" so the
+    // note-off can dispatch pointerup on the same cell. midi → cellIdx
+    // (or null for direct-audition notes that bypassed the grid).
+    const _midiActiveByNote = new Map();
+    function _midiCellIdxForNote(midi) {
+      for (let i = 0; i < notes.length; i++) {
+        if (notes[i] && _midiOfFreq(notes[i].freq) === midi) return i;
+      }
+      return -1;
+    }
+    // Pointer ID range carved out for MIDI events so they can never
+    // collide with real touch / mouse / pen IDs (which typically sit
+    // in 1-N or browser-specific large ints; 200000+ is safely apart).
+    const _MIDI_POINTER_ID_BASE = 200000;
+    function _dispatchSyntheticPointer(cell, type, midi) {
+      try {
+        const evt = new PointerEvent(type, {
+          pointerId: _MIDI_POINTER_ID_BASE + midi,
+          pointerType: 'pen',
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          isPrimary: true,
+        });
+        cell.dispatchEvent(evt);
+      } catch (e) {
+        // PointerEvent constructor is universal in modern browsers,
+        // but defend against ancient ones — log once and bail so
+        // MIDI doesn't spam the console.
+        console.warn('[bloops-midi] synthetic ' + type + ' failed:', e);
+      }
+    }
+    function _midiHandleNoteOn(midi, velocity) {
+      // Re-trigger guard: some controllers send note-on twice without
+      // a note-off (sticky keys). Treat the second as a no-op so the
+      // existing press isn't released.
+      if (_midiActiveByNote.has(midi)) return;
+      // Best-effort start the audio context. Tone.start() is a no-op
+      // when already running; when not, the MIDI message itself isn't
+      // a "user gesture" the browser recognizes — but the click that
+      // triggered _bindMidiOnce probably was, so this usually
+      // succeeds. If it doesn't, the user's next click will warm it.
+      try { Tone && Tone.start && Tone.start(); } catch (e) {}
+      const cellIdx = _midiCellIdxForNote(midi);
+      if (cellIdx >= 0 && cells[cellIdx]) {
+        _midiActiveByNote.set(midi, cellIdx);
+        _dispatchSyntheticPointer(cells[cellIdx], 'pointerdown', midi);
+        return;
+      }
+      // No matching cell — the user played outside the visible grid
+      // window. Audition the freq directly using the active lane's
+      // first-cell sound as a reasonable proxy. Marked with null
+      // cellIdx so note-off knows not to dispatch pointerup.
+      _midiActiveByNote.set(midi, null);
+      try {
+        const freq = masterFreqA * Math.pow(2, (midi - 69) / 12);
+        const baseParams = (cellParams && cellParams[0]) || { type: 'sine' };
+        const params = { ...baseParams };
+        // Scale velocity into the existing 0-100 volume domain so
+        // a hard-hit key is louder than a feather-tap.
+        const vel = Math.max(1, Math.min(127, velocity || 100)) / 127;
+        params.volume = Math.max(1, Math.min(100, Math.round((baseParams.volume ?? 100) * vel)));
+        playNote(freq, params, 250);
+      } catch (e) {}
+    }
+    function _midiHandleNoteOff(midi) {
+      const cellIdx = _midiActiveByNote.get(midi);
+      _midiActiveByNote.delete(midi);
+      if (cellIdx == null) return; // never pressed, or was a direct audition
+      if (cells[cellIdx]) _dispatchSyntheticPointer(cells[cellIdx], 'pointerup', midi);
+    }
     function bindWebMidi() {
       if (_midiBound) return;
       if (!navigator.requestMIDIAccess) return;
@@ -10249,47 +10568,19 @@
           if (!input || input._bloopsBound) return;
           input._bloopsBound = true;
           input.onmidimessage = (e) => {
-            const [status, d1, d2] = e.data;
-            const cmd = status & 0xf0;
-            // Note-on with velocity > 0 = real attack. Note-on with
-            // velocity 0 is a "release" disguise some controllers send.
-            if (cmd !== 0x90 || !d2) return;
-            const midi = d1;
-            const freq = 440 * Math.pow(2, (midi - 69) / 12);
-            try {
-              let label;
-              try { label = Tone.Frequency(freq).toNote(); } catch (_) { label = 'M' + midi; }
-              // Use the closest grid cell for sound + params; fall back
-              // to cellParams[0] when nothing's in range (out-of-octave
-              // note from the controller).
-              const cellIdx = _findCellIdxForFreq(freq);
-              const baseParams = (cellIdx >= 0 && cellParams[cellIdx])
-                ? cellParams[cellIdx]
-                : (cellParams[0] || { type: 'sine' });
-              const params = { ...baseParams };
-              // Scale velocity into the existing 0-100 volume domain so
-              // a hard-hit key is louder than a feather-tap.
-              const vel = Math.max(1, Math.min(127, d2)) / 127;
-              params.volume = Math.max(1, Math.min(100, Math.round((baseParams.volume ?? 100) * vel)));
-              // Audition.
-              try { playNote(freq, params, 250); } catch (_) {}
-              // Append to the sequence only when Keep is on. Matches the
-              // cell-tap append semantics so the user's "is my sequence
-              // mutating" mental model is the same for keyboard + grid.
-              if (keepMode) {
-                const step = {
-                  freq,
-                  label,
-                  cellIndex: cellIdx >= 0 ? cellIdx : null,
-                  sound: params.type,
-                  params,
-                  duration: noteLength,
-                  subdivision: stepSubdivision,
-                };
-                addToSequence(step);
-                if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(step);
-              }
-            } catch (err) { console.warn('[midi] note handling failed', err); }
+            if (!e || !e.data || e.data.length < 2) return;
+            const status = e.data[0];
+            const d1     = e.data[1];
+            const d2     = e.data[2] || 0;
+            const cmd    = status & 0xf0;
+            // Note-on with velocity 0 is the disguised note-off some
+            // controllers send (saves a status byte). Handle both as
+            // a release. True note-off (0x80) gets the same path.
+            if (cmd === 0x90 && d2 > 0)        _midiHandleNoteOn(d1, d2);
+            else if (cmd === 0x80 || cmd === 0x90) _midiHandleNoteOff(d1);
+            // Other MIDI commands (program change, CC, pitch bend,
+            // aftertouch, etc.) intentionally ignored for now —
+            // they'd need their own routing decisions.
           };
         };
         access.inputs.forEach(wire);
@@ -18842,25 +19133,52 @@
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
     })();
-    // ± note-shift buttons (next to Sounds in the lane banner). Each
-    // click shifts the grid's root by 1 semitone, carrying baseOctave
-    // when rootIdx wraps across the C boundary. Pushes the result back
-    // through the Root / Octave selects + rebuildGrid so every label,
-    // saved-state preview, scale overlay, and persist hook picks up
-    // the new state via the same path the Sounds-panel selects use.
+    // ± note-shift buttons (on either side of the Sounds banner).
+    //
+    // Two modes, toggled via the °/½ pill between − and Sounds:
+    //
+    //  • Degree mode (default) — when a non-chromatic scale is active,
+    //    each click shifts the grid's lowest cell to the next / prev
+    //    SCALE NOTE while the scale's tonic stays put. Polarity is
+    //    deliberately inverted (+ shifts the view DOWN one degree,
+    //    − shifts it UP), matching the user's spec where + brings a
+    //    lower note in at the bottom of the grid. Chromatic falls
+    //    through to the semitone path since "degree == semitone" with
+    //    no scale to step through.
+    //  • Semitone mode (legacy) — each click shifts BOTH rootIdx and
+    //    _scaleTonic by 1 semitone, transposing the whole key. Same
+    //    polarity the buttons always had: + = up, − = down.
+    //
+    // The mode pill persists per-session via localStorage. Snapshot
+    // labels capture the direction in user-language terms (degree vs
+    // semitone) so the undo stack reads cleanly.
     (function initNoteShiftButtons() {
       const upBtn   = document.getElementById('note-shift-up');
       const downBtn = document.getElementById('note-shift-down');
+      const modeBtn = document.getElementById('note-shift-mode-btn');
       if (!upBtn && !downBtn) return;
       const MIN_OCT = 0, MAX_OCT = 9;
-      const applyShift = (delta) => {
-        snapshotForUndo(delta > 0 ? 'Shift grid up' : 'Shift grid down');
-        let r = rootIdx + (delta > 0 ? 1 : -1);
-        let oct = baseOctave;
-        if (r >= 12) { r = 0;  oct = Math.min(MAX_OCT, oct + 1); }
-        if (r < 0)   { r = 11; oct = Math.max(MIN_OCT, oct - 1); }
-        rootIdx    = r;
-        baseOctave = oct;
+      const SHIFT_MODE_KEY = 'bloops-note-shift-mode';
+      let shiftMode = 'degree';
+      try {
+        const v = localStorage.getItem(SHIFT_MODE_KEY);
+        if (v === 'semitone' || v === 'degree') shiftMode = v;
+      } catch (e) {}
+      const refreshModeBtn = () => {
+        if (!modeBtn) return;
+        const semi = (shiftMode === 'semitone');
+        modeBtn.classList.toggle('semitone', semi);
+        modeBtn.textContent = semi ? '½' : '°';
+        modeBtn.setAttribute('aria-pressed', semi ? 'true' : 'false');
+      };
+      refreshModeBtn();
+      // Push every shift through the same post-update path the
+      // dropdowns use so labels / banners / persist hooks line up.
+      const _commitShift = (newRoot, newOct, newScaleTonic, label) => {
+        snapshotForUndo(label);
+        rootIdx    = newRoot;
+        baseOctave = newOct;
+        if (newScaleTonic !== undefined) _scaleTonic = newScaleTonic;
         const rootSel  = document.getElementById('root-select');
         const octRange = document.getElementById('octave-range-select');
         if (rootSel)  rootSel.value  = String(rootIdx);
@@ -18868,10 +19186,78 @@
         rebuildGrid();
         if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels();
         if (typeof updateScaleBanner === 'function') updateScaleBanner();
+        if (typeof refreshKeyButton === 'function') refreshKeyButton();
         if (typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      // Semitone mode (or chromatic): shift rootIdx + _scaleTonic
+      // together by 1 semitone in the natural direction.
+      const _shiftSemitone = (dir) => {
+        let r = rootIdx + (dir > 0 ? 1 : -1);
+        let oct = baseOctave;
+        if (r >= 12) { r = 0;  oct = Math.min(MAX_OCT, oct + 1); }
+        if (r < 0)   { r = 11; oct = Math.max(MIN_OCT, oct - 1); }
+        const newTonic = (currentScale && currentScale !== 'chromatic')
+          ? r : null;
+        _commitShift(r, oct, newTonic, dir > 0 ? 'Shift grid up' : 'Shift grid down');
+      };
+      // Degree mode (non-chromatic only): walk through the scale's
+      // notes so the lowest cell jumps to the previous / next scale
+      // pitch. _scaleTonic stays put — the scale is anchored, only
+      // the view scrolls. degDir is +1 for "view up one degree"
+      // (next scale note above current rootIdx) or −1 for "down".
+      const _shiftDegree = (degDir) => {
+        const intervals = SCALES[currentScale];
+        if (!intervals || intervals.length === 0) { _shiftSemitone(degDir); return; }
+        const tonic = _effectiveScaleTonic();
+        const scalePCs = intervals
+          .map(semi => (((tonic + semi) % 12) + 12) % 12)
+          .sort((a, b) => a - b);
+        const curPC = ((rootIdx % 12) + 12) % 12;
+        let deltaSemi = 0;
+        if (degDir > 0) {
+          // up to next scale PC above curPC; wrap to (lowest + 12)
+          let next = null;
+          for (let i = 0; i < scalePCs.length; i++) {
+            if (scalePCs[i] > curPC) { next = scalePCs[i]; break; }
+          }
+          if (next == null) next = scalePCs[0] + 12;
+          deltaSemi = next - curPC;
+        } else {
+          // down to prev scale PC below curPC; wrap to (highest - 12)
+          let prev = null;
+          for (let i = scalePCs.length - 1; i >= 0; i--) {
+            if (scalePCs[i] < curPC) { prev = scalePCs[i]; break; }
+          }
+          if (prev == null) prev = scalePCs[scalePCs.length - 1] - 12;
+          deltaSemi = prev - curPC; // negative
+        }
+        const absMidi   = (baseOctave + 1) * 12 + rootIdx + deltaSemi;
+        const newRoot   = ((absMidi % 12) + 12) % 12;
+        const newOct    = Math.max(MIN_OCT, Math.min(MAX_OCT, Math.floor(absMidi / 12) - 1));
+        // _scaleTonic intentionally NOT passed — keep the scale's
+        // tonic anchored. _commitShift's `undefined` triggers no-op.
+        _commitShift(newRoot, newOct, undefined,
+          degDir > 0 ? 'Shift grid up a degree' : 'Shift grid down a degree');
+      };
+      const applyShift = (delta) => {
+        // delta = +1 from the + button, -1 from the − button.
+        // Degree mode inverts polarity per the user's spec.
+        const isDegree = (shiftMode === 'degree')
+          && currentScale && currentScale !== 'chromatic';
+        if (isDegree) {
+          _shiftDegree(-delta);  // + button → degree DOWN, − → UP
+        } else {
+          _shiftSemitone(delta);
+        }
       };
       if (upBtn)   upBtn.addEventListener('click',   () => applyShift(+1));
       if (downBtn) downBtn.addEventListener('click', () => applyShift(-1));
+      if (modeBtn) modeBtn.addEventListener('click', () => {
+        shiftMode = (shiftMode === 'degree') ? 'semitone' : 'degree';
+        try { localStorage.setItem(SHIFT_MODE_KEY, shiftMode); } catch (e) {}
+        refreshModeBtn();
+        try { modeBtn.blur(); } catch (e) {}
+      });
     })();
 
     // ---- Riff dropdown — Save / Random / Seed / Reverse / Shuffle / Repeat ----
@@ -22629,8 +23015,20 @@
 
     function applyScale() {
       const intervals = SCALES[currentScale] || SCALES['chromatic'];
+      // Compute the SCALE's absolute pitch-class set (relative to
+      // _scaleTonic, not rootIdx). When the grid view is shifted by
+      // 1 scale degree, only rootIdx moves — _scaleTonic stays put,
+      // so the dim pattern stays anchored on the SAME notes even as
+      // the view scrolls through them. Falls back to rootIdx when
+      // _scaleTonic is null (default state for chromatic + initial
+      // boot), preserving byte-for-byte backward compat.
+      const tonic = _effectiveScaleTonic();
+      const scalePCs = new Set(
+        intervals.map(semi => (((tonic + semi) % 12) + 12) % 12)
+      );
       cells.forEach((cell, i) => {
-        cell.classList.toggle('out-of-scale', !intervals.includes(i % 12));
+        const cellPC = (((rootIdx + i) % 12) + 12) % 12;
+        cell.classList.toggle('out-of-scale', !scalePCs.has(cellPC));
       });
       updateScaleBanner();
     }
@@ -23409,10 +23807,57 @@
       other:   'Other',
     };
     const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'wavetable', 'fm', 'am', 'mono', 'duo', 'bass', 'pad', 'xylo']);
-    const _SAMPLE_KEYS_IDS    = new Set(['piano', 'organ', 'rhodes', 'epiano2', 'harpsichord', 'clavinet']);
-    const _SAMPLE_MALLETS_IDS = new Set(['celesta', 'vibraphone', 'marimba']);
-    const _SAMPLE_STRINGS_IDS = new Set(['guitar', 'violin', 'cello', 'eguitar']);
-    const _SAMPLE_LEADS_IDS   = new Set(['leadsquare', 'padpoly']);
+    const _SAMPLE_KEYS_IDS    = new Set([
+      // Originals
+      'piano', 'organ', 'rhodes', 'epiano2', 'harpsichord', 'clavinet',
+      // GM batch — pianos
+      'pianobr', 'pianoeg', 'honkytonk',
+      // GM batch — organs / accordions / harmonica
+      'organdrawbar', 'organperc', 'organrock', 'organchurch', 'organreed',
+      'accordion', 'harmonica', 'tangoaccord',
+    ]);
+    const _SAMPLE_MALLETS_IDS = new Set([
+      'celesta', 'vibraphone', 'marimba',
+      // GM batch — pitched percussion / mallets
+      'glockenspiel', 'musicbox', 'xylophone', 'tubularbells', 'dulcimer',
+      'steeldrums', 'kalimba', 'timpani',
+      'tinklebell', 'agogo', 'woodblock', 'taikodrum', 'melodictom',
+      'synthdrum', 'revcymbal',
+    ]);
+    const _SAMPLE_STRINGS_IDS = new Set([
+      'guitar', 'violin', 'cello', 'eguitar',
+      // GM batch — guitars
+      'guitnylon', 'guitsteel', 'guitjazz', 'guitclean', 'guitmute',
+      'guitod', 'guitdist', 'guitharm',
+      // GM batch — basses
+      'bassacoustic', 'bassefinger', 'bassepick', 'bassfret',
+      'bassslap1', 'bassslap2', 'basssynth1', 'basssynth2',
+      // GM batch — orchestral strings
+      'viola', 'contrabass', 'tremolostr', 'pizzstr', 'harp',
+      'strens1', 'strens2', 'synstr1', 'synstr2',
+    ]);
+    const _SAMPLE_WINDS_IDS = new Set([
+      'flute',
+      // GM batch — saxes
+      'saxsop', 'saxalto', 'saxtenor', 'saxbari',
+      // GM batch — other reeds
+      'oboe', 'enghorn', 'bassoon', 'clarinet',
+      // GM batch — pipes
+      'piccolo', 'recorder', 'panflute', 'blownbottle',
+      'shakuhachi', 'whistle', 'ocarina',
+      // GM batch — brass
+      'trumpet', 'trombone', 'tuba', 'trumpetmute', 'frenchhorn',
+      'brasssec', 'brasssyn1', 'brasssyn2',
+    ]);
+    const _SAMPLE_LEADS_IDS   = new Set([
+      'leadsquare', 'padpoly',
+      // GM batch — additional leads
+      'leadsaw', 'leadcal', 'leadchiff', 'leadchar',
+      'leadvoice', 'leadfifths', 'leadbass',
+      // GM batch — additional pads
+      'padnew', 'padwarm', 'padchoir', 'padbowed',
+      'padmetal', 'padhalo', 'padsweep',
+    ]);
     const _SAMPLE_DRUM_IDS    = new Set(['tr808', 'drumtraks', 'drumkit', 'dr55']);
     function toneFamilyFor(value) {
       if (typeof value !== 'string') return 'other';
@@ -23421,10 +23866,14 @@
         if (_SAMPLE_KEYS_IDS.has(id))    return 'keys';
         if (_SAMPLE_MALLETS_IDS.has(id)) return 'mallets';
         if (_SAMPLE_STRINGS_IDS.has(id)) return 'strings';
-        if (id === 'flute')              return 'winds';
+        if (_SAMPLE_WINDS_IDS.has(id))   return 'winds';
         if (_SAMPLE_LEADS_IDS.has(id))   return 'leads';
         if (_SAMPLE_DRUM_IDS.has(id))    return 'drums';
         if (id.startsWith('imported-'))  return 'imports';
+        // Everything else (FX, ethnic, voice, orchestra hit, sound
+        // effects) falls into the generic Samples bucket — keeps the
+        // family-grouped menu readable instead of inventing a
+        // sub-family for every long-tail GM voice.
         return 'samples';
       }
       if (_SYNTH_KEYS.has(value)) return 'synths';
@@ -24346,6 +24795,10 @@
       rootSelect.addEventListener('change', () => {
         const _oldRoot = rootIdx;
         rootIdx = parseInt(rootSelect.value) || 0;
+        // Explicit root pick re-anchors the scale's tonic too — the
+        // user is saying "this is the new key root". Scale-degree
+        // shifts diverge _scaleTonic from rootIdx separately later.
+        _scaleTonic = (currentScale && currentScale !== 'chromatic') ? rootIdx : null;
         rebuildGrid();
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
         try { if (typeof refreshKeyButton === 'function') refreshKeyButton(); } catch (e) {}
@@ -24406,6 +24859,10 @@
         if (currentScale && currentScale !== 'chromatic') {
           try { _writeLastKeyScale(currentScale); } catch (e) {}
         }
+        // Re-anchor the scale's tonic on the current grid root. Picking
+        // a new scale starts fresh — any prior degree-shift divergence
+        // is cleared. Chromatic clears the tonic entirely.
+        _scaleTonic = (currentScale && currentScale !== 'chromatic') ? rootIdx : null;
         applyScale();
         // Re-render XY pad guide lines so they follow the workspace
         // scale when Grid Off is active. Cheap no-op in Grid On mode.

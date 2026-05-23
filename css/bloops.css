@@ -485,6 +485,34 @@
     @media (hover: hover) {
       .note-shift-btn:hover { background: #0a0a14; color: #81e6d9; }
     }
+    /* Mode toggle between − and the Sounds banner. Tiny pill that
+       reads "°" for degree-shift mode (default, follows the active
+       key) and "½" for semitone-shift mode (the old behavior). The
+       degree state stays subtle; the semitone state lights up amber
+       so the user can see at a glance that ± will move by chromatic
+       semitones rather than scale steps. */
+    .note-shift-mode-btn {
+      flex: 0 0 auto;
+      min-width: 22px;
+      padding: 0 8px;
+      background: transparent;
+      border: none;
+      color: #4a5568;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    @media (hover: hover) {
+      .note-shift-mode-btn:hover { background: #0a0a14; color: #cbd5e0; }
+    }
+    .note-shift-mode-btn.semitone {
+      color: #f6ad55;
+    }
+    .note-shift-mode-btn:focus { outline: none; }
 
     .tone-panel {
       display: none;
@@ -2695,37 +2723,64 @@
          get eaten whenever the user's thumb landed on a chip. */
       touch-action: pan-y;
     }
-    /* ---- Visual key grouping (Round 1 / Phase B) ----
-       Steps stamped with a keyContext get a thin purple accent strip
-       on top + bottom. The first and last steps in each consecutive
-       same-key run additionally pick up left / right strips, forming
-       a visual "container" around chips that belong together. Uses
-       inset box-shadows so the chip's own border / palette color
-       stays intact. Color matches the wrap-bank purple to read as
-       "this is a key thing" without competing with note-color tints. */
-    .seq-step.in-key-group {
-      box-shadow:
-        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
-        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    /* When a chip strip contains key-group containers, bump its top
+       padding so the floating "C Major" label that sits above each
+       container's top edge has room to render without clipping into
+       the lane row above. :has() is well-supported in modern Safari
+       / Chrome / Firefox; older browsers fall back to a tight
+       layout where the label may overlap slightly. */
+    .lane-chips:has(.key-group-container) {
+      padding-top: 14px;
     }
-    .seq-step.key-group-start {
-      box-shadow:
-        inset  2px 0 0 0 rgba(192, 38, 211, 0.55),
-        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
-        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    /* ---- Visual key grouping ----
+       Each consecutive run of same-key steps lives inside a real
+       <div.key-group-container>. The container is a CSS subgrid
+       child of the parent .lane-chips grid — so chips inside it
+       keep aligning to the outer column lines — while drawing a
+       single thin purple border around the whole group plus a small
+       "C Major" / "G Minor" label above it. */
+    .lane-chips.grid-mode > .key-group-container {
+      display: grid;
+      grid-template-columns: subgrid;
+      grid-auto-rows: auto;
+      gap: inherit;
+      border: 1px solid rgba(192, 38, 211, 0.6);
+      border-radius: 8px;
+      padding: 2px;
+      position: relative;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.18);
     }
-    .seq-step.key-group-end {
-      box-shadow:
-        inset -2px 0 0 0 rgba(192, 38, 211, 0.55),
-        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
-        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    /* Fallback for layouts that don't apply the grid-mode class
+       (older code paths, ungroomed lanes). Renders as a flex strip
+       so chips still flow but the visual container still appears. */
+    .lane-chips:not(.grid-mode) > .key-group-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: inherit;
+      border: 1px solid rgba(192, 38, 211, 0.6);
+      border-radius: 8px;
+      padding: 2px;
+      position: relative;
     }
-    .seq-step.key-group-solo {
-      box-shadow:
-        inset  2px 0 0 0 rgba(192, 38, 211, 0.55),
-        inset -2px 0 0 0 rgba(192, 38, 211, 0.55),
-        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
-        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    /* The key name floats just above the container's top-left edge.
+       Pointer-events:none so it doesn't intercept chip clicks. */
+    .key-group-container::before {
+      content: attr(data-key-label);
+      position: absolute;
+      top: -0.85em;
+      left: 6px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: rgba(192, 38, 211, 0.9);
+      background: #0b0b18;
+      padding: 0 4px;
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 2;
+      white-space: nowrap;
     }
     /* Rests get a brighter default outline so the "—" glyph sits in a
        clearly-visible chip even before the per-step-div tint kicks in

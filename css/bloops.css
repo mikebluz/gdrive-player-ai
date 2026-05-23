@@ -240,6 +240,216 @@
       box-shadow: 0 0 8px rgba(246, 173, 85, 0.35);
     }
     .grid-settings-panel .sounds-utilities #jump-mode-btn:focus { outline: none; }
+    /* Key-mode toggle — same chrome as Jump, but the .active state
+       lights up purple (matches the wrap-bank and the in-sequence
+       key-group border so the user sees "this is the Key concept"
+       coherently). The label flips between "♪ Key" (off) and
+       "♪ <root> <scale>" (on) via setKeyButtonLabel(). */
+    .grid-settings-panel .sounds-utilities #key-mode-btn {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #cbd5e0;
+      cursor: pointer;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    }
+    @media (hover: hover) {
+      .grid-settings-panel .sounds-utilities #key-mode-btn:hover {
+        border-color: #c026d3;
+        color: #f5d0fe;
+      }
+    }
+    .grid-settings-panel .sounds-utilities #key-mode-btn.active {
+      background: rgba(192, 38, 211, 0.18);
+      border-color: #c026d3;
+      color: #f5d0fe;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.35);
+    }
+    .grid-settings-panel .sounds-utilities #key-mode-btn:focus { outline: none; }
+    /* Key-edit pill — opens the Pick a key picker. Sits next to the
+       Key toggle and is hidden via [hidden] when Key mode is off.
+       Slightly lighter chrome than the active Key toggle so the two
+       read as "toggle" + "open picker" rather than a single doubled
+       affordance. */
+    .grid-settings-panel .sounds-utilities #key-edit-btn {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px dashed rgba(192, 38, 211, 0.6);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #f5d0fe;
+      cursor: pointer;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    }
+    @media (hover: hover) {
+      .grid-settings-panel .sounds-utilities #key-edit-btn:hover {
+        background: rgba(192, 38, 211, 0.18);
+        border-color: #c026d3;
+        color: #fff;
+      }
+    }
+    .grid-settings-panel .sounds-utilities #key-edit-btn:focus { outline: none; }
+    /* [hidden] attribute is the canonical "remove from layout" toggle —
+       belt-and-suspenders with display:none in case any conflicting
+       rule overrides the attribute's default. */
+    .grid-settings-panel .sounds-utilities #key-edit-btn[hidden] { display: none; }
+
+    /* Key picker popover — shown on right-click / long-press of the
+       Key toggle. Pinned to body so it overlays the rest of the UI
+       without being clipped by the sounds row. Roots on top, scales
+       scrollable below. */
+    .key-picker-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 5, 16, 0.55);
+      /* Sit above every other overlay in the app. Other modals top
+         out around 10001 (the step-div picker), so 10500 keeps the
+         Key picker reliably on top regardless of what else might
+         have been open when the user tapped ✎ Pick key. */
+      z-index: 10500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .key-picker-modal {
+      width: min(440px, 96vw);
+      max-height: 82vh;
+      /* Flex column with min-height:0 is critical — without it,
+         .key-picker-scales (flex:1 1 auto + overflow-y:auto) can't
+         actually shrink below its content height, so a 150-scale
+         catalog would push the modal way past 82vh and the scroll
+         never engages, making buttons stack visually past the modal
+         edge. min-height:0 lets the flex child collapse so its
+         overflow-y:auto becomes the operative scroll surface. */
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: #14141f;
+      border: 1px solid rgba(192, 38, 211, 0.45);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 0 24px rgba(192, 38, 211, 0.25);
+      color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    .key-picker-title {
+      font-size: 0.72rem;
+      letter-spacing: 1.6px;
+      text-transform: uppercase;
+      color: #c026d3;
+      opacity: 0.75;
+      margin-bottom: 10px;
+      flex: 0 0 auto;
+    }
+    .key-picker-roots {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 4px;
+      margin-bottom: 12px;
+      flex: 0 0 auto;
+    }
+    .key-picker-root {
+      padding: 6px 0;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      color: #cbd5e0;
+      font-size: 0.74rem;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 0;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    }
+    .key-picker-root:hover {
+      border-color: rgba(192, 38, 211, 0.55);
+      color: #f5d0fe;
+    }
+    .key-picker-root.active {
+      background: rgba(192, 38, 211, 0.28);
+      border-color: #c026d3;
+      color: #fff;
+    }
+    /* Scales list — single column, vertical scroll. The 2-column grid
+       was overlapping buttons on long scale names ("phrygian dominant",
+       "double harmonic lydian", etc.) because grid items inherit
+       min-width:min-content, letting them overflow into the next cell.
+       Single column with vertical scroll is bulletproof and easier to
+       scan when there are ~150 entries. */
+    .key-picker-scales {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-right: 4px;
+    }
+    .key-picker-scale {
+      padding: 7px 10px;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      color: #cbd5e0;
+      font-size: 0.78rem;
+      text-align: left;
+      cursor: pointer;
+      min-width: 0;
+      flex: 0 0 auto;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .key-picker-scale:hover {
+      border-color: rgba(192, 38, 211, 0.55);
+      color: #f5d0fe;
+    }
+    .key-picker-scale.active {
+      background: rgba(192, 38, 211, 0.28);
+      border-color: #c026d3;
+      color: #fff;
+    }
+    .key-picker-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+      flex: 0 0 auto;
+    }
+    .key-picker-off {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid #4a5568;
+      border-radius: 6px;
+      color: #a0aec0;
+      font-size: 0.74rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .key-picker-off:hover { border-color: #cbd5e0; color: #e2e8f0; }
+    .key-picker-close {
+      padding: 6px 12px;
+      background: rgba(192, 38, 211, 0.18);
+      border: 1px solid #c026d3;
+      border-radius: 6px;
+      color: #f5d0fe;
+      font-size: 0.74rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .key-picker-close:hover { background: rgba(192, 38, 211, 0.32); }
+    @media (max-width: 600px) {
+      .key-picker-modal { padding: 12px; max-height: 86vh; }
+      .key-picker-scale { font-size: 0.74rem; padding: 8px 10px; }
+    }
 
     /* ± note-shift buttons — − sits to the left of the Sounds banner
        and + sits to the right. Both are 15% wider than the original
@@ -2485,6 +2695,38 @@
          get eaten whenever the user's thumb landed on a chip. */
       touch-action: pan-y;
     }
+    /* ---- Visual key grouping (Round 1 / Phase B) ----
+       Steps stamped with a keyContext get a thin purple accent strip
+       on top + bottom. The first and last steps in each consecutive
+       same-key run additionally pick up left / right strips, forming
+       a visual "container" around chips that belong together. Uses
+       inset box-shadows so the chip's own border / palette color
+       stays intact. Color matches the wrap-bank purple to read as
+       "this is a key thing" without competing with note-color tints. */
+    .seq-step.in-key-group {
+      box-shadow:
+        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
+        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    }
+    .seq-step.key-group-start {
+      box-shadow:
+        inset  2px 0 0 0 rgba(192, 38, 211, 0.55),
+        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
+        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    }
+    .seq-step.key-group-end {
+      box-shadow:
+        inset -2px 0 0 0 rgba(192, 38, 211, 0.55),
+        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
+        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    }
+    .seq-step.key-group-solo {
+      box-shadow:
+        inset  2px 0 0 0 rgba(192, 38, 211, 0.55),
+        inset -2px 0 0 0 rgba(192, 38, 211, 0.55),
+        inset 0  2px 0 0 rgba(192, 38, 211, 0.55),
+        inset 0 -2px 0 0 rgba(192, 38, 211, 0.55);
+    }
     /* Rests get a brighter default outline so the "—" glyph sits in a
        clearly-visible chip even before the per-step-div tint kicks in
        (and as a fallback for rests whose subdivision doesn't match any
@@ -4540,6 +4782,41 @@
       font-size: 0.95rem; font-weight: 700;
       color: #f0f4ff; margin-bottom: 14px;
       text-align: center;
+    }
+    /* Title doubles as the session-lock toggle. Replaces the old
+       static .sdiv-title + separate "Use for rest of session"
+       checkbox. Off state looks like a slightly-interactive title;
+       active state lights up blue so the user can tell at a glance
+       whether the next-picked size will lock the rest of this Keep
+       session or apply to just one note. */
+    .step-div-modal .sdiv-title-toggle {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #f0f4ff;
+      margin-bottom: 14px;
+      padding: 8px 12px;
+      text-align: center;
+      background: transparent;
+      border: 1px solid rgba(160, 174, 192, 0.35);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+    }
+    @media (hover: hover) {
+      .step-div-modal .sdiv-title-toggle:hover {
+        border-color: rgba(66, 153, 225, 0.65);
+        color: #bee3f8;
+      }
+    }
+    .step-div-modal .sdiv-title-toggle.active {
+      background: rgba(66, 153, 225, 0.18);
+      border-color: #4299e1;
+      color: #ebf8ff;
+      box-shadow: 0 0 10px rgba(66, 153, 225, 0.35);
     }
     .step-div-modal .sdiv-grid {
       display: grid;

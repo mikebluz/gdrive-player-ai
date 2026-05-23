@@ -148,6 +148,8 @@
         <button type="button" id="radial-tone-btn" class="sounds-sub-btn radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖ Pitch bend</button>
         <button type="button" id="edit-mode-btn" class="sounds-sub-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎ Note edit</button>
         <button type="button" id="jump-mode-btn" class="sounds-sub-btn" aria-label="Jump mode" title="Jump — pressing a cell shifts the grid so that note becomes the lowest cell. Press the same note again and the grid jumps down an octave so it becomes the highest cell; press once more to return to lowest.">⇅ Jump</button>
+        <button type="button" id="key-mode-btn" class="sounds-sub-btn" aria-label="Key mode" title="Key — when on, the grid dims out-of-key notes and new steps stamp their key context. Tap to toggle on / off.">♪ Key</button>
+        <button type="button" id="key-edit-btn" class="sounds-sub-btn" aria-label="Pick a key" title="Pick a root + scale for Key mode" hidden>✎ Pick key</button>
       </div>
       <!-- XY pad axis settings — only meaningful in Graph mode. Hidden
            in Grid mode by .xy-settings's default display: none. -->
@@ -1403,10 +1405,33 @@
 
     function pushWrapToBank(step) {
       if (!step) return;
+      const cloned = cloneStep(step);
+      // Stamp the current grid key onto the bank entry so the rebase
+      // path later knows what key this wrap was built in. Doesn't
+      // overwrite a step that already carries a keyContext (recalled
+      // and re-saved wraps keep their original birthplace).
+      if (cloned && !cloned.keyContext && typeof _captureKeyContext === 'function') {
+        const kc = _captureKeyContext();
+        if (kc) cloned.keyContext = kc;
+      }
       const entry = {
         id: 'w-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         name: wrapBankNextName(),
-        step: cloneStep(step),
+        step: cloned,
+        // Immutable origin — the wrap as it was first committed.
+        // _renderWrapForKey always computes `step` FROM origin, never
+        // from the previous `step`. So a wrap created in C major,
+        // rebased through D# major, F minor, and back to chromatic
+        // restores to the exact original notes — no compounding drift,
+        // no information loss. keyContext stamps the key the wrap was
+        // born in (or null for chromatic origin), which is what tells
+        // the rebase path how to interpret the original notes.
+        origin: {
+          step: cloneStep(cloned),
+          keyContext: (cloned && cloned.keyContext)
+            ? { root: cloned.keyContext.root, scale: cloned.keyContext.scale }
+            : null,
+        },
       };
       savedWraps.push(entry);
       activeWrapBankId = entry.id;
@@ -1438,8 +1463,31 @@
     function removeWrapFromBank(id) {
       const i = savedWraps.findIndex(w => w.id === id);
       if (i < 0) return;
+      const wasActive = (activeWrapBankId === id);
       savedWraps.splice(i, 1);
-      if (activeWrapBankId === id) activeWrapBankId = null;
+      if (wasActive) {
+        // The chip the user just deleted was the live wrap shape.
+        // Tear down the in-flight wrap state too — clearing the
+        // bank id alone would leave wrapTemplate / pendingChord
+        // pointing at a wrap that no longer has a saved home,
+        // which is the kind of "ghost" state that surprises later.
+        activeWrapBankId = null;
+        wrapTemplate = null;
+        pendingChord = [];
+        chordMode = false;
+        if (typeof clearWrapPendingHighlights === 'function') {
+          try { clearWrapPendingHighlights(); } catch (e) {}
+        }
+        if (typeof refreshWrapVisuals === 'function') {
+          try { refreshWrapVisuals(); } catch (e) {}
+        }
+        if (typeof renderSequence === 'function') {
+          try { renderSequence(); } catch (e) {}
+        }
+        if (typeof persistWorkspace === 'function') {
+          try { persistWorkspace(); } catch (e) {}
+        }
+      }
       persistSavedWraps();
       renderWrapBank();
     }
@@ -4826,6 +4874,16 @@
             refreshWrapVisuals();
             renderWrapBank();
           }
+          // Step-selects-grid-key (Round 1 / Phase C). When the clicked
+          // step carries a keyContext, restore that key to the root /
+          // scale dropdowns so the grid re-dims around the right
+          // pitches. Lets the user step through a multi-key sequence
+          // and have the grid follow along instead of staying frozen
+          // on whatever key the user picked first. No-op when the step
+          // has no keyContext (chromatic, or older saved sequence).
+          if (step.keyContext) {
+            try { _applyKeyContext(step.keyContext); } catch (e) {}
+          }
           renderSequence();
           previewStep(sequence[i]);
         };
@@ -4886,6 +4944,64 @@
             ? step.params.pan : 0;
           if (savedPan !== 0) applyPanTint(chip, chipBaseColor, savedPan);
         }
+        // ---- Visual key grouping ----
+        // Steps stamped with a keyContext (anything other than chromatic)
+        // get a colored top + bottom border. The first and last steps in
+        // each run of same-key steps additionally get left / right
+        // borders, forming a per-row visual container that the user can
+        // scan to see which steps belong together.
+        // Skips _wrapEditing stash entries when computing neighbors so
+        // an in-flight wrap edit doesn't fragment the visible group.
+        //
+        // Out-of-key edit ejection (Round 2 / Phase F): if the step's
+        // notes have drifted out of its declared keyContext (e.g. user
+        // edited a wrap's pitch in the wrap-notes modal and added an
+        // F# to a step claiming C major), null the keyContext so the
+        // step ejects from its visual group on this and every future
+        // render. Self-healing: render is the canonical "look at the
+        // truth" pass and runs after every edit via the existing
+        // renderSequence call sites.
+        if (step.keyContext && typeof _stepIsAllInKey === 'function') {
+          try {
+            if (!_stepIsAllInKey(step, step.keyContext)) {
+              step.keyContext = null;
+            }
+          } catch (e) {}
+        }
+        if (step.keyContext) {
+          let _prevKey = null;
+          for (let j = i - 1; j >= 0; j--) {
+            const s = sequence[j];
+            if (!s || s._wrapEditing) continue;
+            _prevKey = s.keyContext || null;
+            break;
+          }
+          let _nextKey = null;
+          for (let j = i + 1; j < sequence.length; j++) {
+            const s = sequence[j];
+            if (!s || s._wrapEditing) continue;
+            _nextKey = s.keyContext || null;
+            break;
+          }
+          const _isStart = !_keyContextsMatch(step.keyContext, _prevKey);
+          const _isEnd   = !_keyContextsMatch(step.keyContext, _nextKey);
+          chip.classList.add('in-key-group');
+          if (_isStart && _isEnd) chip.classList.add('key-group-solo');
+          else if (_isStart)      chip.classList.add('key-group-start');
+          else if (_isEnd)        chip.classList.add('key-group-end');
+          else                    chip.classList.add('key-group-mid');
+          const _rootName  = (typeof CHROMATIC !== 'undefined' && CHROMATIC[step.keyContext.root]) || '?';
+          const _scaleName = (typeof prettyScaleName === 'function')
+            ? prettyScaleName(step.keyContext.scale)
+            : step.keyContext.scale;
+          chip.dataset.keyLabel = `${_rootName} ${_scaleName}`;
+          // Append a key-context note to the existing chip title so
+          // hovering still surfaces the original step details first.
+          if (_isStart) {
+            const _prev = chip.title ? chip.title + ' · ' : '';
+            chip.title = _prev + `Key: ${_rootName} ${_scaleName}`;
+          }
+        }
         chipHost.appendChild(chip);
         // Long steps spill across rows as continuation chips —
         // visually identical to the first segment (same color, same
@@ -4897,6 +5013,12 @@
           _continuationPlan.continuations.forEach((segSpan, idx) => {
             const cont = chip.cloneNode(true);
             cont.classList.remove('cont-start', 'active', 'selected', 'variance-editing');
+            // Continuation segments belong to the same step as the head,
+            // so they shouldn't carry boundary markers — only the head
+            // chip is the "start" or "end" of a key group. Stripping
+            // these prevents a mid-step continuation from drawing a
+            // spurious left / right border at row breaks.
+            cont.classList.remove('key-group-start', 'key-group-end', 'key-group-solo', 'key-group-mid');
             cont.classList.add(
               (idx === _continuationPlan.continuations.length - 1) ? 'cont-end' : 'cont-mid'
             );
@@ -5659,9 +5781,562 @@
       return true;
     }
 
+    // Snapshot of the current grid key for stamping onto new steps.
+    // Chromatic = "no key" → returns null so chromatic sequences don't
+    // get cluttered with empty key groupings. Specific scales return
+    // a fresh object so the step's context doesn't move when the
+    // grid's root / scale later change.
+    function _captureKeyContext() {
+      if (typeof currentScale !== 'string' || currentScale === 'chromatic') return null;
+      if (!Number.isFinite(rootIdx)) return null;
+      return { root: rootIdx, scale: currentScale };
+    }
+    // Pitch classes (0-11) covered by a keyContext. Returns null for
+    // anything unresolvable so callers can short-circuit cleanly.
+    function _scalePitchClassesForKey(kc) {
+      if (!kc) return null;
+      const intervals = (typeof SCALES !== 'undefined' && SCALES[kc.scale]) || null;
+      if (!intervals) return null;
+      return intervals.map(semi => (((kc.root + semi) % 12) + 12) % 12);
+    }
+    // Pitch class (0-11) of a freq using masterFreqA as A4 reference.
+    function _pitchClassOfFreq(freq) {
+      if (!Number.isFinite(freq) || freq <= 0) return null;
+      const midi = Math.round(12 * Math.log2(freq / masterFreqA) + 69);
+      return ((midi % 12) + 12) % 12;
+    }
+    function _midiOfFreq(freq) {
+      if (!Number.isFinite(freq) || freq <= 0) return null;
+      return Math.round(12 * Math.log2(freq / masterFreqA) + 69);
+    }
+    // Walk the step's audible notes and decide whether all of them are
+    // in the given keyContext. Chord + sub steps recurse; freq-bearing
+    // steps check directly; rests (no freq) count as "in key" so a
+    // rest doesn't eject the step from its visual group.
+    function _stepIsAllInKey(step, kc) {
+      const pcs = _scalePitchClassesForKey(kc);
+      if (!pcs) return false;
+      const okSet = new Set(pcs);
+      const checkOne = (s) => {
+        if (!s) return true;
+        if (s.isSub && Array.isArray(s.subSteps)) return s.subSteps.every(checkOne);
+        if (Array.isArray(s.chord))               return s.chord.every(n => {
+          const pc = _pitchClassOfFreq(n && n.freq);
+          return pc == null || okSet.has(pc);
+        });
+        if (s.freq == null) return true; // rest
+        const pc = _pitchClassOfFreq(s.freq);
+        return pc == null || okSet.has(pc);
+      };
+      return checkOne(step);
+    }
+    // Snap a freq to its closest in-key pitch (within ±6 semitones)
+    // and return { freq, label, midi }. Used by the rebase path when
+    // a wrap's transposed note still lands out-of-key in the new key.
+    function _snapFreqToKey(freq, kc) {
+      const pcs = _scalePitchClassesForKey(kc);
+      if (!pcs || pcs.length === 0) return null;
+      const okSet = new Set(pcs);
+      const midi = _midiOfFreq(freq);
+      if (midi == null) return null;
+      // Already in key — no snap needed.
+      if (okSet.has(((midi % 12) + 12) % 12)) {
+        return { freq, midi, label: _midiToLabel(midi) };
+      }
+      // Search ±6 semitones for the closest in-key pitch. Prefer the
+      // lower neighbor on a tie so the snap feels like a "downward
+      // chromatic resolve" rather than always going up.
+      for (let d = 1; d <= 6; d++) {
+        for (const dir of [-1, +1]) {
+          const cand = midi + dir * d;
+          const candPC = ((cand % 12) + 12) % 12;
+          if (okSet.has(candPC)) {
+            const newFreq = masterFreqA * Math.pow(2, (cand - 69) / 12);
+            return { freq: newFreq, midi: cand, label: _midiToLabel(cand) };
+          }
+        }
+      }
+      return null;
+    }
+    // Build a "C4"-style label from a MIDI number. Mirrors the format
+    // CHROMATIC + octave used everywhere else so labels stay consistent
+    // after a rebase.
+    function _midiToLabel(midi) {
+      const pc = ((midi % 12) + 12) % 12;
+      const oct = Math.floor(midi / 12) - 1;
+      return CHROMATIC[pc] + oct;
+    }
+    // Rebase one note in-place: transpose by `deltaSemi`, then snap
+    // to nearest in-key pitch in the new key if the result lands out.
+    // Mutates the note's freq + label + clears cellIndex (the new
+    // pitch may not correspond to any current grid cell).
+    function _rebaseNoteInPlace(note, deltaSemi, newKc) {
+      if (!note || !Number.isFinite(note.freq)) return;
+      const oldMidi = _midiOfFreq(note.freq);
+      if (oldMidi == null) return;
+      const newMidi = oldMidi + deltaSemi;
+      let newFreq = masterFreqA * Math.pow(2, (newMidi - 69) / 12);
+      let newLabel = _midiToLabel(newMidi);
+      const snap = _snapFreqToKey(newFreq, newKc);
+      if (snap) { newFreq = snap.freq; newLabel = snap.label; }
+      note.freq      = newFreq;
+      note.label     = newLabel;
+      note.cellIndex = null; // grid layout may not contain this cell
+    }
+    // Recursively rebase every audible note inside a step. Chord +
+    // sub steps fan out to their constituent notes. Rests pass through.
+    function _rebaseStepNotes(step, deltaSemi, newKc) {
+      if (!step) return;
+      if (Array.isArray(step.chord)) {
+        step.chord.forEach(n => _rebaseNoteInPlace(n, deltaSemi, newKc));
+        step.label = step.chord.map(n => n && n.label).filter(Boolean).join('·');
+        return;
+      }
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        step.subSteps.forEach(s => _rebaseStepNotes(s, deltaSemi, newKc));
+        return;
+      }
+      if (step.freq != null) {
+        _rebaseNoteInPlace(step, deltaSemi, newKc);
+      }
+    }
+    // Determine a wrap's "root note" PC for scale-degree rebasing.
+    // Chord wraps: the lowest pitched voice (matches functional bass).
+    // Sub wraps: the first audible subStep (sequences naturally root
+    // on their first note). Single-note wraps: that note. Rests + odd
+    // shapes return null — caller skips rebase in that case.
+    function _wrapRootPitchClass(step) {
+      if (!step) return null;
+      const allFreqs = [];
+      const collect = (s) => {
+        if (!s) return;
+        if (Array.isArray(s.chord)) { s.chord.forEach(n => { if (n && Number.isFinite(n.freq)) allFreqs.push(n.freq); }); return; }
+        if (s.isSub && Array.isArray(s.subSteps)) { s.subSteps.forEach(collect); return; }
+        if (Number.isFinite(s.freq)) allFreqs.push(s.freq);
+      };
+      collect(step);
+      if (allFreqs.length === 0) return null;
+      // Chord = lowest voice (functional bass). Sub or single = first.
+      const refFreq = Array.isArray(step.chord)
+        ? Math.min(...allFreqs)
+        : allFreqs[0];
+      return _pitchClassOfFreq(refFreq);
+    }
+    // Backfill `origin` for bank entries created before the immutable
+    // model existed. Idempotent — does nothing once origin is set.
+    // Capturing the entry's current `step` as origin is the best we
+    // can do for legacy wraps (we don't know what they were ORIGINALLY
+    // before any earlier rebase). Going forward every fresh push sets
+    // origin at commit time so future rebases stay reversible.
+    function _ensureWrapOrigin(entry) {
+      if (!entry || !entry.step) return;
+      if (entry.origin && entry.origin.step) return;
+      entry.origin = {
+        step: cloneStep(entry.step),
+        keyContext: (entry.step.keyContext)
+          ? { root: entry.step.keyContext.root, scale: entry.step.keyContext.scale }
+          : null,
+      };
+    }
+    // Compute the wrap's `step` view for a given target key, always
+    // from the immutable `origin`. The wrap restores verbatim when
+    // the target equals the origin's birth key OR when the target is
+    // chromatic (which imposes no constraint). Otherwise we
+    // scale-degree-transpose origin into the new key and snap any
+    // out-of-key residue to the nearest in-key pitch.
+    function _renderWrapForKey(entry, newKc) {
+      _ensureWrapOrigin(entry);
+      if (!entry || !entry.origin || !entry.origin.step) return;
+      const originStep = entry.origin.step;
+      const originKc   = entry.origin.keyContext || null;
+      // Chromatic target → restore origin verbatim. Chromatic doesn't
+      // constrain anything, so the wrap's "natural form" is what plays.
+      if (!newKc) {
+        const restored = cloneStep(originStep);
+        if (restored) {
+          restored.keyContext = originKc
+            ? { root: originKc.root, scale: originKc.scale }
+            : null;
+        }
+        entry.step = restored;
+        return;
+      }
+      // Target equals origin key → also restore. Identity case.
+      if (originKc && originKc.root === newKc.root && originKc.scale === newKc.scale) {
+        const restored = cloneStep(originStep);
+        if (restored) restored.keyContext = { root: newKc.root, scale: newKc.scale };
+        entry.step = restored;
+        return;
+      }
+      // Origin's notes all happen to be in the new key already? Same
+      // as restore: no transposition needed, just re-stamp keyContext
+      // so the chip reads as belonging to the new key.
+      if (_stepIsAllInKey(originStep, newKc)) {
+        const restored = cloneStep(originStep);
+        if (restored) restored.keyContext = { root: newKc.root, scale: newKc.scale };
+        entry.step = restored;
+        return;
+      }
+      // True rebase needed. Always start from a fresh clone of origin
+      // so the transformation is reversible.
+      const working = cloneStep(originStep);
+      let deltaSemi = 0;
+      const oldPCs = _scalePitchClassesForKey(originKc);
+      const newPCs = _scalePitchClassesForKey(newKc);
+      const rootPC = _wrapRootPitchClass(working);
+      if (oldPCs && newPCs && rootPC != null) {
+        const oldDegree = oldPCs.indexOf(rootPC);
+        if (oldDegree >= 0) {
+          const newRootPC = newPCs[oldDegree % newPCs.length];
+          const raw = ((newRootPC - rootPC) + 12) % 12;
+          deltaSemi = raw > 6 ? raw - 12 : raw;
+        }
+      }
+      // For chromatic origin (oldPCs null), deltaSemi stays 0 — we
+      // can't infer scale-degree intent, so we just snap each note to
+      // the nearest in-key pitch in the new key.
+      _rebaseStepNotes(working, deltaSemi, newKc);
+      if (working) working.keyContext = { root: newKc.root, scale: newKc.scale };
+      entry.step = working;
+    }
+    // Walk the wrap bank and re-render every entry against newKc.
+    // Every render is computed FROM origin, never from the previous
+    // rendered step — so any sequence of key changes is reversible
+    // and the wrap's identity is preserved across the bank's lifetime.
+    function _rebaseSavedWraps(_oldKc, newKc) {
+      if (!Array.isArray(savedWraps) || savedWraps.length === 0) return false;
+      savedWraps.forEach(entry => _renderWrapForKey(entry, newKc));
+      persistSavedWraps();
+      renderWrapBank();
+      return true;
+    }
+    // Diatonic triad cell indices rooted on the pressed cell's pitch
+    // class — only meaningful for 7-note scales. Returns null for
+    // chromatic, pentatonic, whole tone, blues, etc. so the caller
+    // falls back to a single-note add. Triad voicing tries to stack
+    // thirds upward from the pressed cell (target offsets 0 / +4 / +7
+    // semitones with scale-degree snapping). Matching cell is chosen
+    // by minimum distance from the target MIDI offset.
+    function _diatonicTriadCellIndices(pressedCellIdx) {
+      if (!Number.isFinite(pressedCellIdx) || !notes[pressedCellIdx]) return null;
+      if (!currentScale || currentScale === 'chromatic') return null;
+      const intervals = SCALES[currentScale];
+      if (!intervals || intervals.length < 7) return null;
+      const scalePCs = intervals.map(semi => (((rootIdx + semi) % 12) + 12) % 12);
+      const pressedMidi = _midiOfFreq(notes[pressedCellIdx].freq);
+      if (pressedMidi == null) return null;
+      const pressedPC = ((pressedMidi % 12) + 12) % 12;
+      const degree = scalePCs.indexOf(pressedPC);
+      if (degree < 0) return null;
+      const triadOffsets = [0, 2, 4]; // root, third, fifth in scale-degree space
+      const out = [];
+      for (let t = 0; t < triadOffsets.length; t++) {
+        const targetPC      = scalePCs[(degree + triadOffsets[t]) % scalePCs.length];
+        const targetSemiAbove = t === 0 ? 0 : (t === 1 ? 4 : 7);
+        let bestIdx = -1, bestDist = Infinity;
+        for (let j = 0; j < notes.length; j++) {
+          const n = notes[j];
+          if (!n) continue;
+          const jMidi = _midiOfFreq(n.freq);
+          if (jMidi == null) continue;
+          if ((((jMidi % 12) + 12) % 12) !== targetPC) continue;
+          const dist = Math.abs((jMidi - pressedMidi) - targetSemiAbove);
+          if (dist < bestDist) { bestDist = dist; bestIdx = j; }
+        }
+        if (bestIdx >= 0) out.push(bestIdx);
+      }
+      // De-dup in case the scale's third / fifth land on the same grid
+      // cell as the root (shouldn't happen for normal scales, but
+      // defensive).
+      const seen = new Set();
+      const uniq = out.filter(idx => seen.has(idx) ? false : (seen.add(idx), true));
+      return uniq.length >= 2 ? uniq : null;
+    }
+    // True iff two keyContext snapshots represent the same key. Used
+    // by renderSequence to decide whether consecutive steps belong in
+    // the same visual key group. Null === null is "both ungrouped"
+    // (also a match) so chromatic spans stay together.
+    function _keyContextsMatch(a, b) {
+      if (a === b) return true;
+      if (!a || !b) return false;
+      return a.root === b.root && a.scale === b.scale;
+    }
+    // Apply a stamped keyContext to the grid — mirrors the manual
+    // root / scale dropdown change path so the user can navigate
+    // through a sequence by clicking chips and have the grid follow
+    // each step's stored key. Returns true if anything changed.
+    function _applyKeyContext(kc) {
+      if (!kc) return false;
+      const targetRoot  = Math.max(0, Math.min(11, kc.root | 0));
+      const targetScale = (typeof kc.scale === 'string' && SCALES[kc.scale])
+        ? kc.scale : 'chromatic';
+      if (targetRoot === rootIdx && targetScale === currentScale) return false;
+      rootIdx = targetRoot;
+      currentScale = targetScale;
+      const rootSel  = document.getElementById('root-select');
+      const scaleSel = document.getElementById('scale-select');
+      if (rootSel)  rootSel.value  = String(rootIdx);
+      if (scaleSel) scaleSel.value = currentScale;
+      try { rebuildGrid(); } catch (e) {}
+      try { applyScale(); } catch (e) {}
+      try { if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels(); } catch (e) {}
+      try { if (typeof updateScaleBanner === 'function') updateScaleBanner(); } catch (e) {}
+      try { if (typeof applyPalette === 'function') applyPalette(); } catch (e) {}
+      try { if (typeof refreshKeyButton === 'function') refreshKeyButton(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      return true;
+    }
+
+    // ---- Key toggle button + picker ------------------------------------
+    // The Key toggle in the sounds-utilities row is the user-facing
+    // entry point for the existing root + scale system. Single-tap
+    // flips between chromatic (off — full chromatic grid, no dimming,
+    // no keyContext stamping) and the user's last non-chromatic key
+    // (on). Right-click or long-press opens a richer picker so the
+    // user can change root or scale without digging into Sounds.
+    // Key state IS just (rootIdx, currentScale) — no separate flag.
+    const KEY_LAST_LS = 'bloops-last-key-scale';
+    function _readLastKeyScale() {
+      try {
+        const v = localStorage.getItem(KEY_LAST_LS);
+        if (v && typeof v === 'string' && SCALES[v] && v !== 'chromatic') return v;
+      } catch (e) {}
+      return 'major';
+    }
+    function _writeLastKeyScale(scaleName) {
+      try {
+        if (typeof scaleName === 'string' && scaleName !== 'chromatic') {
+          localStorage.setItem(KEY_LAST_LS, scaleName);
+        }
+      } catch (e) {}
+    }
+    // Short label for the button — keeps things readable on mobile
+    // where horizontal real estate is tight. Two-letter root + the
+    // first ~6 characters of the scale name.
+    function _shortScaleLabel(scaleName) {
+      if (!scaleName || scaleName === 'chromatic') return '';
+      const pretty = (typeof prettyScaleName === 'function') ? prettyScaleName(scaleName) : scaleName;
+      // Trim long scale names down to keep the toggle from blowing
+      // out the sounds-utilities row width on a 360px viewport.
+      return pretty.length > 10 ? pretty.slice(0, 9) + '…' : pretty;
+    }
+    function refreshKeyButton() {
+      const btn = document.getElementById('key-mode-btn');
+      if (!btn) return;
+      const on = (currentScale && currentScale !== 'chromatic');
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (on) {
+        const rootName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[rootIdx]) || '?';
+        btn.textContent = `♪ ${rootName} ${_shortScaleLabel(currentScale)}`;
+      } else {
+        btn.textContent = '♪ Key';
+      }
+      // Edit pill (✎ Pick key) shows only while Key mode is active —
+      // there's nothing to pick when chromatic is the effective key.
+      const editBtn = document.getElementById('key-edit-btn');
+      if (editBtn) editBtn.hidden = !on;
+    }
+    function _setCurrentKey(newRootIdx, newScale, opts = {}) {
+      const r = Math.max(0, Math.min(11, newRootIdx | 0));
+      const s = (typeof newScale === 'string' && SCALES[newScale]) ? newScale : 'chromatic';
+      const changed = (r !== rootIdx) || (s !== currentScale);
+      if (!changed) return false;
+      const oldKc = (currentScale && currentScale !== 'chromatic')
+        ? { root: rootIdx, scale: currentScale } : null;
+      const newKc = (s && s !== 'chromatic') ? { root: r, scale: s } : null;
+      rootIdx = r;
+      currentScale = s;
+      if (s !== 'chromatic') _writeLastKeyScale(s);
+      const rootSel  = document.getElementById('root-select');
+      const scaleSel = document.getElementById('scale-select');
+      if (rootSel)  rootSel.value  = String(rootIdx);
+      if (scaleSel) scaleSel.value = currentScale;
+      if (!opts.skipRebuild) {
+        try { rebuildGrid(); } catch (e) {}
+      }
+      try { applyScale(); } catch (e) {}
+      try { if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels(); } catch (e) {}
+      try { if (typeof updateScaleBanner === 'function') updateScaleBanner(); } catch (e) {}
+      try { if (typeof applyPalette === 'function') applyPalette(); } catch (e) {}
+      refreshKeyButton();
+      // Saved-wrap re-render. Always called, including transitions
+      // TO chromatic — under the immutable-origin model, returning
+      // to chromatic restores each wrap to its original committed
+      // form, so we need to walk the bank in that direction too.
+      if (typeof _rebaseSavedWraps === 'function') {
+        try { _rebaseSavedWraps(oldKc, newKc); } catch (e) {}
+      }
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      return true;
+    }
+    function _toggleKeyMode() {
+      if (currentScale && currentScale !== 'chromatic') {
+        // Turning off — remember the current scale so the next on-flip
+        // restores it instead of resetting to 'major'.
+        _writeLastKeyScale(currentScale);
+        _setCurrentKey(rootIdx, 'chromatic');
+      } else {
+        const restored = _readLastKeyScale();
+        _setCurrentKey(rootIdx, restored);
+      }
+    }
+    // Key picker — opens a modal with a 12-button root row + a
+    // scrollable scale list. Tapping anywhere applies immediately and
+    // updates the underlying root / scale dropdowns. "Off" sets
+    // chromatic without closing; the user can pick another scale
+    // afterwards. Outside-click and Close button both dismiss.
+    let _keyPickerOverlay = null;
+    function _closeKeyPicker() {
+      if (_keyPickerOverlay) {
+        try { _keyPickerOverlay.remove(); } catch (e) {}
+        _keyPickerOverlay = null;
+      }
+    }
+    function _openKeyPicker() {
+      _closeKeyPicker();
+      const overlay = document.createElement('div');
+      overlay.className = 'key-picker-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'key-picker-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      _keyPickerOverlay = overlay;
+
+      const title = document.createElement('div');
+      title.className = 'key-picker-title';
+      title.textContent = 'Pick a key';
+      modal.appendChild(title);
+
+      const rootsRow = document.createElement('div');
+      rootsRow.className = 'key-picker-roots';
+      modal.appendChild(rootsRow);
+      const rootButtons = [];
+      for (let i = 0; i < 12; i++) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'key-picker-root';
+        b.textContent = CHROMATIC[i];
+        b.dataset.root = String(i);
+        b.addEventListener('click', () => {
+          const targetScale = (currentScale && currentScale !== 'chromatic')
+            ? currentScale
+            : _readLastKeyScale();
+          _setCurrentKey(i, targetScale);
+          paintActive();
+        });
+        rootsRow.appendChild(b);
+        rootButtons.push(b);
+      }
+
+      const scalesList = document.createElement('div');
+      scalesList.className = 'key-picker-scales';
+      modal.appendChild(scalesList);
+      const scaleButtons = [];
+      const scaleKeys = Object.keys(SCALES)
+        .filter(n => n !== 'chromatic')
+        .sort();
+      scaleKeys.forEach(name => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'key-picker-scale';
+        b.textContent = (typeof prettyScaleName === 'function') ? prettyScaleName(name) : name;
+        b.dataset.scale = name;
+        b.title = b.textContent;
+        b.addEventListener('click', () => {
+          _setCurrentKey(rootIdx, name);
+          paintActive();
+        });
+        scalesList.appendChild(b);
+        scaleButtons.push(b);
+      });
+
+      const footer = document.createElement('div');
+      footer.className = 'key-picker-footer';
+      const off = document.createElement('button');
+      off.type = 'button';
+      off.className = 'key-picker-off';
+      off.textContent = 'Off (Chromatic)';
+      off.addEventListener('click', () => {
+        if (currentScale && currentScale !== 'chromatic') _writeLastKeyScale(currentScale);
+        _setCurrentKey(rootIdx, 'chromatic');
+        paintActive();
+      });
+      footer.appendChild(off);
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'key-picker-close';
+      close.textContent = 'Done';
+      close.addEventListener('click', _closeKeyPicker);
+      footer.appendChild(close);
+      modal.appendChild(footer);
+
+      function paintActive() {
+        rootButtons.forEach((b, idx) => {
+          b.classList.toggle('active', idx === rootIdx
+            && currentScale && currentScale !== 'chromatic');
+        });
+        scaleButtons.forEach(b => {
+          b.classList.toggle('active', b.dataset.scale === currentScale);
+        });
+      }
+      paintActive();
+
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) _closeKeyPicker();
+      });
+      // Esc closes too.
+      const onKey = (e) => {
+        if (e.key === 'Escape') { _closeKeyPicker(); document.removeEventListener('keydown', onKey); }
+      };
+      document.addEventListener('keydown', onKey);
+    }
+
+    // Wire the toggle button + the dedicated ✎ Pick key edit pill.
+    // The toggle is now a clean single-action button: tap to flip
+    // Key mode on / off. The picker is reached via the separate
+    // edit pill, which only renders while Key mode is on. Right-
+    // click on the toggle still opens the picker as a power-user
+    // shortcut — harmless and discoverable on desktop.
+    (function initKeyModeButton() {
+      const btn  = document.getElementById('key-mode-btn');
+      const edit = document.getElementById('key-edit-btn');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        _toggleKeyMode();
+        try { btn.blur(); } catch (e) {}
+      });
+      btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        _openKeyPicker();
+      });
+      if (edit) {
+        edit.addEventListener('click', () => {
+          _openKeyPicker();
+          try { edit.blur(); } catch (e) {}
+        });
+      }
+      // currentScale is declared further down in the script with `let`,
+      // so it sits in the temporal dead zone right now. Defer the
+      // initial label paint until after top-level execution finishes
+      // (and currentScale exists). Event listeners above are bound
+      // immediately — they only fire on user input, which can't beat
+      // the script's parse-and-init run.
+      setTimeout(() => { try { refreshKeyButton(); } catch (e) {} }, 0);
+    })();
+
     function addToSequence(step) {
       const label = step?.chord ? 'Add chord' : (step?.freq == null ? 'Add rest' : ('Add ' + (step?.label || 'note')));
       snapshotForUndo(label);
+      // Stamp the live grid key onto this step before it lands in the
+      // sequence. Doesn't overwrite an existing keyContext — wraps
+      // recalled from the bank carry their own (possibly rebased)
+      // context, and saved sequences loaded from disk already have
+      // theirs. Skipped entirely when chromatic is active.
+      if (step && !step.keyContext) {
+        const kc = _captureKeyContext();
+        if (kc) step.keyContext = kc;
+      }
       if (insertionPoint !== null && insertionPoint >= 0 && insertionPoint <= sequence.length) {
         sequence.splice(insertionPoint, 0, step);
         // One-shot insert: drop the cursor after the first append so the
@@ -5731,11 +6406,7 @@
       const modal = document.createElement('div');
       modal.className = 'step-div-modal';
       modal.innerHTML = `
-        <div class="sdiv-title">Step size for this note</div>
-        <label class="sdiv-lock">
-          <input type="checkbox" id="sdiv-lock-cb" />
-          Use this size for the rest of this Keep session
-        </label>
+        <button type="button" class="sdiv-title-toggle" id="sdiv-title-toggle" aria-pressed="false" title="Tap to lock the next-picked size for the rest of this Keep session — no more re-prompting until Keep turns off.">Step size for this note</button>
         <div class="sdiv-grid">
           <button type="button" class="sdiv-opt" data-sub="0.08333333333333333">1/32t</button>
           <button type="button" class="sdiv-opt" data-sub="0.125">1/32</button>
@@ -5754,7 +6425,23 @@
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      const lockCb = modal.querySelector('#sdiv-lock-cb');
+      // Title doubles as a session-lock toggle. Off (default) =
+      // "Step size for this note" → the picked size applies to this
+      // one note only and the picker reappears for the next note.
+      // On (highlighted) = "Step size for all notes this Keep session"
+      // → the next picked size locks via _keepStepDiv* so the picker
+      // is skipped for every following note until Keep turns off.
+      const titleToggle = modal.querySelector('#sdiv-title-toggle');
+      if (titleToggle) {
+        titleToggle.addEventListener('click', () => {
+          const on = !titleToggle.classList.contains('active');
+          titleToggle.classList.toggle('active', on);
+          titleToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+          titleToggle.textContent = on
+            ? 'Step size for all notes this Keep session'
+            : 'Step size for this note';
+        });
+      }
       modal.querySelectorAll('.sdiv-opt').forEach(b => {
         b.addEventListener('click', () => {
           const v = parseFloat(b.dataset.sub);
@@ -5763,7 +6450,7 @@
           // across their subSteps instead of landing on the outer
           // wrap (which is a no-op for the audible cadence).
           _applyStepDivToStep(stepRef, v);
-          if (lockCb && lockCb.checked) {
+          if (titleToggle && titleToggle.classList.contains('active')) {
             _keepStepDivLocked = true;
             _keepStepDivLockedValue = v;
           }
@@ -22325,6 +23012,51 @@
               updateChordDisplay();
               return;
             }
+            // Smart wrap: on the FIRST press of a fresh stack-shaped
+            // wrap with key mode active and a 7-note scale, auto-build
+            // the diatonic triad rooted on the pressed pitch's scale
+            // degree. Subsequent presses fall through to the standard
+            // single-note add — they're already in-key (out-of-key
+            // cells are non-interactive via .out-of-scale CSS) and
+            // extend whatever chord type they form (Dm → Dm7 → Dm9
+            // etc. via the existing Tonal chord detection in
+            // updateKeepLabel). Run wraps skip the auto-triad since
+            // they're sequences, not chords.
+            const _isRunWrap = (_wrapShape === 'run')
+              || (_wrapShape == null && gridMode === 'arpeggio');
+            const _keyOn = currentScale && currentScale !== 'chromatic';
+            let _smartCells = null;
+            if (pendingChord.length === 0 && !_isRunWrap && _keyOn) {
+              try { _smartCells = _diatonicTriadCellIndices(i); }
+              catch (e) { _smartCells = null; }
+            }
+            if (_smartCells && _smartCells.length > 0) {
+              for (let _t = 0; _t < _smartCells.length; _t++) {
+                const _sci = _smartCells[_t];
+                const _n = notes[_sci];
+                if (!_n) continue;
+                const _p = { ...cellParams[_sci] };
+                pendingChord.push({
+                  freq: _n.freq, label: _n.label, cellIndex: _sci,
+                  sound: _p.type, params: _p,
+                });
+                if (cells[_sci]) cells[_sci].classList.add('wrap-pending');
+              }
+              // Fire every triad voice with a single suppressed-flash
+              // block so the chord sounds simultaneous (not arpeggiated).
+              const _prevSuppress = _suppressCellFlash;
+              _suppressCellFlash = true;
+              try {
+                for (let _t = 0; _t < _smartCells.length; _t++) {
+                  const _sci = _smartCells[_t];
+                  const _n = notes[_sci];
+                  if (_n) playNote(_n.freq, { ...cellParams[_sci] });
+                }
+              } finally { _suppressCellFlash = _prevSuppress; }
+              renderSequence();
+              updateChordDisplay();
+              return;
+            }
             const params = { ...cellParams[i] };
             // Wrap accumulation always builds the pending form (the
             // committed step becomes wrapTemplate regardless of Keep).
@@ -23612,9 +24344,24 @@
       });
       rootSelect.value = String(rootIdx);
       rootSelect.addEventListener('change', () => {
+        const _oldRoot = rootIdx;
         rootIdx = parseInt(rootSelect.value) || 0;
         rebuildGrid();
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
+        try { if (typeof refreshKeyButton === 'function') refreshKeyButton(); } catch (e) {}
+        // Re-render saved wraps whenever the effective key changes —
+        // both directions, including transitions to / from chromatic
+        // (chromatic restores each wrap to its origin under the
+        // immutable-origin model).
+        if (_oldRoot !== rootIdx && typeof _rebaseSavedWraps === 'function') {
+          try {
+            const _oldKc = (currentScale && currentScale !== 'chromatic')
+              ? { root: _oldRoot, scale: currentScale } : null;
+            const _newKc = (currentScale && currentScale !== 'chromatic')
+              ? { root: rootIdx, scale: currentScale } : null;
+            _rebaseSavedWraps(_oldKc, _newKc);
+          } catch (e) {}
+        }
       });
 
       // Single dropdown that captures both base octave and octave count as
@@ -23654,11 +24401,29 @@
       });
       scaleSelect.value = currentScale;
       scaleSelect.addEventListener('change', () => {
+        const _oldScale = currentScale;
         currentScale = scaleSelect.value;
+        if (currentScale && currentScale !== 'chromatic') {
+          try { _writeLastKeyScale(currentScale); } catch (e) {}
+        }
         applyScale();
         // Re-render XY pad guide lines so they follow the workspace
         // scale when Grid Off is active. Cheap no-op in Grid On mode.
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
+        try { if (typeof refreshKeyButton === 'function') refreshKeyButton(); } catch (e) {}
+        // Re-render saved wraps. Always called (including transitions
+        // TO chromatic) so the immutable-origin model can restore
+        // each wrap to its original committed form whenever the
+        // effective key removes its constraints.
+        if (_oldScale !== currentScale && typeof _rebaseSavedWraps === 'function') {
+          try {
+            const _oldKc = (_oldScale && _oldScale !== 'chromatic')
+              ? { root: rootIdx, scale: _oldScale } : null;
+            const _newKc = (currentScale && currentScale !== 'chromatic')
+              ? { root: rootIdx, scale: currentScale } : null;
+            _rebaseSavedWraps(_oldKc, _newKc);
+          } catch (e) {}
+        }
       });
 
       const freqSlider = document.getElementById('master-freq-slider');

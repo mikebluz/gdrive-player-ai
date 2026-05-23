@@ -1,0 +1,244 @@
+Audio engine roadmap — Bloops playback timing & DSP migration
+================================================================
+
+Big picture
+-----------
+
+Three-step migration to get from the current setTimeout-based playback
+scheduler to an architecture that can host hundreds of voices, custom
+granular engines, and FFT-heavy effects without timing drift or
+main-thread fragility.
+
+The first two steps are merged on main. Step 3 is parked here so we
+can pick it up when the DSP ambitions become concrete.
+
+  Step 1  Shared Mix-mode audio epoch — DONE (commit 0463b79)
+  Step 2  AudioWorklet-driven Make-mode scheduler — DONE (0463b79 + 97162ab)
+  Step 3  Rust DSP voices via WASM in the worklet — PARKED
+
+
+Where things stand on main
+--------------------------
+
+Make mode (single sequence, multiple lanes):
+  - Lanes within a sequence are lock-step against a shared _playBaseTime.
+  - Walk runs every 25 ms via setTimeout, pre-schedules ~500 ms ahead.
+  - AudioWorklet at js/scheduler-worklet.js owns the dispatch clock —
+    main thread captures dispatch closures, posts {audioTime, id} to
+    the worklet, worklet posts them back when due (~60 ms lookahead).
+  - Mute / solo re-read at fire time (~60 ms latency, was ~500 ms).
+  - Live structural edits (step add / remove / replace, BPM change)
+    auto-invalidate the upcoming window via persistWorkspace hook.
+    See _invalidatePlayback / _invalidateScheduledFrom in bloops.html.
+  - Background-tab playback resilience via worklet topUp → schedulerTick.
+  - Falls back to direct dispatch if the worklet fails to load
+    (Safari quirks, COOP issues on some hosts, etc.).
+
+Mix mode (multiple tracks, each chaining saved sequences):
+  - Single shared _tracksAudioEpoch anchors every track in a session.
+  - Per-track _epoch = sharedEpoch - itemStartSec[startIdx], so item
+    handoffs and parallel tracks are sample-accurate arithmetic.
+  - Per-track _trackLaneTick setTimeout chains still own the per-step
+    fire — they got the epoch model in step 1 but haven't been ported
+    onto the worklet hybrid yet (that's the open follow-up below).
+  - _advanceTrackEpochForLoop keeps per-track loops phase-locked,
+    including the 1-item-track edge case.
+
+
+Open follow-ups that don't need Rust
+------------------------------------
+
+Step 2c (the obvious next move before Rust)
+  Port Mix-mode _trackLaneTick chains onto the same worklet hybrid
+  that Make mode uses. Same pattern: walk pre-computes events from
+  each lane's flat-step list, captures dispatch closures, schedules
+  via _scheduleDispatch. Sample-accurate boundaries across sequences
+  AND across parallel tracks. Adds: live mute / solo at fire time
+  for Mix lanes, cancel-and-rewind for live mix edits. ~3 hrs of work
+  modeled on Make's schedulerTick refactor.
+
+Tightening Make's walk lookahead
+  SCHED_LOOKAHEAD_SEC is 0.5 s — chosen pre-worklet to absorb
+  main-thread stalls. With the worklet + topUp pulse covering the
+  background-tab case, we could probably halve this and make live
+  edits feel even tighter. Risky on iOS where touch / scroll can
+  stall the main thread for 100 ms+; measure before changing.
+
+Visual cancel on live edit
+  _invalidatePlayback cancels audio dispatches but leaves chip-
+  highlight visuals (scheduleVisual setTimeouts) firing for steps
+  that no longer exist. Imperceptible during the edit itself but
+  technically incorrect. Hook into clearVisualTimers or similar.
+
+
+Step 3 — Rust DSP voices
+========================
+
+Goal
+----
+
+Custom granular voices, FFT-heavy effects, polyphonic synths > ~50
+voices. The current Tone.js synths can't carry that load on mobile
+without GC pauses + audible glitching. Rust+WASM in the audio thread
+gives us no-GC, predictable-cost DSP for the voices that need it.
+
+
+Scope
+-----
+
+Strictly DSP inner loops. Control flow, scheduling, UI state, message
+passing all stay in JS where iteration is fast. Each Rust voice
+becomes a .wasm module the worklet instantiates and calls per audio
+block (128 samples). The worklet is already the right place — it
+holds the timing clock (step 2) and runs on the audio thread.
+
+What goes in Rust:
+  - Granular voice (the headline use case)
+  - FFT-based effects (spectral freeze, convolver, vocoder, etc.)
+  - High-polyphony synth voices (additive, physical model, etc.)
+
+What STAYS in JS / Tone:
+  - All scheduling and event dispatch
+  - Sample-based voices (Tone.Sampler — already good)
+  - Standard subtractive synth voices (Tone.Synth / FMSynth)
+  - All UI, persistence, file I/O, auth
+
+
+Architecture
+------------
+
+Each Rust voice becomes an AudioWorkletProcessor (separate from the
+bloops-scheduler worklet, which stays JS-only as a timing source).
+Main thread instantiates the voice when needed:
+
+  await ctx.audioWorklet.addModule('js/granular-voice-worklet.js');
+  const node = new AudioWorkletNode(ctx, 'granular-voice', { ... });
+  node.connect(laneBus);
+  // Trigger: node.port.postMessage({type:'attack', freq, time, ...});
+
+The voice processor loads its WASM blob inside the constructor:
+
+  import init, { GranularVoice } from './granular_voice.js';
+  await init();
+  this.voice = GranularVoice.new();
+  // process() block:
+  this.voice.render(outputBuffer);
+
+Tone is bypassed for these voices. The lane bus they connect to is
+still a Tone Channel (or raw GainNode), so they sit alongside the
+existing Tone-based voices in the audio graph.
+
+
+Tradeoffs going in
+------------------
+
+1. Build pipeline arrives.
+   Today's "no build step" architecture deliberately keeps the bar
+   for editing low — change a file, refresh, done. Rust needs cargo +
+   wasm-pack (or wasm-bindgen + a bundler). Iteration loop slows
+   from "save + refresh" to "cargo build + refresh." Still fast for
+   Rust standards (~1-2 s incremental), but not zero.
+
+2. Deploy gets one more step.
+   deploy.sh stages the project then SFTPs to GoDaddy cPanel. Adding
+   a `wasm-pack build` step before staging is straightforward but
+   means the deploy is no longer "just JS files." Make sure CI / the
+   deploy script versions the .wasm output so cached old blobs don't
+   linger.
+
+3. AudioWorklet module loading has Safari quirks.
+   `audioWorklet.addModule` is fine on modern Safari, but the WASM
+   instantiation inside the worklet (where the JS scope is limited)
+   has bitten people. Design the voice's loader defensively — wrap
+   the init in try/catch, expose a "voice ready?" promise to main,
+   fall back to a Tone-based voice if the WASM fails to instantiate.
+
+4. SharedArrayBuffer is NOT needed (and you can't easily get it).
+   GoDaddy cPanel almost certainly can't serve the COOP/COEP headers
+   needed for SharedArrayBuffer. Good news: we don't need it. Both
+   the worklet code and the WASM module it instantiates run on the
+   same thread (the audio thread), so they share memory natively.
+   Only main-thread ↔ worklet communication needs postMessage, and
+   for note triggers / parameter changes that's cheap enough.
+
+5. Don't migrate what already works.
+   Tone.Sampler is great. Tone.Synth is fine for simple voices.
+   Don't port them to Rust just because we have the infra. Pick one
+   voice that genuinely needs it (likely the granular one) and ship
+   it end-to-end before introducing a second.
+
+
+Recommended first voice: granular sampler
+-----------------------------------------
+
+Why start here:
+  - It's the use case you actually named.
+  - It's CPU-bound in a way Tone can't easily match — many overlapping
+    grains, each with their own envelope and pitch, doing windowing
+    and crossfading per sample.
+  - The interface is clean — feed it a sample buffer, give it grain
+    params (size, density, position, pitch), trigger via postMessage.
+
+Minimum viable surface:
+  - Rust struct holding the sample buffer + grain pool.
+  - `attack(freq, position, density, size, time)` queues grains.
+  - `release(time)` fades grains out.
+  - `process(out)` writes one audio block to `out`.
+  - JS-side wrapper exposes it as `playNote(freq, params)` with
+    params.type === 'granular' (so the existing scheduler path treats
+    it like any other voice).
+
+Out of scope for the first granular voice:
+  - Reverse playback, freeze, scrub. These are nice-to-haves; ship
+    forward playback first.
+  - Multi-buffer crossfading. Single buffer per voice initially.
+  - Per-grain effects routing. Voice output goes straight to the
+    lane bus; effects live downstream as before.
+
+
+Files / paths to know going in
+------------------------------
+
+bloops.html
+  - 7372         _schedStreams (Make-mode stream state)
+  - 7376-7449    Worklet infrastructure (loader, dispatch helpers)
+  - 7635-7950    schedulerTick walk (where new voice types plug in)
+  - 9255+        playSequence (entry point for Make playback)
+  - 12137+       startTrack (entry point for Mix playback)
+  - 13219+       playTrackItem (Mix per-item dispatch)
+  - 16561+       persistWorkspace (auto-invalidates Make playback on edits)
+
+js/scheduler-worklet.js
+  - The bloops-scheduler AudioWorkletProcessor. New Rust voices live
+    in SIBLING worklet files (each voice = its own processor).
+
+playNote in bloops.html
+  - The single entry point for triggering audio. Reads params.type
+    and routes to the right Tone voice or sampler. A new Rust voice
+    would add another branch here (or get refactored into a voice
+    registry).
+
+
+Open questions to revisit before starting
+-----------------------------------------
+
+1. wasm-pack or wasm-bindgen + manual? wasm-pack is more turnkey but
+   pins us to its bundling assumptions. wasm-bindgen alone is more
+   verbose but lets us produce a single .wasm + glue.js with no
+   bundler. Lean toward the latter to preserve the "no build step
+   for JS" property — only Rust gets compiled.
+
+2. Where to put the Rust source. Probably `rust/<voice-name>/` at
+   the repo root, with build output going to `js/voices/<name>/`.
+   Add the build output to .gitignore? Probably no — keep it
+   committed so deploys don't need to compile. Trade: bigger repo,
+   simpler deploy.
+
+3. Per-voice latency. Each voice is its own AudioWorkletNode in the
+   graph; they all share the audio thread. Hundreds of voices could
+   saturate. Worth measuring early with a stub Rust voice before
+   building real DSP.
+
+4. Hot reload story. Re-instantiating an AudioWorkletProcessor for
+   each edit is heavy. Probably accept that DSP edits require a
+   refresh (vs. the current JS hot-reload-on-refresh story).

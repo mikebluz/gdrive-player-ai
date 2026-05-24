@@ -150,6 +150,7 @@
         <button type="button" id="jump-mode-btn" class="sounds-sub-btn" aria-label="Jump mode" title="Jump — pressing a cell shifts the grid so that note becomes the lowest cell. Press the same note again and the grid jumps down an octave so it becomes the highest cell; press once more to return to lowest.">⇅ Jump</button>
         <button type="button" id="key-mode-btn" class="sounds-sub-btn" aria-label="Key mode" title="Key — when on, the grid dims out-of-key notes and new steps stamp their key context. Tap to toggle on / off.">♪ Key</button>
         <button type="button" id="key-edit-btn" class="sounds-sub-btn" aria-label="Pick a key" title="Pick a root + scale for Key mode" hidden>✎ Pick key</button>
+        <button type="button" id="wrap-triad-btn" class="sounds-sub-btn" aria-pressed="false" aria-label="Smart triad on wrap" title="Smart Triad — when on AND Key mode is on, the first press while Wrap is open auto-builds a diatonic triad rooted on the pressed pitch. Subsequent presses still add single notes. Off by default; tap to toggle.">△ Triad</button>
       </div>
       <!-- XY pad axis settings — only meaningful in Graph mode. Hidden
            in Grid mode by .xy-settings's default display: none. -->
@@ -16849,7 +16850,7 @@
       // ---- DEV BYPASS — flip to true to skip the gate during layout
       // work that doesn't need an OAuth round-trip. Leave false in
       // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = true;
+      const DEV_BYPASS_SIGNIN = false;
       if (DEV_BYPASS_SIGNIN) {
         hideGate();
         return;
@@ -18292,6 +18293,11 @@
     let jumpMode = false;
     let _lastJumpMidi = null;        // MIDI of the last pressed note in jump mode
     let _jumpState = 'low';          // 'low' = pressed note at cell 0; 'high' = at last cell
+    // Smart-Triad toggle. When true (and Key mode is on), the first
+    // press of a fresh wrap auto-builds the diatonic triad rooted on
+    // the pressed pitch's scale degree. Default off — initialized at
+    // boot from localStorage by initWrapTriadToggle below.
+    let wrapSmartTriad = false;
 
     // Adjust rootIdx + baseOctave so the cell at `cellIdx` (0 for low,
     // last for high) lands on targetMidi. Snaps the grid into place via
@@ -18369,6 +18375,23 @@
         _jumpState = 'low';
         try { btn.blur(); } catch (e) {}
         try { localStorage.setItem(KEY, jumpMode ? '1' : '0'); } catch (e) {}
+      });
+    })();
+
+    (function initWrapTriadToggle() {
+      const btn = document.getElementById('wrap-triad-btn');
+      if (!btn) return;
+      const KEY = 'bloops-wrap-smart-triad';
+      const initial = localStorage.getItem(KEY) === '1';
+      wrapSmartTriad = initial;
+      btn.classList.toggle('active', initial);
+      btn.setAttribute('aria-pressed', initial ? 'true' : 'false');
+      btn.addEventListener('click', () => {
+        wrapSmartTriad = !wrapSmartTriad;
+        btn.classList.toggle('active', wrapSmartTriad);
+        btn.setAttribute('aria-pressed', wrapSmartTriad ? 'true' : 'false');
+        try { btn.blur(); } catch (e) {}
+        try { localStorage.setItem(KEY, wrapSmartTriad ? '1' : '0'); } catch (e) {}
       });
     })();
 
@@ -23423,8 +23446,14 @@
             const _isRunWrap = (_wrapShape === 'run')
               || (_wrapShape == null && gridMode === 'arpeggio');
             const _keyOn = currentScale && currentScale !== 'chromatic';
+            // Smart-triad is opt-in via the △ Triad pill in the Sounds
+            // sub-row. Default OFF so the first wrap press is a single
+            // note (matches a MIDI keyboard's "one key = one note"
+            // expectation); turning it ON brings back the auto-triad
+            // behavior for users who liked it.
+            const _smartTriadOn = (typeof wrapSmartTriad !== 'undefined') && !!wrapSmartTriad;
             let _smartCells = null;
-            if (pendingChord.length === 0 && !_isRunWrap && _keyOn) {
+            if (_smartTriadOn && pendingChord.length === 0 && !_isRunWrap && _keyOn) {
               try { _smartCells = _diatonicTriadCellIndices(i); }
               catch (e) { _smartCells = null; }
             }
@@ -24262,18 +24291,34 @@
           let memo = _fxBypassByLane.get(lane);
           if (!memo) { memo = {}; _fxBypassByLane.set(lane, memo); }
           if (memo[onKey]) {
-            // Un-bypass: restore stashed mix.
-            sends[fxKey] = memo[onKey + '_mix'] ?? 0;
+            // Un-bypass: restore stashed mix to BOTH the lane bus and
+            // the global send tap. Cell-presses route via
+            // globalSendTap (driven by globalFx[fxKey]) while lane
+            // playback routes via lane.sends — both have to come back
+            // for un-bypass to feel correct. Also flips
+            // globalFx[onKey] so the offline WAV export's wetOf() gate
+            // re-opens.
+            const restored = memo[onKey + '_mix'] ?? 0;
+            sends[fxKey]     = restored;
+            globalFx[fxKey]  = restored;
+            globalFx[onKey]  = true;
             delete memo[onKey];
             delete memo[onKey + '_mix'];
           } else {
-            // Bypass: stash current mix and zero the send.
+            // Bypass: stash the current mix and zero BOTH paths so
+            // cell-press, lane playback, and offline export all go
+            // silent for this FX. sends and globalFx are kept in sync
+            // by the slider's dual-write, so either is a fine source
+            // for the stash.
             memo[onKey + '_mix'] = sends[fxKey] || 0;
             memo[onKey] = true;
-            sends[fxKey] = 0;
+            sends[fxKey]     = 0;
+            globalFx[fxKey]  = 0;
+            globalFx[onKey]  = false;
           }
           if (!lane._volume) getLaneBus(activeLaneIdx);
           applyLaneSends(lane);
+          try { applyGlobalSendGains(); } catch (e) {}
           refreshFxBypassUI();
           // Mix slider may need a refresh to reflect the new zero / restored value.
           const slider = sliders.find(s => s[2] === fxKey);
@@ -24283,6 +24328,7 @@
             if (inp) inp.value = String(sends[fxKey] || 0);
             if (lbl) lbl.textContent = (sends[fxKey] || 0) + slider[3];
           }
+          try { persistGlobalFx(); } catch (e) {}
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
       });

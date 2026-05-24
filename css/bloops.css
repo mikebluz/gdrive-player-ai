@@ -270,6 +270,35 @@
       box-shadow: 0 0 8px rgba(192, 38, 211, 0.35);
     }
     .grid-settings-panel .sounds-utilities #key-mode-btn:focus { outline: none; }
+    /* Smart-Triad toggle — shares the Key-mode pill's purple .active
+       state since it's a Key-mode-adjacent modifier (and silently
+       no-ops when Key mode is off). Default chrome is neutral so it
+       reads as "off" until the user opts in. */
+    .grid-settings-panel .sounds-utilities #wrap-triad-btn {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #cbd5e0;
+      cursor: pointer;
+      transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    }
+    @media (hover: hover) {
+      .grid-settings-panel .sounds-utilities #wrap-triad-btn:hover {
+        border-color: #c026d3;
+        color: #f5d0fe;
+      }
+    }
+    .grid-settings-panel .sounds-utilities #wrap-triad-btn.active {
+      background: rgba(192, 38, 211, 0.18);
+      border-color: #c026d3;
+      color: #f5d0fe;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.35);
+    }
+    .grid-settings-panel .sounds-utilities #wrap-triad-btn:focus { outline: none; }
     /* Key-edit pill — opens the Pick a key picker. Sits next to the
        Key toggle and is hidden via [hidden] when Key mode is off.
        Slightly lighter chrome than the active Key toggle so the two

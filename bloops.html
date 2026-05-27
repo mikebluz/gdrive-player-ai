@@ -19,7 +19,7 @@
        code so window.SharedAuth is available when bloopsAuth boots. -->
   <script src="js/auth-storage.js"></script>
 </head>
-<body class="signin-required bloops-loading">
+<body class="bloops-loading no-google">
   <script>
     // Run before the rest of the body parses so a #player deep-link from
     // index.html lands directly on the Player view without a one-frame
@@ -27,13 +27,15 @@
     if ((location.hash || '').toLowerCase() === '#player') {
       document.body.classList.add('view-serialbox');
     }
-    // Same idea for the sign-in gate: if SharedAuth has a fresh token,
-    // drop .signin-required synchronously so the user never sees the
-    // gate flash on a cross-page return trip. The async bloopsAuth init
-    // below would lift the class eventually but only after gapi/GIS
-    // scripts load — a noticeable second on mobile.
+    // Sign-in is optional. If SharedAuth already has a fresh token,
+    // drop the `.no-google` class synchronously so the user lands in
+    // the signed-in state on first paint (Listen tab + Save/Load
+    // buttons enabled) without a flash of the signed-out chrome on a
+    // cross-page return trip. The async bloopsAuth init below also
+    // syncs this class, but lifting here makes the transition feel
+    // immediate.
     if (window.SharedAuth?.load?.()?.token) {
-      document.body.classList.remove('signin-required');
+      document.body.classList.remove('no-google');
     }
   </script>
 
@@ -78,7 +80,12 @@
   <div class="top-bar">
     <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Make)">Make</button>
     <button type="button" class="mix-top-link" id="mix-tab" title="Switch to the Tracks / Mixdown view (Mix)">Mix</button>
-    <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen)">Listen →</button>
+    <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in">Listen →</button>
+    <!-- Sign-in toggle. Optional sign-in: Bloops works without Drive
+         access, but Save/Load Project, Save/Load FX, Export, and the
+         Listen view all need it. Toggling on prompts Google OAuth;
+         toggling off clears the cached token. -->
+    <button type="button" class="signin-toggle" id="signin-toggle-btn" title="Sign in with Google to enable Save / Load, Export, and the Listen view">Sign in</button>
   </div>
 
   <div class="menubar">
@@ -16835,42 +16842,53 @@
       isSignedIn: () => !!googleAccessToken,
     };
 
-    // ---- Sign-in gate ----------------------------------------------------
-    // Both Bloops and the embedded Player need a Drive token, so the whole
-    // page is hidden behind a Google sign-in until one is acquired. The
-    // gate shows immediately on load (token isn't persisted across reloads),
-    // and lifts once authStatusChanged fires with isSignedIn=true.
-    (function initSigninGate() {
-      const gate = document.getElementById('signin-gate');
-      const btn  = document.getElementById('signin-btn');
-      if (!gate || !btn) return;
-      const showGate = () => document.body.classList.add('signin-required');
-      const hideGate = () => document.body.classList.remove('signin-required');
-
-      // ---- DEV BYPASS — flip to true to skip the gate during layout
-      // work that doesn't need an OAuth round-trip. Leave false in
-      // production / committed state. ----
-      const DEV_BYPASS_SIGNIN = false;
-      if (DEV_BYPASS_SIGNIN) {
-        hideGate();
-        return;
-      }
-
-      // Title reflects which view the user is signing in for, so the
-      // index.html Player link lands on a "Listen" sign-in screen
-      // instead of the generic "Bloops" one.
-      const titleEl = document.getElementById('signin-gate-title');
-      if (titleEl) {
-        titleEl.textContent = document.body.classList.contains('view-serialbox')
-          ? 'Listen' : 'Bloops';
-      }
-      // The body ships with .signin-required so the gate is the first
-      // paint — no flash of the Bloops UI before JS runs. If we somehow
-      // boot up already authed (e.g. the GIS library refreshed silently),
-      // peel the class off right away.
-      if (window.bloopsAuth.isSignedIn()) hideGate();
-      else showGate();
+    // ---- Optional sign-in toggle ----------------------------------------
+    // Sign-in is optional. Bloops's local features (sequencer, Mix view,
+    // FX panel, etc.) work without Drive access; Save / Load Project,
+    // Save / Load FX, Export, and the Listen view all need it and stay
+    // disabled via `body.no-google` CSS until a token is present. The
+    // legacy full-page sign-in gate is no longer shown; the inline
+    // <div id="signin-gate"> markup stays in the DOM for back-compat
+    // but is hidden by .signin-required NOT being on the body.
+    function _signOutOfGoogle() {
+      // Drop the in-process token + cached SharedAuth so the next gapi
+      // call has no credential. Don't try to revoke server-side — that
+      // would invalidate the token for the Player on other pages too;
+      // local clear is what "sign out of Bloops" means here.
+      googleAccessToken = null;
+      try { window.SharedAuth?.clear?.(); } catch (e) {}
+      try {
+        if (typeof gapi !== 'undefined' && gapi.client && gapi.client.setToken) {
+          gapi.client.setToken({ access_token: '' });
+        }
+      } catch (e) {}
+      try { document.dispatchEvent(new CustomEvent('authStatusChanged', { detail: { isSignedIn: false } })); } catch (e) {}
+    }
+    (function initSigninToggle() {
+      const btn = document.getElementById('signin-toggle-btn');
+      if (!btn) return;
+      const syncUI = () => {
+        const on = !!(window.bloopsAuth && window.bloopsAuth.isSignedIn());
+        document.body.classList.toggle('no-google', !on);
+        btn.textContent = on ? 'Sign out' : 'Sign in';
+        btn.title = on
+          ? 'Sign out of Google (Save / Load, Export, and Listen will disable)'
+          : 'Sign in with Google to enable Save / Load, Export, and the Listen view';
+        btn.classList.toggle('signed-in', on);
+        // If the user signs out while parked on the Listen view, bounce
+        // them back to Make — the Player can't fetch playlists without
+        // a token. .view-serialbox is the class the top-bar tabs flip.
+        if (!on && document.body.classList.contains('view-serialbox')) {
+          try { document.getElementById('bloops-tab')?.click(); } catch (e) {}
+        }
+      };
+      syncUI();
       btn.addEventListener('click', async () => {
+        if (window.bloopsAuth && window.bloopsAuth.isSignedIn()) {
+          _signOutOfGoogle();
+          syncUI();
+          return;
+        }
         // Warm up the AudioContext synchronously inside this gesture,
         // BEFORE the OAuth popup invalidates it. iOS only resumes a
         // suspended context if the gesture is still valid, so the
@@ -16898,21 +16916,16 @@
         btn.textContent = 'Signing in…';
         try {
           await window.bloopsAuth.signIn();
-          // Belt-and-braces — the authStatusChanged listener below also
-          // hides the gate on success, but lifting here makes the
-          // transition feel immediate.
-          hideGate();
         } catch (e) {
           console.error('Sign-in failed:', e);
           alert(`Sign-in failed: ${e?.message || e}`);
         } finally {
           btn.disabled = false;
           btn.textContent = original;
+          syncUI();
         }
       });
-      document.addEventListener('authStatusChanged', (e) => {
-        if (e?.detail?.isSignedIn) hideGate();
-      });
+      document.addEventListener('authStatusChanged', syncUI);
     })();
 
     // Walks a "/"-separated folder path and returns the leaf folder ID,
@@ -20145,11 +20158,17 @@
       //   3. Default to Make.
       const cls  = document.body.classList;
       const hash = (location.hash || '').toLowerCase();
-      const initial = hash === '#player' ? 'serialbox'
-                    : hash === '#mix'    ? 'mix'
-                    : cls.contains('view-serialbox') ? 'serialbox'
-                    : cls.contains('view-mix')       ? 'mix'
-                    : 'make';
+      let initial  = hash === '#player' ? 'serialbox'
+                   : hash === '#mix'    ? 'mix'
+                   : cls.contains('view-serialbox') ? 'serialbox'
+                   : cls.contains('view-mix')       ? 'mix'
+                   : 'make';
+      // Listen needs Drive access. If a #player deep-link (or stale
+      // body class) lands a signed-out user here, fall back to Make
+      // so they don't stare at an empty Player they can't populate.
+      if (initial === 'serialbox' && !(window.bloopsAuth && window.bloopsAuth.isSignedIn())) {
+        initial = 'make';
+      }
       // Ensure the body class reflects the chosen view (the pre-body
       // script handled this for #player on the happy path, but some
       // mobile contexts skip that — apply unconditionally here).

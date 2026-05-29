@@ -210,30 +210,52 @@
       box-shadow: 0 8px 28px rgba(79, 209, 197, 0.22);
     }
 
-    /* Pre-Save CTA — yellow neon (carried over from the old Latest
-       Release button) to call extra attention. */
-    .btn-presave {
-      background: transparent;
-      color: #fde047;
-      border: 1px solid #fde047;
-      box-shadow: 0 0 12px rgba(253, 224, 71, 0.35);
+    /* "Grains" combined CTA — title strip on top with Listen / Watch
+       split beneath. Yellow neon outer frame carries the same emphasis
+       the old Pre-Save button had. */
+    .grains-cta {
+      display: inline-flex;
+      flex-direction: column;
+      border: 1px solid #faff00;
+      border-radius: 24px;
+      box-shadow: 0 0 18px rgba(250, 255, 0, 0.6);
+      overflow: hidden;
+      min-width: 240px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, 'Helvetica Neue', Arial, sans-serif;
     }
-    .btn-presave:hover {
-      transform: translateY(-2px);
-      background: rgba(253, 224, 71, 0.12);
-      box-shadow: 0 0 22px rgba(253, 224, 71, 0.6);
+    .grains-cta-title {
+      background: #faff00;
+      color: #000;
+      padding: 12px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.2;
+      text-align: center;
+      border-bottom: 1px solid rgba(250, 255, 0, 0.4);
+      letter-spacing: 0.01em;
+      border-radius: 24px 24px 0 0;
+      outline: 1px solid #000;
+      outline-offset: -4px;
     }
-
-    /* "Grains" video CTA — YouTube red. */
-    .btn-grains-video {
-      background: transparent;
-      color: #ff4d4d;
-      border: 1px solid #ff4d4d;
+    .grains-cta-row {
+      display: flex;
     }
-    .btn-grains-video:hover {
-      transform: translateY(-2px);
-      background: rgba(255, 77, 77, 0.1);
-      box-shadow: 0 8px 28px rgba(255, 77, 77, 0.25);
+    .grains-cta-btn {
+      flex: 1;
+      color: #faff00;
+      padding: 12px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.2;
+      text-align: center;
+      text-decoration: none;
+      transition: background 0.2s ease;
+    }
+    .grains-cta-btn + .grains-cta-btn {
+      border-left: 1px solid rgba(250, 255, 0, 0.4);
+    }
+    .grains-cta-btn:hover {
+      background: rgba(250, 255, 0, 0.12);
     }
 
 

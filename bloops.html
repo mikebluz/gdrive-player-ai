@@ -131,6 +131,24 @@
         <label title="Highlight a scale — non-scale notes are blacked out">Scale
           <select id="scale-select"></select>
         </label>
+        <label class="game-only" title="Game mode — pick the key (root note). Mirrors the hidden root-select; ± buttons still nudge from here too.">Key
+          <select id="game-key-select"></select>
+        </label>
+        <label class="game-only" title="Game mode — restrict the polygon's sides to a chord rooted on the grid's root. Off uses the active scale. Overridden if a Progression is set.">Chord
+          <select id="chord-select">
+            <option value="">Off</option>
+          </select>
+        </label>
+        <label class="game-only" title="Game mode — chord progression for the shape to mutate through. Pick chords from the dropdown to add; click × to remove. Empty = use single Chord above.">Progression
+          <select id="progression-add" title="Pick a chord to append">
+            <option value="">+ Add</option>
+          </select>
+          <span class="progression-chips" id="progression-chips"></span>
+          <button type="button" id="progression-clear" class="progression-clear" title="Clear progression">Clear</button>
+        </label>
+        <label class="game-only" title="Game mode — how many shape-edge bounces play the current chord before the progression advances to the next chord. Default 1.">Hits
+          <input type="number" id="hits-per-chord" min="1" max="32" value="1" />
+        </label>
         <label class="grid-only" title="Master tuning: frequency of A4 (Hz)">A4
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
           <!-- Slider element removed in favor of just the numeric
@@ -327,6 +345,57 @@
           <div class="xy-overlay" id="xy-overlay"></div>
           <div class="xy-dot" id="xy-dot" hidden></div>
           <div class="xy-readout" id="xy-readout"></div>
+        </div>
+      </div>
+      <!-- Game pad — third mode of the Grid/Graph toggle. A polygon with
+           one side per (scale-degree × octave) cell encloses a free
+           ball; tap to start motion, tap again to pause. Side colors
+           mirror the grid's palette; ball hits play that side's note;
+           polygon hits a canvas edge play a chord of the last 3 notes. -->
+      <div id="game-pad" hidden>
+        <div class="game-controls">
+          <div class="game-ctrl-row">
+            <div class="game-ctrl-group">
+              <button type="button" id="game-ball-mute" class="game-ctrl-label game-mute" aria-pressed="false" title="Mute / unmute ball note hits">Ball</button>
+              <button type="button" id="game-ball-menu-btn" class="game-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="game-ball-menu" title="Ball size, speed, octave, tone">▾</button>
+              <div class="game-menu" id="game-ball-menu" role="menu">
+                <label>Size <input type="range" id="game-ball-size"  min="4"  max="24"  step="1"  value="9"></label>
+                <label>Speed <input type="range" id="game-ball-speed" min="0"  max="500" step="10" value="200"></label>
+                <label>Oct <select id="game-ball-oct" title="Shift ball note playback by N octaves">
+                  <option value="-2">-2</option>
+                  <option value="-1">-1</option>
+                  <option value="0" selected>0</option>
+                  <option value="1">+1</option>
+                  <option value="2">+2</option>
+                </select></label>
+                <label>Tone <select id="game-ball-tone" title="Override the cell's tone for ball note hits">
+                  <option value="">Cell</option>
+                </select></label>
+              </div>
+            </div>
+            <div class="game-ctrl-group game-ctrl-group-right">
+              <button type="button" id="game-shape-mute" class="game-ctrl-label game-mute" aria-pressed="false" title="Mute / unmute shape edge-bounce chord">Shape</button>
+              <button type="button" id="game-shape-menu-btn" class="game-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="game-shape-menu" title="Shape size, speed, octave, tone">▾</button>
+              <div class="game-menu" id="game-shape-menu" role="menu">
+                <label>Size <input type="range" id="game-shape-size"  min="30" max="100" step="1"  value="75"></label>
+                <label>Speed <input type="range" id="game-shape-speed" min="0"  max="300" step="10" value="80"></label>
+                <label>Oct <select id="game-shape-oct" title="Shift shape edge-bounce chord by N octaves">
+                  <option value="-2">-2</option>
+                  <option value="-1">-1</option>
+                  <option value="0" selected>0</option>
+                  <option value="1">+1</option>
+                  <option value="2">+2</option>
+                </select></label>
+                <label>Tone <select id="game-shape-tone" title="Override the cell's tone for shape edge-bounce chord">
+                  <option value="">Cell</option>
+                </select></label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="game-canvas-wrap">
+          <canvas id="game-canvas"></canvas>
+          <div class="game-info-overlay" id="game-info-overlay" aria-hidden="true"></div>
         </div>
       </div>
       <!-- Keep / Wrap / Rest live inside the lane voice editor so they
@@ -7982,16 +8051,23 @@
     // the file).
     function _syncFluidGridToActiveLane() {
       const lane = lanes[activeLaneIdx];
-      const want = !!(lane && lane.fluidGridMode);
-      const was = fluidGridMode;
-      fluidGridMode = want;
-      document.body.classList.toggle('fluid-grid', want);
+      const wantFluid = !!(lane && lane.fluidGridMode);
+      const wantGame  = !!(lane && lane.gameMode);
+      const wasFluid = fluidGridMode;
+      const wasGame  = gameMode;
+      fluidGridMode = wantFluid;
+      gameMode      = wantGame;
+      document.body.classList.toggle('fluid-grid', wantFluid);
+      document.body.classList.toggle('game-mode',  wantGame);
       const btn = document.getElementById('fluid-grid-toggle');
-      if (btn) btn.textContent = want ? 'Graph' : 'Grid';
-      if (was && !want) {
+      if (btn) btn.textContent = wantGame ? 'Game' : (wantFluid ? 'Graph' : 'Grid');
+      if (wasFluid && !wantFluid) {
         try { if (typeof _endFluidPress === 'function') _endFluidPress(); } catch (e) {}
-      } else if (!was && want) {
+      } else if (!wasFluid && wantFluid) {
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
+      }
+      if (wasGame !== wantGame) {
+        try { if (typeof _onGameModeChanged === 'function') _onGameModeChanged(wantGame); } catch (e) {}
       }
       // Keep the right-side speaker button the same width as the
       // Grid/Graph button so the Sounds menu + ± buttons stay
@@ -18415,6 +18491,7 @@
     //            sustained voice; drag bends both params live. The pad
     //            replaces the cell grid in the lane editor.
     let fluidGridMode = false;
+    let gameMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;
@@ -19149,6 +19226,656 @@
       onMinMax(ids.yMin, 'y', 'min');
       onMinMax(ids.yMax, 'y', 'max');
     })();
+    // ---- Game-mode polygon pad -------------------------------------------
+    // Third state of the Grid/Graph/Game toggle. Builds a regular polygon
+    // whose side count matches notes.length (scale degrees × octaves) and
+    // colors each side from the same per-pitch-class palette the grid uses.
+    // A free ball lives inside; tap to start motion / pause. Ball→side hits
+    // play that side's note. Polygon→canvas-edge hits play the last 3
+    // ball-side notes as a chord.
+    let _gameInited = false;
+    let _gameActive = false;
+    let _gameRunning = false;
+    let _gamePadEl = null, _gameCanvasWrap = null, _gameCanvas = null, _gameCtx = null;
+    let _gameRaf = 0, _gameLastT = 0;
+    let _gameN = 0, _gameR = 100;
+    let _gameSideColors = [];
+    let _gameLastNotes = [];
+    // One entry per polygon side, in the same order vertices are drawn.
+    // { cellIdx: index into the chromatic `notes` array — used to look up
+    //   freq + cellParams; freq: cached freq; pc: pitch class for color. }
+    let _gameNotes = [];
+    const _gameShape = { cx: 0, cy: 0, vx: 0, vy: 0, rot: 0, omega: 0 };
+    const _gameBall  = { x: 0, y: 0, vx: 0, vy: 0, r: 9 };
+    // User-tunable values driven by the four sliders. Defaults match
+    // the input[type=range] value= attributes in the markup so the
+    // first frame matches what the sliders show.
+    let _gameUserBallSize  = 9;
+    let _gameUserBallSpeed = 200;
+    let _gameUserShapeFrac = 0.75; // 0.30..1.00 of max circumradius
+    let _gameUserShapeSpeed = 80;
+    let _gameBallMuted = false;
+    let _gameShapeMuted = false;
+    let _gameUserBallOct = 0;
+    let _gameUserShapeOct = 0;
+    let _gameUserBallTone  = null; // null/'' = inherit the cell's tone
+    let _gameUserShapeTone = null;
+    // Retrigger guards — when the ball gets "caught" on a side (rotating
+    // shape pushing it tangent to a vertex, etc.) it can produce dozens
+    // of hits per second; without a cooldown the synth voices stack and
+    // the audio distorts. Per-side ms timestamp + global ms timestamp
+    // for the shape's edge-bounce chord.
+    const _GAME_SIDE_COOLDOWN_MS  = 70;
+    const _GAME_SHAPE_COOLDOWN_MS = 110;
+    let _gameSideLastHitMs = new Float64Array(0);
+    let _gameShapeLastBounceMs = 0;
+
+    function _gameSize() {
+      if (!_gameCanvas) return;
+      const margin = 14;
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      const maxR = Math.max(20, Math.min(W, H) / 2 - margin);
+      _gameR = maxR * _gameUserShapeFrac;
+      _gameBall.r = _gameUserBallSize;
+    }
+    function _gameRecenter() {
+      if (!_gameCanvas) return;
+      _gameShape.cx = _gameCanvas.width / 2;
+      _gameShape.cy = _gameCanvas.height / 2;
+      _gameShape.rot = 0;
+      _gameShape.vx = _gameShape.vy = _gameShape.omega = 0;
+      _gameBall.x = _gameShape.cx;
+      _gameBall.y = _gameShape.cy;
+      _gameBall.vx = _gameBall.vy = 0;
+    }
+    function _gameResize() {
+      if (!_gameCanvas) return;
+      const host = _gameCanvasWrap || _gamePadEl;
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      const w = Math.max(2, Math.round(rect.width));
+      const h = Math.max(2, Math.round(rect.height));
+      const oldW = _gameCanvas.width, oldH = _gameCanvas.height;
+      if (_gameCanvas.width !== w)  _gameCanvas.width  = w;
+      if (_gameCanvas.height !== h) _gameCanvas.height = h;
+      _gameSize();
+      if (!_gameRunning) {
+        _gameRecenter();
+      } else if (oldW > 0 && oldH > 0 && (oldW !== w || oldH !== h)) {
+        // Mid-play resize: scale shape + ball positions to the new
+        // canvas so the relative layout survives, then let the inside-
+        // polygon guard catch anything that still ends up outside.
+        const sx = w / oldW, sy = h / oldH;
+        _gameShape.cx *= sx; _gameShape.cy *= sy;
+        _gameBall.x *= sx;   _gameBall.y *= sy;
+        _gameEnsureBallInside();
+      }
+    }
+    function _gameRefresh() {
+      _gameNotes = [];
+      _gameSideColors = [];
+      // Chord override — when set, the polygon's sides are the chord's
+      // notes rooted on rootIdx, repeated across octaveCount octaves.
+      // Falls back to the scale-filter path otherwise.
+      const activeChordKey = _activeChordKey();
+      const chordEntry = (activeChordKey && CHORDS && CHORDS[activeChordKey]) || null;
+      if (chordEntry && Array.isArray(notes) && notes.length > 0) {
+        // Drive freq directly off the root cell's freq + semi shift so
+        // chord extensions (9 / 11 / 13) aren't clipped by the active
+        // octave count. cellIdx wraps modulo notes.length for palette
+        // and cellParams lookup (params are per-pitch-class anyway).
+        const oct = Math.max(1, (typeof octaveCount === 'number') ? octaveCount : 1);
+        const baseFreq = notes[0].freq;
+        for (let o = 0; o < oct; o++) {
+          for (const semi of chordEntry.semis) {
+            const totalSemi = o * 12 + semi;
+            const cellIdx = ((totalSemi % notes.length) + notes.length) % notes.length;
+            const freq = baseFreq * Math.pow(2, totalSemi / 12);
+            const pc = (((rootIdx + totalSemi) % 12) + 12) % 12;
+            _gameNotes.push({ cellIdx, freq, pc });
+            _gameSideColors.push((palette && palette[pc]) || '#9f7aea');
+          }
+        }
+      } else {
+        // Side count = scale-degrees × octaves. Chromatic falls through to
+        // 12 × oct. Non-chromatic scales filter the chromatic `notes`
+        // array down to in-scale pitch classes.
+        const intervals = (typeof SCALES !== 'undefined' && SCALES && SCALES[currentScale])
+          || (typeof SCALES !== 'undefined' && SCALES && SCALES['chromatic'])
+          || [];
+        const tonic = (typeof _effectiveScaleTonic === 'function')
+          ? _effectiveScaleTonic()
+          : (typeof rootIdx === 'number' ? rootIdx : 0);
+        const scalePCs = new Set(intervals.map(s => (((tonic + s) % 12) + 12) % 12));
+        if (Array.isArray(notes)) {
+          for (let i = 0; i < notes.length; i++) {
+            const pc = (((rootIdx + i) % 12) + 12) % 12;
+            if (!intervals.length || scalePCs.has(pc)) {
+              _gameNotes.push({ cellIdx: i, freq: notes[i].freq, pc });
+              _gameSideColors.push((palette && palette[pc]) || '#9f7aea');
+            }
+          }
+        }
+      }
+      _gameN = _gameNotes.length;
+      _gameLastNotes = [];
+      _gameSideLastHitMs = new Float64Array(_gameN);
+      _gameShapeLastBounceMs = 0;
+      _gameSize();
+      if (!_gameRunning) {
+        _gameRecenter();
+      } else {
+        // Polygon shape just changed (chord/scale pick, octave change,
+        // etc.) — if the ball is suddenly outside the new shape it'd
+        // drift off-canvas; snap it back inside.
+        _gameEnsureBallInside();
+      }
+      _gameUpdateOverlay();
+      _gameSyncKeySelect();
+      try { if (typeof window._renderProgressionChips === 'function') window._renderProgressionChips(); } catch (_) {}
+    }
+
+    function _gameSyncKeySelect() {
+      const sel = document.getElementById('game-key-select');
+      if (!sel) return;
+      const want = String(((rootIdx % 12) + 12) % 12);
+      if (sel.value !== want) sel.value = want;
+    }
+
+    function _gameUpdateOverlay() {
+      const el = document.getElementById('game-info-overlay');
+      if (!el) return;
+      const keyLabel = (typeof CHROMATIC !== 'undefined' && CHROMATIC[((rootIdx % 12) + 12) % 12]) || 'C';
+      const scaleLabel = (currentScale && currentScale !== 'chromatic'
+          && typeof prettyScaleName === 'function')
+        ? prettyScaleName(currentScale)
+        : 'Chromatic';
+      const parts = [keyLabel + ' ' + scaleLabel];
+      if (currentProgression.length > 0) {
+        const activeKey = _activeChordKey();
+        const chordLabel = (CHORDS[activeKey] && CHORDS[activeKey].label) || activeKey;
+        parts.push(chordLabel + ' (' + (_gameProgressionIdx + 1) + '/' + currentProgression.length + ')');
+      } else if (currentChord && CHORDS[currentChord]) {
+        parts.push(CHORDS[currentChord].label);
+      }
+      el.textContent = parts.join(' · ');
+    }
+    function _gameKick() {
+      // Shape heads toward one of the four canvas corners (with a small
+      // ±0.2 rad jitter) so the initial direction is always diagonal-ish
+      // instead of occasionally near-horizontal/vertical.
+      const W = _gameCanvas ? _gameCanvas.width  : 0;
+      const H = _gameCanvas ? _gameCanvas.height : 0;
+      const corners = [
+        { x: 0, y: 0 }, { x: W, y: 0 }, { x: 0, y: H }, { x: W, y: H },
+      ];
+      const target = corners[(Math.random() * 4) | 0];
+      const ang = Math.atan2(target.y - _gameShape.cy, target.x - _gameShape.cx)
+                + (Math.random() - 0.5) * 0.4;
+      _gameShape.vx = Math.cos(ang) * _gameUserShapeSpeed;
+      _gameShape.vy = Math.sin(ang) * _gameUserShapeSpeed;
+      _gameShape.omega = (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 1.0);
+      const a2 = Math.random() * Math.PI * 2;
+      _gameBall.vx = Math.cos(a2) * _gameUserBallSpeed;
+      _gameBall.vy = Math.sin(a2) * _gameUserBallSpeed;
+    }
+    function _gameVertices() {
+      const out = new Array(_gameN);
+      for (let i = 0; i < _gameN; i++) {
+        const a = _gameShape.rot + (Math.PI * 2 * i) / _gameN - Math.PI / 2;
+        out[i] = { x: _gameShape.cx + _gameR * Math.cos(a), y: _gameShape.cy + _gameR * Math.sin(a) };
+      }
+      return out;
+    }
+    // Inside-polygon guard for the moments when the polygon's geometry
+    // changes under a running ball (chord pick, scale switch, octave/
+    // size change, canvas resize). The polygon is always wound CW in
+    // canvas coords, so the signed cross > 0 means "inside" for every
+    // edge. A `signed distance from edge < -ball.r` reading is treated
+    // as meaningfully past that edge — the tolerance keeps a ball that's
+    // just sitting on / near a side from being snapped during normal
+    // play (which was the source of the earlier jumpiness).
+    function _gameEnsureBallInside() {
+      if (_gameN < 3) return true;
+      const verts = _gameVertices();
+      const tol = Math.max(1, _gameBall.r);
+      for (let i = 0; i < _gameN; i++) {
+        const A = verts[i], B = verts[(i + 1) % _gameN];
+        const dx = B.x - A.x, dy = B.y - A.y;
+        const sideLen = Math.hypot(dx, dy) || 1;
+        const cross = dx * (_gameBall.y - A.y) - dy * (_gameBall.x - A.x);
+        if (cross / sideLen < -tol) {
+          _gameBall.x = _gameShape.cx;
+          _gameBall.y = _gameShape.cy;
+          if (_gameUserBallSpeed > 0) {
+            const mag = Math.hypot(_gameBall.vx, _gameBall.vy);
+            if (mag < 0.5) {
+              const a = Math.random() * Math.PI * 2;
+              _gameBall.vx = Math.cos(a) * _gameUserBallSpeed;
+              _gameBall.vy = Math.sin(a) * _gameUserBallSpeed;
+            }
+          }
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function _gamePlayNoteAt(sideIdx, octShift, toneOverride) {
+      if (sideIdx == null || !_gameNotes || !_gameNotes[sideIdx] || typeof playNote !== 'function') return;
+      const meta = _gameNotes[sideIdx];
+      // Clone so the override doesn't mutate the cell's stored params.
+      const base = (Array.isArray(cellParams) && cellParams[meta.cellIdx]) ? cellParams[meta.cellIdx] : {};
+      const params = { ...base };
+      if (toneOverride) params.type = toneOverride;
+      const freq = octShift ? meta.freq * Math.pow(2, octShift) : meta.freq;
+      try { playNote(freq, params); } catch (e) {}
+    }
+
+    // Build a chord-voice / single-note payload mirroring the shape the
+    // cell-grid Keep paths use, so an addToSequence(step) call from the
+    // game produces a step indistinguishable from a Grid-mode tap.
+    function _gameMakeVoice(sideIdx, octShift, toneOverride) {
+      if (sideIdx == null || !_gameNotes || !_gameNotes[sideIdx]) return null;
+      const meta = _gameNotes[sideIdx];
+      const cellIdx = meta.cellIdx;
+      const base = (Array.isArray(cellParams) && cellParams[cellIdx]) ? cellParams[cellIdx] : {};
+      const params = { ...base };
+      if (toneOverride) params.type = toneOverride;
+      const freq = octShift ? meta.freq * Math.pow(2, octShift) : meta.freq;
+      const label = (Array.isArray(notes) && notes[cellIdx]) ? notes[cellIdx].label : '';
+      return { freq, label, cellIndex: cellIdx, sound: params.type, params };
+    }
+    function _gameKeepAvailable() {
+      return typeof keepMode !== 'undefined' && keepMode
+          && typeof addToSequence === 'function';
+    }
+    function _gameAppendBallStep(sideIdx) {
+      if (!_gameKeepAvailable()) return;
+      const v = _gameMakeVoice(sideIdx, _gameUserBallOct, _gameUserBallTone);
+      if (!v) return;
+      const step = {
+        freq: v.freq,
+        label: v.label,
+        cellIndex: v.cellIndex,
+        sound: v.sound,
+        params: v.params,
+        duration: 1,
+        subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
+      };
+      try { addToSequence(step); } catch (_) {}
+    }
+    function _gameAppendShapeChordStep() {
+      if (!_gameKeepAvailable()) return;
+      if (!_gameLastNotes || _gameLastNotes.length === 0) return;
+      const voices = _gameLastNotes
+        .map(idx => _gameMakeVoice(idx, _gameUserShapeOct, _gameUserShapeTone))
+        .filter(Boolean);
+      if (voices.length === 0) return;
+      const chordStep = {
+        chord: voices,
+        label: voices.map(v => v.label).join('·'),
+        duration: 1,
+        subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
+      };
+      try { addToSequence(chordStep); } catch (_) {}
+    }
+    function _gameUpdate(dt) {
+      if (_gameN < 3) return;
+      // Sub-step the physics so a single frame's motion can't overshoot
+      // a side's overlap window. Bound by half the ball's radius; the
+      // worst case considers ball velocity, shape translation, and the
+      // tangential speed of a side under rotation (omega × R).
+      const ballSpeed = Math.hypot(_gameBall.vx, _gameBall.vy);
+      const shapeSpeed = Math.hypot(_gameShape.vx, _gameShape.vy);
+      const tangentialSpeed = Math.abs(_gameShape.omega) * _gameR;
+      const maxSpeed = Math.max(ballSpeed, shapeSpeed + tangentialSpeed, 1);
+      const maxDist  = Math.max(2, _gameBall.r * 0.5);
+      const steps    = Math.min(16, Math.max(1, Math.ceil(maxSpeed * dt / maxDist)));
+      const subDt    = dt / steps;
+      let bounced = false;
+      for (let s = 0; s < steps; s++) {
+        if (_gameSubStep(subDt)) bounced = true;
+      }
+      // Safety net — sub-stepping + the unconditional position-push in
+      // _gameSubStep should keep the ball inside under steady-state
+      // physics. This catches anything that slipped past after a
+      // polygon-mutating change (chord/scale/octave) or a degenerate
+      // overlap at a vertex.
+      _gameEnsureBallInside();
+      if (bounced) {
+        const nowMs = performance.now();
+        if (nowMs - _gameShapeLastBounceMs >= _GAME_SHAPE_COOLDOWN_MS) {
+          _gameShapeLastBounceMs = nowMs;
+          if (!_gameShapeMuted) {
+            for (const idx of _gameLastNotes) _gamePlayNoteAt(idx, _gameUserShapeOct, _gameUserShapeTone);
+          }
+          _gameAppendShapeChordStep();
+          if (currentProgression.length > 0) {
+            _gameProgressionHits++;
+            if (_gameProgressionHits >= _gameUserHitsPerChord) {
+              _gameProgressionHits = 0;
+              _gameProgressionIdx = (_gameProgressionIdx + 1) % currentProgression.length;
+              try { _gameRefresh(); } catch (_) {}
+            }
+          }
+        }
+      }
+    }
+
+    // One physics integration step. Returns true if the shape bounced
+    // off a canvas edge during this step so the outer driver can fire
+    // the chord (deduped by the global shape cooldown).
+    function _gameSubStep(dt) {
+      _gameShape.cx += _gameShape.vx * dt;
+      _gameShape.cy += _gameShape.vy * dt;
+      _gameShape.rot += _gameShape.omega * dt;
+      _gameBall.x += _gameBall.vx * dt;
+      _gameBall.y += _gameBall.vy * dt;
+
+      const verts = _gameVertices();
+
+      // Ball vs polygon sides — relative-velocity reflection so collisions
+      // stay clean while the shape itself translates/rotates.
+      for (let i = 0; i < _gameN; i++) {
+        const A = verts[i], B = verts[(i + 1) % _gameN];
+        const dx = B.x - A.x, dy = B.y - A.y;
+        const lenSq = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((_gameBall.x - A.x) * dx + (_gameBall.y - A.y) * dy) / lenSq));
+        const cX = A.x + t * dx, cY = A.y + t * dy;
+        const ddx = _gameBall.x - cX, ddy = _gameBall.y - cY;
+        const distSq = ddx * ddx + ddy * ddy;
+        if (distSq < _gameBall.r * _gameBall.r) {
+          const midX = (A.x + B.x) / 2, midY = (A.y + B.y) / 2;
+          let nx = _gameShape.cx - midX, ny = _gameShape.cy - midY;
+          const nlen = Math.hypot(nx, ny) || 1;
+          nx /= nlen; ny /= nlen;
+          // Always push the ball back inside on overlap, even when the
+          // ball itself isn't moving outward — that's what handles a
+          // rotating side sweeping past a slow ball without teleporting
+          // it via the inside guard. Reflection only fires when the
+          // ball is genuinely moving into the side (vn < 0).
+          const dist = Math.sqrt(distSq) || 0.0001;
+          const overlap = _gameBall.r - dist;
+          _gameBall.x += overlap * nx;
+          _gameBall.y += overlap * ny;
+          const vn = _gameBall.vx * nx + _gameBall.vy * ny;
+          if (vn < 0) {
+            _gameBall.vx -= 2 * vn * nx;
+            _gameBall.vy -= 2 * vn * ny;
+            if (_gameUserBallSpeed > 0) {
+              const mag = Math.hypot(_gameBall.vx, _gameBall.vy) || 1;
+              const k = _gameUserBallSpeed / mag;
+              _gameBall.vx *= k;
+              _gameBall.vy *= k;
+            }
+            // Per-side retrigger cooldown — suppresses both the audio
+            // trigger and the lastNotes push when the same side fires
+            // again within the window, so a "caught" ball doesn't pile
+            // up voices or fill the chord buffer with one repeated note.
+            const nowMs = performance.now();
+            if (_gameSideLastHitMs[i] === undefined
+                || nowMs - _gameSideLastHitMs[i] >= _GAME_SIDE_COOLDOWN_MS) {
+              _gameSideLastHitMs[i] = nowMs;
+              if (!_gameBallMuted) _gamePlayNoteAt(i, _gameUserBallOct, _gameUserBallTone);
+              _gameLastNotes.push(i);
+              if (_gameLastNotes.length > 3) _gameLastNotes.shift();
+              _gameAppendBallStep(i);
+            }
+          }
+          break;
+        }
+      }
+
+      // Polygon vs canvas edges — AABB of its vertices.
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const v of verts) {
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+      }
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      let bounced = false;
+      if (minX < 0) { _gameShape.cx += -minX; if (_gameShape.vx < 0) { _gameShape.vx = -_gameShape.vx; bounced = true; } }
+      if (maxX > W) { _gameShape.cx -= (maxX - W); if (_gameShape.vx > 0) { _gameShape.vx = -_gameShape.vx; bounced = true; } }
+      if (minY < 0) { _gameShape.cy += -minY; if (_gameShape.vy < 0) { _gameShape.vy = -_gameShape.vy; bounced = true; } }
+      if (maxY > H) { _gameShape.cy -= (maxY - H); if (_gameShape.vy > 0) { _gameShape.vy = -_gameShape.vy; bounced = true; } }
+      return bounced;
+    }
+    function _gameRender() {
+      if (!_gameCtx) return;
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      _gameCtx.fillStyle = '#0a0a14';
+      _gameCtx.fillRect(0, 0, W, H);
+      if (_gameN < 3) {
+        _gameCtx.fillStyle = '#4a5568';
+        _gameCtx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        _gameCtx.textAlign = 'center';
+        _gameCtx.textBaseline = 'middle';
+        _gameCtx.fillText('No notes — pick a scale', W / 2, H / 2);
+        return;
+      }
+      const verts = _gameVertices();
+      _gameCtx.lineWidth = 4;
+      _gameCtx.lineCap = 'round';
+      for (let i = 0; i < _gameN; i++) {
+        const A = verts[i], B = verts[(i + 1) % _gameN];
+        _gameCtx.strokeStyle = _gameSideColors[i] || '#fff';
+        _gameCtx.beginPath();
+        _gameCtx.moveTo(A.x, A.y);
+        _gameCtx.lineTo(B.x, B.y);
+        _gameCtx.stroke();
+      }
+      _gameCtx.beginPath();
+      _gameCtx.arc(_gameBall.x, _gameBall.y, _gameBall.r, 0, Math.PI * 2);
+      _gameCtx.fillStyle = '#ffffff';
+      _gameCtx.fill();
+    }
+    function _gameLoop(t) {
+      if (!_gameActive) { _gameRaf = 0; return; }
+      const dt = Math.min(0.033, (t - _gameLastT) / 1000);
+      _gameLastT = t;
+      if (_gameRunning) _gameUpdate(dt);
+      _gameRender();
+      _gameRaf = requestAnimationFrame(_gameLoop);
+    }
+    function _gameInit() {
+      if (_gameInited) return;
+      _gameInited = true;
+      _gamePadEl = document.getElementById('game-pad');
+      _gameCanvasWrap = document.querySelector('.game-canvas-wrap');
+      _gameCanvas = document.getElementById('game-canvas');
+      if (!_gamePadEl || !_gameCanvas) return;
+      _gameCtx = _gameCanvas.getContext('2d');
+      _gameCanvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (_gameRunning) {
+          _gameRunning = false;
+        } else {
+          const moving = Math.abs(_gameShape.vx) > 1 || Math.abs(_gameShape.vy) > 1
+                      || Math.abs(_gameBall.vx) > 1  || Math.abs(_gameBall.vy) > 1;
+          if (!moving) _gameKick();
+          _gameRunning = true;
+        }
+      });
+      // ---- sliders ----
+      const bsz = document.getElementById('game-ball-size');
+      const bsp = document.getElementById('game-ball-speed');
+      const ssz = document.getElementById('game-shape-size');
+      const ssp = document.getElementById('game-shape-speed');
+      if (bsz) {
+        _gameUserBallSize = Number(bsz.value) || _gameUserBallSize;
+        bsz.addEventListener('input', () => {
+          const v = Number(bsz.value);
+          if (!Number.isFinite(v)) return;
+          _gameUserBallSize = v;
+          _gameBall.r = v;
+        });
+      }
+      if (bsp) {
+        _gameUserBallSpeed = Number(bsp.value) || _gameUserBallSpeed;
+        bsp.addEventListener('input', () => {
+          const v = Number(bsp.value);
+          if (!Number.isFinite(v)) return;
+          _gameUserBallSpeed = v;
+          const mag = Math.hypot(_gameBall.vx, _gameBall.vy);
+          if (mag > 0.5) {
+            const k = v / mag;
+            _gameBall.vx *= k;
+            _gameBall.vy *= k;
+          }
+        });
+      }
+      if (ssz) {
+        _gameUserShapeFrac = (Number(ssz.value) || 75) / 100;
+        ssz.addEventListener('input', () => {
+          const v = Number(ssz.value);
+          if (!Number.isFinite(v)) return;
+          _gameUserShapeFrac = Math.max(0.30, Math.min(1.00, v / 100));
+          _gameSize();
+          if (!_gameRunning) {
+            _gameBall.x = _gameShape.cx;
+            _gameBall.y = _gameShape.cy;
+          } else {
+            // Running: the polygon just resized under the ball; if it's
+            // now outside, snap it back so it doesn't fly off-canvas.
+            _gameEnsureBallInside();
+          }
+        });
+      }
+      if (ssp) {
+        _gameUserShapeSpeed = Number(ssp.value) || _gameUserShapeSpeed;
+        ssp.addEventListener('input', () => {
+          const v = Number(ssp.value);
+          if (!Number.isFinite(v)) return;
+          _gameUserShapeSpeed = v;
+          const mag = Math.hypot(_gameShape.vx, _gameShape.vy);
+          if (mag > 0.5) {
+            const k = v / mag;
+            _gameShape.vx *= k;
+            _gameShape.vy *= k;
+          }
+        });
+      }
+      _gameBall.r = _gameUserBallSize;
+      // ---- mute toggles ----
+      const bm = document.getElementById('game-ball-mute');
+      const sm = document.getElementById('game-shape-mute');
+      if (bm) {
+        bm.addEventListener('click', () => {
+          _gameBallMuted = !_gameBallMuted;
+          bm.setAttribute('aria-pressed', _gameBallMuted ? 'true' : 'false');
+        });
+      }
+      if (sm) {
+        sm.addEventListener('click', () => {
+          _gameShapeMuted = !_gameShapeMuted;
+          sm.setAttribute('aria-pressed', _gameShapeMuted ? 'true' : 'false');
+        });
+      }
+      // ---- octave selectors ----
+      const bo = document.getElementById('game-ball-oct');
+      const so = document.getElementById('game-shape-oct');
+      if (bo) {
+        _gameUserBallOct = parseInt(bo.value, 10) || 0;
+        bo.addEventListener('change', () => {
+          const v = parseInt(bo.value, 10);
+          if (Number.isFinite(v)) _gameUserBallOct = v;
+        });
+      }
+      if (so) {
+        _gameUserShapeOct = parseInt(so.value, 10) || 0;
+        so.addEventListener('change', () => {
+          const v = parseInt(so.value, 10);
+          if (Number.isFinite(v)) _gameUserShapeOct = v;
+        });
+      }
+      // ---- tone selectors ----
+      const bt = document.getElementById('game-ball-tone');
+      const st = document.getElementById('game-shape-tone');
+      function _gamePopulateTones() {
+        if (typeof getAllSoundOptions !== 'function') return;
+        const opts = getAllSoundOptions() || [];
+        [bt, st].forEach((sel) => {
+          if (!sel) return;
+          const prev = sel.value;
+          while (sel.options.length > 1) sel.remove(1);
+          for (const o of opts) {
+            const opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            sel.appendChild(opt);
+          }
+          sel.value = prev || '';
+        });
+      }
+      _gamePopulateTones();
+      if (bt) {
+        _gameUserBallTone = bt.value || null;
+        bt.addEventListener('change', () => { _gameUserBallTone = bt.value || null; });
+      }
+      if (st) {
+        _gameUserShapeTone = st.value || null;
+        st.addEventListener('change', () => { _gameUserShapeTone = st.value || null; });
+      }
+      // ---- popover menus ----
+      const _gameMenuPairs = [
+        { btn: document.getElementById('game-ball-menu-btn'),  menu: document.getElementById('game-ball-menu')  },
+        { btn: document.getElementById('game-shape-menu-btn'), menu: document.getElementById('game-shape-menu') },
+      ];
+      function _gameCloseAllMenus() {
+        for (const p of _gameMenuPairs) {
+          if (!p.menu) continue;
+          p.menu.classList.remove('open');
+          if (p.btn) p.btn.setAttribute('aria-expanded', 'false');
+        }
+      }
+      for (const p of _gameMenuPairs) {
+        if (!p.btn || !p.menu) continue;
+        p.btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isOpen = p.menu.classList.contains('open');
+          _gameCloseAllMenus();
+          if (!isOpen) {
+            try { _gamePopulateTones(); } catch (_) {}
+            p.menu.classList.add('open');
+            p.btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+        // Keep clicks inside the menu from closing it.
+        p.menu.addEventListener('click', (e) => { e.stopPropagation(); });
+      }
+      document.addEventListener('click', () => { _gameCloseAllMenus(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') _gameCloseAllMenus();
+      });
+      try {
+        const ro = new ResizeObserver(() => { _gameResize(); });
+        ro.observe(_gameCanvasWrap || _gamePadEl);
+      } catch (e) {
+        window.addEventListener('resize', _gameResize);
+      }
+    }
+    function _onGameModeChanged(active) {
+      if (active) {
+        _gameInit();
+        _gameActive = true;
+        _gameResize();
+        _gameProgressionIdx = 0;
+        _gameProgressionHits = 0;
+        _gameRefresh();
+        if (!_gameRaf) {
+          _gameLastT = performance.now();
+          _gameRaf = requestAnimationFrame(_gameLoop);
+        }
+      } else {
+        _gameActive = false;
+        _gameRunning = false;
+        if (_gameRaf) { cancelAnimationFrame(_gameRaf); _gameRaf = 0; }
+        _gameRecenter();
+      }
+    }
     // Toggle button — flips body class for the CSS visual change and
     // ends any in-flight fluid press when leaving fluid mode so a stuck
     // sustain doesn't ring on indefinitely.
@@ -19164,7 +19891,16 @@
       try { _syncFluidGridToActiveLane(); } catch (e) {}
       btn.addEventListener('click', () => {
         const lane = lanes[activeLaneIdx];
-        if (lane) lane.fluidGridMode = !lane.fluidGridMode;
+        if (lane) {
+          // Cycle: Grid → Graph → Game → Grid
+          if (!lane.fluidGridMode && !lane.gameMode) {
+            lane.fluidGridMode = true;  lane.gameMode = false;
+          } else if (lane.fluidGridMode && !lane.gameMode) {
+            lane.fluidGridMode = false; lane.gameMode = true;
+          } else {
+            lane.fluidGridMode = false; lane.gameMode = false;
+          }
+        }
         _syncFluidGridToActiveLane();
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
@@ -23031,6 +23767,73 @@
     }
     const SCALES = buildScaleCatalog();
 
+    // Chord catalog — hand-rolled so extended jazz chords (9 / 11 / 13)
+    // carry every voicing tone faithfully. Tonal.Chord.get(quality)
+    // without a root prefix returns an empty intervals array for many
+    // qualities, so we drive this from a hard-coded table instead.
+    // Each entry: { semis: [0,4,7,...], label: 'Major 7' }. Semis can
+    // exceed 12 (e.g. dom13's 13th = 21) — _gameRefresh derives its
+    // freq directly from baseFreq * 2^(semi/12), so chord notes above
+    // the active octave count still show up as polygon sides.
+    function buildChordCatalog() {
+      const TYPES = [
+        ['maj',     'Major',           [0, 4, 7]],
+        ['min',     'Minor',           [0, 3, 7]],
+        ['dim',     'Diminished',      [0, 3, 6]],
+        ['aug',     'Augmented',       [0, 4, 8]],
+        ['sus2',    'Sus2',            [0, 2, 7]],
+        ['sus4',    'Sus4',            [0, 5, 7]],
+        ['maj7',    'Major 7',         [0, 4, 7, 11]],
+        ['7',       'Dominant 7',      [0, 4, 7, 10]],
+        ['min7',    'Minor 7',         [0, 3, 7, 10]],
+        ['dim7',    'Diminished 7',    [0, 3, 6, 9]],
+        ['m7b5',    'Half-Diminished 7', [0, 3, 6, 10]],
+        ['minMaj7', 'Minor-Major 7',   [0, 3, 7, 11]],
+        ['6',       'Major 6',         [0, 4, 7, 9]],
+        ['m6',      'Minor 6',         [0, 3, 7, 9]],
+        ['6/9',     '6/9',             [0, 4, 7, 9, 14]],
+        ['add9',    'Add 9',           [0, 4, 7, 14]],
+        ['madd9',   'Minor Add 9',     [0, 3, 7, 14]],
+        ['9',       'Dominant 9',      [0, 4, 7, 10, 14]],
+        ['maj9',    'Major 9',         [0, 4, 7, 11, 14]],
+        ['min9',    'Minor 9',         [0, 3, 7, 10, 14]],
+        ['7sus4',   'Dominant 7 Sus4', [0, 5, 7, 10]],
+        ['7b9',     'Dominant 7b9',    [0, 4, 7, 10, 13]],
+        ['7#9',     'Dominant 7#9',    [0, 4, 7, 10, 15]],
+        ['7b5',     'Dominant 7b5',    [0, 4, 6, 10]],
+        ['7#11',    'Dominant 7#11',   [0, 4, 7, 10, 14, 18]],
+        ['11',      'Dominant 11',     [0, 4, 7, 10, 14, 17]],
+        ['min11',   'Minor 11',        [0, 3, 7, 10, 14, 17]],
+        ['maj11',   'Major 11',        [0, 4, 7, 11, 14, 17]],
+        ['13',      'Dominant 13',     [0, 4, 7, 10, 14, 17, 21]],
+        ['maj13',   'Major 13',        [0, 4, 7, 11, 14, 17, 21]],
+        ['min13',   'Minor 13',        [0, 3, 7, 10, 14, 17, 21]],
+      ];
+      const out = {};
+      for (const [key, label, semis] of TYPES) out[key] = { semis, label };
+      return out;
+    }
+    const CHORDS = buildChordCatalog();
+    let currentChord = ''; // '' = no chord override; fall back to scale
+    let currentProgression = []; // ordered chord keys; takes priority over currentChord when non-empty
+    let _gameProgressionIdx = 0;   // which chord in currentProgression is active
+    let _gameProgressionHits = 0;  // shape-edge bounces accumulated for the active chord
+    let _gameUserHitsPerChord = 1; // # of bounces before mutating to the next chord
+    function _parseProgression(text) {
+      if (typeof text !== 'string' || !text.trim()) return [];
+      return text.split(/[,\s]+/)
+        .map(s => s.trim())
+        .filter(s => s && CHORDS && CHORDS[s]);
+    }
+    function _activeChordKey() {
+      if (currentProgression.length > 0) {
+        const len = currentProgression.length;
+        const i = ((_gameProgressionIdx % len) + len) % len;
+        return currentProgression[i];
+      }
+      return currentChord || '';
+    }
+
     // Old hardcoded names → Tonal canonical names, so saved sequences still load.
     const LEGACY_SCALE_MAP = {
       'Chromatic':      'chromatic',
@@ -23073,6 +23876,7 @@
         cell.classList.toggle('out-of-scale', !scalePCs.has(cellPC));
       });
       updateScaleBanner();
+      try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
     }
     // The "current" tone: every cell's tone if they're all the same,
     // otherwise "Mixed" — happens when the user has hand-tuned individual
@@ -23200,6 +24004,7 @@
         const pitchClass = (rootIdx + i) % 12;
         cell.style.background = palette[pitchClass];
       });
+      try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
     }
 
     // Chip-side palette — one colour per pitch class. Stays in sync with the
@@ -23731,6 +24536,7 @@
         }
       } catch (e) {}
       if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
     }
 
     rebuildGrid();
@@ -24968,6 +25774,124 @@
       freqSlider.addEventListener('input', () => { freqInput.value = freqSlider.value; });
       freqSlider.addEventListener('change', () => applyMasterFreq(parseInt(freqSlider.value)));
       freqInput.addEventListener('change', () => applyMasterFreq(parseInt(freqInput.value)));
+
+      // Game-mode Key select — mirrors the hidden root-select. Re-uses
+      // the canonical change handler so scale-tonic reset, rebuildGrid,
+      // _renderXyOverlay, refreshKeyButton, _rebaseSavedWraps, etc. all
+      // run the same way they do for the ± buttons or the legacy
+      // dropdown.
+      const gameKeySel = document.getElementById('game-key-select');
+      if (gameKeySel && typeof CHROMATIC !== 'undefined') {
+        CHROMATIC.forEach((name, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i);
+          opt.textContent = name;
+          gameKeySel.appendChild(opt);
+        });
+        gameKeySel.value = String(rootIdx);
+        gameKeySel.addEventListener('change', () => {
+          const v = parseInt(gameKeySel.value, 10);
+          if (!Number.isFinite(v)) return;
+          const rootSel = document.getElementById('root-select');
+          if (rootSel) {
+            rootSel.value = String(v);
+            rootSel.dispatchEvent(new Event('change'));
+          }
+        });
+      }
+
+      // Chord select — Game-mode override. When set, _gameRefresh
+      // builds the polygon from the chord's intervals (×octaves) rather
+      // than scale-filtering the chromatic note grid.
+      const chordSelect = document.getElementById('chord-select');
+      if (chordSelect && typeof CHORDS !== 'undefined') {
+        for (const key of Object.keys(CHORDS)) {
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = CHORDS[key].label;
+          chordSelect.appendChild(opt);
+        }
+        chordSelect.value = currentChord;
+        chordSelect.addEventListener('change', () => {
+          currentChord = chordSelect.value || '';
+          try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
+        });
+      }
+      // Progression chip-builder — dropdown appends a chord; each chip
+      // has an inline × to remove; Clear empties the list. The chip
+      // representing the currently-playing chord lights up via
+      // .progression-chip.active, repainted whenever _gameRefresh fires
+      // (which is also where progression mutation happens).
+      const progAdd   = document.getElementById('progression-add');
+      const progChips = document.getElementById('progression-chips');
+      const progClear = document.getElementById('progression-clear');
+      function _renderProgressionChips() {
+        if (!progChips) return;
+        progChips.innerHTML = '';
+        const len = currentProgression.length;
+        const activeIdx = len > 0 ? (((_gameProgressionIdx % len) + len) % len) : -1;
+        currentProgression.forEach((key, i) => {
+          const chip = document.createElement('span');
+          chip.className = 'progression-chip' + (i === activeIdx ? ' active' : '');
+          chip.textContent = (CHORDS[key] && CHORDS[key].label) || key;
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'progression-chip-remove';
+          x.textContent = '×';
+          x.title = 'Remove';
+          x.addEventListener('click', () => {
+            currentProgression.splice(i, 1);
+            _gameProgressionIdx = 0;
+            _gameProgressionHits = 0;
+            _renderProgressionChips();
+            try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
+          });
+          chip.appendChild(x);
+          progChips.appendChild(chip);
+        });
+      }
+      if (progAdd && typeof CHORDS !== 'undefined') {
+        for (const key of Object.keys(CHORDS)) {
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = CHORDS[key].label;
+          progAdd.appendChild(opt);
+        }
+        progAdd.addEventListener('change', () => {
+          const key = progAdd.value;
+          if (key && CHORDS[key]) {
+            currentProgression.push(key);
+            _gameProgressionIdx = 0;
+            _gameProgressionHits = 0;
+            _renderProgressionChips();
+            try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
+          }
+          progAdd.value = '';
+        });
+      }
+      if (progClear) {
+        progClear.addEventListener('click', () => {
+          if (currentProgression.length === 0) return;
+          currentProgression = [];
+          _gameProgressionIdx = 0;
+          _gameProgressionHits = 0;
+          _renderProgressionChips();
+          try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
+        });
+      }
+      // Expose globally so _gameRefresh can re-paint the active highlight
+      // whenever the progression advances.
+      window._renderProgressionChips = _renderProgressionChips;
+      _renderProgressionChips();
+      const hitsInput = document.getElementById('hits-per-chord');
+      if (hitsInput) {
+        const initial = parseInt(hitsInput.value, 10);
+        if (Number.isFinite(initial) && initial >= 1) _gameUserHitsPerChord = initial;
+        hitsInput.addEventListener('input', () => {
+          const v = parseInt(hitsInput.value, 10);
+          if (Number.isFinite(v) && v >= 1) _gameUserHitsPerChord = v;
+        });
+      }
     })();
 
     // ---- Grid settings dropdown toggle ----

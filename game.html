@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Game &middot; Mike Luz</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #000;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .top-panel {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid #2d2d3f;
+      flex-wrap: wrap;
+    }
+    .back {
+      color: #a0aec0;
+      text-decoration: none;
+      font-size: 0.9rem;
+      padding: 4px 6px;
+    }
+    .back:hover { color: #e2e8f0; }
+    .score {
+      margin-left: auto;
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: #e2e8f0;
+      white-space: nowrap;
+    }
+    .btn {
+      padding: 7px 16px;
+      border-radius: 20px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      background: transparent;
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+      text-decoration: none;
+      display: inline-block;
+      line-height: 1.2;
+    }
+    .btn:disabled { opacity: 0.32; cursor: not-allowed; }
+    .btn-replay { color: #00d4ff; border: 1px solid #00d4ff; }
+    .btn-replay:hover:not(:disabled) { background: rgba(0, 212, 255, 0.12); }
+    .btn-export { color: #faff00; border: 1px solid #faff00; }
+    .btn-export:hover:not(:disabled) { background: rgba(250, 255, 0, 0.12); }
+    .btn-resume { color: #39ff14; border: 1px solid #39ff14; }
+    .btn-resume:hover:not(:disabled) { background: rgba(57, 255, 20, 0.12); }
+
+    .speed-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #a0aec0;
+      font-size: 0.85rem;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .speed-control input[type="range"] {
+      width: 110px;
+      accent-color: #00d4ff;
+      cursor: pointer;
+    }
+    .toggle-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #a0aec0;
+      font-size: 0.85rem;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-control input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #00d4ff;
+      cursor: pointer;
+    }
+
+    .stage {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .stage-wrap {
+      width: min(96vw, calc((100dvh - 110px - 90px) * 4 / 3));
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .canvas-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #0a0a14;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      color: #cbd5e1;
+      font-size: clamp(1rem, 2.5vw, 1.4rem);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 8px;
+    }
+    .overlay.hidden { display: none; }
+
+    .paddle-pad {
+      position: relative;
+      width: 100%;
+      height: 66px;
+      background: #14141f;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      touch-action: none;
+      cursor: ew-resize;
+      user-select: none;
+      -webkit-user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .paddle-pad-label {
+      color: #4a5568;
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+    .paddle-pad-thumb {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      width: 56px;
+      background: rgba(57, 255, 20, 0.22);
+      border: 1px solid #39ff14;
+      border-radius: 6px;
+      pointer-events: none;
+      box-shadow: 0 0 12px rgba(57, 255, 20, 0.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="top-panel">
+    <a href="index.html" class="back">&larr; Back</a>
+    <button class="btn btn-replay" id="replay-btn" disabled>Replay</button>
+    <button class="btn btn-export" id="export-btn" disabled>Export</button>
+    <button class="btn btn-resume" id="resume-btn" disabled>Resume</button>
+    <label class="toggle-control">
+      <input type="checkbox" id="start-top" />
+      Start top
+    </label>
+    <label class="speed-control">
+      Speed
+      <input type="range" id="speed" min="120" max="640" step="10" value="340" />
+    </label>
+    <label class="speed-control">
+      Step
+      <input type="range" id="step" min="20" max="300" step="5" value="75" />
+    </label>
+    <div class="score">Score: <span id="score">0</span></div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-wrap">
+      <div class="canvas-wrap">
+        <canvas id="game" width="800" height="600"></canvas>
+        <div class="overlay" id="overlay">Click or tap to start</div>
+      </div>
+      <div class="paddle-pad" id="paddle-pad">
+        <span class="paddle-pad-label">drag to move paddle</span>
+        <div class="paddle-pad-thumb" id="paddle-pad-thumb"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    const canvas    = document.getElementById('game');
+    const ctx2d     = canvas.getContext('2d');
+    const W         = canvas.width;
+    const H         = canvas.height;
+    const replayBtn = document.getElementById('replay-btn');
+    const exportBtn = document.getElementById('export-btn');
+    const resumeBtn = document.getElementById('resume-btn');
+    const scoreEl   = document.getElementById('score');
+    const overlay   = document.getElementById('overlay');
+    const speedEl   = document.getElementById('speed');
+    const stepEl    = document.getElementById('step');
+    const startTopEl = document.getElementById('start-top');
+    const pad       = document.getElementById('paddle-pad');
+    const padThumb  = document.getElementById('paddle-pad-thumb');
+
+    // ---------- Audio ----------
+    const AC = window.AudioContext || window.webkitAudioContext;
+    let actx = null, masterGain = null;
+    let ringBuffer = null, writePos = 0, ringLen = 0, SR = 48000;
+    let audioReady = false, replaySource = null;
+
+    const workletSrc = `
+      class RingRecorder extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.buf = new Float32Array(2048);
+          this.pos = 0;
+        }
+        process(inputs) {
+          const ch = inputs[0][0];
+          if (!ch) return true;
+          for (let i = 0; i < ch.length; i++) {
+            this.buf[this.pos++] = ch[i];
+            if (this.pos >= this.buf.length) {
+              this.port.postMessage(this.buf);
+              this.buf = new Float32Array(2048);
+              this.pos = 0;
+            }
+          }
+          return true;
+        }
+      }
+      registerProcessor('ring-recorder', RingRecorder);
+    `;
+
+    async function initAudio() {
+      if (audioReady) return;
+      actx = new AC({ latencyHint: 'interactive' });
+      SR = actx.sampleRate;
+      ringLen = SR * 10;
+      ringBuffer = new Float32Array(ringLen);
+
+      masterGain = actx.createGain();
+      masterGain.gain.value = 0.4;
+      masterGain.connect(actx.destination);
+
+      const blob = new Blob([workletSrc], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+      await actx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const recorder = new AudioWorkletNode(actx, 'ring-recorder');
+      recorder.port.onmessage = (e) => {
+        const samples = e.data;
+        const n = samples.length;
+        if (writePos + n <= ringLen) {
+          ringBuffer.set(samples, writePos);
+          writePos = (writePos + n) % ringLen;
+        } else {
+          const first = ringLen - writePos;
+          ringBuffer.set(samples.subarray(0, first), writePos);
+          ringBuffer.set(samples.subarray(first), 0);
+          writePos = n - first;
+        }
+      };
+      masterGain.connect(recorder);
+
+      audioReady = true;
+    }
+
+    async function ensureRunning() {
+      if (!actx) return;
+      if (actx.state === 'suspended') await actx.resume();
+    }
+
+    function playNote(freq, when) {
+      if (!audioReady) return;
+      const t = (when != null) ? when : actx.currentTime;
+      const osc = actx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const env = actx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.5, t + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.connect(env).connect(masterGain);
+      osc.start(t);
+      osc.stop(t + 0.45);
+    }
+
+    function playReplay() {
+      if (!audioReady) return;
+      if (replaySource) { try { replaySource.stop(); } catch (_) {} replaySource = null; }
+      const ordered = new Float32Array(ringLen);
+      const first = ringLen - writePos;
+      ordered.set(ringBuffer.subarray(writePos), 0);
+      ordered.set(ringBuffer.subarray(0, writePos), first);
+      const buf = actx.createBuffer(1, ringLen, SR);
+      buf.copyToChannel(ordered, 0);
+      const src = actx.createBufferSource();
+      src.buffer = buf;
+      src.connect(actx.destination);
+      src.start();
+      replaySource = src;
+    }
+
+    // ---------- Game ----------
+    const COLS = 20, ROWS = 8;
+    const BRICK_TOP = 50;
+    const BRICK_W = W / COLS;
+    const BRICK_H = 24;
+    const pentatonic = [261.63, 293.66, 329.63, 392.00, 440.00]; // C D E G A
+    const TOP_OCT = 2;
+    const OCT_SPAN = 3.5;
+    function brickFreq(r, c) {
+      const base = pentatonic[c % pentatonic.length];
+      const step = ROWS > 1 ? OCT_SPAN / (ROWS - 1) : 0;
+      const octShift = TOP_OCT - r * step;
+      return base * Math.pow(2, octShift);
+    }
+
+    const recentBrickFreqs = [];
+    const RECENT_MAX = 10;
+    let paddleStep = parseInt(stepEl.value, 10) / 1000;
+    stepEl.addEventListener('input', () => {
+      paddleStep = parseInt(stepEl.value, 10) / 1000;
+    });
+
+    let bricks = [];
+    function initBricks() {
+      bricks = [];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          bricks.push({
+            x: c * BRICK_W,
+            y: BRICK_TOP + r * BRICK_H,
+            w: BRICK_W,
+            h: BRICK_H,
+            alive: true,
+            freq: brickFreq(r, c),
+            hue: ((c * 36) + (r * 80)) % 360,
+          });
+        }
+      }
+    }
+
+    const paddle = { x: W / 2 - 70, y: H - 32, w: 140, h: 12 };
+    const ball   = { x: W / 2, y: H * 0.6, vx: 0, vy: 0, r: 8 };
+    let score = 0, paused = true, started = false, lastT = 0;
+    let userSpeed = parseInt(speedEl.value, 10);
+
+    function resetBall() {
+      if (startTopEl.checked) {
+        ball.x = W / 2 + (Math.random() - 0.5) * W * 0.4;
+        ball.y = 28;
+        const ang = (Math.random() - 0.5) * (Math.PI / 3) + Math.PI / 2;
+        ball.vx = Math.cos(ang) * userSpeed;
+        ball.vy = Math.sin(ang) * userSpeed;
+      } else {
+        ball.x = paddle.x + paddle.w / 2;
+        ball.y = paddle.y - 30;
+        const ang = (Math.random() - 0.5) * (Math.PI / 3) - Math.PI / 2;
+        ball.vx = Math.cos(ang) * userSpeed;
+        ball.vy = Math.sin(ang) * userSpeed;
+      }
+    }
+
+    speedEl.addEventListener('input', () => {
+      userSpeed = parseInt(speedEl.value, 10);
+      const mag = Math.hypot(ball.vx, ball.vy);
+      if (mag > 0) {
+        const k = userSpeed / mag;
+        ball.vx *= k;
+        ball.vy *= k;
+      }
+    });
+
+    function update(dt) {
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      if (ball.x - ball.r < 0)      { ball.x = ball.r;        ball.vx = -ball.vx; }
+      if (ball.x + ball.r > W)      { ball.x = W - ball.r;    ball.vx = -ball.vx; }
+      if (ball.y - ball.r < 0)      { ball.y = ball.r;        ball.vy = -ball.vy; }
+      if (ball.y - ball.r > H)      { resetBall(); }
+
+      // paddle
+      if (ball.vy > 0
+          && ball.y + ball.r > paddle.y
+          && ball.y - ball.r < paddle.y + paddle.h
+          && ball.x + ball.r > paddle.x
+          && ball.x - ball.r < paddle.x + paddle.w) {
+        ball.y = paddle.y - ball.r;
+        const t = (ball.x - paddle.x) / paddle.w;
+        const ang = (t - 0.5) * (Math.PI * 0.65);
+        const speed = Math.hypot(ball.vx, ball.vy);
+        ball.vx = Math.sin(ang) * speed;
+        ball.vy = -Math.abs(Math.cos(ang) * speed);
+        if (recentBrickFreqs.length && audioReady) {
+          const t0 = actx.currentTime;
+          for (let i = 0; i < recentBrickFreqs.length; i++) {
+            playNote(recentBrickFreqs[i], t0 + i * paddleStep);
+          }
+        }
+      }
+
+      // bricks
+      for (const b of bricks) {
+        if (!b.alive) continue;
+        if (ball.x + ball.r > b.x && ball.x - ball.r < b.x + b.w
+            && ball.y + ball.r > b.y && ball.y - ball.r < b.y + b.h) {
+          b.alive = false;
+          score++;
+          scoreEl.textContent = score;
+          playNote(b.freq);
+          recentBrickFreqs.push(b.freq);
+          if (recentBrickFreqs.length > RECENT_MAX) recentBrickFreqs.shift();
+          const dL = (ball.x + ball.r) - b.x;
+          const dR = (b.x + b.w) - (ball.x - ball.r);
+          const dT = (ball.y + ball.r) - b.y;
+          const dB = (b.y + b.h) - (ball.y - ball.r);
+          const m  = Math.min(dL, dR, dT, dB);
+          if      (m === dT) { ball.vy = -Math.abs(ball.vy); ball.y = b.y - ball.r; }
+          else if (m === dB) { ball.vy =  Math.abs(ball.vy); ball.y = b.y + b.h + ball.r; }
+          else if (m === dL) { ball.vx = -Math.abs(ball.vx); ball.x = b.x - ball.r; }
+          else               { ball.vx =  Math.abs(ball.vx); ball.x = b.x + b.w + ball.r; }
+          break;
+        }
+      }
+
+      if (bricks.every((b) => !b.alive)) initBricks();
+    }
+
+    const PAD_THUMB_W = 56;
+    function updatePadThumb() {
+      const center = paddle.x + paddle.w / 2;
+      const frac = Math.max(0, Math.min(1, center / W));
+      padThumb.style.left = `calc(${frac * 100}% - ${PAD_THUMB_W / 2}px)`;
+    }
+
+    function render() {
+      updatePadThumb();
+      ctx2d.fillStyle = '#0a0a14';
+      ctx2d.fillRect(0, 0, W, H);
+
+      for (const b of bricks) {
+        if (!b.alive) continue;
+        ctx2d.fillStyle = `hsl(${b.hue}, 70%, 55%)`;
+        ctx2d.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+      }
+
+      ctx2d.fillStyle = '#39ff14';
+      ctx2d.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+
+      ctx2d.beginPath();
+      ctx2d.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx2d.fillStyle = '#ffffff';
+      ctx2d.fill();
+    }
+
+    function loop(t) {
+      const dt = Math.min(0.033, (t - lastT) / 1000);
+      lastT = t;
+      if (!paused) update(dt);
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    // ---------- Controls ----------
+    function setPaddleFromClientX(clientX) {
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      let x = (clientX - rect.left) * scale - paddle.w / 2;
+      paddle.x = Math.max(0, Math.min(W - paddle.w, x));
+    }
+    canvas.addEventListener('mousemove', (e) => setPaddleFromClientX(e.clientX));
+    canvas.addEventListener('touchmove', (e) => {
+      if (!e.touches[0]) return;
+      e.preventDefault();
+      setPaddleFromClientX(e.touches[0].clientX);
+    }, { passive: false });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft')  paddle.x = Math.max(0, paddle.x - 36);
+      if (e.key === 'ArrowRight') paddle.x = Math.min(W - paddle.w, paddle.x + 36);
+    });
+
+    function paddleFromPadX(clientX) {
+      const rect = pad.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      paddle.x = Math.max(0, Math.min(W - paddle.w, frac * W - paddle.w / 2));
+    }
+    let padDragging = false;
+    pad.addEventListener('pointerdown', (e) => {
+      if (!started) startGame();
+      padDragging = true;
+      try { pad.setPointerCapture(e.pointerId); } catch (_) {}
+      paddleFromPadX(e.clientX);
+      e.preventDefault();
+    });
+    pad.addEventListener('pointermove', (e) => {
+      if (!padDragging) return;
+      paddleFromPadX(e.clientX);
+    });
+    const endPadDrag = () => { padDragging = false; };
+    pad.addEventListener('pointerup', endPadDrag);
+    pad.addEventListener('pointercancel', endPadDrag);
+    pad.addEventListener('pointerleave', endPadDrag);
+
+    async function startGame() {
+      if (started) return;
+      await initAudio();
+      await ensureRunning();
+      started = true;
+      paused = false;
+      overlay.classList.add('hidden');
+      replayBtn.disabled = false;
+      exportBtn.disabled = false;
+      resetBall();
+    }
+    canvas.addEventListener('click', startGame);
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches[0]) setPaddleFromClientX(e.touches[0].clientX);
+      startGame();
+    }, { passive: true });
+
+    replayBtn.addEventListener('click', async () => {
+      if (!started) return;
+      await ensureRunning();
+      paused = true;
+      resumeBtn.disabled = false;
+      playReplay();
+    });
+    resumeBtn.addEventListener('click', () => {
+      if (replaySource) { try { replaySource.stop(); } catch (_) {} replaySource = null; }
+      paused = false;
+      resumeBtn.disabled = true;
+    });
+    exportBtn.addEventListener('click', () => {
+      // no-op for now
+    });
+
+    initBricks();
+    lastT = performance.now();
+    requestAnimationFrame(loop);
+  })();
+  </script>
+</body>
+</html>

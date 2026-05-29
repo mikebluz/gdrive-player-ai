@@ -224,6 +224,18 @@
       box-shadow: 0 0 22px rgba(253, 224, 71, 0.6);
     }
 
+    /* "Grains" video CTA — YouTube red. */
+    .btn-grains-video {
+      background: transparent;
+      color: #ff4d4d;
+      border: 1px solid #ff4d4d;
+    }
+    .btn-grains-video:hover {
+      transform: translateY(-2px);
+      background: rgba(255, 77, 77, 0.1);
+      box-shadow: 0 8px 28px rgba(255, 77, 77, 0.25);
+    }
+
 
     .btn-bloops {
       background: transparent;

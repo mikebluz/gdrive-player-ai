@@ -782,7 +782,7 @@
        except when body.game-mode is active. */
     .grid-settings-panel .game-only { display: none; }
     body.game-mode .grid-settings-panel .game-only { display: revert; }
-    #hits-per-chord    { width: 56px;  font-family: inherit; font-size: 0.85rem; }
+    #hits-per-chord:disabled { opacity: 0.45; cursor: not-allowed; }
     .progression-chips {
       display: inline-flex;
       flex-wrap: wrap;
@@ -1742,6 +1742,290 @@
     body.game-mode #xy-pad { display: none; }
     body.game-mode #game-pad { display: flex; }
     body.game-mode .grid-settings-panel .grid-only { display: none !important; }
+
+    /* Prog pad — fourth mode. Chord-block progression builder. */
+    #prog-pad {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      min-height: var(--grid-natural-h, 210px);
+      padding: 14px;
+      background: #0a0a14;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    body.prog-mode #grid     { display: none; }
+    body.prog-mode #xy-pad   { display: none; }
+    body.prog-mode #game-pad { display: none; }
+    body.prog-mode #prog-pad { display: flex; }
+    body.prog-mode .grid-settings-panel .grid-only { display: none !important; }
+
+    .prog-blocks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: flex-start;
+      align-content: flex-start;
+    }
+    .prog-key-group {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 14px 8px 8px;
+      border: 1px solid #4a5568;
+      border-radius: 8px;
+      background: rgba(15, 15, 26, 0.4);
+      /* Each key container takes its own full-width row so the chords
+         inside can spread to fill it. The + button still trails on its
+         own line beneath the last group via flex-wrap. */
+      flex: 0 0 100%;
+    }
+    .prog-key-group-label {
+      position: absolute;
+      top: -8px;
+      left: 10px;
+      padding: 0 6px;
+      background: #0a0a14;
+      color: #a0aec0;
+      font-family: inherit;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1.4;
+      border: none;
+      cursor: pointer;
+      transition: color 0.15s ease;
+    }
+    .prog-key-group-label:hover { color: #d6bcfa; }
+    .prog-key-group-clone {
+      position: absolute;
+      top: -8px;
+      right: 10px;
+      padding: 0 6px;
+      background: #0a0a14;
+      color: #a0aec0;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      line-height: 1.2;
+      border: none;
+      cursor: pointer;
+      transition: color 0.15s ease;
+    }
+    .prog-key-group-clone:hover { color: #d6bcfa; }
+    .prog-block {
+      position: relative;
+      /* Up to 3 blocks per row inside a key container, sharing the row
+         evenly. With <3 blocks the row, flex-grow lets them grow to
+         fill (1 → 100%, 2 → 50% each, 3 → 33% each). 4th wraps. */
+      flex: 1 1 calc(33.333% - 4px);
+      min-width: 0;
+      padding: 10px 12px 10px 22px;
+      background: rgba(159, 122, 234, 0.16);
+      color: #d6bcfa;
+      border: 1px solid #9f7aea;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    }
+    .prog-block:hover { background: rgba(159, 122, 234, 0.3); border-color: #d6bcfa; }
+    .prog-block:active { transform: scale(0.96); }
+    /* Non-diatonic chord — at least one of its notes is outside the
+       block's own key (root + scale). Warm amber palette to read as
+       "borrowed / chromatic" rather than alarmist. */
+    .prog-block.non-diatonic {
+      background: rgba(246, 173, 85, 0.16);
+      border-color: #f6ad55;
+      color: #fbd38d;
+    }
+    .prog-block.non-diatonic:hover {
+      background: rgba(246, 173, 85, 0.30);
+      border-color: #fbd38d;
+    }
+    .prog-block-remove {
+      position: absolute;
+      top: 2px;
+      right: 4px;
+      background: none;
+      border: none;
+      color: inherit;
+      opacity: 0.55;
+      cursor: pointer;
+      font-size: 0.85rem;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .prog-block-remove:hover { opacity: 1; color: #fff; }
+    .prog-add-btn {
+      padding: 14px 18px;
+      background: transparent;
+      color: #a0aec0;
+      border: 1px dashed #4a5568;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 56px;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .prog-add-btn:hover { color: #d6bcfa; border-color: #9f7aea; }
+    /* Auto button — only present in the empty state, opens a popover
+       that populates a standard progression in the chosen key. */
+    .prog-auto-btn {
+      padding: 14px 22px;
+      background: rgba(79, 209, 197, 0.10);
+      color: #4fd1c5;
+      border: 1px dashed #4fd1c5;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .prog-auto-btn:hover {
+      color: #b2f5ea;
+      border-color: #81e6d9;
+      background: rgba(79, 209, 197, 0.22);
+    }
+    .prog-empty-hint {
+      color: #4a5568;
+      font-size: 0.78rem;
+      font-style: italic;
+      letter-spacing: 0.04em;
+      margin-right: 4px;
+      pointer-events: none;
+    }
+
+    /* Add-chord popover — attached to <body> with position: fixed so the
+       Prog pad's overflow: auto can't clip it. */
+    .prog-popover {
+      position: fixed;
+      z-index: 9999;
+      background: #0f0f1a;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 220px;
+      max-width: calc(100vw - 16px);
+      max-height: calc(100vh - 16px);
+      overflow: auto;
+    }
+    .prog-popover-title {
+      color: #d6bcfa;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .prog-popover label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #cbd5e0;
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+    .prog-popover select {
+      background: #0a0a14;
+      color: #e2e8f0;
+      border: 1px solid #2d2d3f;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: inherit;
+      font-size: 0.78rem;
+    }
+    .prog-popover-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .prog-popover-actions button {
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    .prog-popover-cancel {
+      background: transparent;
+      color: #cbd5e0;
+      border: 1px solid #4a5568;
+    }
+    .prog-popover-save {
+      background: #9f7aea;
+      color: #1a1a2e;
+      border: 1px solid #9f7aea;
+      font-weight: 700;
+    }
+    .prog-popover-save:hover { background: #b794f4; border-color: #b794f4; }
+    .prog-popover-preview {
+      background: transparent;
+      color: #b2f5ea;
+      border: 1px solid #4fd1c5;
+      letter-spacing: 0.04em;
+    }
+    .prog-popover-preview:hover { background: rgba(79, 209, 197, 0.12); color: #ccfbf1; border-color: #81e6d9; }
+    .prog-popover-delete {
+      background: transparent;
+      color: #fca5a5;
+      border: 1px solid #f87171;
+      margin-right: auto; /* push to far-left, away from Cancel/Save */
+    }
+    .prog-popover-delete:hover {
+      background: rgba(248, 113, 113, 0.15);
+      color: #fecaca;
+      border-color: #fca5a5;
+    }
+    .prog-popover-preview:disabled {
+      color: rgba(178, 245, 234, 0.35);
+      border-color: rgba(79, 209, 197, 0.25);
+      cursor: not-allowed;
+    }
+    .prog-popover-save:disabled {
+      background: rgba(159, 122, 234, 0.25);
+      border-color: rgba(159, 122, 234, 0.35);
+      color: rgba(26, 26, 46, 0.55);
+      cursor: not-allowed;
+    }
+    .prog-popover select:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .prog-popover optgroup {
+      color: #9f7aea;
+      font-style: normal;
+      font-weight: 700;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .prog-popover optgroup option {
+      color: #e2e8f0;
+      font-weight: 400;
+      letter-spacing: normal;
+      text-transform: none;
+    }
     /* XY pad axis controls — folded into the Sounds dropdown. Hidden
        in Grid mode so the panel stays clean; revealed in Graph mode
        via body.fluid-grid. Scale + Tone reuse the panel's existing
@@ -3570,31 +3854,95 @@
        gutters Keep and Rest had as standalone clusters. */
     .kwr-pair {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr;
       align-items: center;
       width: 100%;
       min-width: 0;
     }
     /* Rest is only useful when Keep is on (a rest tap only adds to the
        sequence when Keep is active). Hide it otherwise and collapse
-       the row to a 50/50 KEEP / WRAP split so the two remaining
-       buttons fill the full width. :has() lets the grid layout react
-       to the Keep button's .active class without any JS toggle. */
+       to a single KEEP column so the button fills the full width.
+       :has() lets the grid layout react to the Keep button's .active
+       class without any JS toggle. */
     .kwr-pair:has(.play-lock:not(.active)) {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
     }
     .kwr-pair:has(.play-lock:not(.active)) > .rest-bar {
       display: none;
     }
-    /* With REST hidden, WRAP becomes the rightmost button in the row,
-       so its outer-right edge should match the rounded right corner
-       the Rest button normally provides. When the wrap Edit pill is
-       visible the pill is what sits at the right edge, so it gets
-       the rounded corner instead and chord-btn falls back to square. */
-    .kwr-pair:has(.play-lock:not(.active)) #chord-btn {
+
+    /* Wrap row — lives directly under #grid in Grid mode. Hidden in
+       Graph / Game / Prog so it doesn't take vertical space (or fire)
+       when the cell grid isn't visible. */
+    .grid-wrap-row {
+      display: flex;
+      width: 100%;
+      margin-top: 2px;
+    }
+    .grid-wrap-row .wrap-segment {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      width: 100%;
+      min-width: 0;
+      height: 52px;
+    }
+    .grid-wrap-row .wrap-segment > #chord-btn {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      padding: 0 8px;
+      font-size: 0.85rem;
+      letter-spacing: 1.5px;
+    }
+    /* When the Edit pill is visible the pill takes the right rounded
+       corner; chord-btn squares its right edge to meet it cleanly. */
+    .grid-wrap-row .wrap-segment:has(#wrap-edit-btn:not([hidden])) > #chord-btn {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .grid-wrap-row .wrap-segment > #wrap-edit-btn {
+      flex: 0 0 25%;
+      min-width: 0;
+      height: 100%;
+      box-sizing: border-box;
+      padding: 0 4px;
+      border: 2px solid #4fd1c5;
+      border-left: none;
       border-top-right-radius: 10px;
       border-bottom-right-radius: 10px;
+      background: rgba(79, 209, 197, 0.10);
+      color: #b2f5ea;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
     }
+    @media (hover: hover) {
+      .grid-wrap-row .wrap-segment > #wrap-edit-btn:hover {
+        background: rgba(79, 209, 197, 0.22);
+        color: #e6fffa;
+      }
+    }
+    .grid-wrap-row .wrap-segment > #wrap-edit-btn[hidden] { display: none; }
+    @media (max-width: 600px) {
+      .grid-wrap-row .wrap-segment > #chord-btn {
+        font-size: 0.78rem;
+        letter-spacing: 0.8px;
+      }
+    }
+    /* Hide the wrap row + bank in any mode that doesn't show the cell
+       grid (Wrap is a Grid-only feature). */
+    body.fluid-grid .grid-wrap-row,
+    body.game-mode  .grid-wrap-row,
+    body.prog-mode  .grid-wrap-row,
+    body.fluid-grid #wrap-bank,
+    body.game-mode  #wrap-bank,
+    body.prog-mode  #wrap-bank { display: none !important; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active
@@ -3823,6 +4171,13 @@
       border-bottom-right-radius: 0;
       flex: none;
     }
+    /* KEEP is the only button in the pair when it's inactive (REST is
+       hidden) — restore its full rounded radius so it doesn't read as
+       half a button with a flat right edge. */
+    .kwr-pair:has(.play-lock:not(.active)) > .play-lock {
+      border-top-right-radius: 10px;
+      border-bottom-right-radius: 10px;
+    }
     .kwr-pair .play-lock span {
       font-size: 0.85rem;
       letter-spacing: 1.5px;
@@ -3831,11 +4186,13 @@
       font-size: 0.95rem;
       letter-spacing: 0.5px;
     }
-    /* Middle segment — WRAP. Both inner edges flat. */
-    .kwr-pair #chord-btn {
+    /* WRAP button — lives in .grid-wrap-row below the cell grid. All
+       four corners share the same radius; the right corners get
+       squared only when the Edit pill is visible (rule further up). */
+    #chord-btn {
       background: #000;
       border: 2px solid #4fd1c5;
-      border-radius: 0;
+      border-radius: 10px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -3848,17 +4205,13 @@
       text-shadow: 0 0 10px rgba(79, 209, 197, 0.55);
       box-shadow: 0 0 12px rgba(79, 209, 197, 0.18);
       transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-      /* Match KEEP's vertical pull-out (-3px) without the horizontal
-         negative margin — the grid cell already constrains the width
-         so left/right edges land exactly on the track lines. */
-      margin: -3px 0;
     }
-    .kwr-pair #chord-btn:hover {
+    #chord-btn:hover {
       border-color: #81e6d9;
       color: #ccfbf1;
       box-shadow: 0 0 16px rgba(79, 209, 197, 0.32);
     }
-    .kwr-pair #chord-btn.active {
+    #chord-btn.active {
       background: rgba(159, 122, 234, 0.22);
       border-color: #c4b5fd;
       color: #ede9fe;
@@ -4056,7 +4409,11 @@
     }
     #save-btn.sub-edit:hover { border-color: #68d391; color: #b2f5ea; }
 
-    #chord-btn,
+    /* #chord-btn (Wrap) intentionally excluded — its styling lives at
+       the dedicated #chord-btn rule above (black bg / teal border /
+       teal glow), which used to win via the .kwr-pair specificity
+       boost. Keeping it in this shared group made it render as a
+       gray pill once the .kwr-pair prefix was dropped. */
     #rec-btn,
     #random-btn,
     #seed-btn,
@@ -4073,12 +4430,6 @@
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
-    }
-    #chord-btn:hover { border-color: #9f7aea; color: #9f7aea; }
-    #chord-btn.active {
-      border-color: #9f7aea;
-      background: rgba(159,122,234,0.15);
-      color: #d6bcfa;
     }
     /* Rec: red outline + red text by default. When recording, the colors invert
        — fill becomes red, border and text adopt the original (transparent) fill —

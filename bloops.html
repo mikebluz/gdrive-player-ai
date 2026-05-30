@@ -134,20 +134,27 @@
         <label class="game-only" title="Game mode — pick the key (root note). Mirrors the hidden root-select; ± buttons still nudge from here too.">Key
           <select id="game-key-select"></select>
         </label>
-        <label class="game-only" title="Game mode — restrict the polygon's sides to a chord rooted on the grid's root. Off uses the active scale. Overridden if a Progression is set.">Chord
-          <select id="chord-select">
-            <option value="">Off</option>
-          </select>
-        </label>
-        <label class="game-only" title="Game mode — chord progression for the shape to mutate through. Pick chords from the dropdown to add; click × to remove. Empty = use single Chord above.">Progression
-          <select id="progression-add" title="Pick a chord to append">
+        <label title="Chord list. Grid mode: each cell press plays the current chord rooted on the pressed note; advance after the Hits count. Game mode: polygon mutates between chords on each shape-edge bounce. Empty = single notes / scale-driven polygon.">Chords
+          <select id="progression-root" class="game-only" title="Root note for the next added chord (Game mode only — Grid mode uses the pressed cell as root)"></select>
+          <select id="progression-add" title="Pick a chord quality to append">
             <option value="">+ Add</option>
           </select>
           <span class="progression-chips" id="progression-chips"></span>
-          <button type="button" id="progression-clear" class="progression-clear" title="Clear progression">Clear</button>
+          <button type="button" id="progression-clear" class="progression-clear" title="Clear chords">Clear</button>
         </label>
-        <label class="game-only" title="Game mode — how many shape-edge bounces play the current chord before the progression advances to the next chord. Default 1.">Hits
-          <input type="number" id="hits-per-chord" min="1" max="32" value="1" />
+        <label title="How many cell presses / shape-edge bounces play the current chord before mutating to the next. Only active with two or more chords.">Hits
+          <select id="hits-per-chord">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
+          </select>
         </label>
         <label class="grid-only" title="Master tuning: frequency of A4 (Hz)">A4
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
@@ -335,6 +342,24 @@
         <button type="button" id="master-vol-btn" class="banner-row-vol-btn" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter" aria-label="Master volume">🔊</button>
       </div>
       <div class="grid" id="grid"></div>
+      <!-- Wrap controls — live directly under the cell grid since Wrap
+           only makes sense in Grid mode. Hidden in Graph / Game / Prog
+           via body.fluid-grid / body.game-mode / body.prog-mode rules.
+           Keeps the same chord-btn + wrap-edit-btn IDs so every JS
+           handler (wrap toggle, wrap-edit menu, kwr state machine)
+           binds without any rewires. -->
+      <div class="grid-wrap-row" id="grid-wrap-row">
+        <div class="wrap-segment">
+          <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
+          <button id="wrap-edit-btn" type="button" hidden aria-label="Edit" title="Edit current wrap — invert, switch chord/subsequence, edit fields">✎</button>
+        </div>
+      </div>
+      <!-- Wrap bank — moved here from below the Keep/Rest row so it
+           hides in non-Grid modes alongside the Wrap button itself. -->
+      <div class="wrap-bank" id="wrap-bank" hidden>
+        <span class="wrap-bank-label">Wraps</span>
+        <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
+      </div>
       <!-- XY pad — replaces the cell grid when Grid Off (fluid mode)
            is on. X and Y axes each map to a configurable param
            (pitch / volume). Press anywhere to trigger a single
@@ -346,6 +371,13 @@
           <div class="xy-dot" id="xy-dot" hidden></div>
           <div class="xy-readout" id="xy-readout"></div>
         </div>
+      </div>
+      <!-- Prog pad — fourth mode of the Grid/Graph/Game/Prog toggle. A
+           visual chord-progression builder. Each block represents a
+           full chord; consecutive blocks in the same key are wrapped in
+           a labelled container. -->
+      <div id="prog-pad" hidden>
+        <div class="prog-blocks" id="prog-blocks"></div>
       </div>
       <!-- Game pad — third mode of the Grid/Graph toggle. A polygon with
            one side per (scale-degree × octave) cell encloses a free
@@ -406,25 +438,8 @@
       <div class="step-grid-bar">
         <div class="kwr-pair">
           <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
-          <!-- Wrap segment: holds the Wrap/Unwrap button and (when a wrap
-               is active) a small Edit pill that opens the wrap-edit menu
-               for invert / run-stack / full edit. Edit takes 25% of the
-               segment's width; Wrap shrinks to 75% when Edit is visible
-               and otherwise spans the whole segment. -->
-          <div class="wrap-segment">
-            <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
-            <button id="wrap-edit-btn" type="button" hidden aria-label="Edit" title="Edit current wrap — invert, switch chord/subsequence, edit fields">✎</button>
-          </div>
           <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
         </div>
-      </div>
-      <!-- Wrap bank: every committed wrap lands here as a recallable chip.
-           Hidden until the bank has at least one entry; chips populate via
-           renderWrapBank(). Click a chip to re-arm wrapTemplate with that
-           saved shape; tap × to drop the chip. -->
-      <div class="wrap-bank" id="wrap-bank" hidden>
-        <span class="wrap-bank-label">Wraps</span>
-        <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
       </div>
       <!-- Step Pan / Vol / Slip faders + the Edit button. Sits between
            the Keep/Wrap/Rest trio and the active lane row, matching
@@ -1107,6 +1122,14 @@
       if (!btn) return;
       const span = btn.querySelector('span');
       if (!span) return;
+      // Outside Grid mode (Game / Prog) Wrap is hidden and irrelevant —
+      // keep the button reading "KEEP" so any chord/wrap-name carried
+      // over from the last Grid session doesn't linger.
+      if (gameMode || progMode) {
+        span.textContent = 'KEEP';
+        btn.classList.remove('show-chord');
+        return;
+      }
       // In Graph mode, surface the numeric frequency next to the note
       // name (e.g. "C4 · 261.6 Hz"). Graph mode is the XY pad world
       // where the user is dialing freely along a continuous axis, so
@@ -3099,8 +3122,14 @@
       const baseVol = base.volume ?? 100;
       const type = base.type || 'sine';
       const N = Math.max(1, chordSize);
-      const percussive = type === 'kick' || type === 'pluck' || type === 'metal' || isSampleType(type);
-      const scale = percussive ? (1 / Math.sqrt(N)) : (1 / N);
+      // RMS-style 1/√N voice scaling for ALL tones now. The previous
+      // 1/N path for synths was too conservative — at typical 3–5 note
+      // chord sizes each voice landed at 20–33 % of its solo volume, so
+      // sequenced chords audibly dropped below grid taps (which skip
+      // this normalization entirely). 1/√N matches the RMS sum of
+      // uncorrelated voices and is what every other chord path in the
+      // file (percussive, sampled) already uses.
+      const scale = 1 / Math.sqrt(N);
       const out = { ...base, volume: baseVol * scale };
       // Chord-wide pan override: only applies when explicitly set to a
       // non-center value. At center (0 or absent), individual voice
@@ -8053,21 +8082,57 @@
       const lane = lanes[activeLaneIdx];
       const wantFluid = !!(lane && lane.fluidGridMode);
       const wantGame  = !!(lane && lane.gameMode);
+      const wantProg  = !!(lane && lane.progMode);
       const wasFluid = fluidGridMode;
       const wasGame  = gameMode;
+      const wasProg  = progMode;
       fluidGridMode = wantFluid;
       gameMode      = wantGame;
+      progMode      = wantProg;
       document.body.classList.toggle('fluid-grid', wantFluid);
       document.body.classList.toggle('game-mode',  wantGame);
+      document.body.classList.toggle('prog-mode',  wantProg);
       const btn = document.getElementById('fluid-grid-toggle');
-      if (btn) btn.textContent = wantGame ? 'Game' : (wantFluid ? 'Graph' : 'Grid');
+      if (btn) {
+        btn.textContent = wantProg ? 'Prog'
+                        : wantGame ? 'Game'
+                        : wantFluid ? 'Graph' : 'Grid';
+      }
       if (wasFluid && !wantFluid) {
         try { if (typeof _endFluidPress === 'function') _endFluidPress(); } catch (e) {}
       } else if (!wasFluid && wantFluid) {
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
       }
+      if (wasProg !== wantProg) {
+        try { if (typeof _onProgModeChanged === 'function') _onProgModeChanged(wantProg); } catch (e) {}
+      }
+      if (wasFluid !== wantFluid || wasGame !== wantGame || wasProg !== wantProg) {
+        // Wrap is Grid-only — reset the Keep button's label so any
+        // chord/wrap name carried over from the last Grid session
+        // doesn't sit in the button while in Graph / Game / Prog.
+        try { if (typeof updateKeepLabel === 'function') updateKeepLabel(); } catch (e) {}
+      }
       if (wasGame !== wantGame) {
+        // Grid and Game keep separate Chords + Hits state — stash the
+        // outgoing mode's working values, then load the incoming
+        // mode's. Active-mode globals (currentProgression, _gameProgressionIdx,
+        // _gameProgressionHits, _gameUserHitsPerChord) all flip atomically.
+        try { _stashCurrentMode(wasGame ? 'game' : 'grid'); } catch (e) {}
+        try { _loadModeState(wantGame ? 'game' : 'grid'); } catch (e) {}
         try { if (typeof _onGameModeChanged === 'function') _onGameModeChanged(wantGame); } catch (e) {}
+        // Repaint chip labels (label format depends on gameMode) + Root
+        // dropdown + Hits dropdown value + Hits enable gate from the
+        // freshly-loaded state.
+        try { if (typeof window._renderProgressionChips === 'function') window._renderProgressionChips(); } catch (e) {}
+        try { if (typeof window._populateProgressionRoot === 'function') window._populateProgressionRoot(); } catch (e) {}
+        try { if (typeof window._updateHitsEnabled === 'function') window._updateHitsEnabled(); } catch (e) {}
+        try {
+          const hitsSel = document.getElementById('hits-per-chord');
+          if (hitsSel) {
+            const v = Math.max(1, Math.min(10, _gameUserHitsPerChord || 1));
+            hitsSel.value = String(v);
+          }
+        } catch (e) {}
       }
       // Keep the right-side speaker button the same width as the
       // Grid/Graph button so the Sounds menu + ± buttons stay
@@ -18492,6 +18557,7 @@
     //            replaces the cell grid in the lane editor.
     let fluidGridMode = false;
     let gameMode = false;
+    let progMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;
@@ -19317,18 +19383,22 @@
       // Chord override — when set, the polygon's sides are the chord's
       // notes rooted on rootIdx, repeated across octaveCount octaves.
       // Falls back to the scale-filter path otherwise.
-      const activeChordKey = _activeChordKey();
-      const chordEntry = (activeChordKey && CHORDS && CHORDS[activeChordKey]) || null;
-      if (chordEntry && Array.isArray(notes) && notes.length > 0) {
+      const activeEntry = _activeChordEntry();
+      const chordType = (activeEntry && CHORDS && CHORDS[activeEntry.quality]) || null;
+      if (chordType && Array.isArray(notes) && notes.length > 0) {
         // Drive freq directly off the root cell's freq + semi shift so
         // chord extensions (9 / 11 / 13) aren't clipped by the active
         // octave count. cellIdx wraps modulo notes.length for palette
         // and cellParams lookup (params are per-pitch-class anyway).
+        // rootOffset transposes the chord from the grid root up to the
+        // chord's own per-chip root (so "D minor" in a C-rooted grid
+        // starts at D, not C).
         const oct = Math.max(1, (typeof octaveCount === 'number') ? octaveCount : 1);
         const baseFreq = notes[0].freq;
+        const rootOffset = (((activeEntry.rootPC - rootIdx) % 12) + 12) % 12;
         for (let o = 0; o < oct; o++) {
-          for (const semi of chordEntry.semis) {
-            const totalSemi = o * 12 + semi;
+          for (const semi of chordType.semis) {
+            const totalSemi = o * 12 + rootOffset + semi;
             const cellIdx = ((totalSemi % notes.length) + notes.length) % notes.length;
             const freq = baseFreq * Math.pow(2, totalSemi / 12);
             const pc = (((rootIdx + totalSemi) % 12) + 12) % 12;
@@ -19372,6 +19442,7 @@
       }
       _gameUpdateOverlay();
       _gameSyncKeySelect();
+      try { if (typeof window._populateProgressionRoot === 'function') window._populateProgressionRoot(); } catch (_) {}
       try { if (typeof window._renderProgressionChips === 'function') window._renderProgressionChips(); } catch (_) {}
     }
 
@@ -19391,12 +19462,11 @@
         ? prettyScaleName(currentScale)
         : 'Chromatic';
       const parts = [keyLabel + ' ' + scaleLabel];
-      if (currentProgression.length > 0) {
-        const activeKey = _activeChordKey();
-        const chordLabel = (CHORDS[activeKey] && CHORDS[activeKey].label) || activeKey;
-        parts.push(chordLabel + ' (' + (_gameProgressionIdx + 1) + '/' + currentProgression.length + ')');
-      } else if (currentChord && CHORDS[currentChord]) {
-        parts.push(CHORDS[currentChord].label);
+      const entry = _activeChordEntry();
+      if (currentProgression.length > 0 && entry) {
+        parts.push(_chipLabel(entry) + ' (' + (_gameProgressionIdx + 1) + '/' + currentProgression.length + ')');
+      } else if (entry) {
+        parts.push(_chipLabel(entry));
       }
       el.textContent = parts.join(' · ');
     }
@@ -19427,38 +19497,41 @@
       }
       return out;
     }
-    // Inside-polygon guard for the moments when the polygon's geometry
-    // changes under a running ball (chord pick, scale switch, octave/
-    // size change, canvas resize). The polygon is always wound CW in
-    // canvas coords, so the signed cross > 0 means "inside" for every
-    // edge. A `signed distance from edge < -ball.r` reading is treated
-    // as meaningfully past that edge — the tolerance keeps a ball that's
-    // just sitting on / near a side from being snapped during normal
-    // play (which was the source of the earlier jumpiness).
+    // Inside-polygon guard — radial-shrink variant. Instead of snapping
+    // the ball to the shape's center on any escape (which read as a
+    // teleport every time chord mutation rebuilt the polygon), we
+    // measure the ball's distance from the shape center against the
+    // polygon's inscribed-circle radius (R · cos(π/N), invariant under
+    // rotation) and, if the ball is outside that safe disc, pull it
+    // radially inward to the inscribed boundary minus a small clearance.
+    // The position correction is the minimum needed, so genuinely-inside
+    // play never sees a snap and post-mutation escapes look like a quick
+    // settle rather than a jump.
     function _gameEnsureBallInside() {
       if (_gameN < 3) return true;
-      const verts = _gameVertices();
-      const tol = Math.max(1, _gameBall.r);
-      for (let i = 0; i < _gameN; i++) {
-        const A = verts[i], B = verts[(i + 1) % _gameN];
-        const dx = B.x - A.x, dy = B.y - A.y;
-        const sideLen = Math.hypot(dx, dy) || 1;
-        const cross = dx * (_gameBall.y - A.y) - dy * (_gameBall.x - A.x);
-        if (cross / sideLen < -tol) {
-          _gameBall.x = _gameShape.cx;
-          _gameBall.y = _gameShape.cy;
-          if (_gameUserBallSpeed > 0) {
-            const mag = Math.hypot(_gameBall.vx, _gameBall.vy);
-            if (mag < 0.5) {
-              const a = Math.random() * Math.PI * 2;
-              _gameBall.vx = Math.cos(a) * _gameUserBallSpeed;
-              _gameBall.vy = Math.sin(a) * _gameUserBallSpeed;
-            }
-          }
-          return false;
+      const inradius = _gameR * Math.cos(Math.PI / _gameN);
+      const safe = Math.max(0, inradius - _gameBall.r - 2);
+      const dx = _gameBall.x - _gameShape.cx;
+      const dy = _gameBall.y - _gameShape.cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= safe) return true;
+      if (dist > 0.001) {
+        const k = safe / dist;
+        _gameBall.x = _gameShape.cx + dx * k;
+        _gameBall.y = _gameShape.cy + dy * k;
+      } else {
+        _gameBall.x = _gameShape.cx;
+        _gameBall.y = _gameShape.cy;
+      }
+      if (_gameUserBallSpeed > 0) {
+        const mag = Math.hypot(_gameBall.vx, _gameBall.vy);
+        if (mag < 0.5) {
+          const a = Math.random() * Math.PI * 2;
+          _gameBall.vx = Math.cos(a) * _gameUserBallSpeed;
+          _gameBall.vy = Math.sin(a) * _gameUserBallSpeed;
         }
       }
-      return true;
+      return false;
     }
 
     function _gamePlayNoteAt(sideIdx, octShift, toneOverride) {
@@ -19505,6 +19578,55 @@
       };
       try { addToSequence(step); } catch (_) {}
     }
+    // Grid-mode chord progression — when chords are queued, a cell press
+    // plays the current chord with the pressed note as root, then
+    // advances the progression counter (same _gameProgressionIdx /
+    // _gameProgressionHits state Game mode uses). Returns true if it
+    // played a chord (so the caller can skip the normal single-note
+    // play); false otherwise.
+    function _gridChordPlayAt(cellIdx) {
+      if (currentProgression.length === 0) return false;
+      if (typeof notes === 'undefined' || !notes[cellIdx]) return false;
+      const entry = _activeChordEntry();
+      if (!entry) return false;
+      const chordType = CHORDS && CHORDS[entry.quality];
+      if (!chordType) return false;
+      if (typeof playNote !== 'function') return false;
+      const rootFreq = notes[cellIdx].freq;
+      const baseParams = (Array.isArray(cellParams) && cellParams[cellIdx]) ? cellParams[cellIdx] : {};
+      const voices = chordType.semis.map(semi => {
+        const freq = rootFreq * Math.pow(2, semi / 12);
+        const noteIdx = (((rootIdx + cellIdx + semi) % 12) + 12) % 12;
+        const label = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[noteIdx] || '') : '';
+        return {
+          freq,
+          label,
+          cellIndex: cellIdx,
+          sound: baseParams.type,
+          params: { ...baseParams },
+        };
+      });
+      for (const v of voices) {
+        try { playNote(v.freq, v.params); } catch (e) {}
+      }
+      if (typeof keepMode !== 'undefined' && keepMode && typeof addToSequence === 'function') {
+        const chordStep = {
+          chord: voices,
+          label: voices.map(v => v.label).join('·'),
+          duration: 1,
+          subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
+        };
+        try { addToSequence(chordStep); } catch (e) {}
+      }
+      _gameProgressionHits++;
+      if (_gameProgressionHits >= _gameUserHitsPerChord) {
+        _gameProgressionHits = 0;
+        _gameProgressionIdx = (_gameProgressionIdx + 1) % currentProgression.length;
+        try { if (typeof window._renderProgressionChips === 'function') window._renderProgressionChips(); } catch (_) {}
+      }
+      return true;
+    }
+
     function _gameAppendShapeChordStep() {
       if (!_gameKeepAvailable()) return;
       if (!_gameLastNotes || _gameLastNotes.length === 0) return;
@@ -19575,8 +19697,15 @@
 
       const verts = _gameVertices();
 
-      // Ball vs polygon sides — relative-velocity reflection so collisions
-      // stay clean while the shape itself translates/rotates.
+      // Ball vs polygon sides — collect every overlapping side this
+      // substep, average their inward normals weighted by overlap depth,
+      // then do ONE position correction + ONE velocity reflection +
+      // ONE note trigger. Single-side hits behave like the old per-side
+      // path; corner overlaps (where two sides meet) no longer trigger
+      // duelling pushes that read as jitter, and they fire only one
+      // note (the side with the deepest overlap) instead of two.
+      let bestI = -1, bestOverlap = 0;
+      let sumNx = 0, sumNy = 0, sumW = 0;
       for (let i = 0; i < _gameN; i++) {
         const A = verts[i], B = verts[(i + 1) % _gameN];
         const dx = B.x - A.x, dy = B.y - A.y;
@@ -19590,40 +19719,50 @@
           let nx = _gameShape.cx - midX, ny = _gameShape.cy - midY;
           const nlen = Math.hypot(nx, ny) || 1;
           nx /= nlen; ny /= nlen;
-          // Always push the ball back inside on overlap, even when the
-          // ball itself isn't moving outward — that's what handles a
-          // rotating side sweeping past a slow ball without teleporting
-          // it via the inside guard. Reflection only fires when the
-          // ball is genuinely moving into the side (vn < 0).
           const dist = Math.sqrt(distSq) || 0.0001;
           const overlap = _gameBall.r - dist;
-          _gameBall.x += overlap * nx;
-          _gameBall.y += overlap * ny;
-          const vn = _gameBall.vx * nx + _gameBall.vy * ny;
-          if (vn < 0) {
-            _gameBall.vx -= 2 * vn * nx;
-            _gameBall.vy -= 2 * vn * ny;
-            if (_gameUserBallSpeed > 0) {
-              const mag = Math.hypot(_gameBall.vx, _gameBall.vy) || 1;
-              const k = _gameUserBallSpeed / mag;
-              _gameBall.vx *= k;
-              _gameBall.vy *= k;
-            }
-            // Per-side retrigger cooldown — suppresses both the audio
-            // trigger and the lastNotes push when the same side fires
-            // again within the window, so a "caught" ball doesn't pile
-            // up voices or fill the chord buffer with one repeated note.
-            const nowMs = performance.now();
-            if (_gameSideLastHitMs[i] === undefined
-                || nowMs - _gameSideLastHitMs[i] >= _GAME_SIDE_COOLDOWN_MS) {
-              _gameSideLastHitMs[i] = nowMs;
-              if (!_gameBallMuted) _gamePlayNoteAt(i, _gameUserBallOct, _gameUserBallTone);
+          sumNx += nx * overlap;
+          sumNy += ny * overlap;
+          sumW  += overlap;
+          if (overlap > bestOverlap) { bestOverlap = overlap; bestI = i; }
+        }
+      }
+      if (bestI >= 0) {
+        const nlen = Math.hypot(sumNx, sumNy) || 1;
+        const nx = sumNx / nlen;
+        const ny = sumNy / nlen;
+        // Unconditional position push along the combined inward normal,
+        // amount = deepest overlap so the ball ends up at the boundary
+        // of the deepest-penetrating side.
+        _gameBall.x += bestOverlap * nx;
+        _gameBall.y += bestOverlap * ny;
+        const vn = _gameBall.vx * nx + _gameBall.vy * ny;
+        if (vn < 0) {
+          _gameBall.vx -= 2 * vn * nx;
+          _gameBall.vy -= 2 * vn * ny;
+          if (_gameUserBallSpeed > 0) {
+            const mag = Math.hypot(_gameBall.vx, _gameBall.vy) || 1;
+            const k = _gameUserBallSpeed / mag;
+            _gameBall.vx *= k;
+            _gameBall.vy *= k;
+          }
+          // Per-side retrigger cooldown — keyed by the deepest-overlap
+          // side so corner hits only fire one note. lastNotes dedupes
+          // adjacent duplicates so a caught ball never fills the chord
+          // buffer with a single repeated pitch.
+          const i = bestI;
+          const nowMs = performance.now();
+          if (_gameSideLastHitMs[i] === undefined
+              || nowMs - _gameSideLastHitMs[i] >= _GAME_SIDE_COOLDOWN_MS) {
+            _gameSideLastHitMs[i] = nowMs;
+            if (!_gameBallMuted) _gamePlayNoteAt(i, _gameUserBallOct, _gameUserBallTone);
+            if (_gameLastNotes.length === 0
+                || _gameLastNotes[_gameLastNotes.length - 1] !== i) {
               _gameLastNotes.push(i);
               if (_gameLastNotes.length > 3) _gameLastNotes.shift();
-              _gameAppendBallStep(i);
             }
+            _gameAppendBallStep(i);
           }
-          break;
         }
       }
 
@@ -19862,8 +20001,10 @@
         _gameInit();
         _gameActive = true;
         _gameResize();
-        _gameProgressionIdx = 0;
-        _gameProgressionHits = 0;
+        // Progression position is now stashed per-mode by
+        // _syncFluidGridToActiveLane — don't reset here, or the user's
+        // game-mode progression cursor would snap back to chord 1 on
+        // every re-entry.
         _gameRefresh();
         if (!_gameRaf) {
           _gameLastT = performance.now();
@@ -19874,6 +20015,1047 @@
         _gameRunning = false;
         if (_gameRaf) { cancelAnimationFrame(_gameRaf); _gameRaf = 0; }
         _gameRecenter();
+      }
+    }
+
+    // ---- Prog mode (chord-block progression builder) ----------------------
+    // Standard progression templates — keyed by scale family (major or
+    // minor). Each step is [scaleDegree (1-based), chordQuality]. The
+    // Auto popover instantiates the picked template into progBlocks
+    // resolving each step against the chosen key root + scale.
+    const PROGRESSIONS = {
+      major: [
+        { name: 'I — IV — V',                          steps: [[1,'maj'],[4,'maj'],[5,'maj']] },
+        { name: 'I — V — I (Authentic cadence)',       steps: [[1,'maj'],[5,'maj'],[1,'maj']] },
+        { name: 'IV — I (Plagal "Amen")',              steps: [[4,'maj'],[1,'maj']] },
+        { name: 'I — V — vi — IV (Pop)',               steps: [[1,'maj'],[5,'maj'],[6,'min'],[4,'maj']] },
+        { name: 'I — vi — IV — V (50s)',               steps: [[1,'maj'],[6,'min'],[4,'maj'],[5,'maj']] },
+        { name: 'I — vi — iii — IV (50s ballad)',      steps: [[1,'maj'],[6,'min'],[3,'min'],[4,'maj']] },
+        { name: 'vi — IV — I — V',                     steps: [[6,'min'],[4,'maj'],[1,'maj'],[5,'maj']] },
+        { name: 'I — IV — vi — V',                     steps: [[1,'maj'],[4,'maj'],[6,'min'],[5,'maj']] },
+        { name: 'I — iii — IV — V',                    steps: [[1,'maj'],[3,'min'],[4,'maj'],[5,'maj']] },
+        { name: 'I — ii — iii — IV — V (Stepwise)',    steps: [[1,'maj'],[2,'min'],[3,'min'],[4,'maj'],[5,'maj']] },
+        { name: 'I — IV — iv — I (Modal mix)',         steps: [[1,'maj'],[4,'maj'],[4,'min'],[1,'maj']] },
+        { name: 'I — V/V — V — I (Secondary dom)',     steps: [[1,'maj'],[2,'7'],[5,'maj'],[1,'maj']] },
+        { name: 'ii — V — I (Jazz turnaround)',        steps: [[2,'min7'],[5,'7'],[1,'maj7']] },
+        { name: 'I — vi — ii — V (Jazz)',              steps: [[1,'maj7'],[6,'min7'],[2,'min7'],[5,'7']] },
+        { name: 'iii — vi — ii — V (Jazz)',            steps: [[3,'min7'],[6,'min7'],[2,'min7'],[5,'7']] },
+        { name: 'vi — ii — V — I (Turnaround)',        steps: [[6,'min7'],[2,'min7'],[5,'7'],[1,'maj7']] },
+        { name: 'I — IV — I — V (Folk)',               steps: [[1,'maj'],[4,'maj'],[1,'maj'],[5,'maj']] },
+        { name: 'I — V — IV — V (Rock)',               steps: [[1,'maj'],[5,'maj'],[4,'maj'],[5,'maj']] },
+        { name: '12-bar Blues',                        steps: [[1,'7'],[1,'7'],[1,'7'],[1,'7'],[4,'7'],[4,'7'],[1,'7'],[1,'7'],[5,'7'],[4,'7'],[1,'7'],[5,'7']] },
+        { name: '8-bar Blues',                         steps: [[1,'7'],[5,'7'],[4,'7'],[4,'7'],[1,'7'],[5,'7'],[1,'7'],[5,'7']] },
+        { name: 'Pachelbel',                           steps: [[1,'maj'],[5,'maj'],[6,'min'],[3,'min'],[4,'maj'],[1,'maj'],[4,'maj'],[5,'maj']] },
+        { name: 'Circle of 5ths',                      steps: [[1,'maj7'],[4,'maj7'],[7,'m7b5'],[3,'min7'],[6,'min7'],[2,'min7'],[5,'7'],[1,'maj7']] },
+      ],
+      minor: [
+        { name: 'i — iv — v',                          steps: [[1,'min'],[4,'min'],[5,'min']] },
+        { name: 'i — V — i (Cadence)',                 steps: [[1,'min'],[5,'maj'],[1,'min']] },
+        { name: 'i — iv — V — i (Harmonic minor)',     steps: [[1,'min'],[4,'min'],[5,'maj'],[1,'min']] },
+        { name: 'i — VII — VI — V (Andalusian)',       steps: [[1,'min'],[7,'maj'],[6,'maj'],[5,'maj']] },
+        { name: 'i — VI — III — VII (Aeolian)',        steps: [[1,'min'],[6,'maj'],[3,'maj'],[7,'maj']] },
+        { name: 'i — VI — VII — i',                    steps: [[1,'min'],[6,'maj'],[7,'maj'],[1,'min']] },
+        { name: 'i — VII — VI — VII',                  steps: [[1,'min'],[7,'maj'],[6,'maj'],[7,'maj']] },
+        { name: 'i — iv — VII — III (Minor pop)',      steps: [[1,'min'],[4,'min'],[7,'maj'],[3,'maj']] },
+        { name: 'i — III — VII — VI',                  steps: [[1,'min'],[3,'maj'],[7,'maj'],[6,'maj']] },
+        { name: 'i — iv — i — V',                      steps: [[1,'min'],[4,'min'],[1,'min'],[5,'maj']] },
+        { name: 'i — VI — iv — V (Sad)',               steps: [[1,'min'],[6,'maj'],[4,'min'],[5,'maj']] },
+        { name: 'i — III — iv — VII (Rock minor)',     steps: [[1,'min'],[3,'maj'],[4,'min'],[7,'maj']] },
+        { name: 'ii° — V — i (Minor jazz)',            steps: [[2,'dim'],[5,'7'],[1,'min']] },
+        { name: 'i — bIII — VII — iv (Epic minor)',    steps: [[1,'min'],[3,'maj'],[7,'maj'],[4,'min']] },
+        { name: 'Minor 12-bar Blues',                  steps: [[1,'min7'],[1,'min7'],[1,'min7'],[1,'min7'],[4,'min7'],[4,'min7'],[1,'min7'],[1,'min7'],[5,'7'],[4,'min7'],[1,'min7'],[5,'7']] },
+      ],
+      dorian: [
+        { name: 'i — IV (Dorian vamp)',                steps: [[1,'min'],[4,'maj']] },
+        { name: 'i — IV — i — VII',                    steps: [[1,'min'],[4,'maj'],[1,'min'],[7,'maj']] },
+        { name: 'i — VII — IV — i',                    steps: [[1,'min'],[7,'maj'],[4,'maj'],[1,'min']] },
+        { name: 'i — ii — IV — i',                     steps: [[1,'min'],[2,'min'],[4,'maj'],[1,'min']] },
+        { name: 'i — IV — VII — III',                  steps: [[1,'min'],[4,'maj'],[7,'maj'],[3,'maj']] },
+        { name: 'i — IV — v — i',                      steps: [[1,'min'],[4,'maj'],[5,'min'],[1,'min']] },
+        { name: 'ii — V — i (Modal jazz)',             steps: [[2,'min7'],[5,'min7'],[1,'min7']] },
+      ],
+      phrygian: [
+        { name: 'i — II (Phrygian cadence)',           steps: [[1,'min'],[2,'maj']] },
+        { name: 'i — II — III — II (Spanish)',         steps: [[1,'min'],[2,'maj'],[3,'maj'],[2,'maj']] },
+        { name: 'II — i (Phrygian half-cadence)',      steps: [[2,'maj'],[1,'min']] },
+        { name: 'i — II — vii — i',                    steps: [[1,'min'],[2,'maj'],[7,'min'],[1,'min']] },
+        { name: 'i — VI — II — i (Flamenco)',          steps: [[1,'min'],[6,'maj'],[2,'maj'],[1,'min']] },
+        { name: 'i — vii — VI — II',                   steps: [[1,'min'],[7,'min'],[6,'maj'],[2,'maj']] },
+      ],
+      lydian: [
+        { name: 'I — II (Lydian vamp)',                steps: [[1,'maj'],[2,'maj']] },
+        { name: 'I — II — V — I',                      steps: [[1,'maj'],[2,'maj'],[5,'maj'],[1,'maj']] },
+        { name: 'I — II — vii — V',                    steps: [[1,'maj'],[2,'maj'],[7,'min'],[5,'maj']] },
+        { name: 'I — vii — II — V',                    steps: [[1,'maj'],[7,'min'],[2,'maj'],[5,'maj']] },
+        { name: 'I — II — I — vi',                     steps: [[1,'maj'],[2,'maj'],[1,'maj'],[6,'min']] },
+      ],
+      mixolydian: [
+        { name: 'I — VII (Mixo vamp)',                 steps: [[1,'maj'],[7,'maj']] },
+        { name: 'I — VII — IV — I',                    steps: [[1,'maj'],[7,'maj'],[4,'maj'],[1,'maj']] },
+        { name: 'I — VII — IV',                        steps: [[1,'maj'],[7,'maj'],[4,'maj']] },
+        { name: 'I — v — VII — IV',                    steps: [[1,'maj'],[5,'min'],[7,'maj'],[4,'maj']] },
+        { name: 'I — IV — VII — IV (Rock)',            steps: [[1,'maj'],[4,'maj'],[7,'maj'],[4,'maj']] },
+        { name: 'I — v — IV — I',                      steps: [[1,'maj'],[5,'min'],[4,'maj'],[1,'maj']] },
+      ],
+      'harmonic minor': [
+        { name: 'i — iv — V — i',                      steps: [[1,'min'],[4,'min'],[5,'maj'],[1,'min']] },
+        { name: 'i — V — i',                           steps: [[1,'min'],[5,'maj'],[1,'min']] },
+        { name: 'i — VI — V (Lament)',                 steps: [[1,'min'],[6,'maj'],[5,'maj']] },
+        { name: 'i — VI — V — i',                      steps: [[1,'min'],[6,'maj'],[5,'maj'],[1,'min']] },
+        { name: 'i — iv — V (Flamenco)',               steps: [[1,'min'],[4,'min'],[5,'maj']] },
+        { name: 'i — III+ — VI — V (Augmented)',       steps: [[1,'min'],[3,'aug'],[6,'maj'],[5,'maj']] },
+      ],
+      'melodic minor': [
+        { name: 'i — ii — V — i',                      steps: [[1,'min'],[2,'min'],[5,'maj'],[1,'min']] },
+        { name: 'i — IV — V (Jazz minor)',             steps: [[1,'min'],[4,'maj'],[5,'maj']] },
+        { name: 'i — IV — V — i',                      steps: [[1,'min'],[4,'maj'],[5,'maj'],[1,'min']] },
+        { name: 'ii — V — i (Minor ii-V-i)',           steps: [[2,'min7'],[5,'7'],[1,'minMaj7']] },
+      ],
+    };
+    function _progScaleDegreeToSemi(scale, degree) {
+      const intervals = (SCALES && SCALES[scale]) || (SCALES && SCALES['chromatic']) || [];
+      if (!Array.isArray(intervals) || degree < 1 || degree > intervals.length) return null;
+      return intervals[degree - 1];
+    }
+    function _progAutoFillProgression(keyRoot, keyScale, template) {
+      const out = [];
+      if (!template || !Array.isArray(template.steps)) return out;
+      for (const [degree, quality] of template.steps) {
+        const semi = _progScaleDegreeToSemi(keyScale, degree);
+        if (semi == null) continue;
+        const chordRoot = (((keyRoot + semi) % 12) + 12) % 12;
+        out.push({ keyRoot, keyScale, chordRoot, chordQuality: quality });
+      }
+      return out;
+    }
+
+    // Per-lane state lives here as a single shared list for now; can be
+    // moved into lane state alongside fluidGridMode/gameMode if needed.
+    let progBlocks = []; // [{ keyRoot, keyScale, chordRoot, chordQuality }]
+    let _progInited = false;
+    let _progPadEl = null, _progBlocksEl = null;
+    // Defaults the popover pre-fills when nothing is queued yet; subsequent
+    // adds carry the previous block's values through.
+    const _progLastForm = {
+      keyRoot: 0, keyScale: 'major',
+      chordRoot: 0, chordQuality: 'maj',
+    };
+
+    function _progIsDiatonic(block) {
+      if (!block) return true;
+      return _progIsChordDiatonic(block.chordRoot, block.chordQuality, block.keyRoot, block.keyScale);
+    }
+    function _progIsChordDiatonic(chordRoot, chordQuality, keyRoot, keyScale) {
+      const chordType = CHORDS && CHORDS[chordQuality];
+      if (!chordType) return true;
+      const intervals = (SCALES && SCALES[keyScale]) || (SCALES && SCALES['chromatic']) || [];
+      if (intervals.length === 0) return true;
+      const scalePCs = new Set(intervals.map(s => (((keyRoot + s) % 12) + 12) % 12));
+      for (const semi of chordType.semis) {
+        const pc = (((chordRoot + semi) % 12) + 12) % 12;
+        if (!scalePCs.has(pc)) return false;
+      }
+      return true;
+    }
+    // Chord qualities that read as "dominant" — major triads and any
+    // 7-family member without a major 7th. Restricted because secondary
+    // dominants need the major-3rd-and-flat-7-or-bare-triad shape.
+    const _PROG_DOM_QUALITIES = new Set(['maj', '7', '9', '11', '13', '7sus4', '7b9', '7#9', '7b5', '7#11']);
+    function _progParallelScale(keyScale) {
+      if (keyScale === 'major' || keyScale === 'ionian') return 'minor';
+      if (keyScale === 'minor' || keyScale === 'aeolian') return 'major';
+      return null;
+    }
+    function _progDegreeOfRoot(rootPC, keyRoot, keyScale) {
+      const intervals = (SCALES && SCALES[keyScale]) || [];
+      const offset = (((rootPC - keyRoot) % 12) + 12) % 12;
+      const idx = intervals.indexOf(offset);
+      return idx === -1 ? -1 : idx + 1; // 1-indexed scale degree
+    }
+    function _progRomanDiatonic(rootPC, keyRoot, keyScale, chordQuality) {
+      const degree = _progDegreeOfRoot(rootPC, keyRoot, keyScale);
+      if (degree < 1) return '';
+      const majSet = ['I','ii','iii','IV','V','vi','vii°'];
+      const minSet = ['i','ii°','III','iv','v','VI','VII']; // natural minor diatonic triads
+      if (keyScale === 'major' || keyScale === 'ionian') return majSet[degree - 1] || String(degree);
+      if (keyScale === 'minor' || keyScale === 'aeolian') return minSet[degree - 1] || String(degree);
+      return String(degree); // fallback for exotic modes
+    }
+    function _progSecondaryTarget(chordRoot, chordQuality, keyRoot, keyScale) {
+      if (!_PROG_DOM_QUALITIES.has(chordQuality)) return null;
+      const targetPC = (((chordRoot - 7) % 12) + 12) % 12;
+      if (targetPC === keyRoot) return null; // V of I is just V — not "secondary"
+      const degree = _progDegreeOfRoot(targetPC, keyRoot, keyScale);
+      if (degree < 1) return null;
+      const roman = _progRomanDiatonic(targetPC, keyRoot, keyScale, chordQuality);
+      return { rootPC: targetPC, degree, roman };
+    }
+    function _progIsBorrowed(chordRoot, chordQuality, keyRoot, keyScale) {
+      const parallel = _progParallelScale(keyScale);
+      if (!parallel) return false;
+      return _progIsChordDiatonic(chordRoot, chordQuality, keyRoot, parallel);
+    }
+    // { category: 'diatonic'|'secondary'|'borrowed'|'chromatic',
+    //   roleLabel: string for display, target?: { rootPC, degree, roman } }
+    function _progClassifyRoot(rootPC, chordQuality, keyRoot, keyScale) {
+      if (_progIsChordDiatonic(rootPC, chordQuality, keyRoot, keyScale)) {
+        const roman = _progRomanDiatonic(rootPC, keyRoot, keyScale, chordQuality);
+        return { category: 'diatonic', roleLabel: roman || 'diatonic' };
+      }
+      const sec = _progSecondaryTarget(rootPC, chordQuality, keyRoot, keyScale);
+      if (sec) {
+        const note = (typeof CHROMATIC !== 'undefined' && CHROMATIC[sec.rootPC]) || '';
+        return {
+          category: 'secondary',
+          target: sec,
+          roleLabel: 'V/' + (sec.roman || ('°' + sec.degree)) + ' → ' + note,
+        };
+      }
+      if (_progIsBorrowed(rootPC, chordQuality, keyRoot, keyScale)) {
+        const parallel = _progParallelScale(keyScale);
+        const tonicName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[keyRoot]) || '';
+        const parallelName = tonicName + ' ' + (parallel === 'major' ? 'Major' : 'Minor');
+        return { category: 'borrowed', roleLabel: 'borrowed from ' + parallelName };
+      }
+      return { category: 'chromatic', roleLabel: 'chromatic passing' };
+    }
+    function _progKeyLabel(keyRoot, keyScale) {
+      const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[keyRoot]) || '';
+      const scale = (keyScale === 'chromatic') ? 'Chromatic'
+                    : (typeof prettyScaleName === 'function' ? prettyScaleName(keyScale) : keyScale);
+      return (root + ' ' + scale).trim();
+    }
+    function _progBlockLabel(block) {
+      const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[block.chordRoot]) || '';
+      const q = (CHORDS && CHORDS[block.chordQuality] && CHORDS[block.chordQuality].label) || block.chordQuality;
+      return (root + ' ' + q).trim();
+    }
+    function _progRenderBlocks() {
+      if (!_progBlocksEl) return;
+      _progBlocksEl.innerHTML = '';
+      let currentKey = null;
+      let currentGroup = null;
+      for (let i = 0; i < progBlocks.length; i++) {
+        const b = progBlocks[i];
+        const keyId = b.keyRoot + '|' + b.keyScale;
+        if (keyId !== currentKey) {
+          currentGroup = document.createElement('div');
+          currentGroup.className = 'prog-key-group';
+          // Corner label is now a real button so the user can edit the
+          // group's key (root + scale) in place; clicks open the edit
+          // popover anchored to the label. The start index is captured
+          // via closure so the popover knows which range to re-tune.
+          const startIdx = i;
+          const labelBtn = document.createElement('button');
+          labelBtn.type = 'button';
+          labelBtn.className = 'prog-key-group-label';
+          labelBtn.textContent = _progKeyLabel(b.keyRoot, b.keyScale);
+          labelBtn.title = 'Edit key for this group';
+          labelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _progOpenEditKeyPopover(labelBtn, startIdx);
+          });
+          currentGroup.appendChild(labelBtn);
+          // Clone button — duplicates the whole group of consecutive
+          // same-key chords and inserts the copy immediately after.
+          const cloneBtn = document.createElement('button');
+          cloneBtn.type = 'button';
+          cloneBtn.className = 'prog-key-group-clone';
+          cloneBtn.textContent = '⎘';
+          cloneBtn.title = 'Clone this key set in a new key';
+          cloneBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _progOpenCloneKeyPopover(cloneBtn, startIdx);
+          });
+          currentGroup.appendChild(cloneBtn);
+          _progBlocksEl.appendChild(currentGroup);
+          currentKey = keyId;
+        }
+        const blockEl = document.createElement('button');
+        blockEl.type = 'button';
+        const diatonic = _progIsDiatonic(b);
+        blockEl.className = 'prog-block' + (diatonic ? '' : ' non-diatonic');
+        blockEl.textContent = _progBlockLabel(b);
+        blockEl.title = (diatonic ? 'Play ' : 'Play (non-diatonic) ') + _progBlockLabel(b);
+        blockEl.addEventListener('click', () => _progPlayBlock(b));
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'prog-block-remove';
+        rm.textContent = '×';
+        rm.title = 'Remove';
+        rm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          progBlocks.splice(i, 1);
+          _progRenderBlocks();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+        blockEl.appendChild(rm);
+        currentGroup.appendChild(blockEl);
+      }
+      // Trailing + button (always shown).
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'prog-add-btn';
+      addBtn.textContent = '+';
+      addBtn.title = 'Add a chord';
+      addBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _progOpenAddPopover(addBtn);
+      });
+      // Auto button — always visible next to + so a standard
+      // progression can be appended at any time (lands as its own
+      // key-group thanks to the new keyRoot / keyScale).
+      const autoBtn = document.createElement('button');
+      autoBtn.type = 'button';
+      autoBtn.className = 'prog-auto-btn';
+      autoBtn.textContent = 'Auto';
+      autoBtn.title = 'Append a standard progression (I-IV-V, ii-V-I, 12-bar Blues, etc.) in a chosen key';
+      autoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _progOpenAutoPopover(autoBtn);
+      });
+      _progBlocksEl.appendChild(autoBtn);
+      _progBlocksEl.appendChild(addBtn);
+    }
+    function _progPlayBlock(block) {
+      if (!block || typeof playNote !== 'function') return;
+      const chordType = CHORDS && CHORDS[block.chordQuality];
+      if (!chordType) return;
+      // Build the root freq directly from rootIdx + an octave offset that
+      // matches the cell grid's lowest cell (notes[0]) — keeps the prog
+      // chord in the same octave register as the rest of the project.
+      const baseFreq = (Array.isArray(notes) && notes[0]) ? notes[0].freq : 261.63;
+      const rootOffset = (((block.chordRoot - rootIdx) % 12) + 12) % 12;
+      const rootFreq = baseFreq * Math.pow(2, rootOffset / 12);
+      const baseParams = (Array.isArray(cellParams) && cellParams[0]) ? cellParams[0] : {};
+      const voices = chordType.semis.map(semi => {
+        const freq = rootFreq * Math.pow(2, semi / 12);
+        const noteIdx = (((rootIdx + rootOffset + semi) % 12) + 12) % 12;
+        const label = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[noteIdx] || '') : '';
+        return {
+          freq,
+          label,
+          cellIndex: 0,
+          sound: baseParams.type,
+          params: { ...baseParams },
+        };
+      });
+      for (const v of voices) {
+        try { playNote(v.freq, v.params); } catch (e) {}
+      }
+      if (typeof keepMode !== 'undefined' && keepMode && typeof addToSequence === 'function') {
+        try {
+          const chordStep = {
+            chord: voices,
+            label: voices.map(v => v.label).join('·'),
+            duration: 1,
+            subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
+          };
+          addToSequence(chordStep);
+          // Same Step-div prompt the Grid + Wrap Keep paths show after
+          // a chord/note lands — keeps Prog presses consistent.
+          if (typeof maybePromptStepDiv === 'function') {
+            try { maybePromptStepDiv(chordStep); } catch (_) {}
+          }
+        } catch (e) {}
+      }
+    }
+
+    function _progScalePCsFor(keyRoot, keyScale) {
+      const intervals = (SCALES && SCALES[keyScale]) || (SCALES && SCALES['chromatic']) || [];
+      return intervals.map(s => (((keyRoot + s) % 12) + 12) % 12);
+    }
+
+    // Walks forward from startIdx through every consecutive block that
+    // shares its (keyRoot, keyScale). Used by edit-key and clone — both
+    // operate on whole same-key runs.
+    function _progFindGroupRange(startIdx) {
+      const b0 = progBlocks[startIdx];
+      if (!b0) return null;
+      let end = startIdx + 1;
+      while (end < progBlocks.length) {
+        const b = progBlocks[end];
+        if (b.keyRoot !== b0.keyRoot || b.keyScale !== b0.keyScale) break;
+        end++;
+      }
+      return { startIdx, endIdx: end, oldKeyRoot: b0.keyRoot, oldKeyScale: b0.keyScale };
+    }
+    // Re-tune a key group. Transposes every block's chordRoot by
+    // (newRoot − oldRoot) mod 12 so chords move with the key
+    // signature. Scale-only change leaves chordRoots alone. Round-trip
+    // (K1 → K2 → K1) returns chordRoots to their exact original values
+    // since each delta is the inverse of the other.
+    function _progDeleteGroup(startIdx) {
+      const range = _progFindGroupRange(startIdx);
+      if (!range) return;
+      progBlocks.splice(range.startIdx, range.endIdx - range.startIdx);
+      _progRenderBlocks();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _progRetuneKeyGroup(startIdx, newKeyRoot, newKeyScale) {
+      const range = _progFindGroupRange(startIdx);
+      if (!range) return;
+      const dRoot = (((newKeyRoot - range.oldKeyRoot) % 12) + 12) % 12;
+      for (let i = range.startIdx; i < range.endIdx; i++) {
+        const b = progBlocks[i];
+        b.keyRoot  = newKeyRoot;
+        b.keyScale = newKeyScale;
+        if (dRoot !== 0) {
+          b.chordRoot = (((b.chordRoot + dRoot) % 12) + 12) % 12;
+        }
+      }
+      _progRenderBlocks();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Clone a key group into a new same-shape group in a different key.
+    // Chord roots transpose by (newKey − oldKey) mod 12 so the same
+    // scale degrees / role-positions land in the new key. Same
+    // deterministic math as the edit-key path; quality is preserved
+    // verbatim. The clones are spliced immediately after the source
+    // group so they render as their own labelled group right beside
+    // the original.
+    function _progCloneGroupWithKey(startIdx, newKeyRoot, newKeyScale) {
+      const range = _progFindGroupRange(startIdx);
+      if (!range) return;
+      const dRoot = (((newKeyRoot - range.oldKeyRoot) % 12) + 12) % 12;
+      const clones = [];
+      for (let i = range.startIdx; i < range.endIdx; i++) {
+        const src = progBlocks[i];
+        clones.push({
+          keyRoot: newKeyRoot,
+          keyScale: newKeyScale,
+          chordRoot: (((src.chordRoot + dRoot) % 12) + 12) % 12,
+          chordQuality: src.chordQuality,
+        });
+      }
+      progBlocks.splice(range.endIdx, 0, ...clones);
+      _progRenderBlocks();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _progOpenCloneKeyPopover(anchorBtn, startIdx) {
+      const range = _progFindGroupRange(startIdx);
+      if (!range) return;
+      const existing = document.querySelector('.prog-popover');
+      if (existing) existing.remove();
+
+      // Pre-fill with the source group's key so the user can simply
+      // change one field and confirm, or hit Save to clone in-place
+      // (which is still a new group, just identically tuned).
+      let curKeyRoot  = range.oldKeyRoot;
+      let curKeyScale = range.oldKeyScale;
+
+      const pop = document.createElement('div');
+      pop.className = 'prog-popover';
+      const title = document.createElement('div');
+      title.className = 'prog-popover-title';
+      title.textContent = 'Clone group in new key';
+      pop.appendChild(title);
+
+      const mkLabel = (text, child) => {
+        const lab = document.createElement('label');
+        lab.appendChild(document.createTextNode(text));
+        lab.appendChild(child);
+        return lab;
+      };
+      const keyRootSel  = document.createElement('select');
+      const keyScaleSel = document.createElement('select');
+      if (typeof CHROMATIC !== 'undefined') {
+        CHROMATIC.forEach((n, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i); opt.textContent = n;
+          keyRootSel.appendChild(opt);
+        });
+      }
+      keyRootSel.value = String(curKeyRoot);
+      const scaleKeys = Object.keys(SCALES || {}).filter(n => n !== 'chromatic').sort();
+      ['chromatic', ...scaleKeys].forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = (typeof prettyScaleName === 'function') ? prettyScaleName(name) : name;
+        keyScaleSel.appendChild(opt);
+      });
+      keyScaleSel.value = curKeyScale;
+      pop.appendChild(mkLabel('Key root ',  keyRootSel));
+      pop.appendChild(mkLabel('Key scale ', keyScaleSel));
+
+      const actions = document.createElement('div');
+      actions.className = 'prog-popover-actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'prog-popover-cancel';
+      cancelBtn.textContent = 'Cancel';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'prog-popover-save';
+      saveBtn.textContent = 'Clone';
+      actions.appendChild(cancelBtn);
+      actions.appendChild(saveBtn);
+      pop.appendChild(actions);
+      // Disable Clone while the destination key still matches the
+      // source — same-key clones aren't allowed. The button re-enables
+      // as soon as the user changes either field away from the source.
+      function updateCloneBtn() {
+        const same = curKeyRoot === range.oldKeyRoot && curKeyScale === range.oldKeyScale;
+        saveBtn.disabled = same;
+        saveBtn.title = same
+          ? 'Pick a different key root or scale to clone'
+          : '';
+      }
+      updateCloneBtn();
+      keyRootSel.addEventListener('change', () => {
+        curKeyRoot = parseInt(keyRootSel.value, 10) || 0;
+        updateCloneBtn();
+      });
+      keyScaleSel.addEventListener('change', () => {
+        curKeyScale = keyScaleSel.value || 'major';
+        updateCloneBtn();
+      });
+
+      document.body.appendChild(pop);
+      const anchorRect = anchorBtn.getBoundingClientRect();
+      const popW = pop.offsetWidth, popH = pop.offsetHeight;
+      const vw = document.documentElement.clientWidth  || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      let left = anchorRect.left, top = anchorRect.bottom + 6;
+      if (top + popH + 8 > vh) {
+        const above = anchorRect.top - popH - 6;
+        if (above >= 8) top = above;
+        else top = Math.max(8, vh - popH - 8);
+      }
+      left = Math.max(8, Math.min(vw - popW - 8, left));
+      pop.style.left = left + 'px';
+      pop.style.top  = top  + 'px';
+
+      const close = () => {
+        pop.remove();
+        document.removeEventListener('click', onOutside, true);
+        document.removeEventListener('keydown', onKey);
+      };
+      const onOutside = (e) => {
+        if (pop.contains(e.target) || anchorBtn.contains(e.target)) return;
+        close();
+      };
+      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      document.addEventListener('click', onOutside, true);
+      document.addEventListener('keydown', onKey);
+      cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+      saveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        close();
+        _progCloneGroupWithKey(startIdx, curKeyRoot, curKeyScale);
+      });
+      keyRootSel.focus();
+    }
+    function _progOpenAutoPopover(anchorBtn) {
+      const existing = document.querySelector('.prog-popover');
+      if (existing) existing.remove();
+
+      let curKeyRoot  = (typeof rootIdx === 'number') ? rootIdx : 0;
+      // Default to the workspace's current scale when we have
+      // progressions for it; fall back to major otherwise. Aeolian
+      // aliases to minor.
+      const _workingScale = (currentScale === 'aeolian') ? 'minor' : currentScale;
+      let curKeyScale = (PROGRESSIONS[_workingScale]) ? _workingScale : 'major';
+      let curTemplate = PROGRESSIONS[curKeyScale][0];
+
+      const pop = document.createElement('div');
+      pop.className = 'prog-popover';
+      const mkLabel = (text, child) => {
+        const lab = document.createElement('label');
+        lab.appendChild(document.createTextNode(text));
+        lab.appendChild(child);
+        return lab;
+      };
+      const keyRootSel  = document.createElement('select');
+      const keyScaleSel = document.createElement('select');
+      const tempSel     = document.createElement('select');
+
+      if (typeof CHROMATIC !== 'undefined') {
+        CHROMATIC.forEach((n, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i); opt.textContent = n;
+          keyRootSel.appendChild(opt);
+        });
+      }
+      keyRootSel.value = String(curKeyRoot);
+
+      Object.keys(PROGRESSIONS).forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = (typeof prettyScaleName === 'function') ? prettyScaleName(s) : s;
+        keyScaleSel.appendChild(opt);
+      });
+      keyScaleSel.value = curKeyScale;
+
+      const refreshTemplates = () => {
+        const prev = curTemplate && curTemplate.name;
+        tempSel.innerHTML = '';
+        const list = PROGRESSIONS[curKeyScale] || [];
+        list.forEach((t, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i);
+          opt.textContent = t.name;
+          tempSel.appendChild(opt);
+        });
+        let pick = 0;
+        if (prev) {
+          const found = list.findIndex(t => t.name === prev);
+          if (found >= 0) pick = found;
+        }
+        tempSel.value = String(pick);
+        curTemplate = list[pick];
+      };
+      refreshTemplates();
+
+      pop.appendChild(mkLabel('Key root ',    keyRootSel));
+      pop.appendChild(mkLabel('Scale ',       keyScaleSel));
+      pop.appendChild(mkLabel('Progression ', tempSel));
+
+      const actions = document.createElement('div');
+      actions.className = 'prog-popover-actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'prog-popover-cancel';
+      cancelBtn.textContent = 'Cancel';
+      const previewBtn = document.createElement('button');
+      previewBtn.type = 'button';
+      previewBtn.className = 'prog-popover-preview';
+      previewBtn.textContent = '▶ Preview';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'prog-popover-save';
+      saveBtn.textContent = 'Save';
+      actions.appendChild(cancelBtn);
+      actions.appendChild(previewBtn);
+      actions.appendChild(saveBtn);
+      pop.appendChild(actions);
+
+      keyRootSel.addEventListener('change', () => {
+        curKeyRoot = parseInt(keyRootSel.value, 10) || 0;
+      });
+      keyScaleSel.addEventListener('change', () => {
+        curKeyScale = keyScaleSel.value || 'major';
+        refreshTemplates();
+      });
+      tempSel.addEventListener('change', () => {
+        const idx = parseInt(tempSel.value, 10);
+        const list = PROGRESSIONS[curKeyScale] || [];
+        curTemplate = list[idx] || list[0];
+      });
+
+      let previewTimers = [];
+      const clearPreview = () => {
+        for (const t of previewTimers) clearTimeout(t);
+        previewTimers = [];
+      };
+      previewBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearPreview();
+        const blocks = _progAutoFillProgression(curKeyRoot, curKeyScale, curTemplate);
+        if (blocks.length === 0) return;
+        const stepMs = 700;
+        blocks.forEach((b, i) => {
+          previewTimers.push(setTimeout(() => _progPlayBlock(b), i * stepMs));
+        });
+      });
+
+      document.body.appendChild(pop);
+      const anchorRect = anchorBtn.getBoundingClientRect();
+      const popW = pop.offsetWidth, popH = pop.offsetHeight;
+      const vw = document.documentElement.clientWidth  || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      let left = anchorRect.left, top = anchorRect.bottom + 6;
+      if (top + popH + 8 > vh) {
+        const above = anchorRect.top - popH - 6;
+        if (above >= 8) top = above;
+        else top = Math.max(8, vh - popH - 8);
+      }
+      left = Math.max(8, Math.min(vw - popW - 8, left));
+      pop.style.left = left + 'px';
+      pop.style.top  = top  + 'px';
+
+      const close = () => {
+        clearPreview();
+        pop.remove();
+        document.removeEventListener('click', onOutside, true);
+        document.removeEventListener('keydown', onKey);
+      };
+      const onOutside = (e) => {
+        if (pop.contains(e.target) || anchorBtn.contains(e.target)) return;
+        close();
+      };
+      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      document.addEventListener('click', onOutside, true);
+      document.addEventListener('keydown', onKey);
+      cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+      saveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const blocks = _progAutoFillProgression(curKeyRoot, curKeyScale, curTemplate);
+        if (blocks.length > 0) {
+          progBlocks.push(...blocks);
+          // Pre-seed the next Add-Chord pop's defaults so the user can
+          // tack on a follow-up chord in the same key.
+          const last = blocks[blocks.length - 1];
+          Object.assign(_progLastForm, last);
+          _progRenderBlocks();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        }
+        close();
+      });
+      keyRootSel.focus();
+    }
+
+    function _progOpenEditKeyPopover(anchorBtn, startIdx) {
+      const range = _progFindGroupRange(startIdx);
+      if (!range) return;
+      const existing = document.querySelector('.prog-popover');
+      if (existing) existing.remove();
+
+      let curKeyRoot  = range.oldKeyRoot;
+      let curKeyScale = range.oldKeyScale;
+
+      const pop = document.createElement('div');
+      pop.className = 'prog-popover';
+
+      const mkLabel = (text, child) => {
+        const lab = document.createElement('label');
+        lab.appendChild(document.createTextNode(text));
+        lab.appendChild(child);
+        return lab;
+      };
+      const keyRootSel = document.createElement('select');
+      const keyScaleSel = document.createElement('select');
+      if (typeof CHROMATIC !== 'undefined') {
+        CHROMATIC.forEach((n, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i); opt.textContent = n;
+          keyRootSel.appendChild(opt);
+        });
+      }
+      keyRootSel.value = String(curKeyRoot);
+      const scaleKeys = Object.keys(SCALES || {}).filter(n => n !== 'chromatic').sort();
+      ['chromatic', ...scaleKeys].forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = (typeof prettyScaleName === 'function') ? prettyScaleName(name) : name;
+        keyScaleSel.appendChild(opt);
+      });
+      keyScaleSel.value = curKeyScale;
+      keyRootSel.addEventListener('change', () => {
+        curKeyRoot = parseInt(keyRootSel.value, 10) || 0;
+      });
+      keyScaleSel.addEventListener('change', () => {
+        curKeyScale = keyScaleSel.value || 'major';
+      });
+
+      pop.appendChild(mkLabel('Key root ', keyRootSel));
+      pop.appendChild(mkLabel('Key scale ', keyScaleSel));
+
+      const actions = document.createElement('div');
+      actions.className = 'prog-popover-actions';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'prog-popover-delete';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.title = 'Delete every chord in this key group';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'prog-popover-cancel';
+      cancelBtn.textContent = 'Cancel';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'prog-popover-save';
+      saveBtn.textContent = 'Save';
+      actions.appendChild(deleteBtn);
+      actions.appendChild(cancelBtn);
+      actions.appendChild(saveBtn);
+      pop.appendChild(actions);
+
+      document.body.appendChild(pop);
+      const anchorRect = anchorBtn.getBoundingClientRect();
+      const popW = pop.offsetWidth, popH = pop.offsetHeight;
+      const vw = document.documentElement.clientWidth  || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      let left = anchorRect.left, top = anchorRect.bottom + 6;
+      if (top + popH + 8 > vh) {
+        const above = anchorRect.top - popH - 6;
+        if (above >= 8) top = above;
+        else top = Math.max(8, vh - popH - 8);
+      }
+      left = Math.max(8, Math.min(vw - popW - 8, left));
+      pop.style.left = left + 'px';
+      pop.style.top  = top  + 'px';
+
+      const close = () => {
+        pop.remove();
+        document.removeEventListener('click', onOutside, true);
+        document.removeEventListener('keydown', onKey);
+      };
+      const onOutside = (e) => {
+        if (pop.contains(e.target) || anchorBtn.contains(e.target)) return;
+        close();
+      };
+      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      document.addEventListener('click', onOutside, true);
+      document.addEventListener('keydown', onKey);
+      cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        close();
+        _progDeleteGroup(startIdx);
+      });
+      saveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        close();
+        _progRetuneKeyGroup(startIdx, curKeyRoot, curKeyScale);
+      });
+      keyRootSel.focus();
+    }
+    function _progOpenAddPopover(anchorBtn) {
+      // Close any existing popover first.
+      const existing = document.querySelector('.prog-popover');
+      if (existing) existing.remove();
+
+      // Seed the form with the previous block's values when one exists.
+      // For the very first chord, key root/scale default to the
+      // workspace key+scale; chord type starts UNCHOSEN so chord-root
+      // stays disabled until the user picks a quality.
+      const prev = progBlocks.length > 0 ? progBlocks[progBlocks.length - 1] : null;
+      const hasSeed = !!prev;
+      const seed = prev || _progLastForm;
+      let curKeyRoot = (typeof seed.keyRoot === 'number') ? seed.keyRoot : 0;
+      let curKeyScale = seed.keyScale || 'major';
+      let curChordRoot = (typeof seed.chordRoot === 'number') ? seed.chordRoot : curKeyRoot;
+      let curChordQuality = hasSeed ? (seed.chordQuality || '') : '';
+
+      const pop = document.createElement('div');
+      pop.className = 'prog-popover';
+
+      const mkLabel = (text, child) => {
+        const lab = document.createElement('label');
+        lab.appendChild(document.createTextNode(text));
+        lab.appendChild(child);
+        return lab;
+      };
+      const keyRootSel = document.createElement('select');
+      const keyScaleSel = document.createElement('select');
+      const chordQualSel = document.createElement('select');
+      const chordRootSel = document.createElement('select');
+
+      // Build actions row up-front so updateSaveBtn (called inside
+      // refreshChordRoot below) doesn't reference a TDZ saveBtn.
+      const actions = document.createElement('div');
+      actions.className = 'prog-popover-actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'prog-popover-cancel';
+      cancelBtn.textContent = 'Cancel';
+      const previewBtn = document.createElement('button');
+      previewBtn.type = 'button';
+      previewBtn.className = 'prog-popover-preview';
+      previewBtn.textContent = '▶ Preview';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'prog-popover-save';
+      saveBtn.textContent = 'Save';
+      actions.appendChild(cancelBtn);
+      actions.appendChild(previewBtn);
+      actions.appendChild(saveBtn);
+      previewBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (saveBtn.disabled) return;
+        _progPlayBlock({
+          keyRoot: curKeyRoot,
+          keyScale: curKeyScale,
+          chordRoot: curChordRoot,
+          chordQuality: curChordQuality,
+        });
+      });
+      function updateSaveBtn() {
+        const blocked = !curChordQuality
+          || !Number.isFinite(curChordRoot)
+          || chordRootSel.disabled
+          || chordRootSel.options.length === 0;
+        saveBtn.disabled = blocked;
+        previewBtn.disabled = blocked;
+      }
+
+      // Key Root (12 chromatic).
+      if (typeof CHROMATIC !== 'undefined') {
+        CHROMATIC.forEach((n, i) => {
+          const opt = document.createElement('option');
+          opt.value = String(i); opt.textContent = n;
+          keyRootSel.appendChild(opt);
+        });
+      }
+      keyRootSel.value = String(curKeyRoot);
+
+      // Key Scale (chromatic + every named scale).
+      const scaleKeys = Object.keys(SCALES || {}).filter(n => n !== 'chromatic').sort();
+      ['chromatic', ...scaleKeys].forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = (typeof prettyScaleName === 'function') ? prettyScaleName(name) : name;
+        keyScaleSel.appendChild(opt);
+      });
+      keyScaleSel.value = curKeyScale;
+
+      // Chord Type — placeholder first; full CHORDS catalog after.
+      const placeholderOpt = document.createElement('option');
+      placeholderOpt.value = '';
+      placeholderOpt.textContent = 'Choose…';
+      placeholderOpt.disabled = true;
+      chordQualSel.appendChild(placeholderOpt);
+      Object.keys(CHORDS || {}).forEach(key => {
+        const opt = document.createElement('option');
+        opt.value = key; opt.textContent = CHORDS[key].label;
+        chordQualSel.appendChild(opt);
+      });
+      chordQualSel.value = curChordQuality;
+
+      // Chord Root — categorised by musical role relative to the active
+      // key + chord type. Disabled until a chord type is picked.
+      const refreshChordRoot = () => {
+        chordRootSel.innerHTML = '';
+        if (!curChordQuality) {
+          chordRootSel.disabled = true;
+          updateSaveBtn();
+          return;
+        }
+        chordRootSel.disabled = false;
+        const groups = { diatonic: [], secondary: [], borrowed: [], chromatic: [] };
+        for (let pc = 0; pc < 12; pc++) {
+          const cls = _progClassifyRoot(pc, curChordQuality, curKeyRoot, curKeyScale);
+          groups[cls.category].push({ pc, cls });
+        }
+        const mkGroup = (title, items) => {
+          if (!items.length) return;
+          const og = document.createElement('optgroup');
+          og.label = title;
+          for (const it of items) {
+            const opt = document.createElement('option');
+            opt.value = String(it.pc);
+            const note = (typeof CHROMATIC !== 'undefined' && CHROMATIC[it.pc]) || '';
+            opt.textContent = note + ' (' + it.cls.roleLabel + ')';
+            og.appendChild(opt);
+          }
+          chordRootSel.appendChild(og);
+        };
+        mkGroup('Diatonic', groups.diatonic);
+        mkGroup('Secondary Dominant', groups.secondary);
+        mkGroup('Borrowed / Modal Interchange', groups.borrowed);
+        mkGroup('Chromatic Passing', groups.chromatic);
+        // Try to restore previous selection if still present.
+        const wantPC = String(curChordRoot);
+        const opts = Array.from(chordRootSel.querySelectorAll('option'));
+        if (opts.some(o => o.value === wantPC)) {
+          chordRootSel.value = wantPC;
+        } else if (groups.diatonic.length > 0) {
+          chordRootSel.value = String(groups.diatonic[0].pc);
+          curChordRoot = groups.diatonic[0].pc;
+        } else if (opts.length > 0) {
+          chordRootSel.value = opts[0].value;
+          curChordRoot = parseInt(opts[0].value, 10);
+        }
+        updateSaveBtn();
+      };
+
+      pop.appendChild(mkLabel('Key root ', keyRootSel));
+      pop.appendChild(mkLabel('Key scale ', keyScaleSel));
+      pop.appendChild(mkLabel('Chord type ', chordQualSel));
+      pop.appendChild(mkLabel('Chord root ', chordRootSel));
+      pop.appendChild(actions);
+
+      // Live updates.
+      keyRootSel.addEventListener('change', () => {
+        curKeyRoot = parseInt(keyRootSel.value, 10) || 0;
+        refreshChordRoot();
+      });
+      keyScaleSel.addEventListener('change', () => {
+        curKeyScale = keyScaleSel.value || 'major';
+        refreshChordRoot();
+      });
+      chordQualSel.addEventListener('change', () => {
+        curChordQuality = chordQualSel.value || '';
+        refreshChordRoot();
+      });
+      chordRootSel.addEventListener('change', () => {
+        curChordRoot = parseInt(chordRootSel.value, 10) || 0;
+        updateSaveBtn();
+      });
+
+      refreshChordRoot();
+      updateSaveBtn();
+
+      // Mount on <body> with position: fixed so the Prog pad's overflow
+      // can't clip it. Position is clamped into the viewport so the
+      // whole popover is always visible, with a fallback to flip above
+      // the anchor when there isn't room below it.
+      document.body.appendChild(pop);
+      const anchorRect = anchorBtn.getBoundingClientRect();
+      const popW = pop.offsetWidth;
+      const popH = pop.offsetHeight;
+      const vw = document.documentElement.clientWidth  || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      let left = anchorRect.left;
+      let top  = anchorRect.bottom + 6;
+      if (top + popH + 8 > vh) {
+        const above = anchorRect.top - popH - 6;
+        if (above >= 8) top = above;
+        else top = Math.max(8, vh - popH - 8);
+      }
+      left = Math.max(8, Math.min(vw - popW - 8, left));
+      pop.style.left = left + 'px';
+      pop.style.top  = top + 'px';
+
+      const close = () => {
+        pop.remove();
+        document.removeEventListener('click', onOutside, true);
+        document.removeEventListener('keydown', onKey);
+      };
+      const onOutside = (e) => {
+        if (pop.contains(e.target) || anchorBtn.contains(e.target)) return;
+        close();
+      };
+      const onKey = (e) => { if (e.key === 'Escape') close(); };
+      document.addEventListener('click', onOutside, true);
+      document.addEventListener('keydown', onKey);
+
+      cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+      saveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const block = {
+          keyRoot: curKeyRoot,
+          keyScale: curKeyScale,
+          chordRoot: curChordRoot,
+          chordQuality: curChordQuality,
+        };
+        progBlocks.push(block);
+        Object.assign(_progLastForm, block);
+        close();
+        _progRenderBlocks();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+
+      keyRootSel.focus();
+    }
+
+    function _progInit() {
+      if (_progInited) return;
+      _progInited = true;
+      _progPadEl = document.getElementById('prog-pad');
+      _progBlocksEl = document.getElementById('prog-blocks');
+      if (!_progBlocksEl) return;
+      _progRenderBlocks();
+    }
+    function _onProgModeChanged(active) {
+      if (active) {
+        _progInit();
+        _progRenderBlocks();
+      } else {
+        // Close any open popover.
+        const open = document.querySelector('.prog-popover');
+        if (open) open.remove();
       }
     }
     // Toggle button — flips body class for the CSS visual change and
@@ -19892,13 +21074,15 @@
       btn.addEventListener('click', () => {
         const lane = lanes[activeLaneIdx];
         if (lane) {
-          // Cycle: Grid → Graph → Game → Grid
-          if (!lane.fluidGridMode && !lane.gameMode) {
-            lane.fluidGridMode = true;  lane.gameMode = false;
-          } else if (lane.fluidGridMode && !lane.gameMode) {
-            lane.fluidGridMode = false; lane.gameMode = true;
+          // Cycle: Grid → Graph → Game → Prog → Grid
+          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode) {
+            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false;
+          } else if (lane.fluidGridMode) {
+            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false;
+          } else if (lane.gameMode) {
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;
           } else {
-            lane.fluidGridMode = false; lane.gameMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false;
           }
         }
         _syncFluidGridToActiveLane();
@@ -23815,23 +24999,73 @@
     }
     const CHORDS = buildChordCatalog();
     let currentChord = ''; // '' = no chord override; fall back to scale
-    let currentProgression = []; // ordered chord keys; takes priority over currentChord when non-empty
-    let _gameProgressionIdx = 0;   // which chord in currentProgression is active
-    let _gameProgressionHits = 0;  // shape-edge bounces accumulated for the active chord
-    let _gameUserHitsPerChord = 1; // # of bounces before mutating to the next chord
+    // Progression-related globals act as the *active mode's view* of the
+    // per-mode stash below. _stashCurrentMode saves these back to the
+    // outgoing mode on a Grid↔Game flip; _loadModeState pulls the
+    // incoming mode's values in. So Chords + Hits are independent per
+    // mode while every read site stays using the same variable names.
+    let currentProgression = [];
+    let _gameProgressionIdx = 0;
+    let _gameProgressionHits = 0;
+    let _gameUserHitsPerChord = 1;
+    const _modeStash = {
+      grid: { progression: [], progressionIdx: 0, progressionHits: 0, hitsPerChord: 1 },
+      game: { progression: [], progressionIdx: 0, progressionHits: 0, hitsPerChord: 1 },
+    };
+    function _stashCurrentMode(modeKey) {
+      const s = _modeStash[modeKey];
+      if (!s) return;
+      s.progression = currentProgression.slice();
+      s.progressionIdx = _gameProgressionIdx;
+      s.progressionHits = _gameProgressionHits;
+      s.hitsPerChord = _gameUserHitsPerChord;
+    }
+    function _loadModeState(modeKey) {
+      const s = _modeStash[modeKey];
+      if (!s) return;
+      currentProgression = s.progression.slice();
+      _gameProgressionIdx = s.progressionIdx;
+      _gameProgressionHits = s.progressionHits;
+      _gameUserHitsPerChord = s.hitsPerChord;
+    }
     function _parseProgression(text) {
       if (typeof text !== 'string' || !text.trim()) return [];
       return text.split(/[,\s]+/)
         .map(s => s.trim())
         .filter(s => s && CHORDS && CHORDS[s]);
     }
-    function _activeChordKey() {
+    // Progression chips may be a bare string (legacy = use grid root) or
+    // { rootPC, quality } now that each chord carries its own root.
+    function _normalizeChip(chip) {
+      if (typeof chip === 'string') {
+        return { rootPC: (typeof rootIdx === 'number' ? rootIdx : 0), quality: chip };
+      }
+      if (chip && typeof chip === 'object' && typeof chip.quality === 'string') {
+        const pc = (typeof chip.rootPC === 'number') ? ((chip.rootPC % 12) + 12) % 12 : (typeof rootIdx === 'number' ? rootIdx : 0);
+        return { rootPC: pc, quality: chip.quality };
+      }
+      return null;
+    }
+    function _activeChordEntry() {
       if (currentProgression.length > 0) {
         const len = currentProgression.length;
         const i = ((_gameProgressionIdx % len) + len) % len;
-        return currentProgression[i];
+        return _normalizeChip(currentProgression[i]);
       }
-      return currentChord || '';
+      if (currentChord && CHORDS && CHORDS[currentChord]) {
+        return { rootPC: (typeof rootIdx === 'number' ? rootIdx : 0), quality: currentChord };
+      }
+      return null;
+    }
+    function _chipLabel(chip) {
+      const c = _normalizeChip(chip);
+      if (!c) return '';
+      const q = (CHORDS && CHORDS[c.quality] && CHORDS[c.quality].label) || c.quality;
+      // In Grid mode, the cell press picks the root — chips show just
+      // the quality. Game mode renders the chip's own root too.
+      if (!gameMode) return q;
+      const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[c.rootPC]) || '';
+      return root ? (root + ' ' + q) : q;
     }
 
     // Old hardcoded names → Tonal canonical names, so saved sequences still load.
@@ -24211,6 +25445,15 @@
           // handler at bindFluidGridHandlers handles press / move /
           // release as a continuous bend.
           if (fluidGridMode) return;
+          // Chord-progression (Grid mode) — when one or more chords are
+          // queued in Chords, each cell press plays the current chord
+          // rooted on the pressed note and advances the progression
+          // (cycling with the Hits count). Takes precedence over jump /
+          // wrap / fixed-seq paths; clearing the chord list restores
+          // normal single-note behavior.
+          if (currentProgression.length > 0) {
+            if (_gridChordPlayAt(i)) return;
+          }
           // Jump mode — takes precedence over every other press behavior.
           // The handler fires audio for the pressed note and then shifts
           // the grid so that note becomes the lowest (or, on a repeat
@@ -25800,40 +27043,55 @@
         });
       }
 
-      // Chord select — Game-mode override. When set, _gameRefresh
-      // builds the polygon from the chord's intervals (×octaves) rather
-      // than scale-filtering the chromatic note grid.
-      const chordSelect = document.getElementById('chord-select');
-      if (chordSelect && typeof CHORDS !== 'undefined') {
-        for (const key of Object.keys(CHORDS)) {
-          const opt = document.createElement('option');
-          opt.value = key;
-          opt.textContent = CHORDS[key].label;
-          chordSelect.appendChild(opt);
-        }
-        chordSelect.value = currentChord;
-        chordSelect.addEventListener('change', () => {
-          currentChord = chordSelect.value || '';
-          try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
-        });
-      }
-      // Progression chip-builder — dropdown appends a chord; each chip
-      // has an inline × to remove; Clear empties the list. The chip
-      // representing the currently-playing chord lights up via
-      // .progression-chip.active, repainted whenever _gameRefresh fires
-      // (which is also where progression mutation happens).
+      // Chords chip-builder — Root + Quality dropdowns side by side.
+      // Hits dropdown is gated on having ≥2 chords (no mutation needed
+      // with 0 or 1).
+      // Pick a root from the active scale (chromatic = all 12 pitches),
+      // then pick a quality to append a {rootPC, quality} chip. The
+      // active chord lights up via .progression-chip.active, repainted
+      // whenever _gameRefresh fires (also where progression mutation
+      // happens).
+      const progRoot  = document.getElementById('progression-root');
       const progAdd   = document.getElementById('progression-add');
       const progChips = document.getElementById('progression-chips');
       const progClear = document.getElementById('progression-clear');
+
+      function _scalePCs() {
+        const intervals = (SCALES && SCALES[currentScale]) || (SCALES && SCALES['chromatic']) || [];
+        const tonic = (typeof _effectiveScaleTonic === 'function')
+          ? _effectiveScaleTonic()
+          : (typeof rootIdx === 'number' ? rootIdx : 0);
+        return intervals.map(s => (((tonic + s) % 12) + 12) % 12);
+      }
+      function _populateProgressionRoot() {
+        if (!progRoot) return;
+        const prev = parseInt(progRoot.value, 10);
+        progRoot.innerHTML = '';
+        const pcs = _scalePCs();
+        // Walk through pcs in ascending order from the tonic so the
+        // dropdown reads root → 2nd → 3rd → ...
+        for (const pc of pcs) {
+          const opt = document.createElement('option');
+          opt.value = String(pc);
+          opt.textContent = CHROMATIC[pc] || '';
+          progRoot.appendChild(opt);
+        }
+        // Restore previous pick if still in scale, else default to grid root,
+        // else first available.
+        if (Number.isFinite(prev) && pcs.includes(prev)) progRoot.value = String(prev);
+        else if (pcs.includes(rootIdx)) progRoot.value = String(rootIdx);
+        else if (pcs.length > 0) progRoot.value = String(pcs[0]);
+      }
       function _renderProgressionChips() {
         if (!progChips) return;
         progChips.innerHTML = '';
+        try { if (typeof window._updateHitsEnabled === 'function') window._updateHitsEnabled(); } catch (_) {}
         const len = currentProgression.length;
         const activeIdx = len > 0 ? (((_gameProgressionIdx % len) + len) % len) : -1;
-        currentProgression.forEach((key, i) => {
+        currentProgression.forEach((rawChip, i) => {
           const chip = document.createElement('span');
           chip.className = 'progression-chip' + (i === activeIdx ? ' active' : '');
-          chip.textContent = (CHORDS[key] && CHORDS[key].label) || key;
+          chip.textContent = _chipLabel(rawChip);
           const x = document.createElement('button');
           x.type = 'button';
           x.className = 'progression-chip-remove';
@@ -25860,7 +27118,9 @@
         progAdd.addEventListener('change', () => {
           const key = progAdd.value;
           if (key && CHORDS[key]) {
-            currentProgression.push(key);
+            const rootPC = parseInt(progRoot && progRoot.value, 10);
+            const safe = Number.isFinite(rootPC) ? rootPC : (rootIdx || 0);
+            currentProgression.push({ rootPC: safe, quality: key });
             _gameProgressionIdx = 0;
             _gameProgressionHits = 0;
             _renderProgressionChips();
@@ -25879,19 +27139,26 @@
           try { if (typeof _gameRefresh === 'function' && _gameInited) _gameRefresh(); } catch (e) {}
         });
       }
+      _populateProgressionRoot();
       // Expose globally so _gameRefresh can re-paint the active highlight
-      // whenever the progression advances.
-      window._renderProgressionChips = _renderProgressionChips;
-      _renderProgressionChips();
-      const hitsInput = document.getElementById('hits-per-chord');
-      if (hitsInput) {
-        const initial = parseInt(hitsInput.value, 10);
+      // and the root dropdown whenever scale / root state changes.
+      const hitsSel = document.getElementById('hits-per-chord');
+      function _updateHitsEnabled() {
+        if (hitsSel) hitsSel.disabled = currentProgression.length < 2;
+      }
+      if (hitsSel) {
+        const initial = parseInt(hitsSel.value, 10);
         if (Number.isFinite(initial) && initial >= 1) _gameUserHitsPerChord = initial;
-        hitsInput.addEventListener('input', () => {
-          const v = parseInt(hitsInput.value, 10);
+        hitsSel.addEventListener('change', () => {
+          const v = parseInt(hitsSel.value, 10);
           if (Number.isFinite(v) && v >= 1) _gameUserHitsPerChord = v;
         });
       }
+      window._renderProgressionChips = _renderProgressionChips;
+      window._populateProgressionRoot = _populateProgressionRoot;
+      window._updateHitsEnabled = _updateHitsEnabled;
+      _renderProgressionChips();
+      _updateHitsEnabled();
     })();
 
     // ---- Grid settings dropdown toggle ----

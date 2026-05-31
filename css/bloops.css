@@ -3515,6 +3515,21 @@
       flex: 1;
       height: 4px;
       accent-color: #4fd1c5;
+      /* Reserve a generous touch target around the thin track so
+         mobile users can grab the thumb without pinpoint precision.
+         The visual track stays 4px; the padding only enlarges the
+         hit area. */
+      padding: 14px 0;
+      box-sizing: content-box;
+      background: transparent;
+      touch-action: pan-x;
+    }
+    @media (max-width: 768px) {
+      .step-pan-bar input[type="range"],
+      .step-vol-bar input[type="range"],
+      .step-slip-bar input[type="range"] {
+        padding: 18px 0;
+      }
     }
     .step-pan-val, .step-vol-val, .step-slip-val {
       min-width: 36px;

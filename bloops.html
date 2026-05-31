@@ -507,6 +507,10 @@
              when there's just one lane and updates the label between
              Drift / Lock / Reset for the active lane's drift state. -->
         <button id="drift-btn" type="button" title="Drift: pick a millisecond factor; the active lane's loop iteration N is delayed by factor × N. Lock to keep the offset; Reset to undo.">Drift</button>
+        <!-- Merge: combine the active lane with another lane into a
+             new chord-step lane; the two sources are muted so they
+             don't double-play with the merged copy. Needs 2+ lanes. -->
+        <button id="merge-lanes-btn" type="button" title="Merge the active lane with another lane into a new chord-step lane. Source lanes are kept but muted.">Merge</button>
         <!-- Random + Seed are pushed to the end of the menu and tinted
              differently because they're the destructive / generative
              actions — they replace (not just transform) the sequence. -->
@@ -685,7 +689,19 @@
     // picker), cleared back to null when chromatic.
     let _scaleTonic = null;
     function _effectiveScaleTonic() {
-      return (_scaleTonic == null) ? rootIdx : _scaleTonic;
+      if (_scaleTonic != null) return _scaleTonic;
+      // Lazy-anchor when a non-chromatic scale was restored from saved
+      // state (or set by code that didn't go through _setCurrentKey).
+      // Without this, a subsequent degree-shift would let the effective
+      // tonic drift with rootIdx — and _captureKeyContext would then
+      // stamp post-shift steps with a different root from pre-shift
+      // steps in the same key, splitting them out of the visual
+      // key-group container.
+      if (currentScale && currentScale !== 'chromatic') {
+        _scaleTonic = rootIdx;
+        return _scaleTonic;
+      }
+      return rootIdx;
     }
     let octaveCount = 1;   // 1..3
     let masterFreqA = 440; // Hz — master tuning reference (A4)
@@ -12132,6 +12148,192 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     });
 
+    // ---- Merge lanes (Riff menu) -------------------------------------
+    // Combines the active lane with another lane into a NEW lane whose
+    // steps are position-by-position chord merges of the two sources.
+    // Both source lanes are kept and muted so the user doesn't lose
+    // their work and the merged lane plays cleanly without doubling.
+    // The new lane inherits the active lane's voice so playback uses a
+    // familiar instrument out of the gate.
+    function refreshMergeLanesBtn() {
+      const btn = document.getElementById('merge-lanes-btn');
+      if (!btn) return;
+      const hasSiblings = Array.isArray(lanes) && lanes.length >= 2;
+      const atCap = Array.isArray(lanes) && lanes.length >= 8;
+      btn.disabled = !hasSiblings || atCap;
+      if (atCap) {
+        btn.title = 'Merge unavailable — already at the 8-lane cap.';
+      } else if (!hasSiblings) {
+        btn.title = 'Merge needs at least 2 lanes — add another lane first.';
+      } else {
+        const active = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length)
+          ? lanes[activeLaneIdx] : null;
+        btn.title = active
+          ? `Merge lane ${active.name} with another lane into a new chord-step lane (sources muted).`
+          : 'Merge the active lane with another lane into a new chord-step lane (sources muted).';
+      }
+    }
+    // Combine two same-position steps into a single chord step. Rests
+    // contribute nothing; subsequence steps pass through whole (mixing
+    // a sub's children into a chord doesn't have a clean musical
+    // interpretation). Returns a fresh step — never mutates inputs.
+    function _mergeStepPair(a, b) {
+      const aPlay = a && !isRestStep(a);
+      const bPlay = b && !isRestStep(b);
+      if (!aPlay && !bPlay) return makeRestStep();
+      if (aPlay && a.isSub) return cloneStep(a);
+      if (bPlay && b.isSub) return cloneStep(b);
+      if (aPlay && !bPlay) return cloneStep(a);
+      if (!aPlay && bPlay) return cloneStep(b);
+      const voices = [];
+      const collect = (step) => {
+        if (!step || isRestStep(step) || step.isSub) return;
+        if (Array.isArray(step.chord)) {
+          step.chord.forEach(n => {
+            if (n && Number.isFinite(n.freq)) voices.push({
+              freq: n.freq, label: n.label, cellIndex: n.cellIndex,
+              sound: n.sound, params: n.params ? { ...n.params } : {},
+            });
+          });
+        } else if (Number.isFinite(step.freq)) {
+          voices.push({
+            freq: step.freq, label: step.label, cellIndex: step.cellIndex,
+            sound: step.sound, params: step.params ? { ...step.params } : {},
+          });
+        }
+      };
+      collect(a); collect(b);
+      if (voices.length === 0) return makeRestStep();
+      const duration    = (Number.isFinite(a.duration)    && a.duration    > 0) ? a.duration    : (b.duration    || 1);
+      const subdivision = (a.subdivision != null) ? a.subdivision
+                        : (b.subdivision != null ? b.subdivision : stepSubdivision);
+      const kcSrc = a.keyContext || b.keyContext || null;
+      if (voices.length === 1) {
+        const v = voices[0];
+        const out = {
+          freq: v.freq, label: v.label, cellIndex: v.cellIndex,
+          sound: v.sound, params: v.params,
+          duration, subdivision,
+        };
+        if (kcSrc) out.keyContext = { root: kcSrc.root, scale: kcSrc.scale };
+        return out;
+      }
+      const out = {
+        freq: null,
+        label: voices.map(v => v.label).join('·'),
+        chord: voices,
+        duration, subdivision,
+        params: a.params ? { ...a.params } : (b.params ? { ...b.params } : {}),
+      };
+      if (kcSrc) out.keyContext = { root: kcSrc.root, scale: kcSrc.scale };
+      return out;
+    }
+    function _doMergeLanes(srcAIdx, srcBIdx) {
+      if (srcAIdx === srcBIdx) return;
+      if (srcAIdx < 0 || srcAIdx >= lanes.length) return;
+      if (srcBIdx < 0 || srcBIdx >= lanes.length) return;
+      if (lanes.length >= 8) {
+        try { showHistoryToast('Already at 8-lane cap.'); } catch (e) {}
+        return;
+      }
+      const laneA = lanes[srcAIdx];
+      const laneB = lanes[srcBIdx];
+      if (!laneA || !laneB) return;
+      // Flush `sequence` back to its lane so the merged step array
+      // reads the latest edits even if the user just touched a step in
+      // the active lane without triggering a lane-switch / persist.
+      if (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
+        lanes[activeLaneIdx].steps = sequence;
+      }
+      // captureSnapshot only saves the active lane's `sequence` (not
+      // the full lanes array), so an undo wouldn't cleanly reverse
+      // the new lane + mute flips. Skip the snapshot to avoid leaving
+      // a misleading entry in the undo stack — Drift does the same.
+      const stepsA = Array.isArray(laneA.steps) ? laneA.steps : [];
+      const stepsB = Array.isArray(laneB.steps) ? laneB.steps : [];
+      const len = Math.max(stepsA.length, stepsB.length);
+      const merged = [];
+      for (let i = 0; i < len; i++) {
+        merged.push(_mergeStepPair(stepsA[i], stepsB[i]));
+      }
+      const newIdx = lanes.length;
+      const newLane = _makeLane(newIdx, merged);
+      // Seed the merged lane's voice from the active lane so playback
+      // uses a familiar instrument straight away (the user can swap it
+      // later via the voice editor like any other lane).
+      const activeVoice = (lanes[activeLaneIdx] && lanes[activeLaneIdx].voice)
+        ? lanes[activeLaneIdx].voice
+        : (typeof _captureVoiceGlobals === 'function' ? _captureVoiceGlobals() : null);
+      if (activeVoice) {
+        try { newLane.voice = JSON.parse(JSON.stringify(activeVoice)); } catch (e) {}
+      }
+      lanes.push(newLane);
+      laneA.muted = true;
+      laneB.muted = true;
+      // Grow gridRows so the new lane has a visible row and
+      // _resizeLanesToGridRows won't trim it on the next sync.
+      gridRows = Math.min(8, Math.max(gridRows, lanes.length));
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.value = String(gridRows);
+      activateLane(newIdx);
+      try { showHistoryToast(`Merged ${laneA.name} + ${laneB.name} → ${newLane.name}`); } catch (e) {}
+      try { refreshMergeLanesBtn(); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _openMergeLaneMenu() {
+      if (!Array.isArray(lanes) || lanes.length < 2) return;
+      const others = lanes
+        .map((l, i) => ({ lane: l, idx: i }))
+        .filter(({ idx }) => idx !== activeLaneIdx);
+      if (others.length === 0) return;
+      // Modal picker — more obvious than a dropdown that gets visually
+      // detached when the Riff panel collapses on the button click.
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      const activeName = (lanes[activeLaneIdx] && lanes[activeLaneIdx].name) || '?';
+      modal.innerHTML = `
+        <div class="sm-title">Merge lane ${activeName} with…</div>
+        <div class="sm-fold-body" id="merge-lane-list" style="display:flex;flex-direction:column;gap:6px;padding-top:8px;"></div>
+        <div class="sm-footer">
+          <button type="button" class="sm-preview" id="merge-cancel">Cancel</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const list = modal.querySelector('#merge-lane-list');
+      others.forEach(({ lane, idx }) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sm-wave';
+        btn.textContent = `Lane ${lane.name}${lane.muted ? ' (muted)' : ''}`;
+        btn.addEventListener('click', () => {
+          overlay.remove();
+          _doMergeLanes(activeLaneIdx, idx);
+        });
+        list.appendChild(btn);
+      });
+      modal.querySelector('#merge-cancel')?.addEventListener('click', () => overlay.remove());
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    }
+    document.getElementById('merge-lanes-btn')?.addEventListener('click', (e) => {
+      console.log('[merge] click — disabled=', e.currentTarget.disabled,
+        'lanes.length=', Array.isArray(lanes) ? lanes.length : 'not-array',
+        'activeLaneIdx=', activeLaneIdx);
+      e.stopPropagation();
+      if (!Array.isArray(lanes) || lanes.length < 2) {
+        try { showHistoryToast('Merge needs at least 2 lanes — add another lane first.'); } catch (err) {}
+        return;
+      }
+      if (lanes.length >= 8) {
+        try { showHistoryToast('Already at the 8-lane cap.'); } catch (err) {}
+        return;
+      }
+      try { _openMergeLaneMenu(); }
+      catch (err) { console.error('[merge] open menu threw:', err); }
+    });
+
     // Modal: ask the user whether multi-selected notes should be wrapped
     // as a chord (Stack, simultaneous) or a subsequence (Run, sequential).
     // Resolves the choice via callback so the calling code stays linear.
@@ -21229,8 +21431,10 @@
         // Refresh Drift label + disabled state right before the panel
         // shows, so its enabled-ness reflects the current lane count
         // (Drift needs ≥2 lanes) without needing a separate hook on
-        // every lane add/remove path.
+        // every lane add/remove path. Merge shares the same lane-count
+        // gating so it piggybacks on the same hook.
         if (open && typeof refreshDriftBtn === 'function') refreshDriftBtn();
+        if (open && typeof refreshMergeLanesBtn === 'function') refreshMergeLanesBtn();
         panel.classList.toggle('open', open);
         btn.classList.toggle('open', open);
         btn.textContent = open ? 'Riff ▴' : 'Riff ▾';
@@ -27444,7 +27648,12 @@
         if (_allLaneMode) {
           _startAllLaneEdit('pan');
           _applyValueToAllLaneSteps('pan', Math.max(-100, Math.min(100, v)));
-          renderSequence();
+          // Don't re-render mid-drag — renderSequence rebuilds the
+          // active lane row, which forces _placeLaneExpander to
+          // reparent #lane-expander above the new row. On iOS Safari
+          // moving the slider's ancestor mid-touch cancels the drag,
+          // so the thumb appears unresponsive. Tints catch up on the
+          // change handler below when the touch ends.
         } else {
           applyPanToSelectedSteps(v);
         }
@@ -27452,6 +27661,9 @@
       });
       slider.addEventListener('change', () => {
         _endAllLaneEdit('pan');
+        // Repaint chip tints to reflect the post-drag pan values
+        // (skipped during input to keep the touch drag smooth).
+        if (_allLaneMode) renderSequence();
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
     })();

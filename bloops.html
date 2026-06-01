@@ -403,6 +403,12 @@
                 <label>Tone <select id="game-ball-tone" title="Override the cell's tone for ball note hits">
                   <option value="">Cell</option>
                 </select></label>
+                <label title="Bounce physics — Classic (current speed-clamped reflection), Kinetic (reflects in the moving side's frame so a spinning polygon redirects the ball), Momentum (no speed clamp, restitution loss per bounce), Gravity (Momentum plus a downward force).">Physics <select id="game-ball-physics">
+                  <option value="classic" selected>Classic</option>
+                  <option value="kinetic">Kinetic</option>
+                  <option value="momentum">Momentum</option>
+                  <option value="gravity">Gravity</option>
+                </select></label>
               </div>
             </div>
             <div class="game-ctrl-group game-ctrl-group-right">
@@ -19552,6 +19558,21 @@
     // multiplication) so a triad still renders as a triangle, but the
     // pitches roam between octaves each time the chord advances.
     let _gameRandomOctaves = false;
+    // Ball physics mode — incrementally peels back the "classic" speed
+    // clamp + stationary-frame reflection in three steps so the user
+    // can A/B/C/D the feel:
+    //   classic  → original (elastic, speed renormalized after every
+    //              bounce, reflection ignores polygon motion).
+    //   kinetic  → reflect in the contact side's frame of reference
+    //              (subtract side velocity at contact, reflect, add
+    //              back); speed still clamped, so the change shows up
+    //              as a redirection cue from a spinning shape.
+    //   momentum → kinetic + drop the speed clamp; small restitution
+    //              loss per bounce keeps the ball from accelerating
+    //              forever as the rotating polygon pumps energy in.
+    //   gravity  → momentum + a downward force so the ball settles
+    //              and rolls along the bottom side between hops.
+    let _gameBallPhysics = 'classic';
     // Shape touch-interaction modes. 'off' keeps the legacy behavior
     // (canvas tap toggles run / pause). 'drag' lets the user grab the
     // shape and fling it with release momentum. 'magnet' steers the
@@ -20006,6 +20027,15 @@
     // off a canvas edge during this step so the outer driver can fire
     // the chord (deduped by the global shape cooldown).
     function _gameSubStep(dt) {
+      // Gravity acts as a constant downward acceleration on the ball
+      // only in the gravity mode. Apply before the position update so
+      // the half-second of motion this substep covers picks up the
+      // delta-v. Magnitude tuned for canvas pixels — a feel-good
+      // bounce-and-roll without sucking the ball to the bottom in one
+      // frame.
+      if (_gameBallPhysics === 'gravity') {
+        _gameBall.vy += 900 * dt;
+      }
       _gameShape.cx += _gameShape.vx * dt;
       _gameShape.cy += _gameShape.vy * dt;
       _gameShape.rot += _gameShape.omega * dt;
@@ -20021,7 +20051,10 @@
       // path; corner overlaps (where two sides meet) no longer trigger
       // duelling pushes that read as jitter, and they fire only one
       // note (the side with the deepest overlap) instead of two.
-      let bestI = -1, bestOverlap = 0;
+      // bestCX/CY capture the deepest contact point so the non-classic
+      // physics modes can compute side velocity at that point for a
+      // frame-of-reference reflection.
+      let bestI = -1, bestOverlap = 0, bestCX = 0, bestCY = 0;
       let sumNx = 0, sumNy = 0, sumW = 0;
       for (let i = 0; i < _gameN; i++) {
         const A = verts[i], B = verts[(i + 1) % _gameN];
@@ -20041,7 +20074,10 @@
           sumNx += nx * overlap;
           sumNy += ny * overlap;
           sumW  += overlap;
-          if (overlap > bestOverlap) { bestOverlap = overlap; bestI = i; }
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap; bestI = i;
+            bestCX = cX; bestCY = cY;
+          }
         }
       }
       if (bestI >= 0) {
@@ -20053,15 +20089,57 @@
         // of the deepest-penetrating side.
         _gameBall.x += bestOverlap * nx;
         _gameBall.y += bestOverlap * ny;
-        const vn = _gameBall.vx * nx + _gameBall.vy * ny;
-        if (vn < 0) {
-          _gameBall.vx -= 2 * vn * nx;
-          _gameBall.vy -= 2 * vn * ny;
-          if (_gameUserBallSpeed > 0) {
-            const mag = Math.hypot(_gameBall.vx, _gameBall.vy) || 1;
-            const k = _gameUserBallSpeed / mag;
-            _gameBall.vx *= k;
-            _gameBall.vy *= k;
+        // Side velocity at the deepest contact point — translation
+        // plus the rotational contribution ω × r. Stays at (0, 0) for
+        // classic mode so behavior is byte-for-byte the same as before.
+        let vsx = 0, vsy = 0;
+        if (_gameBallPhysics !== 'classic') {
+          const rx = bestCX - _gameShape.cx;
+          const ry = bestCY - _gameShape.cy;
+          vsx = _gameShape.vx + (-_gameShape.omega * ry);
+          vsy = _gameShape.vy + ( _gameShape.omega * rx);
+        }
+        // Reflect in the side's frame: subtract side velocity, mirror
+        // about the normal, add back. Classic falls through as vRel = v
+        // since (vsx, vsy) = (0, 0).
+        const vRelX = _gameBall.vx - vsx;
+        const vRelY = _gameBall.vy - vsy;
+        const vRelN = vRelX * nx + vRelY * ny;
+        if (vRelN < 0) {
+          let newRelX = vRelX - 2 * vRelN * nx;
+          let newRelY = vRelY - 2 * vRelN * ny;
+          // Restitution loss bleeds energy out so the rotating polygon
+          // can't pump the ball to infinity in modes that drop the
+          // speed clamp. Kept at 1 for classic / kinetic which still
+          // renormalize speed below.
+          if (_gameBallPhysics === 'momentum' || _gameBallPhysics === 'gravity') {
+            newRelX *= 0.94;
+            newRelY *= 0.94;
+          }
+          _gameBall.vx = vsx + newRelX;
+          _gameBall.vy = vsy + newRelY;
+          if (_gameBallPhysics === 'classic' || _gameBallPhysics === 'kinetic') {
+            // Original speed-clamp behavior — the user-set speed is the
+            // ball's invariant. Kinetic still benefits from the
+            // frame-of-reference reflection above changing the
+            // direction so a spinning shape steers the ball.
+            if (_gameUserBallSpeed > 0) {
+              const mag = Math.hypot(_gameBall.vx, _gameBall.vy) || 1;
+              const k = _gameUserBallSpeed / mag;
+              _gameBall.vx *= k;
+              _gameBall.vy *= k;
+            }
+          } else {
+            // Momentum / gravity: no speed clamp, but cap absolute
+            // velocity at 8× the slider so a frantic spin can't fire
+            // the ball off-canvas in one substep.
+            const mag = Math.hypot(_gameBall.vx, _gameBall.vy);
+            const cap = Math.max(60, (_gameUserBallSpeed || 200) * 8);
+            if (mag > cap) {
+              const k = cap / mag;
+              _gameBall.vx *= k;
+              _gameBall.vy *= k;
+            }
           }
           // Per-side retrigger cooldown — keyed by the deepest-overlap
           // side so corner hits only fire one note. lastNotes dedupes
@@ -20280,6 +20358,14 @@
           // mid-gesture doesn't leave the shape pinned to the pointer.
           _gameInteract.active = false;
           _gameInteract.grabbed = false;
+        });
+      }
+      // ---- ball physics mode selector ----
+      const bp = document.getElementById('game-ball-physics');
+      if (bp) {
+        bp.value = _gameBallPhysics;
+        bp.addEventListener('change', () => {
+          _gameBallPhysics = bp.value || 'classic';
         });
       }
       // ---- sliders ----

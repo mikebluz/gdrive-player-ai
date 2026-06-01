@@ -418,6 +418,7 @@
                   <option value="1">+1</option>
                   <option value="2">+2</option>
                 </select></label>
+                <label title="When on, each chord note picks a random octave within the grid's range, refreshed on each chord change.">Rand oct <input type="checkbox" id="game-shape-random-oct"></label>
                 <label>Tone <select id="game-shape-tone" title="Override the cell's tone for shape edge-bounce chord">
                   <option value="">Cell</option>
                 </select></label>
@@ -12267,6 +12268,14 @@
       if (activeVoice) {
         try { newLane.voice = JSON.parse(JSON.stringify(activeVoice)); } catch (e) {}
       }
+      // If playback is running, stop it first — the scheduler builds
+      // _schedStreams from `lanes` only at play-start, so a mid-play
+      // push won't add a stream for the new lane (silent merged lane)
+      // and any already-dispatched events from the sources keep firing
+      // even after we mute them (audible source lanes). Restart below
+      // after the lane state settles.
+      const wasPlaying = (typeof sequenceTimer !== 'undefined') && sequenceTimer !== null;
+      if (wasPlaying) { try { stopSequence(); } catch (e) {} }
       lanes.push(newLane);
       laneA.muted = true;
       laneB.muted = true;
@@ -12276,6 +12285,12 @@
       const rowsEl = document.getElementById('grid-rows-input');
       if (rowsEl) rowsEl.value = String(gridRows);
       activateLane(newIdx);
+      if (wasPlaying) {
+        // Rebuild streams with the new lane present + updated mute
+        // flags. Tiny pause (~one tick) but the play state continues
+        // so the user keeps their flow.
+        try { playSequence(); } catch (e) {}
+      }
       try { showHistoryToast(`Merged ${laneA.name} + ${laneB.name} → ${newLane.name}`); } catch (e) {}
       try { refreshMergeLanesBtn(); } catch (e) {}
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -12318,9 +12333,6 @@
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     }
     document.getElementById('merge-lanes-btn')?.addEventListener('click', (e) => {
-      console.log('[merge] click — disabled=', e.currentTarget.disabled,
-        'lanes.length=', Array.isArray(lanes) ? lanes.length : 'not-array',
-        'activeLaneIdx=', activeLaneIdx);
       e.stopPropagation();
       if (!Array.isArray(lanes) || lanes.length < 2) {
         try { showHistoryToast('Merge needs at least 2 lanes — add another lane first.'); } catch (err) {}
@@ -19528,6 +19540,12 @@
     let _gameUserShapeOct = 0;
     let _gameUserBallTone  = null; // null/'' = inherit the cell's tone
     let _gameUserShapeTone = null;
+    // When true, every chord-change rebuild scatters the chord's notes
+    // across random octaves within the grid's octaveCount range. The
+    // polygon keeps one side per chord note (no octave-driven side
+    // multiplication) so a triad still renders as a triangle, but the
+    // pitches roam between octaves each time the chord advances.
+    let _gameRandomOctaves = false;
     // Retrigger guards — when the ball gets "caught" on a side (rotating
     // shape pushing it tangent to a vertex, etc.) it can produce dozens
     // of hits per second; without a cooldown the synth voices stack and
@@ -19598,14 +19616,29 @@
         const oct = Math.max(1, (typeof octaveCount === 'number') ? octaveCount : 1);
         const baseFreq = notes[0].freq;
         const rootOffset = (((activeEntry.rootPC - rootIdx) % 12) + 12) % 12;
-        for (let o = 0; o < oct; o++) {
+        if (_gameRandomOctaves) {
+          // One side per chord note; each note's octave is freshly
+          // picked at refresh time, so every chord advance reshuffles
+          // the pitches without changing the polygon's side count.
           for (const semi of chordType.semis) {
-            const totalSemi = o * 12 + rootOffset + semi;
+            const randOct = Math.floor(Math.random() * oct);
+            const totalSemi = randOct * 12 + rootOffset + semi;
             const cellIdx = ((totalSemi % notes.length) + notes.length) % notes.length;
             const freq = baseFreq * Math.pow(2, totalSemi / 12);
             const pc = (((rootIdx + totalSemi) % 12) + 12) % 12;
             _gameNotes.push({ cellIdx, freq, pc });
             _gameSideColors.push((palette && palette[pc]) || '#9f7aea');
+          }
+        } else {
+          for (let o = 0; o < oct; o++) {
+            for (const semi of chordType.semis) {
+              const totalSemi = o * 12 + rootOffset + semi;
+              const cellIdx = ((totalSemi % notes.length) + notes.length) % notes.length;
+              const freq = baseFreq * Math.pow(2, totalSemi / 12);
+              const pc = (((rootIdx + totalSemi) % 12) + 12) % 12;
+              _gameNotes.push({ cellIdx, freq, pc });
+              _gameSideColors.push((palette && palette[pc]) || '#9f7aea');
+            }
           }
         }
       } else {
@@ -20130,6 +20163,18 @@
         so.addEventListener('change', () => {
           const v = parseInt(so.value, 10);
           if (Number.isFinite(v)) _gameUserShapeOct = v;
+        });
+      }
+      // ---- random-octave toggle (shape chord) ----
+      // Refresh on toggle so the polygon rebuilds with / without the
+      // octave scatter immediately, instead of waiting for the next
+      // chord change.
+      const sro = document.getElementById('game-shape-random-oct');
+      if (sro) {
+        sro.checked = !!_gameRandomOctaves;
+        sro.addEventListener('change', () => {
+          _gameRandomOctaves = !!sro.checked;
+          try { _gameRefresh(); } catch (_) {}
         });
       }
       // ---- tone selectors ----

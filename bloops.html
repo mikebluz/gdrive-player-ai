@@ -26351,30 +26351,56 @@
     Tone.loaded().then(() => {
       clearTimeout(_bloopsRevealTimer);
       document.body.classList.remove('bloops-loading');
+      // Run a safeguard tick the moment the gate lifts — on mobile the
+      // initial rebuildGrid + asset-restore race had ~1.5 s to play out
+      // before the original safeguard window expired; on a slow network
+      // Tone.loaded() can resolve later than that and find the grid
+      // still empty.
+      _safeguardGridRebuild();
     }, () => {
       clearTimeout(_bloopsRevealTimer);
       document.body.classList.remove('bloops-loading');
+      _safeguardGridRebuild();
     });
 
     // Mobile-Safari fallback: a few iOS reloads land with the page laid
     // out but the grid empty — usually because a transient parse / Tone
-    // hiccup raced one of the early init blocks before rebuildGrid()
-    // ran. Re-check on the next animation frame, and again after the
-    // loading gate lifts, and rebuild if no cells made it in. Cheap
-    // when the grid is already populated (length check + return).
+    // hiccup, an async applyProjectSnapshot whose await window outlives
+    // the safeguard window, or a corrupt octaveCount in a restored
+    // workspace produced zero cells. Re-check on a generous schedule
+    // (RAF + every 500 ms for the first 10 s) and rebuild if cells are
+    // missing. Cheap when the grid is already populated (length check
+    // + return). If rebuildGrid still produces zero cells, fall back to
+    // a known-good default (octaveCount=1, rootIdx=0, baseOctave=4) so
+    // the user isn't stuck staring at an empty surface.
     function _safeguardGridRebuild() {
       try {
         const g = document.getElementById('grid');
         if (!g) return;
         if (g.children.length > 0 && cells.length > 0) return;
         rebuildGrid();
+        // Rebuild attempted but still empty — corrupt state somewhere
+        // upstream (saved workspace with octaveCount=0, mid-snapshot
+        // race, etc.). Force defaults and retry once.
+        if (g.children.length === 0 || cells.length === 0) {
+          octaveCount = 1;
+          if (!Number.isFinite(rootIdx))    rootIdx    = 0;
+          if (!Number.isFinite(baseOctave)) baseOctave = 4;
+          if (!Number.isFinite(masterFreqA) || masterFreqA <= 0) masterFreqA = 440;
+          rebuildGrid();
+        }
       } catch (e) {
         console.warn('Safeguard rebuildGrid failed:', e);
       }
     }
     requestAnimationFrame(_safeguardGridRebuild);
-    setTimeout(_safeguardGridRebuild, 250);
-    setTimeout(_safeguardGridRebuild, 1500);
+    // Roll a tighter polling cadence over the first 10 s so a slow
+    // applyProjectSnapshot (Drive asset fetches on a flaky connection
+    // can push the restore well past the prior 1500 ms cutoff) still
+    // gets caught.
+    [250, 750, 1500, 2500, 4000, 6000, 8000, 10000].forEach(ms => {
+      setTimeout(_safeguardGridRebuild, ms);
+    });
 
     // ---- Top-right Tone dropdown: applies a tone to every grid cell ----
     function applyToneToAllCells(type) {

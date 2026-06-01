@@ -419,6 +419,12 @@
                   <option value="2">+2</option>
                 </select></label>
                 <label title="When on, each chord note picks a random octave within the grid's range, refreshed on each chord change.">Rand oct <input type="checkbox" id="game-shape-random-oct"></label>
+                <label title="Pointer interaction with the shape — Off (tap toggles run/pause only), Drag (grab and throw), Magnet (shape steers toward held pointer), Tap (each tap impulses the shape away from the touch).">Touch <select id="game-shape-interaction">
+                  <option value="off" selected>Off</option>
+                  <option value="drag">Drag</option>
+                  <option value="magnet">Magnet</option>
+                  <option value="tap">Tap</option>
+                </select></label>
                 <label>Tone <select id="game-shape-tone" title="Override the cell's tone for shape edge-bounce chord">
                   <option value="">Cell</option>
                 </select></label>
@@ -19546,6 +19552,28 @@
     // multiplication) so a triad still renders as a triangle, but the
     // pitches roam between octaves each time the chord advances.
     let _gameRandomOctaves = false;
+    // Shape touch-interaction modes. 'off' keeps the legacy behavior
+    // (canvas tap toggles run / pause). 'drag' lets the user grab the
+    // shape and fling it with release momentum. 'magnet' steers the
+    // shape toward the held pointer continuously. 'tap' impulses the
+    // shape away from each tap point. The non-Off modes still treat a
+    // quick stationary tap as a run/pause toggle so the user keeps that
+    // gesture available without leaving the mode.
+    let _gameShapeInteraction = 'off';
+    const _gameInteract = {
+      active: false, pointerId: null,
+      startX: 0, startY: 0, startT: 0,
+      curX: 0, curY: 0,
+      // Recent (position, timestamp) samples — used to compute throw
+      // velocity on drag-release from the last ~100 ms of motion so a
+      // sharp wrist flick at the end of the gesture overrides any slow
+      // build-up earlier in the drag.
+      samples: [],
+      // True after a drag-grab on the shape; pointer position drives
+      // _gameShape.cx / cy until release.
+      grabbed: false,
+      grabDx: 0, grabDy: 0,
+    };
     // Retrigger guards — when the ball gets "caught" on a side (rotating
     // shape pushing it tangent to a vertex, etc.) it can produce dozens
     // of hits per second; without a cooldown the synth voices stack and
@@ -19895,6 +19923,35 @@
     }
     function _gameUpdate(dt) {
       if (_gameN < 3) return;
+      // Magnet steering — while the user holds the pointer in 'magnet'
+      // mode, nudge the shape's velocity toward the pointer. Capped at
+      // ~2× the shape-speed slider so the magnet can pick up speed but
+      // doesn't spike to an off-canvas velocity in a single frame.
+      if (_gameShapeInteraction === 'magnet' && _gameInteract.active) {
+        const dx = _gameInteract.curX - _gameShape.cx;
+        const dy = _gameInteract.curY - _gameShape.cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1) {
+          const baseSpeed = Math.max(20, _gameUserShapeSpeed || 80);
+          // Stronger pull when far from the pointer (proportional to
+          // dist, capped). Feels more responsive than a constant force.
+          const pull = Math.min(dist * 6, baseSpeed * 4);
+          _gameShape.vx += (dx / dist) * pull * dt;
+          _gameShape.vy += (dy / dist) * pull * dt;
+          const sp = Math.hypot(_gameShape.vx, _gameShape.vy);
+          const cap = baseSpeed * 2;
+          if (sp > cap) {
+            const k = cap / sp;
+            _gameShape.vx *= k; _gameShape.vy *= k;
+          }
+        }
+      }
+      // Drag-grab freezes the shape's autopilot motion — its position
+      // is driven by the pointer until release, so any residual
+      // velocity here would fight the user's input on each frame.
+      if (_gameShapeInteraction === 'drag' && _gameInteract.grabbed) {
+        _gameShape.vx = 0; _gameShape.vy = 0;
+      }
       // Sub-step the physics so a single frame's motion can't overshoot
       // a side's overlap window. Bound by half the ball's radius; the
       // worst case considers ball velocity, shape translation, and the
@@ -20087,8 +20144,16 @@
       _gameCanvas = document.getElementById('game-canvas');
       if (!_gamePadEl || !_gameCanvas) return;
       _gameCtx = _gameCanvas.getContext('2d');
-      _gameCanvas.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
+      // Canvas pointer event coordinates → canvas-pixel space (the
+      // canvas's CSS box is scaled, so a raw clientX/Y won't line up
+      // with _gameShape.cx / cy or polygon vertices).
+      const _gameCanvasPos = (e) => {
+        const rect = _gameCanvas.getBoundingClientRect();
+        const sx = (rect.width  > 0) ? (_gameCanvas.width  / rect.width)  : 1;
+        const sy = (rect.height > 0) ? (_gameCanvas.height / rect.height) : 1;
+        return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+      };
+      const _gameToggleRunning = () => {
         if (_gameRunning) {
           _gameRunning = false;
         } else {
@@ -20097,7 +20162,126 @@
           if (!moving) _gameKick();
           _gameRunning = true;
         }
+      };
+      _gameCanvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        const { x, y } = _gameCanvasPos(e);
+        _gameInteract.active = true;
+        _gameInteract.pointerId = e.pointerId;
+        _gameInteract.startX = x; _gameInteract.startY = y;
+        _gameInteract.curX   = x; _gameInteract.curY   = y;
+        _gameInteract.startT = performance.now();
+        _gameInteract.samples = [{ x, y, t: _gameInteract.startT }];
+        _gameInteract.grabbed = false;
+        if (_gameShapeInteraction === 'drag') {
+          const dx = x - _gameShape.cx, dy = y - _gameShape.cy;
+          // Generous grab radius (1.2× polygon radius) so the polygon's
+          // pointier sides don't require pixel-perfect aim to grab.
+          if (Math.hypot(dx, dy) <= _gameR * 1.2) {
+            _gameInteract.grabbed = true;
+            _gameInteract.grabDx = dx;
+            _gameInteract.grabDy = dy;
+            _gameShape.vx = 0; _gameShape.vy = 0;
+            try { _gameCanvas.setPointerCapture(e.pointerId); } catch (err) {}
+          }
+        } else if (_gameShapeInteraction === 'tap') {
+          // Impulse the shape away from the tap point so the user
+          // "shoves" it. Speed matches the shape-speed slider so
+          // existing momentum tuning carries over.
+          const dx = _gameShape.cx - x, dy = _gameShape.cy - y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const speed = Math.max(20, _gameUserShapeSpeed || 80);
+          _gameShape.vx = (dx / dist) * speed;
+          _gameShape.vy = (dy / dist) * speed;
+          if (!_gameRunning) {
+            // First impulse from a paused state also starts the loop —
+            // the user is clearly engaging, no reason to make them
+            // hunt for a separate start gesture.
+            _gameRunning = true;
+          }
+        } else if (_gameShapeInteraction === 'magnet') {
+          try { _gameCanvas.setPointerCapture(e.pointerId); } catch (err) {}
+        }
       });
+      _gameCanvas.addEventListener('pointermove', (e) => {
+        if (!_gameInteract.active || e.pointerId !== _gameInteract.pointerId) return;
+        const { x, y } = _gameCanvasPos(e);
+        _gameInteract.curX = x; _gameInteract.curY = y;
+        const now = performance.now();
+        _gameInteract.samples.push({ x, y, t: now });
+        // Keep only the last ~100 ms of samples — that's the window
+        // _gameInteract release uses to compute throw velocity.
+        while (_gameInteract.samples.length > 1
+            && now - _gameInteract.samples[0].t > 100) {
+          _gameInteract.samples.shift();
+        }
+        if (_gameShapeInteraction === 'drag' && _gameInteract.grabbed) {
+          _gameShape.cx = x - _gameInteract.grabDx;
+          _gameShape.cy = y - _gameInteract.grabDy;
+          // Ball can otherwise pop outside when the user yanks the
+          // polygon to a new spot.
+          if (typeof _gameEnsureBallInside === 'function') _gameEnsureBallInside();
+        }
+      });
+      const _gameEndPointer = (e) => {
+        if (!_gameInteract.active || e.pointerId !== _gameInteract.pointerId) return;
+        const now = performance.now();
+        const totalT = now - _gameInteract.startT;
+        const moveDist = Math.hypot(
+          _gameInteract.curX - _gameInteract.startX,
+          _gameInteract.curY - _gameInteract.startY,
+        );
+        if (_gameShapeInteraction === 'drag' && _gameInteract.grabbed) {
+          // Throw velocity from the recent sample window. Short window
+          // = wrist-flick captured cleanly; long releases (slow drift)
+          // fall back to zero so the shape stays put.
+          const s = _gameInteract.samples;
+          if (s.length >= 2) {
+            const s0 = s[0], s1 = s[s.length - 1];
+            const dt = Math.max(0.016, (s1.t - s0.t) / 1000);
+            const vx = (s1.x - s0.x) / dt;
+            const vy = (s1.y - s0.y) / dt;
+            const mag = Math.hypot(vx, vy);
+            // Clamp to a reasonable upper bound so a frantic flick
+            // doesn't fire the shape off-canvas in one frame.
+            const cap = Math.max(60, Math.min(900, (_gameUserShapeSpeed || 80) * 4));
+            if (mag > 1) {
+              const k = Math.min(1, cap / mag);
+              _gameShape.vx = vx * k;
+              _gameShape.vy = vy * k;
+            }
+          }
+          try { _gameCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
+        } else if (_gameShapeInteraction === 'magnet') {
+          try { _gameCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
+        }
+        // Quick stationary tap toggles run/pause across every mode —
+        // 'tap' is excluded because pointerdown already kicked the
+        // shape and starting/stopping on the same gesture would feel
+        // ambiguous.
+        const isTap = totalT < 250 && moveDist < 8;
+        if (isTap && _gameShapeInteraction !== 'tap') {
+          _gameToggleRunning();
+        }
+        _gameInteract.active = false;
+        _gameInteract.pointerId = null;
+        _gameInteract.grabbed = false;
+        _gameInteract.samples = [];
+      };
+      _gameCanvas.addEventListener('pointerup',     _gameEndPointer);
+      _gameCanvas.addEventListener('pointercancel', _gameEndPointer);
+      // ---- shape touch-interaction selector ----
+      const si = document.getElementById('game-shape-interaction');
+      if (si) {
+        si.value = _gameShapeInteraction;
+        si.addEventListener('change', () => {
+          _gameShapeInteraction = si.value || 'off';
+          // Reset any in-progress drag/magnet state so a mode switch
+          // mid-gesture doesn't leave the shape pinned to the pointer.
+          _gameInteract.active = false;
+          _gameInteract.grabbed = false;
+        });
+      }
       // ---- sliders ----
       const bsz = document.getElementById('game-ball-size');
       const bsp = document.getElementById('game-ball-speed');

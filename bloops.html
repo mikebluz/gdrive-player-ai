@@ -19663,7 +19663,16 @@
         }
       }
       _gameN = _gameNotes.length;
-      _gameLastNotes = [];
+      // Don't wipe the last-hit history on a polygon rebuild —
+      // shape-edge bounces echo those indices, and clearing them after
+      // a chord-progression advance left the very next bounce silent
+      // (and the first bounce of a session, before the ball had hit
+      // anything). Filter out stale indices that the new polygon
+      // doesn't have a side for so _gamePlayNoteAt can't index past
+      // _gameNotes.length.
+      _gameLastNotes = Array.isArray(_gameLastNotes)
+        ? _gameLastNotes.filter(i => Number.isInteger(i) && i >= 0 && i < _gameN)
+        : [];
       _gameSideLastHitMs = new Float64Array(_gameN);
       _gameShapeLastBounceMs = 0;
       _gameSize();
@@ -19862,10 +19871,17 @@
       return true;
     }
 
-    function _gameAppendShapeChordStep() {
+    function _gameAppendShapeChordStep(fireIdxs) {
       if (!_gameKeepAvailable()) return;
-      if (!_gameLastNotes || _gameLastNotes.length === 0) return;
-      const voices = _gameLastNotes
+      // Default to the recent ball-hit echo when no explicit fire-set
+      // is passed; callers in the bounce handler pass the polygon's
+      // full set as a fallback so the recorded step matches what the
+      // user just heard.
+      const idxs = (Array.isArray(fireIdxs) && fireIdxs.length > 0)
+        ? fireIdxs
+        : _gameLastNotes;
+      if (!idxs || idxs.length === 0) return;
+      const voices = idxs
         .map(idx => _gameMakeVoice(idx, _gameUserShapeOct, _gameUserShapeTone))
         .filter(Boolean);
       if (voices.length === 0) return;
@@ -19904,10 +19920,19 @@
         const nowMs = performance.now();
         if (nowMs - _gameShapeLastBounceMs >= _GAME_SHAPE_COOLDOWN_MS) {
           _gameShapeLastBounceMs = nowMs;
+          // Pick a fire-set for the bounce. The ball's recent hits drive
+          // it whenever the user has been bouncing notes — that's the
+          // echo behavior. If nothing has been hit yet (start of session
+          // or first bounce after a chord-progression rebuild), fall
+          // back to firing every polygon side so the user reliably hears
+          // the chord on every boundary bounce.
+          const fireIdxs = (Array.isArray(_gameLastNotes) && _gameLastNotes.length > 0)
+            ? _gameLastNotes
+            : _gameNotes.map((_, i) => i);
           if (!_gameShapeMuted) {
-            for (const idx of _gameLastNotes) _gamePlayNoteAt(idx, _gameUserShapeOct, _gameUserShapeTone);
+            for (const idx of fireIdxs) _gamePlayNoteAt(idx, _gameUserShapeOct, _gameUserShapeTone);
           }
-          _gameAppendShapeChordStep();
+          _gameAppendShapeChordStep(fireIdxs);
           if (currentProgression.length > 0) {
             _gameProgressionHits++;
             if (_gameProgressionHits >= _gameUserHitsPerChord) {

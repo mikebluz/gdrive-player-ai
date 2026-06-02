@@ -2067,7 +2067,20 @@
     })();
     document.addEventListener('visibilitychange', () => {
       const tctx = Tone.getContext().rawContext;
-      if (!document.hidden && tctx && tctx.state === 'suspended') tctx.resume();
+      if (document.hidden) return;
+      if (tctx && tctx.state === 'suspended') tctx.resume();
+      // Mobile browsers suspend the AudioContext + the JS scheduler tick
+      // while a tab is backgrounded. When the user comes back the
+      // worklet (or main-thread closure map) may still hold dispatches
+      // whose audioTimes sit in the past — Tone fires those "soonest
+      // possible," producing the rushed-catchup burst that reads as
+      // severe lag. Drop everything past the safety window and let the
+      // walk re-schedule from the live now.
+      if (typeof sequenceTimer !== 'undefined' && sequenceTimer != null) {
+        try {
+          if (typeof _invalidatePlayback === 'function') _invalidatePlayback();
+        } catch (e) {}
+      }
     });
 
     function getStepMs() {
@@ -12082,11 +12095,48 @@
     // its intended audio time a note was when scheduled); the button's
     // .warn / .alarm classes glow when slip crosses thresholds.
     function resetAudioEngine() {
-      try { if (sequenceTimer != null) stopSequence(); } catch (e) {}
+      // Force-stop regardless of sequenceTimer state — mobile sometimes
+      // leaves the timer null while the worklet still has queued
+      // dispatches, so gating on the timer let stuck audio survive a
+      // reset.
+      try { stopSequence(); } catch (e) {}
+      // Wipe pending dispatches a second time defensively — stopSequence
+      // already does this, but resetAudioEngine is the user's panic
+      // button and being explicit here makes the contract obvious.
+      try {
+        if (typeof _clearAllScheduledDispatches === 'function') {
+          _clearAllScheduledDispatches();
+        }
+      } catch (e) {}
       // Snapshot + clear the active-voice list so _stealVoice can dispose
       // each entry without re-entering through _activeVoices mutation.
       const victims = _activeVoices.splice(0, _activeVoices.length);
       victims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
+      // Tear down per-lane Tone.Sampler / volume / panner / FX nodes.
+      // Tone.Sampler queues triggerAttackRelease calls internally —
+      // when the AudioContext clock drifts behind wall clock on mobile
+      // (a tab going background-then-foreground is the common cause),
+      // a backed-up sampler keeps firing notes against stale audioTimes
+      // long after the user expected silence. Dispose every lane bus +
+      // sampler so the next press / play tick rebuilds them fresh.
+      // getLaneBus + getOrCreateLaneSampler are lazy-init so the next
+      // tap reuses the existing slow path with no setup cost beyond a
+      // single Tone.Sampler constructor.
+      try {
+        if (typeof disposeAllLaneAudio === 'function' && Array.isArray(lanes)) {
+          disposeAllLaneAudio(lanes);
+        }
+      } catch (e) {}
+      // Cancel any events Tone has scheduled directly against its
+      // context. tonejs ≥14 exposes cancel on the context (drops every
+      // scheduled event at audioTime ≥ now), which evicts anything we
+      // queued outside the worklet path.
+      try {
+        if (typeof Tone !== 'undefined' && Tone.context
+            && typeof Tone.context.cancel === 'function') {
+          Tone.context.cancel(0);
+        }
+      } catch (e) {}
       try { clearVisualTimers(); } catch (e) {}
       try {
         const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
@@ -12097,6 +12147,14 @@
       _playOffsetSec = 0;
       _slipMs = 0;
       refreshAudioResetUI();
+      // Visible confirmation — the button used to do its work silently,
+      // which made it feel like nothing happened when stuck audio took
+      // a second or two to clear.
+      try {
+        if (typeof showHistoryToast === 'function') {
+          showHistoryToast('Audio reset.');
+        }
+      } catch (e) {}
     }
     function refreshAudioResetUI() {
       const btn = document.getElementById('audio-reset-btn');

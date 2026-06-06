@@ -357,7 +357,7 @@
       <!-- Wrap bank — moved here from below the Keep/Rest row so it
            hides in non-Grid modes alongside the Wrap button itself. -->
       <div class="wrap-bank" id="wrap-bank" hidden>
-        <span class="wrap-bank-label">Wraps</span>
+        <span class="wrap-bank-label" id="wrap-bank-label" role="button" tabindex="0" aria-pressed="false" title="Cycle wraps: when on, each grid press uses the next saved wrap in the bank (wrapping back to the first). Click to toggle.">Wraps</span>
         <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
       </div>
       <!-- XY pad — replaces the cell grid when Grid Off (fluid mode)
@@ -1291,6 +1291,20 @@
     // changes to something not minted by this bank.
     let activeWrapBankId = null;
 
+    // ---- Wrap cycle ----
+    // Toggled by clicking the "Wraps" bank label. When on, each grid
+    // press uses the currently-armed bank wrap; once that press's sound
+    // event ends (pointerup), the next wrap in the bank is armed — wrapping
+    // back to the first after the last. Lets the user "play through" a row
+    // of saved wraps one tap at a time.
+    let wrapCycleMode = false;
+    // Index into savedWraps of the wrap currently armed for cycling.
+    let wrapCycleIndex = 0;
+    // Set on a grid press while cycling so the matching pointerup knows to
+    // advance to the next wrap. Keeps the advance keyed to a real press
+    // (not a stray pointerup) and ensures one advance per gesture.
+    let _wrapCyclePendingAdvance = false;
+
     function seqName(index) {
       let name = '';
       let n = index;
@@ -1595,16 +1609,90 @@
       }
       wrapTemplate = cloneStep(entry.step);
       activeWrapBankId = entry.id;
+      // Keep the cycle cursor in sync when the user hand-picks a chip mid-
+      // cycle, so the very next press continues from the chip they tapped.
+      if (wrapCycleMode) {
+        const idx = savedWraps.findIndex(w => w.id === id);
+        if (idx >= 0) wrapCycleIndex = idx;
+      }
       if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
       renderWrapBank();
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+
+    // Lightweight recall used by the cycle path — arms a bank wrap as the
+    // live wrapTemplate without the undo snapshot / workspace persist that
+    // recallWrapFromBank does (those would spam undo history and add work
+    // on every tap). Mirrors recallWrapFromBank's build-teardown so a
+    // half-built wrap doesn't bleed into the armed shape.
+    function armCycleWrap(idx) {
+      const entry = savedWraps[idx];
+      if (!entry) return;
+      chordMode = false;
+      pendingChord = [];
+      if (typeof clearWrapPendingHighlights === 'function') {
+        try { clearWrapPendingHighlights(); } catch (e) {}
+      }
+      wrapTemplate = cloneStep(entry.step);
+      activeWrapBankId = entry.id;
+      if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
+      renderWrapBank();
+    }
+
+    // Advance to the next wrap in the bank (wrapping to the first). Called
+    // from the cell pointerup once a cycling press's sound event is over.
+    function advanceWrapCycle() {
+      if (!wrapCycleMode || savedWraps.length === 0) return;
+      wrapCycleIndex = (wrapCycleIndex + 1) % savedWraps.length;
+      armCycleWrap(wrapCycleIndex);
+    }
+
+    // Reflect the cycle state on the clickable "Wraps" label.
+    function updateWrapCycleLabel() {
+      const label = document.getElementById('wrap-bank-label');
+      if (label) {
+        label.classList.toggle('cycling', wrapCycleMode);
+        label.setAttribute('aria-pressed', wrapCycleMode ? 'true' : 'false');
+      }
+    }
+
+    function setWrapCycleMode(on) {
+      // Nothing to cycle through with an empty bank — stay off.
+      if (on && savedWraps.length === 0) on = false;
+      wrapCycleMode = !!on;
+      _wrapCyclePendingAdvance = false;
+      if (wrapCycleMode) {
+        // Begin from the already-armed wrap if there is one, else the first.
+        let start = savedWraps.findIndex(w => w.id === activeWrapBankId);
+        if (start < 0) start = 0;
+        wrapCycleIndex = start;
+        armCycleWrap(wrapCycleIndex);
+      }
+      updateWrapCycleLabel();
+    }
+
+    function toggleWrapCycleMode() { setWrapCycleMode(!wrapCycleMode); }
+
+    // Wire the clickable "Wraps" label (created in the markup above).
+    (function bindWrapCycleLabel() {
+      const label = document.getElementById('wrap-bank-label');
+      if (!label) return;
+      label.addEventListener('click', toggleWrapCycleMode);
+      label.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleWrapCycleMode();
+        }
+      });
+    })();
 
     function removeWrapFromBank(id) {
       const i = savedWraps.findIndex(w => w.id === id);
       if (i < 0) return;
       const wasActive = (activeWrapBankId === id);
       savedWraps.splice(i, 1);
+      // Keep the cycle cursor inside the (now shorter) bank.
+      if (wrapCycleIndex >= savedWraps.length) wrapCycleIndex = 0;
       if (wasActive) {
         // The chip the user just deleted was the live wrap shape.
         // Tear down the in-flight wrap state too — clearing the
@@ -1628,6 +1716,12 @@
           try { persistWorkspace(); } catch (e) {}
         }
       }
+      // Deleting the armed wrap mid-cycle would leave cycle mode on with
+      // nothing armed — re-arm whatever now sits at the cursor so the next
+      // press still plays a wrap.
+      if (wrapCycleMode && wasActive && savedWraps.length > 0) {
+        armCycleWrap(wrapCycleIndex);
+      }
       persistSavedWraps();
       renderWrapBank();
     }
@@ -1639,6 +1733,13 @@
       if (savedWraps.length === 0) {
         bank.hidden = true;
         chips.innerHTML = '';
+        // No wraps left to cycle through — drop out of cycle mode so the
+        // label doesn't stay lit over an empty bank.
+        if (wrapCycleMode) {
+          wrapCycleMode = false;
+          _wrapCyclePendingAdvance = false;
+          if (typeof updateWrapCycleLabel === 'function') updateWrapCycleLabel();
+        }
         return;
       }
       bank.hidden = false;
@@ -25343,6 +25444,12 @@
         // Defer finalize so multiple pointers releasing within a frame or
         // two collapse into one chord rather than racing each other.
         _polySession.endTimer = setTimeout(polyFinalizeSession, 60);
+        // Cycling: the press's sound event is over now that the gesture's
+        // last pointer has lifted — arm the next wrap for the next press.
+        if (_wrapCyclePendingAdvance) {
+          _wrapCyclePendingAdvance = false;
+          advanceWrapCycle();
+        }
       }
     }
     function polyShouldSuppressClick() {
@@ -26211,6 +26318,10 @@
               _radialBend.delete(i);
             }
             polyStartWrapCell(i, e.pointerId, _wrapOpts);
+            // Cycling: this press used the armed wrap. Flag it so the
+            // matching pointerup advances to the next wrap once this
+            // sound event is over.
+            if (wrapCycleMode) _wrapCyclePendingAdvance = true;
             return;
           }
           // Arpeggio / Chord modes don't sustain — they fire a one-shot

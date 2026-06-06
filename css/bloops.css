@@ -3979,6 +3979,30 @@
       color: #c026d3;
       opacity: 0.7;
       flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 2px 6px;
+      transition: color 0.12s ease, opacity 0.12s ease,
+                  background-color 0.12s ease, border-color 0.12s ease,
+                  box-shadow 0.12s ease;
+    }
+    @media (hover: hover) {
+      .wrap-bank-label:hover { opacity: 1; }
+    }
+    .wrap-bank-label:focus-visible {
+      outline: none;
+      border-color: rgba(192, 38, 211, 0.6);
+    }
+    /* Cycle mode lit: each grid press steps through the saved wraps. */
+    .wrap-bank-label.cycling {
+      opacity: 1;
+      color: #fff;
+      background: rgba(192, 38, 211, 0.35);
+      border-color: #c026d3;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
     }
     .wrap-bank-chips {
       display: flex;

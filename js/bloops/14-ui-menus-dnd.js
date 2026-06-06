@@ -746,7 +746,7 @@
     // same path the Drive load uses) so sequence + grid + palette + tempo
     // all come back. The persist-enable flag stays off until the restore
     // completes, so no half-applied snapshot gets written back.
-    (async function restoreWorkspaceFromStorage() {
+    async function restoreWorkspaceFromStorage() {
       let restored = false;
       try {
         const raw = localStorage.getItem(WORKSPACE_LS_KEY);
@@ -771,7 +771,22 @@
         if (!restored) renderSequence();
         _workspacePersistEnabled = true;
       }
-    })();
+    }
+    // Defer the restore until every script has loaded and defined its
+    // symbols. applyProjectSnapshot references state + functions that live
+    // in later-loaded module files (SCALES, rebuildGrid, applyPalette, …);
+    // running it inline here — while this file is still executing — would
+    // throw on those forward references and silently lose the user's saved
+    // work (the try/catch above would swallow it). DOMContentLoaded fires
+    // only after every synchronous <script> in the page has executed, so by
+    // then all js/bloops/*.js modules are fully defined. Persist stays
+    // disabled until this completes, so the default-state boot render can't
+    // clobber the saved snapshot before we read it.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', restoreWorkspaceFromStorage, { once: true });
+    } else {
+      restoreWorkspaceFromStorage();
+    }
 
     // ---- Top-bar view switching (Make ↔ Mix ↔ Listen) -------------------
     (function initTopBarTabs() {

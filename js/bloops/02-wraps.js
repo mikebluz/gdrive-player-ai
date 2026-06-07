@@ -470,6 +470,91 @@
       renderWrapBank();
     }
 
+    // Precise manual reorder of the bank. Opens a modal list where each
+    // wrap can be dragged (desktop) or nudged with ▲/▼ (works everywhere,
+    // incl. touch). Changes apply live so the chip row behind reflects each
+    // move; Done just closes. Keeps the cycle cursor on the armed wrap.
+    function openWrapReorder() {
+      if (savedWraps.length < 2) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay wrap-reorder-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal wrap-reorder-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      let dragId = null;
+      const applied = () => {
+        if (wrapCycleMode) {
+          const idx = savedWraps.findIndex(w => w.id === activeWrapBankId);
+          wrapCycleIndex = idx >= 0 ? idx : 0;
+        }
+        persistSavedWraps();
+        renderWrapBank();
+        render();
+      };
+      const move = (id, dir) => {
+        const i = savedWraps.findIndex(w => w.id === id);
+        const j = i + dir;
+        if (i < 0 || j < 0 || j >= savedWraps.length) return;
+        const t = savedWraps[i]; savedWraps[i] = savedWraps[j]; savedWraps[j] = t;
+        applied();
+      };
+      // Move `id` to just before `beforeId` (or to the end when null).
+      const reinsert = (id, beforeId) => {
+        if (id === beforeId) return;
+        const from = savedWraps.findIndex(w => w.id === id);
+        if (from < 0) return;
+        const [item] = savedWraps.splice(from, 1);
+        let to = (beforeId == null) ? savedWraps.length : savedWraps.findIndex(w => w.id === beforeId);
+        if (to < 0) to = savedWraps.length;
+        savedWraps.splice(to, 0, item);
+        applied();
+      };
+
+      const render = () => {
+        modal.innerHTML = `
+          <div class="sm-title">Reorder wraps</div>
+          <div class="wrap-reorder-hint">Drag a row, or use ▲ ▼ to move.</div>
+          <div class="wrap-reorder-list" id="wrap-reorder-list"></div>
+          <div class="sm-footer"><button type="button" class="sm-apply" id="wrap-reorder-done">Done</button></div>
+        `;
+        const list = modal.querySelector('#wrap-reorder-list');
+        savedWraps.forEach((entry, i) => {
+          const row = document.createElement('div');
+          row.className = 'wrap-reorder-row';
+          row.draggable = true;
+          row.dataset.id = entry.id;
+          row.innerHTML =
+            `<span class="wrap-reorder-grip" aria-hidden="true">≡</span>` +
+            `<span class="wrap-reorder-name">${entry.name}</span>` +
+            `<span class="wrap-reorder-label">${wrapBankChipLabel(entry.step)}</span>` +
+            `<span class="wrap-reorder-btns">` +
+              `<button type="button" class="wrap-reorder-up"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button>` +
+              `<button type="button" class="wrap-reorder-dn"${i === savedWraps.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button>` +
+            `</span>`;
+          row.querySelector('.wrap-reorder-up').addEventListener('click', () => move(entry.id, -1));
+          row.querySelector('.wrap-reorder-dn').addEventListener('click', () => move(entry.id, +1));
+          row.addEventListener('dragstart', (e) => {
+            dragId = entry.id; row.classList.add('dragging');
+            try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', entry.id); } catch (_) {}
+          });
+          row.addEventListener('dragend', () => { dragId = null; });
+          row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('drop-target'); });
+          row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+          row.addEventListener('drop', (e) => {
+            e.preventDefault();
+            row.classList.remove('drop-target');
+            if (dragId && dragId !== entry.id) reinsert(dragId, entry.id);
+          });
+          list.appendChild(row);
+        });
+        modal.querySelector('#wrap-reorder-done').addEventListener('click', () => overlay.remove());
+      };
+      render();
+    }
+
     // Wipe the whole wrap bank after a confirm, tearing down any armed wrap
     // and cycle state so nothing dangles.
     function clearWrapBank() {
@@ -527,6 +612,14 @@
         paintCycle();              // update in place; menu stays open
       });
       menu.appendChild(cycleBtn);
+
+      const reorderBtn = document.createElement('button');
+      reorderBtn.type = 'button';
+      reorderBtn.textContent = 'Reorder…';
+      if (savedWraps.length < 2) reorderBtn.disabled = true;
+      reorderBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      reorderBtn.addEventListener('click', (e) => { e.stopPropagation(); closeWrapsMenu(); openWrapReorder(); });
+      menu.appendChild(reorderBtn);
 
       const shuffleBtn = document.createElement('button');
       shuffleBtn.type = 'button';

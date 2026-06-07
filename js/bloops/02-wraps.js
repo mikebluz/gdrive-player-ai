@@ -5,6 +5,10 @@
     // back to the first after the last. Lets the user "play through" a row
     // of saved wraps one tap at a time.
     let wrapCycleMode = false;
+    // Direction the cycle steps through the bank: +1 = right (forward),
+    // -1 = left (backward). The Wraps menu's Cycle item walks off → right →
+    // left → off.
+    let wrapCycleDir = 1;
     // Index into savedWraps of the wrap currently armed for cycling.
     let wrapCycleIndex = 0;
     // Set on a grid press while cycling so the matching pointerup knows to
@@ -397,21 +401,25 @@
       renderWrapBank();
     }
 
-    // Advance to the next wrap in the bank (wrapping to the first). Called
-    // from the cell pointerup once a cycling press's sound event is over.
+    // Advance one step through the bank in the active direction (wrapping
+    // around either end). Called from the cell pointerup once a cycling
+    // press's sound event is over.
     function advanceWrapCycle() {
       if (!wrapCycleMode || savedWraps.length === 0) return;
-      wrapCycleIndex = (wrapCycleIndex + 1) % savedWraps.length;
+      const len = savedWraps.length;
+      wrapCycleIndex = ((wrapCycleIndex + wrapCycleDir) % len + len) % len;
       armCycleWrap(wrapCycleIndex);
     }
 
-    // Reflect the cycle state on the clickable "Wraps" label.
+    // Reflect the cycle state on the "Wraps" menu label: lit while cycling,
+    // with a directional arrow, plus a ▾ caret marking it as a menu.
     function updateWrapCycleLabel() {
       const label = document.getElementById('wrap-bank-label');
-      if (label) {
-        label.classList.toggle('cycling', wrapCycleMode);
-        label.setAttribute('aria-pressed', wrapCycleMode ? 'true' : 'false');
-      }
+      if (!label) return;
+      label.classList.toggle('cycling', wrapCycleMode);
+      label.setAttribute('aria-expanded', _wrapsMenuEl ? 'true' : 'false');
+      const arrow = wrapCycleMode ? (wrapCycleDir > 0 ? ' →' : ' ←') : '';
+      label.textContent = 'Wraps' + arrow + ' ▾';
     }
 
     function setWrapCycleMode(on) {
@@ -429,19 +437,144 @@
       updateWrapCycleLabel();
     }
 
-    function toggleWrapCycleMode() { setWrapCycleMode(!wrapCycleMode); }
+    // Cycle item state machine: off → right → left → off. Flipping the
+    // direction keeps the cycle armed (no re-seed of the cursor); only the
+    // off↔on transitions go through setWrapCycleMode.
+    function advanceWrapCycleState() {
+      if (savedWraps.length === 0) { setWrapCycleMode(false); return; }
+      if (!wrapCycleMode) {
+        wrapCycleDir = 1;
+        setWrapCycleMode(true);          // off → right
+      } else if (wrapCycleDir > 0) {
+        wrapCycleDir = -1;               // right → left
+        updateWrapCycleLabel();
+      } else {
+        setWrapCycleMode(false);         // left → off
+      }
+    }
 
-    // Wire the clickable "Wraps" label (created in the markup above).
-    (function bindWrapCycleLabel() {
+    // Fisher-Yates shuffle of the bank. Names travel with their entries, so
+    // the chip order visibly changes. Keeps the cycle cursor on the armed
+    // wrap so a running cycle continues from where it was.
+    function shuffleWrapBank() {
+      if (savedWraps.length < 2) return;
+      for (let i = savedWraps.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = savedWraps[i]; savedWraps[i] = savedWraps[j]; savedWraps[j] = tmp;
+      }
+      if (wrapCycleMode) {
+        const idx = savedWraps.findIndex(w => w.id === activeWrapBankId);
+        wrapCycleIndex = idx >= 0 ? idx : 0;
+      }
+      persistSavedWraps();
+      renderWrapBank();
+    }
+
+    // Wipe the whole wrap bank after a confirm, tearing down any armed wrap
+    // and cycle state so nothing dangles.
+    function clearWrapBank() {
+      if (savedWraps.length === 0) return;
+      const n = savedWraps.length;
+      if (!confirm(`Clear all ${n} saved wrap${n === 1 ? '' : 's'} from the bank? This can't be undone.`)) return;
+      savedWraps.length = 0;
+      activeWrapBankId = null;
+      wrapTemplate = null;
+      pendingChord = [];
+      chordMode = false;
+      wrapCycleMode = false;
+      _wrapCyclePendingAdvance = false;
+      if (typeof clearWrapPendingHighlights === 'function') { try { clearWrapPendingHighlights(); } catch (e) {} }
+      if (typeof refreshWrapVisuals === 'function') { try { refreshWrapVisuals(); } catch (e) {} }
+      if (typeof renderSequence === 'function') { try { renderSequence(); } catch (e) {} }
+      persistSavedWraps();
+      renderWrapBank();           // hides the bank + clears cycle label
+      updateWrapCycleLabel();
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+    }
+
+    // ---- Wraps menu (expands from the "Wraps" label) ----
+    // Cycle / Shuffle / Clear. Cycle updates in place (so its off→right→left
+    // →off taps don't close the menu); Shuffle and Clear act and close.
+    let _wrapsMenuEl = null;
+    let _wrapsMenuOutside = null;
+    function closeWrapsMenu() {
+      if (_wrapsMenuOutside) {
+        document.removeEventListener('pointerdown', _wrapsMenuOutside, true);
+        document.removeEventListener('keydown', _wrapsMenuOutside, true);
+        _wrapsMenuOutside = null;
+      }
+      if (_wrapsMenuEl) { _wrapsMenuEl.remove(); _wrapsMenuEl = null; }
+      updateWrapCycleLabel();
+    }
+    function openWrapsMenu(anchorEl) {
+      if (_wrapsMenuEl) { closeWrapsMenu(); return; }
+      const menu = document.createElement('div');
+      menu.className = 'ctx-menu wrap-bank-menu';
+
+      const cycleBtn = document.createElement('button');
+      cycleBtn.type = 'button';
+      const paintCycle = () => {
+        cycleBtn.textContent = !wrapCycleMode
+          ? 'Cycle: Off'
+          : (wrapCycleDir > 0 ? 'Cycle: Right →' : 'Cycle: Left ←');
+        cycleBtn.classList.toggle('active', wrapCycleMode);
+      };
+      paintCycle();
+      cycleBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      cycleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        advanceWrapCycleState();   // off → right → left → off
+        paintCycle();              // update in place; menu stays open
+      });
+      menu.appendChild(cycleBtn);
+
+      const shuffleBtn = document.createElement('button');
+      shuffleBtn.type = 'button';
+      shuffleBtn.textContent = 'Shuffle';
+      if (savedWraps.length < 2) shuffleBtn.disabled = true;
+      shuffleBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      shuffleBtn.addEventListener('click', (e) => { e.stopPropagation(); shuffleWrapBank(); closeWrapsMenu(); });
+      menu.appendChild(shuffleBtn);
+
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.textContent = 'Clear';
+      clearBtn.classList.add('danger');
+      if (savedWraps.length === 0) clearBtn.disabled = true;
+      clearBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      clearBtn.addEventListener('click', (e) => { e.stopPropagation(); closeWrapsMenu(); clearWrapBank(); });
+      menu.appendChild(clearBtn);
+
+      document.body.appendChild(menu);
+      _wrapsMenuEl = menu;
+      // Position under the label, clamped to the viewport.
+      const r = anchorEl.getBoundingClientRect();
+      const mw = menu.offsetWidth || 150;
+      const mh = menu.offsetHeight || 120;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      menu.style.left = Math.max(8, Math.min(r.left, vw - mw - 8)) + 'px';
+      menu.style.top  = Math.min(r.bottom + 4, vh - mh - 8) + 'px';
+
+      // Dismiss on outside pointerdown or Escape (capture phase so it beats
+      // other handlers).
+      _wrapsMenuOutside = (e) => {
+        if (e.type === 'keydown') { if (e.key === 'Escape') closeWrapsMenu(); return; }
+        if (!e.target.closest('.wrap-bank-menu') && e.target !== anchorEl) closeWrapsMenu();
+      };
+      document.addEventListener('pointerdown', _wrapsMenuOutside, true);
+      document.addEventListener('keydown', _wrapsMenuOutside, true);
+      updateWrapCycleLabel();
+    }
+
+    // Wire the "Wraps" label as the menu trigger (markup created above).
+    (function bindWrapsMenuLabel() {
       const label = document.getElementById('wrap-bank-label');
       if (!label) return;
-      label.addEventListener('click', toggleWrapCycleMode);
+      label.addEventListener('click', (e) => { e.stopPropagation(); openWrapsMenu(label); });
       label.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggleWrapCycleMode();
-        }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWrapsMenu(label); }
       });
+      updateWrapCycleLabel();   // sets the initial "Wraps ▾" caret
     })();
 
     function removeWrapFromBank(id) {

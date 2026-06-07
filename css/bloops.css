@@ -5445,7 +5445,16 @@
     .ctx-menu button:hover { background: #2d2d3f; }
     .ctx-menu button.danger { color: #fc8181; }
     .ctx-menu button.danger:hover { background: #2d1a1a; }
+    .ctx-menu button:disabled { opacity: 0.4; cursor: default; }
+    .ctx-menu button:disabled:hover { background: none; }
     .ctx-menu hr { border: none; border-top: 1px solid #2d2d3f; margin: 0; }
+    /* Wraps menu — lit Cycle item while cycling is active. */
+    .wrap-bank-menu button.active {
+      color: #fff;
+      background: rgba(192, 38, 211, 0.35);
+      box-shadow: inset 3px 0 0 #c026d3;
+    }
+    .wrap-bank-menu button.active:hover { background: rgba(192, 38, 211, 0.45); }
 
     .saved-empty {
       color: #2d2d3f;

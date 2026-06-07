@@ -276,6 +276,34 @@
         }, 1500);
       } catch (e) {}
     }
+
+    // iOS keep-alive. Mobile Safari suspends an AudioContext that goes idle
+    // (no active source) for even a short spell; resuming it on the next tap
+    // costs the better part of a second, heard as severe per-press lag where
+    // the sound arrives ~1s late EVERY press. A single permanently-running,
+    // fully-muted oscillator keeps the context 'running' so every press hits
+    // the warm ~25 ms trigger path instead of the suspended cold-start
+    // cushion. Started the first time the context is actually running (it
+    // resumes alongside the context after a background→foreground return, so
+    // it keeps protecting once visibilitychange re-resumes). gain 0 → truly
+    // silent; cost is negligible.
+    let _keepAliveStarted = false;
+    function startAudioKeepAlive() {
+      if (_keepAliveStarted) return;
+      let ac;
+      try { ac = Tone.getContext().rawContext; } catch (e) { return; }
+      if (!ac || ac.state !== 'running') return;
+      try {
+        const osc = ac.createOscillator();
+        const g = ac.createGain();
+        g.gain.value = 0;
+        osc.frequency.value = 20;
+        osc.connect(g);
+        g.connect(ac.destination);
+        osc.start();
+        _keepAliveStarted = true;
+      } catch (e) {}
+    }
     (function bindIosAudioUnlock() {
       const events = ['pointerdown','touchstart','keydown'];
       const handler = () => {
@@ -283,6 +311,7 @@
         try { ac = Tone.getContext().rawContext; } catch (e) { return; }
         if (ac && ac.state === 'running') {
           warmMasterChainOnce();
+          startAudioKeepAlive();
           return;
         }
         if (!ac) return;
@@ -296,7 +325,7 @@
         try {
           const p = ac.resume?.();
           if (p && typeof p.then === 'function') {
-            p.then(() => { warmMasterChainOnce(); }, () => {});
+            p.then(() => { warmMasterChainOnce(); startAudioKeepAlive(); }, () => {});
           } else {
             // Synchronous resume path (older Safari) — try the warm-up
             // immediately; if the chain isn't ready yet, the no-op
@@ -304,6 +333,7 @@
             // re-fire (the _bloopsAudioWarmed flag isn't set unless
             // construction succeeds).
             warmMasterChainOnce();
+            startAudioKeepAlive();
           }
         } catch (e) {}
       };
@@ -312,7 +342,11 @@
     document.addEventListener('visibilitychange', () => {
       const tctx = Tone.getContext().rawContext;
       if (document.hidden) return;
-      if (tctx && tctx.state === 'suspended') tctx.resume();
+      if (tctx && tctx.state === 'suspended') {
+        const rp = tctx.resume?.();
+        if (rp && typeof rp.then === 'function') rp.then(() => startAudioKeepAlive(), () => {});
+      }
+      startAudioKeepAlive();
       // Mobile browsers suspend the AudioContext + the JS scheduler tick
       // while a tab is backgrounded. When the user comes back the
       // worklet (or main-thread closure map) may still hold dispatches

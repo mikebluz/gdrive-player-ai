@@ -577,6 +577,70 @@
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
     }
 
+    // Convert one wrap step to Run (subsequence) or Stack (chord). Single-
+    // note wraps are left untouched (neither form changes them). Carries the
+    // wrap-level tone override + keyContext across so a bulk conversion
+    // doesn't drop them. Mirrors toggleWrapRunStack's per-wrap logic.
+    function _wrapStepToShape(step, shape) {
+      if (!step) return step;
+      const baseSub = (typeof stepSubdivision !== 'undefined') ? stepSubdivision : 1;
+      const carryTop = (out) => {
+        if (step.wrapToneOverride) out.wrapToneOverride = step.wrapToneOverride;
+        if (step.wrapToneParams) out.wrapToneParams = { ...step.wrapToneParams };
+        if (step.keyContext) out.keyContext = step.keyContext;
+        return out;
+      };
+      if (shape === 'run') {
+        if (step.isSub) return step;                  // already a Run
+        if (!Array.isArray(step.chord)) return step;  // single note — leave
+        const sub = (step.subdivision != null) ? step.subdivision : baseSub;
+        const subSteps = step.chord.map(n => ({
+          ...n,
+          params: n.params ? { ...n.params } : undefined,
+          duration: 1,
+          subdivision: sub,
+        }));
+        return carryTop({ isSub: true, subSteps, label: '▤', duration: step.duration || 1, subdivision: 1 });
+      }
+      // stack
+      if (Array.isArray(step.chord)) return step;                       // already a Stack
+      if (!step.isSub || !Array.isArray(step.subSteps)) return step;    // single note — leave
+      const chord = step.subSteps.filter(s => Number.isFinite(s.freq)).map(s => {
+        const v = { ...s, params: s.params ? { ...s.params } : undefined };
+        delete v.duration; delete v.subdivision; delete v.isSub; delete v.subSteps;
+        return v;
+      });
+      return carryTop({
+        chord,
+        label: chord.map(n => n.label).join('·'),
+        duration: step.duration || 1,
+        subdivision: step.subdivision || baseSub,
+      });
+    }
+
+    // Bulk-convert every wrap in the bank to Run or Stack. Also rewrites each
+    // entry's rebase origin so key changes keep the converted shape, and
+    // re-syncs the live armed wrap.
+    function convertAllWrapsTo(shape) {
+      if (savedWraps.length === 0) return;
+      savedWraps.forEach(entry => {
+        entry.step = _wrapStepToShape(entry.step, shape);
+        if (entry.origin && entry.origin.step) {
+          entry.origin.step = _wrapStepToShape(entry.origin.step, shape);
+        }
+      });
+      if (activeWrapBankId) {
+        const e = savedWraps.find(w => w.id === activeWrapBankId);
+        if (e) {
+          wrapTemplate = cloneStep(e.step);
+          if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
+        }
+      }
+      persistSavedWraps();
+      renderWrapBank();
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+    }
+
     // ---- Wraps menu (expands from the "Wraps" label) ----
     // Cycle / Shuffle / Clear. Cycle updates in place (so its off→right→left
     // →off taps don't close the menu); Shuffle and Clear act and close.
@@ -612,6 +676,22 @@
         paintCycle();              // update in place; menu stays open
       });
       menu.appendChild(cycleBtn);
+
+      const runBtn = document.createElement('button');
+      runBtn.type = 'button';
+      runBtn.textContent = 'Run (all → sub)';
+      if (savedWraps.length === 0) runBtn.disabled = true;
+      runBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      runBtn.addEventListener('click', (e) => { e.stopPropagation(); convertAllWrapsTo('run'); closeWrapsMenu(); });
+      menu.appendChild(runBtn);
+
+      const stackBtn = document.createElement('button');
+      stackBtn.type = 'button';
+      stackBtn.textContent = 'Stack (all → chord)';
+      if (savedWraps.length === 0) stackBtn.disabled = true;
+      stackBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      stackBtn.addEventListener('click', (e) => { e.stopPropagation(); convertAllWrapsTo('stack'); closeWrapsMenu(); });
+      menu.appendChild(stackBtn);
 
       const reorderBtn = document.createElement('button');
       reorderBtn.type = 'button';

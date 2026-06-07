@@ -6085,6 +6085,29 @@
       background: rgba(79, 209, 197, 0.18);
       box-shadow: 0 0 8px rgba(79, 209, 197, 0.35);
     }
+    /* Per-note "Override master tone" toggle in the wrap step-editor. */
+    .wrap-notes-modal .wn-tone-override {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: #e2e8f0;
+      cursor: pointer;
+      user-select: none;
+      margin-bottom: 4px;
+    }
+    .wrap-notes-modal .wn-tone-override input { cursor: pointer; }
+    .wrap-notes-modal .wn-tone-hint {
+      font-size: 0.72rem;
+      color: #8a93a6;
+      margin-bottom: 12px;
+      line-height: 1.35;
+    }
+    /* Controls follow the master tone (disabled) until override is on. */
+    .wrap-notes-modal .wn-controls-disabled {
+      opacity: 0.45;
+      pointer-events: none;
+    }
 
     .rename-input {
       width: 100%;

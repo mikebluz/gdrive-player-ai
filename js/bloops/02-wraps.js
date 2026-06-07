@@ -264,18 +264,20 @@
       return step.label || '·';
     }
 
-    // Wraps are tone-agnostic: they store only pitch + structure and adopt
-    // the grid's current (master-lane) tone at play time. Strip any per-note
-    // sound/params so a saved wrap can't pin a stale timbre — every wrap
-    // then sounds with whatever tone the grid currently uses. keyContext and
-    // all pitch/structure fields are preserved.
+    // Wraps are tone-agnostic by default: they store only pitch + structure
+    // and adopt the grid's current (master-lane) tone at play time. Strip any
+    // per-note sound/params so a saved wrap can't pin a stale timbre — every
+    // wrap then sounds with whatever tone the grid currently uses. EXCEPTION:
+    // a leaf flagged `toneOverride` keeps its own sound/params (set via the
+    // wrap step-editor), so master-tone changes leave it alone. keyContext
+    // and all pitch/structure fields are always preserved.
     function _stripWrapTone(step) {
       if (!step) return step;
       if (step.isSub && Array.isArray(step.subSteps)) {
         step.subSteps.forEach(_stripWrapTone);
       } else if (Array.isArray(step.chord)) {
-        step.chord.forEach(v => { if (v) { delete v.sound; delete v.params; } });
-      } else {
+        step.chord.forEach(v => { if (v && !v.toneOverride) { delete v.sound; delete v.params; } });
+      } else if (!step.toneOverride) {
         delete step.sound;
         delete step.params;
       }

@@ -1794,9 +1794,23 @@
         return out;
       };
 
+      // The grid's current (master-lane) tone — what a non-overridden note
+      // plays. Used to populate the disabled controls so they show the real
+      // sound, and as the starting point when the user flips Override on.
+      const masterToneParams = () =>
+        (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : null;
       const render = () => {
         const n = notes[activeNoteIdx];
+        const overridden = !!n.toneOverride;
+        const master = masterToneParams();
         if (!n.params) n.params = {};
+        // When the note follows the master tone, mirror it into the working
+        // copy so the (disabled) controls display what will actually play —
+        // and so enabling Override starts from the current master tone.
+        if (!overridden && master) {
+          n.params = { ...master };
+          n.sound = master.type || n.sound;
+        }
         const p = n.params;
         // Fill defaults so sliders always have a starting value.
         if (!Number.isFinite(p.attack))  p.attack  = 10;
@@ -1806,7 +1820,7 @@
         if (!Number.isFinite(p.volume))  p.volume  = 100;
         if (!Number.isFinite(p.detune))  p.detune  = 0;
         if (!Number.isFinite(p.pan))     p.pan     = 0;
-        if (!p.type) p.type = n.sound || 'sine';
+        if (!p.type) p.type = n.sound || (master && master.type) || 'sine';
 
         const tabsHtml = notes.map((nn, i) =>
           `<button type="button" class="wn-tab${i === activeNoteIdx ? ' active' : ''}" data-idx="${i}">${(nn.label || ('Note ' + (i+1)))}</button>`
@@ -1824,6 +1838,13 @@
               <div class="sm-waves" id="wn-stepdiv-row"></div>
             </div>
           </details>` : '';
+        // Preserve which folds are open across re-render (tab switch /
+        // override toggle) so the panel doesn't collapse under the user.
+        const _prevFoldOpen = {};
+        modal.querySelectorAll('details.sm-fold').forEach(d => {
+          const k = d.querySelector('summary')?.textContent || '';
+          _prevFoldOpen[k] = d.open;
+        });
         modal.innerHTML = `
           <div class="sm-title">Edit wrap ${titleLabel}</div>
           <div class="wn-tabs">${tabsHtml}</div>
@@ -1840,14 +1861,18 @@
           <details class="sm-fold">
             <summary>Sound</summary>
             <div class="sm-fold-body">
-              <div class="sm-waves" id="wn-wave-row" style="margin-bottom:14px;"></div>
-              <div class="sm-param"><div class="sm-param-row">Attack <span class="sm-val" id="wn-atk-v">${p.attack} ms</span></div><input type="range" id="wn-atk" min="1" max="500" value="${p.attack}" /></div>
-              <div class="sm-param"><div class="sm-param-row">Decay <span class="sm-val" id="wn-dec-v">${p.decay} ms</span></div><input type="range" id="wn-dec" min="10" max="1000" value="${p.decay}" /></div>
-              <div class="sm-param"><div class="sm-param-row">Sustain <span class="sm-val" id="wn-sus-v">${p.sustain}%</span></div><input type="range" id="wn-sus" min="0" max="100" value="${p.sustain}" /></div>
-              <div class="sm-param"><div class="sm-param-row">Release <span class="sm-val" id="wn-rel-v">${p.release} ms</span></div><input type="range" id="wn-rel" min="100" max="3000" value="${p.release}" /></div>
-              <div class="sm-param"><div class="sm-param-row">Volume <span class="sm-val" id="wn-vol-v">${p.volume}%</span></div><input type="range" id="wn-vol" min="0" max="100" value="${p.volume}" /></div>
-              <div class="sm-param"><div class="sm-param-row">Tune <span class="sm-val" id="wn-tune-v">${p.detune} ¢</span></div><input type="range" id="wn-tune" min="-100" max="100" value="${p.detune}" /></div>
-              <div class="sm-param"><div class="sm-param-row">Pan <span class="sm-val" id="wn-pan-v">${p.pan === 0 ? 'C' : (p.pan < 0 ? 'L' : 'R') + Math.abs(p.pan)}</span></div><input type="range" id="wn-pan" min="-100" max="100" value="${p.pan}" /></div>
+              <label class="wn-tone-override"><input type="checkbox" id="wn-tone-override" ${overridden ? 'checked' : ''} /> Override master tone</label>
+              <div class="wn-tone-hint">${overridden ? 'This note keeps its own tone — master-tone changes won’t affect it.' : 'Following the master tone. Enable to give this note its own tone.'}</div>
+              <div id="wn-sound-controls"${overridden ? '' : ' class="wn-controls-disabled"'}>
+                <div class="sm-waves" id="wn-wave-row" style="margin-bottom:14px;"></div>
+                <div class="sm-param"><div class="sm-param-row">Attack <span class="sm-val" id="wn-atk-v">${p.attack} ms</span></div><input type="range" id="wn-atk" min="1" max="500" value="${p.attack}" /></div>
+                <div class="sm-param"><div class="sm-param-row">Decay <span class="sm-val" id="wn-dec-v">${p.decay} ms</span></div><input type="range" id="wn-dec" min="10" max="1000" value="${p.decay}" /></div>
+                <div class="sm-param"><div class="sm-param-row">Sustain <span class="sm-val" id="wn-sus-v">${p.sustain}%</span></div><input type="range" id="wn-sus" min="0" max="100" value="${p.sustain}" /></div>
+                <div class="sm-param"><div class="sm-param-row">Release <span class="sm-val" id="wn-rel-v">${p.release} ms</span></div><input type="range" id="wn-rel" min="100" max="3000" value="${p.release}" /></div>
+                <div class="sm-param"><div class="sm-param-row">Volume <span class="sm-val" id="wn-vol-v">${p.volume}%</span></div><input type="range" id="wn-vol" min="0" max="100" value="${p.volume}" /></div>
+                <div class="sm-param"><div class="sm-param-row">Tune <span class="sm-val" id="wn-tune-v">${p.detune} ¢</span></div><input type="range" id="wn-tune" min="-100" max="100" value="${p.detune}" /></div>
+                <div class="sm-param"><div class="sm-param-row">Pan <span class="sm-val" id="wn-pan-v">${p.pan === 0 ? 'C' : (p.pan < 0 ? 'L' : 'R') + Math.abs(p.pan)}</span></div><input type="range" id="wn-pan" min="-100" max="100" value="${p.pan}" /></div>
+              </div>
             </div>
           </details>
           <div class="sm-footer">
@@ -1855,6 +1880,10 @@
             <button type="button" class="sm-apply" id="wn-save">Save</button>
           </div>
         `;
+        modal.querySelectorAll('details.sm-fold').forEach(d => {
+          const k = d.querySelector('summary')?.textContent || '';
+          if (k in _prevFoldOpen) d.open = _prevFoldOpen[k];
+        });
 
         // Tabs — switch active note (working copies retain their edits).
         modal.querySelectorAll('.wn-tab').forEach(t => {
@@ -1977,6 +2006,21 @@
           });
         });
 
+        // Override master tone — when off, the note follows the master
+        // tone and the Sound controls are disabled; when on, the note keeps
+        // its own tone (immune to master changes, via the toneOverride flag).
+        const soundControls = modal.querySelector('#wn-sound-controls');
+        if (soundControls && !overridden) {
+          soundControls.querySelectorAll('input, button').forEach(el => { el.disabled = true; });
+        }
+        const overrideChk = modal.querySelector('#wn-tone-override');
+        if (overrideChk) {
+          overrideChk.addEventListener('change', () => {
+            n.toneOverride = overrideChk.checked;
+            render();
+          });
+        }
+
         // Footer
         modal.querySelector('#wn-cancel').addEventListener('click', () => overlay.remove());
         modal.querySelector('#wn-save').addEventListener('click', () => {
@@ -1987,11 +2031,12 @@
             wrapTemplate.subSteps = notes.map(nn => ({ ...nn, params: { ...(nn.params || {}) } }));
           } else {
             const nn = notes[0];
-            wrapTemplate.freq      = nn.freq;
-            wrapTemplate.label     = nn.label;
-            wrapTemplate.cellIndex = nn.cellIndex;
-            wrapTemplate.sound     = nn.sound;
-            wrapTemplate.params    = { ...(nn.params || {}) };
+            wrapTemplate.freq         = nn.freq;
+            wrapTemplate.label        = nn.label;
+            wrapTemplate.cellIndex    = nn.cellIndex;
+            wrapTemplate.sound        = nn.sound;
+            wrapTemplate.params       = { ...(nn.params || {}) };
+            wrapTemplate.toneOverride = !!nn.toneOverride;
           }
           if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
           if (typeof renderSequence === 'function') renderSequence();

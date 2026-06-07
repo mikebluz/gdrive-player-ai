@@ -6307,6 +6307,51 @@
         color: #b3d4ff;
       }
     }
+    /* Manual/Auto fork reuses .wrap-as-opt with no colour variant — give the
+       neutral option a hover lift so it matches the Stack/Run buttons. */
+    @media (hover: hover) {
+      .wrap-as-opt:not(.wrap-as-stack):not(.wrap-as-run):hover {
+        border-color: #4299e1;
+        transform: translateY(-1px);
+        box-shadow: 0 10px 28px rgba(66, 153, 225, 0.28);
+      }
+    }
+
+    /* Auto chord picker — scrollable grid of chord-structure buttons. */
+    .wrap-auto-modal { width: min(440px, 95vw); }
+    .wrap-auto-hint { font-size: 0.74rem; color: #8a93a6; margin: 4px 0 12px; line-height: 1.35; }
+    .wrap-auto-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 8px;
+      max-height: 56vh;
+      overflow-y: auto;
+      padding: 2px;
+    }
+    .wrap-auto-opt {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(159, 122, 234, 0.32);
+      background: rgba(159, 122, 234, 0.10);
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) {
+      .wrap-auto-opt:hover {
+        border-color: #c026d3;
+        background: rgba(192, 38, 211, 0.22);
+        transform: translateY(-1px);
+      }
+    }
+    .wrap-auto-name { font-size: 0.92rem; font-weight: 700; color: #e2bdf6; }
+    .wrap-auto-count { font-size: 0.68rem; color: #a0aec0; }
 
     /* Collapsible "fold" sections — group related controls under a click-to-
        expand summary header, matching the menubar's panel aesthetic so the

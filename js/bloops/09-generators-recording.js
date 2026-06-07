@@ -1335,6 +1335,135 @@
       });
     }
 
+    // Modal: fork a fresh Wrap into Manual (hand-pick notes, then Close) or
+    // Auto (pick a standard chord structure). Resolves 'manual' | 'auto' |
+    // null via callback. Reuses the .wrap-as-* layout from the Stack/Run
+    // prompt it replaces.
+    function showManualAutoPrompt(onPick) {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay wrap-as-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal wrap-as-modal';
+      modal.innerHTML = `
+        <div class="wrap-as-title">Build wrap…</div>
+        <div class="wrap-as-grid">
+          <button type="button" class="wrap-as-opt" id="ma-manual">
+            <span class="wrap-as-glyph" aria-hidden="true">✋</span>
+            <span class="wrap-as-name">Manual</span>
+            <span class="wrap-as-sub">Tap notes, then Close</span>
+          </button>
+          <button type="button" class="wrap-as-opt" id="ma-auto">
+            <span class="wrap-as-glyph" aria-hidden="true">✨</span>
+            <span class="wrap-as-name">Auto</span>
+            <span class="wrap-as-sub">Pick a chord type</span>
+          </button>
+        </div>
+        <div class="wrap-as-footer">
+          <button type="button" class="wrap-as-cancel" id="ma-cancel">Cancel</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const dismiss = (choice) => {
+        overlay.remove();
+        if (choice != null && typeof onPick === 'function') onPick(choice);
+      };
+      modal.querySelector('#ma-manual').addEventListener('click', () => dismiss('manual'));
+      modal.querySelector('#ma-auto').addEventListener('click',   () => dismiss('auto'));
+      modal.querySelector('#ma-cancel').addEventListener('click', () => dismiss(null));
+      requestAnimationFrame(() => {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(null); });
+      });
+    }
+
+    // Modal: pick a standard chord structure for an Auto wrap. Lists the
+    // shared CHORDS catalog (Major, Minor, …). Resolves the chosen key via
+    // callback; Cancel / click-outside resolves null.
+    function showAutoChordPicker(onPick) {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay wrap-auto-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal wrap-auto-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Auto chord</div>
+        <div class="wrap-auto-hint">Pick a chord shape — grid presses play it transposed to the pressed note.</div>
+        <div class="wrap-auto-grid" id="wrap-auto-grid"></div>
+        <div class="sm-footer"><button type="button" class="sm-preview" id="wa-cancel">Cancel</button></div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const dismiss = (key) => {
+        overlay.remove();
+        if (key != null && typeof onPick === 'function') onPick(key);
+      };
+      const grid = modal.querySelector('#wrap-auto-grid');
+      const catalog = (typeof CHORDS !== 'undefined') ? CHORDS : {};
+      // Musical display order — basic triads first, then 7ths, extensions.
+      // (Object key order alone floats numeric keys like '7'/'9' to the top.)
+      const ORDER = ['maj','min','dim','aug','sus2','sus4','maj7','7','min7',
+        'dim7','m7b5','minMaj7','6','m6','6/9','add9','madd9','9','maj9','min9',
+        '7sus4','7b9','7#9','7b5','7#11','11','min11','maj11','13','maj13','min13'];
+      const keys = ORDER.filter(k => catalog[k])
+        .concat(Object.keys(catalog).filter(k => !ORDER.includes(k)));
+      keys.forEach((key) => {
+        const def = catalog[key];
+        if (!def || !Array.isArray(def.semis)) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'wrap-auto-opt';
+        btn.innerHTML =
+          `<span class="wrap-auto-name">${def.label}</span>` +
+          `<span class="wrap-auto-count">${def.semis.length} notes</span>`;
+        btn.addEventListener('click', () => dismiss(key));
+        grid.appendChild(btn);
+      });
+      modal.querySelector('#wa-cancel').addEventListener('click', () => dismiss(null));
+      requestAnimationFrame(() => {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(null); });
+      });
+    }
+
+    // Build a Stack (chord) wrap from a CHORDS structure and commit it just
+    // like a hand-built Close: arm wrapTemplate, save to the bank, and (with
+    // Keep on) drop the root-position chord into the sequence. The chord is
+    // built at the grid's root note; grid presses transpose it so the pressed
+    // note becomes the chord root.
+    function buildAutoWrap(chordKey) {
+      const def = (typeof CHORDS !== 'undefined') ? CHORDS[chordKey] : null;
+      if (!def || !Array.isArray(def.semis) || def.semis.length === 0) return;
+      const base = (typeof notes !== 'undefined' && notes[0]) ? notes[0] : { freq: 261.63, label: 'C4' };
+      const voices = def.semis.map(semi => {
+        const f = base.freq * Math.pow(2, semi / 12);
+        let label = base.label;
+        try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+        return { freq: f, label, cellIndex: null };
+      });
+      const newStep = {
+        chord: voices,
+        label: voices.map(v => v.label).join('·'),
+        duration: noteLength,
+        subdivision: stepSubdivision,
+      };
+      if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Auto wrap'); } catch (e) {} }
+      // Leave any in-progress build state behind so the auto shape stands alone.
+      chordMode = false;
+      pendingChord = [];
+      _wrapShape = null;
+      if (typeof clearWrapPendingHighlights === 'function') clearWrapPendingHighlights();
+      wrapTemplate = newStep;
+      try { pushWrapToBank(newStep); } catch (e) { console.warn('pushWrapToBank failed:', e); }
+      if (keepMode) {
+        addToSequence(newStep);
+        if (typeof maybePromptStepDiv === 'function') {
+          const _toPrompt = newStep;
+          setTimeout(() => { try { maybePromptStepDiv(_toPrompt); } catch (e) {} }, 0);
+        }
+      }
+      refreshWrapVisuals();
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
     document.getElementById('chord-btn').addEventListener('click', () => {
       // Multi-select grouping: when 2+ steps are selected, fold them into a
       // single chord/sub at the earliest selected slot and drop the rest.
@@ -1478,17 +1607,20 @@
         return;
       }
 
-      // Entering a fresh wrap: show the Run/Stack picker so the user
-      // commits to a shape upfront. The choice lives in _wrapShape and
-      // overrides gridMode at commit time, so the result no longer
-      // depends on the global note-mode banner being set correctly.
-      // Cancel closes the modal without entering chord mode.
+      // Entering a fresh wrap: fork Manual vs Auto. Manual is the classic
+      // hand-built flow — default the shape to Stack (chord) and enter build
+      // mode; the user can still flip to Run via the Wrap Edit menu. Auto
+      // pops a chord-structure picker and commits the chosen chord straight
+      // away. Cancel closes without entering chord mode.
       if (!chordMode) {
-        showRunStackPrompt((shape) => {
-          if (!shape) return;
-          _wrapShape = shape;
-          chordMode = true;
-          refreshWrapVisuals();
+        showManualAutoPrompt((choice) => {
+          if (choice === 'manual') {
+            _wrapShape = 'stack';
+            chordMode = true;
+            refreshWrapVisuals();
+          } else if (choice === 'auto') {
+            showAutoChordPicker((chordKey) => { if (chordKey) buildAutoWrap(chordKey); });
+          }
         });
         return;
       }

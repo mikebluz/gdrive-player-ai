@@ -273,6 +273,10 @@
     // and all pitch/structure fields are always preserved.
     function _stripWrapTone(step) {
       if (!step) return step;
+      // Wrap-level override tone lives on the top step. Keep it only while
+      // its override is on; otherwise drop it so a disabled wrap tone can't
+      // linger in storage.
+      if (!step.wrapToneOverride) delete step.wrapToneParams;
       if (step.isSub && Array.isArray(step.subSteps)) {
         step.subSteps.forEach(_stripWrapTone);
       } else if (Array.isArray(step.chord)) {

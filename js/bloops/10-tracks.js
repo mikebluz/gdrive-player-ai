@@ -37,6 +37,9 @@
       if (s.params) copy.params = { ...s.params };
       if (s.subSteps) copy.subSteps = s.subSteps.map(cloneStep);
       if (s.bend) copy.bend = { ...s.bend };
+      // Wrap-level override tone — deep-copy so a cloned/banked wrap doesn't
+      // share the params object with the live template.
+      if (s.wrapToneParams) copy.wrapToneParams = { ...s.wrapToneParams };
       // Variance: deep-copy the alternates pool so duplicated steps
       // don't share references with the original.
       if (s.variance && Array.isArray(s.variance.notes)) {

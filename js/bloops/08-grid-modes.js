@@ -518,27 +518,37 @@
     //    by the clicked-cell delta and appends a new ▤ chip — the
     //    original "Run = transposed playback" behavior.
     // Wraps carry no timbre of their own by default — at play time every
-    // voice adopts the grid's current (master-lane) tone. Recursively
-    // overwrite each leaf's sound/params with a clone of the supplied master
-    // params so chord voices, sub steps, and single notes all sound with one
-    // shared tone (and a kept-to-sequence copy inherits it too). EXCEPTION: a
-    // leaf flagged `toneOverride` keeps its own sound/params, so it's immune
-    // to master-tone changes (set per note via the wrap step-editor).
+    // voice adopts the grid's current (master-lane) tone. Tone precedence,
+    // highest first:
+    //   1. per-note override  — a leaf flagged `toneOverride` keeps its own
+    //      sound/params (set per note in the wrap step-editor)
+    //   2. wrap-level override — when the wrap's top step is flagged
+    //      `wrapToneOverride`, every non-per-note-overridden leaf uses the
+    //      wrap's `wrapToneParams`
+    //   3. master (grid) tone — the default for everything else
+    // The chosen "base" (wrap tone or master) is computed once from the top
+    // step, then applied recursively so sub steps inherit it too.
     function _stampWrapTone(step, masterParams) {
       if (!step || !masterParams) return step;
-      const type = masterParams.type || 'sine';
+      const base = (step.wrapToneOverride && step.wrapToneParams)
+        ? step.wrapToneParams
+        : masterParams;
       const apply = (leaf) => {
-        if (!leaf || leaf.toneOverride) return;
-        leaf.sound = type;
-        leaf.params = { ...masterParams };
+        if (!leaf || leaf.toneOverride) return;   // per-note override wins
+        leaf.sound = base.type || 'sine';
+        leaf.params = { ...base };
       };
-      if (step.isSub && Array.isArray(step.subSteps)) {
-        step.subSteps.forEach(s => _stampWrapTone(s, masterParams));
-      } else if (Array.isArray(step.chord)) {
-        step.chord.forEach(apply);
-      } else {
-        apply(step);
-      }
+      const walk = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          s.subSteps.forEach(walk);
+        } else if (Array.isArray(s.chord)) {
+          s.chord.forEach(apply);
+        } else {
+          apply(s);
+        }
+      };
+      walk(step);
       return step;
     }
 

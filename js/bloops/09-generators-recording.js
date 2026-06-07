@@ -1767,7 +1767,12 @@
         kind = 'single';
       }
       if (notes.length === 0) return;
+      // activeNoteIdx === -1 selects the wrap-level "All" tab (edits the
+      // wrap's own override tone); 0..n-1 select individual notes.
       let activeNoteIdx = 0;
+      // Wrap-level override working state (committed to wrapTemplate on Save).
+      let wrapOverrideWorking = !!wrapTemplate.wrapToneOverride;
+      let wrapToneWorking = wrapTemplate.wrapToneParams ? { ...wrapTemplate.wrapToneParams } : null;
       const overlay = document.createElement('div');
       overlay.className = 'sm-overlay wrap-notes-overlay';
       const modal = document.createElement('div');
@@ -1800,18 +1805,37 @@
       const masterToneParams = () =>
         (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : null;
       const render = () => {
-        const n = notes[activeNoteIdx];
-        const overridden = !!n.toneOverride;
         const master = masterToneParams();
-        if (!n.params) n.params = {};
-        // When the note follows the master tone, mirror it into the working
-        // copy so the (disabled) controls display what will actually play —
-        // and so enabling Override starts from the current master tone.
-        if (!overridden && master) {
-          n.params = { ...master };
-          n.sound = master.type || n.sound;
+        const onWrapTab = (activeNoteIdx === -1);
+        // `n` is the per-note working copy on note tabs; null on the wrap
+        // tab. `p` is whichever params object the Sound controls edit, and
+        // `overridden` whether those controls are active.
+        let n = null, p, overridden;
+        if (onWrapTab) {
+          overridden = wrapOverrideWorking;
+          // Off → mirror the master tone so the disabled controls show what
+          // plays and enabling starts from it. On → edit the wrap's own tone.
+          if (!overridden) {
+            wrapToneWorking = master ? { ...master } : (wrapToneWorking || {});
+          } else if (!wrapToneWorking) {
+            wrapToneWorking = master ? { ...master } : {};
+          }
+          p = wrapToneWorking;
+        } else {
+          n = notes[activeNoteIdx];
+          overridden = !!n.toneOverride;
+          if (!n.params) n.params = {};
+          // A non-overridden note follows the wrap-level tone when that
+          // override is on, otherwise the master tone. Mirror that base into
+          // the working copy so the (disabled) controls show what will play
+          // and so enabling the per-note override starts from it.
+          const base = wrapOverrideWorking ? wrapToneWorking : master;
+          if (!overridden && base) {
+            n.params = { ...base };
+            n.sound = base.type || n.sound;
+          }
+          p = n.params;
         }
-        const p = n.params;
         // Fill defaults so sliders always have a starting value.
         if (!Number.isFinite(p.attack))  p.attack  = 10;
         if (!Number.isFinite(p.decay))   p.decay   = 100;
@@ -1820,24 +1844,49 @@
         if (!Number.isFinite(p.volume))  p.volume  = 100;
         if (!Number.isFinite(p.detune))  p.detune  = 0;
         if (!Number.isFinite(p.pan))     p.pan     = 0;
-        if (!p.type) p.type = n.sound || (master && master.type) || 'sine';
+        if (!p.type) p.type = (n && n.sound) || (master && master.type) || 'sine';
 
-        const tabsHtml = notes.map((nn, i) =>
-          `<button type="button" class="wn-tab${i === activeNoteIdx ? ' active' : ''}" data-idx="${i}">${(nn.label || ('Note ' + (i+1)))}</button>`
-        ).join('');
+        // "All" tab edits the wrap-level override tone; the rest are notes.
+        const tabsHtml =
+          `<button type="button" class="wn-tab${onWrapTab ? ' active' : ''}" data-idx="-1" title="Wrap-level tone — applies to every note that doesn't have its own override">All</button>` +
+          notes.map((nn, i) =>
+            `<button type="button" class="wn-tab${i === activeNoteIdx ? ' active' : ''}" data-idx="${i}">${(nn.label || ('Note ' + (i+1)))}</button>`
+          ).join('');
         const titleLabel = kind === 'chord' ? 'chord' : (kind === 'sub' ? 'subsequence' : 'note');
         // Step Div section only makes sense for subsequence wraps —
         // each subStep has its own subdivision controlling its slice
         // of the run's cadence. Chord wraps share one subdivision via
         // the parent step (all voices fire simultaneously), and single-
         // note wraps don't need a per-note picker either.
-        const stepDivHtml = kind === 'sub' ? `
+        const stepDivHtml = (!onWrapTab && kind === 'sub') ? `
           <details class="sm-fold">
             <summary>Step Div</summary>
             <div class="sm-fold-body">
               <div class="sm-waves" id="wn-stepdiv-row"></div>
             </div>
           </details>` : '';
+        // The wrap-level tab has no pitch of its own — it only carries a tone.
+        const noteFoldHtml = onWrapTab ? '' : `
+          <details class="sm-fold" open>
+            <summary>Note</summary>
+            <div class="sm-fold-body">
+              <div class="sm-section-label" style="margin-top:0;">Octave</div>
+              <div class="sm-waves" id="wn-octave-picker"></div>
+              <div class="sm-section-label">Pitch</div>
+              <div class="sm-waves" id="wn-note-picker"></div>
+            </div>
+          </details>`;
+        // Sound-fold copy depends on which target is selected.
+        const overrideLabel = onWrapTab ? 'Override master tone (whole wrap)' : 'Override master tone (this note)';
+        const overrideHint = onWrapTab
+          ? (overridden
+              ? 'The whole wrap uses this tone instead of the master. Notes with their own override still win.'
+              : 'Following the master tone. Enable to give the whole wrap its own tone.')
+          : (overridden
+              ? 'This note keeps its own tone — wrap and master tone changes won’t affect it.'
+              : (wrapOverrideWorking
+                  ? 'Following the wrap-level tone (set on the All tab). Enable to override just this note.'
+                  : 'Following the master tone. Enable to give this note its own tone.'));
         // Preserve which folds are open across re-render (tab switch /
         // override toggle) so the panel doesn't collapse under the user.
         const _prevFoldOpen = {};
@@ -1848,21 +1897,13 @@
         modal.innerHTML = `
           <div class="sm-title">Edit wrap ${titleLabel}</div>
           <div class="wn-tabs">${tabsHtml}</div>
-          <details class="sm-fold" open>
-            <summary>Note</summary>
-            <div class="sm-fold-body">
-              <div class="sm-section-label" style="margin-top:0;">Octave</div>
-              <div class="sm-waves" id="wn-octave-picker"></div>
-              <div class="sm-section-label">Pitch</div>
-              <div class="sm-waves" id="wn-note-picker"></div>
-            </div>
-          </details>
+          ${noteFoldHtml}
           ${stepDivHtml}
-          <details class="sm-fold">
+          <details class="sm-fold"${onWrapTab ? ' open' : ''}>
             <summary>Sound</summary>
             <div class="sm-fold-body">
-              <label class="wn-tone-override"><input type="checkbox" id="wn-tone-override" ${overridden ? 'checked' : ''} /> Override master tone</label>
-              <div class="wn-tone-hint">${overridden ? 'This note keeps its own tone — master-tone changes won’t affect it.' : 'Following the master tone. Enable to give this note its own tone.'}</div>
+              <label class="wn-tone-override"><input type="checkbox" id="wn-tone-override" ${overridden ? 'checked' : ''} /> ${overrideLabel}</label>
+              <div class="wn-tone-hint">${overrideHint}</div>
               <div id="wn-sound-controls"${overridden ? '' : ' class="wn-controls-disabled"'}>
                 <div class="sm-waves" id="wn-wave-row" style="margin-bottom:14px;"></div>
                 <div class="sm-param"><div class="sm-param-row">Attack <span class="sm-val" id="wn-atk-v">${p.attack} ms</span></div><input type="range" id="wn-atk" min="1" max="500" value="${p.attack}" /></div>
@@ -1883,20 +1924,26 @@
         modal.querySelectorAll('details.sm-fold').forEach(d => {
           const k = d.querySelector('summary')?.textContent || '';
           if (k in _prevFoldOpen) d.open = _prevFoldOpen[k];
+          // The wrap tab only has the Sound fold — keep it open so its
+          // controls are visible even if Sound was collapsed on a note tab.
+          if (onWrapTab && k === 'Sound') d.open = true;
         });
 
         // Tabs — switch active note (working copies retain their edits).
+        // -1 is the wrap-level "All" tab.
         modal.querySelectorAll('.wn-tab').forEach(t => {
           t.addEventListener('click', () => {
             const i = parseInt(t.dataset.idx, 10);
-            if (Number.isFinite(i) && i >= 0 && i < notes.length) {
+            if (i === -1 || (Number.isFinite(i) && i >= 0 && i < notes.length)) {
               activeNoteIdx = i;
               render();
             }
           });
         });
 
-        // Octave + pitch pickers.
+        // Octave + pitch pickers — only on note tabs (the wrap tab is tone-
+        // only, no pitch).
+        if (!onWrapTab) {
         const octavePicker = modal.querySelector('#wn-octave-picker');
         const notePicker   = modal.querySelector('#wn-note-picker');
         let octavePickerCurrent = Math.max(OCT_MIN, Math.min(OCT_MAX, _parseOct(n.label)));
@@ -1937,12 +1984,13 @@
         };
         renderOctaveRow();
         renderPitchRow();
+        }
 
         // Step Div row (sub wraps only). Buttons map to the same
         // subdivision values used by the Step Div picker elsewhere.
         // Mutates n.subdivision so each subStep's playback length
         // can be tuned independently.
-        if (kind === 'sub') {
+        if (!onWrapTab && kind === 'sub') {
           const stepDivRow = modal.querySelector('#wn-stepdiv-row');
           if (stepDivRow) {
             const STEP_DIVS = [
@@ -1973,7 +2021,7 @@
           btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
           btn.addEventListener('click', () => {
             p.type = s;
-            n.sound = s;
+            if (n) n.sound = s;
             waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
           });
@@ -2006,9 +2054,11 @@
           });
         });
 
-        // Override master tone — when off, the note follows the master
-        // tone and the Sound controls are disabled; when on, the note keeps
-        // its own tone (immune to master changes, via the toneOverride flag).
+        // Override toggle — when off, the target follows its fallback tone
+        // (wrap tone for a note when the wrap override is on, else master)
+        // and the Sound controls are disabled; when on, the target keeps its
+        // own tone. On the wrap tab this drives the wrap-level override; on a
+        // note tab it drives that note's per-note override.
         const soundControls = modal.querySelector('#wn-sound-controls');
         if (soundControls && !overridden) {
           soundControls.querySelectorAll('input, button').forEach(el => { el.disabled = true; });
@@ -2016,7 +2066,8 @@
         const overrideChk = modal.querySelector('#wn-tone-override');
         if (overrideChk) {
           overrideChk.addEventListener('change', () => {
-            n.toneOverride = overrideChk.checked;
+            if (onWrapTab) wrapOverrideWorking = overrideChk.checked;
+            else           n.toneOverride      = overrideChk.checked;
             render();
           });
         }
@@ -2037,6 +2088,13 @@
             wrapTemplate.sound        = nn.sound;
             wrapTemplate.params       = { ...(nn.params || {}) };
             wrapTemplate.toneOverride = !!nn.toneOverride;
+          }
+          // Wrap-level override tone (applies to notes without their own).
+          wrapTemplate.wrapToneOverride = wrapOverrideWorking;
+          if (wrapOverrideWorking && wrapToneWorking) {
+            wrapTemplate.wrapToneParams = { ...wrapToneWorking };
+          } else {
+            delete wrapTemplate.wrapToneParams;
           }
           if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
           if (typeof renderSequence === 'function') renderSequence();

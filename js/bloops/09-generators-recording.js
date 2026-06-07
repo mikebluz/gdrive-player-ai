@@ -1664,6 +1664,7 @@
       snapshotForUndo(direction > 0 ? 'Invert wrap up' : 'Invert wrap down');
       _refreshWrapLabel();
       refreshWrapVisuals();
+      if (typeof syncActiveWrapToBank === 'function') syncActiveWrapToBank();
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     // Convert wrapTemplate between chord (simultaneous) and sub
@@ -1713,6 +1714,7 @@
           };
         }
         refreshWrapVisuals();
+        if (typeof syncActiveWrapToBank === 'function') syncActiveWrapToBank();
         if (typeof persistWorkspace === 'function') persistWorkspace();
         return;
       }
@@ -1993,6 +1995,7 @@
           }
           if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
           if (typeof renderSequence === 'function') renderSequence();
+          if (typeof syncActiveWrapToBank === 'function') syncActiveWrapToBank();
           if (typeof persistWorkspace === 'function') persistWorkspace();
           overlay.remove();
         });

@@ -517,6 +517,25 @@
     //  - Note-lock-mode OFF: each click transposes the entire base sub
     //    by the clicked-cell delta and appends a new ▤ chip — the
     //    original "Run = transposed playback" behavior.
+    // Wraps carry no timbre of their own — at play time every voice adopts
+    // the grid's current (master-lane) tone. Recursively overwrite each
+    // leaf's sound/params with a clone of the supplied master params so
+    // chord voices, sub steps, and single notes all sound with one shared
+    // tone (and a kept-to-sequence copy inherits it too).
+    function _stampWrapTone(step, masterParams) {
+      if (!step || !masterParams) return step;
+      const type = masterParams.type || 'sine';
+      const apply = (leaf) => { if (leaf) { leaf.sound = type; leaf.params = { ...masterParams }; } };
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        step.subSteps.forEach(s => _stampWrapTone(s, masterParams));
+      } else if (Array.isArray(step.chord)) {
+        step.chord.forEach(apply);
+      } else {
+        apply(step);
+      }
+      return step;
+    }
+
     // Click handler used while a wrapTemplate is set. Plays a transposed
     // copy of the saved Wrap form at the clicked cell's pitch (its first
     // note becomes the clicked note). With keepMode on, also appends
@@ -543,6 +562,10 @@
       // to the current scale so a wrap auditioned over (e.g.) C major
       // never plays C# / Eb / etc. Chromatic scale → no-op snap.
       const transposed = snapStepToScale(transposeStepRec(wrapTemplate, delta));
+      // Adopt the pressed cell's current tone (the master grid tone) for
+      // every voice — wraps don't store their own timbre.
+      const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;
+      if (masterTone) _stampWrapTone(transposed, masterTone);
       const at = Tone.now();
       if (transposed.isSub && Array.isArray(transposed.subSteps)) {
         playSubStepsAtTime(transposed.subSteps, at);
@@ -603,6 +626,10 @@
       if (baseFreq == null) return null;
       const delta = semitonesBetweenHz(baseFreq, note.freq);
       const transposed = snapStepToScale(transposeStepRec(wrapTemplate, delta));
+      // Adopt the pressed cell's current tone (the master grid tone) for
+      // every voice — wraps don't store their own timbre.
+      const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;
+      if (masterTone) _stampWrapTone(transposed, masterTone);
 
       _wrapTransposeDisplayStep = transposed;
       updateChordDisplay();

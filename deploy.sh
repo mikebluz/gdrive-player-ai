@@ -25,9 +25,16 @@ if [[ -z "$FTP_HOST" || -z "$FTP_USER" || -z "$FTP_PASS" || -z "$REMOTE_DIR" ]];
   exit 1
 fi
 
-# Ensure credentials file exists before deploying
+# Ensure credentials file exists (and is filled in) before deploying.
+# js/config.js is gitignored, so it only reaches the server through this
+# upload — a missing or placeholder file means the deployed app throws
+# "Missing Google API config (js/config.js)." at sign-in.
 if [[ ! -f "js/config.js" ]]; then
   echo "❌ Error: js/config.js not found. Copy js/config.example.js to js/config.js and fill in your credentials."
+  exit 1
+fi
+if grep -q "YOUR_CLIENT_ID\|YOUR_API_KEY" js/config.js; then
+  echo "❌ Error: js/config.js still has placeholder credentials. Fill in your real CLIENT_ID and API_KEY."
   exit 1
 fi
 
@@ -87,8 +94,16 @@ set ftp:ssl-allow no
 set net:max-retries 1
 set net:timeout 15
 mirror --reverse --verbose "$STAGE_DIR/" "$REMOTE_DIR/"
+# Force-upload the credentials file explicitly — guarantees js/config.js
+# lands even if the mirror diff ever decides to skip it. Without config.js
+# the deployed app can't sign in to Google Drive.
+mkdir -p "$REMOTE_DIR/js"
+put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
 bye
 EOF
 
 echo ""
 echo "🎵 Deployment complete."
+echo "🔎 Verify the credentials reached the server:"
+echo "    open https://<your-domain>/js/config.js — it should show your real"
+echo "    clientId/apiKey, not a 404. Then hard-refresh the app (Cmd-Shift-R)."

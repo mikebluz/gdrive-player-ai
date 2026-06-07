@@ -974,6 +974,23 @@
         }
       } catch (e) {}
 
+      // Low-latency trigger time for a warm interactive press: the raw
+      // AudioContext.currentTime, NOT Tone.now() — Tone.now() adds the 25 ms
+      // scheduling lookAhead, which is pure latency for a touch-driven note.
+      // (The synth branch already does this inline; sampler / grain /
+      // wavetable presses used to fall back to Tone.now(), so the DEFAULT
+      // sample:piano cell paid the extra 25 ms on every tap.) Honors a pinned
+      // startAt / cold-start shift via _coldStartAt when present.
+      const _warmAt = () => {
+        if (_coldStartAt != null) return _coldStartAt;
+        try {
+          const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
+            ? Tone.context.rawContext : null;
+          if (ac) return ac.currentTime;
+        } catch (e) {}
+        return (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+      };
+
       if (typeof params === 'string') params = { type: params };
       const {
         type = 'sine',
@@ -1039,7 +1056,7 @@
           const player = new Tone.GrainPlayer(playerOpts).connect(
             fxOverrideGlobal ? masterLimiter : globalSendTap
           );
-          const triggerAt = _coldStartAt != null ? _coldStartAt : Tone.now();
+          const triggerAt = _warmAt();
           const fire = () => { try { player.start(triggerAt); } catch (e) {} };
           if (player.loaded) fire();
           else if (typeof grainInfo.buffer?.loaded?.then === 'function') {
@@ -1066,7 +1083,7 @@
         }
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
-        try { entry.sampler.triggerAttack(tunedFreq, _coldStartAt, velocity); } catch (e) {}
+        try { entry.sampler.triggerAttack(tunedFreq, _warmAt(), velocity); } catch (e) {}
         let released = false;
         return { release: () => {
           if (released) return; released = true;
@@ -1305,7 +1322,7 @@
           wtOscs.push(osc);
           wtGains.push(g);
         });
-        const _triggerAt = startAt != null ? startAt : (_coldStartAt != null ? _coldStartAt : Tone.now());
+        const _triggerAt = _warmAt();
         try { ampEnv.triggerAttack(_triggerAt, velocity); } catch (e) {}
         wtOscs.forEach(o => { try { o.start(_triggerAt); } catch (e) {} });
         let released = false;

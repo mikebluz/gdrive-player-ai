@@ -3492,7 +3492,7 @@
        whole selection (multi-mode included). The chip background still
        lerps toward the L/R hard-pan colour so the visual cue tracks
        the slider live. */
-    .step-pan-bar, .step-vol-bar, .step-slip-bar, .step-strum-bar {
+    .step-pan-bar, .step-vol-bar, .step-slip-bar, .step-strum-bar, .step-ratchet-bar {
       display: flex;
       align-items: center;
       gap: 12px;
@@ -3500,8 +3500,8 @@
       background: #050510;
     }
     .step-pan-bar, .step-vol-bar, .step-slip-bar { border-bottom: 1px solid #1a1a2e; }
-    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden], .step-strum-bar[hidden] { display: none; }
-    .step-pan-label, .step-vol-label, .step-slip-label, .step-strum-label {
+    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden], .step-strum-bar[hidden], .step-ratchet-bar[hidden] { display: none; }
+    .step-pan-label, .step-vol-label, .step-slip-label, .step-strum-label, .step-ratchet-label {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
       font-weight: 700;
@@ -3512,7 +3512,8 @@
     .step-pan-bar input[type="range"],
     .step-vol-bar input[type="range"],
     .step-slip-bar input[type="range"],
-    .step-strum-bar input[type="range"] {
+    .step-strum-bar input[type="range"],
+    .step-ratchet-bar input[type="range"] {
       flex: 1;
       height: 4px;
       accent-color: #4fd1c5;
@@ -3532,7 +3533,7 @@
         padding: 18px 0;
       }
     }
-    .step-pan-val, .step-vol-val, .step-slip-val, .step-strum-val {
+    .step-pan-val, .step-vol-val, .step-slip-val, .step-strum-val, .step-ratchet-val {
       min-width: 36px;
       text-align: right;
       font-family: 'Segoe UI', sans-serif;

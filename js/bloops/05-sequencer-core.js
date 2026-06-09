@@ -1320,6 +1320,21 @@
           if (strumVal) strumVal.textContent = (st > 0 ? '+' : '') + st + (st === 0 ? '' : ' ms');
         }
       }
+      // Ratchet (Roll) bar — applies to any playable step (single or chord).
+      const ratBar = document.getElementById('step-ratchet-bar');
+      if (ratBar) {
+        const _ratStep = (showBars && eligible.length > 0) ? eligible[eligible.length - 1] : null;
+        if (!_ratStep || polyLaneScope) {
+          ratBar.hidden = true;
+        } else {
+          ratBar.hidden = false;
+          const rv = Number.isFinite(_ratStep.ratchet) ? Math.max(1, Math.min(8, _ratStep.ratchet)) : 1;
+          const ratSlider = document.getElementById('step-ratchet-slider');
+          const ratVal = document.getElementById('step-ratchet-val');
+          if (ratSlider) ratSlider.value = String(rv);
+          if (ratVal) ratVal.textContent = rv + '×';
+        }
+      }
       // Edit row wraps both sliders + the Edit button; hide when no
       // bar is up. The Edit button itself is shown only when at least
       // one chip is selected (so the menu has a concrete target —

@@ -1074,6 +1074,24 @@
       });
     })();
 
+    // Ratchet (Roll) slider — splits the selected step(s) into N sub-hits.
+    // Stored on the step's top-level `ratchet`.
+    (function bindStepRatchetSlider() {
+      const slider = document.getElementById('step-ratchet-slider');
+      const valEl  = document.getElementById('step-ratchet-val');
+      if (!slider) return;
+      slider.addEventListener('input', () => {
+        const v = Math.max(1, Math.min(8, parseInt(slider.value, 10) || 1));
+        selectedStepRefs.filter(_stepHasPlayableContent).forEach(s => {
+          if (v <= 1) delete s.ratchet; else s.ratchet = v;
+        });
+        if (valEl) valEl.textContent = v + '×';
+      });
+      slider.addEventListener('change', () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
 
     // ---- Groove panel (swing / humanize) -------------------------------
     // A small popover off the ≈ transport button. Edits the global groove

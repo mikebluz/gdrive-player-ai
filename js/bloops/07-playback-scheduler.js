@@ -627,27 +627,39 @@
             _ensureFluidPlaybackRaf();
             try { updateKeepLabel(); } catch (e) {}
           }, fireTime);
-        } else if (step.chord) {
-          const size = step.chord.length;
-          // Capture the chord voices upfront and fire them in a tight
-          // synchronous loop with the SAME fireTime so they hit the
-          // audio context simultaneously. (Originally a forEach with
-          // captured n; same semantics, just makes the intent explicit.)
-          // Strum: stagger the chord voices by step.strum ms each. Positive
-          // strums low→high (chord arrays run freq-ascending), negative
-          // high→low. 0 = simultaneous (the common path, unchanged).
+        } else if (step.chord || step.freq != null) {
+          // Fire all of this step's voices at audio time `at`, ringing for
+          // `dms`. Factored out so ratchet can re-fire it N times.
           const _strumMs = Number.isFinite(step.strum) ? Math.max(-80, Math.min(80, step.strum)) : 0;
           const _strumSec = _strumMs / 1000;
-          for (let ci = 0; ci < step.chord.length; ci++) {
-            const n = step.chord[ci];
-            if (!n) continue;
-            const _voiceAt = (_strumSec === 0)
-              ? fireTime
-              : fireTime + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
-            playNote(n.freq, paramsWithBend(_withVel(chordVoiceParams(n.params || n.sound || 'sine', size, step)), step.bend), durMs, _voiceAt, undefined, undefined, laneIdx);
+          const _fireStepVoices = (at, dms) => {
+            if (step.chord) {
+              const size = step.chord.length;
+              for (let ci = 0; ci < step.chord.length; ci++) {
+                const n = step.chord[ci];
+                if (!n) continue;
+                // Strum: stagger voices low→high (+) or high→low (−).
+                const _voiceAt = (_strumSec === 0)
+                  ? at
+                  : at + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
+                playNote(n.freq, paramsWithBend(_withVel(chordVoiceParams(n.params || n.sound || 'sine', size, step)), step.bend), dms, _voiceAt, undefined, undefined, laneIdx);
+              }
+            } else {
+              playNote(step.freq, paramsWithBend(_withVel(step.params || step.sound || 'sine'), step.bend), dms, at, undefined, undefined, laneIdx);
+            }
+          };
+          // Ratchet: split the step into N evenly-spaced sub-hits across its
+          // duration (rolls / stutters). 1 (or unset) = the normal single
+          // hit. Capped at 8 so a tiny step can't spawn a runaway burst.
+          const _rat = Number.isFinite(step.ratchet) ? Math.max(1, Math.min(8, Math.floor(step.ratchet))) : 1;
+          if (_rat <= 1) {
+            _fireStepVoices(fireTime, durMs);
+          } else {
+            const _subMs = durMs / _rat;
+            for (let j = 0; j < _rat; j++) {
+              _fireStepVoices(fireTime + (j * _subMs) / 1000, Math.max(20, _subMs));
+            }
           }
-        } else if (step.freq != null) {
-          playNote(step.freq, paramsWithBend(_withVel(step.params || step.sound || 'sine'), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
         }
       } finally {
         _suppressCellFlash = false;

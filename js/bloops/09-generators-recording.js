@@ -321,6 +321,84 @@
       });
     }
 
+    // ---- Euclidean rhythm generator ----
+    // Spread K hits as evenly as possible across N steps (Bjorklund-style
+    // bresenham) — the classic generative rhythm engine. Optional rotation
+    // shifts the pattern's starting point. Because lanes loop at their own
+    // length, generating e.g. 5-over-8 in one lane and 3-over-8 in another
+    // gives instant polymeter/polyrhythm.
+    function euclideanPattern(k, n, rot) {
+      n = Math.max(1, n | 0);
+      k = Math.max(0, Math.min(n, k | 0));
+      const p = [];
+      let bucket = 0;
+      for (let i = 0; i < n; i++) {
+        bucket += k;
+        if (bucket >= n) { bucket -= n; p.push(1); } else { p.push(0); }
+      }
+      const r = (((rot | 0) % n) + n) % n;
+      return r ? p.slice(r).concat(p.slice(0, r)) : p;
+    }
+    // Build a lane of steps from a Euclidean pattern. Hits play the grid's
+    // root note; gaps are rests. Subdivision/duration follow the current
+    // step size so it drops straight into the active tempo grid.
+    function generateEuclidean(k, n, rot) {
+      const pat = euclideanPattern(k, n, rot);
+      const base = (typeof notes !== 'undefined' && notes[0]) ? notes[0] : { freq: 261.63, label: 'C4' };
+      const sub = (typeof stepSubdivision !== 'undefined') ? stepSubdivision : 0.5;
+      return pat.map(hit => hit
+        ? { freq: base.freq, label: base.label, cellIndex: (notes && notes[0]) ? 0 : null, duration: 1, subdivision: sub }
+        : { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub });
+    }
+    function showEuclidDialog() {
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.innerHTML =
+        '<div class="sm-title">Euclidean rhythm</div>' +
+        '<div class="sm-param"><div class="sm-param-row">Hits <span class="sm-val" id="euc-k-v">5</span></div><input type="range" id="euc-k" min="1" max="16" value="5" /></div>' +
+        '<div class="sm-param"><div class="sm-param-row">Steps <span class="sm-val" id="euc-n-v">8</span></div><input type="range" id="euc-n" min="2" max="32" value="8" /></div>' +
+        '<div class="sm-param"><div class="sm-param-row">Rotate <span class="sm-val" id="euc-r-v">0</span></div><input type="range" id="euc-r" min="0" max="31" value="0" /></div>' +
+        '<div class="euc-preview" id="euc-preview" style="font-family:monospace;letter-spacing:2px;color:#9f7aea;margin:6px 0 10px;word-break:break-all;"></div>' +
+        '<div class="sm-footer"><button type="button" class="sm-preview" id="euc-cancel">Cancel</button><button type="button" class="sm-apply" id="euc-go">Generate</button></div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'), rEl = modal.querySelector('#euc-r');
+      const draw = () => {
+        const k = parseInt(kEl.value, 10), n = parseInt(nEl.value, 10), r = parseInt(rEl.value, 10);
+        if (parseInt(kEl.max, 10) !== n) kEl.max = String(n);
+        if (parseInt(kEl.value, 10) > n) { kEl.value = String(n); }
+        rEl.max = String(Math.max(0, n - 1));
+        modal.querySelector('#euc-k-v').textContent = kEl.value;
+        modal.querySelector('#euc-n-v').textContent = n;
+        modal.querySelector('#euc-r-v').textContent = rEl.value;
+        modal.querySelector('#euc-preview').textContent =
+          euclideanPattern(parseInt(kEl.value, 10), n, parseInt(rEl.value, 10)).map(h => h ? '●' : '·').join('');
+      };
+      [kEl, nEl, rEl].forEach(el => el.addEventListener('input', draw));
+      draw();
+      const close = () => overlay.remove();
+      modal.querySelector('#euc-cancel').addEventListener('click', close);
+      modal.querySelector('#euc-go').addEventListener('click', () => {
+        const k = parseInt(kEl.value, 10), n = parseInt(nEl.value, 10), r = parseInt(rEl.value, 10);
+        snapshotForUndo('Euclid');
+        try { stopSequence(); } catch (e) {}
+        const generated = generateEuclidean(k, n, r);
+        sequence = keepMode ? sequence.concat(generated) : generated;
+        pendingChord = [];
+        insertionPoint = null;
+        renderSequence();
+        const sb = document.getElementById('save-btn'); if (sb) sb.disabled = sequence.length === 0;
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        close();
+      });
+      requestAnimationFrame(() => {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      });
+    }
+    document.getElementById('euclid-btn')?.addEventListener('click', showEuclidDialog);
+
     // Seed sequence dialog — built-in song presets and text-to-sequence
     // moved out of the Random dialog so each entry point stays focused.
     function showSeedDialog() {

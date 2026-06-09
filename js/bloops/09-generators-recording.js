@@ -350,128 +350,147 @@
       }
       return cp ? { sound: cp.type || 'sine', params: { ...cp } } : {};
     }
-    // Build a lane of steps from a Euclidean pattern. `noteList` is the set
-    // of notes to play (default: grid root). With `spread`, the notes are
-    // distributed one-per-hit cycling through the pattern (an arpeggiated
-    // chord); without it, multiple notes stack into a chord on every hit.
-    // Hits (Circles) and gaps (Dots) carry their own step div so you can,
-    // e.g., make the hits 1/8 and the gaps 1/16. Hits adopt the grid tone.
-    function generateEuclidean(k, n, rot, noteList, spread, circleDiv, dotDiv) {
-      const pat = euclideanPattern(k, n, rot);
-      const cSub = Number.isFinite(circleDiv) ? circleDiv : 0.5;
-      const dSub = Number.isFinite(dotDiv) ? dotDiv : 0.5;
-      const fallback = (typeof notes !== 'undefined' && notes[0]) ? notes[0] : { freq: 261.63, label: 'C4', cellIndex: 0 };
-      const list = (Array.isArray(noteList) && noteList.length) ? noteList : [fallback];
-      let hit = 0;
-      return pat.map(on => {
-        if (!on) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: dSub };
-        let step;
-        if (spread || list.length === 1) {
-          // One note per hit (cycling through the selected notes).
-          const note = list[hit % list.length];
-          step = { freq: note.freq, label: note.label, cellIndex: Number.isFinite(note.cellIndex) ? note.cellIndex : null,
-                   ..._euclidToneFor(note), duration: 1, subdivision: cSub };
-        } else {
-          // Stacked chord on every hit.
-          step = {
-            chord: list.map(note => ({ freq: note.freq, label: note.label,
-                     cellIndex: Number.isFinite(note.cellIndex) ? note.cellIndex : null, ..._euclidToneFor(note) })),
-            label: list.map(nn => nn.label).join('·'),
-            duration: 1, subdivision: cSub,
-          };
+    // Per-step builder. Each pattern position carries its own config so every
+    // element of the rhythm is independently editable: a circle (hit) plays
+    // its own note(s) (1 = single, 2+ = chord) at its own step div; a dot
+    // (rest) carries its own step div. Hits adopt the current grid tone.
+    function _buildEuclidSteps(pattern, perStep, gridNotes) {
+      const noteFor = (idx) => gridNotes[idx] || gridNotes[0] || { freq: 261.63, label: 'C4', cellIndex: 0 };
+      const voice = (nt) => ({ freq: nt.freq, label: nt.label, cellIndex: Number.isFinite(nt.cellIndex) ? nt.cellIndex : null, ..._euclidToneFor(nt) });
+      return pattern.map((on, i) => {
+        const cfg = perStep[i] || {};
+        if (!on) {
+          return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: Number.isFinite(cfg.dotDiv) ? cfg.dotDiv : 0.5 };
         }
-        hit++;
-        return step;
+        const idxs = (Array.isArray(cfg.noteIdxs) && cfg.noteIdxs.length) ? cfg.noteIdxs : [0];
+        const cDiv = Number.isFinite(cfg.circleDiv) ? cfg.circleDiv : 0.5;
+        if (idxs.length === 1) {
+          return { ...voice(noteFor(idxs[0])), duration: 1, subdivision: cDiv };
+        }
+        return { chord: idxs.map(ix => voice(noteFor(ix))), label: idxs.map(ix => noteFor(ix).label).join('·'), duration: 1, subdivision: cDiv };
       });
     }
     function showEuclidDialog() {
-      const overlay = document.createElement('div');
-      overlay.className = 'sm-overlay';
-      const modal = document.createElement('div');
-      modal.className = 'sm-modal';
+      const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes) && notes.length)
+        ? notes : [{ freq: 261.63, label: 'C4', cellIndex: 0 }];
+      const EUC_DIVS = [['1/32', 0.125], ['1/16', 0.25], ['1/8', 0.5], ['1/4', 1], ['1/2', 2], ['1/1', 4], ['2/1', 8]];
+      // Per-position config, persistent across K/N/Rotate changes (indexed by
+      // step position). Both step divs default to 1/8; root note selected.
+      const mkCfg = () => ({ noteIdxs: [0], circleDiv: 0.5, dotDiv: 0.5 });
+      const state = { k: 5, n: 8, rot: 0, sel: 0, perStep: [] };
+      const ensurePerStep = () => {
+        while (state.perStep.length < state.n) state.perStep.push(mkCfg());
+        if (state.perStep.length > state.n) state.perStep.length = state.n;
+        state.sel = Math.max(0, Math.min(state.n - 1, state.sel));
+      };
+      ensurePerStep();
+
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal euc-modal';
       modal.innerHTML =
         '<div class="sm-title">Euclidean rhythm</div>' +
         '<div class="sm-param"><div class="sm-param-row">Hits <span class="sm-val" id="euc-k-v">5</span></div><input type="range" id="euc-k" min="1" max="16" value="5" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Steps <span class="sm-val" id="euc-n-v">8</span></div><input type="range" id="euc-n" min="2" max="32" value="8" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Rotate <span class="sm-val" id="euc-r-v">0</span></div><input type="range" id="euc-r" min="0" max="31" value="0" /></div>' +
-        '<div class="euc-preview" id="euc-preview" style="font-family:monospace;letter-spacing:2px;color:#9f7aea;margin:6px 0 10px;word-break:break-all;"></div>' +
-        '<div class="sm-section-label" style="margin-top:0;">Circle = notes (1 = single note, 2+ = chord)</div>' +
-        '<div class="sm-waves" id="euc-notes"></div>' +
-        '<label class="euc-spread"><input type="checkbox" id="euc-spread" /> Spread notes across hits (arpeggiate)</label>' +
-        '<div class="sm-section-label">Circle step div</div>' +
-        '<div class="sm-waves" id="euc-cdiv"></div>' +
-        '<div class="sm-section-label">Dot step div</div>' +
-        '<div class="sm-waves" id="euc-ddiv"></div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit it</div>' +
+        '<div class="euc-strip" id="euc-strip"></div>' +
+        '<div class="euc-stepedit" id="euc-stepedit"></div>' +
         '<div class="sm-footer"><button type="button" class="sm-preview" id="euc-cancel">Cancel</button><button type="button" class="sm-apply" id="euc-go">Generate</button></div>';
-      overlay.appendChild(modal);
-      document.body.appendChild(overlay);
-
-      // Note picker — the grid's current notes; root selected by default.
-      const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes)) ? notes : [];
-      const selected = new Set(gridNotes.length ? [0] : []);
-      const notesHost = modal.querySelector('#euc-notes');
-      gridNotes.forEach((nt, i) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'sm-wave' + (selected.has(i) ? ' active' : '');
-        btn.textContent = nt.label;
-        btn.addEventListener('click', () => {
-          if (selected.has(i)) { if (selected.size > 1) selected.delete(i); }
-          else selected.add(i);
-          btn.classList.toggle('active', selected.has(i));
-        });
-        notesHost.appendChild(btn);
-      });
-
-      // Circle (hit) + Dot (rest) step-div pickers — single-select rows,
-      // both default to 1/8.
-      const EUC_DIVS = [['1/32', 0.125], ['1/16', 0.25], ['1/8', 0.5], ['1/4', 1], ['1/2', 2], ['1/1', 4], ['2/1', 8]];
-      const divState = { circle: 0.5, dot: 0.5 };
-      const buildDivRow = (hostId, which) => {
-        const host = modal.querySelector('#' + hostId);
-        if (!host) return;
-        EUC_DIVS.forEach(([label, val]) => {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'sm-wave' + (Math.abs(divState[which] - val) < 0.0001 ? ' active' : '');
-          btn.textContent = label;
-          btn.addEventListener('click', () => {
-            divState[which] = val;
-            host.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-          });
-          host.appendChild(btn);
-        });
-      };
-      buildDivRow('euc-cdiv', 'circle');
-      buildDivRow('euc-ddiv', 'dot');
+      overlay.appendChild(modal); document.body.appendChild(overlay);
 
       const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'), rEl = modal.querySelector('#euc-r');
-      const draw = () => {
-        const n = parseInt(nEl.value, 10);
-        if (parseInt(kEl.max, 10) !== n) kEl.max = String(n);
-        if (parseInt(kEl.value, 10) > n) { kEl.value = String(n); }
-        rEl.max = String(Math.max(0, n - 1));
-        modal.querySelector('#euc-k-v').textContent = kEl.value;
-        modal.querySelector('#euc-n-v').textContent = n;
-        modal.querySelector('#euc-r-v').textContent = rEl.value;
-        modal.querySelector('#euc-preview').textContent =
-          euclideanPattern(parseInt(kEl.value, 10), n, parseInt(rEl.value, 10)).map(h => h ? '●' : '·').join('');
+      const stripEl = modal.querySelector('#euc-strip'), editEl = modal.querySelector('#euc-stepedit');
+      const pattern = () => euclideanPattern(state.k, state.n, state.rot);
+
+      const renderStrip = () => {
+        const pat = pattern();
+        stripEl.innerHTML = '';
+        pat.forEach((on, i) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'euc-cell' + (on ? ' hit' : ' rest') + (i === state.sel ? ' sel' : '');
+          btn.textContent = on ? '●' : '·';
+          btn.addEventListener('click', () => { state.sel = i; renderStrip(); renderEditor(); });
+          stripEl.appendChild(btn);
+        });
       };
-      [kEl, nEl, rEl].forEach(el => el.addEventListener('input', draw));
-      draw();
+      const renderEditor = () => {
+        const pat = pattern();
+        const i = state.sel;
+        const isHit = !!pat[i];
+        const cfg = state.perStep[i] || (state.perStep[i] = mkCfg());
+        let html = '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
+          '<div class="sm-section-label" style="margin-top:0;">Step div</div><div class="sm-waves" id="euc-div"></div>';
+        if (isHit) html += '<div class="sm-section-label">Notes (1 = single, 2+ = chord)</div><div class="sm-waves" id="euc-notes"></div>';
+        html += '<div class="euc-allrow"><button type="button" class="euc-all" id="euc-all-div">Apply div to all ' + (isHit ? '●' : '·') + '</button>' +
+          (isHit ? '<button type="button" class="euc-all" id="euc-all-notes">Apply notes to all ●</button>' : '') + '</div>';
+        editEl.innerHTML = html;
+
+        const divHost = editEl.querySelector('#euc-div');
+        const curDiv = isHit ? (Number.isFinite(cfg.circleDiv) ? cfg.circleDiv : 0.5) : (Number.isFinite(cfg.dotDiv) ? cfg.dotDiv : 0.5);
+        EUC_DIVS.forEach(([label, val]) => {
+          const b = document.createElement('button'); b.type = 'button';
+          b.className = 'sm-wave' + (Math.abs(curDiv - val) < 1e-4 ? ' active' : ''); b.textContent = label;
+          b.addEventListener('click', () => {
+            if (isHit) cfg.circleDiv = val; else cfg.dotDiv = val;
+            divHost.querySelectorAll('.sm-wave').forEach(x => x.classList.remove('active')); b.classList.add('active');
+          });
+          divHost.appendChild(b);
+        });
+
+        if (isHit) {
+          const notesHost = editEl.querySelector('#euc-notes');
+          const sel = new Set((cfg.noteIdxs && cfg.noteIdxs.length) ? cfg.noteIdxs : [0]);
+          gridNotes.forEach((nt, ni) => {
+            const b = document.createElement('button'); b.type = 'button';
+            b.className = 'sm-wave' + (sel.has(ni) ? ' active' : ''); b.textContent = nt.label;
+            b.addEventListener('click', () => {
+              if (sel.has(ni)) { if (sel.size > 1) sel.delete(ni); } else sel.add(ni);
+              cfg.noteIdxs = [...sel].sort((a, b2) => a - b2);
+              b.classList.toggle('active', sel.has(ni));
+            });
+            notesHost.appendChild(b);
+          });
+          const allNotes = editEl.querySelector('#euc-all-notes');
+          if (allNotes) allNotes.addEventListener('click', () => {
+            const pat2 = pattern();
+            state.perStep.forEach((c, idx) => { if (pat2[idx]) c.noteIdxs = [...(cfg.noteIdxs || [0])]; });
+          });
+        }
+        const allDiv = editEl.querySelector('#euc-all-div');
+        if (allDiv) allDiv.addEventListener('click', () => {
+          const pat2 = pattern();
+          const v = isHit ? cfg.circleDiv : cfg.dotDiv;
+          state.perStep.forEach((c, idx) => { if (!!pat2[idx] === isHit) { if (isHit) c.circleDiv = v; else c.dotDiv = v; } });
+        });
+      };
+
+      const refreshTopVals = () => {
+        kEl.max = String(state.n);
+        if (state.k > state.n) { state.k = state.n; kEl.value = String(state.n); }
+        rEl.max = String(Math.max(0, state.n - 1));
+        modal.querySelector('#euc-k-v').textContent = state.k;
+        modal.querySelector('#euc-n-v').textContent = state.n;
+        modal.querySelector('#euc-r-v').textContent = state.rot;
+      };
+      const onTop = () => {
+        state.k = parseInt(kEl.value, 10) || 1;
+        state.n = parseInt(nEl.value, 10) || 2;
+        state.rot = parseInt(rEl.value, 10) || 0;
+        if (state.k > state.n) state.k = state.n;
+        ensurePerStep(); refreshTopVals(); renderStrip(); renderEditor();
+      };
+      [kEl, nEl, rEl].forEach(el => el.addEventListener('input', onTop));
+      refreshTopVals(); renderStrip(); renderEditor();
+
       const close = () => overlay.remove();
       modal.querySelector('#euc-cancel').addEventListener('click', close);
       modal.querySelector('#euc-go').addEventListener('click', () => {
-        const k = parseInt(kEl.value, 10), n = parseInt(nEl.value, 10), r = parseInt(rEl.value, 10);
-        const spread = !!modal.querySelector('#euc-spread').checked;
-        const noteList = [...selected].sort((a, b) => a - b).map(i => gridNotes[i]).filter(Boolean);
+        const generated = _buildEuclidSteps(pattern(), state.perStep, gridNotes);
         snapshotForUndo('Euclid');
         try { stopSequence(); } catch (e) {}
-        const generated = generateEuclidean(k, n, r, noteList, spread, divState.circle, divState.dot);
         sequence = keepMode ? sequence.concat(generated) : generated;
-        pendingChord = [];
-        insertionPoint = null;
+        pendingChord = []; insertionPoint = null;
         renderSequence();
         const sb = document.getElementById('save-btn'); if (sb) sb.disabled = sequence.length === 0;
         if (typeof persistWorkspace === 'function') persistWorkspace();

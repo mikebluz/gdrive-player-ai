@@ -5582,12 +5582,42 @@
       color: #e2bdf6; font-size: 0.8rem; cursor: pointer;
     }
     .gv-div-opt.active, .gv-acc-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
-    .euc-spread {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 0.82rem; color: #e2e8f0; cursor: pointer; user-select: none;
-      margin: 10px 0 4px;
+    /* Euclid per-step editor: a tappable strip of ● / · cells; the selected
+       one is edited by the controls below it. */
+    .euc-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 4px 0 10px;
     }
-    .euc-spread input { cursor: pointer; }
+    .euc-cell {
+      width: 30px; height: 30px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      border: 1px solid #2d2d3f;
+      background: #0a0a14;
+      font-size: 1rem; line-height: 1;
+      cursor: pointer;
+      transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+    }
+    .euc-cell.hit  { color: #9f7aea; border-color: rgba(159,122,234,0.45); }
+    .euc-cell.rest { color: #4a5568; }
+    .euc-cell.sel  { border-color: #f6ad55; box-shadow: 0 0 8px rgba(246,173,85,0.4); background: rgba(246,173,85,0.10); }
+    .euc-stepedit {
+      border-top: 1px solid #2d2d3f;
+      padding-top: 8px;
+    }
+    .euc-step-title {
+      font-size: 0.8rem; font-weight: 700; color: #e2bdf6; letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .euc-allrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .euc-all {
+      padding: 5px 10px; border-radius: 6px;
+      background: rgba(159,122,234,0.12); border: 1px solid rgba(159,122,234,0.35);
+      color: #c9b6ff; font-size: 0.72rem; font-weight: 700; cursor: pointer;
+    }
+    @media (hover: hover) { .euc-all:hover { background: rgba(159,122,234,0.24); border-color: rgba(159,122,234,0.6); } }
     .groove-reset-row { justify-content: flex-end; }
     .groove-reset {
       padding: 5px 14px; border-radius: 8px;

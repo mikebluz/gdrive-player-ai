@@ -470,6 +470,29 @@
       return !lane.muted;
     }
 
+    // Probability + per-loop-pass conditional for a step. Returns true when
+    // the step should fire on this pass. step.prob (0..100) is a dice roll;
+    // step.cond gates on the loop iteration (stream.iter): '1st' (first pass
+    // only), or Elektron-style 'A:B' (play on pass A of every B). 'always' /
+    // unset = always.
+    function _stepShouldFire(step, stream) {
+      if (!step) return true;
+      if (Number.isFinite(step.prob) && step.prob < 100) {
+        if ((Math.random() * 100) >= step.prob) return false;
+      }
+      const cond = step.cond;
+      if (cond && cond !== 'always') {
+        const iter = (stream && Number.isFinite(stream.iter)) ? stream.iter : 0;
+        if (cond === '1st') return iter === 0;
+        const m = /^(\d+):(\d+)$/.exec(cond);
+        if (m) {
+          const a = parseInt(m[1], 10), bb = parseInt(m[2], 10);
+          if (bb > 0) return (iter % bb) === (((a - 1) % bb + bb) % bb);
+        }
+      }
+      return true;
+    }
+
     function scheduleStepAt(step, audioTime, stream, silent = false, laneIdx) {
       // Variance: swap the step's pitch / sound / params for one of
       // its alternates per iteration. Linear cycles via stream.iter,
@@ -602,6 +625,15 @@
             updateKeepLabel();
           }, audioTime);
         }
+        return waitSecExact;
+      }
+
+      // Conditional / probability gate — decide whether this step fires on
+      // THIS pass. A gated-out step plays nothing but the walk still
+      // advances the cadence, so it leaves a clean rest in the groove and
+      // the loop keeps evolving. iter (the lane's loop pass) comes from the
+      // same stream.iter that variance already keys off.
+      if (!_stepShouldFire(step, stream)) {
         return waitSecExact;
       }
 

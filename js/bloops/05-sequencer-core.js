@@ -1335,6 +1335,33 @@
           if (ratVal) ratVal.textContent = rv + '×';
         }
       }
+      // Chance (probability) + When (conditional) bars — any playable step.
+      const _condStep = (showBars && eligible.length > 0 && !polyLaneScope) ? eligible[eligible.length - 1] : null;
+      const probBar = document.getElementById('step-prob-bar');
+      if (probBar) {
+        if (!_condStep) { probBar.hidden = true; }
+        else {
+          probBar.hidden = false;
+          const pv = Number.isFinite(_condStep.prob) ? Math.max(0, Math.min(100, _condStep.prob)) : 100;
+          const ps = document.getElementById('step-prob-slider');
+          const pvl = document.getElementById('step-prob-val');
+          if (ps) ps.value = String(pv);
+          if (pvl) pvl.textContent = pv + '%';
+        }
+      }
+      const condBar = document.getElementById('step-cond-bar');
+      if (condBar) {
+        if (!_condStep) { condBar.hidden = true; }
+        else {
+          condBar.hidden = false;
+          const cv = (typeof _condStep.cond === 'string' && _condStep.cond) ? _condStep.cond : 'always';
+          const cb = document.getElementById('step-cond-btn');
+          if (cb) {
+            cb.textContent = (cv === 'always') ? 'Always' : cv;
+            cb.classList.toggle('active', cv !== 'always');
+          }
+        }
+      }
       // Edit row wraps both sliders + the Edit button; hide when no
       // bar is up. The Edit button itself is shown only when at least
       // one chip is selected (so the menu has a concrete target —

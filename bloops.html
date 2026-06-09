@@ -488,6 +488,15 @@
             <input type="range" id="step-ratchet-slider" min="1" max="8" value="1" step="1" aria-label="Ratchet — split this step into N evenly-spaced rapid sub-hits" />
             <span class="step-ratchet-val" id="step-ratchet-val">1×</span>
           </div>
+          <div class="step-prob-bar" id="step-prob-bar" hidden>
+            <span class="step-prob-label" id="step-prob-label">Chance</span>
+            <input type="range" id="step-prob-slider" min="0" max="100" value="100" step="1" aria-label="Chance — probability this step fires on each loop pass" />
+            <span class="step-prob-val" id="step-prob-val">100%</span>
+          </div>
+          <div class="step-cond-bar" id="step-cond-bar" hidden>
+            <span class="step-cond-label" id="step-cond-label">When</span>
+            <button type="button" id="step-cond-btn" class="step-cond-btn" title="Condition — which loop passes this step plays on (cycles)">Always</button>
+          </div>
         </div>
       </div>
     </div>

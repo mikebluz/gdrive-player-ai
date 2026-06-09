@@ -3492,7 +3492,7 @@
        whole selection (multi-mode included). The chip background still
        lerps toward the L/R hard-pan colour so the visual cue tracks
        the slider live. */
-    .step-pan-bar, .step-vol-bar, .step-slip-bar, .step-strum-bar, .step-ratchet-bar {
+    .step-pan-bar, .step-vol-bar, .step-slip-bar, .step-strum-bar, .step-ratchet-bar, .step-prob-bar, .step-cond-bar {
       display: flex;
       align-items: center;
       gap: 12px;
@@ -3500,8 +3500,8 @@
       background: #050510;
     }
     .step-pan-bar, .step-vol-bar, .step-slip-bar { border-bottom: 1px solid #1a1a2e; }
-    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden], .step-strum-bar[hidden], .step-ratchet-bar[hidden] { display: none; }
-    .step-pan-label, .step-vol-label, .step-slip-label, .step-strum-label, .step-ratchet-label {
+    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden], .step-strum-bar[hidden], .step-ratchet-bar[hidden], .step-prob-bar[hidden], .step-cond-bar[hidden] { display: none; }
+    .step-pan-label, .step-vol-label, .step-slip-label, .step-strum-label, .step-ratchet-label, .step-prob-label, .step-cond-label {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
       font-weight: 700;
@@ -3513,7 +3513,8 @@
     .step-vol-bar input[type="range"],
     .step-slip-bar input[type="range"],
     .step-strum-bar input[type="range"],
-    .step-ratchet-bar input[type="range"] {
+    .step-ratchet-bar input[type="range"],
+    .step-prob-bar input[type="range"] {
       flex: 1;
       height: 4px;
       accent-color: #4fd1c5;
@@ -6939,3 +6940,16 @@
     }
     .sm-copy-sel:disabled { opacity: 0.35; cursor: not-allowed; }
     .sm-copy-sel:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(66,153,225,0.275); }
+
+    .step-cond-btn {
+      margin-left: auto;
+      padding: 5px 14px;
+      border-radius: 8px;
+      background: rgba(159,122,234,0.12);
+      border: 1px solid rgba(159,122,234,0.35);
+      color: #e2bdf6;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem; font-weight: 700; letter-spacing: 0.5px;
+      cursor: pointer;
+    }
+    .step-cond-btn.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }

@@ -1092,6 +1092,41 @@
       });
     })();
 
+    // Chance (probability) slider — % chance the selected step(s) fire on
+    // each loop pass. Stored on step.prob (100/unset = always).
+    (function bindStepProbSlider() {
+      const slider = document.getElementById('step-prob-slider');
+      const valEl  = document.getElementById('step-prob-val');
+      if (!slider) return;
+      slider.addEventListener('input', () => {
+        const v = Math.max(0, Math.min(100, parseInt(slider.value, 10)));
+        selectedStepRefs.filter(_stepHasPlayableContent).forEach(s => {
+          if (v >= 100) delete s.prob; else s.prob = v;
+        });
+        if (valEl) valEl.textContent = v + '%';
+      });
+      slider.addEventListener('change', () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
+    // When (conditional) — cycles which loop passes the step plays on.
+    (function bindStepCondButton() {
+      const btn = document.getElementById('step-cond-btn');
+      if (!btn) return;
+      const CONDS = ['always', '1st', '1:2', '2:2', '1:3', '1:4'];
+      btn.addEventListener('click', () => {
+        const sel = selectedStepRefs.filter(_stepHasPlayableContent);
+        if (sel.length === 0) return;
+        const cur = (typeof sel[0].cond === 'string' && sel[0].cond) ? sel[0].cond : 'always';
+        const next = CONDS[(Math.max(0, CONDS.indexOf(cur)) + 1) % CONDS.length];
+        sel.forEach(s => { if (next === 'always') delete s.cond; else s.cond = next; });
+        btn.textContent = (next === 'always') ? 'Always' : next;
+        btn.classList.toggle('active', next !== 'always');
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
 
     // ---- Groove panel (swing / humanize) -------------------------------
     // A small popover off the ≈ transport button. Edits the global groove

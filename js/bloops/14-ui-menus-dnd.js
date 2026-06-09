@@ -1389,9 +1389,10 @@
       ];
     }
 
-    function showSoundEditor(noteIndex) {
+    function showSoundEditor(noteIndex, opts) {
       const note = notes[noteIndex];
       const p = { ...cellParams[noteIndex] };
+      const _startApplyAll = !!(opts && opts.applyAll);
 
       const overlay = document.createElement('div');
       overlay.className = 'sm-overlay';
@@ -1551,6 +1552,18 @@
       // Apply time) still reflects local changes; broadcastAll mirrors
       // them to the live cellParams immediately.
       const applyAllChk = modal.querySelector('#sm-apply-all');
+      // Opened from the Tone menu's "Sculpt…" entry → sculpt the whole grid,
+      // so start with Apply-to-all on and lead with the Envelope section.
+      if (_startApplyAll && applyAllChk) {
+        applyAllChk.checked = true;
+        const titleEl = modal.querySelector('.sm-title');
+        if (titleEl) titleEl.textContent = 'Sculpt sound — all notes';
+        const folds = modal.querySelectorAll('details.sm-fold');
+        folds.forEach(f => {
+          const sum = f.querySelector('summary');
+          f.open = !!(sum && sum.textContent.trim() === 'Envelope');
+        });
+      }
       const broadcastAll = (key, value) => {
         if (!applyAllChk?.checked) return;
         cellParams.forEach((cp, idx) => {

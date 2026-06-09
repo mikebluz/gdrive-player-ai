@@ -1101,6 +1101,14 @@
       const panel = document.getElementById('tone-panel');
       if (!panel) return;
       panel.innerHTML = '';
+      // Sculpt — opens the full sound editor (envelope / level / effects) in
+      // apply-to-all mode so the chosen tone can be shaped grid-wide.
+      const sculpt = document.createElement('button');
+      sculpt.type = 'button';
+      sculpt.className = 'tone-sculpt-btn';
+      sculpt.id = 'tone-sculpt-btn';
+      sculpt.textContent = '⚙ Sculpt sound…';
+      panel.appendChild(sculpt);
       // Surface the current "Custom" state as a non-clickable marker at the
       // top of the panel, mirroring the Tone banner label. Picking any of
       // the regular options below applies that tone to every cell, which
@@ -1239,6 +1247,13 @@
         if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
       });
       panel.addEventListener('click', (e) => {
+        // Sculpt — open the sound editor (ADSR / level / effects) in
+        // apply-to-all mode so the user can shape the current tone.
+        if (e.target.closest('.tone-sculpt-btn')) {
+          setOpen(false);
+          if (typeof showSoundEditor === 'function') showSoundEditor(0, { applyAll: true });
+          return;
+        }
         const opt = e.target.closest('.tone-opt');
         if (!opt || !opt.dataset.tone) return; // skip family / back / custom marker
         const tone = opt.dataset.tone;

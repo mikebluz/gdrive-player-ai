@@ -575,6 +575,25 @@
       transition: all 0.15s ease;
     }
     .tone-opt:hover { border-color: #4299e1; color: #4299e1; }
+    /* Sculpt — opens the full sound editor (envelope/level/effects) for the
+       whole grid; tinted so it reads as an action, not a tone choice. */
+    .tone-sculpt-btn {
+      display: block;
+      width: 100%;
+      padding: 7px 14px;
+      margin-bottom: 6px;
+      border: 1px solid rgba(79, 209, 197, 0.5);
+      border-radius: 8px;
+      background: rgba(79, 209, 197, 0.12);
+      color: #4fd1c5;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+    }
+    .tone-sculpt-btn:hover { background: rgba(79, 209, 197, 0.22); border-color: #4fd1c5; }
     /* Family rows — top-level entries that drill down into a sub-list. */
     .tone-opt.tone-opt-family {
       display: flex;

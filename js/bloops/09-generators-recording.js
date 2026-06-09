@@ -388,14 +388,24 @@
       const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
       const modal = document.createElement('div'); modal.className = 'sm-modal euc-modal';
       modal.innerHTML =
-        '<div class="sm-title">Euclidean rhythm</div>' +
+        '<div class="sm-title">Generate Sequence</div>' +
         '<div class="sm-param"><div class="sm-param-row">Hits <span class="sm-val" id="euc-k-v">5</span></div><input type="range" id="euc-k" min="1" max="16" value="5" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Steps <span class="sm-val" id="euc-n-v">8</span></div><input type="range" id="euc-n" min="2" max="32" value="8" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Rotate <span class="sm-val" id="euc-r-v">0</span></div><input type="range" id="euc-r" min="0" max="31" value="0" /></div>' +
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit it</div>' +
         '<div class="euc-strip" id="euc-strip"></div>' +
         '<div class="euc-stepedit" id="euc-stepedit"></div>' +
-        '<div class="sm-footer"><button type="button" class="sm-preview" id="euc-cancel">Cancel</button><button type="button" class="sm-apply" id="euc-go">Generate</button></div>';
+        '<div class="sm-footer euc-footer">' +
+          '<div class="euc-gen-alt">' +
+            '<button type="button" class="euc-altbtn" id="euc-random" title="Generate a random sequence from the current voice">Random</button>' +
+            '<button type="button" class="euc-altbtn" id="euc-seed" title="Seed the sequence from a built-in song or text">Seed</button>' +
+          '</div>' +
+          '<div class="euc-gen-main">' +
+            '<button type="button" class="sm-preview" id="euc-cancel">Cancel</button>' +
+            '<button type="button" class="sm-preview" id="euc-preview">Preview</button>' +
+            '<button type="button" class="sm-apply" id="euc-go">Generate</button>' +
+          '</div>' +
+        '</div>';
       overlay.appendChild(modal); document.body.appendChild(overlay);
 
       const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'), rEl = modal.querySelector('#euc-r');
@@ -485,6 +495,21 @@
 
       const close = () => overlay.remove();
       modal.querySelector('#euc-cancel').addEventListener('click', close);
+      // Preview — play the current pattern once, without committing it. Reuses
+      // the sub-sequence scheduler (rests advance time, hits/chords sound) at
+      // the live BPM, so it sounds like what Generate would produce.
+      modal.querySelector('#euc-preview').addEventListener('click', () => {
+        try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+        const steps = _buildEuclidSteps(pattern(), state.perStep, gridNotes);
+        if (typeof playSubStepsAtTime === 'function') {
+          const at = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+          try { playSubStepsAtTime(steps, at); } catch (e) {}
+        }
+      });
+      // Random / Seed — the other generators. Close this dialog and hand off
+      // to their own pickers.
+      modal.querySelector('#euc-random').addEventListener('click', () => { close(); if (typeof showRandomDialog === 'function') showRandomDialog(); });
+      modal.querySelector('#euc-seed').addEventListener('click', () => { close(); if (typeof showSeedDialog === 'function') showSeedDialog(); });
       modal.querySelector('#euc-go').addEventListener('click', () => {
         const generated = _buildEuclidSteps(pattern(), state.perStep, gridNotes);
         snapshotForUndo('Euclid');
@@ -993,8 +1018,10 @@
     }
 
     document.getElementById('rec-btn').addEventListener('click', toggleRecording);
-    document.getElementById('random-btn').addEventListener('click', showRandomDialog);
-    document.getElementById('seed-btn').addEventListener('click', showSeedDialog);
+    // Random / Seed now live in the Generate Sequence (Gen) dialog; these
+    // legacy Riff-panel triggers are gone, so guard against their absence.
+    document.getElementById('random-btn')?.addEventListener('click', showRandomDialog);
+    document.getElementById('seed-btn')?.addEventListener('click', showSeedDialog);
 
     // ---- Song presets ----
     // Each entry is one of:

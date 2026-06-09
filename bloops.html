@@ -545,11 +545,9 @@
              new chord-step lane; the two sources are muted so they
              don't double-play with the merged copy. Needs 2+ lanes. -->
         <button id="merge-lanes-btn" type="button" title="Merge the active lane with another lane into a new chord-step lane. Source lanes are kept but muted.">Merge</button>
-        <!-- Random + Seed are pushed to the end of the menu and tinted
-             differently because they're the destructive / generative
-             actions — they replace (not just transform) the sequence. -->
-        <button id="random-btn" class="riff-generative" title="Generate a random sequence using the current voice's scale + tones">Random</button>
-        <button id="seed-btn" class="riff-generative" title="Seed the sequence from a built-in song or from text">Seed</button>
+        <!-- Random / Seed / Euclid (generative actions) now live in the
+             Gen button's "Generate Sequence" dialog, alongside the Euclidean
+             editor. The Riff menu keeps the transform-only actions above. -->
       </div>
     </div>
   </div>

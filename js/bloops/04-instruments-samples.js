@@ -37,13 +37,31 @@
     // when _offlineSamplerOverride is set; cleared in the export's
     // finally block alongside _offlineSamplerOverride.
     let _offlineVoiceRefs = null;
+    // Sample tones are recorded a good bit quieter than the synth voices, so
+    // they feel weak next to a sawtooth/FM at the same volume. Lift every
+    // sampler's output by a fixed dB so samples sit at roughly synth level.
+    // Applied once per sampler (idempotent) at the trigger funnel below.
+    // Velocity can't do this — it's clamped to 0..1 — so it has to be the
+    // sampler's own volume in dB.
+    const SAMPLE_VOLUME_BOOST_DB = 6;
+    function _boostSampler(s) {
+      try {
+        if (s && s.volume && !s._bloopsBoosted) {
+          s.volume.value = SAMPLE_VOLUME_BOOST_DB;
+          s._bloopsBoosted = true;
+        }
+      } catch (e) {}
+      return s;
+    }
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;
       const id = type.slice(7);
       if (_offlineSamplerOverride && _offlineSamplerOverride.has(id)) {
-        return { sampler: _offlineSamplerOverride.get(id) };
+        return { sampler: _boostSampler(_offlineSamplerOverride.get(id)) };
       }
-      return sampleSamplers.get(id) || null;
+      const entry = sampleSamplers.get(id) || null;
+      if (entry && entry.sampler) _boostSampler(entry.sampler);
+      return entry;
     }
     function getAllSoundOptions() {
       const opts = SOUNDS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));

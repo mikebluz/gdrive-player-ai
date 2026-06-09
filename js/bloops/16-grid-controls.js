@@ -900,7 +900,9 @@
       // chips qualify too, and _buildStepCtxActions already builds
       // sub-aware menu entries (Edit subsequence…, Reverse, etc.).
       const eligible = selectedStepRefs.filter(_stepHasPlayableContent);
-      const step = eligible[eligible.length - 1];
+      // Prefer a playable chip; fall back to any selected chip (e.g. a rest)
+      // so its menu — including Remove step — is still reachable.
+      const step = eligible[eligible.length - 1] || selectedStepRefs[selectedStepRefs.length - 1];
       if (!step) return;
       const stepIdx = sequence.indexOf(step);
       if (stepIdx < 0) return;

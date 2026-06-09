@@ -1362,12 +1362,13 @@
           }
         }
       }
-      // Edit row wraps both sliders + the Edit button; hide when no
-      // bar is up. The Edit button itself is shown only when at least
-      // one chip is selected (so the menu has a concrete target —
-      // lane-scope edits don't have one).
-      if (editRow) editRow.hidden = !showBars;
-      if (editBtn) editBtn.hidden = !(showBars && selEligible.length > 0);
+      // Edit row wraps both sliders + the Edit button. Show it when the
+      // param bars are up OR any chip is selected — a rest has no playable
+      // content (so no Pan/Vol bars) but still needs the Edit button so its
+      // context menu (Remove step, etc.) is reachable.
+      const _anySel = selectedStepRefs.length > 0;
+      if (editRow) editRow.hidden = !(showBars || _anySel);
+      if (editBtn) editBtn.hidden = !_anySel;
       // "All" toggle — visible whenever the bars are. Its active-state
       // styling is owned by the toggle itself (set in the click
       // handler below) so just track presence here.

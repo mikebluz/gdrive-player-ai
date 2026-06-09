@@ -203,26 +203,32 @@
 
           const ctrls = document.createElement('div');
           ctrls.className = 'lane-controls';
-          // Collapse-toggle button — sits to the LEFT of the status pill.
-          // ▾ when expanded (chips wrap to fill all rows visible);
-          // ▸ when collapsed (chips constrained to a single scrollable
-          // row). Per-lane state so each lane's display can be tuned
-          // independently.
-          const collapseBtn = document.createElement('button');
-          collapseBtn.type = 'button';
-          collapseBtn.className = 'lane-collapse-toggle';
-          collapseBtn.textContent = lane.collapsed ? '▸' : '▾';
-          if (!lane.collapsed) collapseBtn.classList.add('open');
-          collapseBtn.title = lane.collapsed
-            ? `Expand lane ${lane.name} — show every step at once`
-            : `Collapse lane ${lane.name} into a single scrollable row`;
-          collapseBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            lane.collapsed = !lane.collapsed;
-            renderSequence();
-            if (typeof persistWorkspace === 'function') persistWorkspace();
-          });
-          ctrls.appendChild(collapseBtn);
+          // The active lane's note grid is showing when the voice editor is
+          // open. The collapse-toggle only appears when the grid is hidden;
+          // while the grid is up the row is just label (left) + hide (right).
+          const gridShowing = isActiveLane && _laneExpanderOpen;
+          if (!gridShowing) {
+            // Collapse-toggle button — sits to the LEFT of the status pill.
+            // ▾ when expanded (chips wrap to fill all rows visible);
+            // ▸ when collapsed (chips constrained to a single scrollable
+            // row). Per-lane state so each lane's display can be tuned
+            // independently.
+            const collapseBtn = document.createElement('button');
+            collapseBtn.type = 'button';
+            collapseBtn.className = 'lane-collapse-toggle';
+            collapseBtn.textContent = lane.collapsed ? '▸' : '▾';
+            if (!lane.collapsed) collapseBtn.classList.add('open');
+            collapseBtn.title = lane.collapsed
+              ? `Expand lane ${lane.name} — show every step at once`
+              : `Collapse lane ${lane.name} into a single scrollable row`;
+            collapseBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              lane.collapsed = !lane.collapsed;
+              renderSequence();
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            });
+            ctrls.appendChild(collapseBtn);
+          }
           // Single status-light button — shows the lane label and its
           // mute state via background color. Click toggles mute, but
           // ONLY when the lane is active. On non-active lanes the
@@ -267,34 +273,28 @@
             e.stopPropagation();
             _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
           });
-          // Stack the status (label / mute) pill above a dedicated grid
-          // show/hide eye button. The grid belongs to the active lane, so
-          // the toggle only appears there. Replaces the old "click the lane
-          // row to hide the grid" behaviour.
-          const statusGroup = document.createElement('div');
-          statusGroup.className = 'lane-status-group';
-          statusGroup.appendChild(status);
+          // Label (status / mute) pill — to the LEFT.
+          ctrls.appendChild(status);
+          // Grid show/hide eye — active lane only; always visible; to the
+          // RIGHT of the label. The grid belongs to the active lane, so the
+          // toggle lives there. Re-renders so the collapse button appears /
+          // disappears as the grid is hidden / shown.
           if (isActiveLane) {
             const gridToggle = document.createElement('button');
             gridToggle.type = 'button';
-            gridToggle.className = 'lane-grid-toggle' + (_laneExpanderOpen ? ' showing' : ' hidden');
+            gridToggle.className = 'lane-grid-toggle' + (_laneExpanderOpen ? ' grid-on' : ' grid-off');
             gridToggle.textContent = '👁';
-            const _gtLabel = () => (_laneExpanderOpen ? 'Hide the note grid' : 'Show the note grid');
-            gridToggle.setAttribute('aria-label', _gtLabel());
-            gridToggle.title = _gtLabel();
+            gridToggle.setAttribute('aria-label', _laneExpanderOpen ? 'Hide the note grid' : 'Show the note grid');
+            gridToggle.title = _laneExpanderOpen ? 'Hide the note grid' : 'Show the note grid';
             gridToggle.addEventListener('click', (e) => {
               e.stopPropagation();
               _laneExpanderOpen = !_laneExpanderOpen;
-              gridToggle.classList.toggle('showing', _laneExpanderOpen);
-              gridToggle.classList.toggle('hidden', !_laneExpanderOpen);
-              gridToggle.setAttribute('aria-label', _gtLabel());
-              gridToggle.title = _gtLabel();
+              renderSequence();
               if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
               if (typeof persistWorkspace === 'function') persistWorkspace();
             });
-            statusGroup.appendChild(gridToggle);
+            ctrls.appendChild(gridToggle);
           }
-          ctrls.appendChild(statusGroup);
           row.appendChild(ctrls);
 
           const chipsEl = document.createElement('div');

@@ -2977,12 +2977,10 @@
       justify-content: stretch;
       gap: 4px;
       padding: 2px;
-      /* Collapse + status pill — the grid-toggle chevron was removed
-         from the controls cluster, leaving just collapse and status.
-         Width trimmed ~30% from the previous 92 px to free room for
-         the chip strip on narrow viewports. */
-      width: 64px;
-      min-width: 64px;
+      /* Holds (collapse, when grid hidden) + label + the grid show/hide eye.
+         Wide enough for all three without crushing the label. */
+      width: 92px;
+      min-width: 92px;
       /* Pin the controls to a single-row height and vertically center
          them inside the lane-row, so when the lane's chip area wraps
          into multiple rows (taller lane-row) the leftmost buttons stay
@@ -3017,32 +3015,14 @@
       color: #b3d4ff;
       background: rgba(66, 153, 225, 0.18);
     }
-    /* Status (label/mute) pill stacked above the grid show/hide eye. */
-    .lane-status-group {
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-      min-width: 0;
-      flex: 1 1 auto;
-    }
-    .lane-grid-toggle {
-      flex: 0 0 auto;
-      border: 2px solid #2d2d3f;
-      border-radius: 8px;
-      background: transparent;
-      padding: 3px 0;
-      font-size: 0.82rem;
-      line-height: 1;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      touch-action: manipulation;
-    }
-    /* Green when the grid is showing, red when hidden. */
-    .lane-grid-toggle.showing { color: #68d391; border-color: rgba(104, 211, 145, 0.6); background: rgba(104, 211, 145, 0.12); }
-    .lane-grid-toggle.hidden  { color: #fc8181; border-color: rgba(252, 129, 129, 0.6); background: rgba(252, 129, 129, 0.12); }
+    /* Grid show/hide eye — uses the shared collapse/grid-toggle sizing (22px,
+       row height) so it matches the label + collapse button. Only the colour
+       differs by state. Green when the grid is showing, red when hidden. */
+    .lane-grid-toggle.grid-on  { color: #68d391; border-color: rgba(104, 211, 145, 0.6); background: rgba(104, 211, 145, 0.12); }
+    .lane-grid-toggle.grid-off { color: #fc8181; border-color: rgba(252, 129, 129, 0.6); background: rgba(252, 129, 129, 0.12); }
     @media (hover: hover) {
-      .lane-grid-toggle.showing:hover { background: rgba(104, 211, 145, 0.22); }
-      .lane-grid-toggle.hidden:hover  { background: rgba(252, 129, 129, 0.22); }
+      .lane-grid-toggle.grid-on:hover  { background: rgba(104, 211, 145, 0.22); }
+      .lane-grid-toggle.grid-off:hover { background: rgba(252, 129, 129, 0.22); }
     }
     .lane-status {
       flex: 1 1 auto;

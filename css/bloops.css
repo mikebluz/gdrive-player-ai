@@ -1208,11 +1208,25 @@
       }
     }
 
+    /* The BPM value picker is hidden from the transport row and surfaced as
+       a popover via right-click / long-press on the metronome (BPM on/off)
+       button — see openBpmPicker. Only the .bpm-pop state renders it. */
     .bpm-digits {
-      display: flex;
+      display: none;
       align-items: center;
       gap: 4px;
       flex-shrink: 0;
+    }
+    .bpm-digits.bpm-pop {
+      display: flex;
+      position: fixed;
+      z-index: 10001;
+      gap: 10px;
+      padding: 8px 14px;
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     }
     .bpm-digit {
       min-width: 22px;

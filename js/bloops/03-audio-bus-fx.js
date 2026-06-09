@@ -88,7 +88,11 @@
         ? 'Metronome on — click to silence.'
         : 'Metronome — toggle a click at the current BPM so you can hear the rhythm.';
     }
+    // Set true when a long-press on the metronome opened the BPM picker, so
+    // the click that follows the press doesn't ALSO toggle the metronome.
+    let _bpmLpFired = false;
     document.getElementById('metronome-btn')?.addEventListener('click', async () => {
+      if (_bpmLpFired) { _bpmLpFired = false; return; }
       try { await Tone.start(); } catch (e) {}
       _metronomeOn = !_metronomeOn;
       refreshMetronomeBtn();
@@ -194,6 +198,57 @@
       // the only thing that surfaces.
       btn.addEventListener('contextmenu', (e) => e.preventDefault());
     });
+
+    // ---- BPM picker popover ----
+    // The 3-digit picker no longer lives inline in the transport row — it
+    // surfaces as a popover anchored to the metronome (BPM on/off) button on
+    // right-click (desktop) or long-press (touch). Left-click/tap still
+    // toggles the metronome.
+    let _bpmPickerOutside = null;
+    function closeBpmPicker() {
+      const d = document.getElementById('bpm-digits');
+      if (d) d.classList.remove('bpm-pop');
+      if (_bpmPickerOutside) {
+        document.removeEventListener('pointerdown', _bpmPickerOutside, true);
+        document.removeEventListener('keydown', _bpmPickerOutside, true);
+        _bpmPickerOutside = null;
+      }
+    }
+    function openBpmPicker(anchor) {
+      const d = document.getElementById('bpm-digits');
+      if (!d || !anchor) return;
+      if (d.classList.contains('bpm-pop')) { closeBpmPicker(); return; }
+      d.classList.add('bpm-pop');
+      refreshBpmDigits();
+      const r = anchor.getBoundingClientRect();
+      const dw = d.offsetWidth || 120, dh = d.offsetHeight || 44;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      d.style.left = Math.max(8, Math.min(r.left, vw - dw - 8)) + 'px';
+      d.style.top  = Math.min(r.bottom + 6, vh - dh - 8) + 'px';
+      _bpmPickerOutside = (e) => {
+        if (e.type === 'keydown') { if (e.key === 'Escape') closeBpmPicker(); return; }
+        // Keep open while interacting with the digits or their 0–9 menu.
+        if (e.target.closest('#bpm-digits') || e.target.closest('.ctx-menu') || e.target === anchor) return;
+        closeBpmPicker();
+      };
+      document.addEventListener('pointerdown', _bpmPickerOutside, true);
+      document.addEventListener('keydown', _bpmPickerOutside, true);
+    }
+    (function bindBpmPickerTriggers() {
+      const metro = document.getElementById('metronome-btn');
+      if (!metro) return;
+      metro.addEventListener('contextmenu', (e) => { e.preventDefault(); openBpmPicker(metro); });
+      let _lpTimer = null;
+      const cancelLp = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
+      metro.addEventListener('pointerdown', (e) => {
+        if (e.button && e.button !== 0) return;   // left / touch only
+        cancelLp();
+        _lpTimer = setTimeout(() => { _bpmLpFired = true; openBpmPicker(metro); }, 450);
+      });
+      metro.addEventListener('pointerup', cancelLp);
+      metro.addEventListener('pointerleave', cancelLp);
+      metro.addEventListener('pointercancel', cancelLp);
+    })();
 
     updateBpmAccent();
     refreshBpmDigits();

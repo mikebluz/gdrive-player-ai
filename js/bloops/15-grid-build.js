@@ -1573,31 +1573,61 @@
       // them; second click restores them. Size/tone/time/feedback are never
       // touched, so the underlying character of each effect is preserved
       // across the round-trip.
+      // Bypass — zero the mix levels (keep size/tone/time/feedback) and
+      // restore on a second click. The audible mix lives in BOTH globalFx
+      // (cell-press audition via globalSendTap) AND the active lane's sends
+      // (lane playback), so both must be zeroed/restored — the old version
+      // only touched globalFx, leaving lane FX still playing.
+      const MIX_KEYS = ['reverb', 'delay', 'distortion', 'chorus', 'vibrato', 'tremolo', 'phaser', 'autoFilter', 'pingPong', 'autoPan'];
       let _fxBypassMemo = null;
       panel.querySelector('#fx-reset').addEventListener('click', () => {
-        const MIX_KEYS = ['reverb', 'delay', 'distortion', 'chorus', 'vibrato', 'tremolo', 'phaser', 'autoFilter', 'pingPong', 'autoPan'];
-        const allZero = MIX_KEYS.every(k => (globalFx[k] || 0) === 0);
+        const lane = _activeLane();
+        const sends = _activeSends();
+        const allZero = MIX_KEYS.every(k => (globalFx[k] || 0) === 0 && (!sends || (sends[k] || 0) === 0));
         if (allZero && _fxBypassMemo) {
-          MIX_KEYS.forEach(k => { globalFx[k] = _fxBypassMemo[k] ?? 0; });
+          MIX_KEYS.forEach(k => {
+            globalFx[k] = _fxBypassMemo.global[k] ?? 0;
+            if (_fxBypassMemo.lane && _fxBypassMemo.lane.sends) _fxBypassMemo.lane.sends[k] = (_fxBypassMemo.sends && _fxBypassMemo.sends[k]) ?? 0;
+          });
+          if (_fxBypassMemo.lane) { try { applyLaneSends(_fxBypassMemo.lane); } catch (e) {} }
           _fxBypassMemo = null;
         } else {
-          _fxBypassMemo = {};
-          MIX_KEYS.forEach(k => { _fxBypassMemo[k] = globalFx[k] || 0; });
-          MIX_KEYS.forEach(k => { globalFx[k] = 0; });
+          _fxBypassMemo = { lane, global: {}, sends: sends ? {} : null };
+          MIX_KEYS.forEach(k => {
+            _fxBypassMemo.global[k] = globalFx[k] || 0;
+            globalFx[k] = 0;
+            if (sends) { _fxBypassMemo.sends[k] = sends[k] || 0; sends[k] = 0; }
+          });
+          if (lane) { try { applyLaneSends(lane); } catch (e) {} }
         }
+        try { applyGlobalSendGains(); } catch (e) {}
         refreshFxSliderUI();
         applyGlobalFx();
         persistGlobalFx();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
       });
+      // Reset — restore every FX parameter to its default AND clear the mix
+      // sends on every lane (the mix is per-lane, so resetting only globalFx
+      // left lane FX untouched). Clears per-FX bypass memos too so the
+      // ON/OFF toggles all read ON again.
       panel.querySelector('#fx-reset-all').addEventListener('click', () => {
         Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
           const v = GLOBAL_FX_DEFAULTS[k];
           globalFx[k] = Array.isArray(v) ? v.slice() : v;
         });
+        _fxBypassMemo = null;
+        (lanes || []).forEach(l => {
+          if (!l) return;
+          try { _fxBypassByLane.delete(l); } catch (e) {}
+          if (typeof _defaultLaneSends === 'function') l.sends = _defaultLaneSends();
+          try { applyLaneSends(l); } catch (e) {}
+        });
         rebuildMasterChain();
+        try { applyGlobalSendGains(); } catch (e) {}
         refreshFxSliderUI();
         applyGlobalFx();
         persistGlobalFx();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
       });
       // Save / Load — round-trip the current globalFx through Google Drive
       // so users can reuse their setups across projects and devices.

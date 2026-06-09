@@ -350,40 +350,66 @@
       }
       return cp ? { sound: cp.type || 'sine', params: { ...cp } } : {};
     }
-    // Per-step builder. Each pattern position carries its own config so every
-    // element of the rhythm is independently editable: a circle (hit) plays
-    // its own note(s) (1 = single, 2+ = chord) at its own step div; a dot
-    // (rest) carries its own step div. Hits adopt the current grid tone.
-    function _buildEuclidSteps(pattern, perStep, gridNotes) {
+    // Step div catalog. `eu` = duration in eighth-note units (1/8 = 1), the
+    // unit the dialog reasons about length in; the engine subdivision is
+    // eu × 0.5. Includes triplet (T) values.
+    const _EUC_DIVS = [
+      ['1/32', 0.25], ['1/16T', 1 / 3], ['1/16', 0.5], ['1/8T', 2 / 3],
+      ['1/8', 1], ['1/4T', 4 / 3], ['1/4', 2], ['1/2', 4], ['1/1', 8],
+    ];
+    // Build the lane from the editable step list. Each step carries hit/
+    // noteIdxs/eu; subdivision = eu × 0.5 so step lengths match their divs.
+    function _buildEuclidSteps(steps, gridNotes) {
       const noteFor = (idx) => gridNotes[idx] || gridNotes[0] || { freq: 261.63, label: 'C4', cellIndex: 0 };
       const voice = (nt) => ({ freq: nt.freq, label: nt.label, cellIndex: Number.isFinite(nt.cellIndex) ? nt.cellIndex : null, ..._euclidToneFor(nt) });
-      return pattern.map((on, i) => {
-        const cfg = perStep[i] || {};
-        if (!on) {
-          return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: Number.isFinite(cfg.dotDiv) ? cfg.dotDiv : 0.5 };
-        }
-        const idxs = (Array.isArray(cfg.noteIdxs) && cfg.noteIdxs.length) ? cfg.noteIdxs : [0];
-        const cDiv = Number.isFinite(cfg.circleDiv) ? cfg.circleDiv : 0.5;
-        if (idxs.length === 1) {
-          return { ...voice(noteFor(idxs[0])), duration: 1, subdivision: cDiv };
-        }
-        return { chord: idxs.map(ix => voice(noteFor(ix))), label: idxs.map(ix => noteFor(ix).label).join('·'), duration: 1, subdivision: cDiv };
+      return steps.map(s => {
+        const sub = Math.max(0.0001, (s.eu || 1) * 0.5);
+        if (!s.hit) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub };
+        const idxs = (Array.isArray(s.noteIdxs) && s.noteIdxs.length) ? s.noteIdxs : [0];
+        if (idxs.length === 1) return { ...voice(noteFor(idxs[0])), duration: 1, subdivision: sub };
+        return { chord: idxs.map(ix => voice(noteFor(ix))), label: idxs.map(ix => noteFor(ix).label).join('·'), duration: 1, subdivision: sub };
       });
     }
     function showEuclidDialog() {
       const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes) && notes.length)
         ? notes : [{ freq: 261.63, label: 'C4', cellIndex: 0 }];
-      const EUC_DIVS = [['1/32', 0.125], ['1/16', 0.25], ['1/8', 0.5], ['1/4', 1], ['1/2', 2], ['1/1', 4], ['2/1', 8]];
-      // Per-position config, persistent across K/N/Rotate changes (indexed by
-      // step position). Both step divs default to 1/8; root note selected.
-      const mkCfg = () => ({ noteIdxs: [0], circleDiv: 0.5, dotDiv: 0.5 });
-      const state = { k: 5, n: 8, rot: 0, sel: 0, perStep: [] };
-      const ensurePerStep = () => {
-        while (state.perStep.length < state.n) state.perStep.push(mkCfg());
-        if (state.perStep.length > state.n) state.perStep.length = state.n;
-        state.sel = Math.max(0, Math.min(state.n - 1, state.sel));
+      const EPS = 1e-6;
+      const DEFAULTS = { k: 5, n: 8, rot: 0, length: 8 };
+      // steps: [{ hit, noteIdxs, eu }] whose eu sum is held at `length`.
+      const state = { ...DEFAULTS, sel: -1, steps: [] };
+
+      // Seed an even N-step pattern from the Euclidean spread, each step
+      // length = length / N, hits per E(K,N,rot). Re-run on K/N/Rotate/Length.
+      const seed = () => {
+        const pat = euclideanPattern(state.k, state.n, state.rot);
+        const eu = state.length / state.n;
+        state.steps = pat.map(on => ({ hit: !!on, noteIdxs: [0], eu }));
+        state.sel = -1;
       };
-      ensurePerStep();
+      // Change step i's div while preserving total length: shrinking spawns a
+      // rest of the freed time right after; growing consumes (shrinks/removes)
+      // the following steps, clamping if it runs off the end.
+      const setStepDiv = (i, newEu) => {
+        const s = state.steps[i]; if (!s) return;
+        const delta = newEu - s.eu;
+        s.eu = newEu;
+        if (delta < -EPS) {
+          state.steps.splice(i + 1, 0, { hit: false, noteIdxs: [], eu: -delta });
+        } else if (delta > EPS) {
+          let need = delta, j = i + 1;
+          while (need > EPS && j < state.steps.length) {
+            if (state.steps[j].eu <= need + EPS) { need -= state.steps[j].eu; state.steps.splice(j, 1); }
+            else { state.steps[j].eu -= need; need = 0; }
+          }
+          if (need > EPS) s.eu -= need;
+        }
+      };
+      const applyDivToAll = (isHit, newEu) => {
+        state.steps.filter(s => s.hit === isHit).forEach(t => {
+          const idx = state.steps.indexOf(t);
+          if (idx >= 0) setStepDiv(idx, newEu);
+        });
+      };
 
       const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
       const modal = document.createElement('div'); modal.className = 'sm-modal euc-modal';
@@ -392,11 +418,13 @@
         '<div class="sm-param"><div class="sm-param-row">Hits <span class="sm-val" id="euc-k-v">5</span></div><input type="range" id="euc-k" min="1" max="16" value="5" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Steps <span class="sm-val" id="euc-n-v">8</span></div><input type="range" id="euc-n" min="2" max="32" value="8" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Rotate <span class="sm-val" id="euc-r-v">0</span></div><input type="range" id="euc-r" min="0" max="31" value="0" /></div>' +
-        '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit it</div>' +
+        '<div class="sm-param"><div class="sm-param-row">Length <span class="sm-val" id="euc-l-v">8 / 8</span></div><input type="range" id="euc-l" min="1" max="32" value="8" /></div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +
         '<div class="euc-strip" id="euc-strip"></div>' +
         '<div class="euc-stepedit" id="euc-stepedit"></div>' +
         '<div class="sm-footer euc-footer">' +
           '<div class="euc-gen-alt">' +
+            '<button type="button" class="euc-altbtn" id="euc-reset" title="Reset all values to default">Reset</button>' +
             '<button type="button" class="euc-altbtn" id="euc-random" title="Generate a random sequence from the current voice">Random</button>' +
             '<button type="button" class="euc-altbtn" id="euc-seed" title="Seed the sequence from a built-in song or text">Seed</button>' +
           '</div>' +
@@ -408,27 +436,31 @@
         '</div>';
       overlay.appendChild(modal); document.body.appendChild(overlay);
 
-      const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'), rEl = modal.querySelector('#euc-r');
+      const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'),
+            rEl = modal.querySelector('#euc-r'), lEl = modal.querySelector('#euc-l');
       const stripEl = modal.querySelector('#euc-strip'), editEl = modal.querySelector('#euc-stepedit');
-      const pattern = () => euclideanPattern(state.k, state.n, state.rot);
+      const EU_PX = 22; // pixels per eighth-note unit → cell width scales with div
 
       const renderStrip = () => {
-        const pat = pattern();
         stripEl.innerHTML = '';
-        pat.forEach((on, i) => {
+        state.steps.forEach((s, i) => {
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.className = 'euc-cell' + (on ? ' hit' : ' rest') + (i === state.sel ? ' sel' : '');
-          btn.textContent = on ? '●' : '·';
-          btn.addEventListener('click', () => { state.sel = i; renderStrip(); renderEditor(); });
+          btn.className = 'euc-cell' + (s.hit ? ' hit' : ' rest') + (i === state.sel ? ' sel' : '');
+          btn.style.width = Math.max(16, (s.eu || 1) * EU_PX) + 'px';
+          btn.textContent = s.hit ? '●' : '·';
+          btn.addEventListener('click', () => {
+            state.sel = (state.sel === i) ? -1 : i;  // tap toggles the editor
+            renderStrip(); renderEditor();
+          });
           stripEl.appendChild(btn);
         });
       };
       const renderEditor = () => {
-        const pat = pattern();
         const i = state.sel;
-        const isHit = !!pat[i];
-        const cfg = state.perStep[i] || (state.perStep[i] = mkCfg());
+        if (i < 0 || i >= state.steps.length) { editEl.innerHTML = ''; return; }
+        const s = state.steps[i];
+        const isHit = !!s.hit;
         let html = '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
           '<div class="sm-section-label" style="margin-top:0;">Step div</div><div class="sm-waves" id="euc-div"></div>';
         if (isHit) html += '<div class="sm-section-label">Notes (1 = single, 2+ = chord)</div><div class="sm-waves" id="euc-notes"></div>';
@@ -437,41 +469,37 @@
         editEl.innerHTML = html;
 
         const divHost = editEl.querySelector('#euc-div');
-        const curDiv = isHit ? (Number.isFinite(cfg.circleDiv) ? cfg.circleDiv : 0.5) : (Number.isFinite(cfg.dotDiv) ? cfg.dotDiv : 0.5);
-        EUC_DIVS.forEach(([label, val]) => {
+        _EUC_DIVS.forEach(([label, eu]) => {
           const b = document.createElement('button'); b.type = 'button';
-          b.className = 'sm-wave' + (Math.abs(curDiv - val) < 1e-4 ? ' active' : ''); b.textContent = label;
-          b.addEventListener('click', () => {
-            if (isHit) cfg.circleDiv = val; else cfg.dotDiv = val;
-            divHost.querySelectorAll('.sm-wave').forEach(x => x.classList.remove('active')); b.classList.add('active');
-          });
+          b.className = 'sm-wave' + (Math.abs((s.eu || 1) - eu) < 1e-3 ? ' active' : ''); b.textContent = label;
+          b.addEventListener('click', () => { setStepDiv(i, eu); renderStrip(); renderEditor(); });
           divHost.appendChild(b);
         });
 
         if (isHit) {
           const notesHost = editEl.querySelector('#euc-notes');
-          const sel = new Set((cfg.noteIdxs && cfg.noteIdxs.length) ? cfg.noteIdxs : [0]);
+          const sel = new Set((s.noteIdxs && s.noteIdxs.length) ? s.noteIdxs : [0]);
           gridNotes.forEach((nt, ni) => {
             const b = document.createElement('button'); b.type = 'button';
             b.className = 'sm-wave' + (sel.has(ni) ? ' active' : ''); b.textContent = nt.label;
             b.addEventListener('click', () => {
               if (sel.has(ni)) { if (sel.size > 1) sel.delete(ni); } else sel.add(ni);
-              cfg.noteIdxs = [...sel].sort((a, b2) => a - b2);
+              s.noteIdxs = [...sel].sort((a, b2) => a - b2);
               b.classList.toggle('active', sel.has(ni));
             });
             notesHost.appendChild(b);
           });
           const allNotes = editEl.querySelector('#euc-all-notes');
           if (allNotes) allNotes.addEventListener('click', () => {
-            const pat2 = pattern();
-            state.perStep.forEach((c, idx) => { if (pat2[idx]) c.noteIdxs = [...(cfg.noteIdxs || [0])]; });
+            const v = [...(s.noteIdxs || [0])];
+            state.steps.forEach(st => { if (st.hit) st.noteIdxs = [...v]; });
+            renderStrip();
           });
         }
         const allDiv = editEl.querySelector('#euc-all-div');
         if (allDiv) allDiv.addEventListener('click', () => {
-          const pat2 = pattern();
-          const v = isHit ? cfg.circleDiv : cfg.dotDiv;
-          state.perStep.forEach((c, idx) => { if (!!pat2[idx] === isHit) { if (isHit) c.circleDiv = v; else c.dotDiv = v; } });
+          applyDivToAll(isHit, s.eu);
+          state.sel = -1; renderStrip(); renderEditor();
         });
       };
 
@@ -482,36 +510,40 @@
         modal.querySelector('#euc-k-v').textContent = state.k;
         modal.querySelector('#euc-n-v').textContent = state.n;
         modal.querySelector('#euc-r-v').textContent = state.rot;
+        modal.querySelector('#euc-l-v').textContent = state.length + ' / 8';
       };
       const onTop = () => {
         state.k = parseInt(kEl.value, 10) || 1;
         state.n = parseInt(nEl.value, 10) || 2;
         state.rot = parseInt(rEl.value, 10) || 0;
+        state.length = parseInt(lEl.value, 10) || 1;
         if (state.k > state.n) state.k = state.n;
-        ensurePerStep(); refreshTopVals(); renderStrip(); renderEditor();
+        seed(); refreshTopVals(); renderStrip(); renderEditor();
       };
-      [kEl, nEl, rEl].forEach(el => el.addEventListener('input', onTop));
-      refreshTopVals(); renderStrip(); renderEditor();
+      [kEl, nEl, rEl, lEl].forEach(el => el.addEventListener('input', onTop));
+      seed(); refreshTopVals(); renderStrip(); renderEditor();
 
       const close = () => overlay.remove();
       modal.querySelector('#euc-cancel').addEventListener('click', close);
-      // Preview — play the current pattern once, without committing it. Reuses
-      // the sub-sequence scheduler (rests advance time, hits/chords sound) at
-      // the live BPM, so it sounds like what Generate would produce.
+      modal.querySelector('#euc-reset').addEventListener('click', () => {
+        Object.assign(state, DEFAULTS, { sel: -1 });
+        kEl.value = String(DEFAULTS.k); nEl.value = String(DEFAULTS.n);
+        rEl.value = String(DEFAULTS.rot); lEl.value = String(DEFAULTS.length);
+        seed(); refreshTopVals(); renderStrip(); renderEditor();
+      });
+      // Preview — play the current pattern once, without committing it.
       modal.querySelector('#euc-preview').addEventListener('click', () => {
         try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
-        const steps = _buildEuclidSteps(pattern(), state.perStep, gridNotes);
+        const steps = _buildEuclidSteps(state.steps, gridNotes);
         if (typeof playSubStepsAtTime === 'function') {
           const at = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
           try { playSubStepsAtTime(steps, at); } catch (e) {}
         }
       });
-      // Random / Seed — the other generators. Close this dialog and hand off
-      // to their own pickers.
       modal.querySelector('#euc-random').addEventListener('click', () => { close(); if (typeof showRandomDialog === 'function') showRandomDialog(); });
       modal.querySelector('#euc-seed').addEventListener('click', () => { close(); if (typeof showSeedDialog === 'function') showSeedDialog(); });
       modal.querySelector('#euc-go').addEventListener('click', () => {
-        const generated = _buildEuclidSteps(pattern(), state.perStep, gridNotes);
+        const generated = _buildEuclidSteps(state.steps, gridNotes);
         snapshotForUndo('Euclid');
         try { stopSequence(); } catch (e) {}
         sequence = keepMode ? sequence.concat(generated) : generated;

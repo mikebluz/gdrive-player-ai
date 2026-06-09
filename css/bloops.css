@@ -5591,12 +5591,15 @@
       margin: 4px 0 10px;
     }
     .euc-cell {
-      width: 30px; height: 30px;
+      flex: 0 0 auto;            /* keep the per-div inline width (no shrink) */
+      height: 30px;
+      box-sizing: border-box;
       display: inline-flex; align-items: center; justify-content: center;
       border-radius: 6px;
       border: 1px solid #2d2d3f;
       background: #0a0a14;
       font-size: 1rem; line-height: 1;
+      overflow: hidden;
       cursor: pointer;
       transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
     }

@@ -5519,6 +5519,19 @@
       color: #e2bdf6; font-size: 0.8rem; cursor: pointer;
     }
     .gv-div-opt.active, .gv-acc-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
+    .euc-spread {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.82rem; color: #e2e8f0; cursor: pointer; user-select: none;
+      margin: 10px 0 4px;
+    }
+    .euc-spread input { cursor: pointer; }
+    .groove-reset-row { justify-content: flex-end; }
+    .groove-reset {
+      padding: 5px 14px; border-radius: 8px;
+      background: rgba(159,122,234,0.10); border: 1px solid rgba(159,122,234,0.32);
+      color: #c9b6ff; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.5px; cursor: pointer;
+    }
+    @media (hover: hover) { .groove-reset:hover { background: rgba(159,122,234,0.22); border-color: rgba(159,122,234,0.6); } }
 
     /* Reorder wraps modal. */
     .wrap-reorder-modal { width: min(380px, 94vw); }

@@ -1193,7 +1193,8 @@
             '<button type="button" class="gv-acc-opt" data-acc="4">4</button>' +
           '</div></div>' +
         '<div class="groove-row"><div class="groove-lab">Accent depth <span class="groove-val" id="gv-acc-v">35%</span></div>' +
-          '<input type="range" id="gv-acc" min="0" max="80" value="35" /></div>';
+          '<input type="range" id="gv-acc" min="0" max="80" value="35" /></div>' +
+        '<div class="groove-row groove-reset-row"><button type="button" class="groove-reset" id="gv-reset">Reset</button></div>';
       document.body.appendChild(panel);
       _groovePanelEl = panel;
 
@@ -1233,6 +1234,18 @@
           persist();
         });
       });
+      const resetBtn = panel.querySelector('#gv-reset');
+      if (resetBtn) {
+        resetBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+        resetBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          grooveSwing = 0; grooveSwingDiv = 0.5;
+          grooveHumanizeMs = 0; grooveHumanizeVel = 0;
+          grooveAccentEvery = 0; grooveAccentAmt = 35;
+          refreshGrooveUI();
+          persist();
+        });
+      }
 
       // Position under the button, clamped to the viewport.
       const r = anchor.getBoundingClientRect();

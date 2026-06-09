@@ -339,16 +339,49 @@
       const r = (((rot | 0) % n) + n) % n;
       return r ? p.slice(r).concat(p.slice(0, r)) : p;
     }
-    // Build a lane of steps from a Euclidean pattern. Hits play the grid's
-    // root note; gaps are rests. Subdivision/duration follow the current
-    // step size so it drops straight into the active tempo grid.
-    function generateEuclidean(k, n, rot) {
+    // The current grid tone for a chosen note — so generated hits play the
+    // active voice (piano, etc.) instead of a bare sine. Uses the note's own
+    // cell tone when it maps to a grid cell, else the root cell's tone.
+    function _euclidToneFor(note) {
+      let cp = null;
+      if (typeof cellParams !== 'undefined') {
+        if (note && Number.isFinite(note.cellIndex) && cellParams[note.cellIndex]) cp = cellParams[note.cellIndex];
+        else if (cellParams[0]) cp = cellParams[0];
+      }
+      return cp ? { sound: cp.type || 'sine', params: { ...cp } } : {};
+    }
+    // Build a lane of steps from a Euclidean pattern. `noteList` is the set
+    // of notes to play (default: grid root). With `spread`, the notes are
+    // distributed one-per-hit cycling through the pattern (an arpeggiated
+    // chord); without it, multiple notes stack into a chord on every hit.
+    // Hits adopt the current grid tone; gaps are rests. Subdivision/duration
+    // follow the current step size.
+    function generateEuclidean(k, n, rot, noteList, spread) {
       const pat = euclideanPattern(k, n, rot);
-      const base = (typeof notes !== 'undefined' && notes[0]) ? notes[0] : { freq: 261.63, label: 'C4' };
       const sub = (typeof stepSubdivision !== 'undefined') ? stepSubdivision : 0.5;
-      return pat.map(hit => hit
-        ? { freq: base.freq, label: base.label, cellIndex: (notes && notes[0]) ? 0 : null, duration: 1, subdivision: sub }
-        : { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub });
+      const fallback = (typeof notes !== 'undefined' && notes[0]) ? notes[0] : { freq: 261.63, label: 'C4', cellIndex: 0 };
+      const list = (Array.isArray(noteList) && noteList.length) ? noteList : [fallback];
+      let hit = 0;
+      return pat.map(on => {
+        if (!on) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub };
+        let step;
+        if (spread || list.length === 1) {
+          // One note per hit (cycling through the selected notes).
+          const note = list[hit % list.length];
+          step = { freq: note.freq, label: note.label, cellIndex: Number.isFinite(note.cellIndex) ? note.cellIndex : null,
+                   ..._euclidToneFor(note), duration: 1, subdivision: sub };
+        } else {
+          // Stacked chord on every hit.
+          step = {
+            chord: list.map(note => ({ freq: note.freq, label: note.label,
+                     cellIndex: Number.isFinite(note.cellIndex) ? note.cellIndex : null, ..._euclidToneFor(note) })),
+            label: list.map(nn => nn.label).join('·'),
+            duration: 1, subdivision: sub,
+          };
+        }
+        hit++;
+        return step;
+      });
     }
     function showEuclidDialog() {
       const overlay = document.createElement('div');
@@ -361,12 +394,33 @@
         '<div class="sm-param"><div class="sm-param-row">Steps <span class="sm-val" id="euc-n-v">8</span></div><input type="range" id="euc-n" min="2" max="32" value="8" /></div>' +
         '<div class="sm-param"><div class="sm-param-row">Rotate <span class="sm-val" id="euc-r-v">0</span></div><input type="range" id="euc-r" min="0" max="31" value="0" /></div>' +
         '<div class="euc-preview" id="euc-preview" style="font-family:monospace;letter-spacing:2px;color:#9f7aea;margin:6px 0 10px;word-break:break-all;"></div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Notes</div>' +
+        '<div class="sm-waves" id="euc-notes"></div>' +
+        '<label class="euc-spread"><input type="checkbox" id="euc-spread" /> Spread notes across hits (arpeggiate)</label>' +
         '<div class="sm-footer"><button type="button" class="sm-preview" id="euc-cancel">Cancel</button><button type="button" class="sm-apply" id="euc-go">Generate</button></div>';
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
+
+      // Note picker — the grid's current notes; root selected by default.
+      const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes)) ? notes : [];
+      const selected = new Set(gridNotes.length ? [0] : []);
+      const notesHost = modal.querySelector('#euc-notes');
+      gridNotes.forEach((nt, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sm-wave' + (selected.has(i) ? ' active' : '');
+        btn.textContent = nt.label;
+        btn.addEventListener('click', () => {
+          if (selected.has(i)) { if (selected.size > 1) selected.delete(i); }
+          else selected.add(i);
+          btn.classList.toggle('active', selected.has(i));
+        });
+        notesHost.appendChild(btn);
+      });
+
       const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'), rEl = modal.querySelector('#euc-r');
       const draw = () => {
-        const k = parseInt(kEl.value, 10), n = parseInt(nEl.value, 10), r = parseInt(rEl.value, 10);
+        const n = parseInt(nEl.value, 10);
         if (parseInt(kEl.max, 10) !== n) kEl.max = String(n);
         if (parseInt(kEl.value, 10) > n) { kEl.value = String(n); }
         rEl.max = String(Math.max(0, n - 1));
@@ -382,9 +436,11 @@
       modal.querySelector('#euc-cancel').addEventListener('click', close);
       modal.querySelector('#euc-go').addEventListener('click', () => {
         const k = parseInt(kEl.value, 10), n = parseInt(nEl.value, 10), r = parseInt(rEl.value, 10);
+        const spread = !!modal.querySelector('#euc-spread').checked;
+        const noteList = [...selected].sort((a, b) => a - b).map(i => gridNotes[i]).filter(Boolean);
         snapshotForUndo('Euclid');
         try { stopSequence(); } catch (e) {}
-        const generated = generateEuclidean(k, n, r);
+        const generated = generateEuclidean(k, n, r, noteList, spread);
         sequence = keepMode ? sequence.concat(generated) : generated;
         pendingChord = [];
         insertionPoint = null;

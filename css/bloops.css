@@ -925,7 +925,9 @@
        canvas buffer width is synced to clientWidth in the draw loop
        (bloops.html initMasterScope) so the waveform stays crisp at any
        viewport width without per-frame canvas.width churn. */
-    body { padding-bottom: 40px; }
+    /* Clear the fixed master scope (40px) + the now-fixed footer transport
+       (~64px) so scrolled content isn't hidden under them. */
+    body { padding-bottom: 112px; }
     .master-scope {
       position: fixed;
       left: 0;
@@ -3015,6 +3017,33 @@
       color: #b3d4ff;
       background: rgba(66, 153, 225, 0.18);
     }
+    /* Status (label/mute) pill stacked above the grid show/hide eye. */
+    .lane-status-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .lane-grid-toggle {
+      flex: 0 0 auto;
+      border: 2px solid #2d2d3f;
+      border-radius: 8px;
+      background: transparent;
+      padding: 3px 0;
+      font-size: 0.82rem;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    /* Green when the grid is showing, red when hidden. */
+    .lane-grid-toggle.showing { color: #68d391; border-color: rgba(104, 211, 145, 0.6); background: rgba(104, 211, 145, 0.12); }
+    .lane-grid-toggle.hidden  { color: #fc8181; border-color: rgba(252, 129, 129, 0.6); background: rgba(252, 129, 129, 0.12); }
+    @media (hover: hover) {
+      .lane-grid-toggle.showing:hover { background: rgba(104, 211, 145, 0.22); }
+      .lane-grid-toggle.hidden:hover  { background: rgba(252, 129, 129, 0.22); }
+    }
     .lane-status {
       flex: 1 1 auto;
       width: 100%;
@@ -3654,7 +3683,20 @@
       align-items: center;
       padding: 6px 20px;
       gap: 10px;
+      /* Locked to the bottom of the viewport (just above the 40px master
+         scope) so the transport stays reachable while the page scrolls.
+         Hidden during the loading gate so it appears under the same
+         conditions as the rest of the page. */
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 40px;
+      z-index: 95;
+      border-top: 1px solid #1a1a2e;
     }
+    body.bloops-loading .footer-bar { display: none; }
+    /* Play sits on the right of the transport row. */
+    .footer-transport > #play-btn { margin-left: auto; }
     /* Row that hosts the moved Step controls (Wrap / Size / Multi) —
        sits between the BPM bar and the sequence display so step
        creation defaults are right where the user is reading. */

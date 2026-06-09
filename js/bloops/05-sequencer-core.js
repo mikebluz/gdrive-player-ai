@@ -267,11 +267,34 @@
             e.stopPropagation();
             _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
           });
-          ctrls.appendChild(status);
-          // Per-lane Hide/Show grid toggle was removed — clicking the
-          // lane row already opens / closes the voice editor via the
-          // existing row click handler below, so the explicit chevron
-          // button on the controls cluster was redundant.
+          // Stack the status (label / mute) pill above a dedicated grid
+          // show/hide eye button. The grid belongs to the active lane, so
+          // the toggle only appears there. Replaces the old "click the lane
+          // row to hide the grid" behaviour.
+          const statusGroup = document.createElement('div');
+          statusGroup.className = 'lane-status-group';
+          statusGroup.appendChild(status);
+          if (isActiveLane) {
+            const gridToggle = document.createElement('button');
+            gridToggle.type = 'button';
+            gridToggle.className = 'lane-grid-toggle' + (_laneExpanderOpen ? ' showing' : ' hidden');
+            gridToggle.textContent = '👁';
+            const _gtLabel = () => (_laneExpanderOpen ? 'Hide the note grid' : 'Show the note grid');
+            gridToggle.setAttribute('aria-label', _gtLabel());
+            gridToggle.title = _gtLabel();
+            gridToggle.addEventListener('click', (e) => {
+              e.stopPropagation();
+              _laneExpanderOpen = !_laneExpanderOpen;
+              gridToggle.classList.toggle('showing', _laneExpanderOpen);
+              gridToggle.classList.toggle('hidden', !_laneExpanderOpen);
+              gridToggle.setAttribute('aria-label', _gtLabel());
+              gridToggle.title = _gtLabel();
+              if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            });
+            statusGroup.appendChild(gridToggle);
+          }
+          ctrls.appendChild(statusGroup);
           row.appendChild(ctrls);
 
           const chipsEl = document.createElement('div');
@@ -376,18 +399,14 @@
             if (e.target.closest('.seq-step')) return;
             if (e.target.closest('#lane-expander')) return;
             if (isActiveLane) {
-              // Click on the active lane → toggle the voice editor
-              // open / closed. Lets the user collapse the grid to
-              // see more lanes at once.
-              _laneExpanderOpen = !_laneExpanderOpen;
-              _placeLaneExpander();
-              if (typeof persistWorkspace === 'function') persistWorkspace();
-            } else {
-              // Activating a different lane always shows its voice
-              // editor — that's the whole point of activating.
-              _laneExpanderOpen = true;
-              activateLane(laneIdx);
+              // Grid show/hide is the dedicated 👁 button now — clicking the
+              // active lane row no longer toggles the voice editor.
+              return;
             }
+            // Activating a different lane always shows its voice editor —
+            // that's the whole point of activating.
+            _laneExpanderOpen = true;
+            activateLane(laneIdx);
           });
 
           if (lane.collapsed) {

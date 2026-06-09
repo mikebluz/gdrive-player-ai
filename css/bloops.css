@@ -3492,16 +3492,16 @@
        whole selection (multi-mode included). The chip background still
        lerps toward the L/R hard-pan colour so the visual cue tracks
        the slider live. */
-    .step-pan-bar, .step-vol-bar, .step-slip-bar {
+    .step-pan-bar, .step-vol-bar, .step-slip-bar, .step-strum-bar {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 4px 18px;
       background: #050510;
     }
-    .step-pan-bar, .step-vol-bar { border-bottom: 1px solid #1a1a2e; }
-    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden] { display: none; }
-    .step-pan-label, .step-vol-label, .step-slip-label {
+    .step-pan-bar, .step-vol-bar, .step-slip-bar { border-bottom: 1px solid #1a1a2e; }
+    .step-pan-bar[hidden], .step-vol-bar[hidden], .step-slip-bar[hidden], .step-strum-bar[hidden] { display: none; }
+    .step-pan-label, .step-vol-label, .step-slip-label, .step-strum-label {
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.7rem;
       font-weight: 700;
@@ -3511,7 +3511,8 @@
     }
     .step-pan-bar input[type="range"],
     .step-vol-bar input[type="range"],
-    .step-slip-bar input[type="range"] {
+    .step-slip-bar input[type="range"],
+    .step-strum-bar input[type="range"] {
       flex: 1;
       height: 4px;
       accent-color: #4fd1c5;
@@ -3531,7 +3532,7 @@
         padding: 18px 0;
       }
     }
-    .step-pan-val, .step-vol-val, .step-slip-val {
+    .step-pan-val, .step-vol-val, .step-slip-val, .step-strum-val {
       min-width: 36px;
       text-align: right;
       font-family: 'Segoe UI', sans-serif;
@@ -5496,12 +5497,12 @@
     .groove-val { font-size: 0.75rem; color: #a0aec0; }
     .groove-panel input[type=range] { width: 100%; }
     .groove-divs { display: flex; gap: 6px; }
-    .gv-div-opt {
+    .gv-div-opt, .gv-acc-opt {
       flex: 1; padding: 6px 0; border-radius: 6px;
       background: rgba(159,122,234,0.12); border: 1px solid rgba(159,122,234,0.35);
       color: #e2bdf6; font-size: 0.8rem; cursor: pointer;
     }
-    .gv-div-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
+    .gv-div-opt.active, .gv-acc-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
 
     /* Reorder wraps modal. */
     .wrap-reorder-modal { width: min(380px, 94vw); }

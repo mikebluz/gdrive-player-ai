@@ -564,6 +564,21 @@
       if (grooveHumanizeVel > 0) {
         _velScale = Math.max(0.05, 1 + (Math.random() * 2 - 1) * (grooveHumanizeVel / 100));
       }
+      // Accent (metric ducking): when an accent pulse is active, notes that
+      // DON'T land on an accent beat (and aren't manually flagged) duck by
+      // grooveAccentAmt, leaving the accented hits proud. Beat parity is read
+      // from the un-slipped slot time like swing, so it's dispatch-stable.
+      if (grooveAccentAmt > 0 && grooveAccentEvery > 0) {
+        let _accented = !!step.accent;
+        if (!_accented) {
+          const beatSec = 60 / bpm;
+          if (beatSec > 0) {
+            const beatIdx = Math.round((audioTime - _playBaseTime) / beatSec);
+            _accented = ((((beatIdx % grooveAccentEvery) + grooveAccentEvery) % grooveAccentEvery) === 0);
+          }
+        }
+        if (!_accented) _velScale *= (1 - grooveAccentAmt / 100);
+      }
       const _withVel = (p) => {
         if (_velScale === 1) return p;
         if (typeof p === 'string') return { type: p, volume: Math.max(0, Math.min(100, 100 * _velScale)) };
@@ -618,10 +633,18 @@
           // synchronous loop with the SAME fireTime so they hit the
           // audio context simultaneously. (Originally a forEach with
           // captured n; same semantics, just makes the intent explicit.)
+          // Strum: stagger the chord voices by step.strum ms each. Positive
+          // strums low→high (chord arrays run freq-ascending), negative
+          // high→low. 0 = simultaneous (the common path, unchanged).
+          const _strumMs = Number.isFinite(step.strum) ? Math.max(-80, Math.min(80, step.strum)) : 0;
+          const _strumSec = _strumMs / 1000;
           for (let ci = 0; ci < step.chord.length; ci++) {
             const n = step.chord[ci];
             if (!n) continue;
-            playNote(n.freq, paramsWithBend(_withVel(chordVoiceParams(n.params || n.sound || 'sine', size, step)), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
+            const _voiceAt = (_strumSec === 0)
+              ? fireTime
+              : fireTime + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
+            playNote(n.freq, paramsWithBend(_withVel(chordVoiceParams(n.params || n.sound || 'sine', size, step)), step.bend), durMs, _voiceAt, undefined, undefined, laneIdx);
           }
         } else if (step.freq != null) {
           playNote(step.freq, paramsWithBend(_withVel(step.params || step.sound || 'sine'), step.bend), durMs, fireTime, undefined, undefined, laneIdx);

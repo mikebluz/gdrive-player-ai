@@ -65,6 +65,12 @@
     let grooveSwingDiv   = 0.5;  // swing grid in quarter-note beats: 0.5 = 1/8, 0.25 = 1/16
     let grooveHumanizeMs = 0;    // ± timing jitter, milliseconds
     let grooveHumanizeVel = 0;   // ± velocity jitter, percent
+    // Accent: a metric emphasis. Notes on an accent beat (or a step flagged
+    // step.accent) play at full velocity; the rest are ducked by
+    // grooveAccentAmt — which keeps the accent audible even when voices sit
+    // at 100% (no headroom to boost into). 0 / 0 = off.
+    let grooveAccentEvery = 0;   // accent every N quarter-note beats (0 = off, 1/2/4)
+    let grooveAccentAmt   = 35;  // how much NON-accented notes duck, percent
     let sequence = []; // [{ freq, label, cellIndex }] — freq null = rest; chord: [{...}]
     // ---- Poly mode (multi-lane sequencer) -----------------------------
     // In Mono (default), the workspace is a single `sequence`. In Poly,

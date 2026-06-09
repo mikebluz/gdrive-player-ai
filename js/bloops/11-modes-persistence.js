@@ -748,6 +748,8 @@
             swingDiv:    grooveSwingDiv,
             humanizeMs:  grooveHumanizeMs,
             humanizeVel: grooveHumanizeVel,
+            accentEvery: grooveAccentEvery,
+            accentAmt:   grooveAccentAmt,
           },
           gridColumns,
           gridRows,

@@ -1303,6 +1303,23 @@
           if (slipVal) slipVal.textContent = (s > 0 ? '+' : '') + s + '%';
         }
       }
+      // Strum bar — only meaningful for chord steps (it staggers the chord's
+      // voices), so it shows only when the primary selected step is a chord.
+      const strumBar = document.getElementById('step-strum-bar');
+      if (strumBar) {
+        const _primaryStep = (showBars && eligible.length > 0) ? eligible[eligible.length - 1] : null;
+        const isChordStep = !!(_primaryStep && Array.isArray(_primaryStep.chord));
+        if (!isChordStep) {
+          strumBar.hidden = true;
+        } else {
+          strumBar.hidden = false;
+          const st = Number.isFinite(_primaryStep.strum) ? _primaryStep.strum : 0;
+          const strumSlider = document.getElementById('step-strum-slider');
+          const strumVal = document.getElementById('step-strum-val');
+          if (strumSlider) strumSlider.value = String(st);
+          if (strumVal) strumVal.textContent = (st > 0 ? '+' : '') + st + (st === 0 ? '' : ' ms');
+        }
+      }
       // Edit row wraps both sliders + the Edit button; hide when no
       // bar is up. The Edit button itself is shown only when at least
       // one chip is selected (so the menu has a concrete target —

@@ -1056,6 +1056,24 @@
       });
     })();
 
+    // Strum slider — staggers a chord step's voices by N ms each. Stored on
+    // the chord step's top-level `strum` (the scheduler reads it there, not
+    // per-voice). Only the chord step(s) in the selection are touched.
+    (function bindStepStrumSlider() {
+      const slider = document.getElementById('step-strum-slider');
+      const valEl  = document.getElementById('step-strum-val');
+      if (!slider) return;
+      slider.addEventListener('input', () => {
+        const v = Math.max(-80, Math.min(80, parseInt(slider.value, 10) || 0));
+        const selChords = selectedStepRefs.filter(s => s && Array.isArray(s.chord));
+        selChords.forEach(s => { s.strum = v; });
+        if (valEl) valEl.textContent = (v > 0 ? '+' : '') + v + (v === 0 ? '' : ' ms');
+      });
+      slider.addEventListener('change', () => {
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
 
     // ---- Groove panel (swing / humanize) -------------------------------
     // A small popover off the ≈ transport button. Edits the global groove
@@ -1066,7 +1084,8 @@
     function refreshGrooveUI() {
       const btn = document.getElementById('groove-btn');
       if (btn) {
-        const on = (grooveSwing > 0 || grooveHumanizeMs > 0 || grooveHumanizeVel > 0);
+        const on = (grooveSwing > 0 || grooveHumanizeMs > 0 || grooveHumanizeVel > 0
+          || (grooveAccentEvery > 0 && grooveAccentAmt > 0));
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-expanded', _groovePanelEl ? 'true' : 'false');
       }
@@ -1079,8 +1098,12 @@
       set('gv-swing', grooveSwing, grooveSwing + '%');
       set('gv-hum',   grooveHumanizeMs, grooveHumanizeMs + ' ms');
       set('gv-vel',   grooveHumanizeVel, grooveHumanizeVel + '%');
+      set('gv-acc',   grooveAccentAmt, grooveAccentAmt + '%');
       p.querySelectorAll('.gv-div-opt').forEach(b => {
         b.classList.toggle('active', Math.abs(parseFloat(b.dataset.div) - grooveSwingDiv) < 0.001);
+      });
+      p.querySelectorAll('.gv-acc-opt').forEach(b => {
+        b.classList.toggle('active', (parseInt(b.dataset.acc, 10) || 0) === grooveAccentEvery);
       });
     }
     function closeGroovePanel() {
@@ -1108,7 +1131,16 @@
         '<div class="groove-row"><div class="groove-lab">Humanize time <span class="groove-val" id="gv-hum-v">0 ms</span></div>' +
           '<input type="range" id="gv-hum" min="0" max="50" value="0" /></div>' +
         '<div class="groove-row"><div class="groove-lab">Humanize vel <span class="groove-val" id="gv-vel-v">0%</span></div>' +
-          '<input type="range" id="gv-vel" min="0" max="50" value="0" /></div>';
+          '<input type="range" id="gv-vel" min="0" max="50" value="0" /></div>' +
+        '<div class="groove-row"><div class="groove-lab">Accent every <span class="groove-val">beats</span></div>' +
+          '<div class="groove-divs">' +
+            '<button type="button" class="gv-acc-opt" data-acc="0">Off</button>' +
+            '<button type="button" class="gv-acc-opt" data-acc="1">1</button>' +
+            '<button type="button" class="gv-acc-opt" data-acc="2">2</button>' +
+            '<button type="button" class="gv-acc-opt" data-acc="4">4</button>' +
+          '</div></div>' +
+        '<div class="groove-row"><div class="groove-lab">Accent depth <span class="groove-val" id="gv-acc-v">35%</span></div>' +
+          '<input type="range" id="gv-acc" min="0" max="80" value="35" /></div>';
       document.body.appendChild(panel);
       _groovePanelEl = panel;
 
@@ -1129,6 +1161,16 @@
       bindSlider('gv-swing', (v) => { grooveSwing = v; }, (v) => v + '%');
       bindSlider('gv-hum',   (v) => { grooveHumanizeMs = v; }, (v) => v + ' ms');
       bindSlider('gv-vel',   (v) => { grooveHumanizeVel = v; }, (v) => v + '%');
+      bindSlider('gv-acc',   (v) => { grooveAccentAmt = v; }, (v) => v + '%');
+      panel.querySelectorAll('.gv-acc-opt').forEach(b => {
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          grooveAccentEvery = parseInt(b.dataset.acc, 10) || 0;
+          refreshGrooveUI();
+          persist();
+        });
+      });
       panel.querySelectorAll('.gv-div-opt').forEach(b => {
         b.addEventListener('pointerdown', (e) => e.stopPropagation());
         b.addEventListener('click', (e) => {

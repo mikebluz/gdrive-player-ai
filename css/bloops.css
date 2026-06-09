@@ -5456,6 +5456,53 @@
     }
     .wrap-bank-menu button.active:hover { background: rgba(192, 38, 211, 0.45); }
 
+    /* Groove (≈) transport button + swing/humanize popover. */
+    #groove-btn {
+      flex-shrink: 0;
+      background: rgba(159, 122, 234, 0.10);
+      border: 1px solid rgba(159, 122, 234, 0.32);
+      border-radius: 8px;
+      color: #c9b6ff;
+      width: 30px; height: 30px;
+      font-size: 1.05rem; line-height: 1;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    }
+    @media (hover: hover) { #groove-btn:hover { background: rgba(159,122,234,0.22); border-color: rgba(159,122,234,0.6); } }
+    #groove-btn.active {
+      color: #fff;
+      background: rgba(192, 38, 211, 0.35);
+      border-color: #c026d3;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
+    }
+    .groove-panel {
+      position: fixed;
+      z-index: 10001;
+      width: min(240px, 92vw);
+      background: #1a1a2e;
+      border: 1px solid #2d2d3f;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      padding: 12px 14px 14px;
+    }
+    .groove-title {
+      font-size: 0.7rem; letter-spacing: 1.2px; text-transform: uppercase;
+      color: #c026d3; opacity: 0.85; margin-bottom: 10px;
+    }
+    .groove-row { margin-bottom: 12px; }
+    .groove-row:last-child { margin-bottom: 0; }
+    .groove-lab { display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px; }
+    .groove-val { font-size: 0.75rem; color: #a0aec0; }
+    .groove-panel input[type=range] { width: 100%; }
+    .groove-divs { display: flex; gap: 6px; }
+    .gv-div-opt {
+      flex: 1; padding: 6px 0; border-radius: 6px;
+      background: rgba(159,122,234,0.12); border: 1px solid rgba(159,122,234,0.35);
+      color: #e2bdf6; font-size: 0.8rem; cursor: pointer;
+    }
+    .gv-div-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
+
     /* Reorder wraps modal. */
     .wrap-reorder-modal { width: min(380px, 94vw); }
     .wrap-reorder-hint { font-size: 0.72rem; color: #8a93a6; margin-bottom: 10px; }

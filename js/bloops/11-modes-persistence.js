@@ -742,6 +742,13 @@
           bpm: parseInt(tempoInput?.value, 10) || 120,
           noteLength,
           stepSubdivision,
+          // Groove (swing / humanize) — project-wide rhythmic feel.
+          groove: {
+            swing:       grooveSwing,
+            swingDiv:    grooveSwingDiv,
+            humanizeMs:  grooveHumanizeMs,
+            humanizeVel: grooveHumanizeVel,
+          },
           gridColumns,
           gridRows,
           chordMode: !!chordMode,

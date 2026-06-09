@@ -1056,3 +1056,107 @@
       });
     })();
 
+
+    // ---- Groove panel (swing / humanize) -------------------------------
+    // A small popover off the ≈ transport button. Edits the global groove
+    // state live; persistWorkspace (debounced) also invalidates in-flight
+    // playback so a running loop picks up the new feel on its next steps.
+    let _groovePanelEl = null;
+    let _groovePanelOutside = null;
+    function refreshGrooveUI() {
+      const btn = document.getElementById('groove-btn');
+      if (btn) {
+        const on = (grooveSwing > 0 || grooveHumanizeMs > 0 || grooveHumanizeVel > 0);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-expanded', _groovePanelEl ? 'true' : 'false');
+      }
+      const p = _groovePanelEl;
+      if (!p) return;
+      const set = (id, val, label, unit) => {
+        const el = p.querySelector('#' + id); if (el) el.value = String(val);
+        const lab = p.querySelector('#' + id + '-v'); if (lab) lab.textContent = label != null ? label : (val + (unit || ''));
+      };
+      set('gv-swing', grooveSwing, grooveSwing + '%');
+      set('gv-hum',   grooveHumanizeMs, grooveHumanizeMs + ' ms');
+      set('gv-vel',   grooveHumanizeVel, grooveHumanizeVel + '%');
+      p.querySelectorAll('.gv-div-opt').forEach(b => {
+        b.classList.toggle('active', Math.abs(parseFloat(b.dataset.div) - grooveSwingDiv) < 0.001);
+      });
+    }
+    function closeGroovePanel() {
+      if (_groovePanelOutside) {
+        document.removeEventListener('pointerdown', _groovePanelOutside, true);
+        document.removeEventListener('keydown', _groovePanelOutside, true);
+        _groovePanelOutside = null;
+      }
+      if (_groovePanelEl) { _groovePanelEl.remove(); _groovePanelEl = null; }
+      refreshGrooveUI();
+    }
+    function openGroovePanel(anchor) {
+      if (_groovePanelEl) { closeGroovePanel(); return; }
+      const panel = document.createElement('div');
+      panel.className = 'groove-panel';
+      panel.innerHTML =
+        '<div class="groove-title">Groove</div>' +
+        '<div class="groove-row"><div class="groove-lab">Swing <span class="groove-val" id="gv-swing-v">0%</span></div>' +
+          '<input type="range" id="gv-swing" min="0" max="100" value="0" /></div>' +
+        '<div class="groove-row"><div class="groove-lab">Swing grid</div>' +
+          '<div class="groove-divs">' +
+            '<button type="button" class="gv-div-opt" data-div="0.5">1/8</button>' +
+            '<button type="button" class="gv-div-opt" data-div="0.25">1/16</button>' +
+          '</div></div>' +
+        '<div class="groove-row"><div class="groove-lab">Humanize time <span class="groove-val" id="gv-hum-v">0 ms</span></div>' +
+          '<input type="range" id="gv-hum" min="0" max="50" value="0" /></div>' +
+        '<div class="groove-row"><div class="groove-lab">Humanize vel <span class="groove-val" id="gv-vel-v">0%</span></div>' +
+          '<input type="range" id="gv-vel" min="0" max="50" value="0" /></div>';
+      document.body.appendChild(panel);
+      _groovePanelEl = panel;
+
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const bindSlider = (id, setter, fmt) => {
+        const el = panel.querySelector('#' + id);
+        const lab = panel.querySelector('#' + id + '-v');
+        if (!el) return;
+        el.addEventListener('input', () => {
+          const v = parseInt(el.value, 10) || 0;
+          setter(v);
+          if (lab) lab.textContent = fmt(v);
+          refreshGrooveUI();
+          persist();
+        });
+        el.addEventListener('pointerdown', (e) => e.stopPropagation());
+      };
+      bindSlider('gv-swing', (v) => { grooveSwing = v; }, (v) => v + '%');
+      bindSlider('gv-hum',   (v) => { grooveHumanizeMs = v; }, (v) => v + ' ms');
+      bindSlider('gv-vel',   (v) => { grooveHumanizeVel = v; }, (v) => v + '%');
+      panel.querySelectorAll('.gv-div-opt').forEach(b => {
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          grooveSwingDiv = parseFloat(b.dataset.div) || 0.5;
+          refreshGrooveUI();
+          persist();
+        });
+      });
+
+      // Position under the button, clamped to the viewport.
+      const r = anchor.getBoundingClientRect();
+      const pw = panel.offsetWidth || 200, ph = panel.offsetHeight || 200;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      panel.style.left = Math.max(8, Math.min(r.left, vw - pw - 8)) + 'px';
+      panel.style.top  = Math.min(r.bottom + 4, vh - ph - 8) + 'px';
+
+      _groovePanelOutside = (e) => {
+        if (e.type === 'keydown') { if (e.key === 'Escape') closeGroovePanel(); return; }
+        if (!e.target.closest('.groove-panel') && e.target !== anchor) closeGroovePanel();
+      };
+      document.addEventListener('pointerdown', _groovePanelOutside, true);
+      document.addEventListener('keydown', _groovePanelOutside, true);
+      refreshGrooveUI();
+    }
+    (function bindGrooveButton() {
+      const btn = document.getElementById('groove-btn');
+      if (!btn) return;
+      btn.addEventListener('click', (e) => { e.stopPropagation(); openGroovePanel(btn); });
+      refreshGrooveUI();
+    })();

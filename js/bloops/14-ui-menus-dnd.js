@@ -409,6 +409,16 @@
       activeSeqIndex = (typeof w.activeSeqIndex === 'number') ? w.activeSeqIndex : null;
       noteLength      = w.noteLength      ?? 1;
       stepSubdivision = w.stepSubdivision ?? 0.5;
+      // Groove (swing / humanize) — restore, defaulting to straight when a
+      // pre-groove project (or no groove block) is loaded.
+      {
+        const g = w.groove || {};
+        grooveSwing       = Number.isFinite(g.swing)       ? g.swing       : 0;
+        grooveSwingDiv    = Number.isFinite(g.swingDiv)    ? g.swingDiv    : 0.5;
+        grooveHumanizeMs  = Number.isFinite(g.humanizeMs)  ? g.humanizeMs  : 0;
+        grooveHumanizeVel = Number.isFinite(g.humanizeVel) ? g.humanizeVel : 0;
+        if (typeof refreshGrooveUI === 'function') { try { refreshGrooveUI(); } catch (e) {} }
+      }
       gridColumns     = Math.min(8, Math.max(1, (w.gridColumns | 0) || 8));
       gridRows        = Math.min(8, Math.max(1, (w.gridRows    | 0) || 1));
       chordMode       = !!w.chordMode;

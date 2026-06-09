@@ -55,6 +55,16 @@
     // start.
     let _playBaseTime  = 0;
     let _playOffsetSec = 0;
+    // ---- Groove (rhythmic feel) ----------------------------------------
+    // Composed into each step's fire time alongside slip in scheduleStepAt,
+    // so they stack and never alter the cadence (only when each attack
+    // lands). swing delays off-grid positions; humanize jitters timing +
+    // velocity for a less mechanical feel. All 0 = byte-for-byte the
+    // original straight timing.
+    let grooveSwing      = 0;    // 0..100 %  (0 = straight)
+    let grooveSwingDiv   = 0.5;  // swing grid in quarter-note beats: 0.5 = 1/8, 0.25 = 1/16
+    let grooveHumanizeMs = 0;    // ± timing jitter, milliseconds
+    let grooveHumanizeVel = 0;   // ± velocity jitter, percent
     let sequence = []; // [{ freq, label, cellIndex }] — freq null = rest; chord: [{...}]
     // ---- Poly mode (multi-lane sequencer) -----------------------------
     // In Mono (default), the workspace is a single `sequence`. In Poly,

@@ -523,15 +523,54 @@
       // audioTime / waitMsExact so the non-slip path is byte-for-byte
       // identical to the pre-slip behavior (no surprise timing changes
       // for projects without slip).
+      // ---- Groove resolver: compose slip + swing + humanize into ONE fire
+      // offset. None of these touch stream.offsetSec, so the cadence stays
+      // grid-locked — only this attack moves within its slot (exactly how
+      // slip already behaved). With every groove value 0 the offset is just
+      // the slip term, so projects without groove are unchanged.
+      let offsetSec = slipFrac * waitSecExact;
+      // Swing: delay the off-grid positions (odd multiples of the swing
+      // grid). Position parity is read from the un-slipped slot time
+      // relative to the playback base, so it's stable across the deferred
+      // dispatch (stream.offsetSec may have advanced by the time we fire).
+      if (grooveSwing > 0) {
+        const beatSec = 60 / bpm;
+        const divSec  = grooveSwingDiv * beatSec;
+        if (divSec > 0) {
+          const gridIdx = Math.round((audioTime - _playBaseTime) / divSec);
+          if ((((gridIdx % 2) + 2) % 2) === 1) {
+            offsetSec += (grooveSwing / 100) * 0.5 * divSec;
+          }
+        }
+      }
+      // Humanize timing: small ± random nudge. Stays well inside the
+      // scheduler's lookahead window so a negative nudge never lands in the
+      // past.
+      if (grooveHumanizeMs > 0) {
+        offsetSec += (Math.random() * 2 - 1) * (grooveHumanizeMs / 1000);
+      }
       let fireTime, durMs;
-      if (slipFrac === 0) {
+      if (offsetSec === 0) {
         fireTime = audioTime;
         durMs    = waitMsExact;
       } else {
-        const slipSec = slipFrac * waitSecExact;
-        fireTime = audioTime + slipSec;
-        durMs    = Math.max(20, waitMsExact - slipSec * 1000);
+        fireTime = audioTime + offsetSec;
+        durMs    = Math.max(20, waitMsExact - offsetSec * 1000);
       }
+      // Humanize velocity: scale each voice's volume by a small ± factor.
+      // _withVel applies it to a params value (string or object); identity
+      // when no velocity humanize is active, so the warm path is untouched.
+      let _velScale = 1;
+      if (grooveHumanizeVel > 0) {
+        _velScale = Math.max(0.05, 1 + (Math.random() * 2 - 1) * (grooveHumanizeVel / 100));
+      }
+      const _withVel = (p) => {
+        if (_velScale === 1) return p;
+        if (typeof p === 'string') return { type: p, volume: Math.max(0, Math.min(100, 100 * _velScale)) };
+        const q = { ...p };
+        q.volume = Math.max(0, Math.min(100, (q.volume == null ? 100 : q.volume) * _velScale));
+        return q;
+      };
       // Silent path: muted lane keeps its scheduler pointer advancing
       // so unmuting mid-loop snaps back into the cadence cleanly.
       // Drop the lane's stale entry from the per-lane Keep label so
@@ -582,10 +621,10 @@
           for (let ci = 0; ci < step.chord.length; ci++) {
             const n = step.chord[ci];
             if (!n) continue;
-            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, step), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
+            playNote(n.freq, paramsWithBend(_withVel(chordVoiceParams(n.params || n.sound || 'sine', size, step)), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
           }
         } else if (step.freq != null) {
-          playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), durMs, fireTime, undefined, undefined, laneIdx);
+          playNote(step.freq, paramsWithBend(_withVel(step.params || step.sound || 'sine'), step.bend), durMs, fireTime, undefined, undefined, laneIdx);
         }
       } finally {
         _suppressCellFlash = false;

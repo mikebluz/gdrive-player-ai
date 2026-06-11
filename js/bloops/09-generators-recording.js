@@ -399,7 +399,10 @@
       const EPS = 1e-6;
       const DEFAULTS = { k: 5, n: 8, rot: 0, length: 8 };
       // steps: [{ hit, noteIdxs, eu }] whose eu sum is held at `length`.
-      const state = { ...DEFAULTS, sel: -1, steps: [] };
+      // applyMode: how Generate commits — replace / append / prepend the
+      // active lane's steps. Seeds from the old keepMode behavior (append
+      // when Keep is on, else replace) so existing muscle memory holds.
+      const state = { ...DEFAULTS, sel: -1, steps: [], applyMode: keepMode ? 'append' : 'replace' };
 
       // Seed an even N-step pattern from the Euclidean spread, each step
       // length = length / N, hits per E(K,N,rot). Re-run on K/N/Rotate/Length.
@@ -458,6 +461,12 @@
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +
         '<div class="euc-strip" id="euc-strip"></div>' +
         '<div class="euc-stepedit" id="euc-stepedit"></div>' +
+        '<div class="sm-section-label" style="margin-top:0;">On Generate</div>' +
+        '<div class="sm-waves euc-apply" id="euc-apply">' +
+          '<button type="button" class="sm-wave" data-apply="replace">Replace</button>' +
+          '<button type="button" class="sm-wave" data-apply="append">Append</button>' +
+          '<button type="button" class="sm-wave" data-apply="prepend">Prepend</button>' +
+        '</div>' +
         '<div class="sm-footer euc-footer">' +
           '<div class="euc-gen-alt">' +
             '<button type="button" class="euc-altbtn" id="euc-reset" title="Reset all values to default">Reset</button>' +
@@ -666,6 +675,19 @@
         state.rot = ri(0, state.n - 1);
         seed(); refreshTopVals(); renderStrip(); renderEditor();
       });
+      // Prepend / Append / Replace selector — how Generate commits.
+      const applyHost = modal.querySelector('#euc-apply');
+      const refreshApply = () => {
+        applyHost.querySelectorAll('[data-apply]').forEach(btn =>
+          btn.classList.toggle('active', btn.getAttribute('data-apply') === state.applyMode));
+      };
+      applyHost.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-apply]'); if (!btn) return;
+        state.applyMode = btn.getAttribute('data-apply');
+        refreshApply();
+      });
+      refreshApply();
+
       seed(); refreshTopVals(); renderStrip(); renderEditor();
 
       const close = () => overlay.remove();
@@ -691,7 +713,9 @@
         const generated = _buildEuclidSteps(state.steps, gridNotes);
         snapshotForUndo('Euclid');
         try { stopSequence(); } catch (e) {}
-        sequence = keepMode ? sequence.concat(generated) : generated;
+        if (state.applyMode === 'append')       sequence = sequence.concat(generated);
+        else if (state.applyMode === 'prepend') sequence = generated.concat(sequence);
+        else                                    sequence = generated; // replace
         pendingChord = []; insertionPoint = null;
         renderSequence();
         const sb = document.getElementById('save-btn'); if (sb) sb.disabled = sequence.length === 0;

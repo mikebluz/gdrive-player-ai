@@ -596,8 +596,16 @@
         if (!_accented) {
           const beatSec = 60 / bpm;
           if (beatSec > 0) {
-            const beatIdx = Math.round((audioTime - _playBaseTime) / beatSec);
-            _accented = ((((beatIdx % grooveAccentEvery) + grooveAccentEvery) % grooveAccentEvery) === 0);
+            // Metric accent: emphasize the note that lands ON each Nth-beat
+            // downbeat. `phase` is this step's distance (in quarter-beats)
+            // into the current accent group; ~0 means it sits on the
+            // downbeat. Using the CONTINUOUS beat position (not a rounded
+            // beat index) keeps the accent on the true downbeat for sub-beat
+            // sequences — the old Math.round() aliased 1/8 / 1/16 steps onto
+            // neighbouring beats, producing a ragged double-accented pattern.
+            const beatPos = (audioTime - _playBaseTime) / beatSec;
+            const phase = ((beatPos % grooveAccentEvery) + grooveAccentEvery) % grooveAccentEvery;
+            _accented = (phase < 1e-3) || ((grooveAccentEvery - phase) < 1e-3);
           }
         }
         if (!_accented) _velScale *= (1 - grooveAccentAmt / 100);

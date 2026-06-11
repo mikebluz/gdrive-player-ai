@@ -464,39 +464,47 @@
         <button type="button" id="step-edit-btn" hidden aria-label="Edit" title="Open the step edit menu for the selected step">✎</button>
         <button type="button" id="step-all-btn" hidden aria-pressed="false" title="Apply Pan / Vol / Slip to every step in this lane while active. Click again to return to per-step editing.">All</button>
         <div class="step-edit-bars">
-          <div class="step-pan-bar" id="step-pan-bar" hidden>
-            <span class="step-pan-label" id="step-pan-label">Pan</span>
-            <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
-            <span class="step-pan-val" id="step-pan-val">C</span>
+          <div class="step-tabs" role="tablist">
+            <button type="button" class="step-tab active" id="step-tab-mix-btn" data-tab="mix" role="tab" aria-selected="true">Mix</button>
+            <button type="button" class="step-tab" id="step-tab-groove-btn" data-tab="groove" role="tab" aria-selected="false">Groove</button>
           </div>
-          <div class="step-vol-bar" id="step-vol-bar" hidden>
-            <span class="step-vol-label" id="step-vol-label">Vol</span>
-            <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
-            <span class="step-vol-val" id="step-vol-val">100%</span>
+          <div class="step-tab-panel" id="step-tab-mix" data-panel="mix">
+            <div class="step-pan-bar" id="step-pan-bar" hidden>
+              <button type="button" class="step-toggle step-pan-label" id="step-pan-label" data-setting="pan" title="Pan — click to bypass / activate">Pan</button>
+              <input type="range" id="step-pan-slider" min="-100" max="100" value="0" step="1" aria-label="Selected step pan" />
+              <span class="step-pan-val" id="step-pan-val">C</span>
+            </div>
+            <div class="step-vol-bar" id="step-vol-bar" hidden>
+              <button type="button" class="step-toggle step-vol-label" id="step-vol-label" data-setting="vol" title="Volume — click to bypass / activate">Vol</button>
+              <input type="range" id="step-vol-slider" min="0" max="100" value="100" step="1" aria-label="Selected step volume" />
+              <span class="step-vol-val" id="step-vol-val">100%</span>
+            </div>
+            <div class="step-slip-bar" id="step-slip-bar" hidden>
+              <button type="button" class="step-toggle step-slip-label" id="step-slip-label" data-setting="slip" title="Slip — click to bypass / activate">Slip</button>
+              <input type="range" id="step-slip-slider" min="-50" max="50" value="0" step="1" aria-label="Step slip — shift fire time backwards/forwards as a percent of step duration" />
+              <span class="step-slip-val" id="step-slip-val">0%</span>
+            </div>
           </div>
-          <div class="step-slip-bar" id="step-slip-bar" hidden>
-            <span class="step-slip-label" id="step-slip-label">Slip</span>
-            <input type="range" id="step-slip-slider" min="-50" max="50" value="0" step="1" aria-label="Step slip — shift fire time backwards/forwards as a percent of step duration" />
-            <span class="step-slip-val" id="step-slip-val">0%</span>
-          </div>
-          <div class="step-strum-bar" id="step-strum-bar" hidden>
-            <span class="step-strum-label" id="step-strum-label">Strum</span>
-            <input type="range" id="step-strum-slider" min="-80" max="80" value="0" step="1" aria-label="Strum — stagger a chord's voices by this many ms each (negative = high to low)" />
-            <span class="step-strum-val" id="step-strum-val">0</span>
-          </div>
-          <div class="step-ratchet-bar" id="step-ratchet-bar" hidden>
-            <span class="step-ratchet-label" id="step-ratchet-label">Roll</span>
-            <input type="range" id="step-ratchet-slider" min="1" max="8" value="1" step="1" aria-label="Ratchet — split this step into N evenly-spaced rapid sub-hits" />
-            <span class="step-ratchet-val" id="step-ratchet-val">1×</span>
-          </div>
-          <div class="step-prob-bar" id="step-prob-bar" hidden>
-            <span class="step-prob-label" id="step-prob-label">Chance</span>
-            <input type="range" id="step-prob-slider" min="0" max="100" value="100" step="1" aria-label="Chance — probability this step fires on each loop pass" />
-            <span class="step-prob-val" id="step-prob-val">100%</span>
-          </div>
-          <div class="step-cond-bar" id="step-cond-bar" hidden>
-            <span class="step-cond-label" id="step-cond-label">When</span>
-            <button type="button" id="step-cond-btn" class="step-cond-btn" title="Condition — which loop passes this step plays on (cycles)">Always</button>
+          <div class="step-tab-panel" id="step-tab-groove" data-panel="groove" hidden>
+            <div class="step-strum-bar" id="step-strum-bar" hidden>
+              <button type="button" class="step-toggle step-strum-label" id="step-strum-label" data-setting="strum" title="Strum — click to bypass / activate">Strum</button>
+              <input type="range" id="step-strum-slider" min="-80" max="80" value="0" step="1" aria-label="Strum — stagger a chord's voices by this many ms each (negative = high to low)" />
+              <span class="step-strum-val" id="step-strum-val">0</span>
+            </div>
+            <div class="step-ratchet-bar" id="step-ratchet-bar" hidden>
+              <button type="button" class="step-toggle step-ratchet-label" id="step-ratchet-label" data-setting="roll" title="Roll — click to bypass / activate">Roll</button>
+              <input type="range" id="step-ratchet-slider" min="1" max="8" value="1" step="1" aria-label="Ratchet — split this step into N evenly-spaced rapid sub-hits" />
+              <span class="step-ratchet-val" id="step-ratchet-val">1×</span>
+            </div>
+            <div class="step-prob-bar" id="step-prob-bar" hidden>
+              <button type="button" class="step-toggle step-prob-label" id="step-prob-label" data-setting="chance" title="Chance — click to bypass / activate">Chance</button>
+              <input type="range" id="step-prob-slider" min="0" max="100" value="100" step="1" aria-label="Chance — probability this step fires on each loop pass" />
+              <span class="step-prob-val" id="step-prob-val">100%</span>
+            </div>
+            <div class="step-cond-bar" id="step-cond-bar" hidden>
+              <button type="button" class="step-toggle step-cond-label" id="step-cond-label" data-setting="when" title="When — click to bypass / activate">When</button>
+              <button type="button" id="step-cond-btn" class="step-cond-btn" title="Condition — which loop passes this step plays on (cycles)">Always</button>
+            </div>
           </div>
         </div>
       </div>

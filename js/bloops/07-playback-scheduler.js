@@ -475,12 +475,12 @@
     // step.cond gates on the loop iteration (stream.iter): '1st' (first pass
     // only), or Elektron-style 'A:B' (play on pass A of every B). 'always' /
     // unset = always.
-    function _stepShouldFire(step, stream) {
+    function _stepShouldFire(step, stream, off) {
       if (!step) return true;
-      if (Number.isFinite(step.prob) && step.prob < 100) {
+      if (!(off && off.chance) && Number.isFinite(step.prob) && step.prob < 100) {
         if ((Math.random() * 100) >= step.prob) return false;
       }
-      const cond = step.cond;
+      const cond = (off && off.when) ? null : step.cond;
       if (cond && cond !== 'always') {
         const iter = (stream && Number.isFinite(stream.iter)) ? stream.iter : 0;
         if (cond === '1st') return iter === 0;
@@ -502,6 +502,11 @@
       const origStep = step;
       const playStep = _resolveVariantStep(step, stream && stream.iter);
       step = playStep;
+      // Per-step bypass switches (the step editor's active/bypass toggles).
+      // _off is authored on the original step; a bypassed setting keeps its
+      // value but the scheduler ignores it here. Keys: pan / vol / slip /
+      // strum / roll / chance / when.
+      const _off = (origStep && origStep._off) || null;
       // Slip shifts the audio fire time forwards or backwards by a
       // percent of this step's duration. Per-step slip lives on
       // step.params.slip; lane-level slip lives on the lane and
@@ -509,7 +514,8 @@
       // stream.offsetSec is NOT shifted, so the next step still fires
       // at its grid position — only this step's attack moves.
       const lane = (Number.isFinite(laneIdx) && lanes[laneIdx]) ? lanes[laneIdx] : null;
-      const stepSlip = (step.params && Number.isFinite(step.params.slip))
+      const stepSlip = (_off && _off.slip) ? 0
+        : (step.params && Number.isFinite(step.params.slip))
         ? step.params.slip
         : (Number.isFinite(step.slip) ? step.slip : 0);
       const laneSlip = (lane && Number.isFinite(lane.slip)) ? lane.slip : 0;
@@ -617,6 +623,16 @@
         q.volume = Math.max(0, Math.min(100, (q.volume == null ? 100 : q.volume) * _velScale));
         return q;
       };
+      // Bypass switches for pan / volume: neutralize the params at fire time
+      // (pan → center, volume → full) while leaving the stored value intact
+      // so the toggle can restore it.
+      const _withBypass = (p) => {
+        if (!_off || (!_off.pan && !_off.vol)) return p;
+        const q = (typeof p === 'string') ? { type: p } : { ...p };
+        if (_off.pan) q.pan = 0;
+        if (_off.vol) q.volume = 100;
+        return q;
+      };
       // Silent path: muted lane keeps its scheduler pointer advancing
       // so unmuting mid-loop snaps back into the cadence cleanly.
       // Drop the lane's stale entry from the per-lane Keep label so
@@ -641,7 +657,7 @@
       // advances the cadence, so it leaves a clean rest in the groove and
       // the loop keeps evolving. iter (the lane's loop pass) comes from the
       // same stream.iter that variance already keys off.
-      if (!_stepShouldFire(step, stream)) {
+      if (!_stepShouldFire(step, stream, _off)) {
         return waitSecExact;
       }
 
@@ -670,7 +686,8 @@
         } else if (step.chord || step.freq != null) {
           // Fire all of this step's voices at audio time `at`, ringing for
           // `dms`. Factored out so ratchet can re-fire it N times.
-          const _strumMs = Number.isFinite(step.strum) ? Math.max(-80, Math.min(80, step.strum)) : 0;
+          const _strumMs = (_off && _off.strum) ? 0
+            : (Number.isFinite(step.strum) ? Math.max(-80, Math.min(80, step.strum)) : 0);
           const _strumSec = _strumMs / 1000;
           const _fireStepVoices = (at, dms) => {
             if (step.chord) {
@@ -682,16 +699,17 @@
                 const _voiceAt = (_strumSec === 0)
                   ? at
                   : at + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
-                playNote(n.freq, paramsWithBend(_withVel(chordVoiceParams(n.params || n.sound || 'sine', size, step)), step.bend), dms, _voiceAt, undefined, undefined, laneIdx);
+                playNote(n.freq, paramsWithBend(_withVel(_withBypass(chordVoiceParams(n.params || n.sound || 'sine', size, step))), step.bend), dms, _voiceAt, undefined, undefined, laneIdx);
               }
             } else {
-              playNote(step.freq, paramsWithBend(_withVel(step.params || step.sound || 'sine'), step.bend), dms, at, undefined, undefined, laneIdx);
+              playNote(step.freq, paramsWithBend(_withVel(_withBypass(step.params || step.sound || 'sine')), step.bend), dms, at, undefined, undefined, laneIdx);
             }
           };
           // Ratchet: split the step into N evenly-spaced sub-hits across its
           // duration (rolls / stutters). 1 (or unset) = the normal single
           // hit. Capped at 8 so a tiny step can't spawn a runaway burst.
-          const _rat = Number.isFinite(step.ratchet) ? Math.max(1, Math.min(8, Math.floor(step.ratchet))) : 1;
+          const _rat = (_off && _off.roll) ? 1
+            : (Number.isFinite(step.ratchet) ? Math.max(1, Math.min(8, Math.floor(step.ratchet))) : 1);
           if (_rat <= 1) {
             _fireStepVoices(fireTime, durMs);
           } else {

@@ -35,6 +35,9 @@
       const copy = { ...s };
       if (s.chord) copy.chord = s.chord.map(n => ({ ...n, params: n.params ? { ...n.params } : undefined }));
       if (s.params) copy.params = { ...s.params };
+      // Per-step bypass switches — copy by value so duplicated/banked steps
+      // don't share the active/bypass state object with the original.
+      if (s._off) copy._off = { ...s._off };
       if (s.subSteps) copy.subSteps = s.subSteps.map(cloneStep);
       if (s.bend) copy.bend = { ...s.bend };
       // Wrap-level override tone — deep-copy so a cloned/banked wrap doesn't

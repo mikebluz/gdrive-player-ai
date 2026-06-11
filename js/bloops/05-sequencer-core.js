@@ -1353,6 +1353,24 @@
           }
         }
       }
+      // Reflect each setting's active/bypass state on its toggle label and
+      // disable the matching control when bypassed. State is read from the
+      // primary (last-selected) eligible step's _off map.
+      {
+        const _primaryForToggles = (showBars && eligible.length > 0) ? eligible[eligible.length - 1] : null;
+        const _toggleMap = [
+          ['pan', 'step-pan-slider'], ['vol', 'step-vol-slider'], ['slip', 'step-slip-slider'],
+          ['strum', 'step-strum-slider'], ['roll', 'step-ratchet-slider'],
+          ['chance', 'step-prob-slider'], ['when', 'step-cond-btn'],
+        ];
+        _toggleMap.forEach(([key, ctrlId]) => {
+          const lbl = document.querySelector('.step-toggle[data-setting="' + key + '"]');
+          const ctrl = document.getElementById(ctrlId);
+          const bypassed = !!(_primaryForToggles && _primaryForToggles._off && _primaryForToggles._off[key]);
+          if (lbl) { lbl.classList.toggle('bypassed', bypassed); lbl.setAttribute('aria-pressed', bypassed ? 'false' : 'true'); }
+          if (ctrl) ctrl.disabled = bypassed;
+        });
+      }
       // Edit row wraps both sliders + the Edit button. Show it when the
       // param bars are up OR any chip is selected — a rest has no playable
       // content (so no Pan/Vol bars) but still needs the Edit button so its

@@ -1129,6 +1129,45 @@
       });
     })();
 
+    // ---- Per-step editor tabs (Mix / Groove) ----
+    (function bindStepTabs() {
+      const tabs = Array.from(document.querySelectorAll('.step-tab[data-tab]'));
+      const panels = Array.from(document.querySelectorAll('.step-tab-panel[data-panel]'));
+      if (!tabs.length) return;
+      tabs.forEach(tab => tab.addEventListener('click', () => {
+        const want = tab.dataset.tab;
+        tabs.forEach(t => {
+          const on = t.dataset.tab === want;
+          t.classList.toggle('active', on);
+          t.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panels.forEach(p => { p.hidden = p.dataset.panel !== want; });
+      }));
+    })();
+
+    // ---- Per-step setting active/bypass toggles ----
+    // The label of each step-editor bar is a button: click to bypass the
+    // setting (its value is kept but the scheduler ignores it via step._off)
+    // or re-activate it. Applies across the whole eligible selection,
+    // flipping off the PRIMARY step's current state.
+    function _setStepSettingBypass(step, key, off) {
+      if (!step) return;
+      if (off) { step._off = step._off || {}; step._off[key] = true; }
+      else if (step._off) { delete step._off[key]; if (Object.keys(step._off).length === 0) delete step._off; }
+    }
+    document.querySelectorAll('.step-toggle[data-setting]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.setting;
+        const sel = selectedStepRefs.filter(_stepHasPlayableContent);
+        if (!sel.length) return;
+        const primary = sel[sel.length - 1];
+        const newBypass = !(primary._off && primary._off[key]);
+        sel.forEach(s => _setStepSettingBypass(s, key, newBypass));
+        try { syncStepEditorFromSelection(); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    });
+
 
     // ---- Groove panel (swing / humanize) -------------------------------
     // A small popover off the ≈ transport button. Edits the global groove

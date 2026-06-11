@@ -3584,6 +3584,34 @@
       font-weight: 700;
       color: #b2f5ea;
     }
+    /* Per-step editor tabs: Mix (Pan/Vol/Slip) and Groove (Strum/Roll/
+       Chance/When). */
+    .step-tabs { display: flex; gap: 6px; padding: 6px 18px 2px; }
+    .step-tab {
+      flex: 1 1 0; min-width: 0; padding: 6px 8px;
+      border: 1px solid #2d2d3f; border-radius: 8px; background: transparent;
+      color: #718096; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .step-tab:hover { border-color: #4fd1c5; color: #b2f5ea; } }
+    .step-tab.active { background: rgba(79, 209, 197, 0.14); border-color: #4fd1c5; color: #b2f5ea; }
+    .step-tab-panel[hidden] { display: none; }
+    /* Label-as-button active/bypass toggle. Active = teal pill; bypassed =
+       dimmed + struck-through, and the matching slider is disabled. */
+    .step-toggle {
+      flex: 0 0 auto; min-width: 56px;
+      padding: 4px 8px; border: 1px solid rgba(79, 209, 197, 0.5);
+      border-radius: 8px; background: rgba(79, 209, 197, 0.12);
+      color: #b2f5ea; cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .step-toggle:hover { border-color: #4fd1c5; color: #e6fffa; } }
+    .step-toggle.bypassed {
+      background: transparent; border-color: #2d2d3f; color: #4a5568;
+      text-decoration: line-through; opacity: 0.7;
+    }
+    .step-edit-bars input[type="range"]:disabled { opacity: 0.3; cursor: default; }
+    .step-edit-bars #step-cond-btn:disabled { opacity: 0.35; cursor: default; }
 
     .seq-cursor {
       width: 4px;

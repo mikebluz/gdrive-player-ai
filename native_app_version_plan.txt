@@ -1,0 +1,250 @@
+================================================================
+NATIVE APP VERSION — PLAN
+================================================================
+Goal: Ship Bloops as installable iOS and Android apps with minimal
+rewriting. Keep the existing bloops.html + css/bloops.css + js/* as
+the single source of truth.
+
+----------------------------------------------------------------
+1. APPROACH: CAPACITOR (recommended)
+----------------------------------------------------------------
+Capacitor (by Ionic) wraps the existing web bundle in a WKWebView
+(iOS) or WebView (Android) shell. Almost no code changes to the
+existing app:
+  - HTML / CSS / JS load straight from the bundled assets folder.
+  - Tone.js + Web Audio work the same as in the browser.
+  - Native bridges (plugins) available for: file system, audio
+    session, media controls, share sheet, deep links, etc.
+
+Alternatives considered + why not:
+  - Cordova / PhoneGap: older, less actively maintained. Capacitor
+    is the modern successor with the same model.
+  - React Native / Flutter: full UI rewrite. ~28k-line HTML/Canvas
+    app would need to be reimplemented in JSX/Dart.
+  - Tauri: desktop only on stable; mobile is still alpha-ish.
+  - Pure native (Swift + Kotlin): biggest rewrite, two codebases.
+
+----------------------------------------------------------------
+2. INITIAL SETUP — ROUGHLY ONE AFTERNOON
+----------------------------------------------------------------
+Prereqs:
+  - Node 18+ (already installed for the local server).
+  - Xcode 15+ (for iOS) — Mac required.
+  - Android Studio (for Android).
+  - Apple Developer Account ($99/yr) for App Store distribution.
+  - Google Play Console ($25 one-time) for Play Store.
+
+Project init (from a fresh sibling folder, NOT inside this repo):
+
+  # Scaffold a Capacitor app
+  npm init @capacitor/app
+    # name:   "Bloops"
+    # id:     "com.mikeluz.bloops"  (reverse-DNS, app identifier)
+
+  cd bloops-native
+  npm install
+  npm install @capacitor/core @capacitor/cli
+  npx cap init Bloops com.mikeluz.bloops
+
+  # Add platforms
+  npm install @capacitor/ios @capacitor/android
+  npx cap add ios
+  npx cap add android
+
+  # Configure where the web bundle lives. Edit capacitor.config.ts:
+  #   webDir: '../gdrive-player-ai'   (point at this repo's root)
+  # OR copy bloops.html + css/ + js/ into bloops-native/www each build.
+  # Cleaner approach: a build script that rsync's the files over so
+  # the native project stays decoupled from the working git tree.
+
+  # Sync web assets into the native projects
+  npx cap sync
+
+  # Open in Xcode / Android Studio to run on a device
+  npx cap open ios
+  npx cap open android
+
+Build flow once set up:
+  - Edit bloops.html / css / js as normal.
+  - `npm run sync` (script that copies + runs cap sync).
+  - Reload in Xcode / Android Studio (or use live-reload mode below).
+
+Live reload during dev — point the WKWebView at the running
+Express server (npm start at :3001) instead of bundled assets:
+  npx cap run ios --livereload --external
+This means edits in bloops.html show up on the phone instantly.
+
+----------------------------------------------------------------
+3. iOS NATIVE CONFIG
+----------------------------------------------------------------
+File: ios/App/App/Info.plist
+
+  - Add `UIBackgroundModes` with `audio` entry. This is REQUIRED
+    for any background audio. Just adding the key isn't enough on
+    its own (see Background Audio section below) but it's the
+    foundational permission.
+
+  - Add `NSAppTransportSecurity` exemptions only if loading remote
+    samples over HTTP — Drive uses HTTPS so probably unnecessary.
+
+  - App icon + launch screen: drop the 1024×1024 icon into the
+    Asset Catalog; Xcode generates the rest.
+
+File: ios/App/App/AppDelegate.swift (or equivalent)
+
+  Configure AVAudioSession on app launch so the OS knows we want
+  to mix / play audio in background:
+
+    let session = AVAudioSession.sharedInstance()
+    try? session.setCategory(.playback, mode: .default,
+                             options: [.mixWithOthers])
+    try? session.setActive(true)
+
+  `.playback` category is what enables background audio. Without
+  it the session defaults to `.soloAmbient` which stops on screen
+  lock.
+
+Capabilities (Xcode → Signing & Capabilities):
+  - Background Modes → Audio, AirPlay, and Picture in Picture.
+  - Push Notifications (not needed for now — skip).
+
+----------------------------------------------------------------
+4. ANDROID NATIVE CONFIG
+----------------------------------------------------------------
+File: android/app/src/main/AndroidManifest.xml
+
+  - <uses-permission android:name="android.permission.INTERNET" />
+  - <uses-permission android:name="android.permission.WAKE_LOCK" />
+  - <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    (only if we add a foreground audio service for background play)
+
+Background audio on Android requires a Foreground Service with a
+persistent notification. There's no equivalent to iOS's
+UIBackgroundModes-audio "trust me, I'll play sound" model — you
+must show a notification or the OS kills the process.
+
+Capacitor has community plugins (e.g. `capacitor-music-controls-
+plugin`) that handle the foreground service + media-style
+notification + lock-screen controls. Worth evaluating before
+hand-rolling Java/Kotlin.
+
+----------------------------------------------------------------
+5. BACKGROUND AUDIO — THE REAL HARD PART
+----------------------------------------------------------------
+The shell ships easily; "keeps playing when the screen locks" is
+where things get spicy. Three escalating approaches:
+
+(a) FOREGROUND-ONLY (no background audio).
+    - Easiest. Ship as-is, audio stops on screen lock.
+    - Acceptable for a v1 release labelled "music creation tool" —
+      most DAW-style apps behave this way.
+
+(b) PRE-RENDER + HTMLAudioElement.
+    - Add a "Render & Loop" button that bounces the current
+      sequence to an offline AudioBuffer (Tone.Offline does this
+      already), then plays it via an <audio> element with the
+      Media Session API (already partially wired in Tone? if not,
+      hand-roll it with `navigator.mediaSession`).
+    - Background audio works because the OS sees a real
+      HTMLMediaElement playing, not Web Audio synthesis.
+    - Tradeoff: live edits (chord swap, tempo, mute) don't take
+      effect until re-render. The user does composition in
+      foreground, then "freezes" to listen in background.
+
+(c) NATIVE AUDIO ROUTING via Capacitor plugin.
+    - Use a plugin like `@capacitor-community/native-audio` that
+      loads sample files into a native AVAudioPlayer (iOS) /
+      ExoPlayer (Android) and triggers playback from JS. Native
+      audio sessions get the full UIBackgroundModes treatment.
+    - Tradeoff: Tone.js synthesis won't survive backgrounding;
+      only sample-based playback. Synths would need to be either
+      pre-rendered or re-implemented as samples.
+    - Most complex; only worth it if (b) isn't enough.
+
+Recommended path: (a) → (b). Skip (c) unless users specifically
+ask for live-synth background playback (probably rare for the
+target use case).
+
+----------------------------------------------------------------
+6. STORAGE + AUTH CONSIDERATIONS
+----------------------------------------------------------------
+Google Drive OAuth in a WebView is fussy:
+  - WKWebView OAuth redirects work but Apple's policy prefers
+    SFSafariViewController / ASWebAuthenticationSession for OAuth.
+    Capacitor's GoogleAuth plugin handles this natively.
+  - Replace the current `gapi` + GIS popup flow with the native
+    OAuth plugin on mobile (gate via a `Capacitor.isNativePlatform()`
+    check so web behavior stays unchanged).
+
+LocalStorage works in WKWebView and survives app updates by
+default, BUT the OS can purge it under storage pressure. For
+project safety:
+  - Mirror saved sequences to the iOS Documents directory via the
+    Filesystem plugin so they're backed up to iCloud.
+  - On Android, write to app-internal storage (auto-backup eligible).
+
+----------------------------------------------------------------
+7. DISTRIBUTION CHECKLIST
+----------------------------------------------------------------
+iOS:
+  - 1024×1024 app icon (PNG, no transparency).
+  - Launch screen (storyboard or asset catalog).
+  - Privacy policy URL (required for App Store; even a tiny
+    "we don't collect anything" page suffices).
+  - App Store Connect listing: description, screenshots (one
+    per device class), category (Music), age rating.
+  - TestFlight for beta distribution before submission.
+  - Apple usually reviews music-creation apps in 1–3 days.
+
+Android:
+  - 512×512 icon + various launcher sizes.
+  - Privacy policy URL.
+  - Internal testing track for early users.
+  - Closed beta → open beta → production rollout.
+
+----------------------------------------------------------------
+8. RISKS / UNKNOWNS
+----------------------------------------------------------------
+- Tone.js sampler performance in WKWebView vs mobile Safari: should
+  be equivalent (same engine), but worth profiling on older
+  devices early.
+- Touch-event handling differences (3D Touch removed, pointer
+  events behave slightly differently). Existing pointerdown/up
+  logic should port cleanly.
+- iOS Safari's hidden bugs (e.g. AudioContext suspend on screen
+  off) also exist in WKWebView. Some workarounds in bloops.html
+  (cold-start guards in playNote) already address this.
+- App Store review can reject for vague "doesn't add enough value
+  beyond a website" reasons. Mitigate by leaning on the native
+  features that aren't possible on the web (offline saves to
+  device, MIDI export to other apps via UIDocumentInteraction,
+  etc.) — pitch the app as offline-capable.
+- Google Sign-In via WKWebView blocked on some account types. Use
+  ASWebAuthenticationSession or the Capacitor GoogleAuth plugin
+  to avoid that.
+
+----------------------------------------------------------------
+9. WHAT TO DECIDE BEFORE STARTING
+----------------------------------------------------------------
+- Background-audio target: (a), (b), or (c)? Drives 80% of the
+  effort estimate.
+- Is Google Drive sync a v1 requirement, or can mobile launch
+  with only on-device storage + later add cloud sync?
+- iOS-only first, or both platforms in parallel? iOS-only is
+  faster (one toolchain) and reaches Mac/iPad too.
+- App name + bundle ID. "Bloops" reads well; "com.mikeluz.bloops"
+  for the iOS bundle ID feels right.
+
+----------------------------------------------------------------
+10. TIME ESTIMATE (single developer, focused)
+----------------------------------------------------------------
+- Capacitor setup + first build on device:    half a day
+- Icon + launch screen + basic polish:        half a day
+- Background audio (approach b):              1–2 days
+- Google Drive OAuth via native plugin:       1 day
+- App Store / Play Store submission prep:     1 day
+- Beta cycle + fixes:                         1–2 weeks calendar
+                                              (mostly waiting)
+
+Realistic: 1 week of focused work to a TestFlight build, plus a
+couple weeks of beta + App Store review before public launch.

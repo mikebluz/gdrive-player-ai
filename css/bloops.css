@@ -1057,15 +1057,15 @@
 
     /* Row that hosts Clear + Riff between the sequence chip display and
        the step controls. Each button takes half the row. */
+    /* Save / Clear / Riff moved into the lane label menu. The row stays in
+       the DOM (hidden) so its buttons + all their existing wiring and
+       disabled gating are reused by the menu, which delegates via .click(). */
     .clear-riff-row {
-      display: flex;
+      display: none;
       gap: 10px;
       padding: 6px 18px;
       background: #050510;
       border-bottom: 1px solid #1a1a2e;
-      /* Sequence-display sits above this bar and may want to grow tall.
-         flex-shrink:0 reserves this row's natural height so it never
-         collapses or gets visually overlapped by chip overflow. */
       flex-shrink: 0;
     }
     .clear-riff-row > #save-btn,

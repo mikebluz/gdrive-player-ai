@@ -238,29 +238,20 @@
           status.type = 'button';
           status.className = 'lane-status';
           status.textContent = lane.name;
-          const stateName = lane.muted ? 'muted' : 'off';
+          const stateName = lane.muted ? 'muted' : (lane.solo ? 'solo' : 'off');
           status.dataset.state = stateName;
           if (!isActiveLane) status.classList.add('inactive');
-          status.title = isActiveLane
-            ? `Lane ${lane.name} — click to ${lane.muted ? 'unmute' : 'mute'}.`
-            : `Lane ${lane.name} (${lane.muted ? 'muted' : 'on'}) — switch to this lane to mute / unmute.`;
+          status.title = `Lane ${lane.name} — open lane menu (grid / solo / mute / save / clear / riff).`;
+          // Click the label to focus the lane and open its menu. The menu
+          // (grid show/hide, solo, mute, Save / Clear / Riff) replaces the
+          // old direct mute toggle and the removed eye button.
           status.addEventListener('click', (e) => {
-            // Non-active lane: first click on the status button just
-            // activates the lane (matches the "click a lane to select
-            // it" model used everywhere else). The user can then
-            // click again to toggle mute. The row-level click handler
-            // bails on .lane-status, so without this branch the click
-            // would be silently consumed.
+            e.stopPropagation();
             if (laneIdx !== activeLaneIdx) {
-              e.stopPropagation();
               _laneExpanderOpen = true;
               activateLane(laneIdx);
-              return;
             }
-            e.stopPropagation();
-            lane.muted = !lane.muted;
-            renderSequence();
-            if (typeof persistWorkspace === 'function') persistWorkspace();
+            if (typeof _showLaneMenu === 'function') _showLaneMenu(laneIdx, e.clientX, e.clientY);
           });
           // Right-click / long-press on the status button opens a
           // "Copy voice from…" menu — lets the user clone any other
@@ -273,28 +264,9 @@
             e.stopPropagation();
             _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
           });
-          // Label (status / mute) pill — to the LEFT.
+          // Label (status) pill — opens the lane menu on click. Grid
+          // show/hide now lives in that menu (the eye button was removed).
           ctrls.appendChild(status);
-          // Grid show/hide eye — active lane only; always visible; to the
-          // RIGHT of the label. The grid belongs to the active lane, so the
-          // toggle lives there. Re-renders so the collapse button appears /
-          // disappears as the grid is hidden / shown.
-          if (isActiveLane) {
-            const gridToggle = document.createElement('button');
-            gridToggle.type = 'button';
-            gridToggle.className = 'lane-grid-toggle' + (_laneExpanderOpen ? ' grid-on' : ' grid-off');
-            gridToggle.textContent = '👁';
-            gridToggle.setAttribute('aria-label', _laneExpanderOpen ? 'Hide the note grid' : 'Show the note grid');
-            gridToggle.title = _laneExpanderOpen ? 'Hide the note grid' : 'Show the note grid';
-            gridToggle.addEventListener('click', (e) => {
-              e.stopPropagation();
-              _laneExpanderOpen = !_laneExpanderOpen;
-              renderSequence();
-              if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
-              if (typeof persistWorkspace === 'function') persistWorkspace();
-            });
-            ctrls.appendChild(gridToggle);
-          }
           row.appendChild(ctrls);
 
           const chipsEl = document.createElement('div');

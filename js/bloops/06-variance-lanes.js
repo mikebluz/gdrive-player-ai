@@ -1261,6 +1261,45 @@
       showCtxMenu(clientX, clientY, actions);
     }
 
+    // Lane label menu — opened by tapping a lane's label pill (the label
+    // first focuses the lane via the caller). Offers grid show/hide, solo,
+    // mute, and the global sequence actions Save / Clear / Riff that used
+    // to sit in the clear-riff-row. Save/Clear/Riff delegate to the now-
+    // hidden transport buttons so all their existing wiring + disabled
+    // gating is reused verbatim; the Riff entry opens a second menu built
+    // live from the riff panel's buttons (so Drift / Merge labels + enable
+    // state stay in sync).
+    function _showLaneMenu(laneIdx, x, y) {
+      const lane = lanes[laneIdx];
+      if (!lane) return;
+      const saveBtn = document.getElementById('save-btn');
+      const clearBtn = document.getElementById('clear-btn');
+      const riffActions = [...document.querySelectorAll('#riff-panel button')]
+        .map(b => ({ label: b.textContent.trim(), disabled: b.disabled, fn: () => b.click() }))
+        .filter(a => a.label);
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const actions = [
+        { label: _laneExpanderOpen ? 'Hide grid' : 'Show grid', fn: () => {
+            _laneExpanderOpen = !_laneExpanderOpen;
+            renderSequence();
+            if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
+            persist();
+          } },
+        { label: lane.solo ? 'Unsolo' : 'Solo', fn: () => { lane.solo = !lane.solo; renderSequence(); persist(); } },
+        { label: lane.muted ? 'Unmute' : 'Mute', fn: () => { lane.muted = !lane.muted; renderSequence(); persist(); } },
+        'hr',
+        { label: 'Save',  disabled: !saveBtn  || saveBtn.disabled,  fn: () => saveBtn && saveBtn.click() },
+        { label: 'Clear', danger: true, disabled: !clearBtn || clearBtn.disabled, fn: () => clearBtn && clearBtn.click() },
+      ];
+      if (riffActions.length) {
+        // Defer the submenu to the next tick: showCtxMenu's click handler
+        // runs dismissCtxMenu() right after fn(), which would otherwise
+        // tear down the submenu we just opened.
+        actions.push({ label: 'Riff ▸', fn: () => setTimeout(() => showCtxMenu(x, y, riffActions), 0) });
+      }
+      showCtxMenu(x, y, actions);
+    }
+
     // Sync the global fluidGridMode mirror + body class + toggle button
     // to the currently-active lane's `fluidGridMode`. Called from
     // activateLane (lane switch), the toggle button (mode flip), and

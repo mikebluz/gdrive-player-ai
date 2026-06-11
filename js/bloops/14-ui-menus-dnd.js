@@ -941,8 +941,9 @@
         const btn = document.createElement('button');
         btn.textContent = a.label;
         if (a.danger) btn.classList.add('danger');
+        if (a.disabled) btn.disabled = true;
         btn.addEventListener('pointerdown', (e) => e.stopPropagation());
-        btn.addEventListener('click', () => { a.fn(); dismissCtxMenu(); });
+        btn.addEventListener('click', () => { if (btn.disabled) return; a.fn(); dismissCtxMenu(); });
         ctxMenu.appendChild(btn);
       });
 

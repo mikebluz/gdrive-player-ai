@@ -5603,23 +5603,64 @@
       color: #e2bdf6; font-size: 0.8rem; cursor: pointer;
     }
     .gv-div-opt.active, .gv-acc-opt.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
+    /* Generate Sequence top controls: label + centered numeric input
+       flanked by large −/+ steppers. */
+    .euc-nums { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .euc-num { display: flex; align-items: center; gap: 10px; }
+    .euc-num-label {
+      flex: 0 0 60px; min-width: 0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; color: #a0aec0;
+    }
+    .euc-num-ctl { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .euc-step-btn {
+      flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px;
+      border: 1px solid rgba(159, 122, 234, 0.5); background: rgba(159, 122, 234, 0.12);
+      color: #c9b6ff; font-size: 1.5rem; font-weight: 700; line-height: 1; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .euc-step-btn:hover { background: rgba(159, 122, 234, 0.26); border-color: #c4b5fd; color: #ede9fe; } }
+    .euc-step-btn:active { transform: scale(0.94); }
+    .euc-num-input {
+      flex: 1 1 auto; min-width: 0; text-align: center; height: 42px;
+      background: #1a1a2e; color: #e2e8f0;
+      border: 1px solid #2d2d3f; border-radius: 8px;
+      font-size: 1.15rem; font-weight: 700; font-family: inherit;
+      -moz-appearance: textfield; appearance: textfield;
+    }
+    .euc-num-input:focus { outline: none; border-color: #4299e1; }
+    .euc-num-input::-webkit-outer-spin-button,
+    .euc-num-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .euc-surprise {
+      width: 100%; margin: 0 0 12px; padding: 10px;
+      border-radius: 10px; border: 1px solid rgba(246, 173, 85, 0.55);
+      background: rgba(246, 173, 85, 0.12); color: #fbd38d;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.84rem; font-weight: 800; letter-spacing: 0.8px;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .euc-surprise:hover { background: rgba(246, 173, 85, 0.24); border-color: #f6e05e; color: #fffaf0; } }
+    .euc-surprise:active { transform: scale(0.98); }
     /* Euclid per-step editor: a tappable strip of ● / · cells; the selected
        one is edited by the controls below it. */
     .euc-strip {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       gap: 4px;
       margin: 4px 0 10px;
     }
     .euc-cell {
-      flex: 0 0 auto;            /* keep the per-div inline width (no shrink) */
-      height: 30px;
+      /* flex-grow set inline per step (= its duration in 1/8 units) so the
+         strip always fills the row and cell widths stay proportional to
+         their div — 8 even steps split the row equally on any viewport. */
+      flex: 1 1 0;
+      min-width: 0;
+      height: 42px;
       box-sizing: border-box;
       display: inline-flex; align-items: center; justify-content: center;
       border-radius: 6px;
       border: 1px solid #2d2d3f;
       background: #0a0a14;
-      font-size: 1rem; line-height: 1;
+      font-size: 1.25rem; line-height: 1;
       overflow: hidden;
       cursor: pointer;
       transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;

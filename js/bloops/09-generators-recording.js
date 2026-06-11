@@ -434,14 +434,27 @@
         });
       };
 
+      // A labelled numeric input flanked by large −/+ steppers (− left,
+      // + right). The stepper buttons carry data-target / data-d so a
+      // single delegated handler drives all four.
+      const _numRow = (label, id, min, max, val) =>
+        '<div class="euc-num"><div class="euc-num-label">' + label + '</div><div class="euc-num-ctl">' +
+          '<button type="button" class="euc-step-btn" data-target="' + id + '" data-d="-1">−</button>' +
+          '<input type="number" class="euc-num-input" id="' + id + '" min="' + min + '" max="' + max + '" value="' + val + '" />' +
+          '<button type="button" class="euc-step-btn" data-target="' + id + '" data-d="1">+</button>' +
+        '</div></div>';
+
       const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
       const modal = document.createElement('div'); modal.className = 'sm-modal euc-modal';
       modal.innerHTML =
         '<div class="sm-title">Generate Sequence</div>' +
-        '<div class="sm-param"><div class="sm-param-row">Hits <span class="sm-val" id="euc-k-v">5</span></div><input type="range" id="euc-k" min="1" max="16" value="5" /></div>' +
-        '<div class="sm-param"><div class="sm-param-row">Steps <span class="sm-val" id="euc-n-v">8</span></div><input type="range" id="euc-n" min="2" max="32" value="8" /></div>' +
-        '<div class="sm-param"><div class="sm-param-row">Rotate <span class="sm-val" id="euc-r-v">0</span></div><input type="range" id="euc-r" min="0" max="31" value="0" /></div>' +
-        '<div class="sm-param"><div class="sm-param-row">Length <span class="sm-val" id="euc-l-v">8 / 8</span></div><input type="range" id="euc-l" min="1" max="32" value="8" /></div>' +
+        '<div class="euc-nums">' +
+          _numRow('Hits',   'euc-k', 1, 16, 5) +
+          _numRow('Steps',  'euc-n', 2, 32, 8) +
+          _numRow('Rotate', 'euc-r', 0, 31, 0) +
+          _numRow('Length', 'euc-l', 1, 32, 8) +
+        '</div>' +
+        '<button type="button" class="euc-surprise" id="euc-surprise">✨ Surprise me</button>' +
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +
         '<div class="euc-strip" id="euc-strip"></div>' +
         '<div class="euc-stepedit" id="euc-stepedit"></div>' +
@@ -462,7 +475,6 @@
       const kEl = modal.querySelector('#euc-k'), nEl = modal.querySelector('#euc-n'),
             rEl = modal.querySelector('#euc-r'), lEl = modal.querySelector('#euc-l');
       const stripEl = modal.querySelector('#euc-strip'), editEl = modal.querySelector('#euc-stepedit');
-      const EU_PX = 22; // pixels per eighth-note unit → cell width scales with div
 
       const renderStrip = () => {
         stripEl.innerHTML = '';
@@ -470,7 +482,10 @@
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'euc-cell' + (s.hit ? ' hit' : ' rest') + (i === state.sel ? ' sel' : '');
-          btn.style.width = Math.max(16, (s.eu || 1) * EU_PX) + 'px';
+          // Grow proportional to the step's div so widths stay relative and
+          // the strip always fills the row (8 even steps → equal eighths).
+          btn.style.flexGrow = String(Math.max(0.05, s.eu || 1));
+          btn.style.flexBasis = '0';
           btn.textContent = s.hit ? '●' : '·';
           btn.addEventListener('click', () => {
             state.sel = (state.sel === i) ? -1 : i;  // tap toggles the editor
@@ -598,23 +613,41 @@
       };
 
       const refreshTopVals = () => {
+        // Steps bounds Hits + Rotate; keep their max attrs + values in sync.
         kEl.max = String(state.n);
-        if (state.k > state.n) { state.k = state.n; kEl.value = String(state.n); }
         rEl.max = String(Math.max(0, state.n - 1));
-        modal.querySelector('#euc-k-v').textContent = state.k;
-        modal.querySelector('#euc-n-v').textContent = state.n;
-        modal.querySelector('#euc-r-v').textContent = state.rot;
-        modal.querySelector('#euc-l-v').textContent = state.length + ' / 8';
+        kEl.value = String(state.k);
+        nEl.value = String(state.n);
+        rEl.value = String(state.rot);
+        lEl.value = String(state.length);
       };
       const onTop = () => {
-        state.k = parseInt(kEl.value, 10) || 1;
-        state.n = parseInt(nEl.value, 10) || 2;
-        state.rot = parseInt(rEl.value, 10) || 0;
-        state.length = parseInt(lEl.value, 10) || 1;
-        if (state.k > state.n) state.k = state.n;
+        state.n = Math.max(2, Math.min(32, parseInt(nEl.value, 10) || 2));
+        state.length = Math.max(1, Math.min(32, parseInt(lEl.value, 10) || 1));
+        state.k = Math.max(1, Math.min(state.n, parseInt(kEl.value, 10) || 1));
+        state.rot = Math.max(0, Math.min(state.n - 1, parseInt(rEl.value, 10) || 0));
         seed(); refreshTopVals(); renderStrip(); renderEditor();
       };
       [kEl, nEl, rEl, lEl].forEach(el => el.addEventListener('input', onTop));
+      // Large −/+ steppers nudge their target input by ±1, then re-derive.
+      modal.querySelectorAll('.euc-step-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const input = modal.querySelector('#' + btn.getAttribute('data-target'));
+          if (!input) return;
+          const d = parseInt(btn.getAttribute('data-d'), 10) || 0;
+          input.value = String((parseInt(input.value, 10) || 0) + d);
+          onTop();
+        });
+      });
+      // Surprise me — random-but-valid values for all four controls.
+      modal.querySelector('#euc-surprise').addEventListener('click', () => {
+        const ri = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+        state.n = ri(3, 16);
+        state.length = ri(2, 16);
+        state.k = ri(1, state.n);
+        state.rot = ri(0, state.n - 1);
+        seed(); refreshTopVals(); renderStrip(); renderEditor();
+      });
       seed(); refreshTopVals(); renderStrip(); renderEditor();
 
       const close = () => overlay.remove();

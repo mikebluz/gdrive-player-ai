@@ -244,12 +244,11 @@
       return (typeof cellParams !== 'undefined' && cellParams[0] && cellParams[0].type) ? cellParams[0].type : 'sine';
     }
     // Sample voices get a +SAMPLE_VOLUME_BOOST_DB (×4) gain in playNote's
-    // per-note path so they match synth loudness on the GRID. Bloom does its
-    // own gain-staging on top, so for sample-tone layers (and Beat, which is
-    // always a drum sample) that boost double-applies — making them ~4× hotter
-    // than the synth voices Bloom was tuned for and slamming the master
-    // compressor/limiter into sustained distortion. Cancel it here so every
-    // layer sits at synth-equivalent level regardless of tone.
+    // per-note path so MELODIC samples (recorded quiet, ~-12 dBFS) match synth
+    // loudness. That boost is RIGHT for Bed/Motif/Texture sample tones, so they
+    // keep it. Only Beat compensates it: drum samples are recorded hot, so the
+    // +12 dB over-boosts them and slams the limiter — this cancels it so a beat
+    // hit sits at synth-equivalent level.
     function _ambBoostComp(type) {
       if (typeof type === 'string' && type.startsWith('sample:')
           && typeof SAMPLE_VOLUME_BOOST_DB === 'number') {
@@ -265,7 +264,11 @@
       const HEADROOM = 0.7;
       const eff = Math.max(1, density) * Math.max(1, overlap);
       const type = _ambLayerType(tone);
-      const vol = Math.max(2, Math.round(baseVol * (HEADROOM / eff) * _ambBoostComp(type)));
+      // Melodic samples KEEP the full +12 dB boost (sustaining samples then
+      // match synth level; decaying ones — e.g. piano — naturally sit a little
+      // lower in a pad role). 1/N staging keeps the bed safe; only Beat (drums,
+      // recorded hot) compensates the boost.
+      const vol = Math.max(2, Math.round(baseVol * (HEADROOM / eff)));
       const out = { ...base, type, attack: atkMs, decay: 200, sustain: 85, release: relMs, volume: vol, pan: pan | 0 };
       // Motion: a small per-voice detune drift (panning is the Space fader's job).
       const m = Math.max(0, Math.min(100, motion | 0)) / 100;
@@ -298,7 +301,7 @@
         attack: Math.max(8, Math.round(lenMs * 0.10)),
         decay: 120, sustain: 70,
         release: Math.max(120, Math.round(lenMs * 0.5)),
-        volume: Math.max(2, Math.round(baseVol * 0.32 * _ambBoostComp(type))),
+        volume: Math.max(2, Math.round(baseVol * 0.32)),
         pan: pan | 0,
       };
     }
@@ -364,7 +367,7 @@
         type,
         attack: Math.max(8, Math.round(lenMs * 0.12)), decay: 80, sustain: 0,
         release: Math.max(120, Math.round(lenMs * 0.8)),
-        volume: Math.max(2, Math.round(baseVol * 0.2 * _ambBoostComp(type))), pan: pan | 0,
+        volume: Math.max(2, Math.round(baseVol * 0.2)), pan: pan | 0,
       };
     }
     function _ambEmitTexture(at, texture, space) {
@@ -1042,13 +1045,15 @@
           '<div class="ambient-ctrl"><label for="ambient-' + layer + '-mod-' + target + '-shape">Shape</label>' +
             shapeSel('ambient-' + layer + '-mod-' + target + '-shape') + '<span class="ambient-hint">wave</span></div>' +
         '</div>';
+      // Collapsed by default — the Mod block is tall, so it lives behind an
+      // expandable <details> per layer.
       const modUi = (layer) =>
-        '<div class="ambient-mod">' +
-          '<div class="ambient-mod-head">Mod · independent VCA / VCO / VCF</div>' +
+        '<details class="ambient-mod">' +
+          '<summary class="ambient-mod-head">Mod · VCA / VCO / VCF</summary>' +
           modTarget(layer, 'vca', 'VCA · amplitude', 'tremolo', 30) +
           modTarget(layer, 'vco', 'VCO · pitch', 'vibrato', 20) +
           modTarget(layer, 'vcf', 'VCF · cutoff', 'sweep', 15) +
-        '</div>';
+        '</details>';
       host.innerHTML =
         '<div class="ambient-title">Bloom — generative ambient</div>' +
         '<canvas id="ambient-viz" class="ambient-viz"></canvas>' +

@@ -957,6 +957,13 @@
       const volNorm = Math.max(0, Math.min(1, (Number.isFinite(lane.volume) ? lane.volume : 100) / 100));
       const volDb = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
       const panner = new Tone.Panner(panNorm);
+      // Tone.Panner forces a mono input, which downmixes any upstream STEREO
+      // signal (per-note/per-voice pans — e.g. Bloom's Space spread, panned
+      // chord voices) to mono before re-panning, collapsing the stereo image.
+      // Force the underlying node to accept stereo so those per-note pans
+      // survive through the lane bus.
+      try { panner.channelCount = 2; panner.channelCountMode = 'max'; } catch (e) {}
+      try { if (panner._panner) { panner._panner.channelCount = 2; panner._panner.channelCountMode = 'max'; } } catch (e) {}
       const volume = new Tone.Volume(volDb);
       volume.connect(panner);
       panner.connect(masterBus);

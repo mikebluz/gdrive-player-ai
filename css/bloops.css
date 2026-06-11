@@ -1837,20 +1837,28 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
+    /* Mod block — an expandable <details> per layer (collapsed by default). */
     .ambient-mod {
-      display: flex; flex-direction: column; gap: 8px;
-      margin-top: 4px; padding: 8px 10px;
-      border: 1px dashed #2d2d3f; border-radius: 6px;
-      background: rgba(159,122,234,0.05);
+      margin-top: 4px; border: 1px dashed #2d2d3f; border-radius: 6px;
+      background: rgba(159,122,234,0.05); overflow: hidden;
     }
     .ambient-mod-head {
+      cursor: pointer; user-select: none; list-style: none;
+      padding: 8px 10px; display: flex; align-items: center; gap: 6px;
       font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 700;
       letter-spacing: 0.04em; color: #9f7aea; text-transform: uppercase;
     }
-    .ambient-mod-target {
+    .ambient-mod-head:hover { color: #d6bcfa; }
+    /* Hide the native disclosure triangle; use our own chevron. */
+    .ambient-mod-head::-webkit-details-marker { display: none; }
+    .ambient-mod-head::before { content: '▸'; font-size: 0.85em; transition: transform 0.12s ease; }
+    .ambient-mod[open] > .ambient-mod-head::before { transform: rotate(90deg); }
+    .ambient-mod > .ambient-mod-target {
       display: flex; flex-direction: column; gap: 6px;
-      padding: 6px 8px; border-left: 2px solid #2d2d3f; border-radius: 0 4px 4px 0;
+      padding: 6px 10px; margin: 0 8px 8px;
+      border-left: 2px solid #2d2d3f; border-radius: 0 4px 4px 0;
     }
+    .ambient-mod > .ambient-mod-target:first-of-type { margin-top: 2px; }
     .ambient-mod-sub {
       font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 600;
       color: #a0aec0;

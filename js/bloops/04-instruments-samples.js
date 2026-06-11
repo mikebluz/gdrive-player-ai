@@ -106,10 +106,20 @@
       let sampleFreq;
       try { sampleFreq = Tone.Frequency(sampleMidi, 'midi').toFrequency(); } catch (e) { return null; }
       const playbackRate = (sampleFreq > 0 && tunedFreq > 0) ? tunedFreq / sampleFreq : 1;
-      let source = null, ampEnv = null, outGain = null, filter = null;
+      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
-        outGain = new Tone.Gain(boost).connect(dest);
+        // Per-note pan: place the voice in the stereo field (e.g. Bloom's
+        // Space spread). The synth path has its own panner; samples skipped
+        // it until now. Sits between outGain and the destination so it pans
+        // the boosted, enveloped signal.
+        const panNorm = (opts && Number.isFinite(opts.pan)) ? Math.max(-1, Math.min(1, opts.pan / 100)) : 0;
+        let outTail = dest;
+        if (Math.abs(panNorm) > 0.001) {
+          panNode = new Tone.Panner(panNorm).connect(dest);
+          outTail = panNode;
+        }
+        outGain = new Tone.Gain(boost).connect(outTail);
         ampEnv = new Tone.AmplitudeEnvelope({
           attack:  Math.max(0, env.attack),
           decay:   Math.max(0, env.decay),
@@ -139,9 +149,10 @@
         try { ampEnv && ampEnv.dispose(); } catch (_) {}
         try { outGain && outGain.dispose(); } catch (_) {}
         try { filter && filter.dispose(); } catch (_) {}
+        try { panNode && panNode.dispose(); } catch (_) {}
         return null;
       }
-      return { source, ampEnv, outGain, filter };
+      return { source, ampEnv, outGain, filter, panNode };
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -149,6 +160,7 @@
       try { v.ampEnv && v.ampEnv.dispose(); } catch (e) {}
       try { v.outGain && v.outGain.dispose(); } catch (e) {}
       try { v.filter && v.filter.dispose(); } catch (e) {}
+      try { v.panNode && v.panNode.dispose(); } catch (e) {}
     }
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;
@@ -1241,7 +1253,7 @@
         // shapes the held sample, not just a fade in/out.
         const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
-          { filterCutoff: params.filterCutoff, filterQ: params.filterQ });
+          { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
         if (v) {
           const triggerAt = _warmAt();
           try {
@@ -1859,7 +1871,7 @@
                || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
                || globalSendTap);
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
-            { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod });
+            { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan });
           if (v) {
             const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             try {

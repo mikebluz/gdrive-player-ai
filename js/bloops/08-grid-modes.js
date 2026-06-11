@@ -476,6 +476,71 @@
       }
       return step;
     }
+    // Diatonic transpose of a wrap step for per-cell audition. Moves
+    // every leaf note by the same number of SCALE DEGREES that the wrap's
+    // root moved (baseFreq -> targetFreq), so a chord keeps its diatonic
+    // shape instead of each note snapping independently to the nearest
+    // scale tone — the latter mangled chords (a C-major triad auditioned
+    // on D in C major used to play D-G-A because the major third F#
+    // tie-rounded UP to G; this plays the correct D-F-A instead).
+    // Chromatic scales fall back to a plain semitone transpose. Updates
+    // every leaf label to match the new pitch.
+    function transposeStepToScaleDegrees(step, baseFreq, targetFreq) {
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      const deltaSemi = semitonesBetweenHz(baseFreq, targetFreq);
+      // Chromatic (or unknown / 12-tone) scale: degree-space is identical
+      // to semitone-space, so a plain chromatic transpose is exact.
+      if (!intervals || intervals.length >= 12) {
+        return transposeStepRec(step, deltaSemi);
+      }
+      const N = intervals.length;
+      const A = masterFreqA || 440;
+      // Map a freq to an absolute scale-degree index (octave*N + degree)
+      // using the nearest scale tone. Octave is anchored on the scale
+      // root so degree + octave reconstruct the pitch exactly.
+      const freqToAbsDegree = (freq) => {
+        const midi = Math.round(12 * Math.log2(freq / A) + 69);
+        const pc = (((midi - rootIdx) % 12) + 12) % 12;
+        let bestI = 0, bestD = 99;
+        for (let i = 0; i < N; i++) {
+          const up   = ((intervals[i] - pc) % 12 + 12) % 12;
+          const down = ((pc - intervals[i]) % 12 + 12) % 12;
+          const d = Math.min(up, down);
+          if (d < bestD) { bestD = d; bestI = i; }
+        }
+        return Math.floor((midi - rootIdx) / 12) * N + bestI;
+      };
+      const absDegreeToMidi = (absDeg) => {
+        const oct = Math.floor(absDeg / N);
+        const i = ((absDeg % N) + N) % N;
+        return rootIdx + oct * 12 + intervals[i];
+      };
+      const degreeDelta = freqToAbsDegree(targetFreq) - freqToAbsDegree(baseFreq);
+      const mapNote = (n) => {
+        if (!n || !Number.isFinite(n.freq)) return { ...n };
+        const midi = absDegreeToMidi(freqToAbsDegree(n.freq) + degreeDelta);
+        const freq = A * Math.pow(2, (midi - 69) / 12);
+        let label = n.label;
+        try { label = Tone.Frequency(freq).toNote(); } catch (e) {}
+        return { ...n, freq, label };
+      };
+      const walk = (s) => {
+        if (!s) return s;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          return { ...s, subSteps: s.subSteps.map(walk) };
+        }
+        if (Array.isArray(s.chord)) {
+          const chord = s.chord.map(mapNote);
+          return { ...s, chord, label: chord.map(n => n.label).join('·') };
+        }
+        if (Number.isFinite(s.freq)) {
+          const m = mapNote(s);
+          return { ...s, freq: m.freq, label: m.label };
+        }
+        return { ...s };
+      };
+      return walk(step);
+    }
 
     // Schedule a subsequence's subSteps starting at `baseTime` audio time.
     // No transposition — the steps are assumed to already be tuned.
@@ -573,11 +638,10 @@
       };
       const baseFreq = visit(wrapTemplate);
       if (baseFreq == null) return false;
-      const delta = semitonesBetweenHz(baseFreq, note.freq);
-      // Transpose first (semitone-accurate), then snap each leaf freq
-      // to the current scale so a wrap auditioned over (e.g.) C major
-      // never plays C# / Eb / etc. Chromatic scale → no-op snap.
-      const transposed = snapStepToScale(transposeStepRec(wrapTemplate, delta));
+      // Diatonic transpose: shift every voice by the same number of
+      // scale degrees the root moved so the chord keeps its shape in
+      // key. Chromatic scale → exact semitone transpose.
+      const transposed = transposeStepToScaleDegrees(wrapTemplate, baseFreq, note.freq);
       // Adopt the pressed cell's current tone (the master grid tone) for
       // every voice — wraps don't store their own timbre.
       const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;
@@ -640,8 +704,9 @@
       };
       const baseFreq = visit(wrapTemplate);
       if (baseFreq == null) return null;
-      const delta = semitonesBetweenHz(baseFreq, note.freq);
-      const transposed = snapStepToScale(transposeStepRec(wrapTemplate, delta));
+      // Diatonic transpose (see playWrapTemplateOnCell) — keeps the
+      // chord's in-key shape instead of snapping voices independently.
+      const transposed = transposeStepToScaleDegrees(wrapTemplate, baseFreq, note.freq);
       // Adopt the pressed cell's current tone (the master grid tone) for
       // every voice — wraps don't store their own timbre.
       const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;

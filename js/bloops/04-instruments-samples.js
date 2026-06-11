@@ -129,6 +129,11 @@
           head = filter;
         }
         source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
+        // VCO automation: sum a modulation source into the source's detune
+        // for continuous vibrato (Bloom per-layer mod). Disposed with the source.
+        if (opts && opts.detuneMod && source.detune && typeof opts.detuneMod.connect === 'function') {
+          try { opts.detuneMod.connect(source.detune); } catch (e) {}
+        }
       } catch (e) {
         try { source && source.dispose(); } catch (_) {}
         try { ampEnv && ampEnv.dispose(); } catch (_) {}
@@ -1854,7 +1859,7 @@
                || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
                || globalSendTap);
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
-            { filterCutoff: params.filterCutoff, filterQ: params.filterQ });
+            { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod });
           if (v) {
             const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             try {
@@ -2261,6 +2266,12 @@
       }
 
       if (synth.detune) synth.detune.value = detune;
+      // VCO automation: an optional modulation source (a Tone.LFO/Signal) is
+      // summed into the voice's detune for continuous vibrato/drift. Used by
+      // Bloom's per-layer mod. Disposing the synth severs the connection.
+      if (synth.detune && params._detuneMod && typeof params._detuneMod.connect === 'function') {
+        try { params._detuneMod.connect(synth.detune); } catch (e) {}
+      }
       synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
 
       // Pitch bend: ramp the synth's detune from `detune` cents to

@@ -1837,6 +1837,24 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
+    .ambient-mod {
+      display: flex; flex-direction: column; gap: 8px;
+      margin-top: 4px; padding: 8px 10px;
+      border: 1px dashed #2d2d3f; border-radius: 6px;
+      background: rgba(159,122,234,0.05);
+    }
+    .ambient-mod-head {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 700;
+      letter-spacing: 0.04em; color: #9f7aea; text-transform: uppercase;
+    }
+    .ambient-mod-target {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 6px 8px; border-left: 2px solid #2d2d3f; border-radius: 0 4px 4px 0;
+    }
+    .ambient-mod-sub {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 600;
+      color: #a0aec0;
+    }
     .ambient-hint { font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6b6b8a; white-space: nowrap; }
     .ambient-note {
       font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #6b6b8a;

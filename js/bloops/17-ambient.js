@@ -20,6 +20,16 @@
     // microtonal tuning, so it tracks the workspace key for free.
 
     // ---- Per-lane config (persisted on lane.ambient) -------------------
+    // Per-layer modulation defaults — one independent { depth, rate, shape }
+    // per target (VCA/VCO/VCF). Rates staggered so an enabled default isn't
+    // phase-locked across targets.
+    function _ambDefaultMod() {
+      return {
+        vca: { depth: 0, rate: 30, shape: 'sine' },
+        vco: { depth: 0, rate: 20, shape: 'sine' },
+        vcf: { depth: 0, rate: 15, shape: 'sine' },
+      };
+    }
     function _defaultAmbientConfig() {
       return {
         timing: 'free',                 // 'free' | 'sync'
@@ -28,10 +38,17 @@
         // `tone` is the layer's instrument: '' = follow the grid voice
         // (cellParams[0]); otherwise a value from getAllSoundOptions (any
         // synth or non-drum sample). Beat uses `kit` (drums only) instead.
-        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, tone: '' },
-        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, tone: '' },
-        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, tone: '' },
-        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25 },
+        // `scale` overrides the layer's note set: '' = follow the workspace
+        // scale (currentScale); otherwise a SCALES name. The root stays the
+        // workspace root. Beat is unpitched (drum map), so it has no scale.
+        // `mod` is the per-layer VCO/VCA/VCF modulation. Each target has its
+        // own { depth (0..100, 0=off), rate (0..100 -> Hz free / division sync),
+        // shape }. Shapes: sine/triangle/sawtooth/square + stochastic
+        // 'smooth' (ramped random) / 'sharp' (sample & hold).
+        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, tone: '', scale: '', mod: _ambDefaultMod() },
+        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, tone: '', scale: '', mod: _ambDefaultMod() },
+        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, tone: '', scale: '', mod: _ambDefaultMod() },
+        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, mod: _ambDefaultMod() },
         // `playing` is never persisted as true — the generator only starts on
         // an explicit gesture (a suspended AudioContext would swallow autostart).
       };
@@ -79,7 +96,28 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         Object.keys(d[layer]).forEach(k => {
           if (k === 'on') { if (typeof cfg[layer].on !== 'boolean') cfg[layer].on = d[layer].on; }
-          else if (k === 'kit' || k === 'tone') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
+          else if (k === 'kit' || k === 'tone' || k === 'scale') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
+          else if (k === 'mod') {
+            let mm = cfg[layer].mod;
+            if (!mm || typeof mm !== 'object') { cfg[layer].mod = mm = _ambDefaultMod(); }
+            // Migrate the old flat schema {shape, rate, vca:N, vco:N, vcf:N}
+            // into the per-target { depth, rate, shape } form.
+            if (typeof mm.vca === 'number' || typeof mm.shape === 'string') {
+              const shp = (typeof mm.shape === 'string') ? mm.shape : 'sine';
+              const rt = Number.isFinite(mm.rate) ? mm.rate : 25;
+              const mk2 = (dep) => ({ depth: Number.isFinite(dep) ? dep : 0, rate: rt, shape: shp });
+              cfg[layer].mod = mm = { vca: mk2(mm.vca), vco: mk2(mm.vco), vcf: mk2(mm.vcf) };
+            }
+            ['vca', 'vco', 'vcf'].forEach(tg => {
+              const dt = d[layer].mod[tg];
+              if (!mm[tg] || typeof mm[tg] !== 'object') mm[tg] = { ...dt };
+              else {
+                if (!Number.isFinite(mm[tg].depth)) mm[tg].depth = 0;
+                if (!Number.isFinite(mm[tg].rate)) mm[tg].rate = dt.rate;
+                if (typeof mm[tg].shape !== 'string') mm[tg].shape = 'sine';
+              }
+            });
+          }
           else if (!Number.isFinite(cfg[layer][k])) cfg[layer][k] = d[layer][k];
         });
       });
@@ -97,20 +135,26 @@
     }
 
     // ---- Pitch material ------------------------------------------------
-    function _ambScaleIntervals() {
-      return (typeof SCALES !== 'undefined' && typeof currentScale === 'string' && SCALES[currentScale])
-        ? SCALES[currentScale]
-        : [0, 2, 4, 5, 7, 9, 11];
+    // Each layer may carry its own `scale`; '' (or unknown) follows the
+    // workspace currentScale. The root stays the workspace root.
+    function _ambResolveScale(scale) {
+      if (typeof scale === 'string' && scale && typeof SCALES !== 'undefined' && SCALES[scale]) return scale;
+      return (typeof currentScale === 'string') ? currentScale : 'chromatic';
     }
-    function _ambNoteFreq(intervalSemi, octave) {
+    function _ambScaleIntervals(scale) {
+      const name = _ambResolveScale(scale);
+      return (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
+    }
+    function _ambNoteFreq(intervalSemi, octave, scale) {
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       const root = (typeof rootIdx === 'number') ? rootIdx : 0;
       const pc = (((root + intervalSemi) % 12) + 12) % 12;
       const midi = 12 * (octave + 1) + pc;
       let freq = A * Math.pow(2, (midi - 69) / 12);
       try {
-        if (typeof MICRO_TUNINGS !== 'undefined' && MICRO_TUNINGS[currentScale]) {
-          const micro = MICRO_TUNINGS[currentScale];
+        const sName = _ambResolveScale(scale);
+        if (typeof MICRO_TUNINGS !== 'undefined' && MICRO_TUNINGS[sName]) {
+          const micro = MICRO_TUNINGS[sName];
           const tonic = (typeof _effectiveScaleTonic === 'function') ? _effectiveScaleTonic() : root;
           const deg = (((pc - tonic) % 12) + 12) % 12;
           const dev = (micro[deg] || 0) - deg * 100;
@@ -119,11 +163,11 @@
       } catch (e) {}
       return freq;
     }
-    function _ambDegreeFreq(deg, octave) {
-      const intervals = _ambScaleIntervals();
+    function _ambDegreeFreq(deg, octave, scale) {
+      const intervals = _ambScaleIntervals(scale);
       const N = intervals.length;
       const d = ((deg % N) + N) % N;
-      return _ambNoteFreq(intervals[d], octave);
+      return _ambNoteFreq(intervals[d], octave, scale);
     }
 
     // ---- Space (stereo distribution) -----------------------------------
@@ -166,7 +210,7 @@
 
     // ================= BED engine ===================================
     function _ambPickVoicing(bed) {
-      const intervals = _ambScaleIntervals();
+      const intervals = _ambScaleIntervals(bed.scale);
       const N = intervals.length;
       const chordDegrees = [0, 2, 4, 6].filter(d => d < N);
       const center = Math.max(1, Math.min(8, bed.register | 0));
@@ -183,7 +227,7 @@
         const key = deg + ':' + oct;
         if (used.has(key)) continue;
         used.add(key);
-        out.push(_ambDegreeFreq(deg, oct));
+        out.push(_ambDegreeFreq(deg, oct, bed.scale));
       }
       return out.sort((a, b) => a - b);
     }
@@ -199,6 +243,20 @@
       if (typeof tone === 'string' && tone) return tone;
       return (typeof cellParams !== 'undefined' && cellParams[0] && cellParams[0].type) ? cellParams[0].type : 'sine';
     }
+    // Sample voices get a +SAMPLE_VOLUME_BOOST_DB (×4) gain in playNote's
+    // per-note path so they match synth loudness on the GRID. Bloom does its
+    // own gain-staging on top, so for sample-tone layers (and Beat, which is
+    // always a drum sample) that boost double-applies — making them ~4× hotter
+    // than the synth voices Bloom was tuned for and slamming the master
+    // compressor/limiter into sustained distortion. Cancel it here so every
+    // layer sits at synth-equivalent level regardless of tone.
+    function _ambBoostComp(type) {
+      if (typeof type === 'string' && type.startsWith('sample:')
+          && typeof SAMPLE_VOLUME_BOOST_DB === 'number') {
+        return Math.pow(10, -SAMPLE_VOLUME_BOOST_DB / 20);
+      }
+      return 1;
+    }
     function _ambBedParams(noteMs, density, motion, overlap, pan, tone) {
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const atkMs = Math.max(150, Math.round(noteMs * 0.30));
@@ -206,8 +264,9 @@
       const baseVol = Number.isFinite(base.volume) ? base.volume : 100;
       const HEADROOM = 0.7;
       const eff = Math.max(1, density) * Math.max(1, overlap);
-      const vol = Math.max(2, Math.round(baseVol * (HEADROOM / eff)));
-      const out = { ...base, type: _ambLayerType(tone), attack: atkMs, decay: 200, sustain: 85, release: relMs, volume: vol, pan: pan | 0 };
+      const type = _ambLayerType(tone);
+      const vol = Math.max(2, Math.round(baseVol * (HEADROOM / eff) * _ambBoostComp(type)));
+      const out = { ...base, type, attack: atkMs, decay: 200, sustain: 85, release: relMs, volume: vol, pan: pan | 0 };
       // Motion: a small per-voice detune drift (panning is the Space fader's job).
       const m = Math.max(0, Math.min(100, motion | 0)) / 100;
       if (m > 0) out.detune = (Number.isFinite(base.detune) ? base.detune : 0) + Math.round((_ambRand() * 2 - 1) * 18 * m);
@@ -219,9 +278,11 @@
       const durMs = Math.max(80, bed.lengthMs | 0);
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
       const pans = _ambSpacePans(voicing.length, space);
+      const dest = _ambLayerDest('bed'), dmod = _ambLayerDetuneMod('bed');
       voicing.forEach((f, i) => {
         const params = _ambBedParams(durMs, voicing.length, bed.motion, overlap, pans[i], bed.tone);
-        try { playNote(f, params, durMs, at + i * 0.012, undefined, undefined, activeLaneIdx); } catch (e) {}
+        if (dmod) params._detuneMod = dmod;
+        try { playNote(f, params, durMs, at + i * 0.012, dest, undefined, activeLaneIdx); } catch (e) {}
       });
     }
 
@@ -230,18 +291,19 @@
     function _ambMotifParams(lenMs, pan, tone) {
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const baseVol = Number.isFinite(base.volume) ? base.volume : 100;
+      const type = _ambLayerType(tone);
       return {
         ...base,
-        type: _ambLayerType(tone),
+        type,
         attack: Math.max(8, Math.round(lenMs * 0.10)),
         decay: 120, sustain: 70,
         release: Math.max(120, Math.round(lenMs * 0.5)),
-        volume: Math.round(baseVol * 0.32),
+        volume: Math.max(2, Math.round(baseVol * 0.32 * _ambBoostComp(type))),
         pan: pan | 0,
       };
     }
     function _ambEmitMotif(at, motif, space) {
-      const intervals = _ambScaleIntervals();
+      const intervals = _ambScaleIntervals(motif.scale);
       const N = intervals.length;
       const center = Math.max(1, Math.min(8, motif.register | 0));
       const range = Math.max(1, Math.min(4, motif.range | 0));
@@ -263,12 +325,14 @@
         next += (best - degInOct);
       }
       _ambMotifDeg = next;
-      const f = _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N));
+      const f = _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), motif.scale);
       const lenMs = Math.max(60, motif.lengthMs | 0);
       // Sequential single notes can't be "distributed" simultaneously, so
       // Space spreads them by panning each randomly within ±space.
       const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
-      try { playNote(f, _ambMotifParams(lenMs, pan, motif.tone), lenMs, at, undefined, undefined, activeLaneIdx); } catch (e) {}
+      const mp = _ambMotifParams(lenMs, pan, motif.tone);
+      const dmod = _ambLayerDetuneMod('motif'); if (dmod) mp._detuneMod = dmod;
+      try { playNote(f, mp, lenMs, at, _ambLayerDest('motif'), undefined, activeLaneIdx); } catch (e) {}
     }
 
     // ================= TEXTURE engine ===============================
@@ -276,7 +340,7 @@
     let _ambTexStep = 0;
     let _ambTexMutateAt = 0;
     function _ambTexBuildPattern(texture) {
-      const intervals = _ambScaleIntervals();
+      const intervals = _ambScaleIntervals(texture.scale);
       const N = intervals.length;
       const fill = Math.max(0, Math.min(100, texture.fill | 0)) / 100;
       _ambTexPattern = [];
@@ -285,7 +349,7 @@
     }
     function _ambTexMutate(texture) {
       if (!_ambTexPattern) return;
-      const intervals = _ambScaleIntervals();
+      const intervals = _ambScaleIntervals(texture.scale);
       const N = intervals.length;
       const i = Math.floor(_ambRand() * _ambTexPattern.length);
       if (_ambRand() < 0.5) _ambTexPattern[i].on = !_ambTexPattern[i].on;
@@ -294,12 +358,13 @@
     function _ambTexParams(lenMs, pan, tone) {
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const baseVol = Number.isFinite(base.volume) ? base.volume : 100;
+      const type = _ambLayerType(tone);
       return {
         ...base,
-        type: _ambLayerType(tone),
+        type,
         attack: Math.max(8, Math.round(lenMs * 0.12)), decay: 80, sustain: 0,
         release: Math.max(120, Math.round(lenMs * 0.8)),
-        volume: Math.round(baseVol * 0.2), pan: pan | 0,
+        volume: Math.max(2, Math.round(baseVol * 0.2 * _ambBoostComp(type))), pan: pan | 0,
       };
     }
     function _ambEmitTexture(at, texture, space) {
@@ -308,10 +373,12 @@
       const slot = _ambTexPattern[_ambTexStep % _ambTexPattern.length];
       _ambTexStep++;
       if (slot && slot.on) {
-        const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0));
+        const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0), texture.scale);
         const lenMs = Math.max(60, texture.lengthMs | 0);
         const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
-        try { playNote(f, _ambTexParams(lenMs, pan, texture.tone), lenMs, at, undefined, undefined, activeLaneIdx); } catch (e) {}
+        const tp = _ambTexParams(lenMs, pan, texture.tone);
+        const dmod = _ambLayerDetuneMod('texture'); if (dmod) tp._detuneMod = dmod;
+        try { playNote(f, tp, lenMs, at, _ambLayerDest('texture'), undefined, activeLaneIdx); } catch (e) {}
       }
       const mr = Math.max(0, Math.min(100, texture.mutateRate | 0));
       if (!_ambTexMutateAt) _ambTexMutateAt = at + (6 - mr / 100 * 5);
@@ -353,6 +420,18 @@
       } catch (e) {}
       return out;
     }
+    // Scale choices for Bed/Motif/Texture: "Workspace scale" + every scale.
+    function _ambScaleOptions() {
+      const out = [{ value: '', label: 'Workspace scale' }];
+      try {
+        if (typeof SCALES !== 'undefined') {
+          Object.keys(SCALES).sort().forEach(name => {
+            out.push({ value: name, label: (typeof prettyScaleName === 'function') ? prettyScaleName(name) : name });
+          });
+        }
+      } catch (e) {}
+      return out;
+    }
     function _ambDrumKits() {
       const kits = [];
       try {
@@ -373,10 +452,14 @@
     function _ambBeatParams(kit, lenMs, pan) {
       // Percussive envelope; Length drives the release tail (the choke/open).
       const rel = Math.max(20, Math.round(Math.max(60, lenMs) * 0.6));
+      const type = 'sample:' + kit;
       return {
-        type: 'sample:' + kit,
+        type,
         attack: 1, decay: 60, sustain: 70, release: rel,
-        volume: 72, pan: pan | 0,
+        // Drums are always samples → cancel the +12 dB boost so a beat hit
+        // sits at synth-equivalent level instead of slamming the limiter.
+        volume: Math.max(2, Math.round(72 * _ambBoostComp(type))),
+        pan: pan | 0,
       };
     }
     function _ambEmitBeat(at, beat, space) {
@@ -387,8 +470,172 @@
       try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, beat.lengthMs | 0);
       const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
-      try { playNote(f, _ambBeatParams(beat.kit, lenMs, pan), lenMs, at, undefined, undefined, activeLaneIdx); } catch (e) {}
+      const bp = _ambBeatParams(beat.kit, lenMs, pan);
+      const dmod = _ambLayerDetuneMod('beat'); if (dmod) bp._detuneMod = dmod;
+      try { playNote(f, bp, lenMs, at, _ambLayerDest('beat'), undefined, activeLaneIdx); } catch (e) {}
     }
+
+    // ================= Modulation (VCO / VCA / VCF) =================
+    // Continuous per-layer modulation. When a layer has any non-zero mod depth,
+    // its voices route through a persistent chain:
+    //   voices -> VCF (Tone.Filter) -> VCA (Tone.Gain) -> lane bus
+    // Each of the three targets (VCA gain, VCF cutoff, VCO detune) has its OWN
+    // depth + rate + shape. The modulation source is either:
+    //   • periodic  — a Tone.LFO (sine / triangle / sawtooth / square), OR
+    //   • stochastic — a Tone.Signal driven by scheduled random values:
+    //       'smooth' ramps between random targets (a wandering LFO),
+    //       'sharp'  steps to random targets (sample & hold).
+    // VCA/VCF sources connect to their param; the VCO source connects to each
+    // voice's detune at emit (additive vibrato). Rate maps to Hz (free) or a
+    // musical division (sync, following the global timing toggle).
+    const _ambMod = {}; // layer -> { input, vcf, vca, src: { vca, vco, vcf } }
+    const _AMB_MOD_SHAPES = ['sine', 'triangle', 'sawtooth', 'square', 'smooth', 'sharp'];
+    function _ambIsStochastic(shape) { return shape === 'smooth' || shape === 'sharp'; }
+    function _ambModActive(m) {
+      return !!(m && (((m.vca && m.vca.depth) | 0) > 0 || ((m.vco && m.vco.depth) | 0) > 0 || ((m.vcf && m.vcf.depth) | 0) > 0));
+    }
+    function _ambModRateHz(rate, cfg) {
+      const r = Math.max(0, Math.min(100, rate | 0)) / 100;
+      if (cfg && cfg.timing === 'sync') {
+        const beatsArr = [8, 4, 2, 1, 0.5, 0.25]; // slow -> fast, in beats/cycle
+        const beats = beatsArr[Math.min(beatsArr.length - 1, Math.round(r * (beatsArr.length - 1)))];
+        return (_ambBpm() / 60) / beats;
+      }
+      const lo = 0.02, hi = 8; // Hz (free): ~50 s cycle -> 8 Hz
+      return lo * Math.pow(hi / lo, r);
+    }
+    function _ambTargetRange(target, depth) {
+      const d = Math.max(0, Math.min(100, depth | 0)) / 100;
+      if (target === 'vca') return [1 - d, 1];
+      if (target === 'vcf') return [200, 200 + d * 8000];
+      return [-d * 100, d * 100]; // vco: ± cents
+    }
+    function _ambLaneBusNode() {
+      try { if (typeof getLaneBus === 'function') return getLaneBus(activeLaneIdx); } catch (e) {}
+      if (typeof globalSendTap !== 'undefined' && globalSendTap) return globalSendTap;
+      return Tone.getDestination();
+    }
+    function _ambDisposeSrc(src) {
+      if (!src || !src.node) return;
+      try { if (typeof src.node.stop === 'function' && !src.stochastic) src.node.stop(); } catch (e) {}
+      try { src.node.disconnect(); } catch (e) {}
+      try { src.node.dispose(); } catch (e) {}
+    }
+    function _ambResetTargetParam(e, target) {
+      try {
+        if (target === 'vca') e.vca.gain.value = 1;
+        else if (target === 'vcf') e.vcf.frequency.value = 20000;
+      } catch (x) {}
+    }
+    function _ambMakeSrc(e, target, shape, hz, min, max) {
+      const stochastic = _ambIsStochastic(shape);
+      const src = { target, stochastic, min, max };
+      let node;
+      try {
+        if (stochastic) {
+          node = new Tone.Signal((min + max) / 2);
+          src.smooth = (shape === 'smooth');
+          src.intervalSec = 1 / Math.max(0.001, hz);
+          src.nextAt = 0;
+        } else {
+          node = new Tone.LFO({ frequency: hz, type: shape, min, max });
+          node.start();
+        }
+        src.node = node;
+        if (target === 'vca') { e.vca.gain.value = 0; node.connect(e.vca.gain); }
+        else if (target === 'vcf') { e.vcf.frequency.value = 0; node.connect(e.vcf.frequency); }
+        // vco: connected to voices at emit via _ambLayerDetuneMod.
+      } catch (x) { try { node && node.dispose(); } catch (y) {} return null; }
+      return src;
+    }
+    // Reconcile one target's source against the config (build / update / drop).
+    function _ambSyncTarget(e, layer, target, cfg) {
+      const t = (cfg[layer].mod && cfg[layer].mod[target]) || {};
+      const depth = t.depth | 0;
+      const existing = e.src[target];
+      if (depth <= 0) {
+        if (existing) { _ambDisposeSrc(existing); e.src[target] = null; _ambResetTargetParam(e, target); }
+        return;
+      }
+      const shape = (_AMB_MOD_SHAPES.indexOf(t.shape) >= 0) ? t.shape : 'sine';
+      const stochastic = _ambIsStochastic(shape);
+      const hz = _ambModRateHz(t.rate, cfg);
+      const range = _ambTargetRange(target, depth);
+      // Rebuild when the kind (periodic↔stochastic) changes or nothing exists.
+      if (!existing || existing.stochastic !== stochastic) {
+        if (existing) _ambDisposeSrc(existing);
+        e.src[target] = _ambMakeSrc(e, target, shape, hz, range[0], range[1]);
+        return;
+      }
+      // Update in place.
+      existing.min = range[0]; existing.max = range[1];
+      if (stochastic) {
+        existing.smooth = (shape === 'smooth');
+        existing.intervalSec = 1 / Math.max(0.001, hz);
+      } else {
+        try { existing.node.frequency.value = hz; existing.node.type = shape; existing.node.min = range[0]; existing.node.max = range[1]; } catch (x) {}
+      }
+    }
+    function _ambBuildMod(layer, cfg) {
+      if (_ambMod[layer]) { _ambUpdateMod(layer, cfg); return; }
+      if (typeof Tone === 'undefined') return;
+      try {
+        const vca = new Tone.Gain(1).connect(_ambLaneBusNode());
+        const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 }).connect(vca);
+        _ambMod[layer] = { input: vcf, vcf, vca, src: { vca: null, vco: null, vcf: null } };
+        _ambUpdateMod(layer, cfg);
+      } catch (e) {}
+    }
+    function _ambUpdateMod(layer, cfg) {
+      const e = _ambMod[layer];
+      if (!e) return;
+      ['vca', 'vco', 'vcf'].forEach(tg => _ambSyncTarget(e, layer, tg, cfg));
+    }
+    function _ambTeardownMod(layer) {
+      const e = _ambMod[layer];
+      if (!e) return;
+      ['vca', 'vco', 'vcf'].forEach(tg => { if (e.src && e.src[tg]) _ambDisposeSrc(e.src[tg]); });
+      try { e.vcf && e.vcf.dispose(); } catch (x) {}
+      try { e.vca && e.vca.dispose(); } catch (x) {}
+      delete _ambMod[layer];
+    }
+    function _ambTeardownMods() { Object.keys(_ambMod).forEach(_ambTeardownMod); }
+    function _ambSyncMods() {
+      const cfg = _laneAmbientCfg();
+      if (!cfg) return;
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
+        const active = cfg[layer] && cfg[layer].on && _ambModActive(cfg[layer].mod);
+        if (active) _ambBuildMod(layer, cfg);
+        else if (_ambMod[layer]) _ambTeardownMod(layer);
+      });
+    }
+    // Schedule random values onto every active stochastic source within the
+    // lookahead window (run each generator tick). Uses Math.random so mod
+    // randomness doesn't perturb the seeded note RNG.
+    function _ambScheduleStochastic(now) {
+      const horizon = now + 1.2;
+      for (const layer in _ambMod) {
+        const e = _ambMod[layer];
+        if (!e.src) continue;
+        ['vca', 'vco', 'vcf'].forEach(tg => {
+          const src = e.src[tg];
+          if (!src || !src.stochastic || !src.node) return;
+          if (!src.nextAt || src.nextAt < now) src.nextAt = now + 0.05;
+          let g = 0;
+          while (src.nextAt < horizon && g++ < 48) {
+            const v = src.min + Math.random() * (src.max - src.min);
+            try {
+              if (src.smooth) src.node.linearRampToValueAtTime(v, src.nextAt);
+              else src.node.setValueAtTime(v, src.nextAt);
+            } catch (x) {}
+            src.nextAt += src.intervalSec;
+          }
+        });
+      }
+    }
+    // Routing helpers for the emit functions.
+    function _ambLayerDest(layer) { const e = _ambMod[layer]; return e ? e.input : undefined; }
+    function _ambLayerDetuneMod(layer) { const e = _ambMod[layer]; return (e && e.src && e.src.vco && e.src.vco.node) ? e.src.vco.node : undefined; }
 
     // ---- Unified schedule-ahead generator clock ------------------------
     let _ambTimer = null;
@@ -405,6 +652,7 @@
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
       const horizon = now + 1.2, lead = now + 0.1;
       const space = cfg.space | 0;
+      try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
       if (cfg.bed && cfg.bed.on) {
         if (!_ambBedNextAt || _ambBedNextAt < now) _ambBedNextAt = lead;
         let g = 0;
@@ -445,6 +693,7 @@
       if (_ambTimer) return;
       _ambResetClocks();
       _ambSeed(cfg.seed);
+      try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
       _ambTick();
       _ambTimer = setInterval(_ambTick, 150);
       cfg.playing = true;
@@ -460,6 +709,7 @@
       // Immediate silence — cut the bed/motif/texture voices now (click-free)
       // instead of leaving their long releases to ring out after Stop.
       try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {}
+      try { _ambTeardownMods(); } catch (e) {}
     }
 
     // ---- Freeze → lane -------------------------------------------------
@@ -531,7 +781,7 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     function _ambMotifFreezeNote(motif) {
-      const intervals = _ambScaleIntervals();
+      const intervals = _ambScaleIntervals(motif.scale);
       const N = intervals.length;
       const center = Math.max(1, Math.min(8, motif.register | 0));
       const range = Math.max(1, Math.min(4, motif.range | 0));
@@ -546,14 +796,14 @@
       if (next > hi) next = hi - (next - hi);
       next = Math.max(lo, Math.min(hi, next));
       _ambMotifDeg = next;
-      return _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N));
+      return _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), motif.scale);
     }
     function _ambTexFreezeNote(texture) {
       if (!_ambTexPattern) _ambTexBuildPattern(texture);
       const center = Math.max(1, Math.min(8, texture.register | 0));
       const slot = _ambTexPattern[_ambTexStep % _ambTexPattern.length];
       _ambTexStep++;
-      if (slot && slot.on) return _ambDegreeFreq(slot.deg, center);
+      if (slot && slot.on) return _ambDegreeFreq(slot.deg, center, texture.scale);
       return null;
     }
 
@@ -723,6 +973,7 @@
       const chk = (id, v) => { const el = document.getElementById(id); if (el) el.classList.toggle('on', !!v); };
       chk('ambient-bed-on', cfg.bed.on);
       set('ambient-bed-tone', cfg.bed.tone);
+      set('ambient-bed-scale', cfg.bed.scale);
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-register', cfg.bed.register);
       set('ambient-bed-spread', cfg.bed.spread);
@@ -731,6 +982,7 @@
       set('ambient-bed-motion', cfg.bed.motion);
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
+      set('ambient-motif-scale', cfg.motif.scale);
       set('ambient-motif-register', cfg.motif.register);
       set('ambient-motif-range', cfg.motif.range);
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
@@ -738,6 +990,7 @@
       set('ambient-motif-rest', cfg.motif.restProb);
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
+      set('ambient-texture-scale', cfg.texture.scale);
       set('ambient-texture-register', cfg.texture.register);
       set('ambient-texture-fill', cfg.texture.fill);
       set('ambient-texture-interval', cfg.texture.intervalMs); hint('ambient-texture-interval-v', _ambFmtMs(cfg.texture.intervalMs));
@@ -748,6 +1001,16 @@
       set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-rest', cfg.beat.restProb);
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
+        const m = cfg[layer] && cfg[layer].mod;
+        if (!m) return;
+        ['vca', 'vco', 'vcf'].forEach(t => {
+          if (!m[t]) return;
+          set('ambient-' + layer + '-mod-' + t + '-depth', m[t].depth);
+          set('ambient-' + layer + '-mod-' + t + '-rate', m[t].rate);
+          set('ambient-' + layer + '-mod-' + t + '-shape', m[t].shape);
+        });
+      });
       const seedEl = document.getElementById('ambient-seed-val');
       if (seedEl) seedEl.textContent = '#' + (cfg.seed >>> 0);
       _ambRefreshPlayBtn();
@@ -767,6 +1030,25 @@
         '<span class="ambient-hint" id="' + id + '-v"></span></div>';
       const head = (label, onId) =>
         '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button></div>';
+      // Per-layer modulation: each target (VCA/VCO/VCF) gets its own Depth,
+      // Rate and Shape (incl. stochastic 'smooth' / 'sharp').
+      const shapeSel = (id) => '<select id="' + id + '" class="ambient-select">' +
+        ['sine', 'triangle', 'sawtooth', 'square', 'smooth', 'sharp'].map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select>';
+      const modTarget = (layer, target, label, hint, defRate) =>
+        '<div class="ambient-mod-target">' +
+          '<div class="ambient-mod-sub">' + label + '</div>' +
+          sl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, 0, hint) +
+          sl('Rate', 'ambient-' + layer + '-mod-' + target + '-rate', 0, 100, defRate, 'slow → fast') +
+          '<div class="ambient-ctrl"><label for="ambient-' + layer + '-mod-' + target + '-shape">Shape</label>' +
+            shapeSel('ambient-' + layer + '-mod-' + target + '-shape') + '<span class="ambient-hint">wave</span></div>' +
+        '</div>';
+      const modUi = (layer) =>
+        '<div class="ambient-mod">' +
+          '<div class="ambient-mod-head">Mod · independent VCA / VCO / VCF</div>' +
+          modTarget(layer, 'vca', 'VCA · amplitude', 'tremolo', 30) +
+          modTarget(layer, 'vco', 'VCO · pitch', 'vibrato', 20) +
+          modTarget(layer, 'vcf', 'VCF · cutoff', 'sweep', 15) +
+        '</div>';
       host.innerHTML =
         '<div class="ambient-title">Bloom — generative ambient</div>' +
         '<canvas id="ambient-viz" class="ambient-viz"></canvas>' +
@@ -785,28 +1067,34 @@
         sl('Space', 'ambient-space', 0, 100, 0, 'centre → wide') +
         '<div class="ambient-layer">' + head('Bed', 'ambient-bed-on') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          '<div class="ambient-ctrl"><label for="ambient-bed-scale">Scale</label><select id="ambient-bed-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
           sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
           sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
           sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') +
           tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
           tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
           sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'drift') +
+          modUi('bed') +
         '</div>' +
         '<div class="ambient-layer">' + head('Motif', 'ambient-motif-on') +
           '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          '<div class="ambient-ctrl"><label for="ambient-motif-scale">Scale</label><select id="ambient-motif-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
           sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
           sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
           tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
           tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
           sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
+          modUi('motif') +
         '</div>' +
         '<div class="ambient-layer">' + head('Texture', 'ambient-texture-on') +
           '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          '<div class="ambient-ctrl"><label for="ambient-texture-scale">Scale</label><select id="ambient-texture-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
           sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
           sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
           tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
           tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
           sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') +
+          modUi('texture') +
         '</div>' +
         '<div class="ambient-layer">' + head('Beat', 'ambient-beat-on') +
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
@@ -814,6 +1102,7 @@
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
           tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
           sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') +
+          modUi('beat') +
         '</div>' +
         '<div class="ambient-note">Routes through this lane’s bus — dial in its Reverb send for the full wash. Follows the current Scale &amp; Key.</div>';
 
@@ -821,23 +1110,48 @@
       // every melodic tone from getAllSoundOptions (drum kits excluded — Beat
       // owns those). Populated once; the core SOUNDS + remote instruments are
       // registered synchronously at startup so the list is essentially full.
-      const wireTone = (id, layer) => {
+      const wireSelect = (id, layer, key, opts) => {
         const sel = document.getElementById(id);
         if (!sel) return;
-        _ambToneOptions().forEach(o => {
+        opts.forEach(o => {
           const op = document.createElement('option');
           op.value = o.value; op.textContent = o.label;
           sel.appendChild(op);
         });
         sel.addEventListener('change', () => {
           const cfg = _laneAmbientCfg(); if (!cfg) return;
-          cfg[layer].tone = sel.value || '';
+          cfg[layer][key] = sel.value || '';
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
       };
-      wireTone('ambient-bed-tone', 'bed');
-      wireTone('ambient-motif-tone', 'motif');
-      wireTone('ambient-texture-tone', 'texture');
+      ['bed', 'motif', 'texture'].forEach(layer => {
+        wireSelect('ambient-' + layer + '-tone', layer, 'tone', _ambToneOptions());
+        wireSelect('ambient-' + layer + '-scale', layer, 'scale', _ambScaleOptions());
+      });
+
+      // Mod controls — per target (VCA/VCO/VCF): Depth, Rate, Shape. Changes
+      // update the live mod chains immediately when playing.
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
+        ['vca', 'vco', 'vcf'].forEach(target => {
+          ['depth', 'rate'].forEach(key => {
+            const el = document.getElementById('ambient-' + layer + '-mod-' + target + '-' + key);
+            if (!el) return;
+            el.addEventListener('input', () => {
+              const cfg = _laneAmbientCfg(); if (!cfg) return;
+              cfg[layer].mod[target][key] = parseInt(el.value, 10) || 0;
+              if (_ambTimer) { try { _ambSyncMods(); } catch (e) {} }
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            });
+          });
+          const shapeEl = document.getElementById('ambient-' + layer + '-mod-' + target + '-shape');
+          if (shapeEl) shapeEl.addEventListener('change', () => {
+            const cfg = _laneAmbientCfg(); if (!cfg) return;
+            cfg[layer].mod[target].shape = shapeEl.value || 'sine';
+            if (_ambTimer) { try { _ambSyncMods(); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+        });
+      });
 
       // Populate the drum-kit dropdown.
       const kitSel = document.getElementById('ambient-beat-kit');

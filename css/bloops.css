@@ -5635,6 +5635,26 @@
       font-size: 0.8rem; font-weight: 700; color: #e2bdf6; letter-spacing: 0.5px;
       margin-bottom: 6px;
     }
+    .euc-step-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; flex-wrap: wrap;
+    }
+    .euc-convert {
+      padding: 4px 12px; border-radius: 10px;
+      border: 1px solid rgba(246, 173, 85, 0.5);
+      background: rgba(246, 173, 85, 0.10);
+      color: #fbd38d; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.5px;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .euc-convert:hover { background: rgba(246, 173, 85, 0.22); border-color: #f6e05e; color: #fffaf0; } }
+    .euc-chord-select {
+      width: 100%; margin-bottom: 14px;
+      background: #1a1a2e; color: #e2e8f0;
+      border: 1px solid #2d2d3f; border-radius: 4px;
+      padding: 5px 6px; font-size: 0.82rem; font-family: inherit;
+    }
+    .euc-chord-select:focus { outline: none; border-color: #4299e1; }
     /* Generate Sequence footer: alt generators (Random/Seed) on the left,
        the main Cancel/Preview/Generate cluster on the right. */
     .euc-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }

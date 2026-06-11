@@ -362,9 +362,32 @@
     function _buildEuclidSteps(steps, gridNotes) {
       const noteFor = (idx) => gridNotes[idx] || gridNotes[0] || { freq: 261.63, label: 'C4', cellIndex: 0 };
       const voice = (nt) => ({ freq: nt.freq, label: nt.label, cellIndex: Number.isFinite(nt.cellIndex) ? nt.cellIndex : null, ..._euclidToneFor(nt) });
+      // Stack a CHORDS structure on a root note: each semitone in the
+      // chord becomes a voice rooted on the selected note, inheriting the
+      // root's grid tone. The root voice keeps its cellIndex; stacked
+      // voices clear it (they may not map to a grid cell).
+      const chordVoices = (rootNt, chordKey) => {
+        const def = (typeof CHORDS !== 'undefined') ? CHORDS[chordKey] : null;
+        const semis = (def && Array.isArray(def.semis) && def.semis.length) ? def.semis : [0];
+        const tone = _euclidToneFor(rootNt);
+        return semis.map(semi => {
+          const f = rootNt.freq * Math.pow(2, semi / 12);
+          let label = rootNt.label;
+          try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+          return { freq: f, label, cellIndex: (semi === 0 && Number.isFinite(rootNt.cellIndex)) ? rootNt.cellIndex : null, ...tone };
+        });
+      };
       return steps.map(s => {
         const sub = Math.max(0.0001, (s.eu || 1) * 0.5);
         if (!s.hit) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub };
+        // Chord mode: the selected note is the chord root; the chosen
+        // CHORDS shape is stacked on it.
+        if (s.noteMode === 'chord' && s.chordKey) {
+          const root = noteFor((Array.isArray(s.noteIdxs) && s.noteIdxs.length) ? s.noteIdxs[0] : 0);
+          const cv = chordVoices(root, s.chordKey);
+          if (cv.length === 1) return { ...cv[0], duration: 1, subdivision: sub };
+          return { chord: cv, label: cv.map(v => v.label).join('·'), duration: 1, subdivision: sub };
+        }
         const idxs = (Array.isArray(s.noteIdxs) && s.noteIdxs.length) ? s.noteIdxs : [0];
         if (idxs.length === 1) return { ...voice(noteFor(idxs[0])), duration: 1, subdivision: sub };
         return { chord: idxs.map(ix => voice(noteFor(ix))), label: idxs.map(ix => noteFor(ix).label).join('·'), duration: 1, subdivision: sub };
@@ -456,17 +479,49 @@
           stripEl.appendChild(btn);
         });
       };
+      // Chord types in musical order (triads → 7ths → extensions).
+      const _EUC_CHORD_ORDER = ['maj','min','dim','aug','sus2','sus4','maj7','7',
+        'min7','dim7','m7b5','minMaj7','6','m6','6/9','add9','madd9','9','maj9',
+        'min9','7sus4','7b9','7#9','7b5','7#11','11','min11','maj11','13','maj13','min13'];
       const renderEditor = () => {
         const i = state.sel;
         if (i < 0 || i >= state.steps.length) { editEl.innerHTML = ''; return; }
         const s = state.steps[i];
         const isHit = !!s.hit;
-        let html = '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
+        const chordMode = isHit && s.noteMode === 'chord';
+        let html = '<div class="euc-step-head">' +
+            '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
+            '<button type="button" class="euc-convert" id="euc-convert">' + (isHit ? 'Make Dot ·' : 'Make Circle ●') + '</button>' +
+          '</div>' +
           '<div class="sm-section-label" style="margin-top:0;">Step div</div><div class="sm-waves" id="euc-div"></div>';
-        if (isHit) html += '<div class="sm-section-label">Notes (1 = single, 2+ = chord)</div><div class="sm-waves" id="euc-notes"></div>';
+        if (isHit) {
+          html += '<div class="sm-section-label">Notes</div>' +
+            '<div class="sm-waves" id="euc-notemode">' +
+              '<button type="button" class="sm-wave' + (!chordMode ? ' active' : '') + '" data-mode="notes">Notes</button>' +
+              '<button type="button" class="sm-wave' + (chordMode ? ' active' : '') + '" data-mode="chord">Chord</button>' +
+            '</div>';
+          if (chordMode) {
+            html += '<div class="sm-section-label">Chord type</div><select class="sm-select euc-chord-select" id="euc-chordkey"></select>' +
+              '<div class="sm-section-label">Root</div><div class="sm-waves" id="euc-notes"></div>';
+          } else {
+            html += '<div class="sm-section-label">Pitches (1 = single, 2+ = chord)</div><div class="sm-waves" id="euc-notes"></div>';
+          }
+        }
         html += '<div class="euc-allrow"><button type="button" class="euc-all" id="euc-all-div">Apply div to all ' + (isHit ? '●' : '·') + '</button>' +
           (isHit ? '<button type="button" class="euc-all" id="euc-all-notes">Apply notes to all ●</button>' : '') + '</div>';
         editEl.innerHTML = html;
+
+        // Convert this step between Dot (rest) and Circle (hit).
+        editEl.querySelector('#euc-convert').addEventListener('click', () => {
+          if (s.hit) {
+            s.hit = false;
+          } else {
+            s.hit = true;
+            if (!Array.isArray(s.noteIdxs) || !s.noteIdxs.length) s.noteIdxs = [0];
+            if (!s.noteMode) s.noteMode = 'notes';
+          }
+          renderStrip(); renderEditor();
+        });
 
         const divHost = editEl.querySelector('#euc-div');
         _EUC_DIVS.forEach(([label, eu]) => {
@@ -477,22 +532,61 @@
         });
 
         if (isHit) {
+          // Notes ↔ Chord mode toggle. Switching to Chord collapses any
+          // multi-note selection down to a single root.
+          editEl.querySelector('#euc-notemode').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-mode]'); if (!btn) return;
+            const mode = btn.getAttribute('data-mode');
+            if (mode === 'chord') {
+              s.noteMode = 'chord';
+              if (!s.chordKey) s.chordKey = 'maj';
+              s.noteIdxs = [(Array.isArray(s.noteIdxs) && s.noteIdxs.length) ? s.noteIdxs[0] : 0];
+            } else {
+              s.noteMode = 'notes';
+            }
+            renderStrip(); renderEditor();
+          });
+
+          if (chordMode) {
+            const csel = editEl.querySelector('#euc-chordkey');
+            _EUC_CHORD_ORDER.filter(k => CHORDS[k]).forEach(k => {
+              const opt = document.createElement('option');
+              opt.value = k; opt.textContent = CHORDS[k].label;
+              if ((s.chordKey || 'maj') === k) opt.selected = true;
+              csel.appendChild(opt);
+            });
+            csel.addEventListener('change', () => { s.chordKey = csel.value; renderStrip(); });
+          }
+
           const notesHost = editEl.querySelector('#euc-notes');
           const sel = new Set((s.noteIdxs && s.noteIdxs.length) ? s.noteIdxs : [0]);
           gridNotes.forEach((nt, ni) => {
             const b = document.createElement('button'); b.type = 'button';
             b.className = 'sm-wave' + (sel.has(ni) ? ' active' : ''); b.textContent = nt.label;
             b.addEventListener('click', () => {
-              if (sel.has(ni)) { if (sel.size > 1) sel.delete(ni); } else sel.add(ni);
-              s.noteIdxs = [...sel].sort((a, b2) => a - b2);
-              b.classList.toggle('active', sel.has(ni));
+              if (chordMode) {
+                // Single-select root.
+                s.noteIdxs = [ni];
+                notesHost.querySelectorAll('.sm-wave').forEach((el, idx) => el.classList.toggle('active', idx === ni));
+              } else {
+                if (sel.has(ni)) { if (sel.size > 1) sel.delete(ni); } else sel.add(ni);
+                s.noteIdxs = [...sel].sort((a, b2) => a - b2);
+                b.classList.toggle('active', sel.has(ni));
+              }
             });
             notesHost.appendChild(b);
           });
           const allNotes = editEl.querySelector('#euc-all-notes');
           if (allNotes) allNotes.addEventListener('click', () => {
+            const mode = s.noteMode || 'notes';
             const v = [...(s.noteIdxs || [0])];
-            state.steps.forEach(st => { if (st.hit) st.noteIdxs = [...v]; });
+            const ck = s.chordKey;
+            state.steps.forEach(st => {
+              if (!st.hit) return;
+              st.noteMode = mode;
+              st.noteIdxs = [...v];
+              if (mode === 'chord') st.chordKey = ck;
+            });
             renderStrip();
           });
         }

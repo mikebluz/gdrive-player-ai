@@ -5689,13 +5689,21 @@
       cursor: pointer; transition: all 0.15s ease;
     }
     @media (hover: hover) { .euc-convert:hover { background: rgba(246, 173, 85, 0.22); border-color: #f6e05e; color: #fffaf0; } }
-    .euc-chord-select {
+    .euc-sel {
       width: 100%; margin-bottom: 14px;
       background: #1a1a2e; color: #e2e8f0;
       border: 1px solid #2d2d3f; border-radius: 4px;
       padding: 5px 6px; font-size: 0.82rem; font-family: inherit;
     }
-    .euc-chord-select:focus { outline: none; border-color: #4299e1; }
+    .euc-sel:focus { outline: none; border-color: #4299e1; }
+    /* Multi-select pitch list (Notes mode): render as a scrollable list box
+       so 1+ pitches can be picked without modifier keys on touch. */
+    .euc-sel-multi { height: auto; padding: 2px; }
+    .euc-sel-multi option { padding: 4px 8px; border-radius: 4px; }
+    .euc-sel-multi option:checked {
+      background: #4299e1 linear-gradient(#4299e1, #4299e1);
+      color: #fff;
+    }
     /* Generate Sequence footer: alt generators (Random/Seed) on the left,
        the main Cancel/Preview/Generate cluster on the right. */
     .euc-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }

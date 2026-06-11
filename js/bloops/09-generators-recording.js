@@ -508,7 +508,7 @@
             '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
             '<button type="button" class="euc-convert" id="euc-convert">' + (isHit ? 'Make Dot ·' : 'Make Circle ●') + '</button>' +
           '</div>' +
-          '<div class="sm-section-label" style="margin-top:0;">Step div</div><div class="sm-waves" id="euc-div"></div>';
+          '<div class="sm-section-label" style="margin-top:0;">Step div</div><select class="euc-sel" id="euc-div"></select>';
         if (isHit) {
           html += '<div class="sm-section-label">Notes</div>' +
             '<div class="sm-waves" id="euc-notemode">' +
@@ -516,10 +516,11 @@
               '<button type="button" class="sm-wave' + (chordMode ? ' active' : '') + '" data-mode="chord">Chord</button>' +
             '</div>';
           if (chordMode) {
-            html += '<div class="sm-section-label">Chord type</div><select class="sm-select euc-chord-select" id="euc-chordkey"></select>' +
-              '<div class="sm-section-label">Root</div><div class="sm-waves" id="euc-notes"></div>';
+            html += '<div class="sm-section-label">Chord type</div><select class="euc-sel" id="euc-chordkey"></select>' +
+              '<div class="sm-section-label">Root</div><select class="euc-sel" id="euc-notes"></select>';
           } else {
-            html += '<div class="sm-section-label">Pitches (1 = single, 2+ = chord)</div><div class="sm-waves" id="euc-notes"></div>';
+            html += '<div class="sm-section-label">Pitches (select one or more)</div>' +
+              '<select class="euc-sel euc-sel-multi" id="euc-notes" multiple size="' + Math.min(Math.max(gridNotes.length, 2), 8) + '"></select>';
           }
         }
         html += '<div class="euc-allrow"><button type="button" class="euc-all" id="euc-all-div">Apply div to all ' + (isHit ? '●' : '·') + '</button>' +
@@ -538,12 +539,27 @@
           renderStrip(); renderEditor();
         });
 
-        const divHost = editEl.querySelector('#euc-div');
+        const divSel = editEl.querySelector('#euc-div');
+        let _divMatched = false;
         _EUC_DIVS.forEach(([label, eu]) => {
-          const b = document.createElement('button'); b.type = 'button';
-          b.className = 'sm-wave' + (Math.abs((s.eu || 1) - eu) < 1e-3 ? ' active' : ''); b.textContent = label;
-          b.addEventListener('click', () => { setStepDiv(i, eu); renderStrip(); renderEditor(); });
-          divHost.appendChild(b);
+          const opt = document.createElement('option');
+          opt.value = String(eu); opt.textContent = label;
+          if (Math.abs((s.eu || 1) - eu) < 1e-3) { opt.selected = true; _divMatched = true; }
+          divSel.appendChild(opt);
+        });
+        // Seeded steps can carry a non-catalog length (length / N). Surface
+        // it as a leading read-only option so the dropdown reflects reality;
+        // picking any catalog div re-quantizes via setStepDiv.
+        if (!_divMatched) {
+          const opt = document.createElement('option');
+          opt.value = ''; opt.textContent = 'Custom (' + (s.eu || 1).toFixed(2) + '/8)';
+          opt.selected = true;
+          divSel.insertBefore(opt, divSel.firstChild);
+        }
+        divSel.addEventListener('change', () => {
+          const eu = parseFloat(divSel.value);
+          if (!Number.isFinite(eu)) return;
+          setStepDiv(i, eu); renderStrip(); renderEditor();
         });
 
         if (isHit) {
@@ -573,23 +589,25 @@
             csel.addEventListener('change', () => { s.chordKey = csel.value; renderStrip(); });
           }
 
-          const notesHost = editEl.querySelector('#euc-notes');
-          const sel = new Set((s.noteIdxs && s.noteIdxs.length) ? s.noteIdxs : [0]);
+          const notesSel = editEl.querySelector('#euc-notes');
+          const cur = new Set((s.noteIdxs && s.noteIdxs.length) ? s.noteIdxs : [0]);
+          const rootIdx0 = (Array.isArray(s.noteIdxs) && s.noteIdxs.length) ? s.noteIdxs[0] : 0;
           gridNotes.forEach((nt, ni) => {
-            const b = document.createElement('button'); b.type = 'button';
-            b.className = 'sm-wave' + (sel.has(ni) ? ' active' : ''); b.textContent = nt.label;
-            b.addEventListener('click', () => {
-              if (chordMode) {
-                // Single-select root.
-                s.noteIdxs = [ni];
-                notesHost.querySelectorAll('.sm-wave').forEach((el, idx) => el.classList.toggle('active', idx === ni));
-              } else {
-                if (sel.has(ni)) { if (sel.size > 1) sel.delete(ni); } else sel.add(ni);
-                s.noteIdxs = [...sel].sort((a, b2) => a - b2);
-                b.classList.toggle('active', sel.has(ni));
-              }
-            });
-            notesHost.appendChild(b);
+            const opt = document.createElement('option');
+            opt.value = String(ni); opt.textContent = nt.label;
+            // Chord mode = single-select root; Notes mode = multi-select.
+            if (chordMode ? (ni === rootIdx0) : cur.has(ni)) opt.selected = true;
+            notesSel.appendChild(opt);
+          });
+          notesSel.addEventListener('change', () => {
+            if (chordMode) {
+              s.noteIdxs = [parseInt(notesSel.value, 10) || 0];
+            } else {
+              let picked = [...notesSel.selectedOptions].map(o => parseInt(o.value, 10)).filter(Number.isFinite);
+              if (!picked.length) picked = [0]; // keep at least one pitch
+              s.noteIdxs = picked.sort((a, b) => a - b);
+            }
+            renderStrip();
           });
           const allNotes = editEl.querySelector('#euc-all-notes');
           if (allNotes) allNotes.addEventListener('click', () => {

@@ -437,15 +437,55 @@
       };
 
       const scaleSelect = document.getElementById('scale-select');
-      const scaleKeys = Object.keys(SCALES)
-        .filter(n => n !== 'chromatic')
-        .sort();
-      ['chromatic', ...scaleKeys].forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = prettyScaleName(name);
-        scaleSelect.appendChild(opt);
-      });
+      // Grouped into <optgroup>s so the long Tonal-derived list is
+      // navigable instead of one flat alphabetical run. Order matters:
+      // the "Standard" group (the scales people reach for first — major,
+      // minor and their pentatonic/blues cousins) sits at the top, then
+      // the church modes, then keyword buckets, then everything else
+      // alphabetized. Explicit names are filtered against the catalog so
+      // a name Tonal drops in a future version just silently disappears
+      // rather than rendering a dead option.
+      (function populateGroupedScaleSelect() {
+        const has  = (n) => SCALES[n] != null;
+        const used = new Set();
+        const addOpt = (parent, name) => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = prettyScaleName(name);
+          parent.appendChild(opt);
+          used.add(name);
+        };
+        const addGroup = (label, names) => {
+          const present = names.filter(n => has(n) && !used.has(n));
+          if (!present.length) return;
+          const og = document.createElement('optgroup');
+          og.label = label;
+          present.forEach(n => addOpt(og, n));
+          scaleSelect.appendChild(og);
+        };
+        // Ordered "headline" groups.
+        addGroup('Standard', [
+          'chromatic', 'major', 'minor', 'harmonic minor', 'melodic minor',
+          'major pentatonic', 'minor pentatonic',
+          'blues', 'major blues', 'minor blues',
+        ]);
+        addGroup('Modes', [
+          'ionian', 'dorian', 'phrygian', 'lydian',
+          'mixolydian', 'aeolian', 'locrian',
+        ]);
+        // 12-note alternate tunings (just intonation, Pythagorean, etc.) —
+        // these retune the grid cells rather than just highlighting them.
+        addGroup('Microtonal',
+          (typeof MICRO_TUNINGS !== 'undefined') ? Object.keys(MICRO_TUNINGS) : []);
+        // Keyword buckets over whatever's left, each alphabetized.
+        const rest = () => Object.keys(SCALES).filter(n => !used.has(n));
+        const bucket = (re) => rest().filter(n => re.test(n)).sort();
+        addGroup('Pentatonic & Blues', bucket(/pentatonic|blues/));
+        addGroup('Bebop', bucket(/bebop/));
+        addGroup('Symmetric', bucket(/whole tone|augmented|diminished|messiaen/));
+        // Everything still unplaced, alphabetized.
+        addGroup('More Scales', rest().sort());
+      })();
       scaleSelect.value = currentScale;
       scaleSelect.addEventListener('change', () => {
         const _oldScale = currentScale;
@@ -458,6 +498,17 @@
         // is cleared. Chromatic clears the tonic entirely.
         _scaleTonic = (currentScale && currentScale !== 'chromatic') ? rootIdx : null;
         applyScale();
+        // Microtonal tunings re-pitch the actual grid cells (not just the
+        // in-scale highlighting applyScale does), so when ENTERING or
+        // LEAVING one, recompute notes and repaint. Plain 12-TET ↔ 12-TET
+        // scale swaps skip this — nothing about the pitches changed.
+        try {
+          const _micro = (typeof MICRO_TUNINGS !== 'undefined') ? MICRO_TUNINGS : null;
+          if (_micro && (_micro[_oldScale] || _micro[currentScale])) {
+            if (typeof rebuildGrid === 'function') rebuildGrid();
+            if (typeof renderSequence === 'function') renderSequence();
+          }
+        } catch (e) {}
         // Re-render XY pad guide lines so they follow the workspace
         // scale when Grid Off is active. Cheap no-op in Grid On mode.
         try { if (typeof _renderXyOverlay === 'function') _renderXyOverlay(); } catch (e) {}
@@ -1308,4 +1359,114 @@
       if (!btn) return;
       btn.addEventListener('click', (e) => { e.stopPropagation(); openGroovePanel(btn); });
       refreshGrooveUI();
+    })();
+
+    // ---- Desktop keyboard → grid notes --------------------------------
+    // Maps physical keyboard keys to grid cells so a key press plays (and
+    // holds) the corresponding note. Rather than re-implement the grid's
+    // press logic (sustain, chord grouping, wrap / step / jump modes,
+    // hold-duration → step), each key SYNTHESIZES the real pointer gesture
+    // on the cell: pointerdown on key-down, pointerup + click on key-up.
+    // That routes through the exact same handlers a mouse/touch press uses,
+    // so every mode behaves identically and holding several keys at once
+    // builds a chord just like multi-touch does.
+    //
+    // Keys are addressed by e.code (physical position), so the mapping is
+    // independent of QWERTY/AZERTY/Dvorak layout and of Shift state. The
+    // order runs low pitch → high: bottom letter row, then home row, then
+    // top row, then the number row — i.e. left-to-right, bottom-to-top.
+    (function bindGridKeyboard() {
+      const KEY_ORDER = [
+        'KeyZ','KeyX','KeyC','KeyV','KeyB','KeyN','KeyM','Comma','Period','Slash',
+        'KeyA','KeyS','KeyD','KeyF','KeyG','KeyH','KeyJ','KeyK','KeyL','Semicolon','Quote',
+        'KeyQ','KeyW','KeyE','KeyR','KeyT','KeyY','KeyU','KeyI','KeyO','KeyP','BracketLeft','BracketRight',
+        'Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9','Digit0','Minus','Equal',
+      ];
+      const keyIndex = new Map(KEY_ORDER.map((code, i) => [code, i]));
+      // code → synthetic pointerId, for keys currently held. Presence also
+      // guards against the OS key-repeat storm re-triggering the press.
+      const held = new Map();
+      // Start well above any real pointerId (mouse = 1, touch = small ints)
+      // so a synthetic key-press never collides with a live pointer session.
+      let _kbPointerSeq = 90000;
+
+      // Don't steal keys while the user is typing into a field or has a
+      // menu/select focused — only drive the grid when focus is "loose".
+      function _typingTarget() {
+        const el = document.activeElement;
+        if (!el) return false;
+        const tag = el.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+          || el.isContentEditable;
+      }
+      function _cellCenter(cell) {
+        const r = cell.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }
+      function _dispatch(cell, type, pointerId, extra = {}) {
+        const { x, y } = _cellCenter(cell);
+        let ev;
+        try {
+          ev = new PointerEvent(type, {
+            bubbles: true, cancelable: true, composed: true,
+            pointerId, pointerType: 'mouse', isPrimary: true,
+            clientX: x, clientY: y, button: 0, buttons: extra.buttons ?? 0,
+          });
+        } catch (e) {
+          // Older engines without the PointerEvent constructor — fall back
+          // to a MouseEvent and tack the pointer fields on so the handlers
+          // (which read e.pointerId) still match down ↔ up.
+          ev = new MouseEvent(type === 'pointerdown' ? 'mousedown'
+            : type === 'pointerup' ? 'mouseup' : type,
+            { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 });
+          try { Object.defineProperty(ev, 'pointerId', { value: pointerId }); } catch (e2) {}
+        }
+        cell.dispatchEvent(ev);
+      }
+
+      document.addEventListener('keydown', (e) => {
+        if (e.repeat) return;                                   // ignore auto-repeat
+        if (e.ctrlKey || e.metaKey || e.altKey) return;         // leave shortcuts alone
+        if (_typingTarget()) return;
+        const idx = keyIndex.get(e.code);
+        if (idx == null) return;
+        if (held.has(e.code)) return;
+        const cell = cells[idx];
+        if (!cell) return;
+        // Out-of-scale cells are non-interactive for the mouse (CSS
+        // pointer-events: none); honor that for the keyboard too — a
+        // dispatchEvent would otherwise bypass the CSS and play them.
+        if (cell.classList.contains('out-of-scale')) { e.preventDefault(); return; }
+        e.preventDefault(); // keep Space/'/' etc. from scrolling or quick-finding
+        const pointerId = ++_kbPointerSeq;
+        held.set(e.code, pointerId);
+        _dispatch(cell, 'pointerdown', pointerId, { buttons: 1 });
+      });
+
+      function _release(code, commit) {
+        const pointerId = held.get(code);
+        if (pointerId == null) return;
+        held.delete(code);
+        const idx = keyIndex.get(code);
+        const cell = (idx != null) ? cells[idx] : null;
+        if (!cell) return;
+        // pointerup ends the sustain (document-level handler keys off the
+        // pointerId); the follow-up click runs the same step-mutation path
+        // a real tap does. On a focus-loss cleanup we release the voice but
+        // skip the click so we don't commit a step the user didn't finish.
+        _dispatch(cell, 'pointerup', pointerId);
+        if (commit) cell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      }
+
+      document.addEventListener('keyup', (e) => {
+        if (!held.has(e.code)) return;
+        e.preventDefault();
+        _release(e.code, true);
+      });
+      // A key held across a tab switch / focus loss never fires keyup —
+      // release everything so notes don't stick on. Treated like a
+      // pointercancel (no step committed).
+      const _releaseAll = () => { Array.from(held.keys()).forEach(code => _release(code, false)); };
+      window.addEventListener('blur', _releaseAll);
+      document.addEventListener('visibilitychange', () => { if (document.hidden) _releaseAll(); });
     })();

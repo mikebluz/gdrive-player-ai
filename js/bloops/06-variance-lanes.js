@@ -873,6 +873,10 @@
         // the XY pad for pitch-bend gestures. Mirrored into the global
         // fluidGridMode whenever this lane is active.
         fluidGridMode: false,
+        // Bloom (generative ambient) mode + its config. `ambient` is built
+        // lazily by 17-ambient.js on first entry so a fresh lane stays light.
+        ambientMode: false,
+        ambient: null,
       };
     }
     // Snapshot the currently-mirrored voice globals into a plain object
@@ -1173,6 +1177,11 @@
           baseUrl: info.baseUrl,
           release: 1,
         }).connect(getLaneBus(laneIdx));
+        // Lift this per-lane sampler to synth level, same as the single-lane
+        // path does via getSampleEntry. Without this, samples played in
+        // Poly / multi-lane mode got NO volume boost at all and sat even
+        // quieter than the (already boosted) single-lane samples.
+        if (typeof _boostSampler === 'function') _boostSampler(samp);
         lane._samplers.set(sampleId, samp);
         return samp;
       } catch (e) {
@@ -1269,6 +1278,57 @@
     // gating is reused verbatim; the Riff entry opens a second menu built
     // live from the riff panel's buttons (so Drift / Merge labels + enable
     // state stay in sync).
+    // Normalize every step's TONE in a lane to the current grid voice
+    // (cellParams[0]) — the synth/sample TYPE, its sculpting (envelope,
+    // wavetable mix, grain settings…), and all per-note FX. Pitch and
+    // performance are deliberately left intact: each step keeps its freq /
+    // label / cellIndex, and the per-step detune, volume, pan, slip, strum
+    // (plus top-level bend / ratchet / chance / when / variance, which this
+    // never touches) all survive. Rests carry no tone, so they're skipped.
+    // Returns the number of voices retoned so the caller can no-op on an
+    // empty lane.
+    const _NORMALIZE_PRESERVE = ['detune', 'volume', 'pan', 'slip', 'strum'];
+    function normalizeLaneTones(laneIdx) {
+      const lane = lanes[laneIdx];
+      if (!lane || !Array.isArray(lane.steps) || lane.steps.length === 0) return 0;
+      const ref = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : null;
+      if (!ref) return 0;
+      // Tone fields only — strip the pitch / dynamics keys so each existing
+      // step's own values pass through untouched.
+      const tone = { ...ref };
+      _NORMALIZE_PRESERVE.forEach(k => delete tone[k]);
+      // Re-parsed per leaf so reference-type fields (e.g. the wavetableMix
+      // array) aren't shared by reference across every retoned step.
+      const toneJson = JSON.stringify(tone);
+      let count = 0;
+      const applyLeaf = (leaf) => {
+        if (!leaf) return;
+        const base = (leaf.params && typeof leaf.params === 'object') ? leaf.params : {};
+        leaf.params = { ...base, ...JSON.parse(toneJson) };
+        if (tone.type) leaf.sound = tone.type;
+        count++;
+      };
+      const walk = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          s.subSteps.forEach(walk);
+        } else if (Array.isArray(s.chord)) {
+          s.chord.forEach(applyLeaf);
+        } else if (s.freq != null) {
+          applyLeaf(s); // skip rests
+        }
+        // Variance pool: each alternate carries its own sound/params, so a
+        // step with variance must have its variants retoned too — otherwise
+        // the iterations that swap in a variant revert to the old tone. Runs
+        // independent of the branch above (a rest can still hold variants).
+        if (s.variance && Array.isArray(s.variance.notes)) {
+          s.variance.notes.forEach(walk);
+        }
+      };
+      lane.steps.forEach(walk);
+      return count;
+    }
+
     function _showLaneMenu(laneIdx, x, y) {
       const lane = lanes[laneIdx];
       if (!lane) return;
@@ -1290,6 +1350,14 @@
         'hr',
         { label: 'Save',  disabled: !saveBtn  || saveBtn.disabled,  fn: () => saveBtn && saveBtn.click() },
         { label: 'Clear', danger: true, disabled: !clearBtn || clearBtn.disabled, fn: () => clearBtn && clearBtn.click() },
+        // Normalize: stamp the current grid voice (tone + sculpting + FX)
+        // onto every step in this lane, leaving each step's pitch and
+        // performance settings alone.
+        { label: 'Normalize', disabled: !lane.steps || lane.steps.length === 0, fn: () => {
+            if (typeof snapshotForUndo === 'function') snapshotForUndo('Normalize tones');
+            const n = normalizeLaneTones(laneIdx);
+            if (n > 0) { renderSequence(); persist(); }
+          } },
       ];
       if (riffActions.length) {
         // Defer the submenu to the next tick: showCtxMenu's click handler
@@ -1309,23 +1377,31 @@
     // the file).
     function _syncFluidGridToActiveLane() {
       const lane = lanes[activeLaneIdx];
-      const wantFluid = !!(lane && lane.fluidGridMode);
-      const wantGame  = !!(lane && lane.gameMode);
-      const wantProg  = !!(lane && lane.progMode);
-      const wasFluid = fluidGridMode;
-      const wasGame  = gameMode;
-      const wasProg  = progMode;
+      const wantFluid   = !!(lane && lane.fluidGridMode);
+      const wantGame    = !!(lane && lane.gameMode);
+      const wantProg    = !!(lane && lane.progMode);
+      const wantAmbient = !!(lane && lane.ambientMode);
+      const wasFluid   = fluidGridMode;
+      const wasGame    = gameMode;
+      const wasProg    = progMode;
+      const wasAmbient = (typeof ambientMode !== 'undefined') ? ambientMode : false;
       fluidGridMode = wantFluid;
       gameMode      = wantGame;
       progMode      = wantProg;
-      document.body.classList.toggle('fluid-grid', wantFluid);
-      document.body.classList.toggle('game-mode',  wantGame);
-      document.body.classList.toggle('prog-mode',  wantProg);
+      if (typeof ambientMode !== 'undefined') ambientMode = wantAmbient;
+      document.body.classList.toggle('fluid-grid',  wantFluid);
+      document.body.classList.toggle('game-mode',   wantGame);
+      document.body.classList.toggle('prog-mode',   wantProg);
+      document.body.classList.toggle('ambient-mode', wantAmbient);
       const btn = document.getElementById('fluid-grid-toggle');
       if (btn) {
-        btn.textContent = wantProg ? 'Prog'
+        btn.textContent = wantAmbient ? 'Bloom'
+                        : wantProg ? 'Prog'
                         : wantGame ? 'Game'
                         : wantFluid ? 'Graph' : 'Grid';
+      }
+      if (wasAmbient !== wantAmbient) {
+        try { if (typeof _onAmbientModeChanged === 'function') _onAmbientModeChanged(wantAmbient); } catch (e) {}
       }
       if (wasFluid && !wantFluid) {
         try { if (typeof _endFluidPress === 'function') _endFluidPress(); } catch (e) {}

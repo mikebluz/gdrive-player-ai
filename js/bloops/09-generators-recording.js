@@ -404,12 +404,22 @@
       // when Keep is on, else replace) so existing muscle memory holds.
       const state = { ...DEFAULTS, sel: -1, steps: [], applyMode: keepMode ? 'append' : 'replace' };
 
-      // Seed an even N-step pattern from the Euclidean spread, each step
-      // length = length / N, hits per E(K,N,rot). Re-run on K/N/Rotate/Length.
+      // Seed the step list from the Euclidean spread. `Steps` (n) is the
+      // resolution of the rhythm cycle E(K,N,rot); `Length` is how many
+      // steps to actually lay down. The n-step cycle repeats (and truncates
+      // on the final partial cycle) to fill `Length` steps, so raising
+      // Length lengthens the sequence and lowering it shortens it — what
+      // the control name implies. Each step is one 1/8 unit (eu = 1); the
+      // per-step Div editor / global subdivision change individual lengths
+      // after seeding. When Length === N (the default 8/8) this is byte-for-
+      // byte the old single-cycle behavior. Re-run on K/N/Rotate/Length.
       const seed = () => {
         const pat = euclideanPattern(state.k, state.n, state.rot);
-        const eu = state.length / state.n;
-        state.steps = pat.map(on => ({ hit: !!on, noteIdxs: [0], eu }));
+        const L = Math.max(1, state.length | 0);
+        state.steps = [];
+        for (let i = 0; i < L; i++) {
+          state.steps.push({ hit: !!pat[i % state.n], noteIdxs: [0], eu: 1 });
+        }
         state.sel = -1;
       };
       // Change step i's div while preserving total length: shrinking spawns a
@@ -690,7 +700,52 @@
 
       seed(); refreshTopVals(); renderStrip(); renderEditor();
 
-      const close = () => overlay.remove();
+      // ---- Looping preview ----
+      // Preview is a toggle: first press starts an audition that loops the
+      // current pattern until pressed again (or the dialog closes). Each
+      // cycle rebuilds the steps from live state, so edits to hits / notes /
+      // divs while it's running are heard on the next pass. Cycles are
+      // pinned to the running audio clock (_eucPreviewAt advances by the
+      // pattern's exact duration) so the loop stays gapless instead of
+      // drifting with setTimeout jitter.
+      const previewBtn = modal.querySelector('#euc-preview');
+      let _eucPreviewTimer = null;
+      let _eucPreviewAt = 0;
+      const _eucTotalMs = (steps) => {
+        const bpm = parseInt(tempoInput?.value, 10) || 120;
+        let t = 0;
+        const add = (s) => {
+          if (!s) return;
+          if (s.isSub && Array.isArray(s.subSteps)) { s.subSteps.forEach(add); return; }
+          const dur = s.duration || 1;
+          const sub = (s.subdivision != null) ? s.subdivision : stepSubdivision;
+          t += Math.round(60000 / bpm * sub) * dur;
+        };
+        steps.forEach(add);
+        return t;
+      };
+      const stopEucPreview = () => {
+        if (_eucPreviewTimer) { clearTimeout(_eucPreviewTimer); _eucPreviewTimer = null; }
+        _eucPreviewAt = 0;
+        if (previewBtn) { previewBtn.classList.remove('active'); previewBtn.textContent = 'Preview'; }
+      };
+      const _eucPreviewTick = () => {
+        const steps = _buildEuclidSteps(state.steps, gridNotes);
+        if (!steps.length || typeof playSubStepsAtTime !== 'function') { stopEucPreview(); return; }
+        const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+        // First cycle fires at `now` (interactive press — no cushion); later
+        // cycles use the pinned, contiguous time so playback is seamless.
+        if (!_eucPreviewAt || _eucPreviewAt < now) _eucPreviewAt = now;
+        try { playSubStepsAtTime(steps, _eucPreviewAt); } catch (e) {}
+        const periodMs = Math.max(60, _eucTotalMs(steps));
+        _eucPreviewAt += periodMs / 1000;
+        // Re-arm ~40 ms before the next cycle's audio time so the next pass
+        // is scheduled in advance; clamp so a tiny pattern can't busy-loop.
+        const leadMs = (_eucPreviewAt - now) * 1000 - 40;
+        _eucPreviewTimer = setTimeout(_eucPreviewTick, Math.max(10, leadMs));
+      };
+
+      const close = () => { stopEucPreview(); overlay.remove(); };
       modal.querySelector('#euc-cancel').addEventListener('click', close);
       modal.querySelector('#euc-reset').addEventListener('click', () => {
         Object.assign(state, DEFAULTS, { sel: -1 });
@@ -698,14 +753,14 @@
         rEl.value = String(DEFAULTS.rot); lEl.value = String(DEFAULTS.length);
         seed(); refreshTopVals(); renderStrip(); renderEditor();
       });
-      // Preview — play the current pattern once, without committing it.
-      modal.querySelector('#euc-preview').addEventListener('click', () => {
+      // Preview — toggle a looping audition of the current pattern (no commit).
+      previewBtn.addEventListener('click', () => {
+        if (_eucPreviewTimer) { stopEucPreview(); return; }
         try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
-        const steps = _buildEuclidSteps(state.steps, gridNotes);
-        if (typeof playSubStepsAtTime === 'function') {
-          const at = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
-          try { playSubStepsAtTime(steps, at); } catch (e) {}
-        }
+        previewBtn.classList.add('active');
+        previewBtn.textContent = 'Stop';
+        _eucPreviewAt = 0;
+        _eucPreviewTick();
       });
       modal.querySelector('#euc-random').addEventListener('click', () => { close(); if (typeof showRandomDialog === 'function') showRandomDialog(); });
       modal.querySelector('#euc-seed').addEventListener('click', () => { close(); if (typeof showSeedDialog === 'function') showSeedDialog(); });
@@ -900,6 +955,8 @@
           slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
           collapsed: !!l.collapsed,
           fluidGridMode: !!l.fluidGridMode,
+          ambientMode: !!l.ambientMode,
+          ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
           // Per-lane FX send levels — deep clone so future mutations on
           // the live lane.sends don't bleed into the snapshot.
           sends: l.sends ? { ...l.sends } : null,

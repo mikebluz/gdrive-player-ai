@@ -450,6 +450,8 @@
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
         collapsed: !!l?.collapsed,
         fluidGridMode: !!l?.fluidGridMode,
+        ambientMode: !!l?.ambientMode,
+        ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
         // Per-lane FX send levels. Migration:
@@ -473,6 +475,8 @@
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
         collapsed: !!l?.collapsed,
         fluidGridMode: !!l?.fluidGridMode,
+        ambientMode: !!l?.ambientMode,
+        ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
         sends: _migrateLaneSends(l),

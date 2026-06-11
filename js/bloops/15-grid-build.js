@@ -15,6 +15,34 @@
     // separate random palette so chips don't collapse to two colours.
     // (Re-initialised whenever palette is reassigned via load/reset/preset.)
 
+    // ---- Microtonal tunings -------------------------------------------
+    // The grid is a 12-cell-per-octave chromatic keyboard, so true
+    // xenharmonic scales (24-TET quarter tones, Bohlen-Pierce, etc.) with
+    // a different note-per-octave count can't be laid out on it. What DOES
+    // fit, and is genuinely microtonal, is a 12-note ALTERNATE TUNING: keep
+    // the 12 cells but bend each one off equal temperament to a non-12-TET
+    // pitch. Each entry below is the 12 pitches of one octave expressed as
+    // CENTS ABOVE THE TONIC (degree 0 = tonic = 0¢). computeNotesForOctaves
+    // reads this and nudges each cell by (theseCents − degree×100) cents
+    // from its equal-tempered position, so the tuning rides on top of the
+    // normal MIDI pitch math and follows the scale tonic + every octave.
+    //
+    // Values are 1200·log2(ratio) for the just/Pythagorean ratios, and the
+    // standard published cent tables for the historical temperaments.
+    const MICRO_TUNINGS = {
+      // 5-limit just intonation — pure small-integer ratios (1/1, 16/15,
+      // 9/8, 6/5, 5/4, 4/3, 45/32, 3/2, 8/5, 5/3, 16/9, 15/8).
+      'just intonation': [0, 111.73, 203.91, 315.64, 386.31, 498.04, 590.22, 701.96, 813.69, 884.36, 996.09, 1088.27],
+      // Pythagorean — a chain of pure 3/2 fifths. Bright thirds, pure fifths.
+      'pythagorean': [0, 90.22, 203.91, 294.13, 407.82, 498.04, 611.73, 701.96, 792.18, 905.87, 996.09, 1109.78],
+      // Quarter-comma meantone — Renaissance temperament with pure 5/4
+      // major thirds and noticeably narrow fifths (the classic "wolf").
+      'quarter-comma meantone': [0, 76.05, 193.16, 310.26, 386.31, 503.42, 579.47, 696.58, 772.63, 889.74, 1006.84, 1082.89],
+      // Werckmeister III — Baroque well-temperament; every key usable,
+      // each with its own subtly different colour.
+      'werckmeister III': [0, 90.22, 192.18, 294.13, 390.22, 498.04, 588.27, 696.09, 792.18, 888.27, 996.09, 1092.18],
+    };
+
     // Scale catalog — chromatic plus everything Tonal.js ships (~100+ named scales).
     // Each value is an array of semitone offsets [0..11] (the in-scale pitch classes).
     function buildScaleCatalog() {
@@ -30,6 +58,13 @@
           if (uniq.length > 0) out[name] = uniq;
         });
       }
+      // Microtonal tunings register as full 12-note chromatic sets so all
+      // the scale-aware code (highlighting, wraps, key context) treats them
+      // as valid keys — every cell is in-tune and playable. Their pitch
+      // bending lives in MICRO_TUNINGS / computeNotesForOctaves, not here.
+      Object.keys(MICRO_TUNINGS).forEach(name => {
+        out[name] = [0,1,2,3,4,5,6,7,8,9,10,11];
+      });
       return out;
     }
     const SCALES = buildScaleCatalog();

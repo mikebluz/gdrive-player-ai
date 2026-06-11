@@ -409,6 +409,12 @@
         if (revBtn) revBtn.disabled = true;
         const shuffBtn = document.getElementById('shuffle-btn');
         if (shuffBtn) shuffBtn.disabled = true;
+        const rotateBtn = document.getElementById('rotate-btn');
+        if (rotateBtn) rotateBtn.disabled = true;
+        const shiftUpBtn = document.getElementById('shift-up-btn');
+        if (shiftUpBtn) shiftUpBtn.disabled = true;
+        const shiftDownBtn = document.getElementById('shift-down-btn');
+        if (shiftDownBtn) shiftDownBtn.disabled = true;
         const repeatBtn = document.getElementById('repeat-btn');
         if (repeatBtn) repeatBtn.disabled = true;
         return;
@@ -808,6 +814,12 @@
       if (revBtn) revBtn.disabled = sequence.length < 2;
       const shuffBtn = document.getElementById('shuffle-btn');
       if (shuffBtn) shuffBtn.disabled = sequence.length < 2;
+      const rotateBtn = document.getElementById('rotate-btn');
+      if (rotateBtn) rotateBtn.disabled = sequence.length < 2;
+      const shiftUpBtn = document.getElementById('shift-up-btn');
+      if (shiftUpBtn) shiftUpBtn.disabled = sequence.length === 0;
+      const shiftDownBtn = document.getElementById('shift-down-btn');
+      if (shiftDownBtn) shiftDownBtn.disabled = sequence.length === 0;
       const repeatBtn = document.getElementById('repeat-btn');
       if (repeatBtn) repeatBtn.disabled = sequence.length === 0;
       // Layout-dependent semitone markers between adjacent chips. Run on

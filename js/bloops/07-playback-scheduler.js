@@ -115,6 +115,11 @@
       }
       clearVisualTimers();
       clearHighlights();
+      // Immediate silence: a user "stop" should cut sounding playback voices
+      // (synths + samples) at once rather than letting their release tails
+      // ring on. Click-free (short ramps), and held LIVE cell presses are
+      // untracked so they survive.
+      try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {}
       renderSequence();
       document.getElementById('play-btn').textContent = '▶';
       // Stop driving the Keep button off the playback step — fall back

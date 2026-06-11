@@ -778,6 +778,10 @@
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
             collapsed: !!l.collapsed,
             fluidGridMode: !!l.fluidGridMode,
+            ambientMode: !!l.ambientMode,
+            // Bloom config — `playing` is never persisted as true (the
+            // generator only ever starts on an explicit gesture).
+            ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
             // Per-lane voice. The active lane's live voice lives in
             // the globals (cellSounds / palette / etc.), so capture
             // those for it instead of relying on l.voice (which may
@@ -805,6 +809,8 @@
             slip:   Number.isFinite(l.slip)   ? l.slip   : 0,
             collapsed: !!l.collapsed,
             fluidGridMode: !!l.fluidGridMode,
+            ambientMode: !!l.ambientMode,
+            ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
             sends: l.sends ? { ...l.sends } : null,
           })) : null,
@@ -1582,6 +1588,10 @@
     let fluidGridMode = false;
     let gameMode = false;
     let progMode = false;
+    // Bloom (generative ambient) mode mirror — see 17-ambient.js. Declared
+    // here alongside the other mode mirrors so it's initialised before the
+    // boot-time _syncFluidGridToActiveLane() call (13-prog-pad.js) reads it.
+    let ambientMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;

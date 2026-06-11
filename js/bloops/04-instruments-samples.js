@@ -887,11 +887,17 @@
     function _releasePooledSynth(key, synth) {
       if (!synth) return;
       const p = _ensurePool(key);
+      // Disconnect FIRST, then reset volume/detune. Resetting volume to unity
+      // (0 dB) while the synth is still wired to the lane bus snaps a still-
+      // ringing oscillator's residual back to full level — a step that pops
+      // audibly on a pure tone (sine). With the node already disconnected the
+      // reset produces no output. (safeReleaseSynth has ramped to -80 dB, so
+      // the disconnect itself lands at near-silence.)
+      try { synth.disconnect(); } catch (e) {}
       try {
         if (synth.volume) { synth.volume.cancelScheduledValues(0); synth.volume.value = 0; }
         if (synth.detune) { synth.detune.cancelScheduledValues(0); synth.detune.value = 0; }
       } catch (e) {}
-      try { synth.disconnect(); } catch (e) {}
       if (p.idle.length < VOICE_POOL_MAX_PER_PRESET) p.idle.push(synth);
       else { try { synth.dispose(); } catch (e) {} }
     }
@@ -2035,7 +2041,21 @@
         synth = _buildPooledSynthForPreset(type, env);
         if (synth) {
           pooledPreset = type;
-          try { synth.connect(chainHead); } catch (e) { synth = null; pooledPreset = null; }
+          try {
+            synth.connect(chainHead);
+            // A reacquired pooled synth is wired up now but won't be retriggered
+            // until startTime (Bloom schedules up to ~1.2 s ahead). Its oscillator
+            // runs continuously, so any leftover release-tail residual from its
+            // previous note would leak through this whole window. Mute it until
+            // the attack; the envelope is 0 at startTime, so lifting the mute
+            // there is inaudible.
+            if (synth.volume && typeof startTime === 'number' && Number.isFinite(startTime)
+                && startTime > Tone.context.now()) {
+              synth.volume.cancelScheduledValues(Tone.context.now());
+              synth.volume.setValueAtTime(-200, Tone.context.now());
+              synth.volume.setValueAtTime(0, startTime);
+            }
+          } catch (e) { synth = null; pooledPreset = null; }
         }
       }
 
@@ -2344,7 +2364,11 @@
         _unregisterVoice(voiceEntry);
         if (pooledPreset) safeReleaseSynth(pooledPreset, synth);
         else              safeDisposeSynth(synth);
-        disposeEffectChain();
+        // safeRelease/DisposeSynth ramps to -80 dB over ~30 ms before letting
+        // go. Tear the per-note FX chain (incl. the pan Panner) down AFTER that
+        // fade — disconnecting it mid-ramp rings the tail through a dead chain
+        // and clicks (the steal path already waits this out).
+        setTimeout(disposeEffectChain, 80);
       }, synthLeadMs + disposeMs);
       _registerVoice(voiceEntry);
     }

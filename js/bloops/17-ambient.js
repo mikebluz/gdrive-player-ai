@@ -45,10 +45,18 @@
         // own { depth (0..100, 0=off), rate (0..100 -> Hz free / division sync),
         // shape }. Shapes: sine/triangle/sawtooth/square + stochastic
         // 'smooth' (ramped random) / 'sharp' (sample & hold).
-        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, tone: '', scale: '', mod: _ambDefaultMod() },
-        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, tone: '', scale: '', mod: _ambDefaultMod() },
-        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, tone: '', scale: '', mod: _ambDefaultMod() },
-        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, mod: _ambDefaultMod() },
+        // `level` (0..100, default 70) scales the layer's output: 70 = unity
+        // (the tuned default), >70 boosts (×level/70), <70 attenuates, 0 = silent.
+        // The 70 default leaves headroom to push a layer LOUDER without clipping
+        // the slider. `drift` (0..99) phase-offsets the layer's events by that
+        // fraction of its Interval, so layers can be staggered against each other.
+        // `when` is an Elektron-style per-event conditional ('always' | '1st' |
+        // 'A:B') that gates which of the layer's generated events actually fire —
+        // e.g. '1:2' = every other event, for sparser/polymetric interplay.
+        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod() },
+        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod() },
+        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod() },
+        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, mod: _ambDefaultMod() },
         // `playing` is never persisted as true — the generator only starts on
         // an explicit gesture (a suspended AudioContext would swallow autostart).
       };
@@ -69,6 +77,16 @@
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
       ['bed','motif','texture','beat'].forEach(layer => {
         if (!cfg[layer] || typeof cfg[layer] !== 'object') cfg[layer] = { ...d[layer] };
+      });
+      // `when` migration: it used to hold the numeric phase offset (now `drift`).
+      // Repurpose `when` as the per-event conditional STRING; an old numeric
+      // value moves to `drift`.
+      ['bed','motif','texture','beat'].forEach(layer => {
+        const L = cfg[layer];
+        if (!L || typeof L !== 'object') return;
+        if (typeof L.when === 'number' && !Number.isFinite(L.drift)) { L.drift = L.when; delete L.when; }
+        if (typeof L.when !== 'string') L.when = 'always';
+        if (!Number.isFinite(L.drift)) L.drift = 0;
       });
       // Phase 2/3 → interval/length migration: derive explicit Interval (ms)
       // and Length (ms) from the old abstract rate sliders, then drop them.
@@ -96,7 +114,7 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         Object.keys(d[layer]).forEach(k => {
           if (k === 'on') { if (typeof cfg[layer].on !== 'boolean') cfg[layer].on = d[layer].on; }
-          else if (k === 'kit' || k === 'tone' || k === 'scale') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
+          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
           else if (k === 'mod') {
             let mm = cfg[layer].mod;
             if (!mm || typeof mm !== 'object') { cfg[layer].mod = mm = _ambDefaultMod(); }
@@ -207,6 +225,38 @@
       const step = _ambStepSec();
       return Math.max(step, Math.round(sec / step) * step);
     }
+    // Per-layer Level (0..100): 70 = unity. Scales a voice's 0..100 volume,
+    // clamped back into range so a boost can't exceed full velocity.
+    function _ambApplyLevel(vol, level) {
+      const L = Number.isFinite(level) ? Math.max(0, level) : 70;
+      return Math.max(0, Math.min(100, Math.round((vol || 0) * (L / 70))));
+    }
+    // Per-layer Drift (0..99): phase-offset the layer's event grid by that
+    // fraction of its Interval (snapped to the step grid in Sync mode).
+    function _ambDriftOffset(layer, cfg) {
+      const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
+      if (drift <= 0) return 0;
+      const intervalSec = Math.max(0.05, (layer.intervalMs | 0) / 1000);
+      let off = (drift / 100) * intervalSec;
+      if (cfg && cfg.timing === 'sync') {
+        const step = _ambStepSec();
+        off = Math.round(off / step) * step;
+      }
+      return off;
+    }
+    // Per-layer When (per-event conditional): mirrors the Grid step `cond`.
+    // 'always'/unset → fire every event; '1st' → only the layer's first event;
+    // 'A:B' → fire on event A of every B (1-based, e.g. '1:2' = events 1,3,5…).
+    function _ambCondFires(cond, iter) {
+      if (!cond || cond === 'always') return true;
+      if (cond === '1st') return iter === 0;
+      const m = /^(\d+):(\d+)$/.exec(cond);
+      if (m) {
+        const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+        if (b > 0) return (iter % b) === (((a - 1) % b + b) % b);
+      }
+      return true;
+    }
 
     // ================= BED engine ===================================
     function _ambPickVoicing(bed) {
@@ -284,6 +334,7 @@
       const dest = _ambLayerDest('bed'), dmod = _ambLayerDetuneMod('bed');
       voicing.forEach((f, i) => {
         const params = _ambBedParams(durMs, voicing.length, bed.motion, overlap, pans[i], bed.tone);
+        params.volume = _ambApplyLevel(params.volume, bed.level);
         if (dmod) params._detuneMod = dmod;
         try { playNote(f, params, durMs, at + i * 0.012, dest, undefined, activeLaneIdx); } catch (e) {}
       });
@@ -334,6 +385,7 @@
       // Space spreads them by panning each randomly within ±space.
       const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
       const mp = _ambMotifParams(lenMs, pan, motif.tone);
+      mp.volume = _ambApplyLevel(mp.volume, motif.level);
       const dmod = _ambLayerDetuneMod('motif'); if (dmod) mp._detuneMod = dmod;
       try { playNote(f, mp, lenMs, at, _ambLayerDest('motif'), undefined, activeLaneIdx); } catch (e) {}
     }
@@ -380,6 +432,7 @@
         const lenMs = Math.max(60, texture.lengthMs | 0);
         const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
         const tp = _ambTexParams(lenMs, pan, texture.tone);
+        tp.volume = _ambApplyLevel(tp.volume, texture.level);
         const dmod = _ambLayerDetuneMod('texture'); if (dmod) tp._detuneMod = dmod;
         try { playNote(f, tp, lenMs, at, _ambLayerDest('texture'), undefined, activeLaneIdx); } catch (e) {}
       }
@@ -474,6 +527,7 @@
       const lenMs = Math.max(60, beat.lengthMs | 0);
       const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
       const bp = _ambBeatParams(beat.kit, lenMs, pan);
+      bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod('beat'); if (dmod) bp._detuneMod = dmod;
       try { playNote(f, bp, lenMs, at, _ambLayerDest('beat'), undefined, activeLaneIdx); } catch (e) {}
     }
@@ -643,8 +697,12 @@
     // ---- Unified schedule-ahead generator clock ------------------------
     let _ambTimer = null;
     let _ambBedNextAt = 0, _ambMotifNextAt = 0, _ambTexNextAt = 0, _ambBeatNextAt = 0;
+    // Per-layer event counters — drive the per-event When conditional. Count
+    // every scheduled event slot (fired or not) so the 'A:B' grid stays stable.
+    let _ambBedIter = 0, _ambMotifIter = 0, _ambTexIter = 0, _ambBeatIter = 0;
     function _ambResetClocks() {
       _ambBedNextAt = _ambMotifNextAt = _ambTexNextAt = _ambBeatNextAt = 0;
+      _ambBedIter = _ambMotifIter = _ambTexIter = _ambBeatIter = 0;
       _ambMotifDeg = null;
       _ambTexPattern = null; _ambTexStep = 0; _ambTexMutateAt = 0;
     }
@@ -657,34 +715,38 @@
       const space = cfg.space | 0;
       try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
       if (cfg.bed && cfg.bed.on) {
-        if (!_ambBedNextAt || _ambBedNextAt < now) _ambBedNextAt = lead;
+        if (!_ambBedNextAt || _ambBedNextAt < now) _ambBedNextAt = lead + _ambDriftOffset(cfg.bed, cfg);
         let g = 0;
         while (_ambBedNextAt < horizon && g++ < 8) {
-          _ambEmitBed(_ambBedNextAt, cfg.bed, space);
+          if (_ambCondFires(cfg.bed.when, _ambBedIter)) _ambEmitBed(_ambBedNextAt, cfg.bed, space);
+          _ambBedIter++;
           _ambBedNextAt += _ambSnap(Math.max(0.05, (cfg.bed.intervalMs | 0) / 1000), cfg);
         }
       }
       if (cfg.motif && cfg.motif.on) {
-        if (!_ambMotifNextAt || _ambMotifNextAt < now) _ambMotifNextAt = lead;
+        if (!_ambMotifNextAt || _ambMotifNextAt < now) _ambMotifNextAt = lead + _ambDriftOffset(cfg.motif, cfg);
         let g = 0;
         while (_ambMotifNextAt < horizon && g++ < 16) {
-          _ambEmitMotif(_ambMotifNextAt, cfg.motif, space);
+          if (_ambCondFires(cfg.motif.when, _ambMotifIter)) _ambEmitMotif(_ambMotifNextAt, cfg.motif, space);
+          _ambMotifIter++;
           _ambMotifNextAt += _ambSnap(Math.max(0.04, (cfg.motif.intervalMs | 0) / 1000), cfg);
         }
       }
       if (cfg.texture && cfg.texture.on) {
-        if (!_ambTexNextAt || _ambTexNextAt < now) _ambTexNextAt = lead;
+        if (!_ambTexNextAt || _ambTexNextAt < now) _ambTexNextAt = lead + _ambDriftOffset(cfg.texture, cfg);
         let g = 0;
         while (_ambTexNextAt < horizon && g++ < 16) {
-          _ambEmitTexture(_ambTexNextAt, cfg.texture, space);
+          if (_ambCondFires(cfg.texture.when, _ambTexIter)) _ambEmitTexture(_ambTexNextAt, cfg.texture, space);
+          _ambTexIter++;
           _ambTexNextAt += _ambSnap(Math.max(0.03, (cfg.texture.intervalMs | 0) / 1000), cfg);
         }
       }
       if (cfg.beat && cfg.beat.on) {
-        if (!_ambBeatNextAt || _ambBeatNextAt < now) _ambBeatNextAt = lead;
+        if (!_ambBeatNextAt || _ambBeatNextAt < now) _ambBeatNextAt = lead + _ambDriftOffset(cfg.beat, cfg);
         let g = 0;
         while (_ambBeatNextAt < horizon && g++ < 16) {
-          _ambEmitBeat(_ambBeatNextAt, cfg.beat, space);
+          if (_ambCondFires(cfg.beat.when, _ambBeatIter)) _ambEmitBeat(_ambBeatNextAt, cfg.beat, space);
+          _ambBeatIter++;
           _ambBeatNextAt += _ambSnap(Math.max(0.04, (cfg.beat.intervalMs | 0) / 1000), cfg);
         }
       }
@@ -982,7 +1044,10 @@
       set('ambient-bed-spread', cfg.bed.spread);
       set('ambient-bed-interval', cfg.bed.intervalMs); hint('ambient-bed-interval-v', _ambFmtMs(cfg.bed.intervalMs));
       set('ambient-bed-length', cfg.bed.lengthMs);     hint('ambient-bed-length-v', _ambFmtMs(cfg.bed.lengthMs));
+      set('ambient-bed-drift', cfg.bed.drift);
+      set('ambient-bed-when', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
+      set('ambient-bed-level', cfg.bed.level);
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
       set('ambient-motif-scale', cfg.motif.scale);
@@ -990,7 +1055,10 @@
       set('ambient-motif-range', cfg.motif.range);
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
+      set('ambient-motif-drift', cfg.motif.drift);
+      set('ambient-motif-when', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
+      set('ambient-motif-level', cfg.motif.level);
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
       set('ambient-texture-scale', cfg.texture.scale);
@@ -998,12 +1066,18 @@
       set('ambient-texture-fill', cfg.texture.fill);
       set('ambient-texture-interval', cfg.texture.intervalMs); hint('ambient-texture-interval-v', _ambFmtMs(cfg.texture.intervalMs));
       set('ambient-texture-length', cfg.texture.lengthMs);     hint('ambient-texture-length-v', _ambFmtMs(cfg.texture.lengthMs));
+      set('ambient-texture-drift', cfg.texture.drift);
+      set('ambient-texture-when', cfg.texture.when);
       set('ambient-texture-mutate', cfg.texture.mutateRate);
+      set('ambient-texture-level', cfg.texture.level);
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
       set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
+      set('ambient-beat-drift', cfg.beat.drift);
+      set('ambient-beat-when', cfg.beat.when);
       set('ambient-beat-rest', cfg.beat.restProb);
+      set('ambient-beat-level', cfg.beat.level);
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const m = cfg[layer] && cfg[layer].mod;
         if (!m) return;
@@ -1037,6 +1111,12 @@
       // Rate and Shape (incl. stochastic 'smooth' / 'sharp').
       const shapeSel = (id) => '<select id="' + id + '" class="ambient-select">' +
         ['sine', 'triangle', 'sawtooth', 'square', 'smooth', 'sharp'].map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select>';
+      // When: per-event conditional (Elektron-style). Mirrors the Grid step
+      // editor's "When" control — fire every event / 1st only / event A of B.
+      const condCtrl = (layer) => '<div class="ambient-ctrl"><label for="ambient-' + layer + '-when">When</label>' +
+        '<select id="ambient-' + layer + '-when" class="ambient-select">' +
+        ['always', '1st', '1:2', '2:2', '1:3', '1:4'].map(c => '<option value="' + c + '">' + (c === 'always' ? 'Always' : c) + '</option>').join('') +
+        '</select><span class="ambient-hint">cond</span></div>';
       const modTarget = (layer, target, label, hint, defRate) =>
         '<div class="ambient-mod-target">' +
           '<div class="ambient-mod-sub">' + label + '</div>' +
@@ -1078,7 +1158,10 @@
           sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') +
           tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
           tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
-          sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'drift') +
+          sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
+          condCtrl('bed') +
+          sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'detune') +
+          sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
           modUi('bed') +
         '</div>' +
         '<div class="ambient-layer">' + head('Motif', 'ambient-motif-on') +
@@ -1088,7 +1171,10 @@
           sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
           tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
           tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
+          sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
+          condCtrl('motif') +
           sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
+          sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
           modUi('motif') +
         '</div>' +
         '<div class="ambient-layer">' + head('Texture', 'ambient-texture-on') +
@@ -1098,7 +1184,10 @@
           sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
           tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
           tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
+          sl('Drift', 'ambient-texture-drift', 0, 99, 0, 'phase offset') +
+          condCtrl('texture') +
           sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') +
+          sl('Level', 'ambient-texture-level', 0, 100, 70, 'soft → boost') +
           modUi('texture') +
         '</div>' +
         '<div class="ambient-layer">' + head('Beat', 'ambient-beat-on') +
@@ -1106,7 +1195,10 @@
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
           tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
+          sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
+          condCtrl('beat') +
           sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') +
+          sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
           modUi('beat') +
         '</div>' +
         '<div class="ambient-note">Routes through this lane’s bus — dial in its Reverb send for the full wash. Follows the current Scale &amp; Key.</div>';
@@ -1201,20 +1293,39 @@
       bind('ambient-bed-spread', 'bed', 'spread');
       bindTime('ambient-bed-interval', 'bed', 'intervalMs');
       bindTime('ambient-bed-length', 'bed', 'lengthMs');
+      bind('ambient-bed-drift', 'bed', 'drift');
       bind('ambient-bed-motion', 'bed', 'motion');
+      bind('ambient-bed-level', 'bed', 'level');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
       bindTime('ambient-motif-interval', 'motif', 'intervalMs');
       bindTime('ambient-motif-length', 'motif', 'lengthMs');
+      bind('ambient-motif-drift', 'motif', 'drift');
       bind('ambient-motif-rest', 'motif', 'restProb');
+      bind('ambient-motif-level', 'motif', 'level');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');
       bindTime('ambient-texture-interval', 'texture', 'intervalMs');
       bindTime('ambient-texture-length', 'texture', 'lengthMs');
+      bind('ambient-texture-drift', 'texture', 'drift');
       bind('ambient-texture-mutate', 'texture', 'mutateRate');
+      bind('ambient-texture-level', 'texture', 'level');
       bindTime('ambient-beat-interval', 'beat', 'intervalMs');
       bindTime('ambient-beat-length', 'beat', 'lengthMs');
+      bind('ambient-beat-drift', 'beat', 'drift');
       bind('ambient-beat-rest', 'beat', 'restProb');
+      bind('ambient-beat-level', 'beat', 'level');
+      // When (per-event conditional) — a string-valued <select> per layer.
+      const bindCond = (layer) => {
+        const sel = document.getElementById('ambient-' + layer + '-when');
+        if (!sel) return;
+        sel.addEventListener('change', () => {
+          const cfg = _laneAmbientCfg(); if (!cfg) return;
+          cfg[layer].when = sel.value || 'always';
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(bindCond);
 
       const toggle = (id, layer) => {
         const el = document.getElementById(id);

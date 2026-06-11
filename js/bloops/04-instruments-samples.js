@@ -43,7 +43,16 @@
     // Applied once per sampler (idempotent) at the trigger funnel below.
     // Velocity can't do this — it's clamped to 0..1 — so it has to be the
     // sampler's own volume in dB.
-    const SAMPLE_VOLUME_BOOST_DB = 6;
+    //
+    // Why this is large: a Tone.Synth oscillator (sine/saw/square/etc.)
+    // outputs at essentially full-scale amplitude (0 dBFS peak), whereas
+    // recorded instrument / soundfont samples are mastered with headroom
+    // and peak well below that — typically -12 dBFS or lower, with much
+    // lower RMS. +6 dB only doubled the amplitude, nowhere near enough to
+    // match a raw oscillator. +12 dB (4×) lands samples in the same
+    // perceived-loudness ballpark as the synths; the master compressor
+    // (-6 dB / 4:1) and -1 dB limiter absorb any peaks the boost adds.
+    const SAMPLE_VOLUME_BOOST_DB = 12;
     function _boostSampler(s) {
       try {
         if (s && s.volume && !s._bloopsBoosted) {
@@ -52,6 +61,106 @@
         }
       } catch (e) {}
       return s;
+    }
+
+    // ---- Full-ADSR per-note sample voice -------------------------------
+    // Tone.Sampler only fades its voices in (attack) and out (release) — it
+    // has no decay or sustain-LEVEL, and no per-note filter. To give samples
+    // the same sculpting synths get, build a fresh voice per note straight
+    // from the buffer:  ToneBufferSource → [Filter] → AmplitudeEnvelope →
+    // Gain(boost) → dest.  The buffer is borrowed from the (already-loaded)
+    // shared/lane/track sampler's internal buffer set — the nearest mapped
+    // note — so there's no extra network load; playbackRate handles the
+    // pitch shift (and microtonal detune, since it's a raw freq ratio).
+    //
+    // Returns { source, ampEnv, outGain, filter } wired but NOT triggered —
+    // the caller triggers (scheduled or held) and disposes. Returns null to
+    // signal "fall back to the shared sampler's attack/release path": during
+    // offline export (the offline render keeps the simple path), when the
+    // buffers aren't reachable, or on any construction failure.
+    function _buildSampleAdsrVoice(sampler, id, tunedFreq, env, dest, opts) {
+      if (_offlineSamplerOverride) return null;
+      if (!sampler || !sampler._buffers || typeof sampler._buffers.get !== 'function'
+          || typeof sampler._buffers.has !== 'function') return null;
+      const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
+      if (!info || !info.urls) return null;
+      // Nearest mapped MIDI that actually has a loaded buffer.
+      let sampleMidi = null;
+      try {
+        const targetMidi = Math.round(Tone.Frequency(tunedFreq).toMidi());
+        let bestD = Infinity;
+        for (const noteName of Object.keys(info.urls)) {
+          let m; try { m = Math.round(Tone.Frequency(noteName).toMidi()); } catch (e) { continue; }
+          if (!sampler._buffers.has(m)) continue;
+          const d = Math.abs(m - targetMidi);
+          if (d < bestD) { bestD = d; sampleMidi = m; }
+        }
+      } catch (e) { return null; }
+      if (sampleMidi == null) return null;
+      let audioBuf;
+      try {
+        const tb = sampler._buffers.get(sampleMidi);
+        audioBuf = (tb && typeof tb.get === 'function') ? tb.get() : null;
+      } catch (e) { return null; }
+      if (!audioBuf) return null;
+      let sampleFreq;
+      try { sampleFreq = Tone.Frequency(sampleMidi, 'midi').toFrequency(); } catch (e) { return null; }
+      const playbackRate = (sampleFreq > 0 && tunedFreq > 0) ? tunedFreq / sampleFreq : 1;
+      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null;
+      try {
+        const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
+        // Per-note pan: place the voice in the stereo field (e.g. Bloom's
+        // Space spread). The synth path has its own panner; samples skipped
+        // it until now. Sits between outGain and the destination so it pans
+        // the boosted, enveloped signal.
+        const panNorm = (opts && Number.isFinite(opts.pan)) ? Math.max(-1, Math.min(1, opts.pan / 100)) : 0;
+        let outTail = dest;
+        if (Math.abs(panNorm) > 0.001) {
+          panNode = new Tone.Panner(panNorm).connect(dest);
+          outTail = panNode;
+        }
+        outGain = new Tone.Gain(boost).connect(outTail);
+        ampEnv = new Tone.AmplitudeEnvelope({
+          attack:  Math.max(0, env.attack),
+          decay:   Math.max(0, env.decay),
+          sustain: Math.max(0, Math.min(1, env.sustain)),
+          release: Math.max(0.01, env.release),
+        }).connect(outGain);
+        let head = ampEnv;
+        // Optional per-note lowpass (the "filter" hook). Driven by a
+        // filterCutoff param; absent / wide-open → no node created.
+        const cutoff = (opts && Number.isFinite(opts.filterCutoff)) ? opts.filterCutoff : null;
+        if (cutoff != null && cutoff < 18000) {
+          filter = new Tone.Filter({
+            type: 'lowpass',
+            frequency: Math.max(40, cutoff),
+            Q: (opts && Number.isFinite(opts.filterQ)) ? Math.max(0, opts.filterQ) : 0.7,
+          }).connect(head);
+          head = filter;
+        }
+        source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
+        // VCO automation: sum a modulation source into the source's detune
+        // for continuous vibrato (Bloom per-layer mod). Disposed with the source.
+        if (opts && opts.detuneMod && source.detune && typeof opts.detuneMod.connect === 'function') {
+          try { opts.detuneMod.connect(source.detune); } catch (e) {}
+        }
+      } catch (e) {
+        try { source && source.dispose(); } catch (_) {}
+        try { ampEnv && ampEnv.dispose(); } catch (_) {}
+        try { outGain && outGain.dispose(); } catch (_) {}
+        try { filter && filter.dispose(); } catch (_) {}
+        try { panNode && panNode.dispose(); } catch (_) {}
+        return null;
+      }
+      return { source, ampEnv, outGain, filter, panNode };
+    }
+    function _disposeSampleAdsrVoice(v) {
+      if (!v) return;
+      try { v.source && v.source.dispose(); } catch (e) {}
+      try { v.ampEnv && v.ampEnv.dispose(); } catch (e) {}
+      try { v.outGain && v.outGain.dispose(); } catch (e) {}
+      try { v.filter && v.filter.dispose(); } catch (e) {}
+      try { v.panNode && v.panNode.dispose(); } catch (e) {}
     }
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;
@@ -778,11 +887,17 @@
     function _releasePooledSynth(key, synth) {
       if (!synth) return;
       const p = _ensurePool(key);
+      // Disconnect FIRST, then reset volume/detune. Resetting volume to unity
+      // (0 dB) while the synth is still wired to the lane bus snaps a still-
+      // ringing oscillator's residual back to full level — a step that pops
+      // audibly on a pure tone (sine). With the node already disconnected the
+      // reset produces no output. (safeReleaseSynth has ramped to -80 dB, so
+      // the disconnect itself lands at near-silence.)
+      try { synth.disconnect(); } catch (e) {}
       try {
         if (synth.volume) { synth.volume.cancelScheduledValues(0); synth.volume.value = 0; }
         if (synth.detune) { synth.detune.cancelScheduledValues(0); synth.detune.value = 0; }
       } catch (e) {}
-      try { synth.disconnect(); } catch (e) {}
       if (p.idle.length < VOICE_POOL_MAX_PER_PRESET) p.idle.push(synth);
       else { try { synth.dispose(); } catch (e) {} }
     }
@@ -967,6 +1082,44 @@
       }, 80);
     }
 
+    // ---- Immediate silence ---------------------------------------------
+    // Scheduled (playback) sample voices built by playNote are tracked here
+    // so a user "stop" can cut them at once. HELD voices (live cell presses
+    // via startSustainedNote) are deliberately NOT tracked — they belong to
+    // the user's fingers, not to playback, and a stop shouldn't cut them.
+    const _activeSampleVoices = new Set();
+    function _registerSampleVoice(v) { if (v) _activeSampleVoices.add(v); }
+    function _unregisterSampleVoice(v) { if (v) _activeSampleVoices.delete(v); }
+    // Fast, click-free kill of one sample voice: ramp its output to silence
+    // over ~22 ms, then dispose. Cancels any pending natural-disposal timer.
+    function _killSampleVoiceFast(v) {
+      if (!v || v._killed) return;
+      v._killed = true;
+      if (v.disposeTimer) { clearTimeout(v.disposeTimer); v.disposeTimer = null; }
+      const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
+      try {
+        if (v.outGain && v.outGain.gain && typeof v.outGain.gain.cancelScheduledValues === 'function') {
+          v.outGain.gain.cancelScheduledValues(now);
+          v.outGain.gain.setValueAtTime(v.outGain.gain.value, now);
+          v.outGain.gain.linearRampToValueAtTime(0, now + 0.022);
+        }
+      } catch (e) {}
+      try { if (v.source) v.source.stop(now + 0.03); } catch (e) {}
+      setTimeout(() => _disposeSampleAdsrVoice(v), 60);
+    }
+    // Immediately silence every SCHEDULED playback voice — synths (a ~30 ms
+    // safeDisposeSynth fade) and per-note samples (a ~22 ms ramp). Both are
+    // click-free, so "immediate" doesn't mean a hard cut/pop. Called by every
+    // user stop gesture (transport stop, Bloom stop) so release tails don't
+    // keep ringing after the user asked for silence.
+    function silenceActiveVoices() {
+      const synthVictims = _activeVoices.splice(0, _activeVoices.length);
+      synthVictims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
+      const sampVictims = Array.from(_activeSampleVoices);
+      _activeSampleVoices.clear();
+      sampVictims.forEach(v => { try { _killSampleVoiceFast(v); } catch (e) {} });
+    }
+
     // Click-and-hold sustain — start an attack on pointerdown, release on
     // pointerup. Returns a handle with .release(); the caller is expected
     // to call it exactly once. One-shot voices (pluck / kick / metal /
@@ -1101,6 +1254,30 @@
         }
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
+        // Full-ADSR held voice: attack → decay → sustain (held), then release
+        // on pointer-up — the sound editor's full envelope (+ optional filter)
+        // shapes the held sample, not just a fade in/out.
+        const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
+        const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
+          { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
+        if (v) {
+          const triggerAt = _warmAt();
+          try {
+            v.source.start(triggerAt);
+            v.ampEnv.triggerAttack(triggerAt, velocity);
+          } catch (e) { _disposeSampleAdsrVoice(v); }
+          let released = false;
+          return { release: () => {
+            if (released) return; released = true;
+            try { v.ampEnv.triggerRelease(); } catch (e) {}
+            setTimeout(() => _disposeSampleAdsrVoice(v), (Math.max(0.1, rel) + 0.3) * 1000);
+          }};
+        }
+        // Fallback — shared sampler, attack/release fade only.
+        try {
+          if (typeof entry.sampler.attack  !== 'undefined') entry.sampler.attack  = Math.max(0, atk);
+          if (typeof entry.sampler.release !== 'undefined') entry.sampler.release = Math.max(0.01, rel);
+        } catch (e) {}
         try { entry.sampler.triggerAttack(tunedFreq, _warmAt(), velocity); } catch (e) {}
         let released = false;
         return { release: () => {
@@ -1690,6 +1867,47 @@
             ? baseFreq * Math.pow(2, detune / 1200)
             : baseFreq;
           const dur = Math.max(targetDur, 0.05);
+          // Full-ADSR per-note voice (live): the sound editor's Attack /
+          // Decay / Sustain / Release (and an optional filter) shape the
+          // sample exactly as they shape synths. Falls back to the shared
+          // sampler's attack/release fade when buffers aren't reachable or
+          // during offline export.
+          const sampleDest = fxOverrideGlobal ? masterLimiter
+            : (destination
+               || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
+               || globalSendTap);
+          const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
+            { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan });
+          if (v) {
+            const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+            try {
+              v.source.start(triggerAt);
+              // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
+              // release over `rel` — same envelope timing the synth path uses,
+              // so a sample voice and a synth voice sit identically in a slot.
+              v.ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
+              try { v.source.stop(triggerAt + preReleaseDur + rel + 0.1); } catch (e) {}
+            } catch (e) {
+              _disposeSampleAdsrVoice(v);
+              return;
+            }
+            // Track as a playback voice so a user stop can cut it immediately;
+            // skip during offline export (no real-time stop there).
+            if (!_offlineSamplerOverride) _registerSampleVoice(v);
+            const leadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+              ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
+            v.disposeTimer = setTimeout(() => {
+              _unregisterSampleVoice(v);
+              _disposeSampleAdsrVoice(v);
+            }, leadMs + (preReleaseDur + rel + 0.5) * 1000);
+            return;
+          }
+          // Fallback — shared sampler, attack/release fade only (Tone.Sampler
+          // has no decay / sustain-level). Captured per-voice at trigger time.
+          try {
+            if (typeof sampler.attack  !== 'undefined') sampler.attack  = Math.max(0, atk);
+            if (typeof sampler.release !== 'undefined') sampler.release = Math.max(0.01, rel);
+          } catch (e) {}
           try {
             sampler.triggerAttackRelease(tunedFreq, dur, startTime, velocity);
           } catch (e) {
@@ -1823,7 +2041,21 @@
         synth = _buildPooledSynthForPreset(type, env);
         if (synth) {
           pooledPreset = type;
-          try { synth.connect(chainHead); } catch (e) { synth = null; pooledPreset = null; }
+          try {
+            synth.connect(chainHead);
+            // A reacquired pooled synth is wired up now but won't be retriggered
+            // until startTime (Bloom schedules up to ~1.2 s ahead). Its oscillator
+            // runs continuously, so any leftover release-tail residual from its
+            // previous note would leak through this whole window. Mute it until
+            // the attack; the envelope is 0 at startTime, so lifting the mute
+            // there is inaudible.
+            if (synth.volume && typeof startTime === 'number' && Number.isFinite(startTime)
+                && startTime > Tone.context.now()) {
+              synth.volume.cancelScheduledValues(Tone.context.now());
+              synth.volume.setValueAtTime(-200, Tone.context.now());
+              synth.volume.setValueAtTime(0, startTime);
+            }
+          } catch (e) { synth = null; pooledPreset = null; }
         }
       }
 
@@ -2066,6 +2298,12 @@
       }
 
       if (synth.detune) synth.detune.value = detune;
+      // VCO automation: an optional modulation source (a Tone.LFO/Signal) is
+      // summed into the voice's detune for continuous vibrato/drift. Used by
+      // Bloom's per-layer mod. Disposing the synth severs the connection.
+      if (synth.detune && params._detuneMod && typeof params._detuneMod.connect === 'function') {
+        try { params._detuneMod.connect(synth.detune); } catch (e) {}
+      }
       synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
 
       // Pitch bend: ramp the synth's detune from `detune` cents to
@@ -2126,7 +2364,11 @@
         _unregisterVoice(voiceEntry);
         if (pooledPreset) safeReleaseSynth(pooledPreset, synth);
         else              safeDisposeSynth(synth);
-        disposeEffectChain();
+        // safeRelease/DisposeSynth ramps to -80 dB over ~30 ms before letting
+        // go. Tear the per-note FX chain (incl. the pan Panner) down AFTER that
+        // fade — disconnecting it mid-ramp rings the tail through a dead chain
+        // and clicks (the steal path already waits this out).
+        setTimeout(disposeEffectChain, 80);
       }, synthLeadMs + disposeMs);
       _registerVoice(voiceEntry);
     }

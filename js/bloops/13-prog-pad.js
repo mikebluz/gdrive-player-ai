@@ -1054,15 +1054,17 @@
       btn.addEventListener('click', () => {
         const lane = lanes[activeLaneIdx];
         if (lane) {
-          // Cycle: Grid → Graph → Game → Prog → Grid
-          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode) {
-            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false;
+          // Cycle: Grid → Graph → Game → Prog → Bloom → Grid
+          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode) {
+            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false;
           } else if (lane.fluidGridMode) {
-            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false;
+            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false;
           } else if (lane.gameMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false;
+          } else if (lane.progMode) {
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;
           } else {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false;
           }
         }
         _syncFluidGridToActiveLane();

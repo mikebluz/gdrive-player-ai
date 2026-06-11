@@ -542,6 +542,68 @@
       return walk(step);
     }
 
+    // Shift one step (recursively, returning a fresh copy) by a fixed number
+    // of SCALE degrees under the current scale + root. On chromatic / 12-tone
+    // scales a degree equals a semitone, so this is a plain chromatic
+    // transpose; on an N-note scale each note hops to the scale tone
+    // `degreeDelta` positions away, so the semitone interval varies per note
+    // (a true diatonic shift). Shares its degree math with
+    // transposeStepToScaleDegrees, but takes the delta directly instead of
+    // deriving it from a base/target freq pair. Used by the Riff Shift Up /
+    // Shift Down actions. Shifted notes drop cellIndex — they no longer
+    // correspond to the grid cell they came from.
+    function transposeStepByScaleDegree(step, degreeDelta) {
+      if (!degreeDelta) return step;
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      // Chromatic / unknown / 12-tone: degree-space == semitone-space.
+      if (!intervals || intervals.length >= 12) {
+        return transposeStepRec(step, degreeDelta);
+      }
+      const N = intervals.length;
+      const A = masterFreqA || 440;
+      const freqToAbsDegree = (freq) => {
+        const midi = Math.round(12 * Math.log2(freq / A) + 69);
+        const pc = (((midi - rootIdx) % 12) + 12) % 12;
+        let bestI = 0, bestD = 99;
+        for (let i = 0; i < N; i++) {
+          const up   = ((intervals[i] - pc) % 12 + 12) % 12;
+          const down = ((pc - intervals[i]) % 12 + 12) % 12;
+          const d = Math.min(up, down);
+          if (d < bestD) { bestD = d; bestI = i; }
+        }
+        return Math.floor((midi - rootIdx) / 12) * N + bestI;
+      };
+      const absDegreeToMidi = (absDeg) => {
+        const oct = Math.floor(absDeg / N);
+        const i = ((absDeg % N) + N) % N;
+        return rootIdx + oct * 12 + intervals[i];
+      };
+      const mapNote = (n) => {
+        if (!n || !Number.isFinite(n.freq)) return { ...n };
+        const midi = absDegreeToMidi(freqToAbsDegree(n.freq) + degreeDelta);
+        const freq = A * Math.pow(2, (midi - 69) / 12);
+        let label = n.label;
+        try { label = Tone.Frequency(freq).toNote(); } catch (e) {}
+        return { ...n, freq, label, cellIndex: null };
+      };
+      const walk = (s) => {
+        if (!s) return s;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          return { ...s, subSteps: s.subSteps.map(walk) };
+        }
+        if (Array.isArray(s.chord)) {
+          const chord = s.chord.map(mapNote);
+          return { ...s, chord, label: chord.map(n => n.label).join('·') };
+        }
+        if (Number.isFinite(s.freq)) {
+          const m = mapNote(s);
+          return { ...s, freq: m.freq, label: m.label, cellIndex: null };
+        }
+        return { ...s };
+      };
+      return walk(step);
+    }
+
     // Schedule a subsequence's subSteps starting at `baseTime` audio time.
     // No transposition — the steps are assumed to already be tuned.
     function playSubStepsAtTime(subSteps, baseTime) {
@@ -1717,6 +1779,46 @@
       insertionPoint = null;
       renderSequence();
     });
+
+    // Rotate — same cyclic shift the Generate Sequence "Rotate" control does
+    // to the Euclidean pattern: a left rotation by one (the first step moves
+    // to the end, everything else shifts one place earlier). Each press
+    // rotates by one more. Keep off rotates the current sequence in place;
+    // Keep on leaves the original and appends a rotated copy (matching how
+    // Reverse / Shuffle behave with Keep on).
+    document.getElementById('rotate-btn').addEventListener('click', () => {
+      if (sequence.length < 2) return;
+      snapshotForUndo('Rotate');
+      stopSequence();
+      const rotateLeftInPlace = (arr) => { if (arr.length > 1) arr.push(arr.shift()); };
+      if (keepMode) {
+        const rotated = sequence.map(cloneStep);
+        rotateLeftInPlace(rotated);
+        sequence = sequence.concat(rotated);
+      } else {
+        rotateLeftInPlace(sequence);
+      }
+      pendingChord = [];
+      insertionPoint = null;
+      renderSequence();
+    });
+
+    // Shift Up / Shift Down — move every note in the sequence by one scale
+    // degree (one semitone on chromatic). Keep off shifts the current
+    // sequence in place; Keep on leaves the original and appends a shifted
+    // copy (same convention as Reverse / Shuffle / Rotate).
+    const _riffShiftByDegree = (dir, undoLabel) => {
+      if (sequence.length === 0) return;
+      snapshotForUndo(undoLabel);
+      stopSequence();
+      const shifted = sequence.map(s => transposeStepByScaleDegree(s, dir));
+      sequence = keepMode ? sequence.concat(shifted) : shifted;
+      pendingChord = [];
+      insertionPoint = null;
+      renderSequence();
+    };
+    document.getElementById('shift-up-btn')?.addEventListener('click', () => _riffShiftByDegree(1, 'Shift up'));
+    document.getElementById('shift-down-btn')?.addEventListener('click', () => _riffShiftByDegree(-1, 'Shift down'));
 
     document.getElementById('repeat-btn').addEventListener('click', () => {
       if (sequence.length === 0) return;

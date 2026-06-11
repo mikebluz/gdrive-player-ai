@@ -29,12 +29,37 @@
     function computeNotesForOctaves(octCount) {
       const out = [];
       const total = 12 * Math.max(1, octCount);
+      // Microtonal tuning: when currentScale names a 12-note alternate
+      // tuning (see MICRO_TUNINGS in 15-grid-build.js), each chromatic
+      // degree is bent off equal temperament by a fixed cents deviation,
+      // looked up by the degree's distance above the scale tonic. Guarded
+      // by typeof because this runs once at module load (line `let notes =
+      // computeNotes()`) before 15-grid-build.js has defined those globals;
+      // it then resolves for real on every later rebuildGrid(). Null /
+      // absent → pure 12-TET, byte-for-byte as before.
+      let micro = null, microTonic = 0;
+      try {
+        if (typeof MICRO_TUNINGS !== 'undefined'
+            && typeof currentScale === 'string'
+            && MICRO_TUNINGS[currentScale]) {
+          micro = MICRO_TUNINGS[currentScale];
+          microTonic = (typeof _effectiveScaleTonic === 'function')
+            ? _effectiveScaleTonic() : rootIdx;
+        }
+      } catch (e) {}
       for (let i = 0; i < total; i++) {
         const semi = rootIdx + i;
         const noteIdx = semi % 12;
         const octaveNum = baseOctave + Math.floor(semi / 12);
         const midi = 12 * (octaveNum + 1) + noteIdx;
-        const freq = masterFreqA * Math.pow(2, (midi - 69) / 12);
+        let freq = masterFreqA * Math.pow(2, (midi - 69) / 12);
+        if (micro) {
+          // Degree above the tonic (0..11), then nudge by the tuning's
+          // cents offset relative to this degree's 12-TET position.
+          const deg = (((noteIdx - microTonic) % 12) + 12) % 12;
+          const dev = (micro[deg] || 0) - deg * 100; // cents off equal temperament
+          if (dev) freq *= Math.pow(2, dev / 1200);
+        }
         out.push({ freq, label: CHROMATIC[noteIdx] + octaveNum });
       }
       return out;

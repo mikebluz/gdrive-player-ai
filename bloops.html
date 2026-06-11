@@ -381,6 +381,13 @@
       <div id="prog-pad" hidden>
         <div class="prog-blocks" id="prog-blocks"></div>
       </div>
+      <!-- Bloom pad — fifth mode of the Grid/Graph/Game/Prog/Bloom toggle.
+           A generative ambient engine: an evolving scale-rooted pad bed that
+           re-voices on its own free-running clock. Controls are built in
+           17-ambient.js when the lane first enters Bloom mode. -->
+      <div id="ambient-pad" hidden>
+        <div class="ambient-inner" id="ambient-inner"></div>
+      </div>
       <!-- Game pad — third mode of the Grid/Graph toggle. A polygon with
            one side per (scale-degree × octave) cell encloses a free
            ball; tap to start motion, tap again to pause. Side colors
@@ -539,10 +546,13 @@
     <!-- Mono / Poly toggle removed — the workspace is always lane-based. -->
     <button id="poly-mode-btn" type="button" hidden aria-hidden="true" tabindex="-1">Poly</button>
     <div class="riff-wrapper">
-      <button type="button" id="riff-menu-btn" title="Riff: Reverse / Shuffle / Repeat / Random / Seed. With Keep on, generated steps are appended; with Keep off, they replace the current sequence.">Riff ▾</button>
+      <button type="button" id="riff-menu-btn" title="Riff: Reverse / Shuffle / Rotate / Shift Up / Shift Down / Repeat. With Keep on, the transformed copy is appended; with Keep off, it replaces the current sequence.">Riff ▾</button>
       <div class="riff-panel" id="riff-panel">
         <button id="reverse-btn" title="Reverse the order of the sequence" disabled>Reverse</button>
         <button id="shuffle-btn" title="Shuffle the order of steps" disabled>Shuffle</button>
+        <button id="rotate-btn" title="Rotate the sequence: shift every step one place earlier, wrapping the first step to the end. With Keep on, a rotated copy is appended instead." disabled>Rotate</button>
+        <button id="shift-up-btn" title="Shift every note up one scale degree (one semitone on chromatic). With Keep on, a shifted copy is appended instead." disabled>Shift Up</button>
+        <button id="shift-down-btn" title="Shift every note down one scale degree (one semitone on chromatic). With Keep on, a shifted copy is appended instead." disabled>Shift Down</button>
         <button id="repeat-btn" title="Duplicate the current steps and append them" disabled>Repeat</button>
         <!-- Drift only meaningful with 2+ lanes (the whole point is one
              lane lagging behind another). refreshDriftBtn disables it
@@ -732,6 +742,7 @@
   <script src="js/bloops/14-ui-menus-dnd.js"></script>
   <script src="js/bloops/15-grid-build.js"></script>
   <script src="js/bloops/16-grid-controls.js"></script>
+  <script src="js/bloops/17-ambient.js"></script>
 
   <!-- ===================== Serialbox view ============================== -->
   <!-- Hidden by default; the Serialbox tab in the top bar reveals it via

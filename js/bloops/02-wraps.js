@@ -164,6 +164,8 @@
               slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
               collapsed: !!l?.collapsed,
               fluidGridMode: !!l?.fluidGridMode,
+              ambientMode: !!l?.ambientMode,
+              ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
               // Restore per-lane FX wet levels. _migrateLaneSends handles
               // the three save-generations (new `sends`, mid-refactor
               // `fx`, none → default-seeded from globalFx). getLaneBus

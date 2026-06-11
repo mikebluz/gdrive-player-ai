@@ -1796,6 +1796,106 @@
     body.prog-mode #prog-pad { display: flex; }
     body.prog-mode .grid-settings-panel .grid-only { display: none !important; }
 
+    /* ---- Bloom (generative ambient) mode ---- */
+    #ambient-pad {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      min-height: var(--grid-natural-h, 210px);
+      padding: 14px;
+      background: #0a0a14;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    body.ambient-mode #grid     { display: none; }
+    body.ambient-mode #xy-pad   { display: none; }
+    body.ambient-mode #game-pad { display: none; }
+    body.ambient-mode #prog-pad { display: none; }
+    body.ambient-mode #ambient-pad { display: flex; }
+    body.ambient-mode .grid-settings-panel .grid-only { display: none !important; }
+
+    .ambient-inner { display: flex; flex-direction: column; gap: 12px; max-width: 460px; }
+    .ambient-title {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.95rem; font-weight: 700;
+      color: #d6bcfa; letter-spacing: 0.02em;
+    }
+    .ambient-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .ambient-play, .ambient-regen {
+      padding: 8px 16px; border: 1px solid #2d2d3f; border-radius: 20px;
+      background: transparent; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease;
+    }
+    .ambient-play:hover, .ambient-regen:hover { border-color: #9f7aea; color: #d6bcfa; }
+    .ambient-play.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.15); }
+    .ambient-seed { font-family: 'Segoe UI', sans-serif; font-size: 0.75rem; color: #6b6b8a; }
+    .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
+    .ambient-ctrl label { font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; color: #a0aec0; }
+    .ambient-ctrl input[type="range"] { width: 100%; min-width: 0; accent-color: #9f7aea; }
+    .ambient-select {
+      width: 100%; min-width: 0; padding: 4px 8px; border: 1px solid #2d2d3f;
+      border-radius: 6px; background: #0a0a14; color: #d6bcfa;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+    }
+    /* Mod block — an expandable <details> per layer (collapsed by default). */
+    .ambient-mod {
+      margin-top: 4px; border: 1px dashed #2d2d3f; border-radius: 6px;
+      background: rgba(159,122,234,0.05); overflow: hidden;
+    }
+    .ambient-mod-head {
+      cursor: pointer; user-select: none; list-style: none;
+      padding: 8px 10px; display: flex; align-items: center; gap: 6px;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 700;
+      letter-spacing: 0.04em; color: #9f7aea; text-transform: uppercase;
+    }
+    .ambient-mod-head:hover { color: #d6bcfa; }
+    /* Hide the native disclosure triangle; use our own chevron. */
+    .ambient-mod-head::-webkit-details-marker { display: none; }
+    .ambient-mod-head::before { content: '▸'; font-size: 0.85em; transition: transform 0.12s ease; }
+    .ambient-mod[open] > .ambient-mod-head::before { transform: rotate(90deg); }
+    .ambient-mod > .ambient-mod-target {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 6px 10px; margin: 0 8px 8px;
+      border-left: 2px solid #2d2d3f; border-radius: 0 4px 4px 0;
+    }
+    .ambient-mod > .ambient-mod-target:first-of-type { margin-top: 2px; }
+    .ambient-mod-sub {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 600;
+      color: #a0aec0;
+    }
+    .ambient-hint { font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6b6b8a; white-space: nowrap; }
+    .ambient-note {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #6b6b8a;
+      line-height: 1.5; padding-top: 4px;
+    }
+    /* Phase 2/3 additions: visual, layers, toggles, timing segmented control. */
+    .ambient-viz {
+      width: 100%; height: 56px; display: block;
+      background: #06060d; border: 1px solid #20203a; border-radius: 6px;
+    }
+    .ambient-timing { gap: 8px; }
+    .ambient-seg {
+      padding: 4px 14px; border: 1px solid #2d2d3f; border-radius: 14px;
+      background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease;
+    }
+    .ambient-seg:hover { border-color: #9f7aea; color: #d6bcfa; }
+    .ambient-seg.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+    .ambient-layer {
+      border: 1px solid #20203a; border-radius: 8px; padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
+    }
+    .ambient-layer-head { display: flex; align-items: center; }
+    .ambient-toggle {
+      padding: 4px 14px; border: 1px solid #2d2d3f; border-radius: 14px;
+      background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+    }
+    .ambient-toggle:hover { border-color: #9f7aea; color: #d6bcfa; }
+    .ambient-toggle.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.16); }
+    /* Dim a layer's sliders when the layer is off (still adjustable). */
+    .ambient-layer:has(> .ambient-layer-head > .ambient-toggle:not(.on)) .ambient-ctrl { opacity: 0.5; }
+
     .prog-blocks {
       display: flex;
       flex-wrap: wrap;
@@ -4081,12 +4181,14 @@
     }
     /* Hide the wrap row + bank in any mode that doesn't show the cell
        grid (Wrap is a Grid-only feature). */
-    body.fluid-grid .grid-wrap-row,
-    body.game-mode  .grid-wrap-row,
-    body.prog-mode  .grid-wrap-row,
-    body.fluid-grid #wrap-bank,
-    body.game-mode  #wrap-bank,
-    body.prog-mode  #wrap-bank { display: none !important; }
+    body.fluid-grid  .grid-wrap-row,
+    body.game-mode   .grid-wrap-row,
+    body.prog-mode   .grid-wrap-row,
+    body.ambient-mode .grid-wrap-row,
+    body.fluid-grid  #wrap-bank,
+    body.game-mode   #wrap-bank,
+    body.prog-mode   #wrap-bank,
+    body.ambient-mode #wrap-bank { display: none !important; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active

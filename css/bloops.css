@@ -4073,6 +4073,10 @@
       padding: 6px 16px 4px;
       flex-wrap: wrap;
     }
+    /* renderWrapBank sets [hidden] when there are no saved wraps; without
+       this the .wrap-bank display:flex above outranks the UA [hidden] rule
+       and the empty bank stays visible. */
+    .wrap-bank[hidden] { display: none; }
     .wrap-bank-label {
       font-size: 0.65rem;
       letter-spacing: 1.2px;

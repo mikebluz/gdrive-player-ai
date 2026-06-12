@@ -843,6 +843,9 @@
           stereo: t.stereo !== false,
         })),
         globalFx: { ...globalFx },
+        // Master Bloom (Mix) config — global, not per-lane. Never persist playing.
+        masterAmbient: (typeof masterAmbient !== 'undefined' && masterAmbient)
+          ? JSON.parse(JSON.stringify({ ...masterAmbient, playing: false })) : null,
         savedGridStates: JSON.parse(JSON.stringify(savedGridStates || [])),
       };
     }

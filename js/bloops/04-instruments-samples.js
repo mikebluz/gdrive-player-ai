@@ -106,7 +106,7 @@
       let sampleFreq;
       try { sampleFreq = Tone.Frequency(sampleMidi, 'midi').toFrequency(); } catch (e) { return null; }
       const playbackRate = (sampleFreq > 0 && tunedFreq > 0) ? tunedFreq / sampleFreq : 1;
-      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null;
+      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, detuneScale = null;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
         // Per-note pan: place the voice in the stereo field (e.g. Bloom's
@@ -139,10 +139,18 @@
           head = filter;
         }
         source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
-        // VCO automation: sum a modulation source into the source's detune
-        // for continuous vibrato (Bloom per-layer mod). Disposed with the source.
-        if (opts && opts.detuneMod && source.detune && typeof opts.detuneMod.connect === 'function') {
-          try { opts.detuneMod.connect(source.detune); } catch (e) {}
+        // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
+        // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
+        // no connectable detune, so retarget it onto playbackRate — where pitch
+        // lives for a sample: rate = base·2^(cents/1200), linearised for small
+        // vibrato as base·(ln2/1200)·cents. A per-voice Gain applies that scale
+        // and sums onto the constant playbackRate (the LFO is zero-mean, so the
+        // sampled pitch centre is preserved); it's disposed with the voice.
+        if (opts && opts.detuneMod && typeof opts.detuneMod.connect === 'function'
+            && source.playbackRate && playbackRate > 0) {
+          detuneScale = new Tone.Gain(playbackRate * (Math.LN2 / 1200));
+          opts.detuneMod.connect(detuneScale);
+          detuneScale.connect(source.playbackRate);
         }
       } catch (e) {
         try { source && source.dispose(); } catch (_) {}
@@ -150,9 +158,10 @@
         try { outGain && outGain.dispose(); } catch (_) {}
         try { filter && filter.dispose(); } catch (_) {}
         try { panNode && panNode.dispose(); } catch (_) {}
+        try { detuneScale && detuneScale.dispose(); } catch (_) {}
         return null;
       }
-      return { source, ampEnv, outGain, filter, panNode };
+      return { source, ampEnv, outGain, filter, panNode, detuneScale };
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -161,6 +170,7 @@
       try { v.outGain && v.outGain.dispose(); } catch (e) {}
       try { v.filter && v.filter.dispose(); } catch (e) {}
       try { v.panNode && v.panNode.dispose(); } catch (e) {}
+      try { v.detuneScale && v.detuneScale.dispose(); } catch (e) {}
     }
     function getSampleEntry(type) {
       if (!isSampleType(type)) return null;

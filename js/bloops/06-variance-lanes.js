@@ -1369,6 +1369,21 @@
             if (n > 0) { renderSequence(); persist(); }
           } },
       ];
+      // Send this lane's own sequence into ITS lane-specific Bloom (then switch
+      // the lane into Bloom). Deferred submenu with the 3 send modes.
+      actions.push('hr');
+      actions.push({ label: '🌸 Send to Bloom ▸', disabled: !lane.steps || lane.steps.length === 0, fn: () => setTimeout(() => {
+        const seqs = (typeof _ambListLaneSeqs === 'function') ? _ambListLaneSeqs(laneIdx) : [];
+        const send = (mode, id) => { try { _ambSendLaneToBloom(laneIdx, mode, id); } catch (e) { console.warn('Send lane to Bloom failed', e); } };
+        const sub = [{ label: '＋ New Seq', fn: () => send('new') }];
+        sub.push('hr');
+        if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => send('append', s.id) }));
+        else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
+        sub.push('hr');
+        if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => send('interleave', s.id) }));
+        else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
+        showCtxMenu(x, y, sub);
+      }, 0) });
       if (riffActions.length) {
         // Defer the submenu to the next tick: showCtxMenu's click handler
         // runs dismissCtxMenu() right after fn(), which would otherwise
@@ -1417,6 +1432,9 @@
       }
       if (wasAmbient !== wantAmbient) {
         try { if (typeof _onAmbientModeChanged === 'function') _onAmbientModeChanged(wantAmbient); } catch (e) {}
+      } else if (wasAmbient && wantAmbient) {
+        // Bloom → Bloom lane switch: rebind the lane engine to the new lane.
+        try { if (typeof _ambRetargetLane === 'function') _ambRetargetLane(); } catch (e) {}
       }
       if (wasText !== wantText) {
         try { if (typeof _onTextModeChanged === 'function') _onTextModeChanged(wantText); } catch (e) {}

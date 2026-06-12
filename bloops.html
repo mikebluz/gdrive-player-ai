@@ -730,6 +730,14 @@
       <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
       <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
     </div>
+
+    <!-- Master Bloom — a project-wide generative ambient instance, independent
+         of lanes. Routes to the master bus and can play alongside per-lane
+         Bloom. Its panel is built by 17-ambient.js when the Mix tab is opened.
+         "Send to Bloom" on a saved sequence adds Seq layers here. -->
+    <div class="mix-bloom-section" id="mix-bloom-section">
+      <div class="ambient-inner" id="mix-bloom-host"></div>
+    </div>
   </div>
 
 

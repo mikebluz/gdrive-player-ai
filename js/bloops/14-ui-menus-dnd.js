@@ -581,6 +581,13 @@
         refreshGridStateDropdown('');
       }
 
+      // Master Bloom (Mix) config — global, not per-lane.
+      try {
+        masterAmbient = (snap.masterAmbient && typeof snap.masterAmbient === 'object')
+          ? _normalizeAmbientCfg(JSON.parse(JSON.stringify({ ...snap.masterAmbient, playing: false }))) : null;
+        if (typeof _masterEng !== 'undefined' && _masterEng.inited) _ambSyncControls(_masterEng);
+      } catch (e) {}
+
       // Global FX — write into the live globalFx and refresh the panel.
       if (snap.globalFx && typeof snap.globalFx === 'object') {
         Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
@@ -865,6 +872,8 @@
         updateLabels('mix');
         _closeTransientUI();
         try { window.musicPlayer?.pause(); } catch (e) {}
+        // Build/refresh the master Bloom panel now that #mix-bloom-host is visible.
+        try { if (typeof _ambInitMaster === 'function') _ambInitMaster(); } catch (e) {}
         // Mix was just made visible — earlier renderTracksLoopRuler
         // passes may have run while #mix-view was display:none and
         // every rect was clipped to zero, leaving the ruler stuck at
@@ -1070,7 +1079,7 @@
       }, { danger: true });
     }
 
-    function savedBlockActions(seqIndex) {
+    function savedBlockActions(seqIndex, x, y) {
       const saved = savedSequences[seqIndex];
       const actions = [
         { label: 'Rename…',     fn: () => showRenameDialog(seqIndex) },
@@ -1088,6 +1097,20 @@
       // or new) and a count. The default is 1 copy so a plain "add
       // this sequence to a track" is still one click → Add.
       actions.push({ label: '⊕ Copy ×N to track…', fn: () => showCopySavedDialog(seqIndex) });
+      actions.push('hr');
+      // Send this sequence to the MASTER Bloom (in Mix), in one of 3 modes.
+      // Deferred (setTimeout) so showCtxMenu's dismiss doesn't tear the submenu.
+      actions.push({ label: '🌸 Send to Bloom ▸', fn: () => setTimeout(() => {
+        const seqs = (typeof _ambListMasterSeqs === 'function') ? _ambListMasterSeqs() : [];
+        const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new') }];
+        sub.push('hr');
+        if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id) }));
+        else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
+        sub.push('hr');
+        if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'interleave', s.id) }));
+        else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
+        showCtxMenu(x, y, sub);
+      }, 0) });
       actions.push('hr');
       actions.push({ label: 'Delete', danger: true, fn: () => {
         const removed = savedSequences[seqIndex];
@@ -1359,7 +1382,7 @@
         longPressTimer = setTimeout(() => {
           longPressTimer = null;
           navigator.vibrate?.(40);
-          showCtxMenu(e.clientX, e.clientY, savedBlockActions(seqIndex));
+          showCtxMenu(e.clientX, e.clientY, savedBlockActions(seqIndex, e.clientX, e.clientY));
         }, 500);
       });
       const cancel = () => { clearTimeout(longPressTimer); longPressTimer = null; };
@@ -1369,7 +1392,7 @@
       // Right-click also opens the same menu (desktop affordance for delete etc.)
       block.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        showCtxMenu(e.clientX, e.clientY, savedBlockActions(seqIndex));
+        showCtxMenu(e.clientX, e.clientY, savedBlockActions(seqIndex, e.clientX, e.clientY));
       });
     }
 

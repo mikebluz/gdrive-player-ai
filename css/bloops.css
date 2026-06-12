@@ -1930,6 +1930,33 @@
     .ambient-toggle.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.16); }
     /* Dim a layer's sliders when the layer is off (still adjustable). */
     .ambient-layer:has(> .ambient-layer-head > .ambient-toggle:not(.on)) .ambient-ctrl { opacity: 0.5; }
+    /* Per-layer expand/collapse caret (sits at the right of the layer head). */
+    .ambient-collapse {
+      margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px;
+      border: 1px solid #2d2d3f; border-radius: 7px; background: transparent;
+      color: #6b6b8a; cursor: pointer; line-height: 1; transition: all 0.15s ease;
+    }
+    .ambient-collapse:hover { border-color: #9f7aea; color: #d6bcfa; }
+    .ambient-collapse::before { content: '▾'; display: inline-block; font-size: 0.8rem; transition: transform 0.12s ease; }
+    .ambient-layer.collapsed .ambient-collapse::before { transform: rotate(-90deg); }
+    /* Collapsed: hide everything in the layer except its head row. */
+    .ambient-layer.collapsed > *:not(.ambient-layer-head) { display: none; }
+    /* Per-Seq "X" delete button (sits between the toggle and the caret). */
+    .ambient-seq-del {
+      margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px;
+      border: 1px solid #4a2330; border-radius: 7px; background: transparent;
+      color: #c97; cursor: pointer; font-size: 0.78rem; line-height: 1;
+      transition: all 0.15s ease;
+    }
+    .ambient-seq-del:hover { border-color: #e25563; color: #ff8a95; background: rgba(226,85,99,0.12); }
+    /* When a delete button is present it claims the auto-margin, so the caret
+       must not also push — keep them snug on the right. */
+    .ambient-seq-del + .ambient-collapse { margin-left: 6px; }
+    .ambient-seq-layers { display: flex; flex-direction: column; gap: 12px; }
+    .ambient-seq-layers:empty { display: none; }
+    /* Master Bloom block in the Mix view. */
+    .mix-bloom-section { margin-top: 18px; border-top: 1px solid #2d2d3f; padding-top: 14px; }
+    .mix-bloom-section .ambient-inner { max-width: 520px; }
 
     .prog-blocks {
       display: flex;

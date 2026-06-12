@@ -42,6 +42,9 @@
         timing: 'free',                 // 'free' | 'sync'
         seed:   1,
         space:  0,                      // 0 = centred → 100 = half full-L / half full-R
+        // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
+        // size → Freeverb roomSize (0..1); damp → dampening Hz (higher = darker).
+        reverb: { size: 80, damp: 45 },
         // `tone` is the layer's instrument: '' = follow the grid voice
         // (cellParams[0]); otherwise a value from getAllSoundOptions (any
         // synth or non-drum sample). Beat uses `kit` (drums only) instead.
@@ -189,6 +192,8 @@
       if (cfg.timing !== 'free' && cfg.timing !== 'sync') cfg.timing = d.timing;
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
+      if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
+      else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
       ['bed','motif','texture','beat'].forEach(layer => {
         if (!cfg[layer] || typeof cfg[layer] !== 'object') cfg[layer] = { ...d[layer] };
       });
@@ -877,9 +882,21 @@
     function _ambEnsureReverb() {
       if (_E.reverb) return _E.reverb;
       if (typeof Tone === 'undefined') return null;
-      try { _E.reverb = new Tone.Freeverb({ roomSize: 0.85, dampening: 2200, wet: 1 }).connect(_E.busNode()); }
+      try { _E.reverb = new Tone.Freeverb({ roomSize: 0.8, dampening: 2500, wet: 1 }).connect(_E.busNode()); }
       catch (e) { _E.reverb = null; }
+      _ambApplyReverb();
       return _E.reverb;
+    }
+    // Push the instance's reverb Size/Damp config onto its live reverb node.
+    function _ambApplyReverb() {
+      if (!_E.reverb) return;
+      const cfg = _E.getCfg(); if (!cfg || !cfg.reverb) return;
+      try {
+        const size = Math.max(0, Math.min(1, (cfg.reverb.size | 0) / 100));
+        const damp = 500 + Math.max(0, Math.min(100, cfg.reverb.damp | 0)) / 100 * 5500; // Hz
+        if (_E.reverb.roomSize) _E.reverb.roomSize.value = size;
+        if (_E.reverb.dampening) _E.reverb.dampening.value = damp;
+      } catch (e) {}
     }
     // Per-layer chain (built for any ON layer): voices → VCF → VCA → Distortion
     // → Delay → bus, plus a parallel reverb send tapped off the VCA. Distortion
@@ -957,6 +974,7 @@
       Object.keys(want).forEach(key => { _ambBuildMod(key, { [key]: want[key] }); _ambApplyLayerFx(key, want[key]); });
       // Tear down chains no longer wanted (off layers, deleted seqs).
       Object.keys(_E.mod).forEach(key => { if (!(key in want)) _ambTeardownMod(key); });
+      _ambApplyReverb();
     }
     // Schedule random values onto every active stochastic source within the
     // lookahead window (run each generator tick). Uses Math.random so mod
@@ -1562,6 +1580,7 @@
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
       set('ambient-space', cfg.space);
+      if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
       const chk = (id, v) => { const el = document.getElementById(tr(id)); if (el) el.classList.toggle('on', !!v); };
       chk('ambient-bed-on', cfg.bed.on);
       set('ambient-bed-tone', cfg.bed.tone);
@@ -1652,6 +1671,11 @@
           '<button type="button" class="ambient-seg" id="ambient-timing-sync">Sync</button>' +
         '</div>' +
         sl('Space', 'ambient-space', 0, 100, 0, 'centre → wide') +
+        // Dedicated reverb (fed by each layer's "Reverb send").
+        '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
+          sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
+          sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
+        '</div>' +
         '<div class="ambient-layer">' + head('Bed', 'ambient-bed-on') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           '<div class="ambient-ctrl"><label for="ambient-bed-scale">Scale</label><select id="ambient-bed-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
@@ -1803,6 +1827,16 @@
         });
       };
       bind('ambient-space', null, 'space');
+      // Reverb Size / Damp → live reverb node.
+      ['size', 'damp'].forEach(key => {
+        const el = G('ambient-reverb-' + key); if (!el) return;
+        el.addEventListener('input', () => {
+          _E = E; const cfg = cfg0(); if (!cfg || !cfg.reverb) return;
+          cfg.reverb[key] = parseInt(el.value, 10) || 0;
+          _ambApplyReverb();
+          persist();
+        });
+      });
       bind('ambient-bed-density', 'bed', 'density');
       bind('ambient-bed-register', 'bed', 'register');
       bind('ambient-bed-spread', 'bed', 'spread');

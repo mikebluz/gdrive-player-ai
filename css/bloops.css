@@ -1952,6 +1952,11 @@
     /* When a delete button is present it claims the auto-margin, so the caret
        must not also push — keep them snug on the right. */
     .ambient-seq-del + .ambient-collapse { margin-left: 6px; }
+    /* Dedicated reverb controls (Size / Damp) — small framed section. */
+    .ambient-reverb {
+      border: 1px solid #20203a; border-radius: 8px; padding: 8px 12px;
+      display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
+    }
     .ambient-seq-layers { display: flex; flex-direction: column; gap: 12px; }
     .ambient-seq-layers:empty { display: none; }
     /* Master Bloom block in the Mix view (now its own sub-tab pane). */

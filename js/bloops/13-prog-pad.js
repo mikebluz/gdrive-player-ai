@@ -1054,17 +1054,19 @@
       btn.addEventListener('click', () => {
         const lane = lanes[activeLaneIdx];
         if (lane) {
-          // Cycle: Grid → Graph → Game → Prog → Bloom → Grid
-          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode) {
-            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false;
+          // Cycle: Grid → Graph → Game → Prog → Bloom → TEXT → Grid
+          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode && !lane.textMode) {
+            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false;
           } else if (lane.fluidGridMode) {
-            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false;
+            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false; lane.textMode = false;
           } else if (lane.gameMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false; lane.textMode = false;
           } else if (lane.progMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;  lane.textMode = false;
+          } else if (lane.ambientMode) {
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = true;
           } else {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false;
           }
         }
         _syncFluidGridToActiveLane();

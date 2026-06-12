@@ -957,6 +957,8 @@
           fluidGridMode: !!l.fluidGridMode,
           ambientMode: !!l.ambientMode,
           ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
+          textMode: !!l.textMode,
+          text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
           // Per-lane FX send levels — deep clone so future mutations on
           // the live lane.sends don't bleed into the snapshot.
           sends: l.sends ? { ...l.sends } : null,

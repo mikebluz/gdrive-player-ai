@@ -388,6 +388,13 @@
       <div id="ambient-pad" hidden>
         <div class="ambient-inner" id="ambient-inner"></div>
       </div>
+      <!-- TEXT pad — sixth mode of the toggle. Type text → meSpeak (eSpeak)
+           speech synthesis; audition, Export→Drive, or Freeze→lane. Controls
+           are built in 18-text.js when the lane first enters TEXT mode; the
+           speech engine is lazy-loaded from /vendor/mespeak/ on first entry. -->
+      <div id="text-pad" hidden>
+        <div class="ambient-inner" id="text-inner"></div>
+      </div>
       <!-- Game pad — third mode of the Grid/Graph toggle. A polygon with
            one side per (scale-degree × octave) cell encloses a free
            ball; tap to start motion, tap again to pause. Side colors
@@ -743,6 +750,8 @@
   <script src="js/bloops/15-grid-build.js"></script>
   <script src="js/bloops/16-grid-controls.js"></script>
   <script src="js/bloops/17-ambient.js"></script>
+  <script src="js/bloops/18-text.js"></script>
+  <script src="js/bloops/zz-diag.js"></script>
 
   <!-- ===================== Serialbox view ============================== -->
   <!-- Hidden by default; the Serialbox tab in the top bar reveals it via

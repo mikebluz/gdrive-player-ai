@@ -644,7 +644,9 @@
       // to finish loading. Without this, sampler.loaded is false at the
       // first triggerAttackRelease and the note is silently dropped — making
       // sample-based tracks appear to "not play" until the second pass.
-      try { await Tone.loaded(); } catch (e) {}
+      // Capped: ~130 remote GM samplers stream from a third-party CDN; if it's
+      // down they stay pending forever and a bare await would hang playback.
+      try { await Promise.race([Tone.loaded(), new Promise((r) => setTimeout(r, 500))]); } catch (e) {}
       track.playing = true;
       const startIdx = (typeof _trackStartItemForTime === 'function')
         ? _trackStartItemForTime(track, effectiveSec)
@@ -1966,7 +1968,9 @@
       // past, Tone would fire it ASAP, and that track would start
       // ahead of the others. Resolving here makes every startTrack a
       // synchronous-feeling sibling against the same epoch.
-      try { await Tone.loaded(); } catch (e) {}
+      // Capped (see togglePlayTrack): a down remote-sample CDN must not hang
+      // the transport on a bare await.
+      try { await Promise.race([Tone.loaded(), new Promise((r) => setTimeout(r, 500))]); } catch (e) {}
       // Snap cursor into the loop region when masterLoop is on so
       // playback always starts inside the loop bounds (and the
       // visual cursor lines up with where audio actually starts).

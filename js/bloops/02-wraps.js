@@ -166,6 +166,8 @@
               fluidGridMode: !!l?.fluidGridMode,
               ambientMode: !!l?.ambientMode,
               ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
+              textMode: !!l?.textMode,
+              text: (l?.text && typeof l.text === 'object') ? JSON.parse(JSON.stringify(l.text)) : null,
               // Restore per-lane FX wet levels. _migrateLaneSends handles
               // the three save-generations (new `sends`, mid-refactor
               // `fx`, none → default-seeded from globalFx). getLaneBus

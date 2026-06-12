@@ -877,6 +877,9 @@
         // lazily by 17-ambient.js on first entry so a fresh lane stays light.
         ambientMode: false,
         ambient: null,
+        // TEXT (speech synthesis) mode + its config, built lazily by 18-text.js.
+        textMode: false,
+        text: null,
       };
     }
     // Snapshot the currently-mirrored voice globals into a plain object
@@ -1388,27 +1391,35 @@
       const wantGame    = !!(lane && lane.gameMode);
       const wantProg    = !!(lane && lane.progMode);
       const wantAmbient = !!(lane && lane.ambientMode);
+      const wantText    = !!(lane && lane.textMode);
       const wasFluid   = fluidGridMode;
       const wasGame    = gameMode;
       const wasProg    = progMode;
       const wasAmbient = (typeof ambientMode !== 'undefined') ? ambientMode : false;
+      const wasText    = (typeof textMode !== 'undefined') ? textMode : false;
       fluidGridMode = wantFluid;
       gameMode      = wantGame;
       progMode      = wantProg;
       if (typeof ambientMode !== 'undefined') ambientMode = wantAmbient;
+      if (typeof textMode !== 'undefined') textMode = wantText;
       document.body.classList.toggle('fluid-grid',  wantFluid);
       document.body.classList.toggle('game-mode',   wantGame);
       document.body.classList.toggle('prog-mode',   wantProg);
       document.body.classList.toggle('ambient-mode', wantAmbient);
+      document.body.classList.toggle('text-mode', wantText);
       const btn = document.getElementById('fluid-grid-toggle');
       if (btn) {
-        btn.textContent = wantAmbient ? 'Bloom'
+        btn.textContent = wantText ? 'TEXT'
+                        : wantAmbient ? 'Bloom'
                         : wantProg ? 'Prog'
                         : wantGame ? 'Game'
                         : wantFluid ? 'Graph' : 'Grid';
       }
       if (wasAmbient !== wantAmbient) {
         try { if (typeof _onAmbientModeChanged === 'function') _onAmbientModeChanged(wantAmbient); } catch (e) {}
+      }
+      if (wasText !== wantText) {
+        try { if (typeof _onTextModeChanged === 'function') _onTextModeChanged(wantText); } catch (e) {}
       }
       if (wasFluid && !wantFluid) {
         try { if (typeof _endFluidPress === 'function') _endFluidPress(); } catch (e) {}

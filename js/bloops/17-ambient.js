@@ -45,10 +45,12 @@
         // own { depth (0..100, 0=off), rate (0..100 -> Hz free / division sync),
         // shape }. Shapes: sine/triangle/sawtooth/square + stochastic
         // 'smooth' (ramped random) / 'sharp' (sample & hold).
-        // `level` (0..100, default 70) scales the layer's output: 70 = unity
-        // (the tuned default), >70 boosts (×level/70), <70 attenuates, 0 = silent.
-        // The 70 default leaves headroom to push a layer LOUDER without clipping
-        // the slider. `drift` (0..99) phase-offsets the layer's events by that
+        // `level` (0..100, default 70) scales the layer's output: 70 = the tuned
+        // default (the layer's normal staged level), 0..70 attenuates toward
+        // silence, and 70..100 boosts the layer up toward a full grid-press voice
+        // (100 = grid-cell loudness). Bloom layers sit below grid level for
+        // polyphony headroom; the upper half of the slider buys it back when you
+        // want it. `drift` (0..99) phase-offsets the layer's events by that
         // fraction of its Interval, so layers can be staggered against each other.
         // `when` is an Elektron-style per-event conditional ('always' | '1st' |
         // 'A:B') that gates which of the layer's generated events actually fire —
@@ -225,11 +227,19 @@
       const step = _ambStepSec();
       return Math.max(step, Math.round(sec / step) * step);
     }
-    // Per-layer Level (0..100): 70 = unity. Scales a voice's 0..100 volume,
-    // clamped back into range so a boost can't exceed full velocity.
+    // Per-layer Level (0..100): 70 = the layer's tuned default (unchanged from
+    // before). 0..70 attenuates that toward silence; 70..100 BOOSTS the layer's
+    // pre-staged volume up toward a full grid-press voice (100), so at the slider
+    // max the layer sits at grid-cell loudness. Bloom layers are deliberately
+    // staged below grid level for polyphony headroom; this upper ramp lets you
+    // push any layer back up to that level when you want it — capped at 100 so a
+    // single voice can never exceed full velocity.
     function _ambApplyLevel(vol, level) {
-      const L = Number.isFinite(level) ? Math.max(0, level) : 70;
-      return Math.max(0, Math.min(100, Math.round((vol || 0) * (L / 70))));
+      const base = vol || 0;
+      const L = Number.isFinite(level) ? Math.max(0, Math.min(100, level)) : 70;
+      if (L <= 70) return Math.max(0, Math.round(base * (L / 70)));
+      const t = (L - 70) / 30; // 0 at the default, 1 at the slider max
+      return Math.max(0, Math.min(100, Math.round(base + (100 - base) * t)));
     }
     // Per-layer Drift (0..99): phase-offset the layer's event grid by that
     // fraction of its Interval (snapped to the step grid in Sync mode).
@@ -461,8 +471,11 @@
     const _AMB_DRUM_WTOTAL = _AMB_DRUMS.reduce((s, d) => s + d.w, 0);
     // Melodic tone choices for Bed/Motif/Texture: "Grid voice" + every
     // non-drum tone the app offers.
+    // Melodic tones for Bed/Motif/Texture (drum kits excluded — Beat owns those).
+    // The "Grid voice" follow option is added separately at wiring time, so this
+    // returns only the instruments and can be fed straight to the grouped builder.
     function _ambToneOptions() {
-      const out = [{ value: '', label: 'Grid voice' }];
+      const out = [];
       try {
         if (typeof getAllSoundOptions === 'function') {
           getAllSoundOptions().forEach(o => {
@@ -471,18 +484,6 @@
               if (info && info.drumKit) return; // drums belong to Beat
             }
             out.push(o);
-          });
-        }
-      } catch (e) {}
-      return out;
-    }
-    // Scale choices for Bed/Motif/Texture: "Workspace scale" + every scale.
-    function _ambScaleOptions() {
-      const out = [{ value: '', label: 'Workspace scale' }];
-      try {
-        if (typeof SCALES !== 'undefined') {
-          Object.keys(SCALES).sort().forEach(name => {
-            out.push({ value: name, label: (typeof prettyScaleName === 'function') ? prettyScaleName(name) : name });
           });
         }
       } catch (e) {}
@@ -1207,14 +1208,10 @@
       // every melodic tone from getAllSoundOptions (drum kits excluded — Beat
       // owns those). Populated once; the core SOUNDS + remote instruments are
       // registered synchronously at startup so the list is essentially full.
-      const wireSelect = (id, layer, key, opts) => {
+      const wireSelect = (id, layer, key, populate) => {
         const sel = document.getElementById(id);
         if (!sel) return;
-        opts.forEach(o => {
-          const op = document.createElement('option');
-          op.value = o.value; op.textContent = o.label;
-          sel.appendChild(op);
-        });
+        populate(sel);
         sel.addEventListener('change', () => {
           const cfg = _laneAmbientCfg(); if (!cfg) return;
           cfg[layer][key] = sel.value || '';
@@ -1222,8 +1219,14 @@
         });
       };
       ['bed', 'motif', 'texture'].forEach(layer => {
-        wireSelect('ambient-' + layer + '-tone', layer, 'tone', _ambToneOptions());
-        wireSelect('ambient-' + layer + '-scale', layer, 'scale', _ambScaleOptions());
+        // Tone picker grouped into <optgroup>s by instrument family, like the
+        // main Tone menu (Synths / Keys / Mallets / … ), with "Grid voice" on top.
+        wireSelect('ambient-' + layer + '-tone', layer, 'tone',
+          (sel) => populateGroupedToneSelect(sel, _ambToneOptions(), { value: '', label: 'Grid voice' }));
+        // Scale picker grouped into <optgroup>s exactly like the main Scale list
+        // (Standard / Modes / Microtonal / … ), with "Workspace scale" on top.
+        wireSelect('ambient-' + layer + '-scale', layer, 'scale',
+          (sel) => populateGroupedScaleSelect(sel, { value: '', label: 'Workspace scale' }));
       });
 
       // Mod controls — per target (VCA/VCO/VCF): Depth, Rate, Shape. Changes

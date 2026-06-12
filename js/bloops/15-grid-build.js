@@ -1126,6 +1126,43 @@
       if (value === 'pluck' || value === 'bell') return 'strings';
       return 'other';
     }
+    // Populate a <select> with tone options grouped into <optgroup>s by
+    // instrument family, in the same order (Synths / Keys / Mallets / Strings /
+    // Winds / Leads & Pads / Drums / Imports / Samples / Other) the main Tone
+    // menu uses. `opts` is a flat [{value,label}] list (e.g. getAllSoundOptions()
+    // or a filtered subset); `firstOption` ({value,label}), if given, is prepended
+    // as a plain <option> (e.g. Bloom's "Grid voice"). Empty families are skipped;
+    // any family outside the canonical order is appended after it.
+    function populateGroupedToneSelect(sel, opts, firstOption) {
+      if (!sel) return;
+      if (firstOption) {
+        const op = document.createElement('option');
+        op.value = firstOption.value; op.textContent = firstOption.label;
+        sel.appendChild(op);
+      }
+      const byFam = new Map();
+      (opts || []).forEach(o => {
+        const fam = toneFamilyFor(o.value);
+        if (!byFam.has(fam)) byFam.set(fam, []);
+        byFam.get(fam).push(o);
+      });
+      const seen = new Set();
+      const addGroup = (fam) => {
+        const items = byFam.get(fam);
+        if (!items || !items.length) return;
+        const og = document.createElement('optgroup');
+        og.label = TONE_FAMILY_LABELS[fam] || fam;
+        items.forEach(o => {
+          const op = document.createElement('option');
+          op.value = o.value; op.textContent = o.label;
+          og.appendChild(op);
+        });
+        sel.appendChild(og);
+        seen.add(fam);
+      };
+      TONE_FAMILY_ORDER.forEach(addGroup);
+      byFam.forEach((_, fam) => { if (!seen.has(fam)) addGroup(fam); });
+    }
     // Top-level bucket: 'synths' (oscillator-based, no sample buffer)
     // or 'samples' (sample-buffer based, played via Tone.Sampler /
     // GrainPlayer). The string 'sample:' prefix is the discriminator.

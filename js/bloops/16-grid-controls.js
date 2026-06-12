@@ -376,6 +376,63 @@
       rebuildGrid({ resetTones: true });
     }
 
+    // Populate a <select> with the full scale catalog grouped into <optgroup>s.
+    // Shared by the main Scale picker and Bloom's per-layer Scale dropdowns so
+    // both read the same way. Order matters: the "Standard" group (the scales
+    // people reach for first — major, minor and their pentatonic/blues cousins)
+    // sits at the top, then the church modes, then keyword buckets, then
+    // everything else alphabetized. Explicit names are filtered against the
+    // catalog so a name Tonal drops in a future version just silently disappears
+    // rather than rendering a dead option. `firstOption` ({value,label}), if
+    // given, is prepended as a plain <option> (e.g. Bloom's "Workspace scale").
+    function populateGroupedScaleSelect(scaleSelect, firstOption) {
+      if (!scaleSelect) return;
+      if (firstOption) {
+        const op = document.createElement('option');
+        op.value = firstOption.value; op.textContent = firstOption.label;
+        scaleSelect.appendChild(op);
+      }
+      const has  = (n) => SCALES[n] != null;
+      const used = new Set();
+      const addOpt = (parent, name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = prettyScaleName(name);
+        parent.appendChild(opt);
+        used.add(name);
+      };
+      const addGroup = (label, names) => {
+        const present = names.filter(n => has(n) && !used.has(n));
+        if (!present.length) return;
+        const og = document.createElement('optgroup');
+        og.label = label;
+        present.forEach(n => addOpt(og, n));
+        scaleSelect.appendChild(og);
+      };
+      // Ordered "headline" groups.
+      addGroup('Standard', [
+        'chromatic', 'major', 'minor', 'harmonic minor', 'melodic minor',
+        'major pentatonic', 'minor pentatonic',
+        'blues', 'major blues', 'minor blues',
+      ]);
+      addGroup('Modes', [
+        'ionian', 'dorian', 'phrygian', 'lydian',
+        'mixolydian', 'aeolian', 'locrian',
+      ]);
+      // 12-note alternate tunings (just intonation, Pythagorean, etc.) —
+      // these retune the grid cells rather than just highlighting them.
+      addGroup('Microtonal',
+        (typeof MICRO_TUNINGS !== 'undefined') ? Object.keys(MICRO_TUNINGS) : []);
+      // Keyword buckets over whatever's left, each alphabetized.
+      const rest = () => Object.keys(SCALES).filter(n => !used.has(n));
+      const bucket = (re) => rest().filter(n => re.test(n)).sort();
+      addGroup('Pentatonic & Blues', bucket(/pentatonic|blues/));
+      addGroup('Bebop', bucket(/bebop/));
+      addGroup('Symmetric', bucket(/whole tone|augmented|diminished|messiaen/));
+      // Everything still unplaced, alphabetized.
+      addGroup('More Scales', rest().sort());
+    }
+
     // ---- Grid controls ----
     (function initGridControls() {
       const rootSelect = document.getElementById('root-select');
@@ -437,55 +494,7 @@
       };
 
       const scaleSelect = document.getElementById('scale-select');
-      // Grouped into <optgroup>s so the long Tonal-derived list is
-      // navigable instead of one flat alphabetical run. Order matters:
-      // the "Standard" group (the scales people reach for first — major,
-      // minor and their pentatonic/blues cousins) sits at the top, then
-      // the church modes, then keyword buckets, then everything else
-      // alphabetized. Explicit names are filtered against the catalog so
-      // a name Tonal drops in a future version just silently disappears
-      // rather than rendering a dead option.
-      (function populateGroupedScaleSelect() {
-        const has  = (n) => SCALES[n] != null;
-        const used = new Set();
-        const addOpt = (parent, name) => {
-          const opt = document.createElement('option');
-          opt.value = name;
-          opt.textContent = prettyScaleName(name);
-          parent.appendChild(opt);
-          used.add(name);
-        };
-        const addGroup = (label, names) => {
-          const present = names.filter(n => has(n) && !used.has(n));
-          if (!present.length) return;
-          const og = document.createElement('optgroup');
-          og.label = label;
-          present.forEach(n => addOpt(og, n));
-          scaleSelect.appendChild(og);
-        };
-        // Ordered "headline" groups.
-        addGroup('Standard', [
-          'chromatic', 'major', 'minor', 'harmonic minor', 'melodic minor',
-          'major pentatonic', 'minor pentatonic',
-          'blues', 'major blues', 'minor blues',
-        ]);
-        addGroup('Modes', [
-          'ionian', 'dorian', 'phrygian', 'lydian',
-          'mixolydian', 'aeolian', 'locrian',
-        ]);
-        // 12-note alternate tunings (just intonation, Pythagorean, etc.) —
-        // these retune the grid cells rather than just highlighting them.
-        addGroup('Microtonal',
-          (typeof MICRO_TUNINGS !== 'undefined') ? Object.keys(MICRO_TUNINGS) : []);
-        // Keyword buckets over whatever's left, each alphabetized.
-        const rest = () => Object.keys(SCALES).filter(n => !used.has(n));
-        const bucket = (re) => rest().filter(n => re.test(n)).sort();
-        addGroup('Pentatonic & Blues', bucket(/pentatonic|blues/));
-        addGroup('Bebop', bucket(/bebop/));
-        addGroup('Symmetric', bucket(/whole tone|augmented|diminished|messiaen/));
-        // Everything still unplaced, alphabetized.
-        addGroup('More Scales', rest().sort());
-      })();
+      populateGroupedScaleSelect(scaleSelect);
       scaleSelect.value = currentScale;
       scaleSelect.addEventListener('change', () => {
         const _oldScale = currentScale;

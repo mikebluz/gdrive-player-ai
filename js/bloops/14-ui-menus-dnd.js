@@ -895,6 +895,33 @@
       bloopsTab.addEventListener('click', showBloops);
       if (mixTab) mixTab.addEventListener('click', showMix);
       sbTab.addEventListener('click', showSerialbox);
+
+      // Mix sub-tabs: Bloom (master generative, default) / Mixdown (tracks +
+      // export). Toggles a class on #mix-view; CSS shows the matching pane.
+      (function initMixSubtabs() {
+        const view = document.getElementById('mix-view');
+        const bBtn = document.getElementById('mix-subtab-bloom');
+        const mBtn = document.getElementById('mix-subtab-mixdown');
+        if (!view || !bBtn || !mBtn) return;
+        const selectSub = (which) => {
+          const bloom = which === 'bloom';
+          view.classList.toggle('mix-sub-bloom', bloom);
+          view.classList.toggle('mix-sub-mixdown', !bloom);
+          bBtn.classList.toggle('active', bloom);
+          mBtn.classList.toggle('active', !bloom);
+          if (bloom) {
+            try { if (typeof _ambInitMaster === 'function') _ambInitMaster(); } catch (e) {}
+          } else if (typeof renderTracksLoopRuler === 'function') {
+            // Mixdown pane just became visible — realign the ruler (it measured
+            // zero-width rects while hidden).
+            requestAnimationFrame(() => { try { renderTracksLoopRuler(); } catch (e) {} });
+          }
+        };
+        bBtn.addEventListener('click', () => selectSub('bloom'));
+        mBtn.addEventListener('click', () => selectSub('mixdown'));
+        // Reflect the default (Bloom) in the button state.
+        selectSub(view.classList.contains('mix-sub-mixdown') ? 'mixdown' : 'bloom');
+      })();
       // Pick the initial view in this order of preference:
       //   1. URL hash (#player / #mix) — survives mobile browsers that
       //      run the pre-body inline classList write too late, or in-app

@@ -1954,9 +1954,20 @@
     .ambient-seq-del + .ambient-collapse { margin-left: 6px; }
     .ambient-seq-layers { display: flex; flex-direction: column; gap: 12px; }
     .ambient-seq-layers:empty { display: none; }
-    /* Master Bloom block in the Mix view. */
-    .mix-bloom-section { margin-top: 18px; border-top: 1px solid #2d2d3f; padding-top: 14px; }
+    /* Master Bloom block in the Mix view (now its own sub-tab pane). */
     .mix-bloom-section .ambient-inner { max-width: 520px; }
+    /* Mix sub-tabs: Bloom (default) / Mixdown. */
+    .mix-subtabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .mix-subtab {
+      padding: 6px 18px; border: 1px solid #2d2d3f; border-radius: 14px;
+      background: transparent; color: #6b6b8a; font-weight: 700; font-size: 0.85rem;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    .mix-subtab:hover { border-color: #9f7aea; color: #d6bcfa; }
+    .mix-subtab.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.16); }
+    .mix-pane { display: none; }
+    #mix-view.mix-sub-bloom    #mix-pane-bloom    { display: block; }
+    #mix-view.mix-sub-mixdown  #mix-pane-mixdown  { display: block; }
 
     .prog-blocks {
       display: flex;

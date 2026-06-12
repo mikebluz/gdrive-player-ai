@@ -683,7 +683,25 @@
        Export/Share controls. Hidden until the user clicks the Mix tab.
        All audio + sequence state is shared across Make / Mix / Listen
        since it lives in module-scoped JS variables, not in this DOM. -->
-  <div id="mix-view">
+  <div id="mix-view" class="mix-sub-bloom">
+    <!-- Mix sub-tabs: Bloom (master generative, default) and Mixdown (the
+         multi-track sequencer + export/share). -->
+    <div class="mix-subtabs">
+      <button id="mix-subtab-bloom" class="mix-subtab" type="button">Bloom</button>
+      <button id="mix-subtab-mixdown" class="mix-subtab" type="button">Mixdown</button>
+    </div>
+
+    <div class="mix-pane" id="mix-pane-bloom">
+      <!-- Master Bloom — a project-wide generative ambient instance, independent
+           of lanes. Routes to the master bus and can play alongside per-lane
+           Bloom. Its panel is built by 17-ambient.js when the Mix tab is opened.
+           "Send to Bloom" on a saved sequence adds Seq layers here. -->
+      <div class="mix-bloom-section" id="mix-bloom-section">
+        <div class="ambient-inner" id="mix-bloom-host"></div>
+      </div>
+    </div>
+
+    <div class="mix-pane" id="mix-pane-mixdown">
     <div class="tracks-section">
       <div class="tracks-header">
         <button id="tracks-back-btn" type="button" title="Return to the full UI">← Back</button>
@@ -730,14 +748,7 @@
       <button id="tracks-export-btn" title="Render tracks to a WAV file and save to Google Drive">Export</button>
       <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
     </div>
-
-    <!-- Master Bloom — a project-wide generative ambient instance, independent
-         of lanes. Routes to the master bus and can play alongside per-lane
-         Bloom. Its panel is built by 17-ambient.js when the Mix tab is opened.
-         "Send to Bloom" on a saved sequence adds Seq layers here. -->
-    <div class="mix-bloom-section" id="mix-bloom-section">
-      <div class="ambient-inner" id="mix-bloom-host"></div>
-    </div>
+    </div><!-- /#mix-pane-mixdown -->
   </div>
 
 

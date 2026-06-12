@@ -1815,6 +1815,41 @@
     body.ambient-mode #ambient-pad { display: flex; }
     body.ambient-mode .grid-settings-panel .grid-only { display: none !important; }
 
+    /* ---- TEXT (speech synthesis) mode ---- */
+    #text-pad {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      min-height: var(--grid-natural-h, 210px);
+      padding: 14px;
+      background: #0a0a14;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    body.text-mode #grid        { display: none; }
+    body.text-mode #xy-pad      { display: none; }
+    body.text-mode #game-pad    { display: none; }
+    body.text-mode #prog-pad    { display: none; }
+    body.text-mode #ambient-pad { display: none; }
+    body.text-mode #text-pad    { display: flex; }
+    body.text-mode .grid-settings-panel .grid-only { display: none !important; }
+    .text-input {
+      width: 100%;
+      box-sizing: border-box;
+      resize: vertical;
+      min-height: 56px;
+      margin-bottom: 10px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 14px;
+      color: #e8e8f0;
+      background: #14141f;
+      border: 1px solid #2d2d3f;
+      border-radius: 6px;
+    }
+    .text-input:focus { outline: none; border-color: #6cc6ff; }
+
     .ambient-inner { display: flex; flex-direction: column; gap: 12px; max-width: 460px; }
     .ambient-title {
       font-family: 'Segoe UI', sans-serif; font-size: 0.95rem; font-weight: 700;
@@ -4185,10 +4220,12 @@
     body.game-mode   .grid-wrap-row,
     body.prog-mode   .grid-wrap-row,
     body.ambient-mode .grid-wrap-row,
+    body.text-mode   .grid-wrap-row,
     body.fluid-grid  #wrap-bank,
     body.game-mode   #wrap-bank,
     body.prog-mode   #wrap-bank,
-    body.ambient-mode #wrap-bank { display: none !important; }
+    body.ambient-mode #wrap-bank,
+    body.text-mode   #wrap-bank { display: none !important; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active

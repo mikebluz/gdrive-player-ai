@@ -1558,8 +1558,20 @@
       const playable = lanes.some(l => (l.steps || []).length > 0);
       if (!playable) return;
       // Wait for any pending sample buffers — without this the first
-      // sample-based attack would be silent on a cold load.
-      try { await Tone.loaded(); } catch (e) {}
+      // sample-based attack would be silent on a cold load. BUT cap the
+      // wait: the app registers ~130 remote GM-instrument samplers that
+      // stream from a third-party CDN (gleitz.github.io). If that CDN is
+      // slow or unreachable, those buffers stay "pending" forever and a
+      // bare `await Tone.loaded()` would block playback indefinitely —
+      // the user clicks Play and nothing happens. Race it against a short
+      // timeout so local samples still get their moment to load while a
+      // dead/slow CDN can't hold the whole transport hostage.
+      try {
+        await Promise.race([
+          Tone.loaded(),
+          new Promise((resolve) => setTimeout(resolve, 500)),
+        ]);
+      } catch (e) {}
       // Skip the warmup pad when the audio context is already running;
       // the 60ms cushion is only needed on a true cold-start where the
       // first attack can otherwise clip. Warm-state taps now play

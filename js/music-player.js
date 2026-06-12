@@ -383,7 +383,12 @@ class MusicPlayer {
     }
 
     handleKeyboardControls(event) {
-        if (event.target.tagName === 'INPUT') return;
+        // Don't hijack keys (Space, arrows) while the user is typing in a
+        // text field or editable element — e.g. the TEXT-mode speech box.
+        const t = event.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        const ae = document.activeElement;
+        if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
         switch (event.code) {
             case 'Space':
                 event.preventDefault();

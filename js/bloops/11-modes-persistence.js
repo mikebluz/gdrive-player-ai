@@ -782,6 +782,8 @@
             // Bloom config — `playing` is never persisted as true (the
             // generator only ever starts on an explicit gesture).
             ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
+            textMode: !!l.textMode,
+            text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             // Per-lane voice. The active lane's live voice lives in
             // the globals (cellSounds / palette / etc.), so capture
             // those for it instead of relying on l.voice (which may
@@ -811,6 +813,8 @@
             fluidGridMode: !!l.fluidGridMode,
             ambientMode: !!l.ambientMode,
             ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
+            textMode: !!l.textMode,
+            text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
             sends: l.sends ? { ...l.sends } : null,
           })) : null,
@@ -1058,6 +1062,25 @@
       // Grid (root, octaves, scale, palette, A4) + cell sounds via rebuildGrid.
       resetGridToDefault();
 
+      // Global FX shape/send levels → defaults. Done BEFORE the lane rebuild
+      // so the fresh lane's per-lane sends (_defaultLaneSends seeds them from
+      // globalFx) start at the defaults, not the prior project's send levels.
+      // The FX panel UI sync + applyGlobalFx() below still run afterwards.
+      Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => { globalFx[k] = GLOBAL_FX_DEFAULTS[k]; });
+
+      // Variance lanes — dispose the old project's lane audio then rebuild a
+      // single fresh lane aliased to the now-empty sequence (matching the
+      // gridRows=1 default). Done after resetGridToDefault() so the new lane
+      // captures the default voice, not the prior project's. renderSequence()
+      // draws straight from lanes[] and never self-initializes, so without
+      // this the prior project's lanes stick around after "new project".
+      if (typeof disposeAllLaneAudio === 'function' && Array.isArray(lanes)) {
+        disposeAllLaneAudio(lanes);
+      }
+      lanes = [];
+      activeLaneIdx = 0;
+      if (typeof ensureLanesInitialized === 'function') ensureLanesInitialized();
+
       // Saved sequences bank.
       savedSequences = [];
       persistSaved();
@@ -1071,8 +1094,9 @@
       persistGridStates();
       refreshGridStateDropdown('');
 
-      // Global FX → defaults + sync the FX panel UI.
-      Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => { globalFx[k] = GLOBAL_FX_DEFAULTS[k]; });
+      // Push the FX defaults (reset above) into the live audio chain + sync
+      // the FX panel UI. applyGlobalFx() also re-applies every lane's sends,
+      // so the freshly-rebuilt lane lands at the default (dry) send levels.
       applyGlobalFx();
       persistGlobalFx();
       [
@@ -1592,6 +1616,7 @@
     // here alongside the other mode mirrors so it's initialised before the
     // boot-time _syncFluidGridToActiveLane() call (13-prog-pad.js) reads it.
     let ambientMode = false;
+    let textMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;

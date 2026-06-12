@@ -75,7 +75,7 @@ restore_dev_bypass() {
 trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
-cp -r index.html bloops.html player.html artwork.html game.html css js banner.jpg me2026.jpg samples artwork "$STAGE_DIR/"
+cp -r index.html bloops.html player.html artwork.html game.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 
 # -----------------------------------------------
 # Upload via SFTP using lftp

@@ -1456,9 +1456,21 @@
     }
 
     function showSoundEditor(noteIndex, opts) {
-      const note = notes[noteIndex];
-      const p = { ...cellParams[noteIndex] };
-      const _startApplyAll = !!(opts && opts.applyAll);
+      // Selection scope: when opts.steps is given, the editor targets those
+      // step refs — it writes each selected step's OWN params, and only the
+      // fields the user actually changes (change-only), so divergent untouched
+      // properties stay per-step. Absent → classic per-cell voice-template edit.
+      const _selSteps = (opts && Array.isArray(opts.steps) && opts.steps.length) ? opts.steps.slice() : null;
+      const _primaryStep = _selSteps ? _selSteps[_selSteps.length - 1] : null;
+      const _seedParams = _primaryStep
+        ? (_primaryStep.params || (Array.isArray(_primaryStep.chord) && _primaryStep.chord[0] && _primaryStep.chord[0].params) || null)
+        : null;
+      const note = _primaryStep ? { label: _primaryStep.label || 'selection', freq: _primaryStep.freq } : notes[noteIndex];
+      const p = _selSteps
+        ? Object.assign({ ...(cellParams[noteIndex] || cellParams[0] || {}) }, _seedParams || {})
+        : { ...cellParams[noteIndex] };
+      const _touched = new Set();     // fields the user actually edited
+      const _startApplyAll = !!(opts && opts.applyAll) && !_selSteps;
 
       const overlay = document.createElement('div');
       overlay.className = 'sm-overlay';
@@ -1645,6 +1657,9 @@
         });
       }
       const broadcastAll = (key, value) => {
+        // In selection scope the checkbox means "Replace entire voice", not
+        // "all cells" — never fan a live value out to the grid template here.
+        if (_selSteps) return;
         if (!applyAllChk?.checked) return;
         cellParams.forEach((cp, idx) => {
           if (!cp) return;
@@ -1668,6 +1683,7 @@
         btn.textContent = opt.label;
         btn.addEventListener('click', () => {
           p.type = opt.value;
+          _touched.add('type');
           broadcastAll('type', opt.value);
           waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
@@ -1736,6 +1752,7 @@
         input.addEventListener('input', () => {
           const v = parseFloat(input.value);
           p[key] = v;
+          _touched.add(key);
           broadcastAll(key, v);
           if (label) label.textContent = v + unit;
         });
@@ -1744,6 +1761,7 @@
       if (overrideCheckbox) {
         overrideCheckbox.addEventListener('change', () => {
           p.fxOverrideGlobal = !!overrideCheckbox.checked;
+          _touched.add('fxOverrideGlobal');
           broadcastAll('fxOverrideGlobal', p.fxOverrideGlobal);
         });
       }
@@ -1758,6 +1776,7 @@
           sliceSel.value = (typeof p.sliceMode === 'string' && p.sliceMode) ? p.sliceMode : 'scan';
           sliceSel.addEventListener('change', () => {
             p.sliceMode = sliceSel.value || 'scan';
+            _touched.add('sliceMode');
             broadcastAll('sliceMode', p.sliceMode);
           });
         }
@@ -1767,6 +1786,7 @@
         dlySyncSel.value = p.delaySync || '';
         dlySyncSel.addEventListener('change', () => {
           p.delaySync = dlySyncSel.value || null;
+          _touched.add('delaySync');
           broadcastAll('delaySync', p.delaySync);
         });
       }
@@ -1775,13 +1795,60 @@
         ppSyncSel.value = p.pingPongSync || '';
         ppSyncSel.addEventListener('change', () => {
           p.pingPongSync = ppSyncSel.value || null;
+          _touched.add('pingPongSync');
           broadcastAll('pingPongSync', p.pingPongSync);
+        });
+      }
+
+      // ---- Selection scope: relabel checkbox, mark mixed fields, retarget ----
+      if (_selSteps) {
+        const titleEl = modal.querySelector('.sm-title');
+        if (titleEl) titleEl.textContent = 'Sound — ' + _selSteps.length + ' step' + (_selSteps.length === 1 ? '' : 's');
+        // "Apply to all notes" → "Replace entire voice" (full stamp vs change-only).
+        const lbl = applyAllChk ? applyAllChk.closest('.sm-apply-all') : null;
+        if (lbl && applyAllChk) {
+          lbl.textContent = '';
+          lbl.appendChild(applyAllChk);
+          lbl.appendChild(document.createTextNode(' Replace entire voice (overwrite all fields)'));
+          lbl.title = 'Off: only the fields you change are written to the selected steps. On: stamp the whole voice onto them.';
+        }
+        // Mark fields that diverge across the selection as "Mixed" so the user
+        // knows touching them unifies just that one field.
+        const leafParams = (st) => (st && st.params) ? st.params
+          : (st && Array.isArray(st.chord) && st.chord[0] && st.chord[0].params) ? st.chord[0].params
+          : (st && Array.isArray(st.subSteps) && st.subSteps[0] && st.subSteps[0].params) ? st.subSteps[0].params : {};
+        const diverges = (key) => { const f = (leafParams(_selSteps[0]) || {})[key]; return _selSteps.some(st => (leafParams(st) || {})[key] !== f); };
+        [['sm-atk-v','attack'],['sm-dec-v','decay'],['sm-sus-v','sustain'],['sm-rel-v','release'],['sm-vol-v','volume'],['sm-tune-v','detune'],['sm-rev-v','reverb'],['sm-dly-v','delay'],['sm-dst-v','distortion']].forEach(([vid,key]) => {
+          if (_selSteps.length >= 2 && diverges(key)) { const el = modal.querySelector('#' + vid); if (el) { el.textContent = 'Mixed'; el.style.fontStyle = 'italic'; el.style.color = '#c9a8ff'; } }
         });
       }
 
       modal.querySelector('#sm-preview').addEventListener('click', () => playNote(note.freq, p));
 
       modal.querySelector('#sm-apply').addEventListener('click', () => {
+        if (_selSteps) {
+          // Change-only by default — write just the touched fields to every
+          // selected step's params (and chord voices / sub leaves), leaving
+          // untouched (divergent) fields per-step. "Replace entire voice" writes
+          // the whole bundle.
+          const full = !!(applyAllChk && applyAllChk.checked);
+          const keys = full ? Object.keys(p) : Array.from(_touched);
+          if (keys.length) {
+            if (typeof snapshotForUndo === 'function') snapshotForUndo('Sound edit');
+            const writeKeys = (st) => {
+              if (!st) return;
+              if (st.isSub && Array.isArray(st.subSteps)) { st.subSteps.forEach(writeKeys); return; }
+              if (!st.params) st.params = {};
+              keys.forEach(k => { st.params[k] = p[k]; if (k === 'type') st.sound = p[k]; });
+              if (Array.isArray(st.chord)) st.chord.forEach(v => { if (!v) return; if (!v.params) v.params = {}; keys.forEach(k => { v.params[k] = p[k]; if (k === 'type') v.sound = p[k]; }); });
+            };
+            _selSteps.forEach(writeKeys);
+            if (typeof renderSequence === 'function') renderSequence();
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          }
+          overlay.remove();
+          return;
+        }
         cellParams[noteIndex] = { ...p };
         cellSounds[noteIndex] = p.type;
         const sel = cells[noteIndex]?.querySelector('.cell-sound-select');
@@ -2452,6 +2519,14 @@
         actions.push('hr');
       }
       actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
+      // Sound editor scoped to the selected steps (change-only). If the
+      // long-pressed chip isn't in the selection, edit just it.
+      (function () {
+        const inSel = (typeof selectedStepRefs !== 'undefined') && selectedStepRefs.indexOf(sequence[stepIndex]) >= 0;
+        const targets = (inSel && selectedStepRefs.length) ? selectedStepRefs.slice() : [sequence[stepIndex]];
+        const n = targets.length;
+        actions.push({ label: '♪ Sound editor' + (n > 1 ? ' (' + n + ' steps)…' : '…'), fn: () => showSoundEditor(stepIndex, { steps: targets }) });
+      })();
       actions.push({ label: '⇕ Fold',        fn: () => foldStep(stepIndex) });
       actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
       actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });

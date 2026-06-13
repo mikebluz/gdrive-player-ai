@@ -605,10 +605,15 @@
       <button type="button" class="colors-opt" data-mode="piano">Piano</button>
     </div>
     <div class="btn-group btn-group--step" title="Step controls — multi-select, grid layout, and append/fixed mode">
-      <label class="step-multi-toggle" title="Multi-select: clicking step chips adds them to the selection so Size edits them all at once.">
+      <!-- "Multi" retired: selection is the edit scope now — tap a chip to
+           toggle it in/out of the selection (shift-click for a range), and
+           edits apply to every selected step. Kept in the DOM (hidden) because
+           the checkbox id is still referenced by several reset paths. -->
+      <label class="step-multi-toggle" hidden>
         <input type="checkbox" id="multi-select-toggle" />
         Multi
       </label>
+      <button type="button" id="seq-select-btn" class="step-mode-btn" title="Select steps by rule (all / none / invert / every Nth / rests / chords / on-beat). Tap chips to toggle; shift-click for a range; Esc or empty-space click to clear.">Select ▾</button>
       <label class="step-multi-toggle" title="Quantize held notes: when on, a press's duration rounds to the NEAREST step division. With it off, holds round UP to the next whole step (the original behavior).">
         <input type="checkbox" id="quantize-holds-toggle" />
         Quantize

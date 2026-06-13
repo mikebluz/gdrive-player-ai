@@ -3613,6 +3613,11 @@
       border-bottom: 1px solid #1a1a2e;
     }
     .step-edit-row[hidden] { display: none; }
+    /* Mixed-state: the selected steps diverge on this attribute. The value
+       reads "Mixed"; editing the control unifies just this one attribute. */
+    #step-pan-bar.mixed #step-pan-val,
+    #step-vol-bar.mixed #step-vol-val,
+    #step-slip-bar.mixed #step-slip-val { font-style: italic; color: #c9a8ff; }
     .step-edit-row > #step-edit-btn {
       flex: 0 0 10vw;
       width: 10vw;

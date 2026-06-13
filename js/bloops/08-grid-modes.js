@@ -1264,7 +1264,12 @@
       if (!semitones || sequence.length === 0) return;
       snapshotForUndo('Transpose');
       stopSequence();
-      sequence.forEach(s => modulateStepRec(s, semitones));
+      // Scope = selection: transpose only the selected steps when there's a
+      // selection, else the whole lane (empty selection = lane-wide).
+      const sel = (typeof selectedStepRefs !== 'undefined' && selectedStepRefs.length)
+        ? selectedStepRefs.filter(s => sequence.indexOf(s) >= 0) : null;
+      const targets = (sel && sel.length) ? sel : sequence;
+      targets.forEach(s => modulateStepRec(s, semitones));
       renderSequence();
     }
     function showTransposeDialog(stepIndex) {
@@ -1852,7 +1857,8 @@
     document.getElementById('subdivision-select')?.addEventListener('change', (e) => {
       const v = parseFloat(e.target.value) || 1;
       if (selectedStepRefs.length > 0) {
-        const targets = (multiSelectMode ? selectedStepRefs : [lastSelectedStep()]).filter(Boolean);
+        // Selection is the scope — size applies to every selected step.
+        const targets = selectedStepRefs.filter(Boolean);
         if (targets.length > 0) snapshotForUndo('Size');
         targets.forEach(s => { if (s && !s.isSub) s.subdivision = v; });
         renderSequence();

@@ -592,7 +592,7 @@
         // and skips the second click of a double-click pair so the
         // dblclick → duplicate handler can run cleanly without us
         // throwing a duplicate select/deselect into the mix.
-        const performSingleClick = () => {
+        const performSingleClick = (ev) => {
           // While a variance edit is active, clicking the blinking
           // chip itself finalizes the edit and locks in whatever
           // alternates the user added. Clicking other chips falls
@@ -624,29 +624,20 @@
             document.getElementById('save-btn').disabled = sequence.length === 0;
             return;
           }
-          // Re-click on an already-selected chip toggles it off — in Multi
-          // mode just that chip leaves the selection, otherwise the whole
-          // selection clears. No audio preview on deselect since the user
-          // is dismissing the edit, not auditioning.
-          if (isSelectedStep(step)) {
-            if (multiSelectMode && !step.isSub) {
-              const sIdx = selectedStepRefs.indexOf(step);
-              if (sIdx >= 0) selectedStepRefs.splice(sIdx, 1);
-              syncStepEditorFromSelection();
-            } else {
-              clearSelection();
-            }
+          // Selection IS the edit scope (no "Multi" mode). A plain click/tap
+          // TOGGLES this chip's membership; shift-click selects the contiguous
+          // range from the primary chip to this one. Deselecting just dismisses
+          // (no preview); a fresh select previews + captures wrap/key below.
+          const _shiftSel = !!(ev && ev.shiftKey);
+          if (_shiftSel && selectedStepRefs.length) {
+            const anchor = sequence.indexOf(lastSelectedStep());
+            if (anchor >= 0) _selectStepRange(anchor, i); else _toggleSelectedStep(i);
             renderSequence();
             return;
           }
-          // First click on this chip — select it so Hold / Step Div retarget
-          // it, and preview the audio so the user hears what they selected.
-          // Multi-mode adds to the selection; otherwise it replaces.
-          if (multiSelectMode && !step.isSub) {
-            addSelectedStep(i);
-          } else {
-            setSelectedStep(i);
-          }
+          const _wasSelected = isSelectedStep(step);
+          _toggleSelectedStep(i);
+          if (_wasSelected) { renderSequence(); return; }
           // Clicking a chord/sub chip captures it as the active wrap
           // form so future cell taps audition that structure transposed,
           // and the Keep button reads the shorthand chord name. Single-
@@ -682,7 +673,7 @@
           // click of a double-click pair. Skipping detail >= 2 keeps the
           // single-click side-effects from running twice on a dblclick.
           if (e.detail >= 2) return;
-          performSingleClick();
+          performSingleClick(e);
         });
         chip.addEventListener('dblclick', () => {
           duplicateStep(i);
@@ -849,6 +840,10 @@
     // refs and selection clears automatically via clampSelectionToSequence.
     // selectedStepRefs[last] is the "primary" / most-recently-clicked step;
     // it drives the editor's displayed Hold/Div values.
+    // Vestigial: the "Multi" toggle is retired — selection IS the edit scope now
+    // (every click toggles a chip's membership; edits act on all selected). This
+    // flag is no longer read for selection behavior; kept only so existing
+    // assignments across the codebase don't break.
     let multiSelectMode = false;
     let selectedStepRefs = [];
     // When true, the Pan / Vol / Slip sliders broadcast their value to
@@ -1141,6 +1136,48 @@
     });
     document.getElementById('undo-btn').addEventListener('click', performUndo);
     document.getElementById('redo-btn').addEventListener('click', performRedo);
+    // ---- Deselect all ---------------------------------------------------
+    // Escape, or a click on empty space in the sequence ribbon, clears the
+    // step selection (which drops the edit scope back to lane-wide).
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (selectedStepRefs.length) { clearSelection(); renderSequence(); }
+    });
+    (function initSeqBackgroundClear() {
+      const disp = document.getElementById('sequence-display');
+      if (!disp) return;
+      disp.addEventListener('click', (e) => {
+        const tgt = e.target;
+        // A chip or any interactive control handles its own click — only a
+        // tap on the empty ribbon background deselects.
+        if (tgt.closest && (tgt.closest('.seq-step') || tgt.closest('button, input, select, textarea, label'))) return;
+        if (selectedStepRefs.length) { clearSelection(); renderSequence(); }
+      });
+    })();
+    // ---- Select-by-rule menu -------------------------------------------
+    (function initSelectByRuleBtn() {
+      const btn = document.getElementById('seq-select-btn');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        if (typeof showCtxMenu !== 'function') return;
+        const r = btn.getBoundingClientRect();
+        showCtxMenu(r.left, r.bottom + 2, [
+          { label: 'All', fn: () => _selectByRule('all') },
+          { label: 'None', fn: () => _selectByRule('none') },
+          { label: 'Invert', fn: () => _selectByRule('invert') },
+          'hr',
+          { label: 'Every 2nd', fn: () => _selectByRule('nth', 2) },
+          { label: 'Every 3rd', fn: () => _selectByRule('nth', 3) },
+          { label: 'Every 4th', fn: () => _selectByRule('nth', 4) },
+          'hr',
+          { label: 'All rests', fn: () => _selectByRule('rests') },
+          { label: 'All chords / wraps', fn: () => _selectByRule('chords') },
+          { label: 'On the beat', fn: () => _selectByRule('onbeat') },
+        ]);
+      });
+    })();
     function lastSelectedStep() {
       if (selectedStepRefs.length === 0) return null;
       return selectedStepRefs[selectedStepRefs.length - 1];
@@ -1212,6 +1249,14 @@
       // appending fresh steps.
       const stepGroup = document.querySelector('.btn-group--step');
       if (stepGroup) stepGroup.classList.toggle('step-selected', selectedStepRefs.length > 0);
+      // Scope readout on the Select button: "N sel" when steps are selected,
+      // else "Lane" so it's clear an edit with no selection hits the whole lane.
+      const _selBtn = document.getElementById('seq-select-btn');
+      if (_selBtn) {
+        const n = selectedStepRefs.length;
+        _selBtn.textContent = n ? (n + ' sel ▾') : 'Lane ▾';
+        _selBtn.classList.toggle('active', n > 0);
+      }
 
       // Selected-step pan slider: hide when nothing is selected; show
       // and sync to the primary's pan value when there is. Multi-mode
@@ -1239,12 +1284,12 @@
       // selection" behavior is gone (per user — these faders are
       // step-level controls, not lane-level).
       const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
-      const polyLaneScope = false;
+      // Scope = selection: with steps selected, the faders edit them; with
+      // NOTHING selected, they fall back to lane-wide (the "0 = lane" half of
+      // the model — replaces the retired "All" button). Poly is always on.
+      const polyLaneScope = (selEligible.length === 0 && typeof polyMode !== 'undefined' && polyMode && lanes[activeLaneIdx]);
       const eligible = selEligible;
-      // Keep the row up while All mode is on — even with no selection,
-      // the user needs the sliders visible to dial in lane-wide values
-      // and the All button itself reachable to deactivate.
-      const showBars = eligible.length > 0 || _allLaneMode;
+      const showBars = eligible.length > 0 || polyLaneScope || _allLaneMode;
       // Read the slider's display value from the primary step's first
       // playable leaf — collapses chord and sub cases to the same
       // lookup. For chord steps the leaf IS the chord step (chord
@@ -1252,6 +1297,17 @@
       const _primaryLeaf = (showBars && !polyLaneScope)
         ? _firstStepLeaf(eligible[eligible.length - 1])
         : null;
+      // Mixed-state: when 2+ steps are selected and diverge on an attribute,
+      // show "Mixed" (and mark the bar) rather than one step's value — so the
+      // user knows editing that control unifies just THAT attribute, leaving
+      // every other (possibly divergent) property per-step.
+      const _attr = (top, key, dflt) => { const lf = _firstStepLeaf(top); const pv = (lf && lf.params) ? lf.params[key] : undefined; return Number.isFinite(pv) ? pv : ((lf && Number.isFinite(lf[key])) ? lf[key] : dflt); };
+      const _markMixed = (bar, valEl, key, dflt) => {
+        const m = (!polyLaneScope && eligible.length >= 2) && eligible.some(t => _attr(t, key, dflt) !== _attr(eligible[0], key, dflt));
+        if (bar) bar.classList.toggle('mixed', m);
+        if (m && valEl) valEl.textContent = 'Mixed';
+        return m;
+      };
       if (panBar) {
         if (!showBars) {
           panBar.hidden = true;
@@ -1267,6 +1323,7 @@
           }
           if (panSlider) panSlider.value = String(p);
           if (panVal) panVal.textContent = formatPanLabel(p);
+          _markMixed(panBar, panVal, 'pan', 0);
         }
       }
       if (volBar) {
@@ -1284,6 +1341,7 @@
           }
           if (volSlider) volSlider.value = String(v);
           if (volVal) volVal.textContent = v + '%';
+          _markMixed(volBar, volVal, 'volume', 100);
         }
       }
       if (slipBar) {
@@ -1304,6 +1362,7 @@
           }
           if (slipSlider) slipSlider.value = String(s);
           if (slipVal) slipVal.textContent = (s > 0 ? '+' : '') + s + '%';
+          _markMixed(slipBar, slipVal, 'slip', 0);
         }
       }
       // Strum bar — only meaningful for chord steps (it staggers the chord's
@@ -1471,6 +1530,52 @@
     function clearSelection() {
       selectedStepRefs = [];
       syncStepEditorFromSelection();
+    }
+    // Toggle a step's membership in the selection (click/tap). Adding pushes it
+    // to the end so it becomes the primary (drives the editor read-out).
+    function _toggleSelectedStep(idx) {
+      if (idx == null || idx < 0 || idx >= sequence.length) return;
+      const step = sequence[idx];
+      if (!step) return;
+      const at = selectedStepRefs.indexOf(step);
+      if (at >= 0) selectedStepRefs.splice(at, 1);
+      else selectedStepRefs.push(step);
+      syncStepEditorFromSelection();
+    }
+    // Select the contiguous range between two indices (shift-click). The
+    // clicked end becomes the primary.
+    function _selectStepRange(aIdx, bIdx) {
+      const lo = Math.min(aIdx, bIdx), hi = Math.max(aIdx, bIdx);
+      const range = [];
+      for (let k = lo; k <= hi; k++) { if (sequence[k]) range.push(sequence[k]); }
+      const clicked = sequence[bIdx];
+      const ci = range.indexOf(clicked);
+      if (ci >= 0) { range.splice(ci, 1); range.push(clicked); } // primary = clicked
+      selectedStepRefs = range;
+      syncStepEditorFromSelection();
+    }
+    // Select-by-rule: set the selection from a pattern over the active lane.
+    // rule: all | none | invert | nth(n) | rests | chords | onbeat.
+    function _selectByRule(rule, n) {
+      const playable = (s) => !!(s && (s.freq != null || s.chord || (s.isSub && Array.isArray(s.subSteps))));
+      let refs = [];
+      if (rule === 'all') refs = sequence.filter(playable);
+      else if (rule === 'none') refs = [];
+      else if (rule === 'invert') refs = sequence.filter(s => playable(s) && !isSelectedStep(s));
+      else if (rule === 'rests') refs = sequence.filter(s => s && s.freq == null && !s.chord && !s.isSub);
+      else if (rule === 'chords') refs = sequence.filter(s => s && (Array.isArray(s.chord) || s.isSub));
+      else if (rule === 'nth') { const k = Math.max(2, n | 0); refs = sequence.filter((s, i) => playable(s) && (i % k === 0)); }
+      else if (rule === 'onbeat') {
+        let acc = 0; const eps = 1e-6;
+        sequence.forEach((s) => {
+          const onBeat = Math.abs(acc - Math.round(acc)) < eps;
+          if (onBeat && playable(s)) refs.push(s);
+          acc += (s.duration || 1) * ((s.subdivision != null) ? s.subdivision : stepSubdivision);
+        });
+      }
+      selectedStepRefs = refs;
+      syncStepEditorFromSelection();
+      renderSequence();
     }
     function clampSelectionToSequence() {
       // Drop any step refs that no longer live in the sequence (e.g., after

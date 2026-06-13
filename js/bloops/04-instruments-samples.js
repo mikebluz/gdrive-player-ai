@@ -136,16 +136,16 @@
         // the attack/release a touch on the slice path to fade them (the
         // non-slice path keeps its exact prior values).
         const _slicing = !!(opts && (Number.isFinite(opts.sliceDurSec) || (Number.isFinite(opts.sampleOffsetSec) && opts.sampleOffsetSec > 0)));
-        // A slice should play the buffer window at its natural level — the
-        // synth-style decay-to-sustain (cellParams default sustain 50%) made
-        // sliced/TEXT-frozen samples audibly trail off to ~half volume. On the
-        // slice path force full sustain + no decay so only the short floored
-        // attack/release shape the cut edges; the non-slice path (tuned
-        // multi-sampled instruments) keeps its full ADSR sculpting.
+        // Honor the voice's full ADSR on every path — samples are sculptable
+        // like synths. Single-buffer sample voices are seeded with a full-level
+        // envelope (sustain 100, decay 0) when applied (see applyToneToAllCells)
+        // so they play at natural level by default; the user can dial in decay/
+        // sustain for fades. The slice path only floors attack/release a touch
+        // so mid-buffer cut edges don't click.
         ampEnv = new Tone.AmplitudeEnvelope({
           attack:  _slicing ? Math.max(0.006, env.attack) : Math.max(0, env.attack),
-          decay:   _slicing ? 0 : Math.max(0, env.decay),
-          sustain: _slicing ? 1 : Math.max(0, Math.min(1, env.sustain)),
+          decay:   Math.max(0, env.decay),
+          sustain: Math.max(0, Math.min(1, env.sustain)),
           release: _slicing ? Math.max(0.006, env.release) : Math.max(0.01, env.release),
         }).connect(outGain);
         let head = ampEnv;

@@ -2058,6 +2058,30 @@
       border: 1px solid #20203a; border-radius: 8px; padding: 10px 12px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
     }
+    /* Parameter ramps (LFO automation of a layer param). */
+    .ambient-ramps-section { display: flex; flex-direction: column; gap: 8px; }
+    .ambient-ramps-head { display: flex; align-items: center; gap: 8px; }
+    .ambient-ramp-add { margin-left: auto; }
+    .ambient-ramps { display: flex; flex-direction: column; gap: 8px; }
+    .ambient-ramp-row {
+      border: 1px solid #20203a; border-radius: 8px; padding: 8px 10px;
+      display: flex; flex-direction: column; gap: 8px; background: rgba(159,122,234,0.05);
+    }
+    .ambient-ramp-head { display: flex; align-items: center; gap: 8px; }
+    .ambient-ramp-head .ambient-ramp-target { flex: 1 1 auto; min-width: 0; }
+    .ambient-ramp-head .ambient-seq-del { margin-left: 0; }
+    .ambient-ramp-params { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+    .ambient-ramp-params > label {
+      display: flex; align-items: center; gap: 5px;
+      color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; font-weight: 700;
+    }
+    .ambient-ramp-num {
+      width: 64px; box-sizing: border-box;
+      background: #0a0a14; color: #e2e8f0; border: 1px solid #2d2d3f; border-radius: 6px;
+      padding: 4px 6px; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+    }
+    .ambient-ramp-params .ambient-ramp-wave { width: auto; }
+    .ambient-ramp-range { flex: 1 0 100%; color: #6b6b8a; font-size: 0.74rem; }
     .ambient-layer-head { display: flex; align-items: center; }
     .ambient-toggle {
       padding: 4px 14px; border: 1px solid #2d2d3f; border-radius: 14px;

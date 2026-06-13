@@ -99,7 +99,7 @@
         playId: opts.playId, seedId: opts.seedId, isLane: !!opts.isLane,
         // per-run state (was module-global, single-instance)
         rng: 1, motifDeg: null, texPattern: null, texStep: 0, texMutateAt: 0,
-        mod: {}, reverb: null, timer: null, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
+        mod: {}, reverb: null, timer: null, rampTimer: null, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
       };
     }
     const _laneEng = _makeAmbientEngine({
@@ -280,6 +280,12 @@
       cfg.samples.forEach(s => { if (s && Number.isFinite(s.id) && s.id > maxSid) maxSid = s.id; });
       cfg.samples.forEach(s => { if (s && !Number.isFinite(s.id)) s.id = ++maxSid; });
       cfg.samples = cfg.samples.filter(s => s && typeof s === 'object').map(s => _normalizeSampleLayer(s, s.id));
+      // Parameter ramps (LFO automation of a layer param between A and B).
+      if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
+      let maxRid = 0;
+      cfg.ramps.forEach(r => { if (r && Number.isFinite(r.id) && r.id > maxRid) maxRid = r.id; });
+      cfg.ramps.forEach(r => { if (r && !Number.isFinite(r.id)) r.id = ++maxRid; });
+      cfg.ramps = cfg.ramps.filter(r => r && typeof r === 'object').map(r => _normalizeRamp(r, r.id));
       return cfg;
     }
     function _laneAmbientCfg() {
@@ -1084,6 +1090,7 @@
       const cfg = E.getCfg();
       if (!cfg) return;
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+      // (Ramps run on their own finer clock — see _ambStartGenerator.)
       const horizon = now + 1.2, lead = now + 0.1;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
@@ -1151,6 +1158,18 @@
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
       _ambTick(E);
       E.timer = setInterval(() => _ambTick(E), 150);
+      // Dedicated finer ramp clock (40 Hz) so parameter ramps sweep smoothly
+      // and sample close to each generated event, independent of the 150 ms
+      // scheduling tick. Cheap (a few arithmetic writes); no-ops without ramps.
+      if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      E.rampTimer = setInterval(() => {
+        try {
+          const c = E.getCfg();
+          if (!c || !Array.isArray(c.ramps) || !c.ramps.length) return;
+          const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+          _ambApplyRamps(c, t);
+        } catch (e) {}
+      }, 25);
       cfg.playing = true;
       _ambRefreshPlayBtn(E);
       _ambVizKick(E);
@@ -1158,6 +1177,7 @@
     function _ambStopGenerator(E) {
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
+      if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       _ambResetClocks(E);
       const cfg = E.getCfg();
       if (cfg) cfg.playing = false;
@@ -1747,6 +1767,187 @@
       _ambRenderSampleLayers(E);
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // ---- Parameter ramps (LFO automation) ------------------------------
+    // A ramp continuously sweeps one layer parameter between A and B over a
+    // period, shaped by a waveform: sine/triangle go A→B→A, saw ramps A→B then
+    // jumps back, square alternates A/B. Applied every tick by writing the live
+    // cfg value (read by the generator on its next event), so no extra audio
+    // wiring is needed. Rampable params are the numeric LAYER params (read live
+    // per-tick) — not the node-backed globals (reverb/space).
+    const _AMB_RAMP_PARAMS = {
+      bed:     [['density','Density',1,8],['register','Register',2,6],['spread','Spread',0,3],['intervalMs','Interval (ms)',200,12000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['motion','Motion',0,100],['level','Level',0,100]],
+      motif:   [['register','Register',2,7],['range','Range',1,4],['intervalMs','Interval (ms)',100,4000],['lengthMs','Length (ms)',80,4000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
+      texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['mutateRate','Mutate',0,100],['level','Level',0,100]],
+      beat:    [['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
+      seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
+      samp:    [['chop','Chop',1,16],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',80,16000],['drift','Drift',0,99],['level','Level',0,100]],
+    };
+    function _normalizeRamp(r, id) {
+      if (!Number.isFinite(r.id)) r.id = id;
+      if (typeof r.on !== 'boolean') r.on = true;
+      if (typeof r.target !== 'string') r.target = 'bed.level';
+      if (!Number.isFinite(r.a)) r.a = 0;
+      if (!Number.isFinite(r.b)) r.b = 100;
+      if (!Number.isFinite(r.periodMs)) r.periodMs = 4000;
+      r.periodMs = Math.max(50, r.periodMs | 0);
+      if (['sine','triangle','saw','square'].indexOf(r.wave) < 0) r.wave = 'sine';
+      return r;
+    }
+    // Resolve a ramp target ("bed.level", "seq:3.intervalMs", "samp:1.chop")
+    // to the { obj, key, min, max } it writes. null if the layer/param is gone.
+    function _ambRampResolve(cfg, target) {
+      if (!cfg || typeof target !== 'string') return null;
+      const dot = target.indexOf('.');
+      if (dot < 0) return null;
+      const head = target.slice(0, dot), key = target.slice(dot + 1);
+      let obj = null, cat = head;
+      if (head === 'bed' || head === 'motif' || head === 'texture' || head === 'beat') {
+        obj = cfg[head];
+      } else if (head.indexOf('seq:') === 0) {
+        const sid = parseInt(head.slice(4), 10);
+        obj = (cfg.seqs || []).find(s => s.id === sid); cat = 'seq';
+      } else if (head.indexOf('samp:') === 0) {
+        const sid = parseInt(head.slice(5), 10);
+        obj = (cfg.samples || []).find(s => s.id === sid); cat = 'samp';
+      }
+      if (!obj) return null;
+      const spec = (_AMB_RAMP_PARAMS[cat] || []).find(p => p[0] === key);
+      if (!spec) return null;
+      return { obj, key, min: spec[2], max: spec[3] };
+    }
+    // Grouped target list for the dropdown (built-in layers + dynamic layers).
+    function _ambRampTargetGroups(cfg) {
+      const g = [];
+      const add = (label, head, cat) => g.push({ label, items: (_AMB_RAMP_PARAMS[cat] || []).map(p => ({ value: head + '.' + p[0], label: p[1] })) });
+      add('Bed', 'bed', 'bed'); add('Motif', 'motif', 'motif'); add('Texture', 'texture', 'texture'); add('Beat', 'beat', 'beat');
+      (cfg.seqs || []).forEach((s, i) => add('Seq' + (i + 1), 'seq:' + s.id, 'seq'));
+      (cfg.samples || []).forEach((s, i) => add('Sample' + (i + 1), 'samp:' + s.id, 'samp'));
+      return g;
+    }
+    // Waveform position factor in [0,1] for phase in [0,1).
+    function _ambRampFactor(wave, phase) {
+      switch (wave) {
+        case 'triangle': return phase < 0.5 ? phase * 2 : 2 - phase * 2;
+        case 'saw':      return phase;
+        case 'square':   return phase < 0.5 ? 0 : 1;
+        case 'sine':
+        default:         return (1 - Math.cos(2 * Math.PI * phase)) / 2;
+      }
+    }
+    // Called each tick: write every active ramp's current value into cfg.
+    function _ambApplyRamps(cfg, nowSec) {
+      if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) return;
+      for (const r of cfg.ramps) {
+        if (!r || !r.on) continue;
+        const res = _ambRampResolve(cfg, r.target);
+        if (!res) continue;
+        const period = Math.max(50, r.periodMs | 0);
+        const phase = ((nowSec * 1000) % period) / period;
+        const f = _ambRampFactor(r.wave, phase);
+        let v = r.a + f * (r.b - r.a);
+        v = Math.max(res.min, Math.min(res.max, v));
+        res.obj[res.key] = Math.round(v);
+      }
+    }
+    function _ambRampRowHtml(r, cfg) {
+      const id = r.id, p = 'ambient-ramp-' + id + '-';
+      const groups = _ambRampTargetGroups(cfg);
+      const tgtOpts = groups.map(grp =>
+        '<optgroup label="' + grp.label + '">' +
+        grp.items.map(it => '<option value="' + it.value + '"' + (it.value === r.target ? ' selected' : '') + '>' + it.label + '</option>').join('') +
+        '</optgroup>').join('');
+      const waveOpts = [['sine','Sine'],['triangle','Triangle'],['saw','Saw'],['square','Square']]
+        .map(w => '<option value="' + w[0] + '"' + (r.wave === w[0] ? ' selected' : '') + '>' + w[1] + '</option>').join('');
+      return '<div class="ambient-ramp-row" data-ramp-id="' + id + '">' +
+        '<div class="ambient-ramp-head">' +
+          '<button type="button" class="ambient-toggle ambient-ramp-on" id="' + p + 'on">Ramp</button>' +
+          '<select id="' + p + 'target" class="ambient-select ambient-ramp-target">' + tgtOpts + '</select>' +
+          '<button type="button" class="ambient-seq-del" id="' + p + 'del" title="Delete ramp" aria-label="Delete ramp">✕</button>' +
+        '</div>' +
+        '<div class="ambient-ramp-params">' +
+          '<span class="ambient-hint ambient-ramp-range" id="' + p + 'range"></span>' +
+          '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" value="' + r.a + '"></label>' +
+          '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" value="' + r.b + '"></label>' +
+          '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="50" step="50" value="' + r.periodMs + '"><span class="ambient-hint">ms</span></label>' +
+          '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + '</select></label>' +
+        '</div>' +
+      '</div>';
+    }
+    function _ambRampSyncABRange(E, id) {
+      const cfg = E.getCfg(); if (!cfg) return;
+      const r = (cfg.ramps || []).find(x => x.id === id); if (!r) return;
+      const res = _ambRampResolve(cfg, r.target); if (!res) return;
+      const p = 'ambient-ramp-' + id + '-';
+      ['a', 'b'].forEach(k => { const e = _ambGet(E, p + k); if (e) { e.min = res.min; e.max = res.max; } });
+      // Show the param's valid range + its current value so the user knows
+      // what A/B to dial in.
+      const rg = _ambGet(E, p + 'range');
+      if (rg) rg.textContent = res.min + '–' + res.max + ' (now ' + Math.round(res.obj[res.key]) + ')';
+    }
+    function _ambWireRamp(E, r) {
+      const id = r.id, p = 'ambient-ramp-' + id + '-';
+      const getR = () => { const c = E.getCfg(); return (c && Array.isArray(c.ramps)) ? c.ramps.find(x => x.id === id) : null; };
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const el = (suf) => _ambGet(E, p + suf);
+      const onB = el('on');
+      if (onB) { onB.classList.toggle('on', !!r.on); onB.addEventListener('click', () => { _E = E; const R = getR(); if (!R) return; R.on = !R.on; onB.classList.toggle('on', R.on); persist(); }); }
+      const tgt = el('target');
+      if (tgt) tgt.addEventListener('change', () => {
+        _E = E; const R = getR(); if (!R) return;
+        R.target = tgt.value;
+        // Reseed A/B to the new param's current value so switching targets
+        // doesn't carry over an out-of-range / silencing value.
+        const c = E.getCfg(); const res = _ambRampResolve(c, R.target);
+        if (res) {
+          const cur = Math.round(res.obj[res.key]);
+          R.a = cur; R.b = cur;
+          const ae = el('a'), be = el('b');
+          if (ae) ae.value = String(cur);
+          if (be) be.value = String(cur);
+        }
+        _ambRampSyncABRange(E, id);
+        persist();
+      });
+      const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.a = parseFloat(a.value) || 0; persist(); });
+      const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.b = parseFloat(b.value) || 0; persist(); });
+      const per = el('period'); if (per) per.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.periodMs = Math.max(50, parseInt(per.value, 10) || 1000); persist(); });
+      const wv = el('wave'); if (wv) wv.addEventListener('change', () => { _E = E; const R = getR(); if (!R) return; R.wave = wv.value || 'sine'; persist(); });
+      const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteRamp(E, id));
+    }
+    function _ambRenderRamps(E) {
+      const wrap = _ambGet(E, 'ambient-ramps');
+      if (!wrap) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
+      wrap.innerHTML = _ambNamespaceHtml(E, cfg.ramps.map(r => _ambRampRowHtml(r, cfg)).join(''));
+      cfg.ramps.forEach(r => _ambWireRamp(E, r));
+      cfg.ramps.forEach(r => _ambRampSyncABRange(E, r.id));
+    }
+    function _ambAddRamp(E) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg) return;
+      if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
+      const newId = cfg.ramps.reduce((m, r) => Math.max(m, r.id | 0), 0) + 1;
+      const target = 'bed.level';
+      const res = _ambRampResolve(cfg, target);
+      // Default A and B to the param's CURRENT value so adding a ramp doesn't
+      // immediately move (or, for Level, silence) the parameter — the user
+      // then sets distinct A/B to define the sweep.
+      const cur = res ? Math.round(res.obj[res.key]) : 0;
+      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, target, a: cur, b: cur, periodMs: 4000, wave: 'sine' }, newId));
+      _ambRenderRamps(E);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _ambDeleteRamp(E, id) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.ramps)) return;
+      const idx = cfg.ramps.findIndex(r => r.id === id);
+      if (idx < 0) return;
+      cfg.ramps.splice(idx, 1);
+      _ambRenderRamps(E);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
     // Apply a distilled sequence "unit" to an engine's Seq layers.
     // mode: 'new' (new SeqN) | 'append' (grow first unit) | 'interleave' (add a unit).
     function _ambSendSeedToInstance(E, unit, mode, targetSeqId) {
@@ -1841,6 +2042,7 @@
       // Seq + Sample layers are dynamic lists — (re)render for this engine.
       _ambRenderSeqLayers(E);
       _ambRenderSampleLayers(E);
+      _ambRenderRamps(E);
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const m = cfg[layer] && cfg[layer].mod;
         if (!m) return;
@@ -1941,6 +2143,12 @@
         '</div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-sample-layers"></div>' +
+        // Parameter ramps — LFO automation of a layer param (A→B, period, wave).
+        '<div class="ambient-ramps-section">' +
+          '<div class="ambient-ramps-head"><span class="ambient-mod-sub">Ramps</span>' +
+            '<button type="button" class="ambient-regen ambient-ramp-add" id="ambient-ramp-add" title="Add a parameter ramp">+ Add ramp</button></div>' +
+          '<div class="ambient-ramps" id="ambient-ramps"></div>' +
+        '</div>' +
         '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
 
@@ -2128,6 +2336,9 @@
           persist();
         });
       });
+
+      const addRampBtn = G('ambient-ramp-add');
+      if (addRampBtn) addRampBtn.addEventListener('click', () => _ambAddRamp(E));
 
       const playBtn = G('ambient-play-btn');
       if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });

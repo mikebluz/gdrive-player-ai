@@ -990,11 +990,25 @@
       // (synths + the multi-sampled tuned instruments) clear sliceMode.
       const sliceMode = (typeof isSliceableSample === 'function' && isSliceableSample(type))
         ? (sliceModeArg || 'scan') : null;
-      const applySlice = (o) => { if (!o) return; if (sliceMode) o.sliceMode = sliceMode; else delete o.sliceMode; };
+      // Single-buffer samples (imported / recorded / TEXT-frozen) default to a
+      // full-level envelope so the clip plays at its natural loudness instead of
+      // inheriting the synth-style decay-to-50% default. The ADSR stays fully
+      // editable in the Sound Editor afterward; this is just the seed state.
+      const SAMPLE_ENV = { attack: 4, decay: 0, sustain: 100, release: 120 };
+      const applyVoiceDefaults = (o) => {
+        if (!o) return;
+        if (sliceMode) {
+          o.sliceMode = sliceMode;
+          o.attack = SAMPLE_ENV.attack; o.decay = SAMPLE_ENV.decay;
+          o.sustain = SAMPLE_ENV.sustain; o.release = SAMPLE_ENV.release;
+        } else {
+          delete o.sliceMode;
+        }
+      };
       cellParams.forEach((p, idx) => {
         p.type = type;
         cellSounds[idx] = type;
-        applySlice(p);
+        applyVoiceDefaults(p);
       });
       // Also retune every step that's already in the workspace so picking
       // a tone changes both what new clicks will produce AND the existing
@@ -1011,7 +1025,7 @@
             n.sound = type;
             if (n.params) n.params.type = type;
             else n.params = { type };
-            applySlice(n.params);
+            applyVoiceDefaults(n.params);
           });
           return;
         }
@@ -1019,7 +1033,7 @@
         s.sound = type;
         if (s.params) s.params.type = type;
         else s.params = { type };
-        applySlice(s.params);
+        applyVoiceDefaults(s.params);
       };
       sequence.forEach(retuneStep);
       // Tone changes are scoped to the active lane only — each lane

@@ -1765,17 +1765,20 @@
           broadcastAll('fxOverrideGlobal', p.fxOverrideGlobal);
         });
       }
-      // Slice mode — only meaningful for single-buffer samples; show the fold
-      // only then. Writes p.sliceMode (broadcast to all cells on Apply-to-all).
+      // Slice mode — available for ANY sample voice (single-buffer one-shots
+      // AND the multi-sampled tuned instruments: slicing scans the nearest
+      // mapped buffer). Single-buffer samples default to 'scan'; tuned
+      // instruments default to 'none' (off) until the user opts in.
       const sliceFold = modal.querySelector('#sm-slice-fold');
       const sliceSel = modal.querySelector('#sm-slice-mode');
       if (sliceFold && sliceSel) {
-        const showSlice = (typeof isSliceableSample === 'function') && isSliceableSample(p.type);
+        const showSlice = (typeof isSampleType === 'function') && isSampleType(p.type);
         sliceFold.style.display = showSlice ? '' : 'none';
         if (showSlice) {
-          sliceSel.value = (typeof p.sliceMode === 'string' && p.sliceMode) ? p.sliceMode : 'scan';
+          const dflt = (typeof isSliceableSample === 'function' && isSliceableSample(p.type)) ? 'scan' : 'none';
+          sliceSel.value = (typeof p.sliceMode === 'string' && p.sliceMode) ? p.sliceMode : dflt;
           sliceSel.addEventListener('change', () => {
-            p.sliceMode = sliceSel.value || 'scan';
+            p.sliceMode = sliceSel.value || 'none';
             _touched.add('sliceMode');
             broadcastAll('sliceMode', p.sliceMode);
           });

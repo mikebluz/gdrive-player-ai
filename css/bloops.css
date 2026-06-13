@@ -6278,6 +6278,89 @@
       accent-color: #4299e1;
     }
 
+    /* Keep-off step-div menu — reuses .step-div-modal .sdiv-grid/.sdiv-opt,
+       adds a title, an All/Per-note tab switch, and the per-note row list. */
+    .keep-sdiv-modal .keep-sdiv-title {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
+      color: #f0f4ff; text-align: center; margin-bottom: 12px;
+    }
+    .keep-sdiv-modal .keep-sdiv-tabs {
+      display: flex; gap: 6px; margin-bottom: 14px;
+    }
+    .keep-sdiv-modal .keep-sdiv-tab {
+      flex: 1 1 0;
+      padding: 7px 6px;
+      border: 1px solid #2d2d3f; border-radius: 9px;
+      background: transparent; color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .keep-sdiv-modal .keep-sdiv-tab:hover { border-color: #4299e1; color: #bee3f8; } }
+    .keep-sdiv-modal .keep-sdiv-tab.active {
+      background: rgba(66,153,225,0.18); border-color: #4299e1; color: #ebf8ff;
+    }
+    .keep-sdiv-modal .keep-sdiv-rows {
+      display: flex; flex-direction: column; gap: 6px;
+      max-height: 46vh; overflow-y: auto;
+    }
+    .keep-sdiv-modal .keep-sdiv-row {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .keep-sdiv-modal .keep-sdiv-name {
+      flex: 1 1 auto; min-width: 0;
+      color: #cbd5e0; font-family: 'Segoe UI', sans-serif; font-size: 0.85rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .keep-sdiv-modal .keep-sdiv-sel {
+      flex: 0 0 auto;
+      background: #0a0a14; color: #e2e8f0;
+      border: 1px solid #2d2d3f; border-radius: 7px;
+      padding: 4px 6px; font-family: 'Segoe UI', sans-serif; font-size: 0.82rem;
+      cursor: pointer;
+    }
+    /* Note + trailing-rest total — the span until the next note starts. */
+    .keep-sdiv-modal .keep-sdiv-total {
+      flex: 0 0 auto; min-width: 48px;
+      color: #81e6d9; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
+      font-weight: 700; text-align: right;
+    }
+    .keep-sdiv-modal .keep-sdiv-addrest,
+    .keep-sdiv-modal .keep-sdiv-delrest {
+      flex: 0 0 auto;
+      background: transparent; color: #a0aec0;
+      border: 1px solid #2d2d3f; border-radius: 7px;
+      padding: 4px 8px; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
+      font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) {
+      .keep-sdiv-modal .keep-sdiv-addrest:hover { border-color: #4299e1; color: #bee3f8; }
+      .keep-sdiv-modal .keep-sdiv-delrest:hover { border-color: #e07a7a; color: #feb2b2; }
+    }
+    .keep-sdiv-modal .keep-sdiv-addrest:disabled { opacity: 0.35; cursor: default; }
+    /* Rest rows sit slightly inset + dimmer so the note/rest rhythm reads. */
+    .keep-sdiv-modal .keep-sdiv-rest { padding-left: 16px; opacity: 0.92; }
+    .keep-sdiv-modal .keep-sdiv-rest .keep-sdiv-name { color: #8a8aa8; font-style: italic; }
+    .keep-sdiv-modal .keep-sdiv-actions {
+      display: flex; justify-content: space-between; gap: 10px; margin-top: 14px;
+    }
+    .keep-sdiv-modal .keep-sdiv-preview {
+      padding: 8px 18px;
+      border: 1px solid #4fd1c5; border-radius: 10px;
+      background: rgba(79,209,197,0.10); color: #81e6d9;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.88rem; font-weight: 700;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .keep-sdiv-modal .keep-sdiv-preview:hover { background: rgba(79,209,197,0.22); border-color: #81e6d9; } }
+    .keep-sdiv-modal .keep-sdiv-apply {
+      padding: 8px 20px;
+      border: 1px solid #4299e1; border-radius: 10px;
+      background: rgba(66,153,225,0.18); color: #ebf8ff;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.88rem; font-weight: 700;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .keep-sdiv-modal .keep-sdiv-apply:hover { background: rgba(66,153,225,0.30); } }
+
     /* PITCH RAMP DIALOG — opens from the step ctx menu, sets the
        step.bend semitones + atFraction the playback path already
        honors. */

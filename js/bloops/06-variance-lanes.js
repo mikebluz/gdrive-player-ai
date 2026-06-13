@@ -1260,6 +1260,24 @@
       const b = document.getElementById('add-lane-btn');
       if (b) b.addEventListener('click', _addLaneBelowActive);
     })();
+    // Delete a lane. Refuses to remove the last remaining lane; clamps the
+    // active lane and re-activates so mode sync / Bloom retarget run for the
+    // new active lane. Undoable via the snapshot.
+    function _deleteLane(idx) {
+      if (!Array.isArray(lanes) || lanes.length <= 1) return;
+      if (idx == null || idx < 0 || idx >= lanes.length) return;
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Delete lane');
+      lanes.splice(idx, 1);
+      if (typeof gridRows !== 'undefined') gridRows = lanes.length;
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));
+      let next = (activeLaneIdx | 0);
+      if (next >= lanes.length) next = lanes.length - 1;
+      if (next < 0) next = 0;
+      if (typeof activateLane === 'function') activateLane(next);
+      else { _aliasSequenceToActiveLane(); if (typeof renderSequence === 'function') renderSequence(); }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     // Build + show a context menu listing every OTHER lane as a copy-
     // source option. Clicking an entry clones that lane's voice onto
     // the target lane (the one the user right-clicked). When the
@@ -1392,6 +1410,13 @@
             const n = normalizeLaneTones(laneIdx);
             if (n > 0) { renderSequence(); persist(); }
           } },
+        // Delete the whole lane. Disabled when it's the only one. Confirms
+        // first if the lane has any steps (undo can still recover it).
+        { label: 'Delete lane', danger: true, disabled: lanes.length <= 1, fn: () => {
+            const hasSteps = !!(lane.steps && lane.steps.length);
+            if (hasSteps && !confirm(`Delete "${lane.name}" and its ${lane.steps.length} step(s)?`)) return;
+            _deleteLane(laneIdx);
+          } },
       ];
       // Send this lane's own sequence into ITS lane-specific Bloom (then switch
       // the lane into Bloom). Deferred submenu with the 3 send modes.
@@ -1438,6 +1463,16 @@
       {
         const qh = (typeof quantizeHolds !== 'undefined') ? quantizeHolds : false;
         actions.push({ label: 'Quantize holds: ' + (qh ? 'Nearest (→ Up)' : 'Up (→ Nearest)'), fn: () => _toggleCheck('quantize-holds-toggle') });
+      }
+      // Keep flow: per-note step-div prompt is optional. Off (default) =
+      // notes append silently and you size them all once on Keep-off; on =
+      // the old per-note picker fires after each kept note.
+      {
+        const on = (typeof _keepAskPerNote !== 'undefined') ? _keepAskPerNote : false;
+        actions.push({ label: 'Keep: ask size per note ' + (on ? '✓' : '✗'), fn: () => {
+          _keepAskPerNote = !_keepAskPerNote;
+          try { localStorage.setItem('bloops-keep-ask-pernote', _keepAskPerNote ? '1' : '0'); } catch (e) {}
+        }});
       }
       if (riffActions.length) {
         // Defer the submenu to the next tick: showCtxMenu's click handler

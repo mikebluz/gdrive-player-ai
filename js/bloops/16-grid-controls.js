@@ -862,6 +862,19 @@
         // session-lock semantics).
         _keepStepDivLocked = false;
         _keepStepDivLockedValue = null;
+        if (keepMode) {
+          // Fresh session — start collecting kept notes.
+          _keepSessionSteps = [];
+        } else {
+          // Keep-off: offer one step-div menu over everything just kept —
+          // but only when per-note prompting is off (otherwise the user has
+          // already sized each note as they went).
+          const kept = _keepSessionSteps.slice();
+          _keepSessionSteps = [];
+          if (!_keepAskPerNote && kept.length && typeof showKeepStepDivMenu === 'function') {
+            showKeepStepDivMenu(kept);
+          }
+        }
         // Fixed-mode sequential edit: Keep-on while stepMode is on
         // selects the first step in the active lane and starts the
         // advance flow; Keep-off cancels it (clears selection).

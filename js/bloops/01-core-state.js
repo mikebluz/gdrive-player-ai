@@ -193,6 +193,15 @@
     // Keep is toggled off.
     let _keepStepDivLocked = false;
     let _keepStepDivLockedValue = null;
+    // Every step kept during the current Keep session, in add order.
+    // Reset when Keep turns on; on Keep-off, showKeepStepDivMenu offers a
+    // single "how long does each note play" menu over all of them.
+    let _keepSessionSteps = [];
+    // The per-note step-div popup is now OPTIONAL (default off). When off,
+    // notes append silently and sizing is chosen once on Keep-off. When on,
+    // the old per-note picker fires after each note. Persisted across loads.
+    let _keepAskPerNote = false;
+    try { _keepAskPerNote = (localStorage.getItem('bloops-keep-ask-pernote') === '1'); } catch (e) {}
     // Saved "form" from the most recent Wrap commit (chord step or
     // subsequence step). While set, cell clicks audition this form
     // transposed so the clicked note becomes its first note. With

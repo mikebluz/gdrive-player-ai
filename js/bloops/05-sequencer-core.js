@@ -2342,6 +2342,15 @@
     function maybePromptStepDiv(stepRef, opts = {}) {
       if (!stepRef || !keepMode) return;
       if (gridMode === 'arpeggio') return;
+      // Record every kept note (in add order) so Keep-off can offer one
+      // step-div menu over the whole session.
+      if (Array.isArray(_keepSessionSteps) && _keepSessionSteps.indexOf(stepRef) < 0) {
+        _keepSessionSteps.push(stepRef);
+      }
+      // Per-note picker is OPTIONAL now. When the user hasn't opted into
+      // per-note prompting, notes append silently and sizing happens once
+      // when Keep turns off (showKeepStepDivMenu).
+      if (!_keepAskPerNote) return;
       // Press-and-hold already conveys size via the hold duration itself
       // (the step inherits a multi-step length from _holdStepDurationFromMs),
       // so don't pop the picker on top — that would force the user to
@@ -2437,6 +2446,219 @@
         overlay.addEventListener('click', (e) => {
           if (e.target === overlay) overlay.remove();
         });
+      });
+    }
+
+    // The Keep-off step-div menu. Shown when Keep turns off and at least one
+    // note was kept that session. Offers two modes: "All notes" (pick one
+    // size, applied to every kept note) and "Per note" (a row per note with
+    // its own size). Dismissing leaves every note at whatever size it had.
+    const _SDIV_SIZES = [
+      ['1/32t', 0.08333333333333333], ['1/32', 0.125], ['1/16t', 0.16666666666666666],
+      ['1/16', 0.25], ['1/8t', 0.3333333333333333], ['1/8', 0.5],
+      ['1/4', 1], ['1/2', 2], ['1/1', 4], ['2/1', 8], ['3/1', 12], ['4/1', 16],
+    ];
+    function _stepCurrentSubdiv(step) {
+      if (!step) return stepSubdivision;
+      if (step.isSub && Array.isArray(step.subSteps) && step.subSteps[0]) {
+        return (step.subSteps[0].subdivision != null) ? step.subSteps[0].subdivision : stepSubdivision;
+      }
+      return (step.subdivision != null) ? step.subdivision : stepSubdivision;
+    }
+    // Compact readout for a step-div total. Returns the named size when the
+    // value matches one exactly (e.g. 1/8 + 1/8 = 1/4), else quarter-note
+    // beats with a ♩ glyph (1/4 + 1/8 = 1.5♩).
+    function _divReadout(v) {
+      if (!Number.isFinite(v) || v <= 0) return '0';
+      for (const [lbl, val] of _SDIV_SIZES) if (Math.abs(val - v) < 1e-6) return lbl;
+      return (+v.toFixed(3)) + '♩';
+    }
+    function _stepName(s) {
+      return (s && s.label) ? s.label : (s && s.isSub ? 'run' : s && Array.isArray(s.chord) ? 'chord' : 'note');
+    }
+    function showKeepStepDivMenu(steps) {
+      const list = (steps || []).filter(Boolean);
+      if (!list.length) return;
+      if (document.querySelector('.step-div-overlay')) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay step-div-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'step-div-modal keep-sdiv-modal';
+      const sizeBtns = _SDIV_SIZES
+        .map(([lbl, v]) => `<button type="button" class="sdiv-opt" data-sub="${v}">${lbl}</button>`)
+        .join('');
+      const optionsFor = (cur) => _SDIV_SIZES
+        .map(([lbl, v]) => `<option value="${v}"${Math.abs(v - cur) < 1e-9 ? ' selected' : ''}>${lbl}</option>`)
+        .join('');
+      // Per-note working model: one {kind:'note'} entry per kept note, with
+      // optional {kind:'rest'} entries inserted right after a note (one per
+      // note). Applied — sizes + inserted rests — only when the user taps
+      // Apply on the Per-note tab.
+      const model = list.map(step => ({ kind: 'note', step, sub: _stepCurrentSubdiv(step) }));
+      modal.innerHTML = `
+        <div class="keep-sdiv-title">How long should each note play?</div>
+        <div class="keep-sdiv-tabs" role="tablist">
+          <button type="button" class="keep-sdiv-tab active" data-mode="all">All notes</button>
+          <button type="button" class="keep-sdiv-tab" data-mode="per">Per note (${list.length})</button>
+        </div>
+        <div class="keep-sdiv-body" data-body="all">
+          <div class="sdiv-grid">${sizeBtns}</div>
+        </div>
+        <div class="keep-sdiv-body" data-body="per" hidden>
+          <div class="keep-sdiv-rows" id="keep-sdiv-rows"></div>
+          <div class="keep-sdiv-actions">
+            <button type="button" class="keep-sdiv-preview">▶ Preview</button>
+            <button type="button" class="keep-sdiv-apply">Apply</button>
+          </div>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      // Audition the current model — each note at its chosen size, rests as
+      // gaps — without committing. Timers are tracked so a re-press (or
+      // closing the menu) cancels an in-flight preview.
+      let _previewTimers = [];
+      const _stopPreview = () => { _previewTimers.forEach(id => clearTimeout(id)); _previewTimers = []; };
+      const previewKeepModel = () => {
+        _stopPreview();
+        try { Tone.start(); } catch (e) {}
+        const bpm = parseInt(tempoInput?.value, 10) || 120;
+        const secPerQuarter = 60 / bpm; // sub === 1 is a 1/4 note
+        let tMs = 0;
+        model.forEach((entry, idx) => {
+          if (entry.kind !== 'note') return; // rests are pure gaps in the timing
+          const noteMs = Math.max(1, Math.round(entry.sub * secPerQuarter * 1000));
+          const nxt = model[idx + 1];
+          const restMs = (nxt && nxt.kind === 'rest') ? Math.max(0, Math.round(nxt.sub * secPerQuarter * 1000)) : 0;
+          const step = entry.step;
+          const at = tMs;
+          _previewTimers.push(setTimeout(() => {
+            try {
+              if (step.isSub) {
+                previewStep(step); // runs handle their own internal cadence
+              } else if (Array.isArray(step.chord)) {
+                const size = step.chord.length;
+                step.chord.forEach(n => {
+                  if (n && n.freq != null) playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, step), step.bend), noteMs);
+                });
+              } else if (step.freq != null) {
+                playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), noteMs);
+              }
+            } catch (e) {}
+          }, at));
+          tMs += noteMs + restMs;
+        });
+      };
+
+      // Render the per-note rows from the working model. Re-run on any model
+      // edit so the note + trailing-rest totals stay live.
+      const rowsEl = modal.querySelector('#keep-sdiv-rows');
+      const renderPer = () => {
+        rowsEl.innerHTML = '';
+        let noteNum = 0;
+        model.forEach((entry, idx) => {
+          const row = document.createElement('div');
+          if (entry.kind === 'note') {
+            noteNum++;
+            const next = model[idx + 1];
+            const hasRest = !!(next && next.kind === 'rest');
+            // Total = this note's size + the rest immediately following it
+            // (the span until the next note begins).
+            const total = entry.sub + (hasRest ? next.sub : 0);
+            row.className = 'keep-sdiv-row';
+            row.innerHTML =
+              `<span class="keep-sdiv-name">${noteNum}. ${_stepName(entry.step)}</span>` +
+              `<select class="keep-sdiv-sel sm-select">${optionsFor(entry.sub)}</select>` +
+              `<span class="keep-sdiv-total" title="This note + the rest after it = time until the next note">→ ${_divReadout(total)}</span>` +
+              `<button type="button" class="keep-sdiv-addrest" title="Add a rest after this note"${hasRest ? ' disabled' : ''}>+ rest</button>`;
+            row.querySelector('.keep-sdiv-sel').addEventListener('change', (e) => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v > 0) { entry.sub = v; renderPer(); }
+            });
+            row.querySelector('.keep-sdiv-addrest').addEventListener('click', () => {
+              model.splice(idx + 1, 0, { kind: 'rest', sub: 0.5 });
+              renderPer();
+            });
+          } else {
+            row.className = 'keep-sdiv-row keep-sdiv-rest';
+            row.innerHTML =
+              `<span class="keep-sdiv-name">↳ rest</span>` +
+              `<select class="keep-sdiv-sel sm-select">${optionsFor(entry.sub)}</select>` +
+              `<span class="keep-sdiv-total"></span>` +
+              `<button type="button" class="keep-sdiv-delrest" title="Remove this rest">×</button>`;
+            row.querySelector('.keep-sdiv-sel').addEventListener('change', (e) => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v > 0) { entry.sub = v; renderPer(); }
+            });
+            row.querySelector('.keep-sdiv-delrest').addEventListener('click', () => {
+              model.splice(idx, 1); renderPer();
+            });
+          }
+          rowsEl.appendChild(row);
+        });
+      };
+      renderPer();
+
+      // Tab switch.
+      modal.querySelectorAll('.keep-sdiv-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          const mode = tab.dataset.mode;
+          modal.querySelectorAll('.keep-sdiv-tab').forEach(t => t.classList.toggle('active', t === tab));
+          modal.querySelectorAll('.keep-sdiv-body').forEach(b => { b.hidden = (b.dataset.body !== mode); });
+        });
+      });
+
+      // Preview the configured rhythm without committing.
+      const previewBtn = modal.querySelector('.keep-sdiv-preview');
+      if (previewBtn) previewBtn.addEventListener('click', previewKeepModel);
+
+      // All-notes mode: one size applied to every kept note.
+      modal.querySelectorAll('.keep-sdiv-body[data-body="all"] .sdiv-opt').forEach(b => {
+        b.addEventListener('click', () => {
+          const v = parseFloat(b.dataset.sub);
+          if (!Number.isFinite(v) || v <= 0) return;
+          _stopPreview();
+          if (typeof snapshotForUndo === 'function') snapshotForUndo('Keep step sizes');
+          list.forEach(s => _applyStepDivToStep(s, v));
+          renderSequence();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          overlay.remove();
+        });
+      });
+
+      // Per-note mode: write each note's size, then splice in the rests.
+      const applyBtn = modal.querySelector('.keep-sdiv-apply');
+      if (applyBtn) {
+        applyBtn.addEventListener('click', () => {
+          _stopPreview();
+          if (typeof snapshotForUndo === 'function') snapshotForUndo('Keep step sizes');
+          // 1) note sizes
+          model.forEach(e => { if (e.kind === 'note') _applyStepDivToStep(e.step, e.sub); });
+          // 2) inserted rests — each goes immediately after its preceding
+          // note in the sequence. Re-find the note's index per insertion so
+          // earlier splices don't throw off later ones.
+          model.forEach((e, i) => {
+            if (e.kind !== 'rest') return;
+            let p = i - 1;
+            while (p >= 0 && model[p].kind !== 'note') p--;
+            if (p < 0) return;
+            const seqIdx = sequence.indexOf(model[p].step);
+            if (seqIdx < 0) return;
+            const rest = makeRestStep();
+            rest.subdivision = e.sub;
+            sequence.splice(seqIdx + 1, 0, rest);
+          });
+          renderSequence();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          overlay.remove();
+        });
+      }
+
+      // Outside-click dismiss (bound next frame so the Keep-toggle click
+      // that opened this can't immediately close it). Cancels any preview.
+      requestAnimationFrame(() => {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) { _stopPreview(); overlay.remove(); } });
       });
     }
 

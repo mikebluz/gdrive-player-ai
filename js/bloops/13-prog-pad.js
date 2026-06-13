@@ -1073,6 +1073,48 @@
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
     })();
+    // Mode tabs — banner-row tab strip that replaces the old cycle button.
+    // Each tab sets the active lane's mode flags directly, then syncs.
+    (function initModeTabs() {
+      const tabs = document.getElementById('mode-tabs');
+      if (!tabs) return;
+      tabs.addEventListener('click', (e) => {
+        const tab = e.target.closest('.mode-tab[data-mode]');
+        if (!tab) return;
+        const lane = lanes[activeLaneIdx];
+        if (!lane) return;
+        const m = tab.dataset.mode;
+        lane.fluidGridMode = (m === 'graph');
+        lane.gameMode      = (m === 'game');
+        lane.progMode      = (m === 'prog');
+        lane.ambientMode   = (m === 'bloom');
+        lane.textMode      = (m === 'text');
+        _syncFluidGridToActiveLane();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+    // Octave-nudge buttons (grid rail) — bump baseOctave by ±1 within the
+    // Octaves dropdown's 1–7 range, then rebuild + persist exactly like a
+    // dropdown change so labels / banner / undo all line up.
+    (function initOctaveNudge() {
+      const up   = document.getElementById('octave-up-btn');
+      const down = document.getElementById('octave-down-btn');
+      if (!up && !down) return;
+      const OCT_MIN = 1, OCT_MAX = 7;
+      const nudge = (dir) => {
+        const next = (baseOctave | 0) + (dir > 0 ? 1 : -1);
+        if (next < OCT_MIN || next > OCT_MAX) return;
+        if (typeof snapshotForUndo === 'function') snapshotForUndo(dir > 0 ? 'Octave up' : 'Octave down');
+        baseOctave = next;
+        if (typeof rebuildGrid === 'function') rebuildGrid();
+        if (typeof window.syncOctaveRangeSelect === 'function') window.syncOctaveRangeSelect();
+        if (typeof refreshAllCellFreqLabels === 'function') refreshAllCellFreqLabels();
+        if (typeof updateScaleBanner === 'function') updateScaleBanner();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      if (up)   up.addEventListener('click', () => nudge(1));
+      if (down) down.addEventListener('click', () => nudge(-1));
+    })();
     // ± note-shift buttons (on either side of the Sounds banner).
     //
     // Two modes, toggled via the °/½ pill between − and Sounds:

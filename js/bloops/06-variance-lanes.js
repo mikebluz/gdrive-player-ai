@@ -1242,6 +1242,24 @@
       if (activeLaneIdx >= lanes.length) activeLaneIdx = lanes.length - 1;
       _aliasSequenceToActiveLane();
     }
+    // Add a fresh lane immediately BELOW the active one and make it active.
+    // (Replaces growing the lane stack via the old grid-rows dropdown.)
+    function _addLaneBelowActive() {
+      if (lanes.length >= 8) return; // grid is laid out as max 8 lanes
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Add lane');
+      const at = Math.min(lanes.length, (activeLaneIdx | 0) + 1);
+      lanes.splice(at, 0, _makeLane(at, []));
+      if (typeof gridRows !== 'undefined') gridRows = lanes.length;
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));
+      if (typeof activateLane === 'function') activateLane(at);
+      else if (typeof renderSequence === 'function') renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    (function initAddLaneBtn() {
+      const b = document.getElementById('add-lane-btn');
+      if (b) b.addEventListener('click', _addLaneBelowActive);
+    })();
     // Build + show a context menu listing every OTHER lane as a copy-
     // source option. Clicking an entry clones that lane's voice onto
     // the target lane (the one the user right-clicked). When the
@@ -1348,6 +1366,12 @@
         .map(b => ({ label: b.textContent.trim(), disabled: b.disabled, fn: () => b.click() }))
         .filter(a => a.label);
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      // Relocated step-control drivers (the toolbar group is hidden; we drive
+      // its real elements/handlers): select-by-rule, Quantize, grid size.
+      const _rule = (r, n) => { try { if (typeof _selectByRule === 'function') _selectByRule(r, n); } catch (e) {} };
+      const _clickEl = (id) => { const el = document.getElementById(id); if (el) el.click(); };
+      const _toggleCheck = (id) => { const el = document.getElementById(id); if (el) { el.checked = !el.checked; el.dispatchEvent(new Event('change', { bubbles: true })); } };
+      const _setGrid = (r, c) => { const re = document.getElementById('grid-rows-input'), ce = document.getElementById('grid-cols-input'); if (re) re.value = String(r); if (ce) ce.value = String(c); const drv = re || ce; if (drv) drv.dispatchEvent(new Event('change', { bubbles: true })); };
       const actions = [
         { label: _laneExpanderOpen ? 'Hide grid' : 'Show grid', fn: () => {
             _laneExpanderOpen = !_laneExpanderOpen;
@@ -1391,6 +1415,30 @@
         }
         showCtxMenu(x, y, sub);
       }, 0) });
+      // "Steps ▸" — the SELECTION actions only (scope readout + select-by-rule).
+      actions.push('hr');
+      actions.push({ label: '⛬ Steps ▸', fn: () => setTimeout(() => {
+        const selN = (typeof selectedStepRefs !== 'undefined') ? selectedStepRefs.length : 0;
+        const sub = [
+          { label: 'Scope: ' + (selN ? (selN + (selN === 1 ? ' step selected' : ' steps selected')) : 'whole lane (none selected)'), disabled: true, fn: () => {} },
+          'hr',
+          { label: 'Select all', fn: () => _rule('all') },
+          { label: 'Select none', fn: () => _rule('none') },
+          { label: 'Invert selection', fn: () => _rule('invert') },
+          { label: 'Every 2nd', fn: () => _rule('nth', 2) },
+          { label: 'Every 3rd', fn: () => _rule('nth', 3) },
+          { label: 'Every 4th', fn: () => _rule('nth', 4) },
+          { label: 'All rests', fn: () => _rule('rests') },
+          { label: 'All chords / wraps', fn: () => _rule('chords') },
+          { label: 'On the beat', fn: () => _rule('onbeat') },
+        ];
+        showCtxMenu(x, y, sub);
+      }, 0) });
+      // Quantize holds — its own toggle.
+      {
+        const qh = (typeof quantizeHolds !== 'undefined') ? quantizeHolds : false;
+        actions.push({ label: 'Quantize holds: ' + (qh ? 'Nearest (→ Up)' : 'Up (→ Nearest)'), fn: () => _toggleCheck('quantize-holds-toggle') });
+      }
       if (riffActions.length) {
         // Defer the submenu to the next tick: showCtxMenu's click handler
         // runs dismissCtxMenu() right after fn(), which would otherwise
@@ -1437,6 +1485,17 @@
                         : wantGame ? 'Game'
                         : wantFluid ? 'Graph' : 'Grid';
       }
+      // Reflect the active mode onto the banner-row tab strip.
+      {
+        const _mode = wantText ? 'text' : wantAmbient ? 'bloom' : wantProg ? 'prog'
+                    : wantGame ? 'game' : wantFluid ? 'graph' : 'grid';
+        const tabs = document.querySelectorAll('#mode-tabs .mode-tab');
+        tabs.forEach(t => {
+          const on = t.dataset.mode === _mode;
+          t.classList.toggle('active', on);
+          t.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+      }
       if (wasAmbient !== wantAmbient) {
         try { if (typeof _onAmbientModeChanged === 'function') _onAmbientModeChanged(wantAmbient); } catch (e) {}
       } else if (wasAmbient && wantAmbient) {
@@ -1482,18 +1541,9 @@
           }
         } catch (e) {}
       }
-      // Keep the right-side speaker button the same width as the
-      // Grid/Graph button so the Sounds menu + ± buttons stay
-      // visually centred. Width depends on the label ("Grid" vs
-      // "Graph" differ slightly), so re-measure every time the
-      // label flips.
-      try {
-        const vol = document.getElementById('master-vol-btn');
-        if (btn && vol) {
-          const w = btn.getBoundingClientRect().width;
-          if (Number.isFinite(w) && w > 0) vol.style.minWidth = w + 'px';
-        }
-      } catch (e) {}
+      // (The master-volume speaker button moved to the tempo cluster, so
+      // the old banner-row width-matching against the Grid/Graph button is
+      // no longer needed.)
     }
     function activateLane(idx) {
       if (idx == null || idx < 0 || idx >= lanes.length) return;

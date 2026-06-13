@@ -1284,12 +1284,14 @@
       // selection" behavior is gone (per user — these faders are
       // step-level controls, not lane-level).
       const selEligible = selectedStepRefs.filter(_stepHasPlayableContent);
-      // Scope = selection: with steps selected, the faders edit them; with
-      // NOTHING selected, they fall back to lane-wide (the "0 = lane" half of
-      // the model — replaces the retired "All" button). Poly is always on.
-      const polyLaneScope = (selEligible.length === 0 && typeof polyMode !== 'undefined' && polyMode && lanes[activeLaneIdx]);
+      // Scope = selection ONLY. The Mix/Groove tab sections are step-level
+      // editors, so they stay hidden until at least one playable step is
+      // selected (per user). The earlier "0 = lane" fall-through is retired —
+      // polyLaneScope is kept as a constant false so the downstream branches
+      // that reference it collapse cleanly to the no-lane-scope path.
+      const polyLaneScope = false;
       const eligible = selEligible;
-      const showBars = eligible.length > 0 || polyLaneScope || _allLaneMode;
+      const showBars = eligible.length > 0 || _allLaneMode;
       // Read the slider's display value from the primary step's first
       // playable leaf — collapses chord and sub cases to the same
       // lookup. For chord steps the leaf IS the chord step (chord
@@ -1452,9 +1454,11 @@
       // "All" toggle — visible whenever the bars are. Its active-state
       // styling is owned by the toggle itself (set in the click
       // handler below) so just track presence here.
+      // "All" is retired — selection IS the scope now (0 selected = whole lane),
+      // so keep the button permanently hidden rather than re-showing it.
       const allBtn = document.getElementById('step-all-btn');
       if (allBtn) {
-        allBtn.hidden = !showBars;
+        allBtn.hidden = true;
         allBtn.classList.toggle('active', !!_allLaneMode);
         allBtn.setAttribute('aria-pressed', _allLaneMode ? 'true' : 'false');
       }

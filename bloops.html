@@ -27,15 +27,18 @@
     if ((location.hash || '').toLowerCase() === '#player') {
       document.body.classList.add('view-serialbox');
     }
-    // Sign-in is optional. If SharedAuth already has a fresh token,
-    // drop the `.no-google` class synchronously so the user lands in
-    // the signed-in state on first paint (Listen tab + Save/Load
-    // buttons enabled) without a flash of the signed-out chrome on a
-    // cross-page return trip. The async bloopsAuth init below also
-    // syncs this class, but lifting here makes the transition feel
-    // immediate.
+    // Sign-in is REQUIRED. If SharedAuth already has a fresh token, drop
+    // the `.no-google` class synchronously so the user lands in the
+    // signed-in state on first paint (Listen tab + Save/Load enabled)
+    // without a flash of the signed-out chrome on a cross-page return.
+    // Otherwise add `.signin-required` so the full-screen #signin-gate
+    // shows on first paint with no flash of the gated-off app behind it.
+    // The async bloopsAuth init (initSigninGate) re-syncs both classes as
+    // auth state changes; doing it here makes the transition immediate.
     if (window.SharedAuth?.load?.()?.token) {
       document.body.classList.remove('no-google');
+    } else {
+      document.body.classList.add('signin-required');
     }
   </script>
 
@@ -46,6 +49,10 @@
     </div>
     <a class="home-bar" href="index.html" title="Back to mikeluz.com">Mercy Wizard</a>
     <div class="tempo-control">
+      <!-- Master volume — speaker button at the far left of the tempo
+           cluster. Opens the #master-vol-panel popover (wired by id in
+           initMasterVolMenu); relocated here from the lane banner row. -->
+      <button type="button" id="master-vol-btn" class="tempo-vol-btn" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter" aria-label="Master volume">🔊</button>
       <!-- 3-digit BPM picker — each column has + above and − below to bump
            that digit's place value (100s / 10s / 1s) up or down. The
            legacy slider + number input live on hidden, kept in DOM so
@@ -313,36 +320,47 @@
     <div id="lane-expander">
       <button type="button" id="lane-expander-close" class="lane-expander-close" aria-label="Close voice editor" title="Close voice editor (Esc)">×</button>
       <div class="banner-row">
-        <!-- Grid/Graph toggle now sits on the LEFT edge of the row.
-             A same-sized inert spacer mirrors it on the RIGHT so the
-             Sounds menu and the ± shift buttons stay visually centred
-             between them. The spacer is non-interactive (disabled +
-             aria-hidden) — it only exists to balance the row. -->
-        <button type="button" id="fluid-grid-toggle" title="Grid: discrete cells. Graph: continuous pitch field — press anywhere, drag for fluid bends between adjacent notes.">Grid</button>
-        <!-- − sits to the left of the Sounds menu so the two note-
-             shift buttons frame the row. Each shifts the grid one
-             semitone (rootIdx ±1, carrying baseOctave at the C
-             boundary). The Radial Pitch Bend toggle moved into the
-             Sounds dropdown to free banner-row space. -->
-        <button type="button" id="note-shift-down" class="note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (− shifts UP a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">−</button>
-        <button type="button" id="note-shift-mode-btn" class="note-shift-mode-btn" aria-label="Note-shift mode" title="Shift step: °=1 scale degree (default, follows the active key), ½=1 semitone (chromatic, the old behavior). Tap to switch.">°</button>
-        <button type="button" id="scale-banner-half" class="banner-half" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
+        <!-- Mode tabs (Grid / Graph / Game / Prog / Bloom / TEXT) replace the
+             old single Grid↔Graph cycle button. Each tab sets the active
+             lane's mode flags via initModeTabs (13). #fluid-grid-toggle lives
+             on as a hidden anchor so initFluidGridToggle and
+             _syncFluidGridToActiveLane (which still write its label) keep
+             resolving. -->
+        <div class="mode-tabs" id="mode-tabs" role="tablist" aria-label="Lane mode">
+          <button type="button" class="mode-tab" data-mode="grid"  role="tab" aria-selected="true"  title="Grid — discrete cells">Grid</button>
+          <button type="button" class="mode-tab" data-mode="graph" role="tab" aria-selected="false" title="Graph — continuous pitch field; press anywhere, drag for fluid bends">Graph</button>
+          <button type="button" class="mode-tab" data-mode="game"  role="tab" aria-selected="false" title="Game — chord-progression game">Game</button>
+          <button type="button" class="mode-tab" data-mode="prog"  role="tab" aria-selected="false" title="Prog — progression pad">Prog</button>
+          <button type="button" class="mode-tab" data-mode="bloom" role="tab" aria-selected="false" title="Bloom — generative ambient">Bloom</button>
+          <button type="button" class="mode-tab" data-mode="text"  role="tab" aria-selected="false" title="TEXT — text-to-speech voice">TEXT</button>
+        </div>
+        <button type="button" id="fluid-grid-toggle" hidden aria-hidden="true" tabindex="-1" style="display:none"></button>
+        <!-- Note-shift + octave-nudge buttons moved to the vertical rail to
+             the RIGHT of the grid (.grid-rail, below). -->
+        <!-- Sounds menu — anchored at the RIGHT edge (where the master-vol
+             speaker used to live) at 25% of the row width. -->
+        <button type="button" id="scale-banner-half" class="banner-half banner-sounds" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <!-- Tone and FX banner buttons live on as hidden anchors so their
              existing IDs (used by initToneMenu / initFxMenu) keep resolving;
              clicks now come from the nested Tone… / FX… rows inside the
-             Sounds panel. CSS hides them visually but they retain their
-             initial position in the layout, which is fine since the panels
-             re-anchor to scale-banner-half on open from Sounds. -->
+             Sounds panel. -->
         <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
         <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
-        <button type="button" id="note-shift-up"   class="note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (+ shifts DOWN a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">+</button>
-        <!-- Speaker button mirrors the Grid button on the opposite
-             side so the row stays balanced. Clicking opens a small
-             popover with the master volume fader (relocated out of
-             the Sounds menu). -->
-        <button type="button" id="master-vol-btn" class="banner-row-vol-btn" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter" aria-label="Master volume">🔊</button>
       </div>
-      <div class="grid" id="grid"></div>
+      <!-- Grid + its right-side control rail. The rail matches the grid's
+           height (align-items: stretch) and holds the octave-nudge and
+           pitch-shift buttons. Hidden alongside the grid in non-Grid modes. -->
+      <div class="grid-with-rail" id="grid-with-rail">
+        <div class="grid" id="grid"></div>
+        <div class="grid-rail" id="grid-rail" role="group" aria-label="Octave and pitch shift">
+          <button type="button" id="octave-up-btn"   class="rail-btn rail-oct" aria-label="Octave up"   title="Octave up — raise the grid one octave">▲</button>
+          <button type="button" id="octave-down-btn" class="rail-btn rail-oct" aria-label="Octave down" title="Octave down — lower the grid one octave">▼</button>
+          <div class="rail-sep" aria-hidden="true"></div>
+          <button type="button" id="note-shift-up"   class="rail-btn note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (+ shifts DOWN a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">+</button>
+          <button type="button" id="note-shift-mode-btn" class="rail-btn note-shift-mode-btn" aria-label="Note-shift mode" title="Shift step: °=1 scale degree (default, follows the active key), ½=1 semitone (chromatic, the old behavior). Tap to switch.">°</button>
+          <button type="button" id="note-shift-down" class="rail-btn note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (− shifts UP a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">−</button>
+        </div>
+      </div>
       <!-- Wrap controls — live directly under the cell grid since Wrap
            only makes sense in Grid mode. Hidden in Graph / Game / Prog
            via body.fluid-grid / body.game-mode / body.prog-mode rules.
@@ -547,6 +565,12 @@
     <span class="seq-empty">Click notes or REST to build a sequence…</span>
   </div>
 
+  <!-- Add a new lane just below the current one (replaces the grid-rows
+       dropdown for growing the lane stack). -->
+  <div class="add-lane-row">
+    <button type="button" id="add-lane-btn" title="Add a new lane below the current one" aria-label="Add a new lane">+ Lane</button>
+  </div>
+
   <div class="clear-riff-row">
     <button id="save-btn" disabled>Save</button>
     <button id="clear-btn">Clear</button>
@@ -604,12 +628,16 @@
       <button type="button" class="colors-opt" data-mode="shuffle">Color shuffle</button>
       <button type="button" class="colors-opt" data-mode="piano">Piano</button>
     </div>
-    <div class="btn-group btn-group--step" title="Step controls — multi-select, grid layout, and append/fixed mode">
+    <!-- Step controls relocated to the lane label menu → "Steps ▸" submenu
+         (select-by-rule, scope readout, Free/Fixed, Quantize, grid size). The
+         group is kept in the DOM (hidden) so its control ids/handlers stay live
+         and the lane menu can drive them. -->
+    <div class="btn-group btn-group--step" hidden style="display:none" title="Step controls — moved to the lane menu (Steps ▸)">
       <!-- "Multi" retired: selection is the edit scope now — tap a chip to
            toggle it in/out of the selection (shift-click for a range), and
            edits apply to every selected step. Kept in the DOM (hidden) because
            the checkbox id is still referenced by several reset paths. -->
-      <label class="step-multi-toggle" hidden>
+      <label class="step-multi-toggle" hidden style="display:none">
         <input type="checkbox" id="multi-select-toggle" />
         Multi
       </label>

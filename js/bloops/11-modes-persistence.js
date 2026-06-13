@@ -1,11 +1,9 @@
-    // ---- Optional sign-in toggle ----------------------------------------
-    // Sign-in is optional. Bloops's local features (sequencer, Mix view,
-    // FX panel, etc.) work without Drive access; Save / Load Project,
-    // Save / Load FX, Export, and the Listen view all need it and stay
-    // disabled via `body.no-google` CSS until a token is present. The
-    // legacy full-page sign-in gate is no longer shown; the inline
-    // <div id="signin-gate"> markup stays in the DOM for back-compat
-    // but is hidden by .signin-required NOT being on the body.
+    // ---- Sign-in toggle --------------------------------------------------
+    // Sign-in is REQUIRED to use Bloops (see initSigninGate below): the
+    // full-page #signin-gate covers the app until a token is present. Once
+    // signed in, this top-bar toggle lets the user sign back OUT (which
+    // re-raises the gate). `body.no-google` still gates the Drive-only
+    // controls (Save / Load, Export, Listen) as a second layer.
     function _signOutOfGoogle() {
       // Drop the in-process token + cached SharedAuth so the next gapi
       // call has no credential. Don't try to revoke server-side — that
@@ -82,6 +80,58 @@
         }
       });
       document.addEventListener('authStatusChanged', syncUI);
+    })();
+
+    // ---- Required sign-in gate ------------------------------------------
+    // Bloops is gated behind Google sign-in. body.signin-required shows the
+    // full-screen #signin-gate and hides the rest of the app (CSS). The
+    // inline boot script raises the gate when no cached token exists; here
+    // we wire the gate's button and drop / restore .signin-required as the
+    // auth state changes (sign-out from the top bar re-raises it).
+    (function initSigninGate() {
+      const gateBtn = document.getElementById('signin-btn');
+      const syncGate = () => {
+        const on = !!(window.bloopsAuth && window.bloopsAuth.isSignedIn());
+        document.body.classList.toggle('signin-required', !on);
+      };
+      if (gateBtn) {
+        gateBtn.addEventListener('click', async () => {
+          if (!window.bloopsAuth) return;
+          // Warm up the AudioContext inside this gesture, BEFORE the OAuth
+          // popup invalidates it (same iOS-unlock trick the toggle uses).
+          try {
+            if (typeof Tone !== 'undefined' && Tone.getContext) {
+              const ac = Tone.getContext().rawContext;
+              if (ac) {
+                try { ac.resume?.(); } catch (e) {}
+                try {
+                  const silent = ac.createBufferSource();
+                  silent.buffer = ac.createBuffer(1, 1, 22050);
+                  silent.connect(ac.destination);
+                  silent.start(0);
+                } catch (e) {}
+              }
+              try { Tone.start(); } catch (e) {}
+            }
+          } catch (e) { console.warn('Audio warm-up failed:', e); }
+
+          const original = gateBtn.textContent;
+          gateBtn.disabled = true;
+          gateBtn.textContent = 'Signing in…';
+          try {
+            await window.bloopsAuth.signIn();
+          } catch (e) {
+            console.error('Sign-in failed:', e);
+            alert(`Sign-in failed: ${e?.message || e}`);
+          } finally {
+            gateBtn.disabled = false;
+            gateBtn.textContent = original;
+            syncGate();
+          }
+        });
+      }
+      document.addEventListener('authStatusChanged', syncGate);
+      syncGate();
     })();
 
     // Walks a "/"-separated folder path and returns the leaf folder ID,

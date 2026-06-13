@@ -2651,6 +2651,16 @@
 
     function buildNoteEditor(modal, stepIndex, overlay) {
       const step = sequence[stepIndex];
+      // Selection scope: when the edited chip is part of a multi-selection,
+      // Apply writes the fields the user actually changed to EVERY selected
+      // step (change-only — untouched, divergent per-step properties stay put),
+      // mirroring the "♪ Sound editor" model. A single step keeps the classic
+      // full-replace behavior. `_touched` records edited fields; 'note',
+      // 'duration', 'subdivision' and 'bend' are tracked under those keys.
+      const _selTargets = (typeof selectedStepRefs !== 'undefined'
+        && selectedStepRefs.indexOf(step) >= 0 && selectedStepRefs.length > 1)
+        ? selectedStepRefs.slice() : null;
+      const _touched = new Set();
       const p = {
         freq:    step.freq,
         label:   step.label,
@@ -2848,6 +2858,13 @@
         </div>
       `;
 
+      // In multi-select scope, retitle so it's clear edits hit every selected
+      // step (and that untouched fields are left per-step).
+      if (_selTargets) {
+        const t = modal.querySelector('.sm-title');
+        if (t) t.textContent = 'Edit ' + _selTargets.length + ' steps — only changed fields apply';
+      }
+
       // Subdivision picker
       const subRow = modal.querySelector('#se-sub-row');
       const SUBS = [[4,'1/1'],[2,'1/2'],[1,'1/4'],[0.5,'1/8'],[0.25,'1/16'],[0.125,'1/32']];
@@ -2856,7 +2873,7 @@
         btn.className = 'sm-wave' + (v === p.subdivision ? ' active' : '');
         btn.textContent = lbl;
         btn.addEventListener('click', () => {
-          p.subdivision = v;
+          p.subdivision = v; _touched.add('subdivision');
           subRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -2870,7 +2887,7 @@
         btn.className = 'sm-wave' + (len === p.duration ? ' active' : '');
         btn.textContent = String(len);
         btn.addEventListener('click', () => {
-          p.duration = len;
+          p.duration = len; _touched.add('duration');
           lenRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -2916,7 +2933,7 @@
           btn.className = 'sm-wave' + (Math.abs(n.freq - p.freq) / n.freq < 0.001 ? ' active' : '');
           btn.textContent = n.label;
           btn.addEventListener('click', () => {
-            p.freq = n.freq; p.label = n.label;
+            p.freq = n.freq; p.label = n.label; _touched.add('note');
             // Map freq back to a grid cell when it lives in range; null
             // out otherwise so playback doesn't flash a wrong cell.
             const gridIdx = (typeof _findCellIdxForFreq === 'function') ? _findCellIdxForFreq(n.freq) : -1;
@@ -2951,7 +2968,7 @@
         btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
         btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
         btn.addEventListener('click', () => {
-          p.type = s;
+          p.type = s; _touched.add('type');
           waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -3002,7 +3019,7 @@
         const label = modal.querySelector(`#${valId}`);
         input.addEventListener('input', () => {
           const v = parseFloat(input.value);
-          p[key] = v;
+          p[key] = v; _touched.add(key);
           if (!label) return;
           if (unit === 'pan') {
             label.textContent = v === 0 ? 'C' : (v < 0 ? 'L' : 'R') + Math.abs(v);
@@ -3014,21 +3031,21 @@
       const seOverrideCheckbox = modal.querySelector('#se-fx-override');
       if (seOverrideCheckbox) {
         seOverrideCheckbox.addEventListener('change', () => {
-          p.fxOverrideGlobal = !!seOverrideCheckbox.checked;
+          p.fxOverrideGlobal = !!seOverrideCheckbox.checked; _touched.add('fxOverrideGlobal');
         });
       }
       const seDlySyncSel = modal.querySelector('#se-dly-sync');
       if (seDlySyncSel) {
         seDlySyncSel.value = p.delaySync || '';
         seDlySyncSel.addEventListener('change', () => {
-          p.delaySync = seDlySyncSel.value || null;
+          p.delaySync = seDlySyncSel.value || null; _touched.add('delaySync');
         });
       }
       const sePpSyncSel = modal.querySelector('#se-pp-sync');
       if (sePpSyncSel) {
         sePpSyncSel.value = p.pingPongSync || '';
         sePpSyncSel.addEventListener('change', () => {
-          p.pingPongSync = sePpSyncSel.value || null;
+          p.pingPongSync = sePpSyncSel.value || null; _touched.add('pingPongSync');
         });
       }
 
@@ -3040,11 +3057,11 @@
       const bendAtSlider = modal.querySelector('#se-bend-at');
       const bendAtValEl  = modal.querySelector('#se-bend-at-v');
       bendSlider.addEventListener('input', () => {
-        p.bendSemitones = parseInt(bendSlider.value) || 0;
+        p.bendSemitones = parseInt(bendSlider.value) || 0; _touched.add('bend');
         bendValEl.textContent = (p.bendSemitones >= 0 ? '+' : '') + p.bendSemitones + ' st';
       });
       bendAtSlider.addEventListener('input', () => {
-        p.bendAt = parseInt(bendAtSlider.value) || 100;
+        p.bendAt = parseInt(bendAtSlider.value) || 100; _touched.add('bend');
         bendAtValEl.textContent = p.bendAt + '%';
       });
 
@@ -3071,6 +3088,47 @@
       });
 
       modal.querySelector('.sm-apply').addEventListener('click', () => {
+        // Multi-select scope: write ONLY the fields the user changed to every
+        // selected step (change-only), so divergent untouched per-step
+        // properties stay intact. Note identity ('note') is applied only to
+        // plain-note steps; FX/envelope params fan out to chord voices and
+        // sub-step leaves too.
+        if (_selTargets) {
+          if (!_touched.size) { overlay.remove(); return; }
+          if (typeof snapshotForUndo === 'function') snapshotForUndo('Edit step');
+          const META = ['note', 'duration', 'subdivision', 'bend'];
+          const paramKeys = Array.from(_touched).filter(k => META.indexOf(k) < 0);
+          const writeParamsDeep = (st) => {
+            if (!st) return;
+            if (st.isSub && Array.isArray(st.subSteps)) { st.subSteps.forEach(writeParamsDeep); return; }
+            if (paramKeys.length) {
+              if (!st.params) st.params = {};
+              paramKeys.forEach(k => { st.params[k] = p[k]; if (k === 'type') st.sound = p[k]; });
+              if (Array.isArray(st.chord)) st.chord.forEach(v => {
+                if (!v) return; if (!v.params) v.params = {};
+                paramKeys.forEach(k => { v.params[k] = p[k]; if (k === 'type') v.sound = p[k]; });
+              });
+            }
+          };
+          const writeSel = (st) => {
+            if (!st) return;
+            if (_touched.has('note') && !Array.isArray(st.chord) && !st.isSub) {
+              st.freq = p.freq; st.label = p.label; st.cellIndex = p.cellIndex;
+            }
+            if (_touched.has('duration'))    st.duration = p.duration;
+            if (_touched.has('subdivision')) st.subdivision = p.subdivision;
+            if (_touched.has('bend')) {
+              if (p.bendSemitones !== 0) st.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
+              else delete st.bend;
+            }
+            writeParamsDeep(st);
+          };
+          _selTargets.forEach(writeSel);
+          renderSequence();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          overlay.remove();
+          return;
+        }
         const next = { freq: p.freq, label: p.label, cellIndex: p.cellIndex,
           sound: p.type, duration: p.duration, subdivision: p.subdivision,
           params: {

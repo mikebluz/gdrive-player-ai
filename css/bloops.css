@@ -4162,11 +4162,11 @@
     .step-grid-bar {
       background: #050510;
       border-bottom: 3px solid #000;
-      /* Single full-width pill (Keep / Wrap / Rest). The 16px horizontal
-         padding preserves the left/right gutters Keep and Rest had as
-         standalone clusters. */
+      /* No horizontal padding so the Keep / Rest pill spans the same width
+         as the Gen / Wrap row (.grid-wrap-row, its sibling in #lane-expander,
+         which has no horizontal inset) and lines up edge-to-edge with it. */
       display: block;
-      padding: 6px 16px;
+      padding: 6px 0;
     }
     .step-grid-bar-left {
       /* Stretch across the 1fr column so the Keep button can expand to

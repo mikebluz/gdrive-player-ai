@@ -804,6 +804,19 @@
       }
       return id;
     }
+    // Register an audio Blob/File as a single-buffer sample voice (mapped to
+    // C4), persisting it to IndexedDB. Returns { id, name }. Shared by the file
+    // importer and the "always listening" grab.
+    async function registerSampleFromBlob(blob, friendly) {
+      const id = makeImportedSampleId(friendly || 'sample');
+      const name = friendly || id;
+      const url = URL.createObjectURL(blob);
+      const urls = { 'C4': url };
+      const sampler = new Tone.Sampler({ urls, release: 1 }).connect(globalSendTap);
+      sampleSamplers.set(id, { sampler, name, rootNote: 'C4', imported: true, urls });
+      await persistImportedSample(id, name, blob);
+      return { id, name };
+    }
     // Pop a file picker, register the chosen audio file as a Tone.Sampler,
     // and call onLoaded(id, friendlyName) once the buffer is ready. Persists
     // the blob in IndexedDB so it survives reloads.
@@ -817,24 +830,10 @@
         const file = input.files && input.files[0];
         input.remove();
         if (!file) return;
-        const id = makeImportedSampleId(file.name);
-        const friendly = (file.name || id).replace(/\.[^.]+$/, '');
+        const friendly = (file.name || 'sample').replace(/\.[^.]+$/, '');
         try {
-          const url = URL.createObjectURL(file);
-          const urls = { 'C4': url };
-          const sampler = new Tone.Sampler({
-            urls,
-            release: 1,
-          }).connect(globalSendTap);
-          sampleSamplers.set(id, {
-            sampler,
-            name: friendly,
-            rootNote: 'C4',
-            imported: true,
-            urls,
-          });
-          await persistImportedSample(id, friendly, file);
-          if (typeof onLoaded === 'function') onLoaded(id, friendly);
+          const { id, name } = await registerSampleFromBlob(file, friendly);
+          if (typeof onLoaded === 'function') onLoaded(id, name);
         } catch (e) {
           console.warn('Failed to import sample', e);
           alert('Could not import this audio file.');

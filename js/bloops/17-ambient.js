@@ -43,6 +43,7 @@
         seed:   1,
         space:  0,                      // 0 = centred → 100 = half full-L / half full-R
         progRateMs: 4000,               // ms per chord for "Progression" note sources
+        freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
         // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
         // size → Freeverb roomSize (0..1); damp → dampening Hz (higher = darker).
         reverb: { size: 80, damp: 45 },
@@ -221,6 +222,7 @@
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
+      if (!Number.isFinite(cfg.freezeLenMs)) cfg.freezeLenMs = d.freezeLenMs;
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
       else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
       ['bed','motif','texture','beat'].forEach(layer => {
@@ -1441,7 +1443,7 @@
       const C = E.clocks, I = E.iters;
       try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
       const runLayer = (key, lc, guardMax, minSec, emit) => {
-        if (!lc || lc.present === false || !lc.on) return;
+        if (!lc || lc.present === false || !lc.on || _ambFreezeFrozen(E, key)) return;
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(lc, cfg);
         let g = 0;
         while (C[key] < horizon && g++ < guardMax) {
@@ -1460,6 +1462,7 @@
         for (const seq of cfg.seqs) {
           if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
+          if (_ambFreezeFrozen(E, key)) continue;
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
           let g = 0;
           while (C[key] < horizon && g++ < 4) {
@@ -1478,6 +1481,7 @@
         for (const L of cfg.samples) {
           if (!L || !L.on || !L.sampleId) continue;
           const key = 'samp:' + L.id;
+          if (_ambFreezeFrozen(E, key)) continue;
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
           let g = 0;
           while (C[key] < horizon && g++ < 4) {
@@ -1494,6 +1498,214 @@
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
     // has at least one ramp. Reads the tick-cached cfg (no re-normalize).
+    // ---- "Always listening": rolling capture of the master output ----------
+    // A chain of short MediaRecorder segments (each a complete, decodable clip)
+    // keeps the most recent ~36s of whatever is playing. "Grab" stitches the
+    // last 30s of PCM into a WAV and registers it as a sample. Segmented (not
+    // one long recorder) so a bounded tail can actually be decoded; native
+    // MediaRecorder fan-out off masterLimiter adds no main-thread audio work.
+    const _AL = { on: false, rec: null, dest: null, segs: [], segMs: 4000, keepMs: 36000, busy: false };
+    function _alSupported() { return (typeof MediaRecorder !== 'undefined') && (typeof masterLimiter !== 'undefined' && !!masterLimiter); }
+    function _alStart() {
+      if (_AL.on || !_alSupported()) return false;
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return false; }
+      try { _AL.dest = ac.createMediaStreamDestination(); masterLimiter.connect(_AL.dest); } catch (e) { return false; }
+      _AL.on = true; _AL.segs = [];
+      _alNextSeg();
+      return true;
+    }
+    function _alNextSeg() {
+      if (!_AL.on || !_AL.dest) return;
+      let rec; const chunks = [];
+      try {
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        rec = new MediaRecorder(_AL.dest.stream, mime ? { mimeType: mime } : undefined);
+      } catch (e) { _AL.on = false; return; }
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        if (chunks.length) {
+          _AL.segs.push(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+          const maxSegs = Math.ceil(_AL.keepMs / _AL.segMs) + 1;
+          while (_AL.segs.length > maxSegs) _AL.segs.shift();
+        }
+        if (_AL.on) _alNextSeg();
+      };
+      try { rec.start(); } catch (e) { _AL.on = false; return; }
+      _AL.rec = rec;
+      setTimeout(() => { try { rec.stop(); } catch (e) {} }, _AL.segMs);
+    }
+    function _alStop() {
+      _AL.on = false;
+      try { _AL.rec && _AL.rec.stop(); } catch (e) {}
+      try { if (_AL.dest) masterLimiter.disconnect(_AL.dest); } catch (e) {}
+      _AL.dest = null; _AL.segs = [];
+    }
+    // Decode a list of recorded segments and stitch the LAST `seconds` of PCM
+    // into one AudioBuffer (≤2ch). Shared by always-listen grab + layer freeze.
+    async function _segsToBuffer(ac, segs, seconds) {
+      const bufs = [];
+      for (const blob of segs) { try { bufs.push(await ac.decodeAudioData(await blob.arrayBuffer())); } catch (e) {} }
+      if (!bufs.length) return null;
+      const sr = bufs[0].sampleRate;
+      const ch = Math.min(2, bufs.reduce((m, b) => Math.max(m, b.numberOfChannels), 1));
+      const total = bufs.reduce((n, b) => n + b.length, 0);
+      const wantLen = Math.min(total, Math.floor(seconds * sr));
+      const startSkip = total - wantLen;
+      const out = ac.createBuffer(ch, wantLen, sr);
+      let srcPos = 0, dstPos = 0;
+      for (const b of bufs) {
+        const len = b.length;
+        const chans = []; for (let c = 0; c < ch; c++) chans.push(b.getChannelData(Math.min(c, b.numberOfChannels - 1)));
+        for (let i = 0; i < len; i++) {
+          if (srcPos + i >= startSkip) { for (let c = 0; c < ch; c++) out.getChannelData(c)[dstPos] = chans[c][i]; dstPos++; }
+        }
+        srcPos += len;
+      }
+      return out;
+    }
+    async function _alGrab(seconds) {
+      if (_AL.busy) return;
+      seconds = seconds || 30;
+      const segs = _AL.segs.slice();
+      if (!segs.length) { alert('Nothing buffered yet — turn on Listen and let it play a few seconds.'); return; }
+      _AL.busy = true;
+      try {
+        let ac; try { ac = Tone.getContext().rawContext; } catch (e) { throw new Error('No audio context'); }
+        const out = await _segsToBuffer(ac, segs, seconds);
+        if (!out) throw new Error('Could not decode buffered audio.');
+        const wantLen = out.length, sr = out.sampleRate;
+        const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(out) : null;
+        if (!wav) throw new Error('WAV encoder unavailable.');
+        let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) {}
+        const reg = (typeof registerSampleFromBlob === 'function') ? await registerSampleFromBlob(wav, 'listen-' + stamp) : null;
+        if (typeof showToast === 'function') showToast(reg ? ('Saved last ' + Math.round(wantLen / sr) + 's as sample “' + reg.name + '”') : 'Grab complete');
+      } catch (e) { alert('Grab failed: ' + ((e && e.message) || e)); }
+      finally { _AL.busy = false; }
+    }
+    // ---- Per-layer Freeze → loop --------------------------------------------
+    // Opt-in / lazy: 1st press arms a rolling recorder on the layer's output;
+    // 2nd press cuts the last `freezeLenMs` into a looping buffer + gates the
+    // generator for that layer (button → "Thaw"); Thaw stops at the next loop
+    // boundary and resumes stochastic generation. State is per-engine, keyed by
+    // layer key ('bed'|'motif'|…|'seq:<id>'|'samp:<id>').
+    const _FREEZE_SEG_MS = 2000;
+    function _ambFreezeState(E, key) {
+      E.freeze = E.freeze || {};
+      return E.freeze[key] || (E.freeze[key] = { armed: false, frozen: false, freezing: false, rec: null, dest: null, tap: null, segs: [], loopSrc: null, loopLen: 0, loopStart: 0 });
+    }
+    function _ambFreezeFrozen(E, key) { return !!(E && E.freeze && E.freeze[key] && E.freeze[key].frozen); }
+    function _ambFreezeArm(E, key) {
+      const tap = E.mod[key] && E.mod[key].vca;
+      if (!tap) { alert('Turn this layer on and press Play first, then Freeze.'); return false; }
+      if (typeof MediaRecorder === 'undefined') { alert('This browser cannot capture audio.'); return false; }
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return false; }
+      const st = _ambFreezeState(E, key);
+      try { st.dest = ac.createMediaStreamDestination(); tap.connect(st.dest); st.tap = tap; } catch (e) { return false; }
+      st.armed = true; st.segs = [];
+      _ambFreezeNextSeg(E, key);
+      return true;
+    }
+    function _ambFreezeNextSeg(E, key) {
+      const st = E.freeze && E.freeze[key];
+      if (!st || !st.armed || !st.dest) return;
+      let rec; const chunks = [];
+      try {
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        rec = new MediaRecorder(st.dest.stream, mime ? { mimeType: mime } : undefined);
+      } catch (e) { st.armed = false; return; }
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        if (chunks.length) st.segs.push(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+        const cfg = E._cfg || E.getCfg();
+        const N = Math.max(1, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
+        const maxSegs = Math.ceil((N * 1000) / _FREEZE_SEG_MS) + 1;
+        while (st.segs.length > maxSegs) st.segs.shift();
+        if (st.freezing) { st.freezing = false; _ambFreezeBuildLoop(E, key); return; }
+        if (st.armed) _ambFreezeNextSeg(E, key);
+      };
+      try { rec.start(); } catch (e) { st.armed = false; return; }
+      st.rec = rec;
+      setTimeout(() => { try { rec.stop(); } catch (e) {} }, _FREEZE_SEG_MS);
+    }
+    function _ambFreezeNow(E, key) {
+      const st = E.freeze && E.freeze[key];
+      if (!st || !st.armed) return;
+      st.frozen = true;   // gate generation immediately
+      st.freezing = true; // tell the recorder's onstop to build the loop
+      st.armed = false;
+      try { st.rec && st.rec.stop(); } catch (e) {}
+    }
+    async function _ambFreezeBuildLoop(E, key) {
+      const st = E.freeze && E.freeze[key];
+      if (!st) return;
+      try { if (st.tap && st.dest) st.tap.disconnect(st.dest); } catch (e) {}
+      st.dest = null; st.rec = null;
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { st.frozen = false; _ambFreezeSyncAll(E); return; }
+      const cfg = E._cfg || E.getCfg();
+      const N = Math.max(1, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
+      let buf = null; try { buf = await _segsToBuffer(ac, st.segs.slice(), N); } catch (e) {}
+      st.segs = [];
+      if (!buf) { st.frozen = false; _ambFreezeSyncAll(E); return; }
+      const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
+      try {
+        const src = ac.createBufferSource();
+        src.buffer = buf; src.loop = true;
+        src.connect(dest);
+        src.start();
+        st.loopSrc = src; st.loopLen = buf.duration; st.loopStart = ac.currentTime;
+      } catch (e) { st.frozen = false; }
+      _ambFreezeSyncAll(E);
+    }
+    function _ambFreezeThaw(E, key) {
+      const st = E.freeze && E.freeze[key];
+      if (!st) return;
+      const src = st.loopSrc;
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { ac = null; }
+      if (src && ac && st.loopLen > 0) {
+        // Let the current loop finish, then stop + resume generation.
+        const elapsed = Math.max(0.01, ac.currentTime - (st.loopStart || ac.currentTime));
+        const end = (st.loopStart || ac.currentTime) + Math.ceil(elapsed / st.loopLen) * st.loopLen;
+        src.onended = () => { st.frozen = false; st.loopSrc = null; _ambFreezeSyncAll(E); };
+        try { src.loop = false; src.stop(end); } catch (e) { try { src.stop(); } catch (_) {} st.frozen = false; st.loopSrc = null; }
+      } else {
+        try { src && src.stop(); } catch (e) {}
+        st.frozen = false; st.loopSrc = null;
+      }
+      _ambFreezeSyncAll(E);
+    }
+    function _ambFreezeCycle(E, key) {
+      const st = _ambFreezeState(E, key);
+      if (st.frozen) _ambFreezeThaw(E, key);
+      else if (st.armed) _ambFreezeNow(E, key);
+      else _ambFreezeArm(E, key);
+      _ambFreezeSyncAll(E);
+    }
+    function _ambFreezeStopAll(E) {
+      if (!E || !E.freeze) return;
+      Object.keys(E.freeze).forEach(key => {
+        const st = E.freeze[key]; if (!st) return;
+        try { st.rec && st.rec.stop(); } catch (e) {}
+        try { if (st.tap && st.dest) st.tap.disconnect(st.dest); } catch (e) {}
+        try { st.loopSrc && st.loopSrc.stop(); } catch (e) {}
+      });
+      E.freeze = {};
+      try { _ambFreezeSyncAll(E); } catch (e) {}
+    }
+    function _ambFreezeSyncAll(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-freeze-btn').forEach(btn => {
+        const st = E.freeze && E.freeze[btn.dataset.fkey];
+        const armed = !!(st && st.armed), frozen = !!(st && st.frozen);
+        btn.classList.toggle('armed', armed);
+        btn.classList.toggle('frozen', frozen);
+        btn.textContent = frozen ? 'Thaw' : (armed ? '● Rec' : '❄');
+        btn.title = frozen ? 'Thaw — resume generation after this loop'
+                  : armed ? 'Freeze — cut & loop the last seconds (recording…)'
+                  : 'Freeze — arm the recorder, press again to loop the last seconds';
+      });
+    }
     // Reset a Bloom instance to defaults: one Bed, default parameters, no extra
     // layers / ramps. Published wraps + progressions (a shared library, not
     // instance state) are preserved on the master.
@@ -1511,7 +1723,8 @@
         if (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) def.publishedProgs = masterAmbient.publishedProgs;
         masterAmbient = def;
       }
-      // Clear per-run engine state + any built mod/FX chains.
+      // Clear per-run engine state + any built mod/FX chains + freeze loops.
+      try { _ambFreezeStopAll(E); } catch (e) {}
       try { _ambTeardownMods(); } catch (e) {}
       E.seqState = {}; E.clocks = {}; E.iters = {}; E.progStep = 0;
       E.motifDeg = null; E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
@@ -1558,6 +1771,7 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
       const cfg = E.getCfg();
       if (cfg) cfg.playing = false;
@@ -1971,8 +2185,9 @@
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
           _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') + '</div>' +
       '</details>';
-    const _ambHead = (label, onId, delId) =>
+    const _ambHead = (label, onId, delId, freezeKey) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
+      (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — arm the recorder, press again to loop the last seconds">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button></div>';
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
@@ -1987,7 +2202,7 @@
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
-        _ambHead('Seq' + (i + 1), p + 'on', p + 'del') +
+        _ambHead('Seq' + (i + 1), p + 'on', p + 'del', 'seq:' + id) +
         '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
         _ambNotesButtonHtml(p.slice(0, -1)) +
         '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
@@ -2082,7 +2297,7 @@
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       const nm = String(s.name || s.sampleId || 'sample').replace(/[<>&"]/g, '');
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
-        _ambHead('Sample' + (i + 1), p + 'on', p + 'del') +
+        _ambHead('Sample' + (i + 1), p + 'on', p + 'del', 'samp:' + id) +
         '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
         _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
         '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' +
@@ -2393,6 +2608,7 @@
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
       set('ambient-space', cfg.space);
       set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
+      set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
       const chk = (id, v) => { const el = document.getElementById(tr(id)); if (el) el.classList.toggle('on', !!v); };
       // Show only "present" built-in layer cards (Bloom starts with just Bed;
@@ -2464,6 +2680,7 @@
       _ambRenderSeqLayers(E);
       _ambRenderSampleLayers(E);
       _ambRenderRamps(E);
+      try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const m = cfg[layer] && cfg[layer].mod;
         if (!m) return;
@@ -2497,6 +2714,12 @@
           '<button type="button" id="ambient-export-btn" class="ambient-regen" title="Record a fixed length of Bloom and save it to Google Drive">⤓ Export→Drive</button>' +
           '<span class="ambient-seed" id="ambient-seed-val">#1</span>' +
         '</div>' +
+        (E.isLane ? '' :
+          '<div class="ambient-row ambient-listen-row">' +
+            '<button type="button" id="ambient-listen-btn" class="ambient-seg" title="Always listening: continuously buffer the last ~30s of everything playing">🎙 Listen</button>' +
+            '<button type="button" id="ambient-grab-btn" class="ambient-regen" title="Save the buffered last 30s as a sample">⤓ Grab 30s</button>' +
+            '<span class="ambient-hint" id="ambient-listen-hint">off</span>' +
+          '</div>') +
         '<div class="ambient-row ambient-timing">' +
           '<span class="ambient-hint">Timing</span>' +
           '<button type="button" class="ambient-seg" id="ambient-timing-free">Free</button>' +
@@ -2504,12 +2727,13 @@
         '</div>' +
         sl('Space', 'ambient-space', 0, 100, 0, 'centre → wide') +
         tm('Chord rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
+        tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +
         // Dedicated reverb (fed by each layer's "Reverb send").
         '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
           sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
           sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Bed', 'ambient-bed-on', 'ambient-bed-del') +
+        '<div class="ambient-layer collapsed">' + head('Bed', 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-bed') +
           sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
@@ -2526,7 +2750,7 @@
           modUi('bed') +
           fxUi('bed') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Motif', 'ambient-motif-on', 'ambient-motif-del') +
+        '<div class="ambient-layer collapsed">' + head('Motif', 'ambient-motif-on', 'ambient-motif-del', 'motif') +
           '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-motif') +
           sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
@@ -2541,7 +2765,7 @@
           modUi('motif') +
           fxUi('motif') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Texture', 'ambient-texture-on', 'ambient-texture-del') +
+        '<div class="ambient-layer collapsed">' + head('Texture', 'ambient-texture-on', 'ambient-texture-del', 'texture') +
           '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-texture') +
           sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
@@ -2555,7 +2779,7 @@
           modUi('texture') +
           fxUi('texture') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Beat', 'ambient-beat-on', 'ambient-beat-del') +
+        '<div class="ambient-layer collapsed">' + head('Beat', 'ambient-beat-on', 'ambient-beat-del', 'beat') +
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
@@ -2592,6 +2816,15 @@
           if (layer) layer.classList.toggle('collapsed');
         });
       });
+      // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
+      // dynamic layers re-render; data-fkey carries the layer key).
+      host.addEventListener('click', (e) => {
+        const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
+        if (!fb) return;
+        e.stopPropagation();
+        try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }
+      });
+      _ambFreezeSyncAll(E);
 
       // Per-section Tone dropdowns: "Grid voice" (follow cellParams[0]) plus
       // every melodic tone from getAllSoundOptions (drum kits excluded — Beat
@@ -2677,6 +2910,8 @@
       bind('ambient-space', null, 'space');
       { const el = G('ambient-prog-rate'), vEl = G('ambient-prog-rate-v');
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 4000; c.progRateMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
+      { const el = G('ambient-freeze-len'), vEl = G('ambient-freeze-len-v');
+        if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 10000; c.freezeLenMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       // Reverb Size / Damp → live reverb node.
       ['size', 'damp'].forEach(key => {
         const el = G('ambient-reverb-' + key); if (!el) return;
@@ -2807,6 +3042,18 @@
       });
       const resetBtn = G('ambient-reset-btn');
       if (resetBtn) resetBtn.addEventListener('click', () => { try { _ambResetInstance(E); } catch (e) { console.warn('Bloom reset failed', e); } });
+      // "Always listening" — master only; rolling capture of the master output.
+      if (!E.isLane) {
+        const listenBtn = G('ambient-listen-btn'), grabBtn = G('ambient-grab-btn'), lHint = G('ambient-listen-hint');
+        const syncAL = () => {
+          if (listenBtn) listenBtn.classList.toggle('active', _AL.on);
+          if (lHint) lHint.textContent = _AL.on ? 'buffering…' : 'off';
+          if (grabBtn) grabBtn.disabled = !_AL.on;
+        };
+        if (listenBtn) listenBtn.addEventListener('click', () => { if (_AL.on) _alStop(); else _alStart(); syncAL(); });
+        if (grabBtn) grabBtn.addEventListener('click', () => _alGrab(30));
+        syncAL();
+      }
       if (E.isLane) {
         const freezeBtn = G('ambient-freeze-btn');
         if (freezeBtn) freezeBtn.addEventListener('click', () => { try { _ambFreezeToLane(); } catch (e) { console.warn('Bloom freeze failed', e); } });

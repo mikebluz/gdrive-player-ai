@@ -6342,8 +6342,9 @@
     .keep-sdiv-modal .keep-sdiv-rest { padding-left: 16px; opacity: 0.92; }
     .keep-sdiv-modal .keep-sdiv-rest .keep-sdiv-name { color: #8a8aa8; font-style: italic; }
     .keep-sdiv-modal .keep-sdiv-actions {
-      display: flex; justify-content: space-between; gap: 10px; margin-top: 14px;
+      display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px;
     }
+    .keep-sdiv-modal .keep-sdiv-playgroup { display: flex; gap: 6px; }
     .keep-sdiv-modal .keep-sdiv-preview {
       padding: 8px 18px;
       border: 1px solid #4fd1c5; border-radius: 10px;
@@ -6352,6 +6353,29 @@
       cursor: pointer; transition: all 0.15s ease;
     }
     @media (hover: hover) { .keep-sdiv-modal .keep-sdiv-preview:hover { background: rgba(79,209,197,0.22); border-color: #81e6d9; } }
+    .keep-sdiv-modal .keep-sdiv-loop {
+      padding: 8px 12px;
+      border: 1px solid #2d2d3f; border-radius: 10px;
+      background: transparent; color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .keep-sdiv-modal .keep-sdiv-loop:hover { border-color: #4fd1c5; color: #bee3f8; } }
+    .keep-sdiv-modal .keep-sdiv-loop.active {
+      background: rgba(79,209,197,0.18); border-color: #4fd1c5; color: #d6fffb;
+    }
+    /* Pitch dropdown on single-note rows. */
+    .keep-sdiv-modal .keep-sdiv-num {
+      flex: 0 0 auto; color: #8a8aa8;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; font-weight: 700;
+    }
+    .keep-sdiv-modal .keep-sdiv-pitch {
+      flex: 1 1 auto; min-width: 0;
+      background: #0a0a14; color: #e2e8f0;
+      border: 1px solid #2d2d3f; border-radius: 7px;
+      padding: 4px 6px; font-family: 'Segoe UI', sans-serif; font-size: 0.82rem;
+      cursor: pointer;
+    }
     .keep-sdiv-modal .keep-sdiv-apply {
       padding: 8px 20px;
       border: 1px solid #4299e1; border-radius: 10px;

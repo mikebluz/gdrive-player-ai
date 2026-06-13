@@ -2490,11 +2490,38 @@
       const optionsFor = (cur) => _SDIV_SIZES
         .map(([lbl, v]) => `<option value="${v}"${Math.abs(v - cur) < 1e-9 ? ' selected' : ''}>${lbl}</option>`)
         .join('');
+      // Pitch <option> list for single-note rows — drawn from the current
+      // grid notes, with the note's own pitch prepended if it isn't on the
+      // grid (e.g. after a scale change) so it stays selectable.
+      const pitchOptsFor = (freq, label) => {
+        const gridNotes = Array.isArray(notes) ? notes : [];
+        let matched = false;
+        const opts = gridNotes
+          .filter(n => n && n.freq != null)
+          .map(n => {
+            const sel = Math.abs(n.freq - freq) / (n.freq || 1) < 0.001;
+            if (sel) matched = true;
+            return `<option value="${n.freq}" data-label="${n.label}"${sel ? ' selected' : ''}>${n.label}</option>`;
+          });
+        if (!matched && freq != null) {
+          opts.unshift(`<option value="${freq}" data-label="${label || ''}" selected>${label || '?'}</option>`);
+        }
+        return opts.join('');
+      };
       // Per-note working model: one {kind:'note'} entry per kept note, with
       // optional {kind:'rest'} entries inserted right after a note (one per
-      // note). Applied — sizes + inserted rests — only when the user taps
-      // Apply on the Per-note tab.
-      const model = list.map(step => ({ kind: 'note', step, sub: _stepCurrentSubdiv(step) }));
+      // note). Single notes also carry an editable pitch (freq/label/
+      // cellIndex). Applied — sizes, pitches, inserted rests — only when the
+      // user taps Apply on the Per-note tab.
+      const model = list.map(step => {
+        const isSingle = !!step && step.freq != null && !step.chord && !step.isSub;
+        return {
+          kind: 'note', step, sub: _stepCurrentSubdiv(step), isSingle,
+          freq: isSingle ? step.freq : null,
+          label: isSingle ? step.label : null,
+          cellIndex: isSingle ? step.cellIndex : null,
+        };
+      });
       modal.innerHTML = `
         <div class="keep-sdiv-title">How long should each note play?</div>
         <div class="keep-sdiv-tabs" role="tablist">
@@ -2507,7 +2534,10 @@
         <div class="keep-sdiv-body" data-body="per" hidden>
           <div class="keep-sdiv-rows" id="keep-sdiv-rows"></div>
           <div class="keep-sdiv-actions">
-            <button type="button" class="keep-sdiv-preview">▶ Preview</button>
+            <div class="keep-sdiv-playgroup">
+              <button type="button" class="keep-sdiv-preview">▶ Preview</button>
+              <button type="button" class="keep-sdiv-loop" aria-pressed="false" title="Loop the preview">↻ Loop</button>
+            </div>
             <button type="button" class="keep-sdiv-apply">Apply</button>
           </div>
         </div>
@@ -2515,13 +2545,25 @@
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      // Audition the current model — each note at its chosen size, rests as
-      // gaps — without committing. Timers are tracked so a re-press (or
-      // closing the menu) cancels an in-flight preview.
+      // Audition the current model — each note at its chosen size/pitch,
+      // rests as gaps — without committing. Timers are tracked so a re-press
+      // (or closing the menu) cancels an in-flight preview. Loop replays at
+      // the end while the Loop toggle is on.
       let _previewTimers = [];
-      const _stopPreview = () => { _previewTimers.forEach(id => clearTimeout(id)); _previewTimers = []; };
+      let _previewActive = false;
+      let _previewLoop = false;
+      const _clearPreviewTimers = () => { _previewTimers.forEach(id => clearTimeout(id)); _previewTimers = []; };
+      const _stopPreview = () => {
+        _clearPreviewTimers();
+        _previewActive = false;
+        const pb = modal.querySelector('.keep-sdiv-preview');
+        if (pb) pb.textContent = '▶ Preview';
+      };
       const previewKeepModel = () => {
-        _stopPreview();
+        _clearPreviewTimers();
+        _previewActive = true;
+        const pb = modal.querySelector('.keep-sdiv-preview');
+        if (pb) pb.textContent = '■ Stop';
         try { Tone.start(); } catch (e) {}
         const bpm = parseInt(tempoInput?.value, 10) || 120;
         const secPerQuarter = 60 / bpm; // sub === 1 is a 1/4 note
@@ -2532,6 +2574,7 @@
           const nxt = model[idx + 1];
           const restMs = (nxt && nxt.kind === 'rest') ? Math.max(0, Math.round(nxt.sub * secPerQuarter * 1000)) : 0;
           const step = entry.step;
+          const freq = entry.isSingle ? entry.freq : step.freq;
           const at = tMs;
           _previewTimers.push(setTimeout(() => {
             try {
@@ -2542,13 +2585,23 @@
                 step.chord.forEach(n => {
                   if (n && n.freq != null) playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, step), step.bend), noteMs);
                 });
-              } else if (step.freq != null) {
-                playNote(step.freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), noteMs);
+              } else if (freq != null) {
+                playNote(freq, paramsWithBend(step.params || step.sound || 'sine', step.bend), noteMs);
               }
             } catch (e) {}
           }, at));
           tMs += noteMs + restMs;
         });
+        // Tail timer: loop or stop at the end. Checks the live flag so
+        // toggling Loop mid-play takes effect at the next boundary.
+        if (tMs > 0) {
+          _previewTimers.push(setTimeout(() => {
+            if (_previewLoop) previewKeepModel();
+            else _stopPreview();
+          }, tMs));
+        } else {
+          _stopPreview();
+        }
       };
 
       // Render the per-note rows from the working model. Re-run on any model
@@ -2567,11 +2620,27 @@
             // (the span until the next note begins).
             const total = entry.sub + (hasRest ? next.sub : 0);
             row.className = 'keep-sdiv-row';
+            // Single notes get an editable pitch dropdown; chords / runs show
+            // their composite name and are left as-is.
+            const nameHtml = entry.isSingle
+              ? `<span class="keep-sdiv-num">${noteNum}.</span>` +
+                `<select class="keep-sdiv-pitch sm-select" title="Change this note's pitch">${pitchOptsFor(entry.freq, entry.label)}</select>`
+              : `<span class="keep-sdiv-name">${noteNum}. ${_stepName(entry.step)}</span>`;
             row.innerHTML =
-              `<span class="keep-sdiv-name">${noteNum}. ${_stepName(entry.step)}</span>` +
+              nameHtml +
               `<select class="keep-sdiv-sel sm-select">${optionsFor(entry.sub)}</select>` +
               `<span class="keep-sdiv-total" title="This note + the rest after it = time until the next note">→ ${_divReadout(total)}</span>` +
               `<button type="button" class="keep-sdiv-addrest" title="Add a rest after this note"${hasRest ? ' disabled' : ''}>+ rest</button>`;
+            const pitchSel = row.querySelector('.keep-sdiv-pitch');
+            if (pitchSel) pitchSel.addEventListener('change', (e) => {
+              const f = parseFloat(e.target.value);
+              if (!Number.isFinite(f)) return;
+              const opt = e.target.selectedOptions && e.target.selectedOptions[0];
+              entry.freq = f;
+              if (opt && opt.dataset.label) entry.label = opt.dataset.label;
+              const gi = (typeof _findCellIdxForFreq === 'function') ? _findCellIdxForFreq(f) : -1;
+              entry.cellIndex = (gi >= 0) ? gi : null;
+            });
             row.querySelector('.keep-sdiv-sel').addEventListener('change', (e) => {
               const v = parseFloat(e.target.value);
               if (Number.isFinite(v) && v > 0) { entry.sub = v; renderPer(); }
@@ -2609,9 +2678,19 @@
         });
       });
 
-      // Preview the configured rhythm without committing.
+      // Preview the configured rhythm without committing. Press toggles
+      // play / stop; the Loop button repeats it until turned off.
       const previewBtn = modal.querySelector('.keep-sdiv-preview');
-      if (previewBtn) previewBtn.addEventListener('click', previewKeepModel);
+      if (previewBtn) previewBtn.addEventListener('click', () => {
+        if (_previewActive) _stopPreview();
+        else previewKeepModel();
+      });
+      const loopBtn = modal.querySelector('.keep-sdiv-loop');
+      if (loopBtn) loopBtn.addEventListener('click', () => {
+        _previewLoop = !_previewLoop;
+        loopBtn.classList.toggle('active', _previewLoop);
+        loopBtn.setAttribute('aria-pressed', _previewLoop ? 'true' : 'false');
+      });
 
       // All-notes mode: one size applied to every kept note.
       modal.querySelectorAll('.keep-sdiv-body[data-body="all"] .sdiv-opt').forEach(b => {
@@ -2633,8 +2712,16 @@
         applyBtn.addEventListener('click', () => {
           _stopPreview();
           if (typeof snapshotForUndo === 'function') snapshotForUndo('Keep step sizes');
-          // 1) note sizes
-          model.forEach(e => { if (e.kind === 'note') _applyStepDivToStep(e.step, e.sub); });
+          // 1) note sizes (+ pitch for single notes that were retuned)
+          model.forEach(e => {
+            if (e.kind !== 'note') return;
+            _applyStepDivToStep(e.step, e.sub);
+            if (e.isSingle && Number.isFinite(e.freq)) {
+              e.step.freq = e.freq;
+              if (e.label != null) e.step.label = e.label;
+              e.step.cellIndex = e.cellIndex;
+            }
+          });
           // 2) inserted rests — each goes immediately after its preceding
           // note in the sequence. Re-find the note's index per insertion so
           // earlier splices don't throw off later ones.

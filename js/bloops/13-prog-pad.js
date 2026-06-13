@@ -296,6 +296,21 @@
       });
       _progBlocksEl.appendChild(autoBtn);
       _progBlocksEl.appendChild(addBtn);
+      // Publish the current progression to the master Bloom's Notes menu so
+      // Bloom layers can use it as a (time-advancing) pitch source.
+      if (progBlocks.length) {
+        const pubBtn = document.createElement('button');
+        pubBtn.type = 'button';
+        pubBtn.className = 'prog-auto-btn';
+        pubBtn.textContent = '🌸 → Bloom';
+        pubBtn.title = 'Publish this progression to Bloom (selectable under a layer’s Notes ▸ Progression)';
+        pubBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const entry = (typeof _ambPublishProg === 'function') ? _ambPublishProg(null, progBlocks) : null;
+          if (typeof showToast === 'function') showToast(entry ? ('Published “' + entry.name + '” to Bloom Notes') : 'Could not publish');
+        });
+        _progBlocksEl.appendChild(pubBtn);
+      }
     }
     function _progPlayBlock(block) {
       if (!block || typeof playNote !== 'function') return;

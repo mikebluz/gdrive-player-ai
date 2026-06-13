@@ -42,6 +42,7 @@
         timing: 'free',                 // 'free' | 'sync'
         seed:   1,
         space:  0,                      // 0 = centred → 100 = half full-L / half full-R
+        progRateMs: 4000,               // ms per chord for "Progression" note sources
         // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
         // size → Freeverb roomSize (0..1); damp → dampening Hz (higher = darker).
         reverb: { size: 80, damp: 45 },
@@ -99,7 +100,7 @@
         playId: opts.playId, seedId: opts.seedId, isLane: !!opts.isLane,
         // per-run state (was module-global, single-instance)
         rng: 1, motifDeg: null, texPattern: null, texStep: 0, texMutateAt: 0,
-        mod: {}, reverb: null, timer: null, rampTimer: null, _cfg: null, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
+        mod: {}, reverb: null, timer: null, rampTimer: null, _cfg: null, progStep: 0, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
       };
     }
     const _laneEng = _makeAmbientEngine({
@@ -219,6 +220,7 @@
       if (cfg.timing !== 'free' && cfg.timing !== 'sync') cfg.timing = d.timing;
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
+      if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
       else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
       ['bed','motif','texture','beat'].forEach(layer => {
@@ -357,11 +359,19 @@
       const arr = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
       return arr.find(w => w && w.id === id) || null;
     }
-    // Interval set for a note source. Chord/Wrap → pitch-class set; scale → SCALES.
+    // The current chord of a progression note source (advances with _E.progStep).
+    function _ambProgCurrentChord(n) {
+      const chs = Array.isArray(n.chords) ? n.chords : [];
+      if (!chs.length) return null;
+      const step = (_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0;
+      return chs[((step % chs.length) + chs.length) % chs.length] || null;
+    }
+    // Interval set for a note source. Chord/Wrap/Prog → pitch-class set; scale → SCALES.
     function _ambScaleIntervals(src) {
       const n = _ambAsNotes(src);
       if (n.type === 'chord') return _ambChordIntervals(n.form, n.inversion);
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return (w && Array.isArray(w.intervals) && w.intervals.length) ? w.intervals : [0, 4, 7]; }
+      if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); return (ch && Array.isArray(ch.intervals) && ch.intervals.length) ? ch.intervals : [0, 4, 7]; }
       const name = _ambResolveScale(n.scale);
       return (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
     }
@@ -369,6 +379,7 @@
       const n = _ambAsNotes(src);
       if (n.type === 'chord' && Number.isFinite(n.root)) return ((n.root % 12) + 12) % 12;
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); if (w && Number.isFinite(w.root)) return ((w.root % 12) + 12) % 12; }
+      if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); if (ch && Number.isFinite(ch.root)) return ((ch.root % 12) + 12) % 12; }
       return (typeof rootIdx === 'number') ? rootIdx : 0;
     }
     // Human label for the Notes button.
@@ -381,6 +392,7 @@
         return rootName + ' ' + (def ? def[1] : 'Chord') + invTxt;
       }
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return '⊕ ' + (w ? w.name : 'Wrap'); }
+      if (n.type === 'prog') return '⇶ ' + (n.name || 'Progression');
       return n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
     }
     // Publish a wrap (saved-bank entry) to the master Bloom Notes registry as a
@@ -407,6 +419,46 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return entry;
     }
+    // ---- Progressions (Notes ▸ Progression) ---------------------------------
+    // Curated standards (resolved against the workspace root on selection).
+    const _AMB_PROG_STANDARDS = [
+      ['I–IV–V', 'major', [[1, 'maj'], [4, 'maj'], [5, 'maj']]],
+      ['I–V–vi–IV', 'major', [[1, 'maj'], [5, 'maj'], [6, 'min'], [4, 'maj']]],
+      ['I–vi–IV–V', 'major', [[1, 'maj'], [6, 'min'], [4, 'maj'], [5, 'maj']]],
+      ['ii–V–I (jazz)', 'major', [[2, 'min7'], [5, '7'], [1, 'maj7']]],
+      ['Pachelbel', 'major', [[1, 'maj'], [5, 'maj'], [6, 'min'], [3, 'min'], [4, 'maj'], [1, 'maj'], [4, 'maj'], [5, 'maj']]],
+      ['12-bar blues', 'major', [[1, '7'], [1, '7'], [1, '7'], [1, '7'], [4, '7'], [4, '7'], [1, '7'], [1, '7'], [5, '7'], [4, '7'], [1, '7'], [5, '7']]],
+      ['i–iv–v', 'minor', [[1, 'min'], [4, 'min'], [5, 'min']]],
+      ['i–VI–VII', 'minor', [[1, 'min'], [6, 'maj'], [7, 'maj']]],
+      ['Andalusian', 'minor', [[1, 'min'], [7, 'maj'], [6, 'maj'], [5, 'maj']]],
+      ['i–VI–iv–V', 'minor', [[1, 'min'], [6, 'maj'], [4, 'min'], [5, 'maj']]],
+    ];
+    // PROG blocks ({chordRoot, chordQuality}) → [{ root, intervals }].
+    function _ambProgChordsFromBlocks(blocks) {
+      return (blocks || []).map(b => {
+        const def = (typeof CHORDS !== 'undefined') ? CHORDS[b.chordQuality] : null;
+        const iv = (def && Array.isArray(def.semis)) ? def.semis : [0, 4, 7];
+        const intervals = Array.from(new Set(iv.map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b);
+        return { root: (((b.chordRoot | 0) % 12) + 12) % 12, intervals };
+      });
+    }
+    function _ambResolveStandard(family, steps) {
+      const root = (typeof rootIdx === 'number') ? rootIdx : 0;
+      let blocks = [];
+      try { if (typeof _progAutoFillProgression === 'function') blocks = _progAutoFillProgression(root, family, { steps }); } catch (e) {}
+      return _ambProgChordsFromBlocks(blocks);
+    }
+    function _ambPublishProg(name, blocks) {
+      const chords = _ambProgChordsFromBlocks(blocks);
+      if (!chords.length) return null;
+      masterAmbient = masterAmbient || _defaultAmbientConfig();
+      if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
+      const id = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+      const entry = { id, name: name || ('Prog ' + id), chords };
+      masterAmbient.publishedProgs.push(entry);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      return entry;
+    }
     function _ambNoteFreq(intervalSemi, octave, src) {
       const notes = _ambAsNotes(src);
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
@@ -415,8 +467,8 @@
       const midi = 12 * (octave + 1) + pc;
       let freq = A * Math.pow(2, (midi - 69) / 12);
       try {
-        // Microtuning applies to scales only (chords are equal-tempered).
-        if (notes.type !== 'chord') {
+        // Microtuning applies to scales only (chords/wraps/progs are equal-tempered).
+        if (notes.type === 'scale' || !notes.type) {
           const sName = _ambResolveScale(notes.scale);
           if (typeof MICRO_TUNINGS !== 'undefined' && MICRO_TUNINGS[sName]) {
             const micro = MICRO_TUNINGS[sName];
@@ -445,6 +497,10 @@
         if (!Number.isFinite(n.root)) n.root = (typeof rootIdx === 'number') ? rootIdx : 0;
         n.root = ((n.root % 12) + 12) % 12;
         n.inversion = Math.max(0, n.inversion | 0);
+      } else if (n.type === 'wrap') {
+        if (!Number.isFinite(n.id)) layer.notes = { type: 'scale', scale: '' };
+      } else if (n.type === 'prog') {
+        if (!Array.isArray(n.chords) || !n.chords.length) layer.notes = { type: 'scale', scale: '' };
       } else {
         n.type = 'scale';
         if (typeof n.scale !== 'string') n.scale = '';
@@ -489,10 +545,21 @@
         }
         showCtxMenu(x, y, wraps.map(w => ({ label: '⊕ ' + w.name, fn: () => apply({ type: 'wrap', id: w.id }) })));
       };
+      const progSub = () => {
+        const items = [{ label: 'Standards', disabled: true }];
+        _AMB_PROG_STANDARDS.forEach(([nm, fam, steps]) => items.push({ label: '  ' + nm, fn: () => apply({ type: 'prog', name: nm, chords: _ambResolveStandard(fam, steps) }) }));
+        const pub = (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+        if (pub.length) {
+          items.push('hr', { label: 'Published', disabled: true });
+          pub.forEach(p => items.push({ label: '  ' + p.name, fn: () => apply({ type: 'prog', name: p.name, chords: (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals })) }) }));
+        }
+        showCtxMenu(x, y, items);
+      };
       showCtxMenu(x, y, [
         { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
         { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
+        { label: '⇶ Progression ▸', fn: () => setTimeout(progSub, 0) },
       ]);
     }
     function _ambOpenChordPicker(E, getLayer, afterChange) {
@@ -1364,6 +1431,10 @@
       E._cfg = cfg;
       if (!cfg) return;
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+      // Progression clock: a shared per-engine step that advances every
+      // progRateMs, so all "Progression" note-source layers move through their
+      // chords together (a single harmonic pulse).
+      { const pr = Math.max(250, (cfg.progRateMs | 0) || 4000); E.progStep = Math.floor((now * 1000) / pr); }
       // (Ramps run on their own finer clock — see _ambStartGenerator.)
       const horizon = now + 1.2, lead = now + 0.1;
       const space = cfg.space | 0;
@@ -1423,6 +1494,31 @@
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
     // has at least one ramp. Reads the tick-cached cfg (no re-normalize).
+    // Reset a Bloom instance to defaults: one Bed, default parameters, no extra
+    // layers / ramps. Published wraps + progressions (a shared library, not
+    // instance state) are preserved on the master.
+    function _ambResetInstance(E) {
+      if (typeof confirm === 'function' && !confirm('Reset this Bloom to defaults? This clears its layers, ramps, and settings.')) return;
+      _E = E;
+      const wasPlaying = !!E.timer;
+      try { _ambStopGenerator(E); } catch (e) {}
+      const def = _defaultAmbientConfig();
+      if (E.isLane) {
+        const lane = (typeof lanes !== 'undefined') ? lanes[activeLaneIdx] : null;
+        if (lane) lane.ambient = def;
+      } else {
+        if (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) def.publishedWraps = masterAmbient.publishedWraps;
+        if (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) def.publishedProgs = masterAmbient.publishedProgs;
+        masterAmbient = def;
+      }
+      // Clear per-run engine state + any built mod/FX chains.
+      try { _ambTeardownMods(); } catch (e) {}
+      E.seqState = {}; E.clocks = {}; E.iters = {}; E.progStep = 0;
+      E.motifDeg = null; E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
+      _ambSyncControls(E);
+      if (wasPlaying) { try { _ambStartGenerator(E); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     function _ambStartRampClock(E) {
       if (!E || E.rampTimer) return;
       const c = E._cfg || (E._cfg = E.getCfg());
@@ -1682,7 +1778,8 @@
     // verbatim. The generator is (re)started fresh from the seed so the
     // captured take is reproducible.
     let _ambExportBusy = false;
-    function _ambCaptureToBuffer(durSec, onProgress) {
+    function _ambCaptureToBuffer(E, durSec, onProgress) {
+      E = E || _laneEng;
       return new Promise(async (resolve, reject) => {
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return reject(new Error('No audio context')); }
@@ -1703,7 +1800,7 @@
         rec.onerror = (e) => { cleanup(); reject((e && e.error) || new Error('Recording failed')); };
         rec.onstop = async () => {
           cleanup();
-          try { _ambStopGenerator(_laneEng); } catch (e) {}
+          try { _ambStopGenerator(E); } catch (e) {}
           try {
             const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
             const arr = await blob.arrayBuffer();
@@ -1712,7 +1809,7 @@
           } catch (e) { reject(e); }
         };
         // Fresh, reproducible take from the seed.
-        try { _ambStopGenerator(_laneEng); _ambStartGenerator(_laneEng); } catch (e) {}
+        try { _ambStopGenerator(E); _ambStartGenerator(E); } catch (e) {}
         try { rec.start(); } catch (e) { cleanup(); return reject(e); }
         const startMs = (typeof performance !== 'undefined') ? performance.now() : 0;
         const pi = setInterval(() => {
@@ -1722,13 +1819,15 @@
         setTimeout(() => { clearInterval(pi); try { rec.stop(); } catch (e) { cleanup(); reject(e); } }, durSec * 1000);
       });
     }
-    async function _ambExportToDrive() {
+    async function _ambExportToDrive(E) {
       if (_ambExportBusy) return;
-      _E = _laneEng;
-      const cfg = _laneAmbientCfg();
+      E = E || _laneEng;
+      _E = E;
+      const cfg = E.getCfg();
       if (!cfg) return;
-      const anyOn = ['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].on)
-        || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length));
+      const anyOn = ['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].present !== false && cfg[k].on)
+        || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length))
+        || (Array.isArray(cfg.samples) && cfg.samples.some(s => s.on && s.sampleId));
       if (!anyOn) { alert('Turn on at least one Bloom layer before exporting.'); return; }
       // Length first (Bloom has no inherent duration).
       const durStr = (typeof prompt === 'function') ? prompt('Bloom export length in seconds:', '60') : '60';
@@ -1751,7 +1850,7 @@
       const progress = (typeof showRenderProgressModal === 'function') ? showRenderProgressModal('Exporting Bloom…') : null;
       try {
         progress && progress.setStatus('Recording ' + durSec + 's…');
-        const buffer = await _ambCaptureToBuffer(durSec, (pct, sec, tot) => progress && progress.setProgress(pct, sec, tot));
+        const buffer = await _ambCaptureToBuffer(E, durSec, (pct, sec, tot) => progress && progress.setProgress(pct, sec, tot));
         progress && progress.setStatus(fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…');
         const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function')
           ? await audioBufferToMp3(buffer)
@@ -2293,6 +2392,7 @@
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
       set('ambient-space', cfg.space);
+      set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
       const chk = (id, v) => { const el = document.getElementById(tr(id)); if (el) el.classList.toggle('on', !!v); };
       // Show only "present" built-in layer cards (Bloom starts with just Bed;
@@ -2392,8 +2492,9 @@
         '<div class="ambient-row">' +
           '<button type="button" id="ambient-play-btn" class="ambient-play">▶ Play</button>' +
           '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="New random seed">✨ Regenerate</button>' +
-          (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' +
-                      '<button type="button" id="ambient-export-btn" class="ambient-regen" title="Record a fixed length of Bloom and save it to Google Drive">⤓ Export→Drive</button>' : '') +
+          '<button type="button" id="ambient-reset-btn" class="ambient-regen" title="Reset this Bloom to defaults (one Bed, default settings)">↺ Reset</button>' +
+          (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
+          '<button type="button" id="ambient-export-btn" class="ambient-regen" title="Record a fixed length of Bloom and save it to Google Drive">⤓ Export→Drive</button>' +
           '<span class="ambient-seed" id="ambient-seed-val">#1</span>' +
         '</div>' +
         '<div class="ambient-row ambient-timing">' +
@@ -2402,6 +2503,7 @@
           '<button type="button" class="ambient-seg" id="ambient-timing-sync">Sync</button>' +
         '</div>' +
         sl('Space', 'ambient-space', 0, 100, 0, 'centre → wide') +
+        tm('Chord rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
         // Dedicated reverb (fed by each layer's "Reverb send").
         '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
           sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
@@ -2573,6 +2675,8 @@
         });
       };
       bind('ambient-space', null, 'space');
+      { const el = G('ambient-prog-rate'), vEl = G('ambient-prog-rate-v');
+        if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 4000; c.progRateMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       // Reverb Size / Damp → live reverb node.
       ['size', 'damp'].forEach(key => {
         const el = G('ambient-reverb-' + key); if (!el) return;
@@ -2701,12 +2805,14 @@
         _ambSyncControls(E);
         persist();
       });
+      const resetBtn = G('ambient-reset-btn');
+      if (resetBtn) resetBtn.addEventListener('click', () => { try { _ambResetInstance(E); } catch (e) { console.warn('Bloom reset failed', e); } });
       if (E.isLane) {
         const freezeBtn = G('ambient-freeze-btn');
         if (freezeBtn) freezeBtn.addEventListener('click', () => { try { _ambFreezeToLane(); } catch (e) { console.warn('Bloom freeze failed', e); } });
-        const exportBtn = G('ambient-export-btn');
-        if (exportBtn) exportBtn.addEventListener('click', () => { _ambExportToDrive(); });
       }
+      const exportBtn = G('ambient-export-btn');
+      if (exportBtn) exportBtn.addEventListener('click', () => { _ambExportToDrive(E); });
 
       E.inited = true;
       _ambSyncControls(E);

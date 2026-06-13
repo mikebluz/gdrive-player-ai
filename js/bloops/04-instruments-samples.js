@@ -24,6 +24,18 @@
     function isSampleType(type) {
       return typeof type === 'string' && type.startsWith('sample:');
     }
+    // A "sliceable" sample is a SINGLE-buffer one-shot (imported / recorded /
+    // TEXT-frozen) — one recording mapped to one note, not a drum kit. The 100+
+    // multi-sampled tuned instruments (piano/organ/GM) map many notes and are
+    // NOT sliceable; they keep their normal pitched behavior. Used to gate the
+    // slice-mode control, the sliced grid voice, and "Send to Bloom (as Sample)".
+    function isSliceableSample(type) {
+      const id = (typeof type === 'string' && type.startsWith('sample:')) ? type.slice(7) : type;
+      const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
+      if (!info || info.drumKit) return false;
+      if (info.imported) return true;
+      try { return !!info.urls && Object.keys(info.urls).length === 1; } catch (e) { return false; }
+    }
     // Lets the offline export route sample-based notes through a parallel
     // bank of samplers bound to the offline audio context. When set, this
     // takes precedence over the live sampleSamplers map. When null, normal
@@ -120,11 +132,15 @@
           outTail = panNode;
         }
         outGain = new Tone.Gain(boost).connect(outTail);
+        // Slicing plays a mid-buffer window, so the cut edges can click — floor
+        // the attack/release a touch on the slice path to fade them (the
+        // non-slice path keeps its exact prior values).
+        const _slicing = !!(opts && (Number.isFinite(opts.sliceDurSec) || (Number.isFinite(opts.sampleOffsetSec) && opts.sampleOffsetSec > 0)));
         ampEnv = new Tone.AmplitudeEnvelope({
-          attack:  Math.max(0, env.attack),
+          attack:  _slicing ? Math.max(0.006, env.attack) : Math.max(0, env.attack),
           decay:   Math.max(0, env.decay),
           sustain: Math.max(0, Math.min(1, env.sustain)),
-          release: Math.max(0.01, env.release),
+          release: _slicing ? Math.max(0.006, env.release) : Math.max(0.01, env.release),
         }).connect(outGain);
         let head = ampEnv;
         // Optional per-note lowpass (the "filter" hook). Driven by a
@@ -161,7 +177,14 @@
         try { detuneScale && detuneScale.dispose(); } catch (_) {}
         return null;
       }
-      return { source, ampEnv, outGain, filter, panNode, detuneScale };
+      // Slice window for source.start(time, offset, duration). offset/duration
+      // are pre-rate BUFFER seconds, so convert the caller's musical (output-time)
+      // sampleOffsetSec/sliceDurSec by × playbackRate here — the one place that
+      // knows the rate. (The buffer consumed for an output-time slice scales with
+      // playbackRate, so a transposed slice still covers the right window.)
+      const sliceOffset = (opts && Number.isFinite(opts.sampleOffsetSec)) ? Math.max(0, Math.min(audioBuf.duration, opts.sampleOffsetSec * playbackRate)) : 0;
+      const sliceBufSec = (opts && Number.isFinite(opts.sliceDurSec)) ? Math.max(0.005, opts.sliceDurSec * playbackRate) : null;
+      return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec };
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -1887,11 +1910,15 @@
                || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
                || globalSendTap);
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
-            { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan });
+            { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,
+              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec });
           if (v) {
             const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             try {
-              v.source.start(triggerAt);
+              // Slice window when present (offset>0 or a bounded duration); else
+              // the plain whole-buffer start — byte-identical to the prior path.
+              if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
+              else v.source.start(triggerAt);
               // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
               // release over `rel` — same envelope timing the synth path uses,
               // so a sample voice and a synth voice sit identically in a slot.

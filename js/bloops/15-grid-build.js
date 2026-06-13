@@ -981,13 +981,20 @@
     });
 
     // ---- Top-right Tone dropdown: applies a tone to every grid cell ----
-    function applyToneToAllCells(type) {
+    function applyToneToAllCells(type, sliceModeArg) {
       // Cell sounds/params live outside the undo stack (matching Sound
       // Editor → Apply), so don't snapshot — it would push an entry that
       // can't actually roll the change back.
+      // Single-buffer samples become sliceable: stamp a sliceMode (default
+      // 'scan') so the sequencer plays step-div slices. Non-sliceable voices
+      // (synths + the multi-sampled tuned instruments) clear sliceMode.
+      const sliceMode = (typeof isSliceableSample === 'function' && isSliceableSample(type))
+        ? (sliceModeArg || 'scan') : null;
+      const applySlice = (o) => { if (!o) return; if (sliceMode) o.sliceMode = sliceMode; else delete o.sliceMode; };
       cellParams.forEach((p, idx) => {
         p.type = type;
         cellSounds[idx] = type;
+        applySlice(p);
       });
       // Also retune every step that's already in the workspace so picking
       // a tone changes both what new clicks will produce AND the existing
@@ -1004,6 +1011,7 @@
             n.sound = type;
             if (n.params) n.params.type = type;
             else n.params = { type };
+            applySlice(n.params);
           });
           return;
         }
@@ -1011,6 +1019,7 @@
         s.sound = type;
         if (s.params) s.params.type = type;
         else s.params = { type };
+        applySlice(s.params);
       };
       sequence.forEach(retuneStep);
       // Tone changes are scoped to the active lane only — each lane
@@ -1034,6 +1043,13 @@
       // restore — without this, an Unwrap or any path that reloads
       // workspace state would revert every cell back to piano.
       if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Shared API: make a single-buffer sample the grid's voice with a slice
+    // mode ('scan' default). Used by any producer — a manual tone pick, an
+    // imported/recorded sample, or a TEXT freeze. No producer-specific logic.
+    function setSampleGridVoice(sampleId, sliceMode) {
+      const type = (typeof sampleId === 'string' && sampleId.startsWith('sample:')) ? sampleId : ('sample:' + sampleId);
+      applyToneToAllCells(type, sliceMode || 'scan');
     }
     // ---- Tone families -- two-level menu (top: family list, drilldown:
     // family's tones). Keeps the panel short and lets us add more

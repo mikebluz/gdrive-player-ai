@@ -1136,6 +1136,13 @@
         sub.push('hr');
         if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'interleave', s.id) }));
         else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
+        // If this sequence's voice is a single-buffer sample, also offer the
+        // raw Sample layer (chopped/whole) on the master Bloom.
+        const _sid = (typeof _ambSampleIdOfSaved === 'function') ? _ambSampleIdOfSaved(saved) : null;
+        if (_sid) {
+          sub.push('hr');
+          sub.push({ label: '◫ As Sample layer', fn: () => _ambSendSampleToMaster(_sid, { chop: Math.max(1, (saved.steps || []).length) }) });
+        }
         showCtxMenu(x, y, sub);
       }, 0) });
       actions.push('hr');
@@ -1467,6 +1474,20 @@
             <div class="sm-waves" id="sm-waves"></div>
           </div>
         </details>
+        <details class="sm-fold" id="sm-slice-fold" style="display:none">
+          <summary>Slice</summary>
+          <div class="sm-fold-body">
+            <div class="sm-param">
+              <div class="sm-param-row">Sequence slice mode</div>
+              <select id="sm-slice-mode" class="sm-select">
+                <option value="scan">Scan (advance, reset on rest)</option>
+                <option value="stutter">Stutter (each step from start)</option>
+                <option value="index">Index (step N = Nth slice)</option>
+                <option value="none">Off (whole sample per step)</option>
+              </select>
+            </div>
+          </div>
+        </details>
         <details class="sm-fold">
           <summary>Envelope</summary>
           <div class="sm-fold-body">
@@ -1725,6 +1746,21 @@
           p.fxOverrideGlobal = !!overrideCheckbox.checked;
           broadcastAll('fxOverrideGlobal', p.fxOverrideGlobal);
         });
+      }
+      // Slice mode — only meaningful for single-buffer samples; show the fold
+      // only then. Writes p.sliceMode (broadcast to all cells on Apply-to-all).
+      const sliceFold = modal.querySelector('#sm-slice-fold');
+      const sliceSel = modal.querySelector('#sm-slice-mode');
+      if (sliceFold && sliceSel) {
+        const showSlice = (typeof isSliceableSample === 'function') && isSliceableSample(p.type);
+        sliceFold.style.display = showSlice ? '' : 'none';
+        if (showSlice) {
+          sliceSel.value = (typeof p.sliceMode === 'string' && p.sliceMode) ? p.sliceMode : 'scan';
+          sliceSel.addEventListener('change', () => {
+            p.sliceMode = sliceSel.value || 'scan';
+            broadcastAll('sliceMode', p.sliceMode);
+          });
+        }
       }
       const dlySyncSel = modal.querySelector('#sm-dly-sync');
       if (dlySyncSel) {

@@ -62,7 +62,7 @@
       if (typeof cfg.voice !== 'string' || !cfg.voice) cfg.voice = d.voice;
       if (typeof cfg.variant !== 'string') cfg.variant = d.variant;
       ['pitch', 'speed', 'amplitude', 'wordgap'].forEach(k => { if (!Number.isFinite(cfg[k])) cfg[k] = d[k]; });
-      if (cfg.freezeMode !== 'clip' && cfg.freezeMode !== 'chop') cfg.freezeMode = d.freezeMode;
+      if (cfg.freezeMode !== 'clip' && cfg.freezeMode !== 'chop' && cfg.freezeMode !== 'slice') cfg.freezeMode = d.freezeMode;
       return cfg;
     }
     function _textClamp(v, lo, hi) { v = +v; return v < lo ? lo : v > hi ? hi : v; }
@@ -260,6 +260,7 @@
           const full = (cfg.text || '').trim();
           const shortLabel = full.length > 18 ? full.slice(0, 18) + '…' : full;
           const steps = [];
+          let sliceVoiceId = null; // set in 'slice' mode → becomes the grid voice
           if (cfg.freezeMode === 'chop') {
             const slices = _textSliceBuffer(c.buffer);
             if (!slices.length) { _textSetStatus('No speech detected to chop.'); return; }
@@ -269,6 +270,14 @@
               const durUnits = Math.max(1, Math.ceil(sl.durSec / stepSec));
               steps.push(_textSampleStep('sample:' + id, c4, '◆ ' + (i + 1), durUnits, sub));
             });
+          } else if (cfg.freezeMode === 'slice') {
+            // Register the whole buffer once and lay it across N step-div steps.
+            // The shared setSampleGridVoice (called post-activation) makes it the
+            // grid's sliceable voice — all slicing logic lives in the general code.
+            const id = _textRegisterSample(c.wavBlob, shortLabel);
+            sliceVoiceId = 'sample:' + id;
+            const n = Math.max(1, Math.ceil(c.buffer.duration / stepSec));
+            for (let i = 0; i < n; i++) steps.push(_textSampleStep('sample:' + id, c4, '◆ ' + (i + 1), 1, sub));
           } else {
             const id = _textRegisterSample(c.wavBlob, shortLabel);
             const durUnits = Math.max(1, Math.ceil(c.buffer.duration / stepSec));
@@ -286,6 +295,15 @@
           if (typeof activateLane === 'function') activateLane(lanes.length - 1);
           else if (typeof renderSequence === 'function') renderSequence();
           if (typeof persistWorkspace === 'function') persistWorkspace();
+          // Slice mode: make the buffer the lane's sliceable grid voice via the
+          // shared general API (this also stamps sliceMode onto the new steps).
+          if (sliceVoiceId && typeof setSampleGridVoice === 'function') {
+            try {
+              setSampleGridVoice(sliceVoiceId, 'scan');
+              if (typeof _captureVoiceGlobals === 'function') lane.voice = _captureVoiceGlobals();
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            } catch (e) {}
+          }
           _textSetStatus('Froze to lane "' + lane.name + '" (' + steps.length + (steps.length === 1 ? ' step).' : ' steps).'));
         } catch (e) { _textSetStatus('Freeze failed: ' + (e.message || e)); }
       }, (err) => _textSetStatus(err.message || 'Synthesis failed'));
@@ -382,7 +400,7 @@
       set('text-speed', cfg.speed);
       set('text-amplitude', cfg.amplitude);
       set('text-wordgap', cfg.wordgap);
-      ['clip', 'chop'].forEach(m => { const el = document.getElementById('text-freeze-' + m); if (el) el.classList.toggle('active', cfg.freezeMode === m); });
+      ['clip', 'chop', 'slice'].forEach(m => { const el = document.getElementById('text-freeze-' + m); if (el) el.classList.toggle('active', cfg.freezeMode === m); });
       _textRefreshPlayBtn();
     }
     function _textInit() {
@@ -413,6 +431,7 @@
           '<span class="ambient-hint">Freeze as</span>' +
           '<button type="button" class="ambient-seg" id="text-freeze-clip" title="One sample clip on a new lane">Clip</button>' +
           '<button type="button" class="ambient-seg" id="text-freeze-chop" title="Slice on silence into one step per word">Chop</button>' +
+          '<button type="button" class="ambient-seg" id="text-freeze-slice" title="Lay the whole sample across step-div slices and make it the grid voice (sliceable, pitched)">Slice</button>' +
         '</div>' +
         '<div class="ambient-note" id="text-status">Speech runs through this lane’s bus — dial in its FX sends. Powered by meSpeak (eSpeak).</div>';
 
@@ -450,7 +469,7 @@
       wireSlider('text-amplitude', 'amplitude');
       wireSlider('text-wordgap', 'wordgap');
       // Freeze-mode segmented toggle.
-      ['clip', 'chop'].forEach(m => {
+      ['clip', 'chop', 'slice'].forEach(m => {
         const el = document.getElementById('text-freeze-' + m);
         if (el) el.addEventListener('click', () => {
           const cfg = _textCfg(); if (!cfg) return;

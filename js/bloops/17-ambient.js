@@ -74,6 +74,9 @@
         // "units", improvising variations and periodically returning to verbatim.
         // See _defaultSeqLayer() for a layer's shape. Empty by default.
         seqs:    [],
+        // Dynamic list of Sample layers — each plays a single-buffer sample
+        // (chopped/whole) per Interval. See _defaultSampleLayer(). Empty default.
+        samples: [],
         // `playing` is never persisted as true — the generator only starts on
         // an explicit gesture (a suspended AudioContext would swallow autostart).
       };
@@ -180,6 +183,29 @@
       _ambNormalizeFx(s);
       return s;
     }
+    // A Sample layer plays a single-buffer `sample:<id>` raw. `chop` 1 = retrigger
+    // the whole sample each Interval; N = chop into N slices played across the
+    // Interval, in `order` (forward cursor / random). Reuses per-layer mod + FX.
+    function _defaultSampleLayer(id) {
+      return { id: id | 0, on: true, sampleId: '', name: '',
+               chop: 1, order: 'forward',
+               intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always', level: 70,
+               mod: _ambDefaultMod(), ..._ambDefaultFx() };
+    }
+    function _normalizeSampleLayer(s, id) {
+      const d = _defaultSampleLayer(id);
+      if (!Number.isFinite(s.id)) s.id = id;
+      if (typeof s.on !== 'boolean') s.on = true;
+      if (typeof s.sampleId !== 'string') s.sampleId = '';
+      if (typeof s.name !== 'string') s.name = '';
+      ['chop','intervalMs','lengthMs','drift','level'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
+      s.chop = Math.max(1, Math.min(16, s.chop | 0));
+      if (s.order !== 'forward' && s.order !== 'random') s.order = 'forward';
+      if (typeof s.when !== 'string') s.when = 'always';
+      _ambNormalizeModObj(s, d.mod);
+      _ambNormalizeFx(s);
+      return s;
+    }
     // Migrate + backfill a Bloom config in place (shared by per-lane + master).
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
@@ -248,6 +274,12 @@
       cfg.seqs.forEach(s => { if (s && Number.isFinite(s.id) && s.id > maxId) maxId = s.id; });
       cfg.seqs.forEach(s => { if (s && !Number.isFinite(s.id)) s.id = ++maxId; });
       cfg.seqs = cfg.seqs.filter(s => s && typeof s === 'object').map(s => _normalizeSeqLayer(s, s.id));
+      // Sample layers (parallel dynamic list).
+      if (!Array.isArray(cfg.samples)) cfg.samples = [];
+      let maxSid = 0;
+      cfg.samples.forEach(s => { if (s && Number.isFinite(s.id) && s.id > maxSid) maxSid = s.id; });
+      cfg.samples.forEach(s => { if (s && !Number.isFinite(s.id)) s.id = ++maxSid; });
+      cfg.samples = cfg.samples.filter(s => s && typeof s === 'object').map(s => _normalizeSampleLayer(s, s.id));
       return cfg;
     }
     function _laneAmbientCfg() {
@@ -702,6 +734,35 @@
       const out = _ambDegreeFreq(deg, oct, scale);
       return (out > 0) ? out : freq;
     }
+    // SAMPLE layer: play a single-buffer sample raw. chop=1 retriggers the whole
+    // sample; chop=N plays N step-sized slices across the Interval, forward or
+    // shuffled. Skips silently until the buffer is loaded (no sine fallback).
+    function _ambEmitSample(at, layer, space, st) {
+      if (!layer.sampleId) return;
+      let info = null;
+      try { info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(layer.sampleId) : null; } catch (e) {}
+      if (!info || !info.sampler || !info.sampler.loaded) return;
+      const key = 'samp:' + layer.id;
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
+      const type = 'sample:' + layer.sampleId;
+      let baseFreq;
+      try { baseFreq = Tone.Frequency(info.rootNote || 'C4').toFrequency(); } catch (e) { baseFreq = 261.63; }
+      const chop = Math.max(1, Math.min(16, layer.chop | 0));
+      const sliceSec = Math.max(0.02, (layer.intervalMs | 0) / 1000 / chop);
+      const vol = _ambApplyLevel(100, layer.level);
+      const pans = _ambSpacePans(chop, space);
+      for (let j = 0; j < chop; j++) {
+        const idx = (chop === 1) ? 0 : (layer.order === 'random' ? Math.floor(_ambRand() * chop) : j);
+        const dur = (chop > 1) ? sliceSec * 1000 : Math.max(80, layer.lengthMs | 0);
+        const p = { ...base, type,
+          attack: 6, decay: 120, sustain: 70, release: Math.max(60, Math.round(dur * 0.5)),
+          volume: vol, pan: (pans[j] | 0) };
+        if (chop > 1) { p.sampleOffsetSec = idx * sliceSec; p.sliceDurSec = sliceSec; }
+        if (dmod) p._detuneMod = dmod;
+        try { playNote(baseFreq, p, dur, at + j * sliceSec, dest, undefined, _E.laneIdx()); } catch (e) {}
+      }
+    }
     function _ambEmitSeq(at, seq, space, st) {
       if (!Array.isArray(seq.units) || !seq.units.length) return;
       // Pick the unit for this cycle: 'single' iterates units[0]; 'interleave'
@@ -969,6 +1030,9 @@
       if (Array.isArray(cfg.seqs)) cfg.seqs.forEach(seq => {
         if (seq.on && Array.isArray(seq.units) && seq.units.length) want['seq:' + seq.id] = seq;
       });
+      if (Array.isArray(cfg.samples)) cfg.samples.forEach(L => {
+        if (L.on && L.sampleId) want['samp:' + L.id] = L;
+      });
       // Build/update wanted chains (pass a one-key cfg-shim so the existing
       // _ambSyncTarget keeps reading cfg[layerKey].mod unchanged), then FX.
       Object.keys(want).forEach(key => { _ambBuildMod(key, { [key]: want[key] }); _ambApplyLayerFx(key, want[key]); });
@@ -1054,6 +1118,24 @@
             }
             I[key] = (I[key] | 0) + 1;
             C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
+          }
+        }
+      }
+      // Sample layers (dynamic list). Each fire schedules up to `chop` slices.
+      if (Array.isArray(cfg.samples)) {
+        for (const L of cfg.samples) {
+          if (!L || !L.on || !L.sampleId) continue;
+          const key = 'samp:' + L.id;
+          if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
+          let g = 0;
+          while (C[key] < horizon && g++ < 4) {
+            if (_ambCondFires(L.when, I[key] | 0)) {
+              const st = E.seqState[key] || (E.seqState[key] = { pick: 0, iter: 0 });
+              st.iter = I[key] | 0;
+              _ambEmitSample(C[key], L, space, st);
+            }
+            I[key] = (I[key] | 0) + 1;
+            C[key] += _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
           }
         }
       }
@@ -1207,6 +1289,57 @@
       if (typeof activateLane === 'function') activateLane(laneIdx); // → _ambientInit(_laneEng)
       // Now the active lane IS this lane, so _laneEng targets its cfg.
       _ambSendSeedToInstance(_laneEng, unit, mode, targetSeqId);
+      try { _ambSyncControls(_laneEng); } catch (e) {}
+    }
+    // ---- Send a single-buffer sample to a Bloom Sample layer ------------
+    function _ambSendSampleToInstance(E, sampleId, opts) {
+      const id = (typeof sampleId === 'string' && sampleId.startsWith('sample:')) ? sampleId.slice(7) : sampleId;
+      if (!id) return false;
+      const cfg = E.getCfg(); if (!cfg) return false;
+      if (!Array.isArray(cfg.samples)) cfg.samples = [];
+      const newId = cfg.samples.reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
+      const L = _defaultSampleLayer(newId);
+      L.sampleId = id;
+      let info = null; try { info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null; } catch (e) {}
+      L.name = (info && info.name) ? info.name : id;
+      if (opts && Number.isFinite(opts.chop)) L.chop = Math.max(1, Math.min(16, opts.chop | 0));
+      if (opts && (opts.order === 'random' || opts.order === 'forward')) L.order = opts.order;
+      cfg.samples.push(L);
+      if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      return true;
+    }
+    // Find a sliceable-sample voice id within a step list (single + chord).
+    function _ambSampleIdFromSteps(steps) {
+      if (!Array.isArray(steps)) return null;
+      const ck = (t) => (typeof t === 'string' && t.startsWith('sample:') && (typeof isSliceableSample !== 'function' || isSliceableSample(t))) ? t.slice(7) : null;
+      for (const s of steps) {
+        if (!s) continue;
+        let id = ck(s.params && s.params.type || s.sound);
+        if (id) return id;
+        if (Array.isArray(s.chord)) for (const n of s.chord) { id = ck(n && (n.params && n.params.type || n.sound)); if (id) return id; }
+        if (s.isSub && Array.isArray(s.subSteps)) { id = _ambSampleIdFromSteps(s.subSteps); if (id) return id; }
+      }
+      return null;
+    }
+    function _ambSampleIdOfSaved(saved) { return (saved && Array.isArray(saved.steps)) ? _ambSampleIdFromSteps(saved.steps) : null; }
+    function _ambSampleIdOfLane(laneIdx) {
+      const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
+      return lane ? _ambSampleIdFromSteps(lane.steps) : null;
+    }
+    function _ambSendSampleToMaster(sampleId, opts) {
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Bloom (sample)');
+      _ambSendSampleToInstance(_masterEng, sampleId, opts);
+      try { if (_masterEng.inited) _ambRenderSampleLayers(_masterEng); } catch (e) {}
+    }
+    function _ambSendSampleToLane(laneIdx, sampleId, opts) {
+      const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
+      if (!lane) return;
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Send lane to Bloom (sample)');
+      if (!lane.ambient || typeof lane.ambient !== 'object') lane.ambient = _defaultAmbientConfig();
+      lane.ambientMode = true;
+      if (typeof activateLane === 'function') activateLane(laneIdx);
+      _ambSendSampleToInstance(_laneEng, sampleId, opts);
       try { _ambSyncControls(_laneEng); } catch (e) {}
     }
     function _ambMotifFreezeNote(motif) {
@@ -1540,6 +1673,80 @@
       _ambRenderSeqLayers(E);
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // ---- Dynamic Sample layers (Sample1, Sample2…) ---------------------
+    function _ambSampleLayerHtml(s, i) {
+      const id = s.id, p = 'ambient-samp-' + id + '-';
+      const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
+      const nm = String(s.name || s.sampleId || 'sample').replace(/[<>&"]/g, '');
+      return '<div class="ambient-layer" data-samp-id="' + id + '">' +
+        _ambHead('Sample' + (i + 1), p + 'on', p + 'del') +
+        '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
+        _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
+        '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' +
+        _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
+        _ambTm('Length', p + 'length', 80, 16000, 20, s.lengthMs) +
+        _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
+        '<div class="ambient-ctrl"><label for="' + p + 'when">When</label><select id="' + p + 'when" class="ambient-select">' + opts([['always', 'Always'], ['1st', '1st'], ['1:2', '1:2'], ['2:2', '2:2'], ['1:3', '1:3'], ['1:4', '1:4']], s.when) + '</select><span class="ambient-hint">cond</span></div>' +
+        _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+        _ambModUi('samp-' + id) +
+        _ambFxUi('samp-' + id) +
+      '</div>';
+    }
+    function _ambWireSampleLayer(E, s) {
+      const id = s.id, p = 'ambient-samp-' + id + '-';
+      const getL = () => { const c = E.getCfg(); return (c && Array.isArray(c.samples)) ? c.samples.find(x => x.id === id) : null; };
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const el = (suf) => _ambGet(E, p + suf);
+      const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
+      const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L[key] = parseInt(e.value, 10) || 0; sync(); persist(); }); };
+      const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; const val = parseInt(e.value, 10) || 0; L[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
+      const bindStr = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L[key] = e.value || L[key]; persist(); }); };
+      bindInt('chop', 'chop'); bindStr('order', 'order');
+      bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
+      bindInt('drift', 'drift'); bindStr('when', 'when'); bindInt('level', 'level');
+      ['vca', 'vco', 'vcf'].forEach(t => {
+        ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L.mod[t][k] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
+        const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L.mod[t].shape = sh.value || 'sine'; sync(); persist(); });
+      });
+      const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
+      bindFx('rev', (q, v) => { q.revSend = v; });
+      bindFx('dly-mix', (q, v) => { q.delay.mix = v; });
+      bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
+      bindFx('dly-fb', (q, v) => { q.delay.feedback = v; });
+      bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
+      bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); sync(); persist(); }); }
+      const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSampleLayer(E, id));
+      const layerDiv = onB ? onB.closest('.ambient-layer') : null;
+      const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
+      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
+      const setVal = (suf, v) => { const e = el(suf); if (e && v != null) e.value = String(v); };
+      const iv = el('interval-v'); if (iv) iv.textContent = _ambFmtMs(s.intervalMs);
+      const lv = el('length-v'); if (lv) lv.textContent = _ambFmtMs(s.lengthMs);
+      ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); const sh = el('mod-' + t + '-shape'); if (sh) sh.value = s.mod[t].shape; });
+      setVal('fx-rev', s.revSend);
+      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); }
+      if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
+    }
+    function _ambRenderSampleLayers(E) {
+      const wrap = _ambGet(E, 'ambient-sample-layers');
+      if (!wrap) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      const arr = Array.isArray(cfg.samples) ? cfg.samples : [];
+      wrap.innerHTML = _ambNamespaceHtml(E, arr.map((s, i) => _ambSampleLayerHtml(s, i)).join(''));
+      arr.forEach((s) => _ambWireSampleLayer(E, s));
+    }
+    function _ambDeleteSampleLayer(E, id) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.samples)) return;
+      const idx = cfg.samples.findIndex(s => s.id === id);
+      if (idx < 0) return;
+      cfg.samples.splice(idx, 1);
+      try { if (E.mod['samp:' + id]) _ambTeardownMod('samp:' + id); } catch (e) {}
+      if (E.seqState) delete E.seqState['samp:' + id];
+      _ambRenderSampleLayers(E);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     // Apply a distilled sequence "unit" to an engine's Seq layers.
     // mode: 'new' (new SeqN) | 'append' (grow first unit) | 'interleave' (add a unit).
     function _ambSendSeedToInstance(E, unit, mode, targetSeqId) {
@@ -1631,8 +1838,9 @@
         if (L.delay) { set('ambient-' + layer + '-fx-dly-mix', L.delay.mix); set('ambient-' + layer + '-fx-dly-time', L.delay.timeMs); hint('ambient-' + layer + '-fx-dly-time-v', _ambFmtMs(L.delay.timeMs)); set('ambient-' + layer + '-fx-dly-fb', L.delay.feedback); }
         if (L.dist) { set('ambient-' + layer + '-fx-dist-amt', L.dist.amount); set('ambient-' + layer + '-fx-dist-mix', L.dist.mix); }
       });
-      // Seq layers are a dynamic list — (re)render them for this engine's lane.
+      // Seq + Sample layers are dynamic lists — (re)render for this engine.
       _ambRenderSeqLayers(E);
+      _ambRenderSampleLayers(E);
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const m = cfg[layer] && cfg[layer].mod;
         if (!m) return;
@@ -1732,6 +1940,7 @@
           fxUi('beat') +
         '</div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
+        '<div class="ambient-seq-layers" id="ambient-sample-layers"></div>' +
         '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
 

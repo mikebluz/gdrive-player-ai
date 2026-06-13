@@ -1382,6 +1382,13 @@
         sub.push('hr');
         if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => send('interleave', s.id) }));
         else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
+        // If this lane's voice is a single-buffer sample, offer the raw Sample
+        // layer (chopped/whole) — switches the lane to Bloom and adds the layer.
+        const _sid = (typeof _ambSampleIdOfLane === 'function') ? _ambSampleIdOfLane(laneIdx) : null;
+        if (_sid) {
+          sub.push('hr');
+          sub.push({ label: '◫ As Sample layer', fn: () => { try { _ambSendSampleToLane(laneIdx, _sid, { chop: Math.max(1, (lane.steps || []).length) }); } catch (e) { console.warn('Send lane sample to Bloom failed', e); } } });
+        }
         showCtxMenu(x, y, sub);
       }, 0) });
       if (riffActions.length) {

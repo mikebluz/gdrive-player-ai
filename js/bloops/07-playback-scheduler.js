@@ -638,6 +638,30 @@
         if (_off.vol) q.volume = 100;
         return q;
       };
+      // Sample slicing: a sliceable-sample grid voice carries params.sliceMode.
+      // Each step plays a step-div-sized slice; the offset depends on the mode
+      // and the per-lane scan playhead (stream._sampleScanSec / _sampleStepIdx,
+      // reset on any non-firing slot below). Computed once per step; identity
+      // for non-slice voices so synth/whole-sample playback is untouched.
+      const _slicePrimary = step.chord ? (step.chord[0] && step.chord[0].params) : step.params;
+      const _sliceMode = (_slicePrimary && typeof _slicePrimary === 'object'
+        && typeof _slicePrimary.sliceMode === 'string' && _slicePrimary.sliceMode !== 'none'
+        && isSampleType(_slicePrimary.type)) ? _slicePrimary.sliceMode : null;
+      let _sliceOpts = null;
+      if (_sliceMode) {
+        const _sliceSec = waitSecExact;
+        const _ofs = (_sliceMode === 'stutter') ? 0
+          : (_sliceMode === 'index') ? ((stream._sampleStepIdx || 0) * _sliceSec)
+          : (stream._sampleScanSec || 0); // 'scan'
+        _sliceOpts = { sampleOffsetSec: _ofs, sliceDurSec: _sliceSec };
+      }
+      const _withSlice = (p) => {
+        if (!_sliceOpts) return p;
+        const q = (typeof p === 'string') ? { type: p } : { ...p };
+        q.sampleOffsetSec = _sliceOpts.sampleOffsetSec;
+        q.sliceDurSec = _sliceOpts.sliceDurSec;
+        return q;
+      };
       // Silent path: muted lane keeps its scheduler pointer advancing
       // so unmuting mid-loop snaps back into the cadence cleanly.
       // Drop the lane's stale entry from the per-lane Keep label so
@@ -663,6 +687,7 @@
       // the loop keeps evolving. iter (the lane's loop pass) comes from the
       // same stream.iter that variance already keys off.
       if (!_stepShouldFire(step, stream, _off)) {
+        stream._sampleScanSec = 0; stream._sampleStepIdx = 0; // gated rest resets slice scan
         return waitSecExact;
       }
 
@@ -704,10 +729,10 @@
                 const _voiceAt = (_strumSec === 0)
                   ? at
                   : at + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
-                playNote(n.freq, paramsWithBend(_withVel(_withBypass(chordVoiceParams(n.params || n.sound || 'sine', size, step))), step.bend), dms, _voiceAt, undefined, undefined, laneIdx);
+                playNote(n.freq, paramsWithBend(_withVel(_withBypass(_withSlice(chordVoiceParams(n.params || n.sound || 'sine', size, step)))), step.bend), dms, _voiceAt, undefined, undefined, laneIdx);
               }
             } else {
-              playNote(step.freq, paramsWithBend(_withVel(_withBypass(step.params || step.sound || 'sine')), step.bend), dms, at, undefined, undefined, laneIdx);
+              playNote(step.freq, paramsWithBend(_withVel(_withBypass(_withSlice(step.params || step.sound || 'sine'))), step.bend), dms, at, undefined, undefined, laneIdx);
             }
           };
           // Ratchet: split the step into N evenly-spaced sub-hits across its
@@ -723,6 +748,15 @@
               _fireStepVoices(fireTime + (j * _subMs) / 1000, Math.max(20, _subMs));
             }
           }
+          // Advance the sample-slice scan playhead once per fired step.
+          if (_sliceOpts) {
+            stream._sampleScanSec = (stream._sampleScanSec || 0) + _sliceOpts.sliceDurSec;
+            stream._sampleStepIdx = (stream._sampleStepIdx || 0) + 1;
+          }
+        } else {
+          // Rest (no chord/freq): reset the slice scan playhead so the next
+          // note retriggers from the sample's start.
+          stream._sampleScanSec = 0; stream._sampleStepIdx = 0;
         }
       } finally {
         _suppressCellFlash = false;

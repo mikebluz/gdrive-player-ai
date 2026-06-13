@@ -351,16 +351,24 @@
       for (let i = 0; i < inv; i++) iv.push(iv.shift()); // rotate → bias the bass tone
       return iv;
     }
-    // Interval set for a note source. Chord → its pitch classes; scale → SCALES.
+    // Published wraps live on the master Bloom config (shared registry); both
+    // master + lane Notes menus read from there.
+    function _ambFindWrap(id) {
+      const arr = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
+      return arr.find(w => w && w.id === id) || null;
+    }
+    // Interval set for a note source. Chord/Wrap → pitch-class set; scale → SCALES.
     function _ambScaleIntervals(src) {
       const n = _ambAsNotes(src);
       if (n.type === 'chord') return _ambChordIntervals(n.form, n.inversion);
+      if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return (w && Array.isArray(w.intervals) && w.intervals.length) ? w.intervals : [0, 4, 7]; }
       const name = _ambResolveScale(n.scale);
       return (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
     }
     function _ambSrcRootPc(src) {
       const n = _ambAsNotes(src);
       if (n.type === 'chord' && Number.isFinite(n.root)) return ((n.root % 12) + 12) % 12;
+      if (n.type === 'wrap') { const w = _ambFindWrap(n.id); if (w && Number.isFinite(w.root)) return ((w.root % 12) + 12) % 12; }
       return (typeof rootIdx === 'number') ? rootIdx : 0;
     }
     // Human label for the Notes button.
@@ -372,7 +380,32 @@
         const invTxt = (n.inversion | 0) > 0 ? ' inv' + (n.inversion | 0) : '';
         return rootName + ' ' + (def ? def[1] : 'Chord') + invTxt;
       }
+      if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return '⊕ ' + (w ? w.name : 'Wrap'); }
       return n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
+    }
+    // Publish a wrap (saved-bank entry) to the master Bloom Notes registry as a
+    // pitch-class set: collect its notes' pitch classes, store as {root,intervals}
+    // (root + intervals reconstruct the exact pc set). Returns the new entry.
+    function _ambPublishWrap(name, step) {
+      let freqs = [];
+      try { freqs = (typeof collectStepFreqs === 'function') ? (collectStepFreqs(step) || []) : []; } catch (e) {}
+      const pcs = [], seen = new Set();
+      freqs.forEach(f => {
+        const m = (typeof _freqToMidi === 'function') ? _freqToMidi(f) : null;
+        if (m == null) return;
+        const pc = ((Math.round(m) % 12) + 12) % 12;
+        if (!seen.has(pc)) { seen.add(pc); pcs.push(pc); }
+      });
+      if (!pcs.length) return null;
+      const root = Math.min.apply(null, pcs);
+      const intervals = Array.from(new Set(pcs.map(p => (((p - root) % 12) + 12) % 12))).sort((a, b) => a - b);
+      masterAmbient = masterAmbient || _defaultAmbientConfig();
+      if (!Array.isArray(masterAmbient.publishedWraps)) masterAmbient.publishedWraps = [];
+      const id = masterAmbient.publishedWraps.reduce((m, w) => Math.max(m, w.id | 0), 0) + 1;
+      const entry = { id, name: name || ('Wrap ' + id), root, intervals };
+      masterAmbient.publishedWraps.push(entry);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      return entry;
     }
     function _ambNoteFreq(intervalSemi, octave, src) {
       const notes = _ambAsNotes(src);
@@ -432,20 +465,35 @@
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
         if (typeof persistWorkspace === 'function') persistWorkspace();
       };
-      const items = [{ label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) }, 'hr'];
-      try {
-        const tmp = document.createElement('select');
-        populateGroupedScaleSelect(tmp, { value: '', label: 'Workspace scale' });
-        Array.from(tmp.children).forEach(node => {
-          if (node.tagName === 'OPTGROUP') {
-            items.push({ label: node.label, disabled: true });
-            Array.from(node.children).forEach(o => items.push({ label: '  ' + o.textContent, fn: () => apply({ type: 'scale', scale: o.value }) }));
-          } else {
-            items.push({ label: node.textContent, fn: () => apply({ type: 'scale', scale: node.value }) });
-          }
-        });
-      } catch (e) {}
-      showCtxMenu(x, y, items);
+      const scaleSub = () => {
+        const items = [];
+        try {
+          const tmp = document.createElement('select');
+          populateGroupedScaleSelect(tmp, { value: '', label: 'Workspace scale' });
+          Array.from(tmp.children).forEach(node => {
+            if (node.tagName === 'OPTGROUP') {
+              items.push({ label: node.label, disabled: true });
+              Array.from(node.children).forEach(o => items.push({ label: '  ' + o.textContent, fn: () => apply({ type: 'scale', scale: o.value }) }));
+            } else {
+              items.push({ label: node.textContent, fn: () => apply({ type: 'scale', scale: node.value }) });
+            }
+          });
+        } catch (e) {}
+        showCtxMenu(x, y, items);
+      };
+      const wrapSub = () => {
+        const wraps = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
+        if (!wraps.length) {
+          showCtxMenu(x, y, [{ label: 'No published wraps', disabled: true }, { label: 'Right-click a wrap chip → Publish to Bloom', disabled: true }]);
+          return;
+        }
+        showCtxMenu(x, y, wraps.map(w => ({ label: '⊕ ' + w.name, fn: () => apply({ type: 'wrap', id: w.id }) })));
+      };
+      showCtxMenu(x, y, [
+        { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
+        { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
+        { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
+      ]);
     }
     function _ambOpenChordPicker(E, getLayer, afterChange) {
       const L = getLayer(); if (!L) return;

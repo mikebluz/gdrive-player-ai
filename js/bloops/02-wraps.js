@@ -836,6 +836,18 @@
           removeWrapFromBank(entry.id);
         });
         chip.appendChild(close);
+        // Right-click / long-press → publish this wrap to the master Bloom's
+        // Notes menu (so layers can use it as a pitch source).
+        chip.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          if (typeof showCtxMenu !== 'function') return;
+          showCtxMenu(e.clientX, e.clientY, [
+            { label: '🌸 Publish to Bloom', fn: () => {
+                const ok = (typeof _ambPublishWrap === 'function') && _ambPublishWrap(entry.name, entry.step);
+                if (typeof showToast === 'function') showToast(ok ? ('Published “' + entry.name + '” to Bloom Notes') : 'Could not publish this wrap');
+              } },
+          ]);
+        });
         chips.appendChild(chip);
       });
     }

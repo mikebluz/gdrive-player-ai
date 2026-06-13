@@ -2010,6 +2010,15 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
+    /* "Notes" source button — looks like the selects, reads left, truncates. */
+    .ambient-notes-btn {
+      text-align: left; cursor: pointer; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    @media (hover: hover) { .ambient-notes-btn:hover { border-color: #9f7aea; color: #ede9fe; } }
+    .amb-chord-modal .keep-sdiv-row { gap: 12px; }
+    .amb-chord-modal .keep-sdiv-name { flex: 0 0 80px; }
+    .amb-chord-modal .sm-select { flex: 1 1 auto; }
     /* Mod block — an expandable <details> per layer (collapsed by default). */
     .ambient-mod {
       margin-top: 4px; border: 1px dashed #2d2d3f; border-radius: 6px;
@@ -2058,6 +2067,10 @@
       border: 1px solid #20203a; border-radius: 8px; padding: 10px 12px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
     }
+    /* Add-layer button — Bloom starts with just Bed; this adds the rest. */
+    .ambient-add-layer-row { display: flex; }
+    .ambient-add-layer { width: 100%; }
+    .ambient-regen:disabled { opacity: 0.4; cursor: default; }
     /* Parameter ramps (LFO automation of a layer param). */
     .ambient-ramps-section { display: flex; flex-direction: column; gap: 8px; }
     .ambient-ramps-head { display: flex; align-items: center; gap: 8px; }

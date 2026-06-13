@@ -75,6 +75,37 @@
       return s;
     }
 
+    // Per-buffer loudness trim. The tuned instruments' source samples are
+    // recorded at very different levels, so a flat boost leaves some far
+    // quieter than others (most audible in Bloom's Bed, where 1/N staging
+    // lowers them further). Scan each buffer's peak ONCE (cached on the
+    // sampleSamplers entry, per mapped note) and return a gain that brings
+    // quiet buffers UP toward a reference peak — never attenuates, capped so a
+    // near-silent buffer can't blow up. Equalizes sample loudness everywhere
+    // (grid presses + Bloom), not just the Bed.
+    function _sampleNormGain(info, midi, audioBuf) {
+      try {
+        if (!info || !audioBuf) return 1;
+        if (!info._normByMidi) info._normByMidi = {};
+        const cached = info._normByMidi[midi];
+        if (Number.isFinite(cached)) return cached;
+        const ch = audioBuf.getChannelData(0);
+        // Subsample the peak scan (≤ ~3k reads) so this stays cheap even when
+        // several Bloom layers each hit fresh buffers in the same scheduling
+        // window — a full per-sample scan there caused choppiness. A strided
+        // peak slightly underestimates, which only nudges the gain up (capped).
+        const N = ch.length;
+        const stride = Math.max(1, Math.floor(N / 3000));
+        let peak = 0;
+        for (let i = 0; i < N; i += stride) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > peak) peak = a; }
+        const REF_PEAK = 0.5, MAX_EXTRA = 3; // only boost (≥1×), cap at +9.5 dB
+        let g = (peak > 1e-4) ? (REF_PEAK / peak) : 1;
+        g = Math.max(1, Math.min(MAX_EXTRA, g));
+        info._normByMidi[midi] = g;
+        return g;
+      } catch (e) { return 1; }
+    }
+
     // ---- Full-ADSR per-note sample voice -------------------------------
     // Tone.Sampler only fades its voices in (attack) and out (release) — it
     // has no decay or sustain-LEVEL, and no per-note filter. To give samples
@@ -131,7 +162,7 @@
           panNode = new Tone.Panner(panNorm).connect(dest);
           outTail = panNode;
         }
-        outGain = new Tone.Gain(boost).connect(outTail);
+        outGain = new Tone.Gain(boost * _sampleNormGain(info, sampleMidi, audioBuf)).connect(outTail);
         // Slicing plays a mid-buffer window, so the cut edges can click — floor
         // the attack/release a touch on the slice path to fade them (the
         // non-slice path keeps its exact prior values).
@@ -1127,7 +1158,24 @@
     // via startSustainedNote) are deliberately NOT tracked — they belong to
     // the user's fingers, not to playback, and a stop shouldn't cut them.
     const _activeSampleVoices = new Set();
-    function _registerSampleVoice(v) { if (v) _activeSampleVoices.add(v); }
+    // Live polyphony cap for scheduled sample voices. Each voice is a fresh
+    // BufferSource→envelope→gain graph, so a dense Bloom stack (several layers ×
+    // overlapping long notes) can pile up enough concurrent voices to overload
+    // the audio render thread and glitch. Under the cap nothing changes; over
+    // it, shed the OLDEST still-ringing voice (Set keeps insertion order, so the
+    // first entry is the earliest-started — usually already in its release tail)
+    // with a click-free fast kill. Held/sustained user notes aren't tracked here.
+    const MAX_SAMPLE_VOICES = 48;
+    function _registerSampleVoice(v) {
+      if (!v) return;
+      while (_activeSampleVoices.size >= MAX_SAMPLE_VOICES) {
+        const oldest = _activeSampleVoices.values().next().value;
+        if (!oldest) break;
+        _activeSampleVoices.delete(oldest);
+        try { _killSampleVoiceFast(oldest); } catch (e) {}
+      }
+      _activeSampleVoices.add(v);
+    }
     function _unregisterSampleVoice(v) { if (v) _activeSampleVoices.delete(v); }
     // Fast, click-free kill of one sample voice: ramp its output to silence
     // over ~22 ms, then dispose. Cancels any pending natural-disposal timer.

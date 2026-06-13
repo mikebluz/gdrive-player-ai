@@ -65,8 +65,8 @@
         // `when` is an Elektron-style per-event conditional ('always' | '1st' |
         // 'A:B') that gates which of the layer's generated events actually fire —
         // e.g. '1:2' = every other event, for sparser/polymetric interplay.
-        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
@@ -99,7 +99,7 @@
         playId: opts.playId, seedId: opts.seedId, isLane: !!opts.isLane,
         // per-run state (was module-global, single-instance)
         rng: 1, motifDeg: null, texPattern: null, texStep: 0, texMutateAt: 0,
-        mod: {}, reverb: null, timer: null, rampTimer: null, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
+        mod: {}, reverb: null, timer: null, rampTimer: null, _cfg: null, clocks: {}, iters: {}, seqState: {}, inited: false, viz: null,
       };
     }
     const _laneEng = _makeAmbientEngine({
@@ -181,6 +181,7 @@
       s.units = s.units.filter(_ambValidUnit);
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
+      _ambNormalizeNotes(s);
       return s;
     }
     // A Sample layer plays a single-buffer `sample:<id>` raw. `chop` 1 = retrigger
@@ -260,6 +261,13 @@
         });
         _ambNormalizeFx(cfg[layer]);
       });
+      // Built-in layers are now "addable": only present ones show + play. New
+      // configs start with just Bed; an Add-layer menu adds the others. Migrate
+      // old saves: a layer that was ON stays present so nothing vanishes.
+      ['bed', 'motif', 'texture', 'beat'].forEach(l => {
+        if (typeof cfg[l].present !== 'boolean') cfg[l].present = (l === 'bed') ? true : !!cfg[l].on;
+      });
+      ['bed', 'motif', 'texture'].forEach(l => _ambNormalizeNotes(cfg[l]));
       // Seq layers: ensure array; migrate a legacy single `seq` slot → seqs[].
       if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
       if (cfg.seq && typeof cfg.seq === 'object') {
@@ -314,33 +322,179 @@
       if (typeof scale === 'string' && scale && typeof SCALES !== 'undefined' && SCALES[scale]) return scale;
       return (typeof currentScale === 'string') ? currentScale : 'chromatic';
     }
-    function _ambScaleIntervals(scale) {
-      const name = _ambResolveScale(scale);
+    // ---- Note source ("Notes" menu) ------------------------------------
+    // A layer's pitch material is a descriptor `{ type, ... }`. Phase 1:
+    //   { type:'scale', scale:'<name>'|'' }                (''/missing = workspace scale)
+    //   { type:'chord', form:'maj7', root:0..11, inversion:0..n }
+    // Legacy layers store a bare `scale` string — _ambNotesOf migrates it.
+    const _AMB_CHORD_FORMS = [
+      ['maj', 'Major', [0, 4, 7]], ['min', 'Minor', [0, 3, 7]],
+      ['dom7', 'Dom 7', [0, 4, 7, 10]], ['maj7', 'Maj 7', [0, 4, 7, 11]],
+      ['min7', 'Min 7', [0, 3, 7, 10]], ['m7b5', 'Min7♭5', [0, 3, 6, 10]],
+      ['dim7', 'Dim 7', [0, 3, 6, 9]], ['aug', 'Aug', [0, 4, 8]],
+      ['sus2', 'Sus2', [0, 2, 7]], ['sus4', 'Sus4', [0, 5, 7]],
+      ['add9', 'Add 9', [0, 2, 4, 7]], ['maj9', 'Maj 9', [0, 2, 4, 7, 11]],
+      ['min9', 'Min 9', [0, 2, 3, 7, 10]],
+    ];
+    function _ambAsNotes(x) {
+      if (x && typeof x === 'object' && typeof x.type === 'string') return x;
+      return { type: 'scale', scale: (typeof x === 'string') ? x : '' };
+    }
+    function _ambNotesOf(layer) {
+      if (layer && layer.notes && typeof layer.notes === 'object' && typeof layer.notes.type === 'string') return layer.notes;
+      return { type: 'scale', scale: (layer && typeof layer.scale === 'string') ? layer.scale : '' };
+    }
+    function _ambChordIntervals(form, inversion) {
+      const def = _AMB_CHORD_FORMS.find(c => c[0] === form) || _AMB_CHORD_FORMS[0];
+      let iv = Array.from(new Set(def[2].map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b);
+      const inv = Math.max(0, Math.min(iv.length - 1, inversion | 0));
+      for (let i = 0; i < inv; i++) iv.push(iv.shift()); // rotate → bias the bass tone
+      return iv;
+    }
+    // Interval set for a note source. Chord → its pitch classes; scale → SCALES.
+    function _ambScaleIntervals(src) {
+      const n = _ambAsNotes(src);
+      if (n.type === 'chord') return _ambChordIntervals(n.form, n.inversion);
+      const name = _ambResolveScale(n.scale);
       return (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
     }
-    function _ambNoteFreq(intervalSemi, octave, scale) {
+    function _ambSrcRootPc(src) {
+      const n = _ambAsNotes(src);
+      if (n.type === 'chord' && Number.isFinite(n.root)) return ((n.root % 12) + 12) % 12;
+      return (typeof rootIdx === 'number') ? rootIdx : 0;
+    }
+    // Human label for the Notes button.
+    function _ambNotesLabel(src) {
+      const n = _ambAsNotes(src);
+      if (n.type === 'chord') {
+        const def = _AMB_CHORD_FORMS.find(c => c[0] === n.form);
+        const rootName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[((n.root % 12) + 12) % 12]) || '';
+        const invTxt = (n.inversion | 0) > 0 ? ' inv' + (n.inversion | 0) : '';
+        return rootName + ' ' + (def ? def[1] : 'Chord') + invTxt;
+      }
+      return n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
+    }
+    function _ambNoteFreq(intervalSemi, octave, src) {
+      const notes = _ambAsNotes(src);
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
-      const root = (typeof rootIdx === 'number') ? rootIdx : 0;
+      const root = _ambSrcRootPc(notes);
       const pc = (((root + intervalSemi) % 12) + 12) % 12;
       const midi = 12 * (octave + 1) + pc;
       let freq = A * Math.pow(2, (midi - 69) / 12);
       try {
-        const sName = _ambResolveScale(scale);
-        if (typeof MICRO_TUNINGS !== 'undefined' && MICRO_TUNINGS[sName]) {
-          const micro = MICRO_TUNINGS[sName];
-          const tonic = (typeof _effectiveScaleTonic === 'function') ? _effectiveScaleTonic() : root;
-          const deg = (((pc - tonic) % 12) + 12) % 12;
-          const dev = (micro[deg] || 0) - deg * 100;
-          if (dev) freq *= Math.pow(2, dev / 1200);
+        // Microtuning applies to scales only (chords are equal-tempered).
+        if (notes.type !== 'chord') {
+          const sName = _ambResolveScale(notes.scale);
+          if (typeof MICRO_TUNINGS !== 'undefined' && MICRO_TUNINGS[sName]) {
+            const micro = MICRO_TUNINGS[sName];
+            const tonic = (typeof _effectiveScaleTonic === 'function') ? _effectiveScaleTonic() : root;
+            const deg = (((pc - tonic) % 12) + 12) % 12;
+            const dev = (micro[deg] || 0) - deg * 100;
+            if (dev) freq *= Math.pow(2, dev / 1200);
+          }
         }
       } catch (e) {}
       return freq;
     }
-    function _ambDegreeFreq(deg, octave, scale) {
-      const intervals = _ambScaleIntervals(scale);
+    function _ambDegreeFreq(deg, octave, src) {
+      const intervals = _ambScaleIntervals(src);
       const N = intervals.length;
       const d = ((deg % N) + N) % N;
-      return _ambNoteFreq(intervals[d], octave, scale);
+      return _ambNoteFreq(intervals[d], octave, src);
+    }
+    // Sanitize a layer's saved `notes` descriptor (no-op for legacy scale-string
+    // layers — _ambNotesOf migrates those on the fly).
+    function _ambNormalizeNotes(layer) {
+      const n = layer && layer.notes;
+      if (!n || typeof n !== 'object') return;
+      if (n.type === 'chord') {
+        if (!_AMB_CHORD_FORMS.find(c => c[0] === n.form)) n.form = 'maj';
+        if (!Number.isFinite(n.root)) n.root = (typeof rootIdx === 'number') ? rootIdx : 0;
+        n.root = ((n.root % 12) + 12) % 12;
+        n.inversion = Math.max(0, n.inversion | 0);
+      } else {
+        n.type = 'scale';
+        if (typeof n.scale !== 'string') n.scale = '';
+      }
+    }
+    // ---- "Notes" control: a button that opens a Scale / Chord menu ----------
+    function _ambNotesButtonHtml(prefix) {
+      return '<div class="ambient-ctrl"><label>Notes</label>' +
+        '<button type="button" id="' + prefix + '-notes" class="ambient-select ambient-notes-btn">Scale</button>' +
+        '<span class="ambient-hint">source</span></div>';
+    }
+    function _ambOpenNotesMenu(E, getLayer, x, y, afterChange) {
+      if (typeof showCtxMenu !== 'function') return;
+      const apply = (notes) => {
+        _E = E; const L = getLayer(); if (!L) return;
+        L.notes = notes;
+        if (typeof afterChange === 'function') afterChange();
+        if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      const items = [{ label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) }, 'hr'];
+      try {
+        const tmp = document.createElement('select');
+        populateGroupedScaleSelect(tmp, { value: '', label: 'Workspace scale' });
+        Array.from(tmp.children).forEach(node => {
+          if (node.tagName === 'OPTGROUP') {
+            items.push({ label: node.label, disabled: true });
+            Array.from(node.children).forEach(o => items.push({ label: '  ' + o.textContent, fn: () => apply({ type: 'scale', scale: o.value }) }));
+          } else {
+            items.push({ label: node.textContent, fn: () => apply({ type: 'scale', scale: node.value }) });
+          }
+        });
+      } catch (e) {}
+      showCtxMenu(x, y, items);
+    }
+    function _ambOpenChordPicker(E, getLayer, afterChange) {
+      const L = getLayer(); if (!L) return;
+      const curN = _ambNotesOf(L);
+      const cur = (curN.type === 'chord') ? curN : { form: 'maj', root: (typeof rootIdx === 'number') ? rootIdx : 0, inversion: 0 };
+      const CHROM = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const ordinal = (i) => i === 0 ? 'Root' : (i === 1 ? '1st' : i === 2 ? '2nd' : i === 3 ? '3rd' : i + 'th');
+      const invOptsFor = (form, sel) => {
+        const def = _AMB_CHORD_FORMS.find(c => c[0] === form) || _AMB_CHORD_FORMS[0];
+        return def[2].map((_, i) => '<option value="' + i + '"' + (i === (sel | 0) ? ' selected' : '') + '>' + ordinal(i) + '</option>').join('');
+      };
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-chord-modal';
+      modal.innerHTML = '<div class="keep-sdiv-title">Chord</div>' +
+        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Root</span><select id="amb-chord-root" class="sm-select">' +
+          CHROM.map((nm, i) => '<option value="' + i + '"' + (i === (cur.root | 0) ? ' selected' : '') + '>' + nm + '</option>').join('') + '</select></div>' +
+        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Form</span><select id="amb-chord-form" class="sm-select">' +
+          _AMB_CHORD_FORMS.map(c => '<option value="' + c[0] + '"' + (c[0] === cur.form ? ' selected' : '') + '>' + c[1] + '</option>').join('') + '</select></div>' +
+        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Inversion</span><select id="amb-chord-inv" class="sm-select">' + invOptsFor(cur.form, cur.inversion) + '</select></div>' +
+        '<div class="keep-sdiv-actions"><button type="button" class="keep-sdiv-apply" id="amb-chord-apply">Apply</button></div>';
+      overlay.appendChild(modal); document.body.appendChild(overlay);
+      const formSel = modal.querySelector('#amb-chord-form');
+      const invSel = modal.querySelector('#amb-chord-inv');
+      formSel.addEventListener('change', () => { invSel.innerHTML = invOptsFor(formSel.value, 0); });
+      modal.querySelector('#amb-chord-apply').addEventListener('click', () => {
+        _E = E; const layer = getLayer();
+        if (layer) {
+          layer.notes = {
+            type: 'chord', form: formSel.value,
+            root: parseInt(modal.querySelector('#amb-chord-root').value, 10) || 0,
+            inversion: parseInt(invSel.value, 10) || 0,
+          };
+          if (typeof afterChange === 'function') afterChange();
+          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        }
+        overlay.remove();
+      });
+      requestAnimationFrame(() => overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); }));
+    }
+    function _ambWireNotesBtn(E, btnId, getLayer) {
+      const btn = _ambGet(E, btnId);
+      if (!btn) return;
+      const refresh = () => { const L = getLayer(); if (L) btn.textContent = _ambNotesLabel(_ambNotesOf(L)); };
+      refresh();
+      btn.addEventListener('click', () => {
+        const r = btn.getBoundingClientRect();
+        _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
+      });
     }
 
     // ---- Space (stereo distribution) -----------------------------------
@@ -423,7 +577,7 @@
 
     // ================= BED engine ===================================
     function _ambPickVoicing(bed) {
-      const intervals = _ambScaleIntervals(bed.scale);
+      const intervals = _ambScaleIntervals(_ambNotesOf(bed));
       const N = intervals.length;
       const chordDegrees = [0, 2, 4, 6].filter(d => d < N);
       const center = Math.max(1, Math.min(8, bed.register | 0));
@@ -440,7 +594,7 @@
         const key = deg + ':' + oct;
         if (used.has(key)) continue;
         used.add(key);
-        out.push(_ambDegreeFreq(deg, oct, bed.scale));
+        out.push(_ambDegreeFreq(deg, oct, _ambNotesOf(bed)));
       }
       return out.sort((a, b) => a - b);
     }
@@ -488,6 +642,23 @@
       if (m > 0) out.detune = (Number.isFinite(base.detune) ? base.detune : 0) + Math.round((_ambRand() * 2 - 1) * 18 * m);
       return out;
     }
+    // Strum play-order for N notes. fidelity 0 = the voicing's own order
+    // (low→high) every time; higher = increasing chance each position swaps
+    // with a random later one (partial Fisher–Yates), so the arpeggio order
+    // wanders more. Uses the engine's seeded RNG so it's reproducible per seed.
+    function _ambStrumOrder(n, fidelity) {
+      const order = [];
+      for (let i = 0; i < n; i++) order.push(i);
+      const p = Math.max(0, Math.min(100, fidelity || 0)) / 100;
+      if (p <= 0 || n < 2) return order;
+      for (let i = n - 1; i > 0; i--) {
+        if (_ambRand() < p) {
+          const j = Math.floor(_ambRand() * (i + 1));
+          const t = order[i]; order[i] = order[j]; order[j] = t;
+        }
+      }
+      return order;
+    }
     function _ambEmitBed(at, bed, space) {
       const voicing = _ambPickVoicing(bed);
       if (!voicing.length) return;
@@ -495,11 +666,22 @@
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
       const pans = _ambSpacePans(voicing.length, space);
       const dest = _ambLayerDest('bed'), dmod = _ambLayerDetuneMod('bed');
-      voicing.forEach((f, i) => {
-        const params = _ambBedParams(durMs, voicing.length, bed.motion, overlap, pans[i], bed.tone);
+      const n = voicing.length;
+      // Strum: spread the chord's notes across a fraction of the bed's interval
+      // (0 = a near-simultaneous pad, 100 = arpeggiated across the whole cycle),
+      // in an order shaped by Strum Fidelity.
+      const strumAmt = Math.max(0, Math.min(100, bed.strum || 0));
+      const spanSec = (strumAmt / 100) * Math.max(0, (bed.intervalMs | 0) / 1000);
+      const order = _ambStrumOrder(n, bed.strumFidelity || 0);
+      order.forEach((vi, pos) => {
+        const f = voicing[vi];
+        const params = _ambBedParams(durMs, n, bed.motion, overlap, pans[vi], bed.tone);
         params.volume = _ambApplyLevel(params.volume, bed.level);
         if (dmod) params._detuneMod = dmod;
-        try { playNote(f, params, durMs, at + i * 0.012, dest, undefined, _E.laneIdx()); } catch (e) {}
+        // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
+        // strum, space the onsets evenly across spanSec in play order.
+        const offset = (spanSec > 0) ? (pos / Math.max(1, n)) * spanSec : (pos * 0.012);
+        try { playNote(f, params, durMs, at + offset, dest, undefined, _E.laneIdx()); } catch (e) {}
       });
     }
 
@@ -519,14 +701,15 @@
         pan: pan | 0,
       };
     }
-    function _ambEmitMotif(at, motif, space) {
-      const intervals = _ambScaleIntervals(motif.scale);
+    // One random-walk step → frequency. Advances _E.motifDeg. Pulled out of
+    // _ambEmitMotif so Twist can fire several in quick succession.
+    function _ambMotifNextNote(motif) {
+      const intervals = _ambScaleIntervals(_ambNotesOf(motif));
       const N = intervals.length;
       const center = Math.max(1, Math.min(8, motif.register | 0));
       const range = Math.max(1, Math.min(4, motif.range | 0));
       const lo = (center - range) * N, hi = (center + range) * N;
       if (_E.motifDeg == null) _E.motifDeg = center * N;
-      if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return;
       const leap = _ambRand() < 0.18;
       const mag = leap ? 3 + Math.floor(_ambRand() * 3) : 1 + Math.floor(_ambRand() * 2);
       const dir = _ambRand() < 0.5 ? -1 : 1;
@@ -542,21 +725,36 @@
         next += (best - degInOct);
       }
       _E.motifDeg = next;
-      const f = _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), motif.scale);
+      return _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), _ambNotesOf(motif));
+    }
+    function _ambEmitMotif(at, motif, space) {
+      if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return;
       const lenMs = Math.max(60, motif.lengthMs | 0);
-      // Sequential single notes can't be "distributed" simultaneously, so
-      // Space spreads them by panning each randomly within ±space.
-      const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
-      const mp = _ambMotifParams(lenMs, pan, motif.tone);
-      mp.volume = _ambApplyLevel(mp.volume, motif.level);
-      const dmod = _ambLayerDetuneMod('motif'); if (dmod) mp._detuneMod = dmod;
-      try { playNote(f, mp, lenMs, at, _ambLayerDest('motif'), undefined, _E.laneIdx()); } catch (e) {}
+      // Twist: 0 = a single note per fire (steady cadence). As it rises, the
+      // chance AND size of a quick note-burst grow — a flurry of walk-steps
+      // packed into a tight window, so the line stutters into runs.
+      const tw = Math.max(0, Math.min(100, motif.twist | 0)) / 100;
+      let count = 1;
+      if (tw > 0 && _ambRand() < tw) count = 2 + Math.floor(_ambRand() * (1 + tw * 5)); // 2..~7
+      const burstGap = Math.min(0.12, (lenMs / 1000) / Math.max(1, count)); // fast, ≤120 ms apart
+      const dmod = _ambLayerDetuneMod('motif');
+      for (let i = 0; i < count; i++) {
+        const f = _ambMotifNextNote(motif);
+        if (f == null) continue;
+        // Sequential single notes can't be "distributed" simultaneously, so
+        // Space spreads them by panning each randomly within ±space.
+        const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
+        const mp = _ambMotifParams(lenMs, pan, motif.tone);
+        mp.volume = _ambApplyLevel(mp.volume, motif.level);
+        if (dmod) mp._detuneMod = dmod;
+        try { playNote(f, mp, lenMs, at + i * burstGap, _ambLayerDest('motif'), undefined, _E.laneIdx()); } catch (e) {}
+      }
     }
 
     // ================= TEXTURE engine ===============================
     // texture pattern/cursor/mutate-clock live on the engine: _E.texPattern / _E.texStep / _E.texMutateAt
     function _ambTexBuildPattern(texture) {
-      const intervals = _ambScaleIntervals(texture.scale);
+      const intervals = _ambScaleIntervals(_ambNotesOf(texture));
       const N = intervals.length;
       const fill = Math.max(0, Math.min(100, texture.fill | 0)) / 100;
       _E.texPattern = [];
@@ -565,7 +763,7 @@
     }
     function _ambTexMutate(texture) {
       if (!_E.texPattern) return;
-      const intervals = _ambScaleIntervals(texture.scale);
+      const intervals = _ambScaleIntervals(_ambNotesOf(texture));
       const N = intervals.length;
       const i = Math.floor(_ambRand() * _E.texPattern.length);
       if (_ambRand() < 0.5) _E.texPattern[i].on = !_E.texPattern[i].on;
@@ -589,7 +787,7 @@
       const slot = _E.texPattern[_E.texStep % _E.texPattern.length];
       _E.texStep++;
       if (slot && slot.on) {
-        const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0), texture.scale);
+        const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0), _ambNotesOf(texture));
         const lenMs = Math.max(60, texture.lengthMs | 0);
         const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
         const tp = _ambTexParams(lenMs, pan, texture.tone);
@@ -823,7 +1021,7 @@
       }
       // PITCH / RHYTHM / verbatim: walk the phrase on a within-phrase cursor.
       let t = at;
-      const intervals = _ambScaleIntervals(seq.scale);
+      const intervals = _ambScaleIntervals(_ambNotesOf(seq));
       const N = Math.max(1, intervals.length);
       for (let i = 0; i < seed.events.length; i++) {
         const ev = seed.events[i];
@@ -835,7 +1033,7 @@
         }
         if (!verbatim && freqs.length && (seq.varyMode === 'pitch' || seq.varyMode === 'rhythm')) {
           if (_ambRand() < 0.15 * depth) { t += durMs / 1000; continue; } // drop note (keep timing)
-          freqs = freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, seq.scale));
+          freqs = freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq)));
         }
         emitEvent(freqs, durMs, ev.vel, t, false);
         t += durMs / 1000;
@@ -843,7 +1041,7 @@
       // RHYTHM mode: occasionally append an extra nudged echo at the phrase tail.
       if (!verbatim && seq.varyMode === 'rhythm' && _ambRand() < 0.2 * depth) {
         const ev = seed.events[Math.floor(_ambRand() * seed.events.length)];
-        if (ev && ev.freqs.length) emitEvent(ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, seq.scale)), Math.max(40, ev.durMs | 0), ev.vel, t, false);
+        if (ev && ev.freqs.length) emitEvent(ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), Math.max(40, ev.durMs | 0), ev.vel, t, false);
       }
     }
 
@@ -965,33 +1163,57 @@
         if (_E.reverb.dampening) _E.reverb.dampening.value = damp;
       } catch (e) {}
     }
-    // Per-layer chain (built for any ON layer): voices → VCF → VCA → Distortion
-    // → Delay → bus, plus a parallel reverb send tapped off the VCA. Distortion
-    // and Delay are always present with wet=0 (transparent) so toggling FX never
-    // needs reconnection; _ambApplyLayerFx sets their params/wet from the cfg.
+    // Per-layer chain base (built for any ON layer): voices → VCF → VCA → bus,
+    // plus a parallel reverb send tapped off the VCA. The Distortion and Delay
+    // nodes are NO LONGER created up-front — they're heavy continuous DSP
+    // (FeedbackDelay's delay line, Distortion's oversampled waveshaper) that
+    // ran for every layer even at wet=0, glitching dense Bloom stacks. They're
+    // now inserted lazily by _ambApplyLayerFx only when the layer's mix > 0.
     function _ambBuildMod(layer, cfg) {
       if (_E.mod[layer]) { _ambUpdateMod(layer, cfg); return; }
       if (typeof Tone === 'undefined') return;
       try {
         const out = _E.busNode();
-        const delay = new Tone.FeedbackDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }).connect(out);
-        const dist = new Tone.Distortion({ distortion: 0.4, wet: 0 }).connect(delay);
-        const vca = new Tone.Gain(1).connect(dist);
+        const vca = new Tone.Gain(1).connect(out);
         const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 }).connect(vca);
         const revSend = new Tone.Gain(0);
         vca.connect(revSend);
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, vca, dist, delay, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, vca, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
-    // Apply a layer's FX (reverb send + delay + distortion) to its live chain.
+    // Apply a layer's FX (reverb send + delay + distortion). Builds/disposes the
+    // Distortion/Delay tail on demand so a layer with FX off carries no extra
+    // DSP, then sets params/wet. Reconnects VCA → [Dist] → [Delay] → bus
+    // (matching the original signal order) only when the tail's shape changes.
     function _ambApplyLayerFx(layer, lc) {
       const e = _E.mod[layer];
       if (!e || !lc) return;
       const dly = lc.delay || {}, dst = lc.dist || {};
+      const wantDelay = (dly.mix | 0) > 0;
+      const wantDist = (dst.mix | 0) > 0;
       try {
+        if (wantDelay !== !!e.delay || wantDist !== !!e.dist) {
+          const out = _E.busNode();
+          try { e.vca.disconnect(); } catch (x) {}
+          if (!wantDelay && e.delay) { try { e.delay.dispose(); } catch (x) {} e.delay = null; }
+          if (!wantDist && e.dist) { try { e.dist.dispose(); } catch (x) {} e.dist = null; }
+          let tail = out;
+          if (wantDelay) {
+            if (!e.delay) e.delay = new Tone.FeedbackDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 });
+            try { e.delay.disconnect(); } catch (x) {}
+            e.delay.connect(tail); tail = e.delay;
+          }
+          if (wantDist) {
+            if (!e.dist) e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0 });
+            try { e.dist.disconnect(); } catch (x) {}
+            e.dist.connect(tail); tail = e.dist;
+          }
+          e.vca.connect(tail);
+          e.vca.connect(e.revSend); // re-tap the parallel reverb send
+        }
         if (e.dist) {
           e.dist.distortion = Math.max(0, Math.min(1, (dst.amount | 0) / 100));
           e.dist.wet.value = Math.max(0, Math.min(1, (dst.mix | 0) / 100));
@@ -1031,7 +1253,7 @@
       // (reverb send / delay / distortion) are always available.
       const want = {};
       ['bed', 'motif', 'texture', 'beat'].forEach(l => {
-        if (cfg[l] && cfg[l].on) want[l] = cfg[l];
+        if (cfg[l] && cfg[l].present !== false && cfg[l].on) want[l] = cfg[l];
       });
       if (Array.isArray(cfg.seqs)) cfg.seqs.forEach(seq => {
         if (seq.on && Array.isArray(seq.units) && seq.units.length) want['seq:' + seq.id] = seq;
@@ -1088,6 +1310,10 @@
       _E = E;
       if (!E.guard()) { _ambStopGenerator(E); return; }
       const cfg = E.getCfg();
+      // Cache the (already-normalized) cfg so the finer ramp clock can read it
+      // without re-running _normalizeAmbientCfg 40×/s (that re-normalize, whose
+      // cost grows with layer count, was glitching dense Bloom stacks).
+      E._cfg = cfg;
       if (!cfg) return;
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
       // (Ramps run on their own finer clock — see _ambStartGenerator.)
@@ -1096,7 +1322,7 @@
       const C = E.clocks, I = E.iters;
       try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
       const runLayer = (key, lc, guardMax, minSec, emit) => {
-        if (!lc || !lc.on) return;
+        if (!lc || lc.present === false || !lc.on) return;
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(lc, cfg);
         let g = 0;
         while (C[key] < horizon && g++ < guardMax) {
@@ -1147,6 +1373,24 @@
         }
       }
     }
+    // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
+    // has at least one ramp. Reads the tick-cached cfg (no re-normalize).
+    function _ambStartRampClock(E) {
+      if (!E || E.rampTimer) return;
+      const c = E._cfg || (E._cfg = E.getCfg());
+      if (!c || !Array.isArray(c.ramps) || !c.ramps.length) return;
+      E.rampTimer = setInterval(() => {
+        try {
+          const cfg = E._cfg;
+          if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) { _ambStopRampClock(E); return; }
+          const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+          _ambApplyRamps(cfg, t);
+        } catch (e) {}
+      }, 25);
+    }
+    function _ambStopRampClock(E) {
+      if (E && E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+    }
     function _ambStartGenerator(E) {
       _E = E;
       const cfg = E.getCfg();
@@ -1158,18 +1402,10 @@
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
       _ambTick(E);
       E.timer = setInterval(() => _ambTick(E), 150);
-      // Dedicated finer ramp clock (40 Hz) so parameter ramps sweep smoothly
-      // and sample close to each generated event, independent of the 150 ms
-      // scheduling tick. Cheap (a few arithmetic writes); no-ops without ramps.
-      if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
-      E.rampTimer = setInterval(() => {
-        try {
-          const c = E.getCfg();
-          if (!c || !Array.isArray(c.ramps) || !c.ramps.length) return;
-          const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
-          _ambApplyRamps(c, t);
-        } catch (e) {}
-      }, 25);
+      // The finer ramp clock only runs while ramps exist (started lazily) so a
+      // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
+      // with audio scheduling.
+      _ambStartRampClock(E);
       cfg.playing = true;
       _ambRefreshPlayBtn(E);
       _ambVizKick(E);
@@ -1363,7 +1599,7 @@
       try { _ambSyncControls(_laneEng); } catch (e) {}
     }
     function _ambMotifFreezeNote(motif) {
-      const intervals = _ambScaleIntervals(motif.scale);
+      const intervals = _ambScaleIntervals(_ambNotesOf(motif));
       const N = intervals.length;
       const center = Math.max(1, Math.min(8, motif.register | 0));
       const range = Math.max(1, Math.min(4, motif.range | 0));
@@ -1378,14 +1614,14 @@
       if (next > hi) next = hi - (next - hi);
       next = Math.max(lo, Math.min(hi, next));
       _E.motifDeg = next;
-      return _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), motif.scale);
+      return _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), _ambNotesOf(motif));
     }
     function _ambTexFreezeNote(texture) {
       if (!_E.texPattern) _ambTexBuildPattern(texture);
       const center = Math.max(1, Math.min(8, texture.register | 0));
       const slot = _E.texPattern[_E.texStep % _E.texPattern.length];
       _E.texStep++;
-      if (slot && slot.on) return _ambDegreeFreq(slot.deg, center, texture.scale);
+      if (slot && slot.on) return _ambDegreeFreq(slot.deg, center, _ambNotesOf(texture));
       return null;
     }
 
@@ -1590,7 +1826,7 @@
       '</details>';
     const _ambHead = (label, onId, delId) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
-      (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Delete this Seq layer" aria-label="Delete this Seq layer">✕</button>' : '') +
+      (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button></div>';
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
@@ -1603,10 +1839,10 @@
     function _ambSeqLayerHtml(s, i) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
-      return '<div class="ambient-layer" data-seq-id="' + id + '">' +
+      return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
         _ambHead('Seq' + (i + 1), p + 'on', p + 'del') +
         '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-        '<div class="ambient-ctrl"><label for="' + p + 'scale">Scale</label><select id="' + p + 'scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
+        _ambNotesButtonHtml(p.slice(0, -1)) +
         '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
         _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
         _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
@@ -1640,8 +1876,8 @@
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };
       const toneSel = el('tone'); if (toneSel) populateGroupedToneSelect(toneSel, _ambToneOptions(), { value: '', label: 'Grid voice' });
-      const scaleSel = el('scale'); if (scaleSel) populateGroupedScaleSelect(scaleSel, { value: '', label: 'Workspace scale' });
-      bindStr('tone', 'tone'); bindStr('scale', 'scale'); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
+      _ambWireNotesBtn(E, p + 'notes', getSq); // Notes source button (Scale / Chord)
+      bindStr('tone', 'tone'); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
       bindInt('depth', 'varyDepth'); bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); bindStr('when', 'when');
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));
@@ -1698,7 +1934,7 @@
       const id = s.id, p = 'ambient-samp-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       const nm = String(s.name || s.sampleId || 'sample').replace(/[<>&"]/g, '');
-      return '<div class="ambient-layer" data-samp-id="' + id + '">' +
+      return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
         _ambHead('Sample' + (i + 1), p + 'on', p + 'del') +
         '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
         _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
@@ -1775,8 +2011,8 @@
     // wiring is needed. Rampable params are the numeric LAYER params (read live
     // per-tick) — not the node-backed globals (reverb/space).
     const _AMB_RAMP_PARAMS = {
-      bed:     [['density','Density',1,8],['register','Register',2,6],['spread','Spread',0,3],['intervalMs','Interval (ms)',200,12000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['motion','Motion',0,100],['level','Level',0,100]],
-      motif:   [['register','Register',2,7],['range','Range',1,4],['intervalMs','Interval (ms)',100,4000],['lengthMs','Length (ms)',80,4000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
+      bed:     [['density','Density',1,8],['register','Register',2,6],['spread','Spread',0,3],['intervalMs','Interval (ms)',200,12000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['motion','Motion',0,100],['strum','Strum',0,100],['strumFidelity','Fidelity',0,100],['level','Level',0,100]],
+      motif:   [['register','Register',2,7],['range','Range',1,4],['intervalMs','Interval (ms)',100,4000],['lengthMs','Length (ms)',80,4000],['drift','Drift',0,99],['restProb','Rests',0,100],['twist','Twist',0,100],['level','Level',0,100]],
       texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['mutateRate','Mutate',0,100],['level','Level',0,100]],
       beat:    [['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
       seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
@@ -1936,6 +2172,7 @@
       const cur = res ? Math.round(res.obj[res.key]) : 0;
       cfg.ramps.push(_normalizeRamp({ id: newId, on: true, target, a: cur, b: cur, periodMs: 4000, wave: 'sine' }, newId));
       _ambRenderRamps(E);
+      if (E.timer) { E._cfg = cfg; _ambStartRampClock(E); } // spin up the ramp clock if playing
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     function _ambDeleteRamp(E, id) {
@@ -1945,6 +2182,26 @@
       if (idx < 0) return;
       cfg.ramps.splice(idx, 1);
       _ambRenderRamps(E);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
+    // Add / remove a built-in layer (Bed / Motif / Texture / Beat). Settings are
+    // retained on remove (the card just hides), so re-adding restores them.
+    function _ambAddLayer(E, layer) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !cfg[layer]) return;
+      cfg[layer].present = true;
+      cfg[layer].on = true;
+      _ambSyncControls(E);                                   // unhides + refreshes the card
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }  // build its chain if playing
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _ambRemoveLayer(E, layer) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !cfg[layer]) return;
+      cfg[layer].present = false;
+      _ambSyncControls(E);                                   // hides the card
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }  // tears down its chain
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
 
@@ -1990,9 +2247,22 @@
       set('ambient-space', cfg.space);
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
       const chk = (id, v) => { const el = document.getElementById(tr(id)); if (el) el.classList.toggle('on', !!v); };
+      // Show only "present" built-in layer cards (Bloom starts with just Bed;
+      // the rest are added via the Add-layer menu). Also grey the Add button
+      // when every built-in type is already present.
+      let _absentCount = 0;
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
+        const onBtn = document.getElementById(tr('ambient-' + layer + '-on'));
+        const card = onBtn ? onBtn.closest('.ambient-layer') : null;
+        const absent = !!(cfg[layer] && cfg[layer].present === false);
+        if (absent) _absentCount++;
+        if (card) card.style.display = absent ? 'none' : '';
+      });
+      const addBtn = document.getElementById(tr('ambient-add-layer'));
+      if (addBtn) addBtn.disabled = (_absentCount === 0);
       chk('ambient-bed-on', cfg.bed.on);
       set('ambient-bed-tone', cfg.bed.tone);
-      set('ambient-bed-scale', cfg.bed.scale);
+      { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-register', cfg.bed.register);
       set('ambient-bed-spread', cfg.bed.spread);
@@ -2001,10 +2271,12 @@
       set('ambient-bed-drift', cfg.bed.drift);
       set('ambient-bed-when', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
+      set('ambient-bed-strum', cfg.bed.strum);
+      set('ambient-bed-strumfid', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
-      set('ambient-motif-scale', cfg.motif.scale);
+      { const _nb = document.getElementById(tr('ambient-motif-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.motif)); }
       set('ambient-motif-register', cfg.motif.register);
       set('ambient-motif-range', cfg.motif.range);
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
@@ -2012,10 +2284,11 @@
       set('ambient-motif-drift', cfg.motif.drift);
       set('ambient-motif-when', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
+      set('ambient-motif-twist', cfg.motif.twist);
       set('ambient-motif-level', cfg.motif.level);
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
-      set('ambient-texture-scale', cfg.texture.scale);
+      { const _nb = document.getElementById(tr('ambient-texture-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.texture)); }
       set('ambient-texture-register', cfg.texture.register);
       set('ambient-texture-fill', cfg.texture.fill);
       set('ambient-texture-interval', cfg.texture.intervalMs); hint('ambient-texture-interval-v', _ambFmtMs(cfg.texture.intervalMs));
@@ -2086,9 +2359,9 @@
           sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
           sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
         '</div>' +
-        '<div class="ambient-layer">' + head('Bed', 'ambient-bed-on') +
+        '<div class="ambient-layer collapsed">' + head('Bed', 'ambient-bed-on', 'ambient-bed-del') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-          '<div class="ambient-ctrl"><label for="ambient-bed-scale">Scale</label><select id="ambient-bed-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
+          _ambNotesButtonHtml('ambient-bed') +
           sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
           sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
           sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') +
@@ -2097,13 +2370,15 @@
           sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
           condCtrl('bed') +
           sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'detune') +
+          sl('Strum', 'ambient-bed-strum', 0, 100, 0, 'chord → arp') +
+          sl('Fidelity', 'ambient-bed-strumfid', 0, 100, 0, 'in order → random') +
           sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
           modUi('bed') +
           fxUi('bed') +
         '</div>' +
-        '<div class="ambient-layer">' + head('Motif', 'ambient-motif-on') +
+        '<div class="ambient-layer collapsed">' + head('Motif', 'ambient-motif-on', 'ambient-motif-del') +
           '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-          '<div class="ambient-ctrl"><label for="ambient-motif-scale">Scale</label><select id="ambient-motif-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
+          _ambNotesButtonHtml('ambient-motif') +
           sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
           sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
           tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
@@ -2111,13 +2386,14 @@
           sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
           condCtrl('motif') +
           sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
+          sl('Twist', 'ambient-motif-twist', 0, 100, 0, 'steady → bursts') +
           sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
           modUi('motif') +
           fxUi('motif') +
         '</div>' +
-        '<div class="ambient-layer">' + head('Texture', 'ambient-texture-on') +
+        '<div class="ambient-layer collapsed">' + head('Texture', 'ambient-texture-on', 'ambient-texture-del') +
           '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-          '<div class="ambient-ctrl"><label for="ambient-texture-scale">Scale</label><select id="ambient-texture-scale" class="ambient-select"></select><span class="ambient-hint">notes</span></div>' +
+          _ambNotesButtonHtml('ambient-texture') +
           sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
           sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
           tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
@@ -2129,7 +2405,7 @@
           modUi('texture') +
           fxUi('texture') +
         '</div>' +
-        '<div class="ambient-layer">' + head('Beat', 'ambient-beat-on') +
+        '<div class="ambient-layer collapsed">' + head('Beat', 'ambient-beat-on', 'ambient-beat-del') +
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
@@ -2140,6 +2416,11 @@
           sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
           modUi('beat') +
           fxUi('beat') +
+        '</div>' +
+        // Add-layer button — Bloom starts with just Bed; this adds the other
+        // built-in layer types (Motif / Texture / Beat) on demand.
+        '<div class="ambient-add-layer-row">' +
+          '<button type="button" class="ambient-regen ambient-add-layer" id="ambient-add-layer" title="Add a layer">+ Add layer</button>' +
         '</div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-sample-layers"></div>' +
@@ -2182,8 +2463,8 @@
       ['bed', 'motif', 'texture'].forEach(layer => {
         wireSelect('ambient-' + layer + '-tone', layer, 'tone',
           (sel) => populateGroupedToneSelect(sel, _ambToneOptions(), { value: '', label: 'Grid voice' }));
-        wireSelect('ambient-' + layer + '-scale', layer, 'scale',
-          (sel) => populateGroupedScaleSelect(sel, { value: '', label: 'Workspace scale' }));
+        // "Notes" source button (Scale / Chord) replaces the old scale select.
+        _ambWireNotesBtn(E, 'ambient-' + layer + '-notes', () => { const c = cfg0(); return c ? c[layer] : null; });
       });
 
       // Mod controls for the fixed layers (seq layers wire their own in the renderer).
@@ -2261,6 +2542,8 @@
       bindTime('ambient-bed-length', 'bed', 'lengthMs');
       bind('ambient-bed-drift', 'bed', 'drift');
       bind('ambient-bed-motion', 'bed', 'motion');
+      bind('ambient-bed-strum', 'bed', 'strum');
+      bind('ambient-bed-strumfid', 'bed', 'strumFidelity');
       bind('ambient-bed-level', 'bed', 'level');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
@@ -2268,6 +2551,7 @@
       bindTime('ambient-motif-length', 'motif', 'lengthMs');
       bind('ambient-motif-drift', 'motif', 'drift');
       bind('ambient-motif-rest', 'motif', 'restProb');
+      bind('ambient-motif-twist', 'motif', 'twist');
       bind('ambient-motif-level', 'motif', 'level');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');
@@ -2339,6 +2623,24 @@
 
       const addRampBtn = G('ambient-ramp-add');
       if (addRampBtn) addRampBtn.addEventListener('click', () => _ambAddRamp(E));
+
+      // Add-layer menu — lists the built-in layer types not currently present.
+      const addLayerBtn = G('ambient-add-layer');
+      if (addLayerBtn) addLayerBtn.addEventListener('click', () => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        const LABELS = { bed: 'Bed', motif: 'Motif', texture: 'Texture', beat: 'Beat' };
+        const absent = ['bed', 'motif', 'texture', 'beat'].filter(l => cfg[l] && cfg[l].present === false);
+        if (!absent.length) return;
+        const actions = absent.map(l => ({ label: LABELS[l], fn: () => _ambAddLayer(E, l) }));
+        const r = addLayerBtn.getBoundingClientRect();
+        if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
+        else _ambAddLayer(E, absent[0]);
+      });
+      // Delete (✕) on each built-in layer head → remove it (settings retained).
+      ['bed', 'motif', 'texture', 'beat'].forEach(l => {
+        const delB = G('ambient-' + l + '-del');
+        if (delB) delB.addEventListener('click', () => _ambRemoveLayer(E, l));
+      });
 
       const playBtn = G('ambient-play-btn');
       if (playBtn) playBtn.addEventListener('click', () => { if (E.timer) _ambStopGenerator(E); else _ambStartGenerator(E); });

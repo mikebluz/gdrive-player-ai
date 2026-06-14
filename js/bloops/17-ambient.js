@@ -1102,6 +1102,7 @@
         else pushFrom(s);
       });
       if (!events.length) return null;
+      try { console.log('[SEQ] seedFromSaved', { stepCount: saved.steps.length, hasLanes: Array.isArray(saved.lanes), poly: !!saved.polyMode, events: events.length, sounds: saved.steps.slice(0, 30).map(s => Array.isArray(s.chord) ? ('['+s.chord.map(n=>n.sound).join(',')+']') : (s.sound || (s.freq==null?'rest':'?'))) }); } catch (e) {}
       return { events, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm };
     }
     // Nudge an absolute freq to a nearby scale degree (seeded random walk).
@@ -1172,6 +1173,7 @@
       const depth = Math.max(0, Math.min(100, seq.varyDepth | 0)) / 100;
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const type = _ambLayerType(seq.tone);
+      try { if (!seq._dbgTone) { seq._dbgTone = 1; console.log('[SEQ] emit tone', { seqTone: seq.tone, resolvedType: type, gridType: (typeof cellParams!=='undefined'&&cellParams[0])?cellParams[0].type:'?', events: seed.events.length, units: seq.units.length, intervalMs: seq.intervalMs }); } } catch (e) {}
       // Verbatim (return-to-original) decision for THIS cycle, on the picked unit.
       let verbatim;
       if (seq.returnMode === 'chance') {

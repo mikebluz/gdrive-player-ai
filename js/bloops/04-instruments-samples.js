@@ -1711,6 +1711,11 @@
     }
 
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
+      // Bloom layer Freeze "recording": tee scheduled notes to the active
+      // capture sink (set around a recording layer's emit in the Bloom tick).
+      if (typeof window !== 'undefined' && window._ambCaptureSink) {
+        try { window._ambCaptureSink(freq, params, durationMs, startTime); } catch (e) {}
+      }
       // Cold-start guard: if the AudioContext hasn't actually resumed yet
       // (very first gesture race — the gesture's resume() is async, the
       // synchronous call into playNote loses), kick the resume now and

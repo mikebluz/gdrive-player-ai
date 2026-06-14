@@ -2104,7 +2104,7 @@
       font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
     }
     @media (hover: hover) { .ambient-freeze-btn:hover { border-color: #4fd1c5; color: #b2f5ea; } }
-    .ambient-freeze-btn.armed { color: #fff; background: rgba(229,62,62,0.30); border-color: #e53e3e; animation: amb-freeze-rec 1s ease-in-out infinite; }
+    .ambient-freeze-btn.recording { color: #fff; background: rgba(229,62,62,0.30); border-color: #e53e3e; animation: amb-freeze-rec 1s ease-in-out infinite; }
     .ambient-freeze-btn.frozen { color: #fff; background: rgba(79,209,197,0.28); border-color: #4fd1c5; }
     @keyframes amb-freeze-rec { 0%,100% { box-shadow: 0 0 0 rgba(229,62,62,0); } 50% { box-shadow: 0 0 8px rgba(229,62,62,0.7); } }
     /* When a delete ✕ is also present, the freeze button shouldn't eat all the
@@ -6656,6 +6656,19 @@
       width: min(380px, 92vw);
       box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(0, 191, 255, 0.06);
     }
+    /* Waveform sample editor. */
+    .sample-editor-modal { width: min(560px, 94vw); }
+    .se-wave-canvas {
+      width: 100%; height: 120px; display: block;
+      background: #07070f; border: 1px solid #2d2d3f; border-radius: 8px;
+      touch-action: none; cursor: ew-resize; margin: 4px 0 8px;
+    }
+    .se-wave-info {
+      display: flex; align-items: center; justify-content: space-between;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.82rem; margin-bottom: 10px;
+    }
+    .se-wave-rev { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .se-wave-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
     /* Render-progress modal — status line above the bar describes the
        current phase (Building FX chain… / Decoding samples… /
        Rendering audio…), the percent + time-elapsed line below the

@@ -1477,17 +1477,26 @@
           C[key] += _ambSnap(Math.max(minSec, (lc.intervalMs | 0) / 1000), cfg);
         }
       };
-      runLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
-      runLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
-      runLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
-      runLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
+      // Freeze-aware wrapper: frozen → replay the captured loop; recording →
+      // generate normally while teeing each note into the capture sink.
+      const stepLayer = (key, lc, guardMax, minSec, emit) => {
+        if (_ambFreezeFrozen(E, key)) { _ambReplayFrozen(E, key, now, horizon); return; }
+        window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
+        try { runLayer(key, lc, guardMax, minSec, emit); }
+        finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+      };
+      stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
+      stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
+      stepLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
+      stepLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
       // Seq layers (dynamic list). Each fire schedules a whole phrase, so a
       // smaller per-tick guard bounds overlapping voices.
       if (Array.isArray(cfg.seqs)) {
         for (const seq of cfg.seqs) {
           if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
-          if (_ambFreezeFrozen(E, key)) continue;
+          if (_ambFreezeFrozen(E, key)) { _ambReplayFrozen(E, key, now, horizon); continue; }
+          window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
           let g = 0;
           while (C[key] < horizon && g++ < 4) {
@@ -1499,6 +1508,7 @@
             I[key] = (I[key] | 0) + 1;
             C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
           }
+          window._ambCaptureSink = null; _ambPruneCap(E, key, now);
         }
       }
       // Sample layers (dynamic list). Each fire schedules up to `chop` slices.
@@ -1506,7 +1516,8 @@
         for (const L of cfg.samples) {
           if (!L || !L.on || !L.sampleId) continue;
           const key = 'samp:' + L.id;
-          if (_ambFreezeFrozen(E, key)) continue;
+          if (_ambFreezeFrozen(E, key)) { _ambReplayFrozen(E, key, now, horizon); continue; }
+          window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
           let g = 0;
           while (C[key] < horizon && g++ < 4) {
@@ -1518,6 +1529,7 @@
             I[key] = (I[key] | 0) + 1;
             C[key] += _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
           }
+          window._ambCaptureSink = null; _ambPruneCap(E, key, now);
         }
       }
       // Extra layer instances (additional Bed/Motif/Texture/Beat). runLayer
@@ -1528,7 +1540,7 @@
           const key = ex.type + ':' + ex.id;
           const gm = ex.type === 'bed' ? 8 : 16;
           const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
-          runLayer(key, ex, gm, ms, (at) => {
+          stepLayer(key, ex, gm, ms, (at) => {
             if (ex.type === 'bed') _ambEmitBed(at, ex, space, key);
             else if (ex.type === 'motif') _ambEmitMotif(at, ex, space, key);
             else if (ex.type === 'texture') _ambEmitTexture(at, ex, space, key);
@@ -1624,134 +1636,116 @@
       } catch (e) { alert('Grab failed: ' + ((e && e.message) || e)); }
       finally { _AL.busy = false; }
     }
-    // ---- Per-layer Freeze → loop --------------------------------------------
-    // Opt-in / lazy: 1st press arms a rolling recorder on the layer's output;
-    // 2nd press cuts the last `freezeLenMs` into a looping buffer + gates the
-    // generator for that layer (button → "Thaw"); Thaw stops at the next loop
-    // boundary and resumes stochastic generation. State is per-engine, keyed by
-    // layer key ('bed'|'motif'|…|'seq:<id>'|'samp:<id>').
-    const _FREEZE_SEG_MS = 2000;
+    // ---- Per-layer Freeze → loop (RETROACTIVE event capture) ----------------
+    // The layer's generated notes (freq / params / step-div duration / time) are
+    // ALWAYS streamed into a cheap rolling buffer (E.cap[key]) as it plays. A
+    // single Freeze press loops the LAST N seconds that ALREADY played (N =
+    // Freeze length), snapped to the layer's note grid so it links up; press
+    // again to Thaw and resume generation. Symbolic (not audio), so it's seamless.
     function _ambFreezeState(E, key) {
       E.freeze = E.freeze || {};
-      return E.freeze[key] || (E.freeze[key] = { armed: false, frozen: false, freezing: false, rec: null, dest: null, tap: null, segs: [], loopSrc: null, loopLen: 0, loopStart: 0 });
+      return E.freeze[key] || (E.freeze[key] = { frozen: false, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0 });
     }
     function _ambFreezeFrozen(E, key) { return !!(E && E.freeze && E.freeze[key] && E.freeze[key].frozen); }
-    function _ambFreezeArm(E, key) {
-      const tap = E.mod[key] && E.mod[key].vca;
-      if (!tap) { alert('Turn this layer on and press Play first, then Freeze.'); return false; }
-      if (typeof MediaRecorder === 'undefined') { alert('This browser cannot capture audio.'); return false; }
-      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return false; }
-      const st = _ambFreezeState(E, key);
-      try { st.dest = ac.createMediaStreamDestination(); tap.connect(st.dest); st.tap = tap; } catch (e) { return false; }
-      st.armed = true; st.segs = [];
-      _ambFreezeNextSeg(E, key);
-      return true;
+    // Resolve a freeze key ('bed' | 'bed:5' | 'seq:3' | 'samp:2') → its layer cfg.
+    function _ambLayerByKey(E, key) {
+      const cfg = E._cfg || E.getCfg(); if (!cfg) return null;
+      const ci = key.indexOf(':');
+      if (ci < 0) return cfg[key] || null;
+      const t = key.slice(0, ci), id = parseInt(key.slice(ci + 1), 10);
+      if (t === 'seq') return (cfg.seqs || []).find(s => s.id === id) || null;
+      if (t === 'samp') return (cfg.samples || []).find(s => s.id === id) || null;
+      return (cfg.extras || []).find(x => x.id === id && x.type === t) || null;
     }
-    function _ambFreezeNextSeg(E, key) {
-      const st = E.freeze && E.freeze[key];
-      if (!st || !st.armed || !st.dest) return;
-      let rec; const chunks = [];
-      try {
-        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
-        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
-        rec = new MediaRecorder(st.dest.stream, mime ? { mimeType: mime } : undefined);
-      } catch (e) { st.armed = false; return; }
-      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      rec.onstop = () => {
-        if (chunks.length) st.segs.push(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
-        const cfg = E._cfg || E.getCfg();
-        const N = Math.max(1, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
-        const maxSegs = Math.ceil((N * 1000) / _FREEZE_SEG_MS) + 1;
-        while (st.segs.length > maxSegs) st.segs.shift();
-        if (st.freezing) { st.freezing = false; _ambFreezeBuildLoop(E, key); return; }
-        if (st.armed) _ambFreezeNextSeg(E, key);
+    // Rolling-capture sink (set on window so cross-file playNote can see it),
+    // active around every NON-frozen layer's emit. Stores notes by absolute time.
+    function _ambCapSink(E, key) {
+      E.cap = E.cap || {};
+      const arr = E.cap[key] || (E.cap[key] = []);
+      return (freq, params, dur, at) => {
+        if (typeof freq !== 'number' || typeof at !== 'number') return;
+        const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
+        arr.push({ at: at, freq: freq, dur: dur, params: p });
       };
-      try { rec.start(); } catch (e) { st.armed = false; return; }
-      st.rec = rec;
-      setTimeout(() => { try { rec.stop(); } catch (e) {} }, _FREEZE_SEG_MS);
     }
+    function _ambPruneCap(E, key, now) {
+      const arr = E.cap && E.cap[key]; if (!arr || !arr.length) return;
+      const keepFrom = now - 33; // keep ~last 33s (≥ max Freeze length)
+      let i = 0; while (i < arr.length && arr[i].at < keepFrom) i++;
+      if (i > 0) arr.splice(0, i);
+    }
+    // Single press: loop the last N seconds that already played (retroactive).
     function _ambFreezeNow(E, key) {
-      const st = E.freeze && E.freeze[key];
-      if (!st || !st.armed) return;
-      st.frozen = true;   // gate generation immediately
-      st.freezing = true; // tell the recorder's onstop to build the loop
-      st.armed = false;
-      try { st.rec && st.rec.stop(); } catch (e) {}
-    }
-    async function _ambFreezeBuildLoop(E, key) {
-      const st = E.freeze && E.freeze[key];
-      if (!st) return;
-      try { if (st.tap && st.dest) st.tap.disconnect(st.dest); } catch (e) {}
-      st.dest = null; st.rec = null;
-      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { st.frozen = false; _ambFreezeSyncAll(E); return; }
+      const st = _ambFreezeState(E, key);
+      const cap = (E.cap && E.cap[key]) || [];
       const cfg = E._cfg || E.getCfg();
-      const N = Math.max(1, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
-      let buf = null; try { buf = await _segsToBuffer(ac, st.segs.slice(), N); } catch (e) {}
-      st.segs = [];
-      if (!buf || !(buf.duration > 0.02)) {
-        // Nothing usable captured yet (armed too briefly, or the layer was
-        // silent for the window). Resume generation and tell the user.
-        st.frozen = false; _ambFreezeSyncAll(E);
-        if (typeof showToast === 'function') showToast('Freeze: nothing captured yet — let it play a few seconds, then Freeze again.');
+      const N = Math.max(0.5, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
+      const layer = _ambLayerByKey(E, key);
+      const intervalSec = Math.max(0.05, (((layer && layer.intervalMs) | 0) / 1000) || 1);
+      const P = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Loop window = the last L seconds before P, L = N snapped to the note grid.
+      let L = Math.max(intervalSec, Math.round(N / intervalSec) * intervalSec);
+      const start = P - L;
+      // Notes that had already played (at <= P) within [start, P).
+      const events = cap.filter(e => e.at >= start - 0.001 && e.at < P + 0.001)
+        .map(e => ({ t: Math.max(0, e.at - start), freq: e.freq, dur: e.dur, params: e.params }));
+      if (!events.length) {
+        if (typeof showToast === 'function') showToast('Freeze: nothing has played yet — let the layer sound first.');
         return;
       }
-      // Use a Tone source so it connects to the layer's Tone-node chain input
-      // (a raw AudioBufferSourceNode can't connect to a Tone node).
-      const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
-      try {
-        const src = new Tone.ToneBufferSource({ url: buf, loop: true });
-        src.connect(dest);
-        src.start();
-        st.loopSrc = src; st.loopLen = buf.duration; st.loopStart = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-      } catch (e) { st.frozen = false; }
+      st.events = events; st.loopLen = L;
+      // Hand off where the generator left off (next-scheduled time) so the
+      // queued ~1.2s tail flows straight into the loop — no overlap, no gap.
+      const clk = (E.clocks && Number.isFinite(E.clocks[key]) && E.clocks[key] > P) ? E.clocks[key] : P;
+      st.anchor = clk; st.scheduledUpto = clk; st.frozen = true;
       _ambFreezeSyncAll(E);
+    }
+    // Schedule the frozen layer's looped events that fall in [now, horizon].
+    function _ambReplayFrozen(E, key, now, horizon) {
+      const st = E.freeze && E.freeze[key];
+      if (!st || !st.frozen || !st.events.length || !(st.loopLen > 0)) return;
+      const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
+      let from = st.scheduledUpto;
+      if (from == null || from < now) from = Math.max(now, st.anchor || now);
+      const L = st.loopLen, A = st.anchor || now;
+      let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
+      while (guard++ < 4096) {
+        const base = A + k * L;
+        if (base >= horizon) break;
+        for (const e of st.events) {
+          const at = base + e.t;
+          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
+        }
+        k++;
+      }
+      st.scheduledUpto = horizon;
     }
     function _ambFreezeThaw(E, key) {
       const st = E.freeze && E.freeze[key];
       if (!st) return;
-      const src = st.loopSrc;
-      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-      if (src && st.loopLen > 0) {
-        // Let the current loop finish, then stop + resume generation.
-        const elapsed = Math.max(0.01, now - (st.loopStart || now));
-        const end = (st.loopStart || now) + Math.ceil(elapsed / st.loopLen) * st.loopLen;
-        src.onended = () => { st.frozen = false; st.loopSrc = null; _ambFreezeSyncAll(E); };
-        try { src.loop = false; src.stop(end); } catch (e) { try { src.stop(); } catch (_) {} st.frozen = false; st.loopSrc = null; }
-      } else {
-        try { src && src.stop(); } catch (e) {}
-        st.frozen = false; st.loopSrc = null;
-      }
+      st.frozen = false; st.scheduledUpto = 0;
       _ambFreezeSyncAll(E);
     }
     function _ambFreezeCycle(E, key) {
       const st = _ambFreezeState(E, key);
       if (st.frozen) _ambFreezeThaw(E, key);
-      else if (st.armed) _ambFreezeNow(E, key);
-      else _ambFreezeArm(E, key);
+      else _ambFreezeNow(E, key);
       _ambFreezeSyncAll(E);
     }
     function _ambFreezeStopAll(E) {
-      if (!E || !E.freeze) return;
-      Object.keys(E.freeze).forEach(key => {
-        const st = E.freeze[key]; if (!st) return;
-        try { st.rec && st.rec.stop(); } catch (e) {}
-        try { if (st.tap && st.dest) st.tap.disconnect(st.dest); } catch (e) {}
-        try { st.loopSrc && st.loopSrc.stop(); } catch (e) {}
-      });
-      E.freeze = {};
+      if (!E) return;
+      window._ambCaptureSink = null;
+      E.freeze = {}; E.cap = {};
       try { _ambFreezeSyncAll(E); } catch (e) {}
     }
     function _ambFreezeSyncAll(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-freeze-btn').forEach(btn => {
-        const st = E.freeze && E.freeze[btn.dataset.fkey];
-        const armed = !!(st && st.armed), frozen = !!(st && st.frozen);
-        btn.classList.toggle('armed', armed);
+        const frozen = !!(E.freeze && E.freeze[btn.dataset.fkey] && E.freeze[btn.dataset.fkey].frozen);
         btn.classList.toggle('frozen', frozen);
-        btn.textContent = frozen ? 'Thaw' : (armed ? '● Rec' : '❄');
-        btn.title = frozen ? 'Thaw — resume generation after this loop'
-                  : armed ? 'Freeze — cut & loop the last seconds (recording…)'
-                  : 'Freeze — arm the recorder, press again to loop the last seconds';
+        btn.textContent = frozen ? 'Thaw' : '❄';
+        btn.title = frozen ? 'Thaw — resume generative playback'
+                  : 'Freeze — loop the last few seconds this layer just played';
       });
     }
     // Reset a Bloom instance to defaults: one Bed, default parameters, no extra

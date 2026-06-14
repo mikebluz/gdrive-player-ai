@@ -1455,6 +1455,128 @@
       ];
     }
 
+    // Grab the loaded AudioBuffer behind a single-buffer sample voice.
+    function _getSampleAudioBuffer(id) {
+      try {
+        const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
+        if (!info || !info.sampler || !info.sampler._buffers || !info.urls) return null;
+        const bufs = info.sampler._buffers;
+        for (const noteName of Object.keys(info.urls)) {
+          let m; try { m = Math.round(Tone.Frequency(noteName).toMidi()); } catch (e) { continue; }
+          if (bufs.has(m)) { const tb = bufs.get(m); return (tb && typeof tb.get === 'function') ? tb.get() : null; }
+        }
+      } catch (e) {}
+      return null;
+    }
+    // Slice [startF,endF] (fractions) of an AudioBuffer into a new one, optionally reversed.
+    function _sliceAudioBuffer(ac, buf, startF, endF, reverse) {
+      const total = buf.length;
+      let s = Math.floor(startF * total), e = Math.floor(endF * total);
+      s = Math.max(0, Math.min(total - 1, s));
+      e = Math.max(s + 1, Math.min(total, e));
+      const len = e - s, ch = buf.numberOfChannels;
+      const out = ac.createBuffer(ch, len, buf.sampleRate);
+      for (let c = 0; c < ch; c++) {
+        const src = buf.getChannelData(c), dst = out.getChannelData(c);
+        if (reverse) { for (let i = 0; i < len; i++) dst[i] = src[e - 1 - i]; }
+        else { for (let i = 0; i < len; i++) dst[i] = src[s + i]; }
+      }
+      return out;
+    }
+    // Waveform sample editor: trim (draggable start/end) + reverse + preview,
+    // save as a NEW sample. `onSaved(newId)` fires after a successful save.
+    function showSampleEditor(sampleId, onSaved) {
+      const buf = _getSampleAudioBuffer(sampleId);
+      if (!buf) { alert('This sample buffer isn’t loaded yet (or it’s a multi-sampled instrument, which can’t be waveform-edited).'); return; }
+      const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(sampleId) : null;
+      const nm = (info && info.name) || sampleId;
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return; }
+      let startF = 0, endF = 1, reverse = false, previewSrc = null, drag = null;
+
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal sample-editor-modal';
+      modal.innerHTML =
+        '<div class="sm-title">Edit sample — ' + String(nm).replace(/[<>&]/g, '') + '</div>' +
+        '<canvas class="se-wave-canvas" id="se-wave-canvas"></canvas>' +
+        '<div class="se-wave-info"><span id="se-wave-sel">full</span><label class="se-wave-rev"><input type="checkbox" id="se-wave-reverse"> Reverse</label></div>' +
+        '<div class="se-wave-actions">' +
+          '<button type="button" class="sm-wave" id="se-wave-preview">▶ Preview</button>' +
+          '<button type="button" class="sm-wave" id="se-wave-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply" id="se-wave-save">Save as new sample</button>' +
+        '</div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const canvas = modal.querySelector('#se-wave-canvas');
+      const selEl = modal.querySelector('#se-wave-sel');
+      const stopPreview = () => { try { previewSrc && previewSrc.stop(); } catch (e) {} previewSrc = null; };
+      const fmtSel = () => {
+        const dur = buf.duration * (endF - startF);
+        selEl.textContent = (reverse ? '⇄ ' : '') + (dur >= 1 ? dur.toFixed(2) + ' s' : Math.round(dur * 1000) + ' ms') +
+          ' of ' + (buf.duration >= 1 ? buf.duration.toFixed(2) + ' s' : Math.round(buf.duration * 1000) + ' ms');
+      };
+      const draw = () => {
+        const W = canvas.width = canvas.clientWidth || 480;
+        const H = canvas.height = 120;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, W, H);
+        const sx = startF * W, ex = endF * W;
+        ctx.fillStyle = 'rgba(159,122,234,0.16)'; ctx.fillRect(sx, 0, ex - sx, H);
+        const data = buf.getChannelData(0);
+        const step = Math.max(1, Math.floor(data.length / W)), mid = H / 2;
+        ctx.strokeStyle = '#7fd6e8'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let x = 0; x < W; x++) {
+          let min = 1, max = -1; const o = x * step;
+          for (let i = 0; i < step; i++) { const v = data[o + i] || 0; if (v < min) min = v; if (v > max) max = v; }
+          ctx.moveTo(x + 0.5, mid + min * mid); ctx.lineTo(x + 0.5, mid + max * mid);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#4fd1c5'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); ctx.stroke();
+        fmtSel();
+      };
+      requestAnimationFrame(draw);
+
+      const xToF = (clientX) => { const r = canvas.getBoundingClientRect(); return Math.max(0, Math.min(1, (clientX - r.left) / r.width)); };
+      canvas.addEventListener('pointerdown', (e) => {
+        const f = xToF(e.clientX);
+        drag = (Math.abs(f - startF) <= Math.abs(f - endF)) ? 'start' : 'end';
+        if (drag === 'start') startF = Math.min(f, endF - 0.001); else endF = Math.max(f, startF + 0.001);
+        try { canvas.setPointerCapture(e.pointerId); } catch (x) {} draw();
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const f = xToF(e.clientX);
+        if (drag === 'start') startF = Math.min(f, endF - 0.001); else endF = Math.max(f, startF + 0.001);
+        draw();
+      });
+      const endDrag = () => { drag = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+
+      modal.querySelector('#se-wave-reverse').addEventListener('change', (e) => { reverse = !!e.target.checked; draw(); });
+      modal.querySelector('#se-wave-preview').addEventListener('click', () => {
+        stopPreview();
+        try { const sliced = _sliceAudioBuffer(ac, buf, startF, endF, reverse); const src = new Tone.ToneBufferSource({ url: sliced }).toDestination(); src.start(); previewSrc = src; } catch (e) {}
+      });
+      const close = () => { stopPreview(); overlay.remove(); };
+      modal.querySelector('#se-wave-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      modal.querySelector('#se-wave-save').addEventListener('click', async () => {
+        stopPreview();
+        try {
+          const sliced = _sliceAudioBuffer(ac, buf, startF, endF, reverse);
+          const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(sliced) : null;
+          if (!wav) throw new Error('WAV encoder unavailable.');
+          const base = String(nm).replace(/\.[^.]+$/, '') + '-edit';
+          const reg = (typeof registerSampleFromBlob === 'function') ? await registerSampleFromBlob(wav, base) : null;
+          if (typeof showToast === 'function') showToast('Saved “' + (reg ? reg.name : base) + '”');
+          overlay.remove();
+          if (reg && typeof onSaved === 'function') onSaved(reg.id);
+        } catch (e) { alert('Save failed: ' + ((e && e.message) || e)); }
+      });
+    }
+
     function showSoundEditor(noteIndex, opts) {
       // Selection scope: when opts.steps is given, the editor targets those
       // step refs — it writes each selected step's OWN params, and only the
@@ -1706,6 +1828,23 @@
         });
       });
       waveRow.appendChild(importBtn);
+      // Waveform editor — only for single-buffer samples (trim / reverse →
+      // save as a new sample, then auto-select it as this voice).
+      if (typeof isSliceableSample === 'function' && isSliceableSample(p.type)) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'sm-wave';
+        editBtn.textContent = '✂ Edit…';
+        editBtn.title = 'Trim / reverse this sample and save it as a new sample';
+        editBtn.addEventListener('click', () => {
+          showSampleEditor(p.type.slice(7), (newId) => {
+            const opt = { value: 'sample:' + newId, label: (sampleSamplers.get(newId) || {}).name || newId };
+            const btn = addToneButton(opt);
+            waveRow.insertBefore(btn, importBtn);
+            btn.click(); // select the edited sample as this voice
+          });
+        });
+        waveRow.appendChild(editBtn);
+      }
 
       // Slider bindings — parseFloat so step=0.1 sliders (Hz) keep precision;
       // integer-stepped sliders unaffected since their .value is already int.

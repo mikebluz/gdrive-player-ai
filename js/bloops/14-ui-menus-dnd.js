@@ -1096,10 +1096,25 @@
         persistSaved();
         renderSavedSequences();
       });
-      // Single-click → Copy ×N dialog. Defaults to 1 iteration so a
-      // plain "add this to a track" is two clicks (Add to → Add).
-      makeBtn('⊕ Add to track…', 'Copy this sequence to a track',
-        () => showCopySavedDialog(seqIndex));
+      // Send this sequence to the master Bloom (Mix), in one of 3 modes —
+      // opens the same submenu as the long-press menu, anchored to the button.
+      makeBtn('🌸 Send to Bloom…', 'Send this sequence to the master Bloom', (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const x = r.left, y = r.bottom + 4;
+        setTimeout(() => {
+          const seqs = (typeof _ambListMasterSeqs === 'function') ? _ambListMasterSeqs() : [];
+          const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new') }];
+          sub.push('hr');
+          if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id) }));
+          else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
+          sub.push('hr');
+          if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'interleave', s.id) }));
+          else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
+          const _sid = (typeof _ambSampleIdOfSaved === 'function') ? _ambSampleIdOfSaved(saved) : null;
+          if (_sid) { sub.push('hr'); sub.push({ label: '◫ As Sample layer', fn: () => _ambSendSampleToMaster(_sid, { chop: Math.max(1, (saved.steps || []).length) }) }); }
+          if (typeof showCtxMenu === 'function') showCtxMenu(x, y, sub);
+        }, 0);
+      });
       makeBtn('Delete', 'Remove this sequence from the bank', () => {
         const removed = savedSequences[seqIndex];
         savedSequences.splice(seqIndex, 1);

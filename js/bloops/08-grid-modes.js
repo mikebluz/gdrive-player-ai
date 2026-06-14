@@ -1467,6 +1467,20 @@
       if (newChip) _setChipActive(newChip, true);
       if (newChip) _activeChipsByLane.set(laneIdx, newChip);
       else         _activeChipsByLane.delete(laneIdx);
+      // Auto-scroll the single-row timeline so the playing step stays centered.
+      if (newChip && chipsScope) _centerChipInLane(chipsScope, newChip);
+    }
+    // Scroll a lane's step strip so `chip` sits centered in the viewport.
+    // Computed from bounding rects so nesting (key-group containers) is fine.
+    function _centerChipInLane(scope, chip) {
+      try {
+        const sRect = scope.getBoundingClientRect();
+        const cRect = chip.getBoundingClientRect();
+        const chipLeftInContent = (cRect.left - sRect.left) + scope.scrollLeft;
+        const target = chipLeftInContent - (scope.clientWidth - cRect.width) / 2;
+        const max = scope.scrollWidth - scope.clientWidth;
+        scope.scrollLeft = Math.max(0, Math.min(max, target));
+      } catch (e) {}
     }
 
     function playSequence(index = 0, freshStart = true) {

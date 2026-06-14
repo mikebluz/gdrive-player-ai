@@ -16,6 +16,13 @@
     function stepWidthPx(step) {
       return STEP_BASE_PX * stepLengthFactor(step);
     }
+    // Single-row lane timeline: chip width ∝ duration at a larger base than the
+    // legacy STEP_BASE_PX so chips stay readable/tappable on the scrolling row.
+    // A 1/4 note ≈ 70px, 1/8 ≈ 35px; floored so very short steps don't vanish.
+    const LANE_SCROLL_BASE_PX = 280;
+    function laneChipWidthPx(step) {
+      return Math.max(10, Math.round(LANE_SCROLL_BASE_PX * stepLengthFactor(step)));
+    }
 
     // Render a semitone count as a traditional chromatic interval name
     // (P1, m2, M2, m3, M3, P4, TT, P5, m6, M6, m7, M7, P8 …) with a
@@ -271,10 +278,9 @@
 
           const chipsEl = document.createElement('div');
           chipsEl.className = 'lane-chips';
-          if (cols > 0) {
-            chipsEl.classList.add('grid-mode');
-            chipsEl.style.setProperty('--grid-cols', String(subCols));
-          }
+          // Single-row scrolling timeline (no grid-mode wrap): chips fill
+          // logically to the right at proportional widths; the strip scrolls
+          // horizontally and auto-follows the playhead. See CLAUDE.md §1 carve-out.
           row.appendChild(chipsEl);
 
           if (isActiveLane) {
@@ -305,30 +311,8 @@
                 else if (isRest) label = '—';
                 else             label = step.label || '';
                 chip.textContent = label;
-                let _previewPlan = null;
-                if (cols > 0) {
-                  const naturalSpan = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
-                  const capacity = subCols - (_previewCol - 1);
-                  if (naturalSpan <= capacity) {
-                    chip.style.gridColumn = `span ${naturalSpan}`;
-                    _previewCol += naturalSpan;
-                    if (_previewCol > subCols) _previewCol = 1;
-                  } else {
-                    const firstSpan = capacity;
-                    const conts = [];
-                    let remaining = naturalSpan - capacity;
-                    while (remaining > 0) {
-                      const seg = Math.min(subCols, remaining);
-                      conts.push(seg);
-                      remaining -= seg;
-                    }
-                    chip.style.gridColumn = `span ${firstSpan}`;
-                    chip.classList.add('cont-start');
-                    _previewPlan = conts;
-                    const lastSeg = conts[conts.length - 1];
-                    _previewCol = (lastSeg === subCols) ? 1 : (lastSeg + 1);
-                  }
-                }
+                // Single-row timeline: proportional fixed width, no wrap/split.
+                chip.style.width = laneChipWidthPx(step) + 'px';
                 {
                   const pc = stepColorPitchClass(step);
                   if (pc != null && chipPalette[pc]) {
@@ -345,19 +329,6 @@
                 chip.addEventListener('contextmenu', (e) => e.preventDefault());
                 chip.addEventListener('selectstart',  (e) => e.preventDefault());
                 chipsEl.appendChild(chip);
-                if (_previewPlan && _previewPlan.length > 0) {
-                  _previewPlan.forEach((segSpan, idx) => {
-                    const cont = chip.cloneNode(true);
-                    cont.classList.remove('cont-start');
-                    cont.classList.add(
-                      (idx === _previewPlan.length - 1) ? 'cont-end' : 'cont-mid'
-                    );
-                    cont.classList.add('cont-segment');
-                    cont.style.gridColumn = `span ${segSpan}`;
-                    cont.textContent = '';
-                    chipsEl.appendChild(cont);
-                  });
-                }
               });
             }
           }
@@ -560,22 +531,11 @@
         // how many chips fit per row, while individual chip widths stay
         // proportional to their step-div. Outside grid mode, pin width
         // directly via stepWidthPx.
-        let _continuationPlan = null;
-        if (cols > 0) {
-          chip.style.width = '';
-          const naturalSpan = Math.max(1, Math.round(stepLengthFactor(step) * SPAN_PER_MEASURE));
-          _continuationPlan = _planChipPlacement(naturalSpan);
-          chip.style.gridColumn = `span ${_continuationPlan.firstSpan}`;
-          if (_continuationPlan.continuations.length > 0) {
-            // First segment of a wrapped step — round-cap the left
-            // edge, dashed right edge (CSS .cont-start).
-            chip.classList.add('cont-start');
-          }
-          _wrapCurrentCol = _continuationPlan.newCol;
-        } else {
-          chip.style.gridColumn = '';
-          chip.style.width = stepWidthPx(step) + 'px';
-        }
+        // Single-row timeline: every step is one chip at a proportional fixed
+        // width — no grid spans, no row-boundary continuation splitting.
+        const _continuationPlan = null;
+        chip.style.gridColumn = '';
+        chip.style.width = laneChipWidthPx(step) + 'px';
         if (isSelectedStep(step)) chip.classList.add('selected');
         // Variance markers — blinking outline while editing the pool,
         // a small ⟳ glyph (via CSS) for committed variance steps.

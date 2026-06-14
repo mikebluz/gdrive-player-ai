@@ -3485,18 +3485,27 @@
       min-width: 0;
       display: flex;
       flex-direction: row;
-      /* Default: wrap chips so every step is visible without
-         horizontal scrolling. Lane row grows vertically to fit. */
-      flex-wrap: wrap;
+      /* Single-row timeline: chips fill logically to the right at
+         proportional widths; the strip scrolls horizontally and
+         auto-follows the playhead during playback (CLAUDE.md §1 carve-out). */
+      flex-wrap: nowrap;
       align-items: stretch;
       gap: 4px;
-      overflow-x: hidden;
-      overflow-y: visible;
+      overflow-x: auto;
+      overflow-y: hidden;
       padding: 4px 6px;
       background: rgba(10, 10, 20, 0.55);
       border-radius: 6px;
       scrollbar-width: thin;
       scrollbar-color: #2d2d3f #0a0a14;
+    }
+    /* Steps + key-group wrappers keep their natural (proportional) width and
+       never shrink, so the row extends and scrolls instead of squeezing. */
+    .lane-chips > .seq-step,
+    .lane-chips .seq-step { flex: 0 0 auto; }
+    .lane-chips .key-group-container {
+      display: flex; flex: 0 0 auto; flex-direction: row;
+      align-items: stretch; gap: 4px;
     }
     /* Collapsed lane: hide the chip strip entirely so just the lane
        controls (status pill + collapse + grid toggles) remain visible.

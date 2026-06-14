@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Apply these rules to every UI change:
 
-1. **No horizontal scrolling.** If a row's contents don't fit, either (a) shrink elements in that row to fit (`min-width: 0`, `flex-shrink: 1`, narrower padding/font on small viewports via media queries), or (b) wrap to a new row and resize the new row's contents to fit. Never solve overflow with `overflow-x: auto/scroll`.
+1. **No horizontal scrolling** — with ONE intentional exception (below). If a row's contents don't fit, either (a) shrink elements in that row to fit (`min-width: 0`, `flex-shrink: 1`, narrower padding/font on small viewports via media queries), or (b) wrap to a new row and resize the new row's contents to fit. Never solve overflow with `overflow-x: auto/scroll`.
+   - **Exception — lane step strips (`.lane-chips`).** Each lane's step strip is a single-row, proportional-width **timeline** that intentionally scrolls horizontally (`overflow-x: auto`) and fills logically to the right; during playback each lane auto-scrolls to keep its currently-playing step centered. This is deliberate (chosen over wrapping) so there are no row-boundary / continuation-split artifacts. Do NOT "fix" it back into a wrapping layout.
 
 2. **Audio playback must be smooth and immediate.** Every user-triggered sound (cell press, wrap audition, sequence/loop playback, REST tap, sample preview, recording playback, etc.) should fire with no perceptible lag, no distortion, and no fluctuation. When changing audio code, prefer firing the sound *before* DOM work, keep Tone's `lookAhead` minimal (currently 25 ms in `bloops.html`), and don't add unconditional time cushions to interactive triggers — guards for cold-start (suspended `AudioContext`) are fine but should not penalize the warm path. If a change risks audio glitches (under-runs, stagger between voices, dropouts), test it in the browser before declaring done.
 

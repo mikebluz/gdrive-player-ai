@@ -1683,21 +1683,27 @@
       const layer = _ambLayerByKey(E, key);
       const intervalSec = Math.max(0.05, (((layer && layer.intervalMs) | 0) / 1000) || 1);
       const P = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-      // Loop window = the last L seconds before P, L = N snapped to the note grid.
-      let L = Math.max(intervalSec, Math.round(N / intervalSec) * intervalSec);
-      const start = P - L;
-      // Notes that had already played (at <= P) within [start, P).
-      const events = cap.filter(e => e.at >= start - 0.001 && e.at < P + 0.001)
-        .map(e => ({ t: Math.max(0, e.at - start), freq: e.freq, dur: e.dur, params: e.params }));
-      if (!events.length) {
+      // Notes that already played in the last N seconds.
+      const win = cap.filter(e => e.at < P + 0.001 && e.at >= P - N);
+      if (!win.length) {
         if (typeof showToast === 'function') showToast('Freeze: nothing has played yet — let the layer sound first.');
         return;
       }
+      // Trim leading silence: loop content starts at the first captured note
+      // (round to nearest note at the start). Loop length = span to now, snapped
+      // to the layer's note grid, and extended to contain every onset.
+      let minAt = Infinity; win.forEach(e => { if (e.at < minAt) minAt = e.at; });
+      const events = win.map(e => ({ t: Math.max(0, e.at - minAt), freq: e.freq, dur: e.dur, params: e.params }));
+      const maxRel = events.reduce((m, e) => Math.max(m, e.t), 0);
+      const span = P - minAt;
+      let L = Math.max(intervalSec, Math.round(span / intervalSec) * intervalSec);
+      if (L < maxRel + intervalSec * 0.25) L = Math.ceil((maxRel + 0.001) / intervalSec) * intervalSec;
       st.events = events; st.loopLen = L;
-      // Hand off where the generator left off (next-scheduled time) so the
-      // queued ~1.2s tail flows straight into the loop — no overlap, no gap.
-      const clk = (E.clocks && Number.isFinite(E.clocks[key]) && E.clocks[key] > P) ? E.clocks[key] : P;
-      st.anchor = clk; st.scheduledUpto = clk; st.frozen = true;
+      // Start the loop almost immediately (small lead so the first note isn't
+      // already in the past by the next scheduling tick). A brief overlap with
+      // any still-ringing generated note is fine for ambient.
+      const A = P + 0.25;
+      st.anchor = A; st.scheduledUpto = A; st.frozen = true;
       _ambFreezeSyncAll(E);
     }
     // Schedule the frozen layer's looped events that fall in [now, horizon].

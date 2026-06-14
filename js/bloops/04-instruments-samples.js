@@ -1,6 +1,7 @@
     // ---- Custom sample loading (samples/manifest.json) ----
     // Each entry creates a Tone.Sampler that pitch-shifts the file across
     // the keyboard. type strings of the form 'sample:<id>' route through these.
+    console.log('[PADV] samples module loaded — build 154500');
     const sampleSamplers = new Map();
 
     // For drum-kit samples, snap any incoming pitch to the C2 row so each
@@ -1421,6 +1422,7 @@
       };
     }
     function startSustainedNote(freq, params = {}, startAt) {
+      try { const _t = (typeof params === 'string') ? params : (params && params.type); if (typeof _t === 'string' && _t.indexOf('sample:') === 0) console.log('[PADV] startSustainedNote ENTER type=' + _t + ' freq=' + freq); } catch (e) {}
       // Cold-start guard — same race as playNote. Optional `startAt`
       // (Tone audio time) lets multi-voice wrap auditions pin every
       // voice to the same instant; without it, each voice computes its

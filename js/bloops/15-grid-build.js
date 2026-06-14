@@ -982,7 +982,6 @@
 
     // ---- Top-right Tone dropdown: applies a tone to every grid cell ----
     function applyToneToAllCells(type, sliceModeArg) {
-      try { console.log('[ENS] applyToneToAllCells', { type, sliceModeArg }); } catch (e) {}
       // Cell sounds/params live outside the undo stack (matching Sound
       // Editor → Apply), so don't snapshot — it would push an entry that
       // can't actually roll the change back.

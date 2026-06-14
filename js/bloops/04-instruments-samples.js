@@ -35,7 +35,6 @@
     //     octave/detune/pan/level honored in 'stackOffset' and 'rr' modes
     //     attack/decay/sustain/release = optional per-member ADSR overrides (ms / %)
     const ensembles = new Map();   // id -> def (runtime registry; persisted in the workspace snapshot)
-    try { console.log('[ENS] build=ens-v3 loaded'); } catch (e) {}
     const _ensembleRR = {};        // id -> next member index (round-robin cursor; runtime only)
     function isEnsembleType(type) { return typeof type === 'string' && type.startsWith('ensemble:'); }
     function getEnsemble(id) { return ensembles.get(String(id)) || null; }
@@ -44,7 +43,6 @@
     function _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {
       const id = params.type.slice(9); // 'ensemble:'.length === 9
       const def = ensembles.get(id);
-      console.log('[ENS] play', { type: params.type, id, found: !!def, members: def && def.members && def.members.map(m => m && m.type), mode: def && def.mode, regKeys: Array.from(ensembles.keys()) });
       if (!def || !Array.isArray(def.members) || !def.members.length) {
         // Unknown / empty ensemble — stay audible with a plain sine.
         const p = { ...params, type: 'sine' };
@@ -65,7 +63,6 @@
         p.type = m.type || 'sine';
         ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
         let f = freq;
-        console.log('[ENS] member', { type: p.type, freq: f, vol: p.volume });
         if (useOffsets) {
           if (Number.isFinite(m.octave) && m.octave) f = freq * Math.pow(2, m.octave);
           if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
@@ -76,8 +73,7 @@
           }
         }
         delete p._detuneMod; // a single LFO node can't fan out to multiple voices
-        try { playNote(f, p, durationMs, startTime, destination, trackIdx, laneIdx); }
-        catch (e) { console.warn('[ENS] member playNote threw', p.type, e); }
+        try { playNote(f, p, durationMs, startTime, destination, trackIdx, laneIdx); } catch (e) {}
       });
     }
     // A "sliceable" sample is a SINGLE-buffer one-shot (imported / recorded /
@@ -1330,6 +1326,43 @@
     // pointerup. Returns a handle with .release(); the caller is expected
     // to call it exactly once. One-shot voices (pluck / kick / metal /
     // samples without a clean release) fall back to a normal short hit.
+    // Held (sustained) ensemble: start one sustained member voice per member
+    // and return a composite { release } that releases them together.
+    function _startSustainedEnsemble(freq, params, startAt) {
+      const id = params.type.slice(9);
+      const def = ensembles.get(id);
+      if (!def || !Array.isArray(def.members) || !def.members.length) {
+        return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
+      }
+      const mode = def.mode || 'stack';
+      const useOffsets = (mode !== 'stack');
+      let members = def.members;
+      if (mode === 'rr') {
+        const i = (_ensembleRR[id] | 0) % members.length;
+        _ensembleRR[id] = (i + 1) % members.length;
+        members = [members[i]];
+      }
+      const handles = [];
+      members.forEach(m => {
+        if (!m || isEnsembleType(m.type)) return;
+        const p = { ...params };
+        p.type = m.type || 'sine';
+        ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
+        let f = freq;
+        if (useOffsets) {
+          if (Number.isFinite(m.octave) && m.octave) f = freq * Math.pow(2, m.octave);
+          if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
+          if (Number.isFinite(m.pan)) p.pan = m.pan;
+          if (Number.isFinite(m.level)) { const base = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100)))); }
+        }
+        delete p._detuneMod;
+        try { const h = startSustainedNote(f, p, startAt); if (h) handles.push(h); } catch (e) {}
+      });
+      return {
+        release: () => handles.forEach(h => { try { h && h.release && h.release(); } catch (e) {} }),
+        setDetune: (c) => handles.forEach(h => { try { h && h.setDetune && h.setDetune(c); } catch (e) {} }),
+      };
+    }
     function startSustainedNote(freq, params = {}, startAt) {
       // Cold-start guard — same race as playNote. Optional `startAt`
       // (Tone audio time) lets multi-voice wrap auditions pin every
@@ -1857,6 +1890,11 @@
       } catch (e) {}
 
       if (typeof params === 'string') params = { type: params };
+      // Ensemble voice: hold one sustained voice per member, return a composite
+      // handle that releases them all on pointer-up. (Sequence playback goes
+      // through playNote, which dispatches separately; this is the live-press /
+      // sustain path.)
+      if (isEnsembleType(params.type)) return _startSustainedEnsemble(freq, params, _coldStartAt);
       const {
         type    = 'sine',
         attack  = 10,

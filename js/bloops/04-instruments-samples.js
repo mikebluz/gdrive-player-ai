@@ -49,17 +49,27 @@
         playNote(freq, p, durationMs, startTime, destination, trackIdx, laneIdx);
         return;
       }
-      const mode = def.mode || 'stack';
-      const useOffsets = (mode !== 'stack');
+      let mode = def.mode || 'stack';
       let members = def.members;
-      if (mode === 'rr') {
+      // Caller overrides (used by the Bloom Seq lock/unlock control):
+      //  _ensembleForceStack → play ALL members together (locked), ignoring mode.
+      //  _ensembleMemberIdx   → play ONLY that one member (unlocked: the seq
+      //                          spreads members across notes as independent voices).
+      if (Number.isFinite(params._ensembleMemberIdx)) {
+        const i = ((params._ensembleMemberIdx % members.length) + members.length) % members.length;
+        members = [members[i]]; mode = def.mode || 'stack';
+      } else if (params._ensembleForceStack) {
+        mode = 'stack';
+      } else if (mode === 'rr') {
         const i = (_ensembleRR[id] | 0) % members.length;
         _ensembleRR[id] = (i + 1) % members.length;
         members = [members[i]];
       }
+      const useOffsets = (mode !== 'stack');
       members.forEach(m => {
         if (!m || isEnsembleType(m.type)) return; // never nest ensembles
         const p = { ...params };
+        delete p._ensembleForceStack; delete p._ensembleMemberIdx;
         p.type = m.type || 'sine';
         ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
         let f = freq;

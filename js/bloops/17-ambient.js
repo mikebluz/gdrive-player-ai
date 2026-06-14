@@ -165,7 +165,7 @@
     // positional (Seq1, Seq2…).
     function _defaultSeqLayer(id) {
       return { id: id | 0, on: true, intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always',
-               level: 70, accent: 0, tone: '', scale: '', mod: _ambDefaultMod(),
+               level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
                unitMode: 'single', units: [], ..._ambDefaultFx() };
     }
@@ -179,6 +179,7 @@
       ['intervalMs','lengthMs','drift','level','accent','varyDepth','returnN','returnChance'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
       ['tone','scale'].forEach(k => { if (typeof s[k] !== 'string') s[k] = d[k]; });
       if (typeof s.when !== 'string') s.when = 'always';
+      if (typeof s.ensembleLock !== 'boolean') s.ensembleLock = true;
       if (s.varyMode !== 'pitch' && s.varyMode !== 'rhythm' && s.varyMode !== 'pad') s.varyMode = 'pitch';
       if (s.returnMode !== 'everyN' && s.returnMode !== 'chance') s.returnMode = 'everyN';
       if (s.unitMode !== 'single' && s.unitMode !== 'interleave') s.unitMode = 'single';
@@ -1180,6 +1181,11 @@
       // whatever the grid voice happens to be — e.g. an ensemble). An explicit
       // layer Tone still overrides every note uniformly.
       const layerSet = !!(seq.tone && seq.tone !== '');
+      // Ensemble lock: locked (default) → an ensemble-voiced note fires ALL its
+      // members together; unlocked → members are spread across notes as
+      // independent voices (one per note, rotating) — part of the generative flow.
+      const seqEnsLock = (seq.ensembleLock !== false);
+      let _ensPick = (st && Number.isFinite(st._ensPick)) ? st._ensPick : 0;
       // Verbatim (return-to-original) decision for THIS cycle, on the picked unit.
       let verbatim;
       if (seq.returnMode === 'chance') {
@@ -1197,6 +1203,10 @@
           const p = padStyle
             ? { ...base, type: vtype, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
             : { ...base, type: vtype, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] };
+          if (isEnsembleType(vtype)) {
+            if (seqEnsLock) p._ensembleForceStack = true;   // locked: all members together
+            else p._ensembleMemberIdx = _ensPick++;          // unlocked: one member per note, rotating
+          }
           if (dmod) p._detuneMod = dmod;
           try { playNote(f, p, durMs, t + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
         });
@@ -1239,6 +1249,7 @@
         const ev = seed.events[Math.floor(_ambRand() * seed.events.length)];
         if (ev && ev.freqs.length) emitEvent(ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), Math.max(40, ev.durMs | 0), ev.vel, t, false, ev.sounds);
       }
+      if (st) st._ensPick = _ensPick; // carry the unlocked-ensemble rotation across fires
     }
 
     // ================= Modulation (VCO / VCA / VCF) =================
@@ -2455,6 +2466,11 @@
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
         _ambHead('Seq' + (i + 1), p + 'on', p + 'del', 'seq:' + id) +
         '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+        // Ensemble lock — only shown (un-hidden in wiring) when this seq's voice
+        // is an ensemble. Locked = members fire together; Unlocked = members
+        // spread across notes as independent generative voices.
+        '<div class="ambient-ctrl ambient-ens-lock-row" id="' + p + 'enslock-row" hidden><label for="' + p + 'enslock">Ensemble</label>' +
+          '<button type="button" id="' + p + 'enslock" class="ambient-seg ambient-ens-lock"></button><span class="ambient-hint">lock / spread</span></div>' +
         // No Notes source here — a Seq plays the pitches captured in its own
         // sequence; the note set is fixed by the sequence, not a scale/chord pick.
         '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
@@ -2472,6 +2488,28 @@
         _ambModUi('seq-' + id) +
         _ambFxUi('seq-' + id) +
       '</div>';
+    }
+    // A seq "involves an ensemble" when its layer Tone is an ensemble OR any of
+    // its captured note voices are (e.g. a merged lane whose grid voice was one).
+    function _seqHasEnsemble(sq) {
+      if (!sq) return false;
+      if (typeof isEnsembleType === 'function' && isEnsembleType(sq.tone)) return true;
+      if (Array.isArray(sq.units)) {
+        for (const u of sq.units) {
+          if (u && Array.isArray(u.events)) {
+            for (const e of u.events) { if (Array.isArray(e.sounds) && e.sounds.some(x => isEnsembleType(x))) return true; }
+          }
+        }
+      }
+      return false;
+    }
+    function _ambSeqEnsLockVis(E, id) {
+      const c = E.getCfg(); if (!c) return;
+      const sq = (c.seqs || []).find(x => x.id === id); if (!sq) return;
+      const p = 'ambient-seq-' + id + '-';
+      const row = _ambGet(E, p + 'enslock-row'), btn = _ambGet(E, p + 'enslock');
+      if (row) row.hidden = !_seqHasEnsemble(sq);
+      if (btn) { const locked = (sq.ensembleLock !== false); btn.textContent = locked ? '🔒 Locked' : '🔓 Unlocked'; btn.classList.toggle('active', locked); btn.title = locked ? 'Locked: all ensemble voices play together on each note' : 'Unlocked: ensemble voices spread across notes as independent generative voices'; }
     }
     function _ambSeqReturnVis(E, id) {
       const c = E.getCfg(); if (!c) return;
@@ -2491,7 +2529,10 @@
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };
       const toneSel = el('tone'); if (toneSel) populateGroupedToneSelect(toneSel, _ambToneOptions(), { value: '', label: 'Grid voice' });
-      bindStr('tone', 'tone'); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
+      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
+      const lockBtn = el('enslock');
+      if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
+      _ambSeqEnsLockVis(E, id);
       bindInt('depth', 'varyDepth'); bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); bindStr('when', 'when');
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));

@@ -1516,29 +1516,71 @@
     // length and still loops perfectly — the discontinuity at any one copy's wrap
     // point is masked by the others, which are continuous there. The sum is
     // peak-normalized back to the input's peak so adding copies never clips.
-    function _buildPadBuffer(ac, slice, copies, offsetSec) {
+    //
+    // `spread` (0..1) pans the copies across the stereo field: each copy gets an
+    // equal-power pan position fanned out from centre, so the output is stereo
+    // (copies summed mono per voice, then panned). spread=0 keeps the source's
+    // channel layout and sums in place (mono-faithful).
+    function _buildPadBuffer(ac, slice, copies, offsetSec, spread) {
       copies = Math.max(1, Math.min(8, copies | 0));
-      if (copies <= 1) return slice;
-      const L = slice.length, ch = slice.numberOfChannels, sr = slice.sampleRate;
+      if (copies <= 1) return slice; // spread/offset need ≥2 copies to do anything
+      spread = Math.max(0, Math.min(1, spread || 0));
+      const L = slice.length, srcCh = slice.numberOfChannels, sr = slice.sampleRate;
       if (L < 2) return slice;
       const offSamp = Math.max(0, Math.round((offsetSec || 0) * sr));
-      const out = ac.createBuffer(ch, L, sr);
       let peakIn = 0;
-      for (let c = 0; c < ch; c++) { const s = slice.getChannelData(c); for (let i = 0; i < L; i++) { const a = s[i] < 0 ? -s[i] : s[i]; if (a > peakIn) peakIn = a; } }
-      for (let c = 0; c < ch; c++) {
-        const s = slice.getChannelData(c), d = out.getChannelData(c);
+      for (let c = 0; c < srcCh; c++) { const s = slice.getChannelData(c); for (let i = 0; i < L; i++) { const a = s[i] < 0 ? -s[i] : s[i]; if (a > peakIn) peakIn = a; } }
+      const stereo = spread > 0;
+      const out = ac.createBuffer(stereo ? 2 : srcCh, L, sr);
+      if (stereo) {
+        const dL = out.getChannelData(0), dR = out.getChannelData(1);
+        const chans = []; for (let c = 0; c < srcCh; c++) chans.push(slice.getChannelData(c));
+        const mono = (i) => { let v = 0; for (let c = 0; c < srcCh; c++) v += chans[c][i]; return v / srcCh; };
         for (let k = 0; k < copies; k++) {
           const sh = ((offSamp * k) % L + L) % L;
-          for (let i = 0; i < L; i++) d[i] += s[(i + sh) % L];
+          const pan = ((k / (copies - 1)) * 2 - 1) * spread;   // −spread..+spread
+          const theta = (pan + 1) * Math.PI / 4;               // 0..π/2 (equal power)
+          const gl = Math.cos(theta), gr = Math.sin(theta);
+          for (let i = 0; i < L; i++) { const v = mono((i + sh) % L); dL[i] += v * gl; dR[i] += v * gr; }
+        }
+      } else {
+        for (let c = 0; c < srcCh; c++) {
+          const s = slice.getChannelData(c), d = out.getChannelData(c);
+          for (let k = 0; k < copies; k++) {
+            const sh = ((offSamp * k) % L + L) % L;
+            for (let i = 0; i < L; i++) d[i] += s[(i + sh) % L];
+          }
         }
       }
       let peakOut = 0;
-      for (let c = 0; c < ch; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) { const a = d[i] < 0 ? -d[i] : d[i]; if (a > peakOut) peakOut = a; } }
+      for (let c = 0; c < out.numberOfChannels; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) { const a = d[i] < 0 ? -d[i] : d[i]; if (a > peakOut) peakOut = a; } }
       if (peakOut > 1e-6) {
         const g = (peakIn > 1e-6 ? peakIn : 0.9) / peakOut;
-        for (let c = 0; c < ch; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) d[i] *= g; }
+        for (let c = 0; c < out.numberOfChannels; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) d[i] *= g; }
       }
       return out;
+    }
+    // Bake a 2nd-order (Butterworth) low-pass into a buffer, in place — RBJ
+    // cookbook biquad, run per channel. Kept synchronous (no OfflineAudioContext)
+    // so the pad preview and the saved WAV use the exact same rendered audio.
+    function _lowpassBufferInPlace(buf, cutoffHz, Q) {
+      const sr = buf.sampleRate;
+      const fc = Math.max(40, Math.min(sr * 0.45, cutoffHz));
+      const w0 = 2 * Math.PI * fc / sr, cosw0 = Math.cos(w0), sinw0 = Math.sin(w0);
+      const alpha = sinw0 / (2 * (Q || 0.707));
+      const a0 = 1 + alpha;
+      const b0 = ((1 - cosw0) / 2) / a0, b1 = (1 - cosw0) / a0, b2 = b0;
+      const a1 = (-2 * cosw0) / a0, a2 = (1 - alpha) / a0;
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const d = buf.getChannelData(c);
+        let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        for (let i = 0; i < d.length; i++) {
+          const x0 = d[i];
+          const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+          x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+          d[i] = y0;
+        }
+      }
     }
     // Make a loop seamless by crossfading its tail over its head: the last
     // `xf` samples are blended (equal-power) with the first `xf` so the wrap
@@ -2009,6 +2051,12 @@
           '<label class="ee-field"><span>Crossfade <em id="pad-xfade-v">off</em></span>' +
             '<input type="range" id="pad-xfade" min="0" max="250" step="1" value="0"></label>' +
         '</div>' +
+        '<div class="ee-top">' +
+          '<label class="ee-field"><span>Low-pass <em id="pad-lpf-v">off</em></span>' +
+            '<input type="range" id="pad-lpf" min="0" max="100" step="1" value="100"></label>' +
+          '<label class="ee-field"><span>Spread <em id="pad-spread-v">0%</em></span>' +
+            '<input type="range" id="pad-spread" min="0" max="100" step="1" value="0"></label>' +
+        '</div>' +
         '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
         '<div class="se-wave-actions">' +
           '<button type="button" class="sm-wave" id="pad-preview">▶ Preview loop</button>' +
@@ -2030,18 +2078,28 @@
       const offsetV = modal.querySelector('#pad-offset-v');
       const xfadeEl = modal.querySelector('#pad-xfade');
       const xfadeV = modal.querySelector('#pad-xfade-v');
-      let copies = 1, offsetSec = 0.025, crossfadeSec = 0;
+      const lpfEl = modal.querySelector('#pad-lpf');
+      const lpfV = modal.querySelector('#pad-lpf-v');
+      const spreadEl = modal.querySelector('#pad-spread');
+      const spreadV = modal.querySelector('#pad-spread-v');
+      let copies = 1, offsetSec = 0.025, crossfadeSec = 0, lpfPos = 100, spread = 0;
+      // Slider 0..100 → log cutoff ~80 Hz..20 kHz; 100 = fully open (off).
+      const lpfHz = () => Math.round(80 * Math.pow(2, lpfPos * 8 / 100));
 
       const stopPreview = () => {
         try { previewSrc && previewSrc.stop(); } catch (e) {}
         previewSrc = null; previewBtn.textContent = '▶ Preview loop';
       };
-      // The exact buffer that gets saved/previewed: the trimmed slice, with
-      // `copies` overlaid offset copies summed in (1 copy = the plain slice),
-      // then an optional loop-boundary crossfade.
-      const buildOut = () => _crossfadeLoopBuffer(ac,
-        _buildPadBuffer(ac, _sliceAudioBuffer(ac, buf, startF, endF, false), copies, offsetSec),
-        crossfadeSec);
+      // The exact buffer that gets saved/previewed: the trimmed slice → overlaid
+      // offset copies (optionally stereo-spread) → loop-boundary crossfade →
+      // optional low-pass. All baked synchronously so preview == saved audio.
+      const buildOut = () => {
+        let b = _sliceAudioBuffer(ac, buf, startF, endF, false);
+        b = _buildPadBuffer(ac, b, copies, offsetSec, spread / 100);
+        b = _crossfadeLoopBuffer(ac, b, crossfadeSec);
+        if (lpfPos < 100) _lowpassBufferInPlace(b, lpfHz(), 0.707);
+        return b;
+      };
       const startPreview = () => {
         if (!buf) return;
         stopPreview();
@@ -2116,6 +2174,16 @@
       xfadeEl.addEventListener('input', () => {
         const ms = parseInt(xfadeEl.value, 10) || 0; crossfadeSec = ms / 1000;
         xfadeV.textContent = ms ? ms + ' ms' : 'off';
+        if (previewSrc) startPreview();
+      });
+      lpfEl.addEventListener('input', () => {
+        lpfPos = parseInt(lpfEl.value, 10); if (!Number.isFinite(lpfPos)) lpfPos = 100;
+        if (lpfPos >= 100) lpfV.textContent = 'off';
+        else { const hz = lpfHz(); lpfV.textContent = hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : hz + ' Hz'; }
+        if (previewSrc) startPreview();
+      });
+      spreadEl.addEventListener('input', () => {
+        spread = parseInt(spreadEl.value, 10) || 0; spreadV.textContent = spread + '%';
         if (previewSrc) startPreview();
       });
       previewBtn.addEventListener('click', () => {

@@ -1487,7 +1487,12 @@
       // Always-poly: need at least one non-empty lane to play. Mute /
       // solo are honored live per-tick so the user can flip lanes on
       // and off without restarting.
-      const playable = lanes.filter(l => (l.steps || []).length > 0);
+      // Bloom (ambientMode) lanes are generative — driven by their Bloom
+      // engine, NOT step-sequenced. Excluding them here stops the main
+      // transport from also playing their raw steps (which carry the source
+      // voices, e.g. a merged lane's square notes) on top of / instead of the
+      // Bloom output.
+      const playable = lanes.filter(l => (l.steps || []).length > 0 && !l.ambientMode);
       if (playable.length === 0) { stopSequence(); return; }
       document.getElementById('play-btn').textContent = '⏹';
       // Build the streams array FIRST so any synchronous setup work
@@ -1508,7 +1513,7 @@
         // round-trips through save/load.
         _schedStreams = lanes
           .map((lane, laneIdx) => ({ lane, laneIdx }))
-          .filter(({ lane }) => (lane.steps || []).length > 0)
+          .filter(({ lane }) => (lane.steps || []).length > 0 && !lane.ambientMode)
           .map(({ lane, laneIdx }) => {
             const baseOffset = Number.isFinite(lane.driftOffsetSec) ? lane.driftOffsetSec : 0;
             // Warm up the lane's per-sample Tone.Samplers eagerly so

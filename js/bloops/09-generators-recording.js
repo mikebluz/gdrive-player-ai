@@ -1614,55 +1614,76 @@
     // contribute nothing; subsequence steps pass through whole (mixing
     // a sub's children into a chord doesn't have a clean musical
     // interpretation). Returns a fresh step — never mutates inputs.
-    function _mergeStepPair(a, b) {
-      const aPlay = a && !isRestStep(a);
-      const bPlay = b && !isRestStep(b);
-      if (!aPlay && !bPlay) return makeRestStep();
-      if (aPlay && a.isSub) return cloneStep(a);
-      if (bPlay && b.isSub) return cloneStep(b);
-      if (aPlay && !bPlay) return cloneStep(a);
-      if (!aPlay && bPlay) return cloneStep(b);
-      const voices = [];
-      const collect = (step) => {
-        if (!step || isRestStep(step) || step.isSub) return;
-        if (Array.isArray(step.chord)) {
-          step.chord.forEach(n => {
-            if (n && Number.isFinite(n.freq)) voices.push({
-              freq: n.freq, label: n.label, cellIndex: n.cellIndex,
-              sound: n.sound, params: n.params ? { ...n.params } : {},
-            });
-          });
-        } else if (Number.isFinite(step.freq)) {
-          voices.push({
-            freq: step.freq, label: step.label, cellIndex: step.cellIndex,
-            sound: step.sound, params: step.params ? { ...step.params } : {},
-          });
+    // Merge two lanes on an ABSOLUTE timeline (ticks, 96/quarter — handles
+    // binary divs down to 1/32 and triplets). Each lane's steps are flattened
+    // to note events with exact start/end ticks (chords → simultaneous events,
+    // subsequences → their sub-steps at the right offsets, rests → gaps). The
+    // union of every event boundary slices the timeline into segments; each
+    // segment becomes one step holding the notes sounding in it (single, or a
+    // chord when 2+ overlap), with its duration = the segment length. So a note
+    // that starts midway through another's sustain lands in its own segment at
+    // exactly that point, and both lanes' step-div resolutions survive (the
+    // segment grid is the GCD of all boundaries). Sustained notes re-articulate
+    // at each new boundary — the mono step model can't overlap independent
+    // envelopes, so an onset is added wherever the other lane changes.
+    const _MERGE_TPQ = 96;
+    function _laneToTickEvents(steps) {
+      const events = [];
+      const ticksOf = (s) => Math.max(1, Math.round(stepLengthFactor(s) * 4 * _MERGE_TPQ));
+      const push = (n, start, len) => {
+        if (n && Number.isFinite(n.freq)) events.push({
+          start, end: start + len,
+          note: { freq: n.freq, label: n.label, cellIndex: n.cellIndex, sound: n.sound, params: n.params ? { ...n.params } : {} },
+        });
+      };
+      const walk = (s, start) => {
+        if (!s) return 0;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          let t = start; s.subSteps.forEach(ss => { t += walk(ss, t); }); return t - start;
         }
+        const len = ticksOf(s);
+        if (Array.isArray(s.chord)) s.chord.forEach(n => push(n, start, len));
+        else if (Number.isFinite(s.freq)) push(s, start, len); // single note (rest: freq null → skipped)
+        return len;
       };
-      collect(a); collect(b);
-      if (voices.length === 0) return makeRestStep();
-      const duration    = (Number.isFinite(a.duration)    && a.duration    > 0) ? a.duration    : (b.duration    || 1);
-      const subdivision = (a.subdivision != null) ? a.subdivision
-                        : (b.subdivision != null ? b.subdivision : stepSubdivision);
-      const kcSrc = a.keyContext || b.keyContext || null;
-      if (voices.length === 1) {
-        const v = voices[0];
-        const out = {
-          freq: v.freq, label: v.label, cellIndex: v.cellIndex,
-          sound: v.sound, params: v.params,
-          duration, subdivision,
-        };
-        if (kcSrc) out.keyContext = { root: kcSrc.root, scale: kcSrc.scale };
-        return out;
+      let t = 0;
+      (steps || []).forEach(s => { t += walk(s, t); });
+      return { events, total: t };
+    }
+    function _mergeLaneSteps(stepsA, stepsB) {
+      const A = _laneToTickEvents(stepsA), B = _laneToTickEvents(stepsB);
+      const events = A.events.concat(B.events);
+      const total = Math.max(A.total, B.total);
+      if (total <= 0 || events.length === 0) {
+        // Nothing pitched — fall back to a single rest spanning the longer lane.
+        return [{ freq: null, label: '—', cellIndex: null, duration: Math.max(1, total || 1), subdivision: 0.125 }];
       }
-      const out = {
-        freq: null,
-        label: voices.map(v => v.label).join('·'),
-        chord: voices,
-        duration, subdivision,
-        params: a.params ? { ...a.params } : (b.params ? { ...b.params } : {}),
-      };
-      if (kcSrc) out.keyContext = { root: kcSrc.root, scale: kcSrc.scale };
+      const bset = new Set([0, total]);
+      events.forEach(e => { if (e.start >= 0 && e.start <= total) bset.add(e.start); if (e.end >= 0 && e.end <= total) bset.add(e.end); });
+      const bounds = Array.from(bset).sort((a, b) => a - b);
+      const _gcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) { [x, y] = [y, x % y]; } return x; };
+      let g = 0;
+      for (let k = 1; k < bounds.length; k++) g = _gcd(g, bounds[k] - bounds[k - 1]);
+      if (!(g > 0)) g = _MERGE_TPQ;
+      const subdivision = g / _MERGE_TPQ; // one dur unit = g ticks (model: sub=1 ⇒ a quarter)
+      const out = [];
+      for (let k = 0; k < bounds.length - 1; k++) {
+        const t0 = bounds[k], segLen = bounds[k + 1] - t0;
+        if (segLen <= 0) continue;
+        const dur = Math.max(1, Math.round(segLen / g));
+        const active = events.filter(e => e.start <= t0 && e.end > t0);
+        // De-dupe identical pitches sounding from both lanes at once.
+        const seen = new Set(); const voices = [];
+        active.forEach(e => { const key = Math.round(e.note.freq * 100); if (!seen.has(key)) { seen.add(key); voices.push(e.note); } });
+        if (voices.length === 0) {
+          out.push({ freq: null, label: '—', cellIndex: null, duration: dur, subdivision });
+        } else if (voices.length === 1) {
+          const v = voices[0];
+          out.push({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params, duration: dur, subdivision });
+        } else {
+          out.push({ freq: null, label: voices.map(v => v.label).join('·'), chord: voices.map(v => ({ ...v })), duration: dur, subdivision, params: voices[0].params ? { ...voices[0].params } : {} });
+        }
+      }
       return out;
     }
     function _doMergeLanes(srcAIdx, srcBIdx) {
@@ -1688,11 +1709,10 @@
       // a misleading entry in the undo stack — Drift does the same.
       const stepsA = Array.isArray(laneA.steps) ? laneA.steps : [];
       const stepsB = Array.isArray(laneB.steps) ? laneB.steps : [];
-      const len = Math.max(stepsA.length, stepsB.length);
-      const merged = [];
-      for (let i = 0; i < len; i++) {
-        merged.push(_mergeStepPair(stepsA[i], stepsB[i]));
-      }
+      // Absolute-timeline merge: preserves both lanes' step-div resolution and
+      // every note's exact start/stop; overlaps become chords sliced at event
+      // boundaries (a midway onset lands at its real position).
+      const merged = _mergeLaneSteps(stepsA, stepsB);
       const newIdx = lanes.length;
       const newLane = _makeLane(newIdx, merged);
       // Seed the merged lane's voice from the active lane so playback

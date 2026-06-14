@@ -2402,6 +2402,80 @@
       document.querySelectorAll('.seq-step.drag-over').forEach(c => c.classList.remove('drag-over'));
     }
 
+    // Nudge a step's onset earlier (dir<0) or later (dir>0) by dUnits (in
+    // 1/32-note units), zero-sum: the neighbour the step moves TOWARD shrinks by
+    // dUnits and the OTHER neighbour grows by dUnits, so total length and the
+    // step's own length are unchanged. At an edge (no opposite neighbour) a rest
+    // is created to absorb the shift. Subsequence neighbours can't be resized.
+    function nudgeStep(stepRef, dir, dUnits) {
+      const i = sequence.indexOf(stepRef);
+      if (i < 0) return false;
+      dUnits = Math.max(1, Math.round(dUnits));
+      const _toast = (m) => { if (typeof showToast === 'function') showToast(m); };
+      const len32 = (s) => Math.max(1, Math.round(stepLengthFactor(s) * 32));
+      const setLen32 = (s, n) => {
+        n = Math.max(1, Math.round(n));
+        const unit = ((s.subdivision != null ? s.subdivision : stepSubdivision) * 8); // step-div in 1/32-units
+        if (unit > 0 && (n % unit) === 0) { s.duration = n / unit; }
+        else { s.subdivision = 0.125; s.duration = n; }        // fall to 1/32 so dur stays integer
+      };
+      const mkRest = (n) => ({ freq: null, label: '—', cellIndex: null, duration: Math.max(1, Math.round(n)), subdivision: 0.125 });
+      const simple = (s) => s && !s.isSub; // notes / chords / rests resize cleanly; subs don't
+      const prev = sequence[i - 1] || null;
+      const next = sequence[i + 1] || null;
+      if (dir > 0) { // later
+        if (!next) { _toast('Nudge: nothing after this step to borrow from.'); return false; }
+        if (!simple(next) || (prev && !simple(prev))) { _toast('Nudge: an adjacent subsequence can’t be resized.'); return false; }
+        if (len32(next) - dUnits < 1) { _toast('Nudge: not enough room after the step.'); return false; }
+        snapshotForUndo('Nudge ▶');
+        setLen32(next, len32(next) - dUnits);
+        if (prev) setLen32(prev, len32(prev) + dUnits);
+        else sequence.splice(i, 0, mkRest(dUnits)); // first step: push right with a leading rest
+      } else { // earlier
+        if (!prev) { _toast('Nudge: nothing before this step to borrow from.'); return false; }
+        if (!simple(prev) || (next && !simple(next))) { _toast('Nudge: an adjacent subsequence can’t be resized.'); return false; }
+        if (len32(prev) - dUnits < 1) { _toast('Nudge: not enough room before the step.'); return false; }
+        snapshotForUndo('Nudge ◀');
+        setLen32(prev, len32(prev) - dUnits);
+        if (next) setLen32(next, len32(next) + dUnits);
+        else sequence.splice(i + 1, 0, mkRest(dUnits)); // last step: trailing rest absorbs the shift
+      }
+      renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      return true;
+    }
+    // Repeatable nudge dialog: pick an amount, tap ◀ / ▶ to shift the step.
+    function showNudgeDialog(stepIndex) {
+      const stepRef = sequence[stepIndex];
+      if (!stepRef) return;
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Nudge step</div>
+        <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.8rem;padding:0 0 12px;line-height:1.45;">
+          Shift this step earlier or later. The neighbouring steps give/take the same amount, so the total sequence length doesn't change.
+        </div>
+        <div class="sm-section-label" style="margin-top:0;">Amount</div>
+        <select id="nudge-amt" style="width:100%;background:#0c0c18;border:1px solid #2d2d3f;border-radius:7px;color:#e2e8f0;padding:6px 8px;font-size:0.85rem;margin-bottom:12px;">
+          <option value="8">1/4</option>
+          <option value="4">1/8</option>
+          <option value="2" selected>1/16</option>
+          <option value="1">1/32</option>
+        </select>
+        <div class="sm-footer" style="justify-content:space-between;gap:8px;">
+          <button type="button" class="sm-preview" id="nudge-left">◀ Earlier</button>
+          <button type="button" class="sm-preview" id="nudge-right">Later ▶</button>
+          <button type="button" class="sm-apply" id="nudge-close">Done</button>
+        </div>`;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const amt = modal.querySelector('#nudge-amt');
+      const units = () => Math.max(1, parseInt(amt.value, 10) || 2);
+      modal.querySelector('#nudge-left').addEventListener('click', () => nudgeStep(stepRef, -1, units()));
+      modal.querySelector('#nudge-right').addEventListener('click', () => nudgeStep(stepRef, +1, units()));
+      modal.querySelector('#nudge-close').addEventListener('click', () => overlay.remove());
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    }
     function moveSequenceStep(from, to) {
       if (from === to || from < 0 || to < 0 || from >= sequence.length) return;
       const [item] = sequence.splice(from, 1);
@@ -2996,6 +3070,7 @@
         actions.push({ label: '♪ Sound editor' + (n > 1 ? ' (' + n + ' steps)…' : '…'), fn: () => showSoundEditor(stepIndex, { steps: targets }) });
       })();
       actions.push({ label: '⇕ Fold',        fn: () => foldStep(stepIndex) });
+      actions.push({ label: '⇄ Nudge…',      fn: () => showNudgeDialog(stepIndex) });
       actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
       actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
       actions.push('hr');

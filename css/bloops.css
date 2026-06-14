@@ -2076,6 +2076,26 @@
       font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; color: #6b6b8a;
       line-height: 1.5; padding-top: 4px;
     }
+    /* Capture bank — recorded Bloom takes awaiting upload. */
+    .ambient-capture-bank { display: flex; flex-direction: column; gap: 6px; margin-top: 10px;
+      border-top: 1px solid #1a1a2e; padding-top: 10px; }
+    .ambient-cap-title { color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-weight: 700;
+      font-size: 0.78rem; letter-spacing: 0.5px; }
+    .ambient-cap-empty { color: #4a4a6a; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; }
+    .ambient-cap-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      background: rgba(10,10,20,0.55); border: 1px solid #232333; border-radius: 8px; padding: 6px 8px; }
+    .ambient-cap-item.uploaded { border-color: rgba(104,211,145,0.5); }
+    .ambient-cap-name { flex: 1 1 120px; min-width: 0; color: #e2e8f0; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ambient-cap-item.uploaded .ambient-cap-name { color: #9ae6b4; }
+    .ambient-cap-meta { flex: 0 0 auto; color: #6b6b8a; font-family: 'SF Mono','Menlo',monospace; font-size: 0.68rem; }
+    .ambient-cap-btn { flex: 0 0 auto; padding: 4px 8px; border-radius: 7px; cursor: pointer;
+      background: transparent; border: 1px solid #2d2d3f; color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; font-weight: 600; transition: all 0.15s ease; }
+    @media (hover: hover) { .ambient-cap-btn:hover { border-color: #4299e1; color: #90cdf4; } }
+    .ambient-cap-btn.ambient-cap-up { border-color: #4299e1; color: #90cdf4; }
+    @media (hover: hover) { .ambient-cap-btn.ambient-cap-up:hover { background: rgba(66,153,225,0.18); color: #bee3f8; } }
+    .ambient-cap-btn.ambient-cap-del { border-color: rgba(252,129,129,0.4); color: #fc8181; }
     /* Phase 2/3 additions: visual, layers, toggles, timing segmented control. */
     .ambient-viz {
       width: 100%; height: 56px; display: block;

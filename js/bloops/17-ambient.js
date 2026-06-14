@@ -2262,7 +2262,15 @@
         setTimeout(() => { clearInterval(pi); try { rec.stop(); } catch (e) { cleanup(); reject(e); } }, durSec * 1000);
       });
     }
-    async function _ambExportToDrive(E) {
+    // ---- Capture bank --------------------------------------------------
+    // "Export to Drive" is split in two: CAPTURE records + encodes the take
+    // into a local bank (no network), and UPLOAD (per bank item) pushes it to
+    // Drive. A failed/expired upload never loses the audio — it stays in the
+    // bank to retry. The bank is per-session (in-memory blobs).
+    let _ambCaptureBank = [];   // [{ id, name, ext, mime, folder, durSec, bytes, blob, url, uploaded }]
+    let _ambCapBankSeq = 0;
+    let _ambBankPreviewAudio = null;
+    async function _ambCaptureToBank(E) {
       if (_ambExportBusy) return;
       E = E || _laneEng;
       _E = E;
@@ -2272,65 +2280,129 @@
         || (Array.isArray(cfg.extras) && cfg.extras.some(x => x && x.present !== false && x.on && _AMB_LAYER_SCHEMA[x.type]))
         || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length))
         || (Array.isArray(cfg.samples) && cfg.samples.some(s => s.on && s.sampleId));
-      if (!anyOn) { alert('Turn on at least one Bloom layer before exporting.'); return; }
-      // Length first (Bloom has no inherent duration).
-      const durStr = (typeof prompt === 'function') ? prompt('Bloom export length in seconds:', '60') : '60';
+      if (!anyOn) { alert('Turn on at least one Bloom layer before capturing.'); return; }
+      const durStr = (typeof prompt === 'function') ? prompt('Capture length in seconds:', '60') : '60';
       if (durStr == null) return;
       const durSec = Math.max(2, Math.min(600, parseFloat(durStr) || 60));
-      if (typeof showExportOptionsDialog !== 'function') { alert('Export is unavailable.'); return; }
+      if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
       const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
       const choice = await showExportOptionsDialog({
-        title: 'Export Bloom to Drive',
-        defaultName: 'bloom-' + stamp,
-        defaultFolder: 'bloops/exports',
-        includeFolder: true,
-        applyLabel: 'Export',
+        title: 'Capture Bloom', defaultName: 'bloom-' + stamp,
+        defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Capture',
       });
       if (!choice) return;
       const { filename, fmt, folder } = choice;
       const ext = fmt === 'mp3' ? 'mp3' : 'wav';
       const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
       _ambExportBusy = true;
-      // Bloom export records the LIVE output in real time, so keep the progress
-      // indicator non-blocking — the user can tweak layers / FX / solo / ramps
-      // while it records and those changes are captured in the take.
+      // Records the LIVE output in real time → non-blocking progress so the user
+      // can keep tweaking; edits are captured until the recording ends.
       const progress = (typeof showRenderProgressModal === 'function')
-        ? showRenderProgressModal('Exporting Bloom…', { nonBlocking: true, note: 'Keep tweaking — edits are captured live until the recording ends.' })
+        ? showRenderProgressModal('Capturing Bloom…', { nonBlocking: true, note: 'Keep tweaking — edits are captured live until the recording ends.' })
         : null;
       try {
         progress && progress.setStatus('Recording ' + durSec + 's…');
         const buffer = await _ambCaptureToBuffer(E, durSec, (pct, sec, tot) => progress && progress.setProgress(pct, sec, tot));
         progress && progress.setStatus(fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…');
-        const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function')
-          ? await audioBufferToMp3(buffer)
-          : audioBufferToWav(buffer);
-        progress && progress.setStatus('Signing in to Google Drive…');
-        const is401 = (err) => !!(err && (err.status === 401 || (err.result && err.result.error && err.result.error.code === 401)));
-        const doDrive = async () => {
-          await googleSignInForDrive();
-          progress && progress.setStatus('Uploading to Drive…');
-          const folderId = await findOrCreateDriveFolder(folder);
-          return uploadBlobToDrive(`${filename}.${ext}`, blob, folderId, mime);
-        };
+        const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(buffer) : audioBufferToWav(buffer);
+        let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false });
+        _ambRenderCaptureBank();
+        progress && progress.markDone();
+        if (typeof showToast === 'function') showToast('Captured “' + filename + '” — upload it from the bank below.');
+      } catch (e) {
+        console.error('Bloom capture failed', e);
+        alert('Bloom capture failed: ' + ((e && e.message) || e));
+      } finally {
+        progress && progress.close();
+        _ambExportBusy = false;
+      }
+    }
+    async function _ambUploadBankItem(item) {
+      if (!item || !item.blob) return;
+      if (typeof showExportOptionsDialog !== 'function') { alert('Upload is unavailable.'); return; }
+      const choice = await showExportOptionsDialog({
+        title: 'Upload capture to Drive', defaultName: item.name,
+        defaultFolder: item.folder || 'bloops/exports', includeFolder: true, applyLabel: 'Upload',
+      });
+      if (!choice) return;
+      const name = choice.filename || item.name;
+      const folder = choice.folder || item.folder || 'bloops/exports';
+      item.name = name; item.folder = folder; _ambRenderCaptureBank();
+      const progress = (typeof showRenderProgressModal === 'function') ? showRenderProgressModal('Uploading to Drive…') : null;
+      const is401 = (err) => !!(err && (err.status === 401 || (err.result && err.result.error && err.result.error.code === 401)));
+      const doDrive = async () => {
+        await googleSignInForDrive();
+        progress && progress.setStatus('Uploading to Drive…');
+        const folderId = await findOrCreateDriveFolder(folder);
+        return uploadBlobToDrive(name + '.' + item.ext, item.blob, folderId, item.mime);
+      };
+      try {
         let file;
         try { file = await doDrive(); }
         catch (e1) {
           if (!is401(e1)) throw e1;
-          // Stale/revoked token — drop it and re-auth once, then retry.
           try { window.SharedAuth && window.SharedAuth.clear && window.SharedAuth.clear(); } catch (e) {}
           try { if (typeof gapi !== 'undefined' && gapi.client && gapi.client.setToken) gapi.client.setToken({ access_token: '' }); } catch (e) {}
           progress && progress.setStatus('Re-authorizing Google Drive…');
           file = await doDrive();
         }
         progress && progress.markDone();
-        alert(`Saved "${(file && file.name) || filename + '.' + ext}" to Drive folder "${folder}".`);
+        item.uploaded = true; _ambRenderCaptureBank();
+        alert('Uploaded “' + ((file && file.name) || (name + '.' + item.ext)) + '” to “' + folder + '”.');
       } catch (e) {
-        console.error('Bloom export failed', e);
-        alert(`Bloom export failed: ${(e && e.message) || e}`);
+        console.error('Upload failed', e);
+        alert('Upload failed — the capture is still in the bank to retry.\n' + ((e && e.message) || e));
       } finally {
         progress && progress.close();
-        _ambExportBusy = false;
       }
+    }
+    function _ambDownloadBankItem(item) {
+      if (!item || !item.url) return;
+      try { const a = document.createElement('a'); a.href = item.url; a.download = item.name + '.' + item.ext; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+    }
+    function _ambRemoveBankItem(id) {
+      const i = _ambCaptureBank.findIndex(x => x.id === id);
+      if (i < 0) return;
+      try { if (_ambCaptureBank[i].url) URL.revokeObjectURL(_ambCaptureBank[i].url); } catch (e) {}
+      _ambCaptureBank.splice(i, 1);
+      _ambRenderCaptureBank();
+    }
+    function _ambPreviewBankItem(item) {
+      try {
+        if (_ambBankPreviewAudio) { _ambBankPreviewAudio.pause(); _ambBankPreviewAudio = null; }
+        if (!item || !item.url) return;
+        const a = new Audio(item.url); _ambBankPreviewAudio = a; a.play().catch(() => {});
+      } catch (e) {}
+    }
+    function _ambRenderCaptureBank() {
+      const fmtBytes = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+      document.querySelectorAll('.ambient-capture-bank').forEach(host => {
+        if (!host._capWired) {
+          host._capWired = true;
+          host.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest && e.target.closest('.ambient-cap-btn'); if (!btn) return;
+            const row = btn.closest('.ambient-cap-item'); if (!row) return;
+            const id = parseInt(row.dataset.cap, 10);
+            const it = _ambCaptureBank.find(x => x.id === id); if (!it) return;
+            const act = btn.dataset.act;
+            if (act === 'play') _ambPreviewBankItem(it);
+            else if (act === 'dl') _ambDownloadBankItem(it);
+            else if (act === 'up') _ambUploadBankItem(it);
+            else if (act === 'del') _ambRemoveBankItem(id);
+          });
+        }
+        if (!_ambCaptureBank.length) { host.innerHTML = '<div class="ambient-cap-empty">No captures yet — press ⤓ Capture to record a take.</div>'; return; }
+        host.innerHTML = '<div class="ambient-cap-title">Captures</div>' + _ambCaptureBank.map(it =>
+          '<div class="ambient-cap-item' + (it.uploaded ? ' uploaded' : '') + '" data-cap="' + it.id + '">' +
+            '<span class="ambient-cap-name" title="' + (it.uploaded ? 'Uploaded' : 'Not uploaded') + '">' + (it.uploaded ? '✓ ' : '') + String(it.name).replace(/[<>&]/g, '') + '.' + it.ext + '</span>' +
+            '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + '</span>' +
+            '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview">▶</button>' +
+            '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +
+            '<button type="button" class="ambient-cap-btn ambient-cap-up" data-act="up" title="Upload to Google Drive">⬆ Upload</button>' +
+            '<button type="button" class="ambient-cap-btn ambient-cap-del" data-act="del" title="Remove from bank">✕</button>' +
+          '</div>').join('');
+      });
     }
 
     // ---- Visual (analyser-bound waveform; animates only while playing) --
@@ -3182,7 +3254,7 @@
           '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="New random seed">✨ Regenerate</button>' +
           '<button type="button" id="ambient-reset-btn" class="ambient-regen" title="Reset this Bloom to defaults (one Bed, default settings)">↺ Reset</button>' +
           (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
-          '<button type="button" id="ambient-export-btn" class="ambient-regen" title="Record a fixed length of Bloom and save it to Google Drive">⤓ Export→Drive</button>' +
+          '<button type="button" id="ambient-export-btn" class="ambient-regen" title="Record a fixed length of Bloom into the capture bank below (upload to Drive from there)">⤓ Capture</button>' +
           '<span class="ambient-seed" id="ambient-seed-val">#1</span>' +
         '</div>' +
         (E.isLane ? '' :
@@ -3278,8 +3350,12 @@
             '<button type="button" class="ambient-regen ambient-ramp-add" id="ambient-ramp-add" title="Add a parameter ramp">+ Add ramp</button></div>' +
           '<div class="ambient-ramps" id="ambient-ramps"></div>' +
         '</div>' +
-        '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>';
+        '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>' +
+        // Capture bank — ⤓ Capture records takes here; upload each to Drive
+        // when ready so an upload error never loses the audio.
+        '<div class="ambient-capture-bank"></div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
+      try { _ambRenderCaptureBank(); } catch (e) {}
 
       // Per-layer expand/collapse: the caret in each layer head folds that
       // layer's body away (the on/off toggle stays). UI-only state on the DOM —
@@ -3546,7 +3622,7 @@
         if (freezeBtn) freezeBtn.addEventListener('click', () => { try { _ambFreezeToLane(); } catch (e) { console.warn('Bloom freeze failed', e); } });
       }
       const exportBtn = G('ambient-export-btn');
-      if (exportBtn) exportBtn.addEventListener('click', () => { _ambExportToDrive(E); });
+      if (exportBtn) exportBtn.addEventListener('click', () => { _ambCaptureToBank(E); });
 
       E.inited = true;
       _ambSyncControls(E);

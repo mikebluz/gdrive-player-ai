@@ -1073,7 +1073,7 @@
     // ---- Tone families -- two-level menu (top: family list, drilldown:
     // family's tones). Keeps the panel short and lets us add more
     // instruments without scrolling forever.
-    const TONE_FAMILY_ORDER = ['ensembles', 'synths', 'keys', 'mallets', 'strings', 'winds', 'leads', 'drums', 'imports', 'samples', 'other'];
+    const TONE_FAMILY_ORDER = ['ensembles', 'synths', 'keys', 'mallets', 'strings', 'winds', 'leads', 'pads', 'drums', 'imports', 'samples', 'other'];
     const TONE_FAMILY_LABELS = {
       synths:  'Synths',
       keys:    'Keys',
@@ -1081,6 +1081,7 @@
       strings: 'Strings',
       winds:   'Winds',
       leads:   'Leads & Pads',
+      pads:    'Pads',
       drums:   'Drums',
       imports: 'Imports',
       samples: 'Samples',
@@ -1145,6 +1146,10 @@
       if (value.startsWith('ensemble:')) return 'ensembles';
       if (value.startsWith('sample:')) {
         const id = value.slice(7);
+        // Pads (looping sustained samples) get their own family, ahead of the
+        // generic imported/sample buckets they'd otherwise fall into.
+        const _sinfo = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
+        if (_sinfo && _sinfo.padLoop)    return 'pads';
         if (_SAMPLE_KEYS_IDS.has(id))    return 'keys';
         if (_SAMPLE_MALLETS_IDS.has(id)) return 'mallets';
         if (_SAMPLE_STRINGS_IDS.has(id)) return 'strings';
@@ -1233,6 +1238,14 @@
       capBtn.id = 'tone-capture-btn';
       capBtn.textContent = '🎙 Capture sample…';
       panel.appendChild(capBtn);
+      // Turn a slice of any single-buffer sample into a looping "pad" voice
+      // that sustains for as long as the note is held.
+      const padBtn = document.createElement('button');
+      padBtn.type = 'button';
+      padBtn.className = 'tone-sculpt-btn';
+      padBtn.id = 'tone-pad-btn';
+      padBtn.textContent = '🎚 Sample to Pad…';
+      panel.appendChild(padBtn);
       // Surface the current "Custom" state as a non-clickable marker at the
       // top of the panel, mirroring the Tone banner label. Picking any of
       // the regular options below applies that tone to every cell, which
@@ -1381,6 +1394,11 @@
         if (e.target.closest('#tone-capture-btn')) {
           setOpen(false);
           if (typeof showCaptureSampleDialog === 'function') showCaptureSampleDialog();
+          return;
+        }
+        if (e.target.closest('#tone-pad-btn')) {
+          setOpen(false);
+          if (typeof showSampleToPadDialog === 'function') showSampleToPadDialog();
           return;
         }
         if (e.target.closest('.tone-sculpt-btn')) {

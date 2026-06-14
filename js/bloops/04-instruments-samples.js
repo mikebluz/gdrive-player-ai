@@ -257,6 +257,12 @@
           head = filter;
         }
         source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
+        // Pad voices loop their whole (pre-trimmed) buffer so the sound holds
+        // for the full note duration: a held press sustains until release, a
+        // sequenced step loops for its slot (the trigger sites still bound the
+        // source via the ampEnv release + source.stop). loop=true is harmless
+        // on a normal start(time) — it only matters while the source plays.
+        if (info && info.padLoop) { try { source.loop = true; } catch (e) {} }
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch
@@ -819,6 +825,7 @@
         const rec = { id, name, blob };
         if (meta && meta.rootNote) rec.rootNote = meta.rootNote;
         if (meta && Number.isFinite(meta.tuneCents)) rec.tuneCents = meta.tuneCents;
+        if (meta && meta.padLoop) rec.padLoop = true;
         await new Promise((resolve, reject) => {
           const tx = db.transaction('blobs', 'readwrite');
           tx.objectStore('blobs').put(rec);
@@ -856,6 +863,7 @@
               tuneCents,
               imported: true,
               urls,
+              padLoop: !!rec.padLoop,
             });
           } catch (e) {
             console.warn('Failed to restore imported sample', rec.id, e);
@@ -890,10 +898,15 @@
       // baked into the voice so a captured sample can be pulled exactly in tune.
       const rootNote = (opts && opts.rootNote) || 'C4';
       const tuneCents = (opts && Number.isFinite(opts.tuneCents)) ? opts.tuneCents : 0;
+      // A "pad" voice loops its (already-trimmed) buffer for as long as the
+      // note event lasts — a held grid press sustains indefinitely, a
+      // sequenced step holds for its slot. Flagged on the info + persisted so
+      // it survives reload, and surfaced in the "Pads" tone family.
+      const padLoop = !!(opts && opts.padLoop);
       const urls = { [rootNote]: url };
       const sampler = new Tone.Sampler({ urls, release: 1 }).connect(globalSendTap);
-      sampleSamplers.set(id, { sampler, name, rootNote, tuneCents, imported: true, urls });
-      await persistImportedSample(id, name, blob, { rootNote, tuneCents });
+      sampleSamplers.set(id, { sampler, name, rootNote, tuneCents, imported: true, urls, padLoop });
+      await persistImportedSample(id, name, blob, { rootNote, tuneCents, padLoop });
       return { id, name };
     }
     // Estimate the fundamental frequency (Hz) of an AudioBuffer via

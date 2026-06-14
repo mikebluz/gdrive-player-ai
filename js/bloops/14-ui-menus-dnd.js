@@ -1918,6 +1918,149 @@
       });
     }
 
+    // ---- Sample → Pad --------------------------------------------------
+    // Pick any single-buffer sample, scrub a start/end region over its
+    // waveform (with a looped preview), name it, and save it as a "Pad" voice.
+    // A pad loops its trimmed slice for as long as the note event lasts — a
+    // held grid press sustains indefinitely and stops on release (see the
+    // `padLoop` branch in _buildSampleAdsrVoice). Modeled on showSampleEditor,
+    // plus a source-sample picker and a looping preview.
+    function showSampleToPadDialog() {
+      const samples = [];
+      if (typeof sampleSamplers !== 'undefined') {
+        for (const [id, info] of sampleSamplers) {
+          if (typeof isSliceableSample === 'function' && isSliceableSample('sample:' + id)) {
+            samples.push({ id, name: (info && info.name) || id });
+          }
+        }
+      }
+      if (!samples.length) { alert('No single-buffer samples to turn into a pad yet — capture or import a sample first.'); return; }
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return; }
+
+      let buf = null, startF = 0, endF = 1, previewSrc = null, drag = null;
+
+      const optsHtml = samples.map(s =>
+        '<option value="' + s.id + '">' + String(s.name).replace(/[<>&]/g, '') + '</option>').join('');
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal sample-editor-modal';
+      modal.innerHTML =
+        '<div class="sm-title">Sample → Pad</div>' +
+        '<label class="ee-field ee-name"><span>Source sample</span><select id="pad-src">' + optsHtml + '</select></label>' +
+        '<canvas class="se-wave-canvas" id="pad-wave-canvas"></canvas>' +
+        '<div class="se-wave-info"><span id="pad-wave-sel">full</span></div>' +
+        '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
+        '<div class="se-wave-actions">' +
+          '<button type="button" class="sm-wave" id="pad-preview">▶ Preview loop</button>' +
+          '<button type="button" class="sm-wave" id="pad-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply" id="pad-save" disabled>Save pad</button>' +
+        '</div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const srcSel = modal.querySelector('#pad-src');
+      const canvas = modal.querySelector('#pad-wave-canvas');
+      const selEl = modal.querySelector('#pad-wave-sel');
+      const nameEl = modal.querySelector('#pad-name');
+      const saveBtn = modal.querySelector('#pad-save');
+      const previewBtn = modal.querySelector('#pad-preview');
+
+      const stopPreview = () => {
+        try { previewSrc && previewSrc.stop(); } catch (e) {}
+        previewSrc = null; previewBtn.textContent = '▶ Preview loop';
+      };
+      const fmtSel = () => {
+        if (!buf) { selEl.textContent = '—'; return; }
+        const dur = buf.duration * (endF - startF);
+        selEl.textContent = (dur >= 1 ? dur.toFixed(2) + ' s' : Math.round(dur * 1000) + ' ms') +
+          ' loop of ' + (buf.duration >= 1 ? buf.duration.toFixed(2) + ' s' : Math.round(buf.duration * 1000) + ' ms');
+      };
+      const draw = () => {
+        const W = canvas.width = canvas.clientWidth || 480;
+        const H = canvas.height = 120;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, W, H);
+        if (!buf) return;
+        const sx = startF * W, ex = endF * W;
+        ctx.fillStyle = 'rgba(159,122,234,0.16)'; ctx.fillRect(sx, 0, ex - sx, H);
+        const data = buf.getChannelData(0);
+        const step = Math.max(1, Math.floor(data.length / W)), mid = H / 2;
+        ctx.strokeStyle = '#7fd6e8'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let x = 0; x < W; x++) {
+          let min = 1, max = -1; const o = x * step;
+          for (let i = 0; i < step; i++) { const v = data[o + i] || 0; if (v < min) min = v; if (v > max) max = v; }
+          ctx.moveTo(x + 0.5, mid + min * mid); ctx.lineTo(x + 0.5, mid + max * mid);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#4fd1c5'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); ctx.stroke();
+        fmtSel();
+      };
+      const loadSample = (id) => {
+        stopPreview();
+        buf = (typeof _getSampleAudioBuffer === 'function') ? _getSampleAudioBuffer(id) : null;
+        startF = 0; endF = 1;
+        saveBtn.disabled = !buf;
+        if (!buf) selEl.textContent = 'This sample buffer isn’t loaded yet.';
+        requestAnimationFrame(draw);
+      };
+
+      const xToF = (clientX) => { const r = canvas.getBoundingClientRect(); return Math.max(0, Math.min(1, (clientX - r.left) / r.width)); };
+      canvas.addEventListener('pointerdown', (e) => {
+        if (!buf) return;
+        const f = xToF(e.clientX);
+        drag = (Math.abs(f - startF) <= Math.abs(f - endF)) ? 'start' : 'end';
+        if (drag === 'start') startF = Math.min(f, endF - 0.001); else endF = Math.max(f, startF + 0.001);
+        try { canvas.setPointerCapture(e.pointerId); } catch (x) {} draw();
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!drag || !buf) return;
+        const f = xToF(e.clientX);
+        if (drag === 'start') startF = Math.min(f, endF - 0.001); else endF = Math.max(f, startF + 0.001);
+        draw();
+      });
+      const endDrag = () => { drag = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+
+      srcSel.addEventListener('change', () => loadSample(srcSel.value));
+      previewBtn.addEventListener('click', () => {
+        if (!buf) return;
+        if (previewSrc) { stopPreview(); return; }
+        try {
+          const sliced = _sliceAudioBuffer(ac, buf, startF, endF, false);
+          const src = new Tone.ToneBufferSource({ url: sliced, loop: true }).toDestination();
+          src.start();
+          previewSrc = src;
+          previewBtn.textContent = '■ Stop';
+        } catch (e) {}
+      });
+      const close = () => { stopPreview(); try { overlay.remove(); } catch (e) {} };
+      modal.querySelector('#pad-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      saveBtn.addEventListener('click', async () => {
+        if (!buf) return;
+        stopPreview();
+        const srcName = (srcSel.options[srcSel.selectedIndex] && srcSel.options[srcSel.selectedIndex].textContent) || 'pad';
+        const nm = (nameEl.value || '').trim() || (srcName + ' pad');
+        saveBtn.disabled = true;
+        try {
+          const sliced = _sliceAudioBuffer(ac, buf, startF, endF, false);
+          const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(sliced) : null;
+          if (!wav) throw new Error('WAV encoder unavailable.');
+          const reg = await registerSampleFromBlob(wav, nm, { padLoop: true });
+          if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
+          if (reg && typeof applyToneToAllCells === 'function') { try { applyToneToAllCells('sample:' + reg.id, 'none'); } catch (e) {} }
+          if (typeof showToast === 'function') showToast('Saved pad “' + (reg ? reg.name : nm) + '”');
+          close();
+        } catch (e) {
+          alert('Save failed: ' + ((e && e.message) || e));
+          saveBtn.disabled = false;
+        }
+      });
+
+      loadSample(srcSel.value);
+    }
+
     function showSoundEditor(noteIndex, opts) {
       // Selection scope: when opts.steps is given, the editor targets those
       // step refs — it writes each selected step's OWN params, and only the

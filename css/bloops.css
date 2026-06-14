@@ -4400,6 +4400,27 @@
       background: rgba(229,62,62,0.28); color: #fff; border-color: #fc8181;
       box-shadow: 0 0 16px rgba(229,62,62,0.5); animation: amb-freeze-rec 1s ease-in-out infinite;
     }
+    /* Join PERF | Keep | Rest into one segment (mirrors Gen | Wrap | ✎):
+       square the inner edges and drop the in-between right borders so each
+       seam reads as a single line. */
+    .kwr-pair > .perform-btn {
+      border-right: none;
+      border-top-right-radius: 0; border-bottom-right-radius: 0;
+    }
+    .kwr-pair > .play-lock {
+      border-right: none;
+      border-top-left-radius: 0; border-bottom-left-radius: 0;
+      border-top-right-radius: 0; border-bottom-right-radius: 0;
+    }
+    .kwr-pair > .rest-bar {
+      border-top-left-radius: 0; border-bottom-left-radius: 0;
+    }
+    /* Keep off → Rest is hidden, so Keep becomes the rightmost: restore its
+       right border + rounding. */
+    .kwr-pair:has(.play-lock:not(.active)) > .play-lock {
+      border-right: 2px solid #f6ad55;
+      border-top-right-radius: 10px; border-bottom-right-radius: 10px;
+    }
     .step-grid-bar { position: relative; }
     .perform-popover {
       position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 200;

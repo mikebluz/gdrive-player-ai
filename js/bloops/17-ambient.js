@@ -1808,6 +1808,7 @@
       _ambResetClocks(E);
       _ambSeed(cfg.seed);
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
+      console.log('[FZ] build=replay-v2 generator start', E.idPrefix);
       _ambTick(E);
       E.timer = setInterval(() => _ambTick(E), 150);
       // The finer ramp clock only runs while ramps exist (started lazily) so a

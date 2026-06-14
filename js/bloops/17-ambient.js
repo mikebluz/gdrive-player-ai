@@ -2574,14 +2574,23 @@
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
       const setVal = (suf, val) => { const e = el(suf); if (e && val != null) e.value = String(val); };
+      // Wire on/off, delete, and collapse FIRST so a later control-wiring error
+      // (e.g. the tone picker) can never leave the layer untoggleable.
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { const L = get(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); sync(); persist(); }); }
+      const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteExtra(E, type, id));
+      const layerDiv = onB ? onB.closest('.ambient-layer') : null;
+      const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
+      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
       sch.ctrls.forEach(c => {
         const k = c[0];
-        if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: 'Grid voice' }); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
-        else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
-        else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
-        else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
-        else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
-        else if (k === 'cond') { const s = el('when'); if (s) { s.value = inst.when || 'always'; s.addEventListener('change', () => { const L = get(); if (L) { L.when = s.value || 'always'; persist(); } }); } }
+        try {
+          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: 'Grid voice' }); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
+          else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
+          else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
+          else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
+          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
+          else if (k === 'cond') { const s = el('when'); if (s) { s.value = inst.when || 'always'; s.addEventListener('change', () => { const L = get(); if (L) { L.when = s.value || 'always'; persist(); } }); } }
+        } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(kk => { const e = el('mod-' + t + '-' + kk); if (e) e.addEventListener('input', () => { const L = get(); if (!L) return; L.mod[t][kk] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
@@ -2593,11 +2602,6 @@
       setVal('fx-rev', inst.revSend);
       if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { const L = get(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); sync(); persist(); }); }
-      const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteExtra(E, type, id));
-      const layerDiv = onB ? onB.closest('.ambient-layer') : null;
-      const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
-      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
     }
     function _ambRenderExtras(E) {
       const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;

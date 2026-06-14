@@ -1644,7 +1644,7 @@
     // again to Thaw and resume generation. Symbolic (not audio), so it's seamless.
     function _ambFreezeState(E, key) {
       E.freeze = E.freeze || {};
-      return E.freeze[key] || (E.freeze[key] = { frozen: false, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0 });
+      return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0 });
     }
     function _ambFreezeFrozen(E, key) { return !!(E && E.freeze && E.freeze[key] && E.freeze[key].frozen); }
     // Resolve a freeze key ('bed' | 'bed:5' | 'seq:3' | 'samp:2') → its layer cfg.
@@ -1674,38 +1674,58 @@
       let i = 0; while (i < arr.length && arr[i].at < keepFrom) i++;
       if (i > 0) arr.splice(0, i);
     }
-    // Single press: loop the last N seconds that already played (retroactive).
-    function _ambFreezeNow(E, key) {
+    // First press: mark the loop start (the layer keeps generating; notes keep
+    // rolling into the capture sink). The window between this press and the next
+    // becomes the loop.
+    function _ambFreezeArm(E, key) {
+      const st = _ambFreezeState(E, key);
+      st.recording = true; st.frozen = false; st.events = [];
+      st.recStart = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    }
+    // Nearest captured note onset to a target time (within a sane range), so the
+    // loop boundaries land on real note events rather than mid-note.
+    function _ambNearestOnset(cap, target, lo, hi) {
+      let best = null, bestD = Infinity;
+      for (let i = 0; i < cap.length; i++) {
+        const a = cap[i].at;
+        if (a < lo || a > hi) continue;
+        const d = Math.abs(a - target);
+        if (d < bestD) { bestD = d; best = a; }
+      }
+      return best;
+    }
+    // Second press: the window between the two presses is the loop. Snap both
+    // boundaries to the nearest captured note onset so the loop tiles cleanly,
+    // then commit the events (relative to the start) and start looping.
+    function _ambFreezeCommit(E, key) {
       const st = _ambFreezeState(E, key);
       const cap = (E.cap && E.cap[key]) || [];
-      const cfg = E._cfg || E.getCfg();
-      const N = Math.max(0.5, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
       const layer = _ambLayerByKey(E, key);
       const intervalSec = Math.max(0.05, (((layer && layer.intervalMs) | 0) / 1000) || 1);
-      const P = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-      // Notes that already played in the last N seconds.
-      const win = cap.filter(e => e.at < P + 0.001 && e.at >= P - N);
-      console.log('[FZ] _ambFreezeNow', { key, engine: E.idPrefix, capLen: cap.length, winLen: win.length, N, P, lastCapAt: cap.length ? cap[cap.length - 1].at : null });
+      const P1 = st.recStart || 0;
+      const P2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Round the start/end presses to the nearest note onset (search a little
+      // past P2 so the end can snap up to the next note for seamless tiling).
+      const startOnset = _ambNearestOnset(cap, P1, P1 - intervalSec, P2 + intervalSec);
+      const endOnset = _ambNearestOnset(cap, P2, P1, P2 + intervalSec * 1.5);
+      let loopStart = (startOnset != null) ? startOnset : P1;
+      let loopEnd = (endOnset != null) ? endOnset : P2;
+      if (loopEnd <= loopStart + 0.01) loopEnd = loopStart + intervalSec; // too-fast double press
+      const eps = 0.001;
+      const win = cap.filter(e => e.at >= loopStart - eps && e.at < loopEnd - eps);
       if (!win.length) {
-        if (typeof showToast === 'function') showToast('Freeze: nothing has played yet — let the layer sound first.');
+        // Nothing played between the presses — abandon, back to idle.
+        st.recording = false; st.frozen = false;
+        if (typeof showToast === 'function') showToast('Freeze: no notes between the two presses — try a longer span.');
+        _ambFreezeSyncAll(E);
         return;
       }
-      // Trim leading silence: loop content starts at the first captured note
-      // (round to nearest note at the start). Loop length = span to now, snapped
-      // to the layer's note grid, and extended to contain every onset.
-      let minAt = Infinity; win.forEach(e => { if (e.at < minAt) minAt = e.at; });
-      const events = win.map(e => ({ t: Math.max(0, e.at - minAt), freq: e.freq, dur: e.dur, params: e.params }));
-      const maxRel = events.reduce((m, e) => Math.max(m, e.t), 0);
-      const span = P - minAt;
-      let L = Math.max(intervalSec, Math.round(span / intervalSec) * intervalSec);
-      if (L < maxRel + intervalSec * 0.25) L = Math.ceil((maxRel + 0.001) / intervalSec) * intervalSec;
-      st.events = events; st.loopLen = L;
-      console.log('[FZ] frozen', { key, events: events.length, loopLen: L, anchor: P + 0.25 });
-      // Start the loop almost immediately (small lead so the first note isn't
-      // already in the past by the next scheduling tick). A brief overlap with
-      // any still-ringing generated note is fine for ambient.
-      const A = P + 0.25;
-      st.anchor = A; st.scheduledUpto = A; st.frozen = true;
+      st.events = win.map(e => ({ t: Math.max(0, e.at - loopStart), freq: e.freq, dur: e.dur, params: e.params }));
+      st.loopLen = loopEnd - loopStart;
+      // Start looping immediately from the next scheduling tick (tiny lead).
+      const A = P2 + 0.12;
+      st.anchor = A; st.scheduledUpto = A;
+      st.recording = false; st.frozen = true;
       _ambFreezeSyncAll(E);
     }
     // Schedule the frozen layer's looped events that fall in [now, horizon].
@@ -1716,29 +1736,30 @@
       let from = st.scheduledUpto;
       if (from == null || from < now) from = Math.max(now, st.anchor || now);
       const L = st.loopLen, A = st.anchor || now;
-      let k = Math.max(0, Math.floor((from - A) / L)), guard = 0, fired = 0;
+      let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
       while (guard++ < 4096) {
         const base = A + k * L;
         if (base >= horizon) break;
         for (const e of st.events) {
           const at = base + e.t;
-          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); fired++; } catch (x) {} }
+          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
         }
         k++;
       }
-      console.log('[FZ] replay', { key, now: +now.toFixed(2), from: +from.toFixed(2), horizon: +horizon.toFixed(2), A: +A.toFixed(2), L, fired });
       st.scheduledUpto = horizon;
     }
     function _ambFreezeThaw(E, key) {
       const st = E.freeze && E.freeze[key];
       if (!st) return;
-      st.frozen = false; st.scheduledUpto = 0;
+      st.frozen = false; st.recording = false; st.scheduledUpto = 0; st.events = [];
       _ambFreezeSyncAll(E);
     }
+    // One button, three states: idle → (arm) recording → (commit) looping → (thaw) idle.
     function _ambFreezeCycle(E, key) {
       const st = _ambFreezeState(E, key);
       if (st.frozen) _ambFreezeThaw(E, key);
-      else _ambFreezeNow(E, key);
+      else if (st.recording) _ambFreezeCommit(E, key);
+      else _ambFreezeArm(E, key);
       _ambFreezeSyncAll(E);
     }
     function _ambFreezeStopAll(E) {
@@ -1750,11 +1771,14 @@
     function _ambFreezeSyncAll(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-freeze-btn').forEach(btn => {
-        const frozen = !!(E.freeze && E.freeze[btn.dataset.fkey] && E.freeze[btn.dataset.fkey].frozen);
+        const fs = E.freeze && E.freeze[btn.dataset.fkey];
+        const frozen = !!(fs && fs.frozen), recording = !!(fs && fs.recording);
         btn.classList.toggle('frozen', frozen);
-        btn.textContent = frozen ? 'Thaw' : '❄';
+        btn.classList.toggle('recording', recording);
+        btn.textContent = frozen ? 'Thaw' : recording ? '◉' : '❄';
         btn.title = frozen ? 'Thaw — resume generative playback'
-                  : 'Freeze — loop the last few seconds this layer just played';
+                  : recording ? 'Recording — press again to set the loop end'
+                  : 'Freeze — press to start the loop, press again to set its length';
       });
     }
     // Reset a Bloom instance to defaults: one Bed, default parameters, no extra
@@ -1808,7 +1832,6 @@
       _ambResetClocks(E);
       _ambSeed(cfg.seed);
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
-      console.log('[FZ] build=replay-v2 generator start', E.idPrefix);
       _ambTick(E);
       E.timer = setInterval(() => _ambTick(E), 150);
       // The finer ramp clock only runs while ramps exist (started lazily) so a
@@ -2239,7 +2262,7 @@
       '</details>';
     const _ambHead = (label, onId, delId, freezeKey) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
-      (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — arm the recorder, press again to loop the last seconds">❄</button>' : '') +
+      (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button></div>';
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
@@ -2991,7 +3014,6 @@
       // dynamic layers re-render; data-fkey carries the layer key).
       host.addEventListener('click', (e) => {
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
-        console.log('[FZ] host click', { target: e.target && e.target.className, foundBtn: !!fb, fkey: fb && fb.dataset.fkey, engine: E.idPrefix });
         if (!fb) return;
         e.stopPropagation();
         try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }

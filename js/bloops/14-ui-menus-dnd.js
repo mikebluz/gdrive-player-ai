@@ -2032,7 +2032,7 @@
       if (!samples.length) { alert('No single-buffer samples to turn into a pad yet — capture or import a sample first.'); return; }
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return; }
 
-      let buf = null, startF = 0, endF = 1, previewSrc = null, drag = null;
+      let buf = null, startF = 0, endF = 1, previewSrc = null, drag = null, zeroLock = false;
 
       const optsHtml = samples.map(s =>
         '<option value="' + s.id + '">' + String(s.name).replace(/[<>&]/g, '') + '</option>').join('');
@@ -2042,7 +2042,8 @@
         '<div class="sm-title">Sample → Pad</div>' +
         '<label class="ee-field ee-name"><span>Source sample</span><select id="pad-src">' + optsHtml + '</select></label>' +
         '<canvas class="se-wave-canvas" id="pad-wave-canvas"></canvas>' +
-        '<div class="se-wave-info"><span id="pad-wave-sel">full</span></div>' +
+        '<div class="se-wave-info"><span id="pad-wave-sel">full</span>' +
+          '<label class="se-wave-rev"><input type="checkbox" id="pad-zerolock"> Lock to zero</label></div>' +
         '<div class="ee-top" style="margin-top:6px;">' +
           '<label class="ee-field"><span>Overlaid copies <em id="pad-copies-v">1</em></span>' +
             '<input type="range" id="pad-copies" min="1" max="8" step="1" value="1"></label>' +
@@ -2144,6 +2145,28 @@
         requestAnimationFrame(draw);
       };
 
+      // Nearest zero-crossing (fraction) to a given fraction, searching outward
+      // on channel 0. Snapping start/end here means the loop begins and ends at
+      // amplitude ~0, so the wrap (and the slice edges) don't click.
+      const snapToZeroFrac = (frac) => {
+        if (!buf) return frac;
+        const data = buf.getChannelData(0), N = data.length;
+        if (N < 2) return frac;
+        const target = Math.max(0, Math.min(N - 1, Math.round(frac * N)));
+        const isCross = (i) => i >= 0 && i < N - 1 && ((data[i] <= 0 && data[i + 1] > 0) || (data[i] >= 0 && data[i + 1] < 0));
+        if (isCross(target)) return target / N;
+        for (let r = 1; r < N; r++) {
+          if (isCross(target - r)) return (target - r) / N;
+          if (isCross(target + r)) return (target + r) / N;
+        }
+        return frac;
+      };
+      const applyZeroLock = () => {
+        if (!zeroLock || !buf) return;
+        startF = Math.max(0, Math.min(snapToZeroFrac(startF), endF - 0.001));
+        endF = Math.min(1, Math.max(snapToZeroFrac(endF), startF + 0.001));
+      };
+
       const xToF = (clientX) => { const r = canvas.getBoundingClientRect(); return Math.max(0, Math.min(1, (clientX - r.left) / r.width)); };
       canvas.addEventListener('pointerdown', (e) => {
         if (!buf) return;
@@ -2158,11 +2181,24 @@
         if (drag === 'start') startF = Math.min(f, endF - 0.001); else endF = Math.max(f, startF + 0.001);
         draw();
       });
-      const endDrag = () => { drag = null; };
+      const endDrag = () => {
+        if (drag && zeroLock && buf) {
+          if (drag === 'start') startF = Math.max(0, Math.min(snapToZeroFrac(startF), endF - 0.001));
+          else endF = Math.min(1, Math.max(snapToZeroFrac(endF), startF + 0.001));
+        }
+        const had = !!drag;
+        drag = null;
+        if (had) { draw(); if (previewSrc) startPreview(); }
+      };
       canvas.addEventListener('pointerup', endDrag);
       canvas.addEventListener('pointercancel', endDrag);
 
       srcSel.addEventListener('change', () => loadSample(srcSel.value));
+      const zeroLockEl = modal.querySelector('#pad-zerolock');
+      zeroLockEl.addEventListener('change', () => {
+        zeroLock = zeroLockEl.checked;
+        if (zeroLock && buf) { applyZeroLock(); draw(); if (previewSrc) startPreview(); }
+      });
       copiesEl.addEventListener('input', () => {
         copies = parseInt(copiesEl.value, 10) || 1; copiesV.textContent = String(copies);
         if (previewSrc) startPreview(); // re-render the loop live

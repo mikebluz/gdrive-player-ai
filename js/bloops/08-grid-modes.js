@@ -744,6 +744,33 @@
     // shape can't be sustained (sub-step wraps schedule sequentially —
     // we play them one-shot and return null so the poly session skips
     // sustaining bookkeeping).
+    // Expand a chord note whose voice is an ensemble into one note per member
+    // (so the inline wrap voice builder, which only knows synths/samples, can
+    // build each member). Honors octave/detune/pan/level offsets in
+    // stack-offset / round-robin modes; falls back to sine if the ensemble is
+    // missing. Non-ensemble notes pass through unchanged.
+    function _expandEnsembleNote(n) {
+      const t = n && n.params && n.params.type;
+      if (!(typeof isEnsembleType === 'function' && isEnsembleType(t))) return [n];
+      const id = t.slice(9);
+      const def = (typeof ensembles !== 'undefined') ? ensembles.get(id) : null;
+      if (!def || !Array.isArray(def.members) || !def.members.length) {
+        return [{ ...n, sound: 'sine', params: { ...n.params, type: 'sine' } }];
+      }
+      const useOffsets = (def.mode || 'stack') !== 'stack';
+      return def.members.filter(m => m && m.type && !isEnsembleType(m.type)).map(m => {
+        const p = { ...n.params, type: m.type };
+        ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
+        let f = n.freq;
+        if (useOffsets) {
+          if (Number.isFinite(m.octave) && m.octave) f = n.freq * Math.pow(2, m.octave);
+          if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
+          if (Number.isFinite(m.pan)) p.pan = m.pan;
+          if (Number.isFinite(m.level)) { const b = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(b * (m.level / 100)))); }
+        }
+        return { ...n, freq: f, sound: m.type, params: p };
+      });
+    }
     function startSustainedWrapOnCell(cellIdx, opts = {}) {
       if (!wrapTemplate) return null;
       const note = notes[cellIdx];
@@ -807,9 +834,10 @@
         const _ac = Tone.context && Tone.context.rawContext;
         if (_ac && _ac.state === 'suspended') _ac.resume();
       } catch (e) {}
-      if (Array.isArray(transposed.chord) && transposed.chord.length > 0) {
-        const size = transposed.chord.length;
-        const voices = transposed.chord.map(n => {
+      const _chordNotes = Array.isArray(transposed.chord) ? transposed.chord.flatMap(_expandEnsembleNote) : [];
+      if (_chordNotes.length > 0) {
+        const size = _chordNotes.length;
+        const voices = _chordNotes.map(n => {
           if (!n || n.freq == null) return null;
           const p = chordVoiceParams(n.params || n.sound || 'sine', size, transposed);
           const vol = Math.max(0.001, (p.volume ?? 100) / 100);

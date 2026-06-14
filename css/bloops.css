@@ -2095,7 +2095,20 @@
     }
     .ambient-ramp-params .ambient-ramp-wave { width: auto; }
     .ambient-ramp-range { flex: 1 0 100%; color: #6b6b8a; font-size: 0.74rem; }
-    .ambient-layer-head { display: flex; align-items: center; }
+    .ambient-layer-head { display: flex; align-items: center; position: relative; }
+    /* Per-layer playhead: thin bar pinned to the bottom edge of the layer head,
+       filled left→right across the current iteration / frozen loop. */
+    .ambient-ph {
+      position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+      background: rgba(159,122,234,0.12); border-radius: 2px; overflow: hidden;
+      opacity: 0; transition: opacity 0.2s ease; pointer-events: none;
+    }
+    .ambient-ph.active { opacity: 1; }
+    .ambient-ph > i {
+      display: block; height: 100%; width: 100%; transform-origin: left center;
+      transform: scaleX(var(--ph, 0)); background: #9f7aea;
+    }
+    .ambient-ph.frozen > i { background: #4fd1c5; }
     /* Per-layer Freeze button (in the layer head). */
     .ambient-freeze-btn {
       margin-left: auto; flex: 0 0 auto;

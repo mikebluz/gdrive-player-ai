@@ -1886,6 +1886,7 @@
       const cfg = E.getCfg();
       if (cfg) cfg.playing = false;
       _ambRefreshPlayBtn(E);
+      try { _ambUpdatePlayheads(E); } catch (e) {} // zero the bars when stopped
       // Only hard-silence active voices when NO Bloom engine is still running —
       // otherwise stopping one engine would cut the other engine's ringing
       // voices. The stopped engine's long releases ring out meanwhile.
@@ -2150,6 +2151,7 @@
       const cfg = E.getCfg();
       if (!cfg) return;
       const anyOn = ['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].present !== false && cfg[k].on)
+        || (Array.isArray(cfg.extras) && cfg.extras.some(x => x && x.present !== false && x.on && _AMB_LAYER_SCHEMA[x.type]))
         || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length))
         || (Array.isArray(cfg.samples) && cfg.samples.some(s => s.on && s.sampleId));
       if (!anyOn) { alert('Turn on at least one Bloom layer before exporting.'); return; }
@@ -2218,8 +2220,40 @@
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
+      try { _ambUpdatePlayheads(E); } catch (e) {}
       if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
       else E.viz.raf = 0;
+    }
+    // Per-layer playback indicator: a thin bar in each layer head showing how
+    // far through the current iteration (or frozen loop) playback is. Driven by
+    // the viz rAF while the generator runs; reads the engine clocks/freeze state.
+    function _ambUpdatePlayheads(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      bars.forEach(el => {
+        const key = el.dataset.phkey; if (!key) return;
+        let prog = 0, active = false, frozen = false;
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs.frozen && fs.loopLen > 0) {
+          frozen = true; active = true;
+          const d = now - (fs.anchor || now);
+          prog = d <= 0 ? 0 : (d % fs.loopLen) / fs.loopLen;
+        } else if (E.timer) {
+          const layer = _ambLayerByKey(E, key);
+          const on = !!(layer && layer.present !== false && layer.on);
+          const next = E.clocks && E.clocks[key];
+          if (on && typeof next === 'number' && next > now) {
+            const iv = Math.max(0.05, ((layer.intervalMs | 0) / 1000) || 1);
+            const x = (next - now) / iv;
+            prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
+            active = true;
+          }
+        }
+        el.style.setProperty('--ph', active ? prog.toFixed(3) : '0');
+        el.classList.toggle('active', active);
+        el.classList.toggle('frozen', frozen);
+      });
     }
     function _ambVizKick(E) { if (E.viz && !E.viz.raf) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E)); }
     function _ambStartViz(E) {
@@ -2299,7 +2333,9 @@
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
-      '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button></div>';
+      '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
+      (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
+      '</div>';
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
     const _ambGet = (E, id) => document.getElementById(_ambTrId(E, id));

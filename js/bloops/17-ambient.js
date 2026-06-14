@@ -669,6 +669,25 @@
       const step = _ambStepSec();
       return Math.max(step, Math.round(sec / step) * step);
     }
+    // Beat "Rate" — express a layer's speed as a note division of the GLOBAL
+    // BPM instead of a fixed millisecond Interval. The value is beats-per-event
+    // (quarter note = 1 beat). When a layer carries a `rate`, its interval is
+    // derived live from the global tempo (so changing BPM scales it), and the
+    // ms Interval slider is ignored. Empty/unknown rate → fall back to Interval.
+    const _AMB_RATES = { '1/1': 4, '1/2': 2, '1/4': 1, '1/4T': 2 / 3, '1/8': 0.5, '1/8T': 1 / 3, '1/16': 0.25, '1/16T': 1 / 6, '1/32': 0.125 };
+    function _ambRateBeats(rate) { return (rate && _AMB_RATES[rate]) ? _AMB_RATES[rate] : 0; }
+    // Effective interval (sec) for a layer, honoring `rate` first, else Interval
+    // (snapped to the step grid in global Sync mode via _ambSnap).
+    function _ambStepSecFor(lc, minSec, cfg) {
+      const b = _ambRateBeats(lc && lc.rate);
+      if (b > 0) return Math.max(minSec || 0.02, b * (60 / _ambBpm()));
+      return _ambSnap(Math.max(minSec || 0.05, (lc.intervalMs | 0) / 1000), cfg);
+    }
+    // Raw effective interval (sec), no step-snap — for drift phase + playheads.
+    function _ambEffIntervalSec(lc) {
+      const b = _ambRateBeats(lc && lc.rate);
+      return b > 0 ? b * (60 / _ambBpm()) : Math.max(0.05, ((lc && lc.intervalMs) | 0) / 1000);
+    }
     // Per-layer Level (0..100): 70 = the layer's tuned default (unchanged from
     // before). 0..70 attenuates that toward silence; 70..100 BOOSTS the layer's
     // pre-staged volume up toward a full grid-press voice (100), so at the slider
@@ -688,7 +707,7 @@
     function _ambDriftOffset(layer, cfg) {
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
       if (drift <= 0) return 0;
-      const intervalSec = Math.max(0.05, (layer.intervalMs | 0) / 1000);
+      const intervalSec = _ambEffIntervalSec(layer);
       let off = (drift / 100) * intervalSec;
       if (cfg && cfg.timing === 'sync') {
         const step = _ambStepSec();
@@ -1495,7 +1514,7 @@
         while (C[key] < horizon && g++ < guardMax) {
           if (_ambCondFires(lc.when, I[key] | 0)) emit(C[key]);
           I[key] = (I[key] | 0) + 1;
-          C[key] += _ambSnap(Math.max(minSec, (lc.intervalMs | 0) / 1000), cfg);
+          C[key] += _ambStepSecFor(lc, minSec, cfg);
         }
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
@@ -2296,7 +2315,7 @@
           const on = !!(layer && layer.present !== false && layer.on);
           const next = E.clocks && E.clocks[key];
           if (on && typeof next === 'number' && next > now) {
-            const iv = Math.max(0.05, ((layer.intervalMs | 0) / 1000) || 1);
+            const iv = Math.max(0.05, _ambEffIntervalSec(layer) || 1);
             const x = (next - now) / iv;
             prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
             active = true;
@@ -2381,6 +2400,13 @@
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
           _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') + '</div>' +
       '</details>';
+    // "Rate" selector — a layer's speed as a note division of the global BPM
+    // ('' = Free, follow the ms Interval). Used by Beat layers.
+    const _AMB_RATE_OPTS = [['', 'Free (ms)'], ['1/1', '1/1'], ['1/2', '1/2'], ['1/4', '1/4'], ['1/4T', '1/4T'], ['1/8', '1/8'], ['1/8T', '1/8T'], ['1/16', '1/16'], ['1/16T', '1/16T'], ['1/32', '1/32']];
+    const _ambRateSel = (stem) =>
+      '<div class="ambient-ctrl"><label for="' + stem + '">Rate</label><select id="' + stem + '" class="ambient-select">' +
+      _AMB_RATE_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+      '</select><span class="ambient-hint">vs global BPM</span></div>';
     const _ambHead = (label, onId, delId, freezeKey) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
@@ -2588,7 +2614,7 @@
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
-      beat: { label: 'Beat', ctrls: [['kit'],
+      beat: { label: 'Beat', ctrls: [['kit'], ['rate'],
         ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'],
@@ -2610,6 +2636,7 @@
         const k = c[0];
         if (k === 'tone') html += '<div class="ambient-ctrl"><label for="' + p + '-tone">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
         else if (k === 'kit') html += '<div class="ambient-ctrl"><label for="' + p + '-kit">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
+        else if (k === 'rate') html += _ambRateSel(p + '-rate');
         else if (k === 'notes') html += _ambNotesButtonHtml(p);
         else if (k === 'sl') html += _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
         else if (k === 'tm') html += _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
@@ -2639,6 +2666,7 @@
         try {
           if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: 'Grid voice' }); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
           else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
+          else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; sync(); persist(); } }); } }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
@@ -2983,6 +3011,7 @@
       set('ambient-texture-level', cfg.texture.level);
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
+      set('ambient-beat-rate', cfg.beat.rate || '');
       set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-drift', cfg.beat.drift);
@@ -3104,6 +3133,7 @@
         '<div class="ambient-layer collapsed">' + head('Beat', 'ambient-beat-on', 'ambient-beat-del', 'beat') +
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
+          _ambRateSel('ambient-beat-rate') +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
           tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
           sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
@@ -3210,6 +3240,12 @@
           persist();
         });
       }
+      const beatRateSel = G('ambient-beat-rate');
+      if (beatRateSel) beatRateSel.addEventListener('change', () => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        cfg.beat.rate = beatRateSel.value || '';
+        persist();
+      });
 
       const bind = (id, layer, key) => {
         const el = G(id);

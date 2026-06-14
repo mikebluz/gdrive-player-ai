@@ -927,7 +927,7 @@
        viewport width without per-frame canvas.width churn. */
     /* Clear the fixed master scope (40px) + the now-fixed footer transport
        (~64px) so scrolled content isn't hidden under them. */
-    body { padding-bottom: 112px; }
+    body { padding-bottom: 168px; }
     .master-scope {
       position: fixed;
       left: 0;
@@ -944,7 +944,7 @@
     }
     .footer-transport {
       display: flex;
-      align-items: stretch;
+      align-items: center;
       gap: 10px;
       flex: 1 1 100%;
       flex-wrap: nowrap;
@@ -1020,14 +1020,20 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.7; }
     }
-    .footer-transport > #play-btn {
-      width: 52px;
-      height: 52px;
-      min-width: 52px;
-      min-height: 52px;
-      font-size: 1.25rem;
+    /* Play is the hero control (2× the old 52px); Record matches it so the
+       Loop pill sits centered between two equal circles. */
+    .footer-transport > #play-btn,
+    .footer-transport > #rec-btn {
+      width: 104px;
+      height: 104px;
+      min-width: 104px;
+      min-height: 104px;
       flex: 0 0 auto;
+      border-radius: 50%;
+      padding: 0;
+      font-size: 2.4rem;
     }
+    .footer-transport > #loop-btn { flex: 1 1 0; align-self: center; }
     /* Drift option inside the Riff dropdown. Inherits the riff-panel
        button base style; the orange identity only kicks in when the
        active lane is actively drifting or locked (refreshDriftBtn adds
@@ -6679,6 +6685,18 @@
       width: min(380px, 92vw);
       box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(0, 191, 255, 0.06);
     }
+    /* Capture-sample dialog. */
+    .capture-sample-modal { width: min(520px, 94vw); }
+    .capture-sample-modal .cap-rec-row { display: flex; align-items: center; gap: 12px; margin: 8px 0 12px; }
+    .cap-rec-btn {
+      flex: 0 0 auto; padding: 8px 16px; border-radius: 22px; cursor: pointer;
+      background: transparent; border: 2px solid #e53e3e; color: #e53e3e;
+      font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 0.9rem; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .cap-rec-btn:hover { border-color: #fc8181; color: #fc8181; } }
+    .cap-rec-btn.recording { background: rgba(229,62,62,0.25); color: #fff; animation: amb-freeze-rec 1s ease-in-out infinite; }
+    .capture-sample-modal .cap-status { color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; min-width: 0; }
+    .capture-sample-modal .cap-detected { color: #d6bcfa; font-family: 'Segoe UI', sans-serif; font-size: 0.82rem; margin-bottom: 8px; }
     /* Ensemble editor. */
     .ensemble-editor-modal { width: min(620px, 95vw); max-height: 90vh; overflow-y: auto; }
     .ensemble-editor-modal .ee-top {

@@ -200,7 +200,10 @@
       if (!audioBuf) return null;
       let sampleFreq;
       try { sampleFreq = Tone.Frequency(sampleMidi, 'midi').toFrequency(); } catch (e) { return null; }
-      const playbackRate = (sampleFreq > 0 && tunedFreq > 0) ? tunedFreq / sampleFreq : 1;
+      let playbackRate = (sampleFreq > 0 && tunedFreq > 0) ? tunedFreq / sampleFreq : 1;
+      // Baked-in fine tune (cents) from sample capture — pulls the buffer into
+      // tune relative to its mapped root so the keyboard tracks chromatically.
+      if (info && Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
       let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, detuneScale = null;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
@@ -800,12 +803,15 @@
         req.onerror = () => reject(req.error);
       });
     }
-    async function persistImportedSample(id, name, blob) {
+    async function persistImportedSample(id, name, blob, meta) {
       try {
         const db = await getImportedDB();
+        const rec = { id, name, blob };
+        if (meta && meta.rootNote) rec.rootNote = meta.rootNote;
+        if (meta && Number.isFinite(meta.tuneCents)) rec.tuneCents = meta.tuneCents;
         await new Promise((resolve, reject) => {
           const tx = db.transaction('blobs', 'readwrite');
-          tx.objectStore('blobs').put({ id, name, blob });
+          tx.objectStore('blobs').put(rec);
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
         });
@@ -826,7 +832,9 @@
           if (!rec || !rec.id || !rec.blob) continue;
           try {
             const url = URL.createObjectURL(rec.blob);
-            const urls = { 'C4': url };
+            const rootNote = rec.rootNote || 'C4';
+            const tuneCents = Number.isFinite(rec.tuneCents) ? rec.tuneCents : 0;
+            const urls = { [rootNote]: url };
             const sampler = new Tone.Sampler({
               urls,
               release: 1,
@@ -834,7 +842,8 @@
             sampleSamplers.set(rec.id, {
               sampler,
               name: rec.name || rec.id,
-              rootNote: 'C4',
+              rootNote,
+              tuneCents,
               imported: true,
               urls,
             });
@@ -862,15 +871,67 @@
     // Register an audio Blob/File as a single-buffer sample voice (mapped to
     // C4), persisting it to IndexedDB. Returns { id, name }. Shared by the file
     // importer and the "always listening" grab.
-    async function registerSampleFromBlob(blob, friendly) {
+    async function registerSampleFromBlob(blob, friendly, opts) {
       const id = makeImportedSampleId(friendly || 'sample');
       const name = friendly || id;
       const url = URL.createObjectURL(blob);
-      const urls = { 'C4': url };
+      // opts.rootNote = the grid note that plays the buffer at natural pitch
+      // (others pitch-shift relative to it). opts.tuneCents = a fine offset
+      // baked into the voice so a captured sample can be pulled exactly in tune.
+      const rootNote = (opts && opts.rootNote) || 'C4';
+      const tuneCents = (opts && Number.isFinite(opts.tuneCents)) ? opts.tuneCents : 0;
+      const urls = { [rootNote]: url };
       const sampler = new Tone.Sampler({ urls, release: 1 }).connect(globalSendTap);
-      sampleSamplers.set(id, { sampler, name, rootNote: 'C4', imported: true, urls });
-      await persistImportedSample(id, name, blob);
+      sampleSamplers.set(id, { sampler, name, rootNote, tuneCents, imported: true, urls });
+      await persistImportedSample(id, name, blob, { rootNote, tuneCents });
       return { id, name };
+    }
+    // Estimate the fundamental frequency (Hz) of an AudioBuffer via
+    // autocorrelation on a mid-signal window (skips attack/silence), with a
+    // parabolic refine for sub-sample accuracy. Returns null if too quiet /
+    // unpitched. Used by the "Capture sample" pitch analysis.
+    function _detectPitchHz(audioBuf) {
+      try {
+        const data = audioBuf.getChannelData(0);
+        const sr = audioBuf.sampleRate || 44100;
+        const size = Math.min(data.length, 16384);
+        if (size < 512) return null;
+        const start = Math.max(0, Math.floor(data.length / 2 - size / 2));
+        const buf = data.subarray(start, start + size);
+        let rms = 0; for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+        rms = Math.sqrt(rms / buf.length);
+        if (rms < 0.004) return null; // effectively silent / no clear tone
+        const MIN_F = 50, MAX_F = 1600;
+        const maxLag = Math.min(buf.length - 1, Math.floor(sr / MIN_F));
+        const minLag = Math.max(2, Math.floor(sr / MAX_F));
+        const corr = new Float32Array(maxLag + 1);
+        for (let lag = minLag; lag <= maxLag; lag++) {
+          let c = 0; const lim = buf.length - lag;
+          for (let i = 0; i < lim; i++) c += buf[i] * buf[i + lag];
+          corr[lag] = c;
+        }
+        let bestLag = -1, best = 0;
+        for (let lag = minLag; lag <= maxLag; lag++) { if (corr[lag] > best) { best = corr[lag]; bestLag = lag; } }
+        if (bestLag <= 0 || best <= 0) return null;
+        let lag = bestLag;
+        if (bestLag > minLag && bestLag < maxLag) {
+          const a = corr[bestLag - 1], b = corr[bestLag], c = corr[bestLag + 1], denom = a - 2 * b + c;
+          if (denom !== 0) lag = bestLag + 0.5 * (a - c) / denom;
+        }
+        const hz = sr / lag;
+        return (hz >= MIN_F && hz <= MAX_F) ? hz : null;
+      } catch (e) { return null; }
+    }
+    // Hz → { midi, note, cents } where cents is the signed deviation from the
+    // nearest equal-tempered note (−50..+50).
+    function _hzToNoteInfo(hz) {
+      if (!(hz > 0)) return null;
+      const midiFloat = 69 + 12 * Math.log2(hz / 440);
+      const midi = Math.round(midiFloat);
+      const cents = Math.round((midiFloat - midi) * 100);
+      let note = 'C4';
+      try { note = Tone.Frequency(midi, 'midi').toNote(); } catch (e) {}
+      return { midi, note, cents };
     }
     // Pop a file picker, register the chosen audio file as a Tone.Sampler,
     // and call onLoaded(id, friendlyName) once the buffer is ready. Persists

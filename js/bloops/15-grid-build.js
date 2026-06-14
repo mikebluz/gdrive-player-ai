@@ -1221,6 +1221,13 @@
       ensBtn.id = 'tone-ensemble-btn';
       ensBtn.textContent = '✚ Create ensemble…';
       panel.appendChild(ensBtn);
+      // Capture a sample from the mic, tune it, and save it as a named voice.
+      const capBtn = document.createElement('button');
+      capBtn.type = 'button';
+      capBtn.className = 'tone-sculpt-btn';
+      capBtn.id = 'tone-capture-btn';
+      capBtn.textContent = '🎙 Capture sample…';
+      panel.appendChild(capBtn);
       // Surface the current "Custom" state as a non-clickable marker at the
       // top of the panel, mirroring the Tone banner label. Picking any of
       // the regular options below applies that tone to every cell, which
@@ -1364,6 +1371,11 @@
         if (e.target.closest('#tone-ensemble-btn')) {
           setOpen(false);
           if (typeof showEnsembleEditor === 'function') showEnsembleEditor();
+          return;
+        }
+        if (e.target.closest('#tone-capture-btn')) {
+          setOpen(false);
+          if (typeof showCaptureSampleDialog === 'function') showCaptureSampleDialog();
           return;
         }
         if (e.target.closest('.tone-sculpt-btn')) {

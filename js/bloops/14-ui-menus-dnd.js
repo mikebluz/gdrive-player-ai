@@ -1497,6 +1497,135 @@
     }
     // Waveform sample editor: trim (draggable start/end) + reverse + preview,
     // save as a NEW sample. `onSaved(newId)` fires after a successful save.
+    // ---- Capture sample (record from mic → tuned, named voice) ---------
+    function showCaptureSampleDialog() {
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('Audio is not ready yet.'); return; }
+      let stream = null, rec = null, chunks = [], recordedBlob = null, audioBuf = null;
+      let detected = null, previewNode = null, recording = false;
+      let rootNote = 'C4', tuneCents = 0;
+
+      // Root-note options, C2..C6.
+      let rootOpts = '';
+      for (let m = 36; m <= 84; m++) { let nm = 'C4'; try { nm = Tone.Frequency(m, 'midi').toNote(); } catch (e) {} rootOpts += '<option value="' + nm + '">' + nm + '</option>'; }
+
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal capture-sample-modal';
+      modal.innerHTML =
+        '<div class="sm-title">Capture sample</div>' +
+        '<div class="cap-rec-row">' +
+          '<button type="button" class="cap-rec-btn" id="cap-rec">● Record</button>' +
+          '<span class="cap-status" id="cap-status">Press Record, make a sound, then Stop.</span>' +
+        '</div>' +
+        '<div class="cap-analysis" id="cap-analysis" style="display:none;">' +
+          '<div class="cap-detected" id="cap-detected"></div>' +
+          '<div class="ee-top">' +
+            '<label class="ee-field"><span>Root note (plays natural)</span><select id="cap-root">' + rootOpts + '</select></label>' +
+            '<label class="ee-field ee-name"><span>Fine tune <em id="cap-cents-v">0¢</em></span><input type="range" id="cap-cents" min="-50" max="50" step="1" value="0"></label>' +
+            '<button type="button" class="sm-wave" id="cap-preview">▶ Preview</button>' +
+          '</div>' +
+          '<label class="ee-field ee-name" style="margin-top:6px;"><span>Name</span><input type="text" id="cap-name" placeholder="My sample"></label>' +
+        '</div>' +
+        '<div class="se-wave-actions">' +
+          '<button type="button" class="sm-wave" id="cap-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply" id="cap-save" disabled>Save sample</button>' +
+        '</div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const recBtn = modal.querySelector('#cap-rec');
+      const statusEl = modal.querySelector('#cap-status');
+      const analysisEl = modal.querySelector('#cap-analysis');
+      const detectedEl = modal.querySelector('#cap-detected');
+      const rootSel = modal.querySelector('#cap-root');
+      const centsEl = modal.querySelector('#cap-cents');
+      const centsV = modal.querySelector('#cap-cents-v');
+      const nameEl = modal.querySelector('#cap-name');
+      const saveBtn = modal.querySelector('#cap-save');
+
+      const stopPreview = () => { try { previewNode && previewNode.stop(); } catch (e) {} previewNode = null; };
+      const stopStream = () => { try { stream && stream.getTracks().forEach(t => t.stop()); } catch (e) {} stream = null; };
+      const close = () => { stopPreview(); stopStream(); try { if (rec && rec.state === 'recording') rec.stop(); } catch (e) {} try { document.body.removeChild(overlay); } catch (e) {} };
+
+      async function startRec() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) { statusEl.textContent = 'Microphone permission denied.'; return; }
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+        catch (e) { statusEl.textContent = 'Recording is not supported here.'; stopStream(); return; }
+        chunks = [];
+        rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+        rec.onstop = async () => {
+          stopStream();
+          recording = false;
+          recBtn.textContent = '● Record';
+          recBtn.classList.remove('recording');
+          statusEl.textContent = 'Analyzing…';
+          try {
+            recordedBlob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+            audioBuf = await ac.decodeAudioData(await recordedBlob.arrayBuffer());
+          } catch (e) { statusEl.textContent = 'Could not decode the recording.'; return; }
+          const hz = (typeof _detectPitchHz === 'function') ? _detectPitchHz(audioBuf) : null;
+          detected = (hz && typeof _hzToNoteInfo === 'function') ? _hzToNoteInfo(hz) : null;
+          if (detected) {
+            detectedEl.textContent = 'Detected pitch: ' + hz.toFixed(1) + ' Hz · ' + detected.note +
+              (detected.cents ? (detected.cents > 0 ? ' +' : ' ') + detected.cents + '¢' : '');
+            rootNote = detected.note; rootSel.value = detected.note;
+            // Default the fine-tune to cancel the detected deviation → in tune.
+            tuneCents = detected.cents; centsEl.value = String(detected.cents); centsV.textContent = detected.cents + '¢';
+          } else {
+            detectedEl.textContent = 'No clear pitch detected — pick a root note manually.';
+            rootNote = 'C4'; rootSel.value = 'C4'; tuneCents = 0; centsEl.value = '0'; centsV.textContent = '0¢';
+          }
+          analysisEl.style.display = '';
+          saveBtn.disabled = false;
+          statusEl.textContent = 'Recorded. Tune + name it, then Save.';
+        };
+        rec.start();
+        recording = true;
+        recBtn.textContent = '■ Stop';
+        recBtn.classList.add('recording');
+        statusEl.textContent = 'Recording… press Stop when done.';
+      }
+
+      recBtn.addEventListener('click', () => {
+        if (recording) { try { rec.stop(); } catch (e) {} }
+        else startRec();
+      });
+      rootSel.addEventListener('change', () => { rootNote = rootSel.value || 'C4'; });
+      centsEl.addEventListener('input', () => { tuneCents = parseInt(centsEl.value, 10) || 0; centsV.textContent = tuneCents + '¢'; });
+      modal.querySelector('#cap-preview').addEventListener('click', () => {
+        if (!audioBuf) return;
+        stopPreview();
+        try {
+          const src = ac.createBufferSource(); src.buffer = audioBuf;
+          src.playbackRate.value = Math.pow(2, -tuneCents / 1200); // hear the fine-tuned pitch
+          src.connect(ac.destination); src.start();
+          previewNode = src;
+        } catch (e) {}
+      });
+      modal.querySelector('#cap-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      saveBtn.addEventListener('click', async () => {
+        if (!recordedBlob) return;
+        const nm = (nameEl.value || '').trim() || 'sample';
+        saveBtn.disabled = true; statusEl.textContent = 'Saving…';
+        try {
+          const { id } = await registerSampleFromBlob(recordedBlob, nm, { rootNote, tuneCents });
+          if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
+          // Use it as the grid voice immediately, pitched (not sliced) so it
+          // plays chromatically from the bound root note.
+          if (typeof applyToneToAllCells === 'function') { try { applyToneToAllCells('sample:' + id, 'none'); } catch (e) {} }
+          close();
+        } catch (e) {
+          console.warn('Capture save failed', e);
+          statusEl.textContent = 'Could not save the sample.';
+          saveBtn.disabled = false;
+        }
+      });
+    }
+
     // ---- Ensemble editor ----------------------------------------------
     // Build / edit a multi-tone "ensemble" voice: pick N tones, shape each
     // (ADSR + per-tone octave/detune/pan/level), choose a play mode, preview,

@@ -4140,7 +4140,10 @@
     /* FOOTER */
     .footer-bar {
       min-height: 48px;
-      background: transparent;
+      /* Solid black at the bottom (meeting the master scope) fading up to
+         transparent, so scrolled content dissolves behind the transport
+         instead of hitting a hard edge. */
+      background: linear-gradient(to top, #000 0%, #000 45%, rgba(0,0,0,0.75) 75%, rgba(0,0,0,0) 100%);
       display: flex;
       flex-wrap: wrap;
       align-items: center;

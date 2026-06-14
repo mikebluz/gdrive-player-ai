@@ -884,6 +884,32 @@
       });
     })();
 
+    // ---- Perform button — real-time record-what-you-play mode ----
+    (function bindPerformButton() {
+      const btn = document.getElementById('perform-btn');
+      const opts = document.getElementById('perform-options');
+      const qz = document.getElementById('perform-quantize');
+      const res = document.getElementById('perform-resolution');
+      if (!btn) return;
+      const refresh = () => {
+        btn.classList.toggle('active', performMode);
+        if (opts) opts.hidden = !performMode;
+      };
+      refresh();
+      btn.addEventListener('click', () => {
+        performMode = !performMode;
+        if (performMode) {
+          // Fresh take: the first played note anchors the timeline.
+          _performStartMs = null;
+          _performEmittedUnits = 0;
+          if (typeof showToast === 'function') showToast('Perform: play the grid — notes record with rests for silence.');
+        }
+        refresh();
+      });
+      if (qz) qz.addEventListener('change', () => { performQuantize = !!qz.checked; });
+      if (res) res.addEventListener('change', () => { performResolution = parseFloat(res.value) || 0.25; });
+    })();
+
     // ---- All-lane edit mode ----
     // Walks every step in the active lane and writes the given value
     // onto the matching leaf params field. Used both at toggle-on

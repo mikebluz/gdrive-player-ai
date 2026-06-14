@@ -780,6 +780,11 @@
         // events on the original cell only. See the listener installed
         // alongside document.pointerup above.
         cell.addEventListener('click', () => {
+          // Perform mode records via the press/release lifecycle
+          // (polyFinalizeSession → _performEmit). The audition already fired
+          // on pointerdown, so the click does nothing here — bail before any
+          // append path so notes aren't double-written.
+          if (performMode) return;
           // Variance edit: cell presses go into the active step's
           // variance pool instead of becoming new steps. Captured here
           // BEFORE any of the other gates so it works regardless of

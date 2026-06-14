@@ -185,6 +185,17 @@
     // sequence (per the active note mode). When off (default), the note
     // is auditioned only — sequence is not modified.
     let keepMode = false;
+    // Perform mode — a real-time recorder. When on, each note/chord the user
+    // plays is captured into the sequence with its timing; silences become
+    // rests. performQuantize snaps timing to performResolution (a step-div:
+    // 1=1/4, 0.5=1/8, 0.25=1/16, 0.125=1/32). The capture timeline cursor is
+    // tracked in resolution-units (_performEmittedUnits) from the first note
+    // (_performStartMs).
+    let performMode = false;
+    let performQuantize = true;
+    let performResolution = 0.25;
+    let _performStartMs = null;
+    let _performEmittedUnits = 0;
     // Per-Keep-session step-div lock. While Keep is on, the step-div
     // picker pops up after each note added in Spell or Stack mode so
     // the user picks the size for that note. Toggling the "use for the

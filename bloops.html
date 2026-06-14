@@ -484,9 +484,23 @@
            grid currently belongs to. -->
       <div class="step-grid-bar">
         <div class="kwr-pair">
+          <button id="perform-btn" class="perform-btn" type="button" title="Perform: record what you play into the sequence in real time — notes land as steps and silences become rests. Optional quantize snaps timing to a resolution grid."><span>● PERF</span></button>
           <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
           <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
         </div>
+      </div>
+      <!-- Perform options — visible while Perform is armed/active. Quantize
+           snaps recorded note/rest timing to the chosen resolution grid. -->
+      <div class="perform-options" id="perform-options" hidden>
+        <label class="perform-opt"><input type="checkbox" id="perform-quantize" checked> Quantize</label>
+        <label class="perform-opt">Resolution
+          <select id="perform-resolution">
+            <option value="1">1/4</option>
+            <option value="0.5">1/8</option>
+            <option value="0.25" selected>1/16</option>
+            <option value="0.125">1/32</option>
+          </select>
+        </label>
       </div>
       <!-- Step Pan / Vol / Slip faders + the Edit button. Sits between
            the Keep/Wrap/Rest trio and the active lane row, matching

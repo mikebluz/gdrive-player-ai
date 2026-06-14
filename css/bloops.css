@@ -1034,6 +1034,13 @@
       font-size: 2.4rem;
     }
     .footer-transport > #loop-btn { flex: 1 1 0; align-self: center; }
+    /* Transparent footer: the Rec / Loop / Play buttons get a 50%-translucent
+       fill so the page shows through behind the locked transport. */
+    .footer-transport > #rec-btn,
+    .footer-transport > #loop-btn,
+    .footer-transport > #play-btn {
+      background: rgba(0, 0, 0, 0.5);
+    }
     /* Drift option inside the Riff dropdown. Inherits the riff-panel
        button base style; the orange identity only kicks in when the
        active lane is actively drifting or locked (refreshDriftBtn adds
@@ -4091,7 +4098,7 @@
     /* FOOTER */
     .footer-bar {
       min-height: 48px;
-      background: #000;
+      background: transparent;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -4361,21 +4368,48 @@
        gutters Keep and Rest had as standalone clusters. */
     .kwr-pair {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 25% 1fr 25%;
       align-items: center;
       width: 100%;
       min-width: 0;
     }
     /* Rest is only useful when Keep is on (a rest tap only adds to the
-       sequence when Keep is active). Hide it otherwise and collapse
-       to a single KEEP column so the button fills the full width.
-       :has() lets the grid layout react to the Keep button's .active
-       class without any JS toggle. */
+       sequence when Keep is active). Hide it otherwise and let Perform +
+       Keep share the row. :has() lets the grid react to the Keep button's
+       .active class without any JS toggle. Perform mirrors Gen (25%), Keep
+       mirrors Wrap (the 1fr middle), Rest mirrors the ✎ Edit pill (25%). */
     .kwr-pair:has(.play-lock:not(.active)) {
-      grid-template-columns: 1fr;
+      grid-template-columns: 25% 1fr;
     }
     .kwr-pair:has(.play-lock:not(.active)) > .rest-bar {
       display: none;
+    }
+    /* Perform — sits left of Keep, sized like Gen (25%). Record-red identity. */
+    .perform-btn {
+      width: 100%; height: 52px; box-sizing: border-box; margin: -3px 0;
+      padding: 0 6px; min-width: 0;
+      background: #000; border: 2px solid #e53e3e; border-radius: 10px;
+      color: #fc8181; font-family: 'Segoe UI', sans-serif; font-weight: 700;
+      font-size: 0.82rem; letter-spacing: 1px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    @media (hover: hover) { .perform-btn:hover { border-color: #fc8181; box-shadow: 0 0 16px rgba(229,62,62,0.3); } }
+    .perform-btn.active {
+      background: rgba(229,62,62,0.28); color: #fff; border-color: #fc8181;
+      box-shadow: 0 0 16px rgba(229,62,62,0.5); animation: amb-freeze-rec 1s ease-in-out infinite;
+    }
+    .perform-options {
+      display: flex; gap: 16px; align-items: center; width: 100%;
+      padding: 4px 2px 2px; color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
+    }
+    .perform-options[hidden] { display: none; }
+    .perform-opt { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .perform-opt select {
+      background: #0c0c18; border: 1px solid #2d2d3f; border-radius: 6px;
+      color: #e2e8f0; padding: 3px 6px; font-size: 0.78rem;
     }
 
     /* Wrap row — lives directly under #grid in Grid mode. Hidden in

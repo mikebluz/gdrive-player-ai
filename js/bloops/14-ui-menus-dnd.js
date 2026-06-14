@@ -4279,12 +4279,48 @@
     // that runs at session end. The flag lets that fallback add the
     // single-note step itself without double-adding when click DID fire.
     let _cellTapAdded = false;
+    // Perform recorder: append the just-completed press (note or chord) to the
+    // sequence with its real timing — a leading rest fills the silence since
+    // the previous capture, then the note sized by how long it was held. All
+    // lengths are integer units of the resolution grid (or 1/32 when quantize
+    // is off), tracked on a cursor so notes land where they were played.
+    function _performEmit(voices) {
+      const live = (voices || []).filter(v => v && v.pressStart != null && Number.isFinite(v.freq));
+      if (!live.length) return;
+      const bpm = parseInt(tempoInput?.value, 10) || 120;
+      const unitSub = performQuantize ? performResolution : 0.125;
+      const unitMs = Math.max(1, (60000 / bpm) * unitSub);
+      let startMs = Infinity, endMs = -Infinity;
+      live.forEach(v => { startMs = Math.min(startMs, v.pressStart); endMs = Math.max(endMs, v.pressEnd ?? performance.now()); });
+      if (_performStartMs == null) { _performStartMs = startMs; _performEmittedUnits = 0; }
+      const desiredStart = Math.max(0, Math.round((startMs - _performStartMs) / unitMs));
+      const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
+      snapshotForUndo('Perform');
+      if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
+      const noteUnits = Math.max(1, Math.round((endMs - startMs) / unitMs));
+      let step;
+      if (live.length >= 2) {
+        step = { chord: live.map(v => ({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined })), label: live.map(v => v.label).join('·'), duration: noteUnits, subdivision: unitSub };
+      } else {
+        const v = live[0];
+        step = { freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined, duration: noteUnits, subdivision: unitSub };
+      }
+      addToSequence(step);
+      _performEmittedUnits = desiredStart + noteUnits;
+    }
     function polyFinalizeSession() {
       _polySession.endTimer = null;
       const voices = Array.from(_polySession.pressed.values());
       const tapAlreadyAdded = _cellTapAdded;
       _cellTapAdded = false;
       _polySession.pressed.clear();
+      // Perform mode owns capture in default Sequencer mode: record the press
+      // with timing instead of the normal Keep single/chord append below.
+      if (performMode && gridMode === 'sequencer' && !wrapTemplate && !chordMode && !stepMode && selectedStepRefs.length === 0) {
+        try { _performEmit(voices); } catch (e) { console.warn('Perform capture failed', e); }
+        _polySession.suppressClickUntil = performance.now() + 250;
+        return;
+      }
       if (voices.length >= 2) {
         // Multi-press → emit a chord step. Suppress the per-cell click
         // handlers that fire right after each pointerup so they don't

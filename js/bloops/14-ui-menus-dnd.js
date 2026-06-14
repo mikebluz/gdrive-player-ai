@@ -1540,6 +1540,29 @@
       }
       return out;
     }
+    // Make a loop seamless by crossfading its tail over its head: the last
+    // `xf` samples are blended (equal-power) with the first `xf` so the wrap
+    // morphs continuously instead of jumping. The result is `xf` samples
+    // shorter and loops cleanly with no pre-roll needed. xf=0 → unchanged.
+    function _crossfadeLoopBuffer(ac, buf, xfSec) {
+      const L = buf.length, ch = buf.numberOfChannels, sr = buf.sampleRate;
+      let xf = Math.round((xfSec || 0) * sr);
+      if (xf <= 0 || L < 4) return buf;
+      xf = Math.min(xf, Math.floor(L / 2)); // can't fade more than half the loop
+      const newLen = L - xf;
+      const out = ac.createBuffer(ch, newLen, sr);
+      for (let c = 0; c < ch; c++) {
+        const s = buf.getChannelData(c), d = out.getChannelData(c);
+        for (let i = xf; i < newLen; i++) d[i] = s[i];
+        for (let i = 0; i < xf; i++) {
+          const t = (i + 0.5) / xf;             // 0..1 across the fade
+          const gin = Math.sin(t * Math.PI / 2);  // head fades in
+          const gout = Math.cos(t * Math.PI / 2); // tail fades out
+          d[i] = s[i] * gin + s[i + newLen] * gout; // s[i+newLen] = the tail
+        }
+      }
+      return out;
+    }
     // Waveform sample editor: trim (draggable start/end) + reverse + preview,
     // save as a NEW sample. `onSaved(newId)` fires after a successful save.
     // ---- Capture sample (record from mic → tuned, named voice) ---------
@@ -1983,6 +2006,8 @@
             '<input type="range" id="pad-copies" min="1" max="8" step="1" value="1"></label>' +
           '<label class="ee-field"><span>Copy offset <em id="pad-offset-v">25 ms</em></span>' +
             '<input type="range" id="pad-offset" min="0" max="500" step="1" value="25"></label>' +
+          '<label class="ee-field"><span>Crossfade <em id="pad-xfade-v">off</em></span>' +
+            '<input type="range" id="pad-xfade" min="0" max="250" step="1" value="0"></label>' +
         '</div>' +
         '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
         '<div class="se-wave-actions">' +
@@ -2003,15 +2028,20 @@
       const copiesV = modal.querySelector('#pad-copies-v');
       const offsetEl = modal.querySelector('#pad-offset');
       const offsetV = modal.querySelector('#pad-offset-v');
-      let copies = 1, offsetSec = 0.025;
+      const xfadeEl = modal.querySelector('#pad-xfade');
+      const xfadeV = modal.querySelector('#pad-xfade-v');
+      let copies = 1, offsetSec = 0.025, crossfadeSec = 0;
 
       const stopPreview = () => {
         try { previewSrc && previewSrc.stop(); } catch (e) {}
         previewSrc = null; previewBtn.textContent = '▶ Preview loop';
       };
-      // The exact buffer that gets saved/previewed: the trimmed slice with
-      // `copies` overlaid, offset copies summed in (1 copy = the plain slice).
-      const buildOut = () => _buildPadBuffer(ac, _sliceAudioBuffer(ac, buf, startF, endF, false), copies, offsetSec);
+      // The exact buffer that gets saved/previewed: the trimmed slice, with
+      // `copies` overlaid offset copies summed in (1 copy = the plain slice),
+      // then an optional loop-boundary crossfade.
+      const buildOut = () => _crossfadeLoopBuffer(ac,
+        _buildPadBuffer(ac, _sliceAudioBuffer(ac, buf, startF, endF, false), copies, offsetSec),
+        crossfadeSec);
       const startPreview = () => {
         if (!buf) return;
         stopPreview();
@@ -2081,6 +2111,11 @@
       });
       offsetEl.addEventListener('input', () => {
         const ms = parseInt(offsetEl.value, 10) || 0; offsetSec = ms / 1000; offsetV.textContent = ms + ' ms';
+        if (previewSrc) startPreview();
+      });
+      xfadeEl.addEventListener('input', () => {
+        const ms = parseInt(xfadeEl.value, 10) || 0; crossfadeSec = ms / 1000;
+        xfadeV.textContent = ms ? ms + ' ms' : 'off';
         if (previewSrc) startPreview();
       });
       previewBtn.addEventListener('click', () => {

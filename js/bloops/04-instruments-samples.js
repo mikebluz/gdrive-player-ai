@@ -257,16 +257,16 @@
           head = filter;
         }
         // Pad voices loop their whole (pre-trimmed) buffer so the sound holds for
-        // the full note duration: a held press sustains until release, a sequenced
-        // step loops for its slot (the trigger sites bound the source via the
-        // ampEnv release + source.stop). Pass loop in the CONSTRUCTOR (the setter
-        // can no-op if the internal node isn't ready yet) with an explicit
-        // loopEnd so the whole buffer loops regardless of defaults.
+        // the full note duration. NOTE: Tone's ToneBufferSource (a OneShotSource)
+        // schedules an auto-stop at the buffer end in start(); its `loop` setter
+        // only cancels that stop when the source has ALREADY started. So loop set
+        // here (pre-start) reads true but the source still stops after one play —
+        // the trigger sites must re-assert `source.loop = true` AFTER start()
+        // (see padLoop in the returned voice) to cancel the pending stop.
         const _padLoop = !!(info && info.padLoop);
         const _srcOpts = { url: audioBuf, playbackRate };
         if (_padLoop) { _srcOpts.loop = true; _srcOpts.loopStart = 0; _srcOpts.loopEnd = audioBuf.duration; }
         source = new Tone.ToneBufferSource(_srcOpts).connect(head);
-        if (_padLoop) { try { source.loop = true; source.loopEnd = audioBuf.duration; } catch (e) {} }
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch
@@ -296,7 +296,7 @@
       // playbackRate, so a transposed slice still covers the right window.)
       const sliceOffset = (opts && Number.isFinite(opts.sampleOffsetSec)) ? Math.max(0, Math.min(audioBuf.duration, opts.sampleOffsetSec * playbackRate)) : 0;
       const sliceBufSec = (opts && Number.isFinite(opts.sliceDurSec)) ? Math.max(0.005, opts.sliceDurSec * playbackRate) : null;
-      return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec };
+      return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec, padLoop: _padLoop };
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -1541,15 +1541,16 @@
         // on pointer-up — the sound editor's full envelope (+ optional filter)
         // shapes the held sample, not just a fade in/out.
         const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
-        const _padInfo = sampleSamplers.get(type.slice(7)) || {};
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
           { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
-        console.log('[PAD] startSustainedNote sample type=' + type + ' padLoop=' + !!_padInfo.padLoop +
-          ' → ' + (v ? 'ADSR(loop=' + v.source.loop + ', dur=' + (v.source.buffer && v.source.buffer.duration) + ', sustain=' + env.sustain + ')' : 'FALLBACK shared sampler (NO LOOP)'));
         if (v) {
           const triggerAt = _warmAt();
           try {
             v.source.start(triggerAt);
+            // Re-assert loop AFTER start() — the setter cancels the OneShotSource
+            // auto-stop only once started, so this is what actually makes a pad
+            // loop indefinitely while held (vs. playing once and cutting off).
+            if (v.padLoop) { try { v.source.loop = true; } catch (e) {} }
             v.ampEnv.triggerAttack(triggerAt, velocity);
           } catch (e) { _disposeSampleAdsrVoice(v); }
           let released = false;
@@ -2181,6 +2182,10 @@
               // the plain whole-buffer start — byte-identical to the prior path.
               if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
               else v.source.start(triggerAt);
+              // Pad: re-assert loop AFTER start() to cancel the OneShotSource
+              // auto-stop, so the buffer loops to fill the step (the explicit
+              // stop below then bounds it to the slot).
+              if (v.padLoop) { try { v.source.loop = true; } catch (e) {} }
               // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
               // release over `rel` — same envelope timing the synth path uses,
               // so a sample voice and a synth voice sit identically in a slot.

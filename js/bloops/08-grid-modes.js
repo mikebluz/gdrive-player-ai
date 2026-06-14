@@ -850,7 +850,28 @@
             const tunedFreq = (typeof baseFreq === 'number')
               ? baseFreq * Math.pow(2, ((p.detune || 0) + bendCents) / 1200)
               : baseFreq;
-            console.log('[PAD] WRAP/CHORD sample voice type=' + p.type + ' padLoop=' + !!((typeof sampleSamplers !== 'undefined' && sampleSamplers.get(p.type.slice(7))) || {}).padLoop + ' (shared sampler — NO LOOP)');
+            // Pads must loop while held; the shared Tone.Sampler is one-shot, so
+            // build a dedicated looping ADSR voice (mirrors the single-note path).
+            const _isPad = !!(((typeof sampleSamplers !== 'undefined' && sampleSamplers.get(p.type.slice(7))) || {}).padLoop);
+            if (_isPad && typeof _buildSampleAdsrVoice === 'function') {
+              const senv = {
+                attack:  Math.max((p.attack  ?? 300) / 1000, 0.005),
+                decay:   Math.max((p.decay   ?? 0)   / 1000, 0.001),
+                sustain: Math.max((p.sustain ?? 100) / 100,  0.001),
+                release: Math.max((p.release ?? 800) / 1000, 0.1),
+              };
+              const dest = fxOverrideGlobal ? masterLimiter : globalSendTap;
+              const sv = _buildSampleAdsrVoice(entry.sampler, p.type.slice(7), tunedFreq, senv, dest,
+                { filterCutoff: p.filterCutoff, filterQ: p.filterQ });
+              if (sv) {
+                return {
+                  attack:  (at) => { try { sv.source.start(at); if (sv.padLoop) { try { sv.source.loop = true; } catch (e) {} } sv.ampEnv.triggerAttack(at, vol); } catch (e) {} },
+                  release: () => { try { sv.ampEnv.triggerRelease(); } catch (e) {} setTimeout(() => { try { _disposeSampleAdsrVoice(sv); } catch (e) {} }, (senv.release + 0.3) * 1000); },
+                  setDetune: () => {},
+                  env: { release: senv.release },
+                };
+              }
+            }
             return {
               attack:  (at) => { try { entry.sampler.triggerAttack(tunedFreq, at, vol); } catch (e) {} },
               release: () => { try { entry.sampler.triggerRelease(tunedFreq, undefined); } catch (e) {} },

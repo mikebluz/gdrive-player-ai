@@ -1897,7 +1897,7 @@
       // handle that releases them all on pointer-up. (Sequence playback goes
       // through playNote, which dispatches separately; this is the live-press /
       // sustain path.)
-      try { if (isEnsembleType(params.type)) console.log('[ENS] sustain dispatch', params.type); } catch (e) {}
+      try { console.log('[ENS] startSustainedNote type=', params.type); } catch (e) {}
       if (isEnsembleType(params.type)) return _startSustainedEnsemble(freq, params, _coldStartAt);
       const {
         type    = 'sine',

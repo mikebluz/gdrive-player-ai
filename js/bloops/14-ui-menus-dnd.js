@@ -4102,6 +4102,7 @@
       if (!notes[cellIdx]) return;
       const note = notes[cellIdx];
       const params = { ...cellParams[cellIdx] };
+      try { console.log('[ENS] polyStartCell', { cellIdx, type: params.type, gridMode: (typeof gridMode !== 'undefined' ? gridMode : '?') }); } catch (e) {}
       // Radial Tone overrides the cell's stored detune with a press-position-
       // derived value (see radialBendCents); subsequent pointermoves update
       // the live synth via the sustain handle.

@@ -1087,14 +1087,16 @@
         const stepSub = (step.subdivision != null) ? step.subdivision : gsub;
         const durMs = Math.max(20, Math.round((60 / bpm) * stepSub * stepDur * 1000));
         if (Array.isArray(step.chord) && step.chord.length) {
-          const freqs = step.chord.filter(n => n && n.freq != null).map(n => n.freq);
+          const playable = step.chord.filter(n => n && n.freq != null);
+          const freqs = playable.map(n => n.freq);
+          const sounds = playable.map(n => n.sound || null); // per-voice source tone (merge preserves these)
           const vel = step.chord.reduce((m, n) => Math.max(m, (n && n.params && Number.isFinite(n.params.volume)) ? n.params.volume : 100), 0) || 100;
-          events.push({ freqs, durMs, vel });
+          events.push({ freqs, sounds, durMs, vel });
         } else if (step.freq != null) {
           const vel = (step.params && Number.isFinite(step.params.volume)) ? step.params.volume : 100;
-          events.push({ freqs: [step.freq], durMs, vel });
+          events.push({ freqs: [step.freq], sounds: [step.sound || null], durMs, vel });
         } else {
-          events.push({ freqs: [], durMs, vel: 0 }); // rest preserves timing
+          events.push({ freqs: [], sounds: [], durMs, vel: 0 }); // rest preserves timing
         }
       };
       saved.steps.forEach(s => {
@@ -1102,7 +1104,6 @@
         else pushFrom(s);
       });
       if (!events.length) return null;
-      try { console.log('[SEQ] seedFromSaved', { stepCount: saved.steps.length, hasLanes: Array.isArray(saved.lanes), poly: !!saved.polyMode, events: events.length, sounds: saved.steps.slice(0, 30).map(s => Array.isArray(s.chord) ? ('['+s.chord.map(n=>n.sound).join(',')+']') : (s.sound || (s.freq==null?'rest':'?'))) }); } catch (e) {}
       return { events, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm };
     }
     // Nudge an absolute freq to a nearby scale degree (seeded random walk).
@@ -1173,7 +1174,12 @@
       const depth = Math.max(0, Math.min(100, seq.varyDepth | 0)) / 100;
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const type = _ambLayerType(seq.tone);
-      try { if (!seq._dbgTone) { seq._dbgTone = 1; console.log('[SEQ] emit tone', { seqTone: seq.tone, resolvedType: type, gridType: (typeof cellParams!=='undefined'&&cellParams[0])?cellParams[0].type:'?', events: seed.events.length, units: seq.units.length, intervalMs: seq.intervalMs }); } } catch (e) {}
+      // When the layer Tone is "Grid voice" ('') we honor each note's own
+      // captured source voice (so a merged/multi-voice sequence plays piano
+      // notes as piano, square as square, instead of forcing them all through
+      // whatever the grid voice happens to be — e.g. an ensemble). An explicit
+      // layer Tone still overrides every note uniformly.
+      const layerSet = !!(seq.tone && seq.tone !== '');
       // Verbatim (return-to-original) decision for THIS cycle, on the picked unit.
       let verbatim;
       if (seq.returnMode === 'chance') {
@@ -1182,14 +1188,15 @@
         const Nr = Math.max(1, seq.returnN | 0);
         verbatim = (((st && st.iter) | 0) % Nr) === 0;
       }
-      const emitEvent = (freqs, durMs, vel, t, padStyle) => {
+      const emitEvent = (freqs, durMs, vel, t, padStyle, sounds) => {
         if (!freqs || !freqs.length) return;
         const pans = _ambSpacePans(freqs.length, space);
         const vol = _ambAccentVol(_ambApplyLevel(Math.round((vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
         freqs.forEach((f, vi) => {
+          const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
           const p = padStyle
-            ? { ...base, type, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
-            : { ...base, type, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] };
+            ? { ...base, type: vtype, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
+            : { ...base, type: vtype, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] };
           if (dmod) p._detuneMod = dmod;
           try { playNote(f, p, durMs, t + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
         });
@@ -1224,13 +1231,13 @@
           if (_ambRand() < 0.15 * depth) { t += durMs / 1000; continue; } // drop note (keep timing)
           freqs = freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq)));
         }
-        emitEvent(freqs, durMs, ev.vel, t, false);
+        emitEvent(freqs, durMs, ev.vel, t, false, ev.sounds);
         t += durMs / 1000;
       }
       // RHYTHM mode: occasionally append an extra nudged echo at the phrase tail.
       if (!verbatim && seq.varyMode === 'rhythm' && _ambRand() < 0.2 * depth) {
         const ev = seed.events[Math.floor(_ambRand() * seed.events.length)];
-        if (ev && ev.freqs.length) emitEvent(ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), Math.max(40, ev.durMs | 0), ev.vel, t, false);
+        if (ev && ev.freqs.length) emitEvent(ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), Math.max(40, ev.durMs | 0), ev.vel, t, false, ev.sounds);
       }
     }
 

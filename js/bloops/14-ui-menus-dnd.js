@@ -589,6 +589,7 @@
           (Array.isArray(snap.ensembles) ? snap.ensembles : []).forEach(d => {
             if (d && d.id != null) ensembles.set(String(d.id), JSON.parse(JSON.stringify(d)));
           });
+          if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
         }
       } catch (e) {}
 
@@ -1630,6 +1631,7 @@
         if (typeof confirm === 'function' && !confirm('Delete ensemble "' + (existing.name || existing.id) + '"?')) return;
         if (typeof ensembles !== 'undefined') ensembles.delete(String(existing.id));
         if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
         close();
       });
 
@@ -1670,6 +1672,8 @@
         def.id = id;
         ensembles.set(id, JSON.parse(JSON.stringify(def)));
         if (typeof persistWorkspace === 'function') persistWorkspace();
+        // Surface it in the Bloom layer Tone dropdowns right away.
+        if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
         // Make it the live grid voice so the user hears it immediately.
         if (typeof applyToneToAllCells === 'function') { try { applyToneToAllCells('ensemble:' + id); } catch (e) {} }
         close();

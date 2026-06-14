@@ -2109,9 +2109,19 @@
       transform: scaleX(var(--ph, 0)); background: #9f7aea;
     }
     .ambient-ph.frozen > i { background: #4fd1c5; }
+    /* Per-layer Solo button (in the layer head) — pushes the right-hand
+       button group (Solo / Freeze / delete / collapse) over. */
+    .ambient-solo-btn {
+      margin-left: auto; flex: 0 0 auto;
+      padding: 2px 8px; border: 1px solid #2d2d3f; border-radius: 12px;
+      background: transparent; color: #d6bcfa; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-solo-btn:hover { border-color: #9f7aea; color: #e9d8fd; } }
+    .ambient-solo-btn.soloed { color: #1a202c; background: #f6e05e; border-color: #f6e05e; }
     /* Per-layer Freeze button (in the layer head). */
     .ambient-freeze-btn {
-      margin-left: auto; flex: 0 0 auto;
+      margin-left: 6px; flex: 0 0 auto;
       padding: 2px 8px; border: 1px solid #2d2d3f; border-radius: 12px;
       background: transparent; color: #7fd6e8; font-family: 'Segoe UI', sans-serif;
       font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
@@ -6763,6 +6773,22 @@
       text-align: center;
       margin-top: 8px;
       min-height: 1.2em;
+    }
+    .render-progress-modal .render-progress-note {
+      color: #9f7aea; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem;
+      text-align: center; margin-top: 8px;
+    }
+    /* Non-blocking variant: no backdrop, clicks pass through, parked at the
+       bottom so it doesn't obscure the controls being edited. */
+    .render-progress-overlay.render-progress-nonblock {
+      background: transparent; pointer-events: none;
+      align-items: flex-end; justify-content: center;
+      padding-bottom: 24px;
+    }
+    .render-progress-nonblock .render-progress-modal {
+      pointer-events: none; width: min(340px, 92vw);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 22px rgba(159,122,234,0.18);
+      border-color: #3b3b52;
     }
 
     .sm-title {

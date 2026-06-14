@@ -454,9 +454,12 @@
     // handle exposes setProgress / setLabel / close — caller drives
     // it from renderTracksToBuffer's onProgress + the encode / upload
     // phase transitions.
-    function showRenderProgressModal(title) {
+    function showRenderProgressModal(title, opts = {}) {
       const overlay = document.createElement('div');
-      overlay.className = 'sm-overlay render-progress-overlay';
+      // Non-blocking mode: a corner status card with no backdrop and
+      // pointer-events disabled, so the user can keep interacting with the
+      // app (e.g. tweak Bloom live while it records in real time).
+      overlay.className = 'sm-overlay render-progress-overlay' + (opts.nonBlocking ? ' render-progress-nonblock' : '');
       const modal = document.createElement('div');
       modal.className = 'sm-modal render-progress-modal';
       modal.innerHTML = `
@@ -464,6 +467,7 @@
         <div class="render-progress-status">Preparing…</div>
         <div class="render-progress-bar"><div class="render-progress-fill" style="width:0%"></div></div>
         <div class="render-progress-pct"></div>
+        ${opts.note ? `<div class="render-progress-note">${opts.note}</div>` : ''}
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);

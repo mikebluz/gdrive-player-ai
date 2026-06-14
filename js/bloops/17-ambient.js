@@ -976,6 +976,24 @@
       } catch (e) {}
       return out;
     }
+    // Re-populate this engine's per-layer Tone dropdowns from the current voice
+    // list (so newly-created ensembles / imported samples appear without a full
+    // panel rebuild). Preserves each select's current value when still valid.
+    function _ambRefreshToneSelects(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      if (typeof populateGroupedToneSelect !== 'function') return;
+      const opts = _ambToneOptions();
+      host.querySelectorAll('select[id$="-tone"]').forEach(sel => {
+        const cur = sel.value;
+        populateGroupedToneSelect(sel, opts, { value: '', label: 'Grid voice' });
+        sel.value = cur;
+        if (sel.value !== cur) sel.value = ''; // chosen voice no longer exists → Grid voice
+      });
+    }
+    function _ambRefreshAllToneSelects() {
+      try { if (_laneEng && _laneEng.inited) _ambRefreshToneSelects(_laneEng); } catch (e) {}
+      try { if (_masterEng && _masterEng.inited) _ambRefreshToneSelects(_masterEng); } catch (e) {}
+    }
     function _ambDrumKits() {
       const kits = [];
       try {
@@ -1466,6 +1484,9 @@
       const horizon = now + 1.2, lead = now + 0.1;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
+      // Solo: if ANY on layer is soloed, only soloed layers sound.
+      const anySolo = _ambComputeAnySolo(cfg);
+      const _muted = (lc) => anySolo && !(lc && lc.solo);
       try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
       const runLayer = (key, lc, guardMax, minSec, emit) => {
         if (!lc || lc.present === false || !lc.on || _ambFreezeFrozen(E, key)) return;
@@ -1480,6 +1501,7 @@
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
       // generate normally while teeing each note into the capture sink.
       const stepLayer = (key, lc, guardMax, minSec, emit) => {
+        if (_muted(lc)) return; // silenced by another layer's solo
         if (_ambFreezeGate(E, key, now, horizon)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
         try { runLayer(key, lc, guardMax, minSec, emit); }
@@ -1495,6 +1517,7 @@
         for (const seq of cfg.seqs) {
           if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
+          if (_muted(seq)) continue;
           if (_ambFreezeGate(E, key, now, horizon)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
@@ -1516,6 +1539,7 @@
         for (const L of cfg.samples) {
           if (!L || !L.on || !L.sampleId) continue;
           const key = 'samp:' + L.id;
+          if (_muted(L)) continue;
           if (_ambFreezeGate(E, key, now, horizon)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
@@ -1642,6 +1666,29 @@
     // single Freeze press loops the LAST N seconds that ALREADY played (N =
     // Freeze length), snapped to the layer's note grid so it links up; press
     // again to Thaw and resume generation. Symbolic (not audio), so it's seamless.
+    // Solo: true when at least one ON layer (of any type) is soloed — in which
+    // case only soloed layers sound. A soloed-but-off layer doesn't engage solo.
+    function _ambComputeAnySolo(cfg) {
+      if (!cfg) return false;
+      if (['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].present !== false && cfg[k].on && cfg[k].solo)) return true;
+      if (Array.isArray(cfg.extras) && cfg.extras.some(x => x && x.present !== false && x.on && x.solo)) return true;
+      if (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s && s.on && s.solo)) return true;
+      if (Array.isArray(cfg.samples) && cfg.samples.some(s => s && s.on && s.solo)) return true;
+      return false;
+    }
+    function _ambToggleSolo(E, key) {
+      const layer = _ambLayerByKey(E, key); if (!layer) return;
+      layer.solo = !layer.solo;
+      _ambSoloSyncAll(E);
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _ambSoloSyncAll(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-solo-btn').forEach(btn => {
+        const layer = _ambLayerByKey(E, btn.dataset.skey);
+        btn.classList.toggle('soloed', !!(layer && layer.solo));
+      });
+    }
     function _ambFreezeState(E, key) {
       E.freeze = E.freeze || {};
       return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null });
@@ -2173,7 +2220,12 @@
       const ext = fmt === 'mp3' ? 'mp3' : 'wav';
       const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
       _ambExportBusy = true;
-      const progress = (typeof showRenderProgressModal === 'function') ? showRenderProgressModal('Exporting Bloom…') : null;
+      // Bloom export records the LIVE output in real time, so keep the progress
+      // indicator non-blocking — the user can tweak layers / FX / solo / ramps
+      // while it records and those changes are captured in the take.
+      const progress = (typeof showRenderProgressModal === 'function')
+        ? showRenderProgressModal('Exporting Bloom…', { nonBlocking: true, note: 'Keep tweaking — edits are captured live until the recording ends.' })
+        : null;
       try {
         progress && progress.setStatus('Recording ' + durSec + 's…');
         const buffer = await _ambCaptureToBuffer(E, durSec, (pct, sec, tot) => progress && progress.setProgress(pct, sec, tot));
@@ -2331,6 +2383,7 @@
       '</details>';
     const _ambHead = (label, onId, delId, freezeKey) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
+      (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
@@ -2949,6 +3002,7 @@
       _ambRenderExtras(E);
       _ambRenderRamps(E);
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
+      try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const m = cfg[layer] && cfg[layer].mod;
         if (!m) return;
@@ -3088,12 +3142,15 @@
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
       host.addEventListener('click', (e) => {
+        const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
+        if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();
         try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }
       });
       _ambFreezeSyncAll(E);
+      _ambSoloSyncAll(E);
 
       // Per-section Tone dropdowns: "Grid voice" (follow cellParams[0]) plus
       // every melodic tone from getAllSoundOptions (drum kits excluded — Beat

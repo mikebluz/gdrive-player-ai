@@ -256,13 +256,17 @@
           }).connect(head);
           head = filter;
         }
-        source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
-        // Pad voices loop their whole (pre-trimmed) buffer so the sound holds
-        // for the full note duration: a held press sustains until release, a
-        // sequenced step loops for its slot (the trigger sites still bound the
-        // source via the ampEnv release + source.stop). loop=true is harmless
-        // on a normal start(time) — it only matters while the source plays.
-        if (info && info.padLoop) { try { source.loop = true; } catch (e) {} }
+        // Pad voices loop their whole (pre-trimmed) buffer so the sound holds for
+        // the full note duration: a held press sustains until release, a sequenced
+        // step loops for its slot (the trigger sites bound the source via the
+        // ampEnv release + source.stop). Pass loop in the CONSTRUCTOR (the setter
+        // can no-op if the internal node isn't ready yet) with an explicit
+        // loopEnd so the whole buffer loops regardless of defaults.
+        const _padLoop = !!(info && info.padLoop);
+        const _srcOpts = { url: audioBuf, playbackRate };
+        if (_padLoop) { _srcOpts.loop = true; _srcOpts.loopStart = 0; _srcOpts.loopEnd = audioBuf.duration; }
+        source = new Tone.ToneBufferSource(_srcOpts).connect(head);
+        if (_padLoop) { try { source.loop = true; source.loopEnd = audioBuf.duration; } catch (e) {} }
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch

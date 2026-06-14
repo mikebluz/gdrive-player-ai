@@ -1685,7 +1685,7 @@
       const P = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       // Notes that already played in the last N seconds.
       const win = cap.filter(e => e.at < P + 0.001 && e.at >= P - N);
-      if (typeof showToast === 'function') showToast('FZ ' + key + ': cap=' + cap.length + ' win=' + win.length + ' N=' + N.toFixed(1));
+      console.log('[FZ] _ambFreezeNow', { key, engine: E.idPrefix, capLen: cap.length, winLen: win.length, N, P, lastCapAt: cap.length ? cap[cap.length - 1].at : null });
       if (!win.length) {
         if (typeof showToast === 'function') showToast('Freeze: nothing has played yet — let the layer sound first.');
         return;
@@ -1700,7 +1700,7 @@
       let L = Math.max(intervalSec, Math.round(span / intervalSec) * intervalSec);
       if (L < maxRel + intervalSec * 0.25) L = Math.ceil((maxRel + 0.001) / intervalSec) * intervalSec;
       st.events = events; st.loopLen = L;
-      if (typeof showToast === 'function') showToast('FZ ' + key + ': events=' + events.length + ' loopLen=' + L.toFixed(2) + 's');
+      console.log('[FZ] frozen', { key, events: events.length, loopLen: L, anchor: P + 0.25 });
       // Start the loop almost immediately (small lead so the first note isn't
       // already in the past by the next scheduling tick). A brief overlap with
       // any still-ringing generated note is fine for ambient.
@@ -1722,7 +1722,7 @@
         if (base >= horizon) break;
         for (const e of st.events) {
           const at = base + e.t;
-          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); if (!st._dbgPlayed && typeof showToast === 'function') { st._dbgPlayed = 1; showToast('FZ ' + key + ': replay firing (dest=' + (dest ? 'mod' : 'none') + ')'); } } catch (x) {} }
+          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); if (!st._dbgPlayed) { st._dbgPlayed = 1; console.log('[FZ] replay firing', { key, at, dest: dest ? 'mod/bus' : 'none', events: st.events.length, loopLen: st.loopLen }); } } catch (x) {} }
         }
         k++;
       }
@@ -2989,6 +2989,7 @@
       // dynamic layers re-render; data-fkey carries the layer key).
       host.addEventListener('click', (e) => {
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
+        console.log('[FZ] host click', { target: e.target && e.target.className, foundBtn: !!fb, fkey: fb && fb.dataset.fkey, engine: E.idPrefix });
         if (!fb) return;
         e.stopPropagation();
         try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }

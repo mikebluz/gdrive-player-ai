@@ -257,16 +257,21 @@
           head = filter;
         }
         // Pad voices loop their whole (pre-trimmed) buffer so the sound holds for
-        // the full note duration. NOTE: Tone's ToneBufferSource (a OneShotSource)
-        // schedules an auto-stop at the buffer end in start(); its `loop` setter
-        // only cancels that stop when the source has ALREADY started. So loop set
-        // here (pre-start) reads true but the source still stops after one play —
-        // the trigger sites must re-assert `source.loop = true` AFTER start()
-        // (see padLoop in the returned voice) to cancel the pending stop.
+        // the full note duration. Tone.ToneBufferSource is a OneShotSource whose
+        // output Gain starts at 0 and ramps up at start(); its `loop` setter calls
+        // cancelStop() → cancelScheduledValues(), which (if called after start)
+        // cancels that fade-in ramp and leaves the gain at 0 (silence). So we
+        // can't make it loop reliably. Tone.Player is purpose-built for gapless
+        // looping — use it for pads (start/stop/dispose share the same API the
+        // trigger sites use). playbackRate is a plain number on Player (no VCO
+        // connect), which is fine: grid pad presses don't drive a detune LFO.
         const _padLoop = !!(info && info.padLoop);
-        const _srcOpts = { url: audioBuf, playbackRate };
-        if (_padLoop) { _srcOpts.loop = true; _srcOpts.loopStart = 0; _srcOpts.loopEnd = audioBuf.duration; }
-        source = new Tone.ToneBufferSource(_srcOpts).connect(head);
+        if (_padLoop) {
+          source = new Tone.Player({ url: audioBuf, loop: true, loopStart: 0, loopEnd: audioBuf.duration,
+            playbackRate, fadeIn: 0, fadeOut: 0 }).connect(head);
+        } else {
+          source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
+        }
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch
@@ -274,7 +279,7 @@
         // vibrato as base·(ln2/1200)·cents. A per-voice Gain applies that scale
         // and sums onto the constant playbackRate (the LFO is zero-mean, so the
         // sampled pitch centre is preserved); it's disposed with the voice.
-        if (opts && opts.detuneMod && typeof opts.detuneMod.connect === 'function'
+        if (!_padLoop && opts && opts.detuneMod && typeof opts.detuneMod.connect === 'function'
             && source.playbackRate && playbackRate > 0) {
           detuneScale = new Tone.Gain(playbackRate * (Math.LN2 / 1200));
           opts.detuneMod.connect(detuneScale);
@@ -1546,11 +1551,7 @@
         if (v) {
           const triggerAt = _warmAt();
           try {
-            v.source.start(triggerAt);
-            // Re-assert loop AFTER start() — the setter cancels the OneShotSource
-            // auto-stop only once started, so this is what actually makes a pad
-            // loop indefinitely while held (vs. playing once and cutting off).
-            if (v.padLoop) { try { v.source.loop = true; } catch (e) {} }
+            v.source.start(triggerAt);   // pad = Tone.Player(loop) → loops while held
             v.ampEnv.triggerAttack(triggerAt, velocity);
           } catch (e) { _disposeSampleAdsrVoice(v); }
           let released = false;
@@ -2182,10 +2183,8 @@
               // the plain whole-buffer start — byte-identical to the prior path.
               if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
               else v.source.start(triggerAt);
-              // Pad: re-assert loop AFTER start() to cancel the OneShotSource
-              // auto-stop, so the buffer loops to fill the step (the explicit
-              // stop below then bounds it to the slot).
-              if (v.padLoop) { try { v.source.loop = true; } catch (e) {} }
+              // Pad = Tone.Player(loop): loops to fill the step; the explicit
+              // stop below bounds it to the slot.
               // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
               // release over `rel` — same envelope timing the synth path uses,
               // so a sample voice and a synth voice sit identically in a slot.

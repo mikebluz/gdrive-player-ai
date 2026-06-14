@@ -865,7 +865,7 @@
                 { filterCutoff: p.filterCutoff, filterQ: p.filterQ });
               if (sv) {
                 return {
-                  attack:  (at) => { try { sv.source.start(at); if (sv.padLoop) { try { sv.source.loop = true; } catch (e) {} } sv.ampEnv.triggerAttack(at, vol); } catch (e) {} },
+                  attack:  (at) => { try { sv.source.start(at); sv.ampEnv.triggerAttack(at, vol); } catch (e) {} },
                   release: () => { try { sv.ampEnv.triggerRelease(); } catch (e) {} setTimeout(() => { try { _disposeSampleAdsrVoice(sv); } catch (e) {} }, (senv.release + 0.3) * 1000); },
                   setDetune: () => {},
                   env: { release: senv.release },

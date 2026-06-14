@@ -3027,6 +3027,11 @@
         const seq = _defaultSeqLayer(id);
         seq.units = [unit];
         seq.scale = (unit.scale && typeof SCALES !== 'undefined' && SCALES[unit.scale]) ? unit.scale : '';
+        // Play the sent sequence FAITHFULLY by default — the generative walk
+        // (pitch/rhythm vary) would otherwise drop ~6% of notes and nudge
+        // pitches on non-verbatim cycles, so you'd hear a thinned/altered take
+        // rather than the merge. Variation stays opt-in via the Amount slider.
+        seq.varyDepth = 0;
         _ambFitSeqInterval(seq);
         cfg.seqs.push(seq);
       } else {

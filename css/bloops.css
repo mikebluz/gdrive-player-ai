@@ -5327,10 +5327,29 @@
     .clear-bank-row {
       display: flex;
       justify-content: center;
-      padding: 12px 0 4px;
+      gap: 10px;
+      padding: 12px 12px 4px;
     }
+    /* Record (moved here from the footer) sits beside Clear bank — both share
+       the row. Record keeps its red identity + .recording pulse. */
+    .clear-bank-row > #rec-btn {
+      flex: 1 1 0; min-width: 0;
+      width: auto; height: auto;
+      padding: 8px 16px;
+      border: 1px solid #e53e3e;
+      border-radius: 20px;
+      background: transparent;
+      color: #e53e3e;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .clear-bank-row > #rec-btn:hover { border-color: #fc8181; color: #fc8181; } }
     .clear-bank-row > #clear-bank-btn {
-      width: 50%;
+      flex: 1 1 0;
+      width: auto;
       padding: 8px 16px;
       border: 1px solid #2d2d3f;
       border-radius: 20px;

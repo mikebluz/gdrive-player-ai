@@ -122,7 +122,23 @@
       return out;
     }
 
-    function generateRandomSequence(numSteps, maxChordSize, includeRests = true, includeChords = true, scaleName = null, tones = null, octavesToUse = null) {
+    // Generated accent pattern: a per-step volume (0..100) giving the sequence
+    // dynamics instead of every note at full velocity. Picks a metric period
+    // (2/3/4), marks downbeats strong + a secondary mid accent in 4, weak
+    // elsewhere, with light random jitter so it feels played, not stamped.
+    function _genAccentPattern(n) {
+      const period = randomFrom([2, 3, 4]);
+      const STRONG = 100, MID = 74, WEAK = 52;
+      const out = [];
+      for (let s = 0; s < n; s++) {
+        const pos = s % period;
+        let v = (pos === 0) ? STRONG : (period >= 4 && pos === 2) ? MID : WEAK;
+        v = Math.max(22, Math.min(100, Math.round(v + (Math.random() * 2 - 1) * 8)));
+        out.push(v);
+      }
+      return out;
+    }
+    function generateRandomSequence(numSteps, maxChordSize, includeRests = true, includeChords = true, scaleName = null, tones = null, octavesToUse = null, accentPattern = false) {
       // Filter the chromatic note grid down to scale tones — `pool` holds
       // the cell indices we're allowed to sample from. octavesToUse caps the
       // pool to the bottom N octaves (1 = lowest octave only). Notes beyond
@@ -144,6 +160,7 @@
       const cellIdxFor = (i) => (i < visibleCount) ? i : null;
       const out = [];
       const chordAllowed = includeChords && maxChordSize > 1 && poolSize > 1;
+      const accents = accentPattern ? _genAccentPattern(numSteps) : null;
       for (let s = 0; s < numSteps; s++) {
         const roll = Math.random();
         const subdivision = randomFrom(_RAND_SUBS);
@@ -158,12 +175,14 @@
           const chord = picked.map(p => {
             const idx = pool[p];
             const sound = randomFrom(tonePool);
+            const params = randomStepParams(sound);
+            if (accents) params.volume = accents[s];
             return {
               freq: pickNotes[idx].freq,
               label: pickNotes[idx].label,
               cellIndex: cellIdxFor(idx),
               sound,
-              params: randomStepParams(sound),
+              params,
             };
           });
           out.push({
@@ -175,12 +194,14 @@
         }
         const idx = pool[Math.floor(Math.random() * poolSize)];
         const sound = randomFrom(tonePool);
+        const params = randomStepParams(sound);
+        if (accents) params.volume = accents[s];
         out.push({
           freq: pickNotes[idx].freq,
           label: pickNotes[idx].label,
           cellIndex: cellIdxFor(idx),
           sound,
-          params: randomStepParams(sound),
+          params,
           duration, subdivision,
         });
       }
@@ -231,6 +252,10 @@
         <label style="display:flex;align-items:center;gap:8px;padding:0 0 4px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
           <input type="checkbox" id="rand-chords" />
           Include chords
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:0 0 4px;color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.85rem;cursor:pointer;">
+          <input type="checkbox" id="rand-accent" />
+          Accent pattern (dynamics)
         </label>
         <div style="color:#4a4a6a;font-family:'Segoe UI',sans-serif;font-size:0.72rem;padding:4px 0 10px;">
           Uses the grid's current scale and octave range. Replaces the in-progress sequence — save first to keep the existing one.
@@ -305,12 +330,13 @@
         const c = Math.max(1, Math.min(8,  parseInt(chordIn.value) || 3));
         const includeRests  = !!modal.querySelector('#rand-rests').checked;
         const includeChords = !!modal.querySelector('#rand-chords').checked;
+        const accentPattern = !!modal.querySelector('#rand-accent').checked;
         const tones         = Array.from(selectedTones);
         snapshotForUndo('Random sequence');
         stopSequence();
         // Use the grid's current scale + octaveCount so generation stays
         // anchored to the active voice instead of forcing user choices.
-        const generated = generateRandomSequence(n, c, includeRests, includeChords, currentScale, tones, octaveCount);
+        const generated = generateRandomSequence(n, c, includeRests, includeChords, currentScale, tones, octaveCount, accentPattern);
         // Keep on: append; Keep off: replace (original behavior).
         sequence = keepMode ? sequence.concat(generated) : generated;
         pendingChord = [];

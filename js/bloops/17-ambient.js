@@ -68,7 +68,7 @@
         // 'A:B') that gates which of the layer's generated events actually fire —
         // e.g. '1:2' = every other event, for sparser/polymetric interplay.
         bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
@@ -165,7 +165,7 @@
     // positional (Seq1, Seq2…).
     function _defaultSeqLayer(id) {
       return { id: id | 0, on: true, intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always',
-               level: 70, tone: '', scale: '', mod: _ambDefaultMod(),
+               level: 70, accent: 0, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
                unitMode: 'single', units: [], ..._ambDefaultFx() };
     }
@@ -176,7 +176,7 @@
       const d = _defaultSeqLayer(id);
       if (!Number.isFinite(s.id)) s.id = id;
       if (typeof s.on !== 'boolean') s.on = true;
-      ['intervalMs','lengthMs','drift','level','varyDepth','returnN','returnChance'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
+      ['intervalMs','lengthMs','drift','level','accent','varyDepth','returnN','returnChance'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
       ['tone','scale'].forEach(k => { if (typeof s[k] !== 'string') s[k] = d[k]; });
       if (typeof s.when !== 'string') s.when = 'always';
       if (s.varyMode !== 'pitch' && s.varyMode !== 'rhythm' && s.varyMode !== 'pad') s.varyMode = 'pitch';
@@ -702,6 +702,17 @@
       const t = (L - 70) / 30; // 0 at the default, 1 at the slider max
       return Math.max(0, Math.min(100, Math.round(base + (100 - base) * t)));
     }
+    // Stochastic Accent (0..100): randomly widen a layer's note-to-note
+    // dynamics. 0 = flat (every note at its level). As it rises, more notes pop
+    // louder and a few drop to ghost-notes, so the line breathes. Per-note call.
+    function _ambAccentVol(vol, accent) {
+      const a = Math.max(0, Math.min(100, accent | 0)) / 100;
+      if (a <= 0) return vol;
+      const r = _ambRand();
+      if (r < a * 0.45) return Math.max(0, Math.min(100, Math.round(vol * (1 + a * 0.6))));   // accented
+      if (r > 1 - a * 0.22) return Math.max(0, Math.round(vol * (1 - a * 0.4)));               // ghost
+      return vol;
+    }
     // Per-layer Drift (0..99): phase-offset the layer's event grid by that
     // fraction of its Interval (snapped to the step grid in Sync mode).
     function _ambDriftOffset(layer, cfg) {
@@ -901,7 +912,7 @@
         // Space spreads them by panning each randomly within ±space.
         const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
         const mp = _ambMotifParams(lenMs, pan, motif.tone);
-        mp.volume = _ambApplyLevel(mp.volume, motif.level);
+        mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
         if (dmod) mp._detuneMod = dmod;
         try { playNote(f, mp, lenMs, at + i * burstGap, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       }
@@ -1172,7 +1183,7 @@
       const emitEvent = (freqs, durMs, vel, t, padStyle) => {
         if (!freqs || !freqs.length) return;
         const pans = _ambSpacePans(freqs.length, space);
-        const vol = _ambApplyLevel(Math.round((vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level);
+        const vol = _ambAccentVol(_ambApplyLevel(Math.round((vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
         freqs.forEach((f, vi) => {
           const p = padStyle
             ? { ...base, type, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
@@ -2442,6 +2453,7 @@
         _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
         _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') +
         _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+        _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
         _ambModUi('seq-' + id) +
         _ambFxUi('seq-' + id) +
       '</div>';
@@ -2468,7 +2480,7 @@
       bindInt('depth', 'varyDepth'); bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); bindStr('when', 'when');
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));
-      bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level');
+      bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent');
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t][k] = parseInt(e.value, 10) || 0; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); });
         const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t].shape = sh.value || 'sine'; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); });
@@ -2607,6 +2619,7 @@
         ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'],
+        ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
       texture: { label: 'Texture', ctrls: [['tone'], ['notes'],
         ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
@@ -2997,6 +3010,7 @@
       set('ambient-motif-when', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
+      set('ambient-motif-accent', cfg.motif.accent);
       set('ambient-motif-level', cfg.motif.level);
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
@@ -3112,6 +3126,7 @@
           condCtrl('motif') +
           sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
           sl('Twist', 'ambient-motif-twist', 0, 100, 0, 'steady → bursts') +
+          sl('Accent', 'ambient-motif-accent', 0, 100, 0, 'flat → dynamic') +
           sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
           modUi('motif') +
           fxUi('motif') +
@@ -3301,6 +3316,7 @@
       bind('ambient-motif-drift', 'motif', 'drift');
       bind('ambient-motif-rest', 'motif', 'restProb');
       bind('ambient-motif-twist', 'motif', 'twist');
+      bind('ambient-motif-accent', 'motif', 'accent');
       bind('ambient-motif-level', 'motif', 'level');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');

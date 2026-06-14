@@ -993,21 +993,30 @@
       // Single-buffer samples become sliceable: stamp a sliceMode (default
       // 'scan') so the sequencer plays step-div slices. Non-sliceable voices
       // (synths + the multi-sampled tuned instruments) clear sliceMode.
-      const sliceMode = (typeof isSliceableSample === 'function' && isSliceableSample(type))
-        ? (sliceModeArg || 'scan') : null;
-      // Single-buffer samples (imported / recorded / TEXT-frozen) default to a
-      // full-level envelope so the clip plays at its natural loudness instead of
-      // inheriting the synth-style decay-to-50% default. The ADSR stays fully
-      // editable in the Sound Editor afterward; this is just the seed state.
+      // Pads loop the whole buffer for a held note, so they NEVER per-step slice
+      // (unlike other single-buffer samples) and seed a slow swell envelope.
+      const _padInfo = (typeof type === 'string' && type.startsWith('sample:') && typeof sampleSamplers !== 'undefined')
+        ? sampleSamplers.get(type.slice(7)) : null;
+      const isPad = !!(_padInfo && _padInfo.padLoop);
+      const sliceMode = isPad ? null
+        : ((typeof isSliceableSample === 'function' && isSliceableSample(type)) ? (sliceModeArg || 'scan') : null);
+      // Single-buffer samples default to a full-level envelope so the clip plays
+      // at its natural loudness; pads add a slow attack/release swell (their own,
+      // stored at creation). The ADSR stays fully editable in the Sound Editor.
       const SAMPLE_ENV = { attack: 4, decay: 0, sustain: 100, release: 120 };
+      const PAD_ENV = isPad ? {
+        attack: Number.isFinite(_padInfo.padAttack) ? _padInfo.padAttack : 300,
+        decay: 0, sustain: 100,
+        release: Number.isFinite(_padInfo.padRelease) ? _padInfo.padRelease : 800,
+      } : null;
+      const ENV = isPad ? PAD_ENV : SAMPLE_ENV;
+      const seedEnv = isPad || !!sliceMode;
       const applyVoiceDefaults = (o) => {
         if (!o) return;
-        if (sliceMode) {
-          o.sliceMode = sliceMode;
-          o.attack = SAMPLE_ENV.attack; o.decay = SAMPLE_ENV.decay;
-          o.sustain = SAMPLE_ENV.sustain; o.release = SAMPLE_ENV.release;
-        } else {
-          delete o.sliceMode;
+        if (sliceMode) o.sliceMode = sliceMode; else delete o.sliceMode;
+        if (seedEnv) {
+          o.attack = ENV.attack; o.decay = ENV.decay;
+          o.sustain = ENV.sustain; o.release = ENV.release;
         }
       };
       cellParams.forEach((p, idx) => {

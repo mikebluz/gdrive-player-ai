@@ -826,6 +826,8 @@
         if (meta && meta.rootNote) rec.rootNote = meta.rootNote;
         if (meta && Number.isFinite(meta.tuneCents)) rec.tuneCents = meta.tuneCents;
         if (meta && meta.padLoop) rec.padLoop = true;
+        if (meta && Number.isFinite(meta.padAttack)) rec.padAttack = meta.padAttack;
+        if (meta && Number.isFinite(meta.padRelease)) rec.padRelease = meta.padRelease;
         await new Promise((resolve, reject) => {
           const tx = db.transaction('blobs', 'readwrite');
           tx.objectStore('blobs').put(rec);
@@ -856,7 +858,7 @@
               urls,
               release: 1,
             }).connect(globalSendTap);
-            sampleSamplers.set(rec.id, {
+            const _info = {
               sampler,
               name: rec.name || rec.id,
               rootNote,
@@ -864,7 +866,12 @@
               imported: true,
               urls,
               padLoop: !!rec.padLoop,
-            });
+            };
+            if (rec.padLoop) {
+              if (Number.isFinite(rec.padAttack)) _info.padAttack = rec.padAttack;
+              if (Number.isFinite(rec.padRelease)) _info.padRelease = rec.padRelease;
+            }
+            sampleSamplers.set(rec.id, _info);
           } catch (e) {
             console.warn('Failed to restore imported sample', rec.id, e);
           }
@@ -903,10 +910,17 @@
       // sequenced step holds for its slot. Flagged on the info + persisted so
       // it survives reload, and surfaced in the "Pads" tone family.
       const padLoop = !!(opts && opts.padLoop);
+      // Pad swell envelope (ms) — how the held note fades in/out; stored on the
+      // info + persisted so applyToneToAllCells can seed it when the pad is the
+      // grid voice (see PAD_ENV there).
+      const padAttack = (opts && Number.isFinite(opts.padAttack)) ? opts.padAttack : undefined;
+      const padRelease = (opts && Number.isFinite(opts.padRelease)) ? opts.padRelease : undefined;
       const urls = { [rootNote]: url };
       const sampler = new Tone.Sampler({ urls, release: 1 }).connect(globalSendTap);
-      sampleSamplers.set(id, { sampler, name, rootNote, tuneCents, imported: true, urls, padLoop });
-      await persistImportedSample(id, name, blob, { rootNote, tuneCents, padLoop });
+      const info = { sampler, name, rootNote, tuneCents, imported: true, urls, padLoop };
+      if (padLoop) { if (padAttack != null) info.padAttack = padAttack; if (padRelease != null) info.padRelease = padRelease; }
+      sampleSamplers.set(id, info);
+      await persistImportedSample(id, name, blob, { rootNote, tuneCents, padLoop, padAttack, padRelease });
       return { id, name };
     }
     // Estimate the fundamental frequency (Hz) of an AudioBuffer via

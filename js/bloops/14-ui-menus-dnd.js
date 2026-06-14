@@ -1521,34 +1521,44 @@
     // equal-power pan position fanned out from centre, so the output is stereo
     // (copies summed mono per voice, then panned). spread=0 keeps the source's
     // channel layout and sums in place (mono-faithful).
-    function _buildPadBuffer(ac, slice, copies, offsetSec, spread) {
+    //
+    // `detuneCents` (>0) pitch-shifts each copy by a symmetric spread of ±cents
+    // (read circularly with linear interpolation at the per-copy rate), which
+    // decorrelates the copies into a lush, slowly-beating chorus instead of a
+    // static comb. A detuned copy isn't periodic at length L, so its wrap has a
+    // small step — buildOut enforces a crossfade floor when detune is on to mask
+    // the summed seam.
+    function _buildPadBuffer(ac, slice, copies, offsetSec, spread, detuneCents) {
       copies = Math.max(1, Math.min(8, copies | 0));
-      if (copies <= 1) return slice; // spread/offset need ≥2 copies to do anything
+      if (copies <= 1) return slice; // spread/offset/detune need ≥2 copies to do anything
       spread = Math.max(0, Math.min(1, spread || 0));
+      detuneCents = Math.max(0, Math.min(50, detuneCents || 0));
       const L = slice.length, srcCh = slice.numberOfChannels, sr = slice.sampleRate;
       if (L < 2) return slice;
       const offSamp = Math.max(0, Math.round((offsetSec || 0) * sr));
+      const rateOf = (k) => detuneCents > 0 ? Math.pow(2, (((k / (copies - 1)) * 2 - 1) * detuneCents) / 1200) : 1;
+      const lerp = (arr, pos) => { const p = ((pos % L) + L) % L, i0 = Math.floor(p), f = p - i0, i1 = (i0 + 1) % L; return arr[i0] * (1 - f) + arr[i1] * f; };
       let peakIn = 0;
       for (let c = 0; c < srcCh; c++) { const s = slice.getChannelData(c); for (let i = 0; i < L; i++) { const a = s[i] < 0 ? -s[i] : s[i]; if (a > peakIn) peakIn = a; } }
       const stereo = spread > 0;
       const out = ac.createBuffer(stereo ? 2 : srcCh, L, sr);
+      const chans = []; for (let c = 0; c < srcCh; c++) chans.push(slice.getChannelData(c));
+      const monoLerp = (pos) => { let v = 0; for (let c = 0; c < srcCh; c++) v += lerp(chans[c], pos); return v / srcCh; };
       if (stereo) {
         const dL = out.getChannelData(0), dR = out.getChannelData(1);
-        const chans = []; for (let c = 0; c < srcCh; c++) chans.push(slice.getChannelData(c));
-        const mono = (i) => { let v = 0; for (let c = 0; c < srcCh; c++) v += chans[c][i]; return v / srcCh; };
         for (let k = 0; k < copies; k++) {
-          const sh = ((offSamp * k) % L + L) % L;
+          const sh = (offSamp * k) % L, r = rateOf(k);
           const pan = ((k / (copies - 1)) * 2 - 1) * spread;   // −spread..+spread
           const theta = (pan + 1) * Math.PI / 4;               // 0..π/2 (equal power)
           const gl = Math.cos(theta), gr = Math.sin(theta);
-          for (let i = 0; i < L; i++) { const v = mono((i + sh) % L); dL[i] += v * gl; dR[i] += v * gr; }
+          for (let i = 0; i < L; i++) { const v = monoLerp(sh + i * r); dL[i] += v * gl; dR[i] += v * gr; }
         }
       } else {
         for (let c = 0; c < srcCh; c++) {
-          const s = slice.getChannelData(c), d = out.getChannelData(c);
+          const s = chans[c], d = out.getChannelData(c);
           for (let k = 0; k < copies; k++) {
-            const sh = ((offSamp * k) % L + L) % L;
-            for (let i = 0; i < L; i++) d[i] += s[(i + sh) % L];
+            const sh = (offSamp * k) % L, r = rateOf(k);
+            for (let i = 0; i < L; i++) d[i] += lerp(s, sh + i * r);
           }
         }
       }
@@ -1559,6 +1569,16 @@
         for (let c = 0; c < out.numberOfChannels; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) d[i] *= g; }
       }
       return out;
+    }
+    // Remove any DC offset (per channel) so the loop wrap doesn't tick and no
+    // headroom is wasted on a constant bias. Cheap mean-subtraction, in place.
+    function _dcBlockBufferInPlace(buf) {
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const d = buf.getChannelData(c);
+        let m = 0; for (let i = 0; i < d.length; i++) m += d[i];
+        m /= d.length || 1;
+        if (Math.abs(m) > 1e-5) for (let i = 0; i < d.length; i++) d[i] -= m;
+      }
     }
     // Bake a 2nd-order (Butterworth) low-pass into a buffer, in place — RBJ
     // cookbook biquad, run per channel. Kept synchronous (no OfflineAudioContext)
@@ -2049,14 +2069,22 @@
             '<input type="range" id="pad-copies" min="1" max="8" step="1" value="1"></label>' +
           '<label class="ee-field"><span>Copy offset <em id="pad-offset-v">25 ms</em></span>' +
             '<input type="range" id="pad-offset" min="0" max="500" step="1" value="25"></label>' +
-          '<label class="ee-field"><span>Crossfade <em id="pad-xfade-v">off</em></span>' +
-            '<input type="range" id="pad-xfade" min="0" max="250" step="1" value="0"></label>' +
+          '<label class="ee-field"><span>Detune <em id="pad-detune-v">0¢</em></span>' +
+            '<input type="range" id="pad-detune" min="0" max="30" step="1" value="0"></label>' +
         '</div>' +
         '<div class="ee-top">' +
-          '<label class="ee-field"><span>Low-pass <em id="pad-lpf-v">off</em></span>' +
-            '<input type="range" id="pad-lpf" min="0" max="100" step="1" value="100"></label>' +
           '<label class="ee-field"><span>Spread <em id="pad-spread-v">0%</em></span>' +
             '<input type="range" id="pad-spread" min="0" max="100" step="1" value="0"></label>' +
+          '<label class="ee-field"><span>Crossfade <em id="pad-xfade-v">off</em></span>' +
+            '<input type="range" id="pad-xfade" min="0" max="250" step="1" value="0"></label>' +
+          '<label class="ee-field"><span>Low-pass <em id="pad-lpf-v">off</em></span>' +
+            '<input type="range" id="pad-lpf" min="0" max="100" step="1" value="100"></label>' +
+        '</div>' +
+        '<div class="ee-top">' +
+          '<label class="ee-field"><span>Attack <em id="pad-attack-v">300 ms</em></span>' +
+            '<input type="range" id="pad-attack" min="0" max="3000" step="10" value="300"></label>' +
+          '<label class="ee-field"><span>Release <em id="pad-release-v">800 ms</em></span>' +
+            '<input type="range" id="pad-release" min="0" max="4000" step="10" value="800"></label>' +
         '</div>' +
         '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
         '<div class="se-wave-actions">' +
@@ -2083,7 +2111,14 @@
       const lpfV = modal.querySelector('#pad-lpf-v');
       const spreadEl = modal.querySelector('#pad-spread');
       const spreadV = modal.querySelector('#pad-spread-v');
+      const detuneEl = modal.querySelector('#pad-detune');
+      const detuneV = modal.querySelector('#pad-detune-v');
+      const attackEl = modal.querySelector('#pad-attack');
+      const attackV = modal.querySelector('#pad-attack-v');
+      const releaseEl = modal.querySelector('#pad-release');
+      const releaseV = modal.querySelector('#pad-release-v');
       let copies = 1, offsetSec = 0.025, crossfadeSec = 0, lpfPos = 100, spread = 0;
+      let detuneCents = 0, padAttackMs = 300, padReleaseMs = 800;
       // Slider 0..100 → log cutoff ~80 Hz..20 kHz; 100 = fully open (off).
       const lpfHz = () => Math.round(80 * Math.pow(2, lpfPos * 8 / 100));
 
@@ -2096,8 +2131,12 @@
       // optional low-pass. All baked synchronously so preview == saved audio.
       const buildOut = () => {
         let b = _sliceAudioBuffer(ac, buf, startF, endF, false);
-        b = _buildPadBuffer(ac, b, copies, offsetSec, spread / 100);
-        b = _crossfadeLoopBuffer(ac, b, crossfadeSec);
+        _dcBlockBufferInPlace(b); // strip DC before looping
+        b = _buildPadBuffer(ac, b, copies, offsetSec, spread / 100, detuneCents);
+        // Detuned copies aren't periodic at the loop length, so force a small
+        // crossfade floor to mask the summed seam when detune is engaged.
+        const effX = (detuneCents > 0 && copies > 1) ? Math.max(crossfadeSec, 0.025) : crossfadeSec;
+        b = _crossfadeLoopBuffer(ac, b, effX);
         if (lpfPos < 100) _lowpassBufferInPlace(b, lpfHz(), 0.707);
         return b;
       };
@@ -2222,6 +2261,20 @@
         spread = parseInt(spreadEl.value, 10) || 0; spreadV.textContent = spread + '%';
         if (previewSrc) startPreview();
       });
+      detuneEl.addEventListener('input', () => {
+        detuneCents = parseInt(detuneEl.value, 10) || 0; detuneV.textContent = detuneCents + '¢';
+        if (previewSrc) startPreview();
+      });
+      // Attack/Release shape the held note's swell (not the baked loop), so they
+      // only update their labels here and are stored on the pad at save.
+      attackEl.addEventListener('input', () => {
+        padAttackMs = parseInt(attackEl.value, 10) || 0;
+        attackV.textContent = padAttackMs >= 1000 ? (padAttackMs / 1000).toFixed(2).replace(/0$/, '') + ' s' : padAttackMs + ' ms';
+      });
+      releaseEl.addEventListener('input', () => {
+        padReleaseMs = parseInt(releaseEl.value, 10) || 0;
+        releaseV.textContent = padReleaseMs >= 1000 ? (padReleaseMs / 1000).toFixed(2).replace(/0$/, '') + ' s' : padReleaseMs + ' ms';
+      });
       previewBtn.addEventListener('click', () => {
         if (previewSrc) stopPreview(); else startPreview();
       });
@@ -2237,7 +2290,7 @@
         try {
           const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(buildOut()) : null;
           if (!wav) throw new Error('WAV encoder unavailable.');
-          const reg = await registerSampleFromBlob(wav, nm, { padLoop: true });
+          const reg = await registerSampleFromBlob(wav, nm, { padLoop: true, padAttack: padAttackMs, padRelease: padReleaseMs });
           if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
           if (reg && typeof applyToneToAllCells === 'function') { try { applyToneToAllCells('sample:' + reg.id, 'none'); } catch (e) {} }
           if (typeof showToast === 'function') showToast('Saved pad “' + (reg ? reg.name : nm) + '”');

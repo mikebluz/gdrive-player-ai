@@ -1,7 +1,6 @@
     // ---- Custom sample loading (samples/manifest.json) ----
     // Each entry creates a Tone.Sampler that pitch-shifts the file across
     // the keyboard. type strings of the form 'sample:<id>' route through these.
-    console.log('[PADV] samples module loaded — build 154500');
     const sampleSamplers = new Map();
 
     // For drum-kit samples, snap any incoming pitch to the C2 row so each
@@ -296,24 +295,88 @@
       const sliceBufSec = (opts && Number.isFinite(opts.sliceDurSec)) ? Math.max(0.005, opts.sliceDurSec * playbackRate) : null;
       return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec, padLoop: _padLoop };
     }
-    // Make a (just-started) ToneBufferSource loop by setting `loop` straight on
-    // the underlying native AudioBufferSourceNode — NOT via Tone's loop setter,
-    // whose cancelStop() would cancel the OneShotSource fade-in ramp (→ silence).
-    // Called immediately after start(); with no duration passed to start() there
-    // is no auto-stop, so the buffer loops indefinitely until the voice is
-    // stopped/disposed. Returns true if the native node was reachable.
-    function _padLoopNativeSource(toneSrc) {
+    // Dedicated LOOPING voice for pad samples, built from raw Web Audio nodes:
+    //   native AudioBufferSourceNode(loop=true) → envGain (manual ADSR) →
+    //   boostGain → [panner] → (Tone.connect) destination.
+    // Tone's ToneBufferSource is a OneShotSource that can't loop without its
+    // loop-setter cancelling its own fade-in ramp (→ silence), so pads bypass it
+    // entirely. Returns a { release } handle (and start happens here at `when`),
+    // or null if the buffer isn't reachable (caller falls back to a one-shot).
+    function _startPadVoice(id, tunedFreq, env, destNode, velocity, when, opts) {
       try {
-        const ns = toneSrc && (toneSrc._source || toneSrc._sourceNode || toneSrc.sourceNode);
-        if (ns && typeof ns === 'object' && 'loop' in ns) {
-          const dur = (ns.buffer && ns.buffer.duration) || (toneSrc.buffer && toneSrc.buffer.duration) || 0;
-          ns.loop = true;
-          ns.loopStart = 0;
-          if (dur > 0) ns.loopEnd = dur;
-          return true;
+        const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+        const info = sampleSamplers.get(id);
+        const audioBuf = (typeof _getSampleAudioBuffer === 'function') ? _getSampleAudioBuffer(id) : null;
+        if (!ac || !info || !audioBuf) return null;
+        let rootFreq = 261.63;
+        try { rootFreq = Tone.Frequency(info.rootNote || 'C4').toFrequency(); } catch (e) {}
+        let playbackRate = (rootFreq > 0 && tunedFreq > 0) ? tunedFreq / rootFreq : 1;
+        if (Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
+
+        const src = ac.createBufferSource();
+        src.buffer = audioBuf;
+        src.loop = true; src.loopStart = 0; src.loopEnd = audioBuf.duration;
+        try { src.playbackRate.value = playbackRate; } catch (e) {}
+
+        const envGain = ac.createGain(); envGain.gain.value = 0;
+        const boostGain = ac.createGain(); boostGain.gain.value = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
+        src.connect(envGain); envGain.connect(boostGain);
+        let tail = boostGain, panNode = null;
+        if (opts && Number.isFinite(opts.pan) && Math.abs(opts.pan) > 0.01 && ac.createStereoPanner) {
+          panNode = ac.createStereoPanner();
+          try { panNode.pan.value = Math.max(-1, Math.min(1, opts.pan / 100)); } catch (e) {}
+          boostGain.connect(panNode); tail = panNode;
         }
-      } catch (e) {}
-      return false;
+        try { if (typeof Tone.connect === 'function') Tone.connect(tail, destNode); else tail.connect(destNode.input || destNode); }
+        catch (e) { try { tail.connect(ac.destination); } catch (_) {} }
+
+        const t0 = (typeof when === 'number' && when >= 0) ? when : ac.currentTime;
+        try { src.start(t0); } catch (e) {}
+        const peak = Math.max(0.0001, velocity);
+        const atk = Math.max(0.005, env.attack || 0);
+        const dec = Math.max(0, env.decay || 0);
+        const sus = Math.max(0, Math.min(1, env.sustain != null ? env.sustain : 1)) * peak;
+        envGain.gain.setValueAtTime(0, t0);
+        envGain.gain.linearRampToValueAtTime(peak, t0 + atk);
+        if (dec > 0) envGain.gain.linearRampToValueAtTime(sus, t0 + atk + dec);
+        else envGain.gain.setValueAtTime(sus, t0 + atk + 0.0005);
+
+        let cleaned = false;
+        const cleanup = () => {
+          if (cleaned) return; cleaned = true;
+          try { src.stop(); } catch (e) {}
+          try { src.disconnect(); } catch (e) {}
+          try { envGain.disconnect(); } catch (e) {}
+          try { boostGain.disconnect(); } catch (e) {}
+          try { panNode && panNode.disconnect(); } catch (e) {}
+        };
+        let released = false;
+        return {
+          release: () => {
+            if (released) return; released = true;
+            const rel = Math.max(0.02, env.release || 0.1);
+            try {
+              const now = ac.currentTime;
+              envGain.gain.cancelScheduledValues(now);
+              envGain.gain.setValueAtTime(envGain.gain.value, now);
+              envGain.gain.linearRampToValueAtTime(0, now + rel);
+              src.stop(now + rel + 0.05);
+            } catch (e) {}
+            setTimeout(cleanup, (Math.max(0.02, env.release || 0.1) + 0.3) * 1000);
+          },
+          // Scheduled (sequence) use: hold for `holdSec` from t0, then release.
+          scheduleStop: (holdSec) => {
+            try {
+              const rel = Math.max(0.02, env.release || 0.1);
+              const relStart = t0 + Math.max(0, holdSec);
+              envGain.gain.setValueAtTime(sus, relStart);
+              envGain.gain.linearRampToValueAtTime(0, relStart + rel);
+              src.stop(relStart + rel + 0.05);
+              setTimeout(cleanup, ((relStart + rel + 0.1 - ac.currentTime) * 1000) + 100);
+            } catch (e) {}
+          },
+        };
+      } catch (e) { return null; }
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -1422,7 +1485,6 @@
       };
     }
     function startSustainedNote(freq, params = {}, startAt) {
-      try { const _t = (typeof params === 'string') ? params : (params && params.type); if (typeof _t === 'string' && _t.indexOf('sample:') === 0) console.log('[PADV] startSustainedNote ENTER type=' + _t + ' freq=' + freq); } catch (e) {}
       // Cold-start guard — same race as playNote. Optional `startAt`
       // (Tone audio time) lets multi-voice wrap auditions pin every
       // voice to the same instant; without it, each voice computes its
@@ -1544,9 +1606,6 @@
           }};
         }
         const entry = getSampleEntry(type);
-        console.log('[PADV] sample branch: entry=' + !!entry + ' sampler=' + !!(entry && entry.sampler) +
-          ' loaded=' + !!(entry && entry.sampler && entry.sampler.loaded) +
-          ' padLoop=' + !!(sampleSamplers.get(type.slice(7)) || {}).padLoop);
         if (!entry || !entry.sampler || !entry.sampler.loaded) {
           // Sampler hasn't finished its network fetch yet — the most
           // common cause of "first taps make no sound" on a cold load,
@@ -1554,30 +1613,28 @@
           // Tone.Synth sine sustain so the press is audible and held;
           // the next press (likely a few hundred ms later) will use the
           // real sample.
-          console.log('[PADV] → sampler NOT loaded, falling back to sine');
           return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
         }
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
+        const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
+        // Pad voices loop continuously while held — a dedicated native looping
+        // voice (Tone's one-shot source can't loop without killing its fade-in).
+        if ((sampleSamplers.get(type.slice(7)) || {}).padLoop) {
+          const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, _warmAt(), { pan });
+          if (padH) return padH;
+        }
         // Full-ADSR held voice: attack → decay → sustain (held), then release
         // on pointer-up — the sound editor's full envelope (+ optional filter)
         // shapes the held sample, not just a fade in/out.
-        const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
           { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
-        const _pdbg = !!(sampleSamplers.get(type.slice(7)) || {}).padLoop;
-        if (_pdbg) console.log('[PADV] v=' + !!v + ' src=' + (v && v.source && v.source.constructor && v.source.constructor.name) +
-          ' env=' + JSON.stringify(env) + ' vel=' + velocity + ' dest=' + (sampleDest && sampleDest.constructor && sampleDest.constructor.name));
         if (v) {
           const triggerAt = _warmAt();
           try {
             v.source.start(triggerAt);
-            if (v.padLoop) {
-              const _found = _padLoopNativeSource(v.source);
-              if (_pdbg) { const ns = v.source._source || v.source._sourceNode; console.log('[PADV] after start: nativeFound=' + _found + ' ns=' + (ns && ns.constructor && ns.constructor.name) + ' ns.loop=' + (ns && ns.loop) + ' ns.loopEnd=' + (ns && ns.loopEnd) + ' hasBuffer=' + !!(v.source.buffer)); }
-            }
             v.ampEnv.triggerAttack(triggerAt, velocity);
-          } catch (e) { if (_pdbg) console.log('[PADV] THREW in start/attack: ' + (e && e.message)); _disposeSampleAdsrVoice(v); }
+          } catch (e) { _disposeSampleAdsrVoice(v); }
           let released = false;
           return { release: () => {
             if (released) return; released = true;
@@ -2197,6 +2254,14 @@
             : (destination
                || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
                || globalSendTap);
+          // Pad voices loop to fill the step (native looping voice, bounded by
+          // scheduleStop). Skipped if the step carries a slice window.
+          if ((sampleSamplers.get(type.slice(7)) || {}).padLoop
+              && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)) {
+            const padAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+            const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, padAt, { pan });
+            if (padH) { try { padH.scheduleStop(Math.max(0.02, preReleaseDur)); } catch (e) {} return; }
+          }
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
             { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,
               sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec });
@@ -2207,7 +2272,6 @@
               // the plain whole-buffer start — byte-identical to the prior path.
               if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
               else v.source.start(triggerAt);
-              if (v.padLoop) _padLoopNativeSource(v.source); // loop to fill the step (stop below bounds it)
               // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
               // release over `rel` — same envelope timing the synth path uses,
               // so a sample voice and a synth voice sit identically in a slot.

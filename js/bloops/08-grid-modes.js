@@ -850,6 +850,7 @@
             const tunedFreq = (typeof baseFreq === 'number')
               ? baseFreq * Math.pow(2, ((p.detune || 0) + bendCents) / 1200)
               : baseFreq;
+            console.log('[PAD] WRAP/CHORD sample voice type=' + p.type + ' padLoop=' + !!((typeof sampleSamplers !== 'undefined' && sampleSamplers.get(p.type.slice(7))) || {}).padLoop + ' (shared sampler — NO LOOP)');
             return {
               attack:  (at) => { try { entry.sampler.triggerAttack(tunedFreq, at, vol); } catch (e) {} },
               release: () => { try { entry.sampler.triggerRelease(tunedFreq, undefined); } catch (e) {} },

@@ -1541,10 +1541,11 @@
         // on pointer-up — the sound editor's full envelope (+ optional filter)
         // shapes the held sample, not just a fade in/out.
         const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
-        const _padDbg = !!(sampleSamplers.get(type.slice(7)) || {}).padLoop;
+        const _padInfo = sampleSamplers.get(type.slice(7)) || {};
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
           { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
-        if (_padDbg) console.log('[PAD] held press →', v ? 'ADSR voice (loop=' + v.source.loop + ', dur=' + (v.source.buffer && v.source.buffer.duration) + ', sustain=' + env.sustain + ')' : 'FALLBACK shared sampler (NO LOOP)');
+        console.log('[PAD] startSustainedNote sample type=' + type + ' padLoop=' + !!_padInfo.padLoop +
+          ' → ' + (v ? 'ADSR(loop=' + v.source.loop + ', dur=' + (v.source.buffer && v.source.buffer.duration) + ', sustain=' + env.sustain + ')' : 'FALLBACK shared sampler (NO LOOP)'));
         if (v) {
           const triggerAt = _warmAt();
           try {

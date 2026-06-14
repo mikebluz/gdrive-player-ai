@@ -302,6 +302,10 @@
     // loop-setter cancelling its own fade-in ramp (→ silence), so pads bypass it
     // entirely. Returns a { release } handle (and start happens here at `when`),
     // or null if the buffer isn't reachable (caller falls back to a one-shot).
+    // Live pad voices (native looping AudioBufferSourceNode graphs). Tracked so a
+    // user Stop gesture can cut them immediately (they bypass the Tone-based
+    // _activeSampleVoices registry). Each entry carries a fast click-free kill().
+    const _activePadVoices = new Set();
     function _startPadVoice(id, tunedFreq, env, destNode, velocity, when, opts) {
       try {
         const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
@@ -342,13 +346,28 @@
         else envGain.gain.setValueAtTime(sus, t0 + atk + 0.0005);
 
         let cleaned = false;
+        const reg = {};
+        _activePadVoices.add(reg);
         const cleanup = () => {
           if (cleaned) return; cleaned = true;
+          _activePadVoices.delete(reg);
           try { src.stop(); } catch (e) {}
           try { src.disconnect(); } catch (e) {}
           try { envGain.disconnect(); } catch (e) {}
           try { boostGain.disconnect(); } catch (e) {}
           try { panNode && panNode.disconnect(); } catch (e) {}
+        };
+        // Fast, click-free kill for a user Stop gesture — ramp to silence over
+        // ~22 ms (ignoring the pad's long musical release) then dispose.
+        reg.kill = () => {
+          try {
+            const now = ac.currentTime;
+            envGain.gain.cancelScheduledValues(now);
+            envGain.gain.setValueAtTime(envGain.gain.value, now);
+            envGain.gain.linearRampToValueAtTime(0, now + 0.022);
+            src.stop(now + 0.03);
+          } catch (e) {}
+          setTimeout(cleanup, 60);
         };
         let released = false;
         return {
@@ -1441,6 +1460,10 @@
       const sampVictims = Array.from(_activeSampleVoices);
       _activeSampleVoices.clear();
       sampVictims.forEach(v => { try { _killSampleVoiceFast(v); } catch (e) {} });
+      // Pad voices (native looping graphs) — cut them too.
+      const padVictims = Array.from(_activePadVoices);
+      _activePadVoices.clear();
+      padVictims.forEach(r => { try { r.kill && r.kill(); } catch (e) {} });
     }
 
     // Click-and-hold sustain — start an attack on pointerdown, release on

@@ -1559,13 +1559,19 @@
         const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
           { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
+        const _pdbg = !!(sampleSamplers.get(type.slice(7)) || {}).padLoop;
+        if (_pdbg) console.log('[PAD2] v=' + !!v + ' src=' + (v && v.source && v.source.constructor && v.source.constructor.name) +
+          ' env=' + JSON.stringify(env) + ' vel=' + velocity + ' dest=' + (sampleDest && sampleDest.constructor && sampleDest.constructor.name));
         if (v) {
           const triggerAt = _warmAt();
           try {
             v.source.start(triggerAt);
-            if (v.padLoop) _padLoopNativeSource(v.source); // loop while held
+            if (v.padLoop) {
+              const _found = _padLoopNativeSource(v.source);
+              if (_pdbg) { const ns = v.source._source || v.source._sourceNode; console.log('[PAD2] after start: nativeFound=' + _found + ' ns=' + (ns && ns.constructor && ns.constructor.name) + ' ns.loop=' + (ns && ns.loop) + ' ns.loopEnd=' + (ns && ns.loopEnd) + ' hasBuffer=' + !!(v.source.buffer)); }
+            }
             v.ampEnv.triggerAttack(triggerAt, velocity);
-          } catch (e) { _disposeSampleAdsrVoice(v); }
+          } catch (e) { if (_pdbg) console.log('[PAD2] THREW in start/attack: ' + (e && e.message)); _disposeSampleAdsrVoice(v); }
           let released = false;
           return { release: () => {
             if (released) return; released = true;

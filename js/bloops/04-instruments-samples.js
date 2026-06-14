@@ -76,7 +76,8 @@
           }
         }
         delete p._detuneMod; // a single LFO node can't fan out to multiple voices
-        try { playNote(f, p, durationMs, startTime, destination, trackIdx, laneIdx); } catch (e) {}
+        try { playNote(f, p, durationMs, startTime, destination, trackIdx, laneIdx); }
+        catch (e) { console.warn('[ENS] member playNote threw', p.type, e); }
       });
     }
     // A "sliceable" sample is a SINGLE-buffer one-shot (imported / recorded /

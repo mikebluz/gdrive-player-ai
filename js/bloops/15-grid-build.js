@@ -1211,6 +1211,7 @@
     const _toneTopBucketFor = (value) =>
       (typeof value === 'string' && (value.startsWith('sample:') || value.startsWith('ensemble:'))) ? 'samples' : 'synths';
     let _toneMenuView = 'top'; // 'top' | 'synths' | 'samples'
+    let _toneSearchQuery = '';  // type-to-search filter; empty = bucketed nav
     function populateTonePanel() {
       const panel = document.getElementById('tone-panel');
       if (!panel) return;
@@ -1246,6 +1247,26 @@
       padBtn.id = 'tone-pad-btn';
       padBtn.textContent = '🎚 Sample to Pad…';
       panel.appendChild(padBtn);
+      // Type-to-search: filter every tone by name. While non-empty it replaces
+      // the bucket/family navigation with a flat, family-grouped match list.
+      const search = document.createElement('input');
+      search.type = 'text';
+      search.className = 'tone-search';
+      search.id = 'tone-search';
+      search.placeholder = '🔍 Search sounds…';
+      search.value = _toneSearchQuery;
+      panel.appendChild(search);
+      search.addEventListener('click', (e) => e.stopPropagation());
+      search.addEventListener('input', () => {
+        _toneSearchQuery = search.value;
+        const caret = search.selectionStart;
+        populateTonePanel();
+        const again = document.getElementById('tone-search');
+        if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch (e) {} }
+        const trigger = document.getElementById('tone-banner-half');
+        const panelEl = document.getElementById('tone-panel');
+        if (trigger && panelEl && panelEl.classList.contains('open')) pinPanelToButton(trigger, panelEl);
+      });
       // Surface the current "Custom" state as a non-clickable marker at the
       // top of the panel, mirroring the Tone banner label. Picking any of
       // the regular options below applies that tone to every cell, which
@@ -1288,6 +1309,25 @@
         h.textContent = text;
         panel.appendChild(h);
       };
+      // Active search: flat, family-grouped match list across all buckets.
+      const q = (_toneSearchQuery || '').trim().toLowerCase();
+      if (q) {
+        const matches = allOpts.filter(o => (o.label || '').toLowerCase().includes(q));
+        if (!matches.length) { renderHeader('No matches'); return; }
+        const grouped = groupByFamily(matches);
+        TONE_FAMILY_ORDER.forEach(fam => {
+          const items = grouped.get(fam);
+          if (!items || !items.length) return;
+          renderHeader(TONE_FAMILY_LABELS[fam] || fam);
+          items.forEach(renderRow);
+        });
+        grouped.forEach((items, fam) => {
+          if (TONE_FAMILY_ORDER.indexOf(fam) >= 0) return; // already rendered
+          renderHeader(TONE_FAMILY_LABELS[fam] || fam);
+          items.forEach(renderRow);
+        });
+        return;
+      }
       if (_toneMenuView === 'top') {
         // Two top-level buttons. Each shows the count of tones in
         // that bucket so the user can see at a glance how many synth
@@ -1364,6 +1404,7 @@
           // Always start at the family list when re-opening, and pick up
           // freshly-loaded samples / instruments.
           _toneMenuView = 'top';
+          _toneSearchQuery = '';
           populateTonePanel();
         }
         panel.classList.toggle('open', open);

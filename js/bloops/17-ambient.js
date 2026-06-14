@@ -1463,6 +1463,22 @@
       Object.keys(_E.mod).forEach(_ambTeardownMod);
       try { if (_E.reverb) { _E.reverb.dispose(); _E.reverb = null; } } catch (x) {}
     }
+    // Cheap single-layer mod/FX sync for on/off toggles. Building or tearing
+    // ONLY the affected chain (not every layer's, as _ambSyncMods does) and
+    // deferring it past the next paint keeps a layer toggle instant — the full
+    // graph rebuild was blocking the repaint, so the click looked dropped and
+    // the user clicked again, re-toggling the state ("stays highlighted").
+    function _ambSyncOneLayerMod(E, key, layer) {
+      const run = () => {
+        _E = E;
+        try {
+          if (layer && layer.on && layer.present !== false) { _ambBuildMod(key, { [key]: layer }); _ambApplyLayerFx(key, layer); }
+          else { _ambTeardownMod(key); }
+          _ambApplyReverb();
+        } catch (e) {}
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run); else run();
+    }
     function _ambSyncMods() {
       const cfg = _E.getCfg();
       if (!cfg) return;
@@ -2649,7 +2665,7 @@
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.on = !sq.on; onB.classList.toggle('on', sq.on); if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.on = !sq.on; onB.classList.toggle('on', sq.on); if (E.timer) _ambSyncOneLayerMod(E, 'seq:' + id, sq); persist(); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSeqLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
@@ -2726,7 +2742,7 @@
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); sync(); persist(); }); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); if (E.timer) _ambSyncOneLayerMod(E, 'samp:' + id, L); persist(); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSampleLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
@@ -2825,7 +2841,7 @@
       const setVal = (suf, val) => { const e = el(suf); if (e && val != null) e.value = String(val); };
       // Wire on/off, delete, and collapse FIRST so a later control-wiring error
       // (e.g. the tone picker) can never leave the layer untoggleable.
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { const L = get(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); sync(); persist(); }); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { _E = E; const L = get(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); if (E.timer) _ambSyncOneLayerMod(E, type + ':' + id, L); persist(); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteExtra(E, type, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
@@ -3550,7 +3566,7 @@
           _E = E; const cfg = cfg0(); if (!cfg) return;
           cfg[layer].on = !cfg[layer].on;
           el.classList.toggle('on', cfg[layer].on);
-          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          if (E.timer) _ambSyncOneLayerMod(E, layer, cfg[layer]);
           persist();
         });
       };

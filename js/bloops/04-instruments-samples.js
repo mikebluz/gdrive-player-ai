@@ -35,6 +35,7 @@
     //     octave/detune/pan/level honored in 'stackOffset' and 'rr' modes
     //     attack/decay/sustain/release = optional per-member ADSR overrides (ms / %)
     const ensembles = new Map();   // id -> def (runtime registry; persisted in the workspace snapshot)
+    try { console.log('[ENS] build=ens-v3 loaded'); } catch (e) {}
     const _ensembleRR = {};        // id -> next member index (round-robin cursor; runtime only)
     function isEnsembleType(type) { return typeof type === 'string' && type.startsWith('ensemble:'); }
     function getEnsemble(id) { return ensembles.get(String(id)) || null; }

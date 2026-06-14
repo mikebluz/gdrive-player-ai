@@ -2052,7 +2052,7 @@
       if (!samples.length) { alert('No single-buffer samples to turn into a pad yet — capture or import a sample first.'); return; }
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return; }
 
-      let buf = null, startF = 0, endF = 1, previewSrc = null, drag = null, zeroLock = false;
+      let buf = null, startF = 0, endF = 1, previewSrc = null, previewGain = null, drag = null, zeroLock = false;
 
       const optsHtml = samples.map(s =>
         '<option value="' + s.id + '">' + String(s.name).replace(/[<>&]/g, '') + '</option>').join('');
@@ -2122,9 +2122,26 @@
       // Slider 0..100 → log cutoff ~80 Hz..20 kHz; 100 = fully open (off).
       const lpfHz = () => Math.round(80 * Math.pow(2, lpfPos * 8 / 100));
 
-      const stopPreview = () => {
-        try { previewSrc && previewSrc.stop(); } catch (e) {}
-        previewSrc = null; previewBtn.textContent = '▶ Preview loop';
+      const _disposePreview = () => {
+        const s = previewSrc, g = previewGain;
+        previewSrc = null; previewGain = null;
+        try { s && s.stop(); } catch (e) {}
+        try { s && s.dispose(); } catch (e) {}
+        try { g && g.dispose(); } catch (e) {}
+      };
+      const stopPreview = () => { _disposePreview(); previewBtn.textContent = '▶ Preview loop'; };
+      // Graceful stop for the Stop button — fade over the pad's Release so the
+      // user hears the release swell (mirrors playing the pad on the grid).
+      const releasePreview = () => {
+        if (!previewSrc || !previewGain) { stopPreview(); return; }
+        const s = previewSrc, g = previewGain;
+        previewSrc = null; previewGain = null; previewBtn.textContent = '▶ Preview loop';
+        try {
+          const r = Math.max(0.02, padReleaseMs / 1000), now = Tone.now();
+          g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now);
+          g.gain.linearRampToValueAtTime(0, now + r);
+          setTimeout(() => { try { s.stop(); } catch (e) {} try { s.dispose(); } catch (e) {} try { g.dispose(); } catch (e) {} }, (r + 0.1) * 1000);
+        } catch (e) { try { s.stop(); s.dispose(); g.dispose(); } catch (x) {} }
       };
       // The exact buffer that gets saved/previewed: the trimmed slice → overlaid
       // offset copies (optionally stereo-spread) → loop-boundary crossfade →
@@ -2140,12 +2157,21 @@
         if (lpfPos < 100) _lowpassBufferInPlace(b, lpfHz(), 0.707);
         return b;
       };
-      const startPreview = () => {
+      // withAttack=true (Preview button) ramps in over the pad's Attack so the
+      // swell is audible; re-renders during slider drags pass falsy for an
+      // instant restart (no repeated fade-in while dragging).
+      const startPreview = (withAttack) => {
         if (!buf) return;
-        stopPreview();
+        _disposePreview();
         try {
-          const src = new Tone.ToneBufferSource({ url: buildOut(), loop: true }).toDestination();
-          src.start(); previewSrc = src; previewBtn.textContent = '■ Stop';
+          const g = new Tone.Gain(1).toDestination();
+          const src = new Tone.ToneBufferSource({ url: buildOut(), loop: true }).connect(g);
+          if (withAttack) {
+            const a = Math.max(0.005, padAttackMs / 1000), now = Tone.now();
+            g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(0, now);
+            g.gain.linearRampToValueAtTime(1, now + a);
+          }
+          src.start(); previewSrc = src; previewGain = g; previewBtn.textContent = '■ Stop';
         } catch (e) {}
       };
       const fmtSel = () => {
@@ -2276,7 +2302,7 @@
         releaseV.textContent = padReleaseMs >= 1000 ? (padReleaseMs / 1000).toFixed(2).replace(/0$/, '') + ' s' : padReleaseMs + ' ms';
       });
       previewBtn.addEventListener('click', () => {
-        if (previewSrc) stopPreview(); else startPreview();
+        if (previewSrc) releasePreview(); else startPreview(true);
       });
       const close = () => { stopPreview(); try { overlay.remove(); } catch (e) {} };
       modal.querySelector('#pad-cancel').addEventListener('click', close);

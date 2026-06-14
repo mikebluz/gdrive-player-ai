@@ -1650,10 +1650,25 @@
       (steps || []).forEach(s => { t += walk(s, t); });
       return { events, total: t };
     }
-    function _mergeLaneSteps(stepsA, stepsB) {
+    const _mergeGcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) { [x, y] = [y, x % y]; } return x; };
+    function _mergeLaneSteps(stepsA, stepsB, squareUp) {
       const A = _laneToTickEvents(stepsA), B = _laneToTickEvents(stepsB);
-      const events = A.events.concat(B.events);
-      const total = Math.max(A.total, B.total);
+      let evA = A.events, evB = B.events, total = Math.max(A.total, B.total);
+      // Square up: repeat each lane to their common multiple length so both
+      // end together (a resolving polyrhythm). A repeats lcm/la times, B
+      // repeats lcm/lb times.
+      if (squareUp && A.total > 0 && B.total > 0 && A.total !== B.total) {
+        const g = _mergeGcd(A.total, B.total), lcm = (A.total / g) * B.total;
+        const tile = (ev, period, n) => {
+          const out = [];
+          for (let r = 0; r < n; r++) ev.forEach(e => out.push({ start: e.start + r * period, end: e.end + r * period, note: e.note }));
+          return out;
+        };
+        evA = tile(A.events, A.total, lcm / A.total);
+        evB = tile(B.events, B.total, lcm / B.total);
+        total = lcm;
+      }
+      const events = evA.concat(evB);
       if (total <= 0 || events.length === 0) {
         // Nothing pitched — fall back to a single rest spanning the longer lane.
         return [{ freq: null, label: '—', cellIndex: null, duration: Math.max(1, total || 1), subdivision: 0.125 }];
@@ -1686,7 +1701,37 @@
       }
       return out;
     }
-    function _doMergeLanes(srcAIdx, srcBIdx) {
+    // Warn that the two lanes are different lengths and offer to square them up
+    // (repeat each to the common multiple so the merged lane ends cleanly).
+    function _showMergeLengthDialog(srcAIdx, srcBIdx, laneA, laneB, la, lb) {
+      const g = _mergeGcd(la, lb), lcm = (la / g) * lb;
+      const repA = lcm / la, repB = lcm / lb;
+      const beats = (t) => (t / _MERGE_TPQ);
+      const fmt = (t) => { const b = beats(t); return (Math.abs(b - Math.round(b)) < 0.01 ? String(Math.round(b)) : b.toFixed(2)) + ' beat' + (Math.round(b) === 1 ? '' : 's'); };
+      const nameA = laneA.name || 'A', nameB = laneB.name || 'B';
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Lanes are different lengths</div>
+        <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.82rem;padding:2px 0 12px;line-height:1.5;">
+          <b>${nameA}</b> is ${fmt(la)}, <b>${nameB}</b> is ${fmt(lb)}.<br>
+          Square up so both end together? <b>${nameA}</b> repeats <b>${repA}×</b> and
+          <b>${nameB}</b> repeats <b>${repB}×</b>, ending at ${fmt(lcm)}.
+        </div>
+        <div class="sm-footer" style="flex-wrap:wrap;gap:8px;">
+          <button type="button" class="sm-preview" id="merge-len-cancel">Cancel</button>
+          <button type="button" class="sm-preview" id="merge-len-asis">Merge as-is</button>
+          <button type="button" class="sm-apply"   id="merge-len-square">Square up &amp; merge</button>
+        </div>`;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const close = () => { try { document.body.removeChild(overlay); } catch (e) {} };
+      modal.querySelector('#merge-len-cancel').addEventListener('click', close);
+      modal.querySelector('#merge-len-asis').addEventListener('click', () => { close(); _doMergeLanes(srcAIdx, srcBIdx, false); });
+      modal.querySelector('#merge-len-square').addEventListener('click', () => { close(); _doMergeLanes(srcAIdx, srcBIdx, true); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    }
+    function _doMergeLanes(srcAIdx, srcBIdx, squareUp) {
       if (srcAIdx === srcBIdx) return;
       if (srcAIdx < 0 || srcAIdx >= lanes.length) return;
       if (srcBIdx < 0 || srcBIdx >= lanes.length) return;
@@ -1709,10 +1754,21 @@
       // a misleading entry in the undo stack — Drift does the same.
       const stepsA = Array.isArray(laneA.steps) ? laneA.steps : [];
       const stepsB = Array.isArray(laneB.steps) ? laneB.steps : [];
+      // Different-length lanes: warn once and offer to "square up" (repeat each
+      // to their common multiple so both end together). squareUp undefined =
+      // first call → prompt; true/false = the user's choice → proceed.
+      if (squareUp === undefined) {
+        const la = _laneToTickEvents(stepsA).total, lb = _laneToTickEvents(stepsB).total;
+        if (la > 0 && lb > 0 && la !== lb) {
+          _showMergeLengthDialog(srcAIdx, srcBIdx, laneA, laneB, la, lb);
+          return;
+        }
+        squareUp = false;
+      }
       // Absolute-timeline merge: preserves both lanes' step-div resolution and
       // every note's exact start/stop; overlaps become chords sliced at event
       // boundaries (a midway onset lands at its real position).
-      const merged = _mergeLaneSteps(stepsA, stepsB);
+      const merged = _mergeLaneSteps(stepsA, stepsB, squareUp);
       const newIdx = lanes.length;
       const newLane = _makeLane(newIdx, merged);
       // Seed the merged lane's voice from the active lane so playback

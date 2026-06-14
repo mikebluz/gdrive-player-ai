@@ -3987,6 +3987,14 @@
           discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
         });
       }
+      // Re-validate against SharedAuth, which enforces expiry (60s buffer).
+      // The in-process googleAccessToken is never cleared on its own, so after
+      // ~1h it's a dead string — reusing it 401s every Drive call. Adopt the
+      // still-valid cached token, or drop ours so we mint a fresh one below.
+      try {
+        const stored = window.SharedAuth?.load?.();
+        googleAccessToken = (stored && stored.token) ? stored.token : null;
+      } catch (e) { /* keep whatever we have */ }
       if (googleAccessToken) {
         gapi.client.setToken({ access_token: googleAccessToken });
         return googleAccessToken;

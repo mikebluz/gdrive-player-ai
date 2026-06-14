@@ -2305,10 +2305,23 @@
           ? await audioBufferToMp3(buffer)
           : audioBufferToWav(buffer);
         progress && progress.setStatus('Signing in to Google Drive…');
-        await googleSignInForDrive();
-        progress && progress.setStatus('Uploading to Drive…');
-        const folderId = await findOrCreateDriveFolder(folder);
-        const file = await uploadBlobToDrive(`${filename}.${ext}`, blob, folderId, mime);
+        const is401 = (err) => !!(err && (err.status === 401 || (err.result && err.result.error && err.result.error.code === 401)));
+        const doDrive = async () => {
+          await googleSignInForDrive();
+          progress && progress.setStatus('Uploading to Drive…');
+          const folderId = await findOrCreateDriveFolder(folder);
+          return uploadBlobToDrive(`${filename}.${ext}`, blob, folderId, mime);
+        };
+        let file;
+        try { file = await doDrive(); }
+        catch (e1) {
+          if (!is401(e1)) throw e1;
+          // Stale/revoked token — drop it and re-auth once, then retry.
+          try { window.SharedAuth && window.SharedAuth.clear && window.SharedAuth.clear(); } catch (e) {}
+          try { if (typeof gapi !== 'undefined' && gapi.client && gapi.client.setToken) gapi.client.setToken({ access_token: '' }); } catch (e) {}
+          progress && progress.setStatus('Re-authorizing Google Drive…');
+          file = await doDrive();
+        }
         progress && progress.markDone();
         alert(`Saved "${(file && file.name) || filename + '.' + ext}" to Drive folder "${folder}".`);
       } catch (e) {

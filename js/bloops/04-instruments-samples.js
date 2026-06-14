@@ -1544,6 +1544,9 @@
           }};
         }
         const entry = getSampleEntry(type);
+        console.log('[PADV] sample branch: entry=' + !!entry + ' sampler=' + !!(entry && entry.sampler) +
+          ' loaded=' + !!(entry && entry.sampler && entry.sampler.loaded) +
+          ' padLoop=' + !!(sampleSamplers.get(type.slice(7)) || {}).padLoop);
         if (!entry || !entry.sampler || !entry.sampler.loaded) {
           // Sampler hasn't finished its network fetch yet — the most
           // common cause of "first taps make no sound" on a cold load,
@@ -1551,6 +1554,7 @@
           // Tone.Synth sine sustain so the press is audible and held;
           // the next press (likely a few hundred ms later) will use the
           // real sample.
+          console.log('[PADV] → sampler NOT loaded, falling back to sine');
           return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
         }
         const baseFreq = snapDrumKitFreq(type, freq);

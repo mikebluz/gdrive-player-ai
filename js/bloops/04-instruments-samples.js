@@ -1331,6 +1331,7 @@
     function _startSustainedEnsemble(freq, params, startAt) {
       const id = params.type.slice(9);
       const def = ensembles.get(id);
+      console.log('[ENS] sustain', { id, found: !!def, members: def && def.members && def.members.map(m => m && m.type), mode: def && def.mode, regKeys: Array.from(ensembles.keys()) });
       if (!def || !Array.isArray(def.members) || !def.members.length) {
         return startSustainedNote(freq, { ...params, type: 'sine' }, startAt);
       }
@@ -1356,7 +1357,9 @@
           if (Number.isFinite(m.level)) { const base = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100)))); }
         }
         delete p._detuneMod;
-        try { const h = startSustainedNote(f, p, startAt); if (h) handles.push(h); } catch (e) {}
+        console.log('[ENS] sustain member', { type: p.type, freq: f, vol: p.volume });
+        try { const h = startSustainedNote(f, p, startAt); if (h) handles.push(h); else console.warn('[ENS] member returned no handle', p.type); }
+        catch (e) { console.warn('[ENS] sustain member threw', p.type, e); }
       });
       return {
         release: () => handles.forEach(h => { try { h && h.release && h.release(); } catch (e) {} }),
@@ -1894,6 +1897,7 @@
       // handle that releases them all on pointer-up. (Sequence playback goes
       // through playNote, which dispatches separately; this is the live-press /
       // sustain path.)
+      try { if (isEnsembleType(params.type)) console.log('[ENS] sustain dispatch', params.type); } catch (e) {}
       if (isEnsembleType(params.type)) return _startSustainedEnsemble(freq, params, _coldStartAt);
       const {
         type    = 'sine',

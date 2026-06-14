@@ -43,6 +43,7 @@
     function _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {
       const id = params.type.slice(9); // 'ensemble:'.length === 9
       const def = ensembles.get(id);
+      console.log('[ENS] play', { type: params.type, id, found: !!def, members: def && def.members && def.members.map(m => m && m.type), mode: def && def.mode, regKeys: Array.from(ensembles.keys()) });
       if (!def || !Array.isArray(def.members) || !def.members.length) {
         // Unknown / empty ensemble — stay audible with a plain sine.
         const p = { ...params, type: 'sine' };
@@ -63,6 +64,7 @@
         p.type = m.type || 'sine';
         ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
         let f = freq;
+        console.log('[ENS] member', { type: p.type, freq: f, vol: p.volume });
         if (useOffsets) {
           if (Number.isFinite(m.octave) && m.octave) f = freq * Math.pow(2, m.octave);
           if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;

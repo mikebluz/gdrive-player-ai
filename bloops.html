@@ -488,10 +488,9 @@
           <button id="play-lock-btn" class="play-lock" type="button" title="Keep: when on, pressing a note in the grid creates a step in the current sequence. When off (default), notes are auditioned only — sequence is not modified."><span>KEEP</span></button>
           <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
         </div>
-      </div>
       <!-- Perform config popover — opens when PERF is pressed (while idle).
-           Pick a start mode (Listen = wait for first note, or Count-in = N
-           bars of click then record) plus quantize + resolution. -->
+           Anchored inside .step-grid-bar (position:relative) so it floats just
+           above the PERF button. -->
       <div class="perform-popover" id="perform-popover" hidden>
         <div class="perform-pop-title">Perform</div>
         <div class="perform-pop-row">
@@ -513,6 +512,7 @@
             <option value="0.125">1/32</option>
           </select>
         </label>
+      </div>
       </div>
       <!-- Step Pan / Vol / Slip faders + the Edit button. Sits between
            the Keep/Wrap/Rest trio and the active lane row, matching

@@ -4400,17 +4400,35 @@
       background: rgba(229,62,62,0.28); color: #fff; border-color: #fc8181;
       box-shadow: 0 0 16px rgba(229,62,62,0.5); animation: amb-freeze-rec 1s ease-in-out infinite;
     }
-    .perform-options {
-      display: flex; gap: 16px; align-items: center; width: 100%;
-      padding: 4px 2px 2px; color: #a0aec0;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
+    .step-grid-bar { position: relative; }
+    .perform-popover {
+      position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 200;
+      min-width: 240px; max-width: 92vw;
+      background: #07070f; border: 1px solid #2d2d3f; border-radius: 12px;
+      padding: 12px; box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+      display: flex; flex-direction: column; gap: 8px;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
-    .perform-options[hidden] { display: none; }
+    .perform-popover[hidden] { display: none; }
+    .perform-pop-title { color: #fc8181; font-weight: 700; letter-spacing: 1px; }
+    .perform-pop-row { display: flex; gap: 10px; align-items: center; }
+    .perform-pop-divider { height: 1px; background: #1a1a2e; margin: 2px 0; }
+    .perform-start-btn {
+      flex: 1 1 auto; display: flex; flex-direction: column; align-items: flex-start;
+      gap: 1px; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+      background: rgba(229,62,62,0.10); border: 1px solid #e53e3e; color: #fc8181;
+      font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 0.84rem;
+      transition: background 0.12s ease;
+    }
+    .perform-start-btn small { font-weight: 400; font-size: 0.68rem; opacity: 0.7; }
+    @media (hover: hover) { .perform-start-btn:hover { background: rgba(229,62,62,0.22); color: #fff; } }
+    .perform-countin-row .perform-opt { flex: 0 0 auto; }
     .perform-opt { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-    .perform-opt select {
+    .perform-opt select, .perform-opt input[type=number] {
       background: #0c0c18; border: 1px solid #2d2d3f; border-radius: 6px;
-      color: #e2e8f0; padding: 3px 6px; font-size: 0.78rem;
+      color: #e2e8f0; padding: 3px 6px; font-size: 0.78rem; width: 56px;
     }
+    .perform-opt select { width: auto; }
 
     /* Wrap row — lives directly under #grid in Grid mode. Hidden in
        Graph / Game / Prog so it doesn't take vertical space (or fire)

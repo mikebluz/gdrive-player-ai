@@ -489,9 +489,21 @@
           <button id="rest-bar" class="rest-bar" type="button" title="Add a rest step"><span>REST</span></button>
         </div>
       </div>
-      <!-- Perform options — visible while Perform is armed/active. Quantize
-           snaps recorded note/rest timing to the chosen resolution grid. -->
-      <div class="perform-options" id="perform-options" hidden>
+      <!-- Perform config popover — opens when PERF is pressed (while idle).
+           Pick a start mode (Listen = wait for first note, or Count-in = N
+           bars of click then record) plus quantize + resolution. -->
+      <div class="perform-popover" id="perform-popover" hidden>
+        <div class="perform-pop-title">Perform</div>
+        <div class="perform-pop-row">
+          <button type="button" class="perform-start-btn" id="perform-listen-btn" title="Wait for your first note, then start recording">🎧 Listen<small>start on first note</small></button>
+        </div>
+        <div class="perform-pop-row perform-countin-row">
+          <button type="button" class="perform-start-btn" id="perform-countin-btn" title="Click for N bars, then start recording">▶ Count-in<small>then record</small></button>
+          <label class="perform-opt">Bars
+            <input type="number" id="perform-countin-bars" min="1" max="8" step="1" value="1">
+          </label>
+        </div>
+        <div class="perform-pop-divider"></div>
         <label class="perform-opt"><input type="checkbox" id="perform-quantize" checked> Quantize</label>
         <label class="perform-opt">Resolution
           <select id="perform-resolution">

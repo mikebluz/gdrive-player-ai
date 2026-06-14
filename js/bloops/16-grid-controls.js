@@ -885,29 +885,83 @@
     })();
 
     // ---- Perform button — real-time record-what-you-play mode ----
+    // Pressing PERF (while idle) opens a config popover: choose a start mode
+    // (Listen = wait for first note, or Count-in = N bars of click then
+    // record) plus quantize + resolution. Pressing PERF while armed disarms.
     (function bindPerformButton() {
       const btn = document.getElementById('perform-btn');
-      const opts = document.getElementById('perform-options');
+      const pop = document.getElementById('perform-popover');
       const qz = document.getElementById('perform-quantize');
       const res = document.getElementById('perform-resolution');
+      const listenBtn = document.getElementById('perform-listen-btn');
+      const countinBtn = document.getElementById('perform-countin-btn');
+      const barsEl = document.getElementById('perform-countin-bars');
       if (!btn) return;
-      const refresh = () => {
-        btn.classList.toggle('active', performMode);
-        if (opts) opts.hidden = !performMode;
-      };
+      const refresh = () => btn.classList.toggle('active', performMode);
+      const closePop = () => { if (pop) pop.hidden = true; };
+      const openPop = () => { if (pop) pop.hidden = false; };
       refresh();
-      btn.addEventListener('click', () => {
-        performMode = !performMode;
-        if (performMode) {
-          // Fresh take: the first played note anchors the timeline.
-          _performStartMs = null;
-          _performEmittedUnits = 0;
-          if (typeof showToast === 'function') showToast('Perform: play the grid — notes record with rests for silence.');
+
+      // N bars of metronome click, then fire onStart on the downbeat after.
+      const runCountIn = (bars, onStart) => {
+        const bpm = parseInt(tempoInput?.value, 10) || 120;
+        const beatSec = 60 / bpm;
+        const beats = Math.max(1, bars | 0) * 4;
+        const synth = (typeof _getMetronomeSynth === 'function') ? _getMetronomeSynth() : null;
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const t0 = now + 0.12;
+        if (synth) {
+          for (let i = 0; i < beats; i++) {
+            try { synth.triggerAttackRelease(i % 4 === 0 ? 'C6' : 'C5', '32n', t0 + i * beatSec); } catch (e) {}
+          }
         }
+        const delayMs = ((t0 - now) + beats * beatSec) * 1000;
+        setTimeout(() => { try { onStart(); } catch (e) {} }, Math.max(0, delayMs));
+      };
+
+      const arm = (countInBars) => {
+        performMode = true;
+        _performEmittedUnits = 0;
+        closePop();
         refresh();
+        try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+        if (countInBars > 0) {
+          _performCountingIn = true;
+          _performStartMs = null;
+          if (typeof showToast === 'function') showToast('Perform: counting in…');
+          runCountIn(countInBars, () => {
+            if (!performMode) return; // disarmed during count-in
+            _performCountingIn = false;
+            _performStartMs = performance.now(); // recording anchor = end of count-in
+            if (typeof showToast === 'function') showToast('Perform: recording…');
+          });
+        } else {
+          _performCountingIn = false;
+          _performStartMs = null; // first played note anchors the timeline
+          if (typeof showToast === 'function') showToast('Perform: listening — play to record.');
+        }
+      };
+      const disarm = () => {
+        performMode = false; _performCountingIn = false;
+        closePop(); refresh();
+      };
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (performMode) { disarm(); return; }
+        if (pop && pop.hidden) openPop(); else closePop();
       });
+      if (listenBtn) listenBtn.addEventListener('click', () => arm(0));
+      if (countinBtn) countinBtn.addEventListener('click', () => arm(Math.max(1, parseInt(barsEl?.value, 10) || 1)));
       if (qz) qz.addEventListener('change', () => { performQuantize = !!qz.checked; });
       if (res) res.addEventListener('change', () => { performResolution = parseFloat(res.value) || 0.25; });
+      // Close the popover on outside click / Escape.
+      document.addEventListener('click', (e) => {
+        if (!pop || pop.hidden) return;
+        if (pop.contains(e.target) || e.target === btn) return;
+        closePop();
+      });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePop(); });
     })();
 
     // ---- All-lane edit mode ----

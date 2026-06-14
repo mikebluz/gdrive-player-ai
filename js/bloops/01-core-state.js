@@ -196,6 +196,10 @@
     let performResolution = 0.25;
     let _performStartMs = null;
     let _performEmittedUnits = 0;
+    // While a count-in click is playing, Perform is armed but not yet
+    // capturing — presses still audition but aren't recorded until the
+    // downbeat after the count-in.
+    let _performCountingIn = false;
     // Per-Keep-session step-div lock. While Keep is on, the step-div
     // picker pops up after each note added in Spell or Stack mode so
     // the user picks the size for that note. Toggling the "use for the

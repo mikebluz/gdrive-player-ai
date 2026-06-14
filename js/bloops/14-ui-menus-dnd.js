@@ -4317,7 +4317,8 @@
       // Perform mode owns capture in default Sequencer mode: record the press
       // with timing instead of the normal Keep single/chord append below.
       if (performMode && gridMode === 'sequencer' && !wrapTemplate && !chordMode && !stepMode && selectedStepRefs.length === 0) {
-        try { _performEmit(voices); } catch (e) { console.warn('Perform capture failed', e); }
+        // During a count-in the layer is armed but not yet recording.
+        if (!_performCountingIn) { try { _performEmit(voices); } catch (e) { console.warn('Perform capture failed', e); } }
         _polySession.suppressClickUntil = performance.now() + 250;
         return;
       }

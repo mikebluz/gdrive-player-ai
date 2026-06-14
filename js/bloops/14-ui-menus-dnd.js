@@ -4076,11 +4076,9 @@
       }
       const refs = (_polySession.cellRefCount.get(cellIdx) || 0) + 1;
       _polySession.cellRefCount.set(cellIdx, refs);
-      try { console.log('[ENS] _polyStartSustain', { cellIdx, refs }); } catch (e) {}
       if (refs === 1) {
         let handle = null;
-        try { handle = voiceStarter(); } catch (e) { try { console.warn('[ENS] voiceStarter threw', e); } catch (_) {} }
-        try { console.log('[ENS] voiceStarter handle?', !!handle); } catch (e) {}
+        try { handle = voiceStarter(); } catch (e) {}
         if (handle) {
           _polySession.cellSustains.set(cellIdx, handle);
           // Persistent press highlight — stays until refs hits 0 in
@@ -4104,7 +4102,6 @@
       if (!notes[cellIdx]) return;
       const note = notes[cellIdx];
       const params = { ...cellParams[cellIdx] };
-      try { console.log('[ENS] polyStartCell', { cellIdx, type: params.type, gridMode: (typeof gridMode !== 'undefined' ? gridMode : '?') }); } catch (e) {}
       // Radial Tone overrides the cell's stored detune with a press-position-
       // derived value (see radialBendCents); subsequent pointermoves update
       // the live synth via the sustain handle.

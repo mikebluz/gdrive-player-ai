@@ -933,6 +933,9 @@
             if (!performMode) return; // disarmed during count-in
             _performCountingIn = false;
             _performStartMs = performance.now(); // recording anchor = end of count-in
+            // Start the lanes the instant recording starts, so the take
+            // overdubs in time with playback.
+            try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
             if (typeof showToast === 'function') showToast('Perform: recording…');
           });
         } else {
@@ -949,6 +952,10 @@
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (performMode) { disarm(); return; }
+        // Entering Perform: stop any running playback (safe no-op if idle).
+        // Playback restarts when recording actually begins (first note /
+        // post-count-in) so the take overdubs in sync.
+        try { if (typeof stopSequence === 'function') stopSequence(); } catch (e) {}
         if (pop && pop.hidden) openPop(); else closePop();
       });
       if (listenBtn) listenBtn.addEventListener('click', () => arm(0));

@@ -4292,7 +4292,12 @@
       const unitMs = Math.max(1, (60000 / bpm) * unitSub);
       let startMs = Infinity, endMs = -Infinity;
       live.forEach(v => { startMs = Math.min(startMs, v.pressStart); endMs = Math.max(endMs, v.pressEnd ?? performance.now()); });
-      if (_performStartMs == null) { _performStartMs = startMs; _performEmittedUnits = 0; }
+      if (_performStartMs == null) {
+        _performStartMs = startMs; _performEmittedUnits = 0;
+        // Listen mode: recording begins on this first note — start the lanes so
+        // the performance overdubs in time with the existing playback.
+        try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
+      }
       const desiredStart = Math.max(0, Math.round((startMs - _performStartMs) / unitMs));
       const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
       snapshotForUndo('Perform');

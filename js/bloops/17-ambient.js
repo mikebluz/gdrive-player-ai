@@ -2403,7 +2403,8 @@
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
         _ambHead('Seq' + (i + 1), p + 'on', p + 'del', 'seq:' + id) +
         '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-        _ambNotesButtonHtml(p.slice(0, -1)) +
+        // No Notes source here — a Seq plays the pitches captured in its own
+        // sequence; the note set is fixed by the sequence, not a scale/chord pick.
         '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
         _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
         _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
@@ -2437,7 +2438,6 @@
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };
       const toneSel = el('tone'); if (toneSel) populateGroupedToneSelect(toneSel, _ambToneOptions(), { value: '', label: 'Grid voice' });
-      _ambWireNotesBtn(E, p + 'notes', getSq); // Notes source button (Scale / Chord)
       bindStr('tone', 'tone'); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
       bindInt('depth', 'varyDepth'); bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); bindStr('when', 'when');

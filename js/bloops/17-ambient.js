@@ -1716,16 +1716,17 @@
       let from = st.scheduledUpto;
       if (from == null || from < now) from = Math.max(now, st.anchor || now);
       const L = st.loopLen, A = st.anchor || now;
-      let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
+      let k = Math.max(0, Math.floor((from - A) / L)), guard = 0, fired = 0;
       while (guard++ < 4096) {
         const base = A + k * L;
         if (base >= horizon) break;
         for (const e of st.events) {
           const at = base + e.t;
-          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); if (!st._dbgPlayed) { st._dbgPlayed = 1; console.log('[FZ] replay firing', { key, at, dest: dest ? 'mod/bus' : 'none', events: st.events.length, loopLen: st.loopLen }); } } catch (x) {} }
+          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); fired++; } catch (x) {} }
         }
         k++;
       }
+      console.log('[FZ] replay', { key, now: +now.toFixed(2), from: +from.toFixed(2), horizon: +horizon.toFixed(2), A: +A.toFixed(2), L, fired });
       st.scheduledUpto = horizon;
     }
     function _ambFreezeThaw(E, key) {

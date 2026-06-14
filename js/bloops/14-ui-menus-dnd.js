@@ -581,6 +581,17 @@
         refreshGridStateDropdown('');
       }
 
+      // Ensembles — rebuild the registry before Bloom/grid restore so any
+      // 'ensemble:<id>' voice references resolve.
+      try {
+        if (typeof ensembles !== 'undefined') {
+          ensembles.clear();
+          (Array.isArray(snap.ensembles) ? snap.ensembles : []).forEach(d => {
+            if (d && d.id != null) ensembles.set(String(d.id), JSON.parse(JSON.stringify(d)));
+          });
+        }
+      } catch (e) {}
+
       // Master Bloom (Mix) config — global, not per-lane.
       try {
         masterAmbient = (snap.masterAmbient && typeof snap.masterAmbient === 'object')
@@ -1485,6 +1496,177 @@
     }
     // Waveform sample editor: trim (draggable start/end) + reverse + preview,
     // save as a NEW sample. `onSaved(newId)` fires after a successful save.
+    // ---- Ensemble editor ----------------------------------------------
+    // Build / edit a multi-tone "ensemble" voice: pick N tones, shape each
+    // (ADSR + per-tone octave/detune/pan/level), choose a play mode, preview,
+    // and save as a named voice that appears everywhere a tone is picked.
+    function _ensembleDefaultMember() {
+      return { type: 'sine', attack: 10, decay: 100, sustain: 50, release: 1400, octave: 0, detune: 0, pan: 0, level: 100 };
+    }
+    function showEnsembleEditor(editId) {
+      const C4 = 261.63;
+      const existing = (editId != null) ? (typeof getEnsemble === 'function' ? getEnsemble(editId) : null) : null;
+      const def = existing
+        ? JSON.parse(JSON.stringify(existing))
+        : { id: null, name: '', mode: 'stack', members: [_ensembleDefaultMember()] };
+      if (!Array.isArray(def.members) || !def.members.length) def.members = [_ensembleDefaultMember()];
+
+      const voiceOpts = (typeof getAllSoundOptions === 'function' ? getAllSoundOptions() : [])
+        .filter(o => o && typeof o.value === 'string' && !o.value.startsWith('ensemble:'));
+      const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal ensemble-editor-modal';
+      const ensList = (typeof ensembles !== 'undefined') ? Array.from(ensembles.values()) : [];
+      modal.innerHTML =
+        '<div class="sm-title">' + (existing ? 'Edit ensemble' : 'Create ensemble') + '</div>' +
+        '<div class="ee-top">' +
+          '<label class="ee-field ee-name"><span>Name</span><input type="text" id="ee-name" placeholder="My ensemble" value="' + esc(def.name) + '"></label>' +
+          '<label class="ee-field"><span>Play mode</span><select id="ee-mode">' +
+            '<option value="stack">Stacked (unison)</option>' +
+            '<option value="stackOffset">Stacked + offsets</option>' +
+            '<option value="rr">Round-robin</option>' +
+          '</select></label>' +
+          (ensList.length ? '<label class="ee-field"><span>Load</span><select id="ee-load"><option value="">— new —</option>' +
+            ensList.map(d => '<option value="' + esc(d.id) + '"' + (existing && String(d.id) === String(existing.id) ? ' selected' : '') + '>' + esc(d.name || ('Ensemble ' + d.id)) + '</option>').join('') +
+          '</select></label>' : '') +
+          (existing ? '<button type="button" class="ee-del" id="ee-delete" title="Delete this ensemble">🗑 Delete</button>' : '') +
+        '</div>' +
+        '<div class="ee-members" id="ee-members"></div>' +
+        '<div class="ee-addrow"><button type="button" class="sm-wave" id="ee-add">+ Add tone</button></div>' +
+        '<div class="se-wave-actions">' +
+          '<button type="button" class="sm-wave" id="ee-preview">▶ Preview ensemble</button>' +
+          '<button type="button" class="sm-wave" id="ee-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply" id="ee-save">Save voice</button>' +
+        '</div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const modeSel = modal.querySelector('#ee-mode'); modeSel.value = def.mode || 'stack';
+      const membersWrap = modal.querySelector('#ee-members');
+      const close = () => { try { document.body.removeChild(overlay); } catch (e) {} };
+
+      // Params for one member as playNote expects (inherits the grid base voice
+      // so previews sound like the real thing, then overrides per member).
+      const memberParams = (m, withOffsets) => {
+        const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? { ...cellParams[0] } : { volume: 100 };
+        const p = { ...base, type: m.type || 'sine' };
+        ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
+        if (withOffsets) {
+          if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
+          if (Number.isFinite(m.pan)) p.pan = m.pan;
+          if (Number.isFinite(m.level)) p.volume = Math.max(0, Math.min(100, Math.round((p.volume != null ? p.volume : 100) * (m.level / 100))));
+        }
+        return p;
+      };
+      const previewMember = (m) => {
+        try {
+          const withOff = (modeSel.value !== 'stack');
+          const f = (withOff && Number.isFinite(m.octave) && m.octave) ? C4 * Math.pow(2, m.octave) : C4;
+          playNote(f, memberParams(m, withOff), 650);
+        } catch (e) {}
+      };
+
+      const numField = (label, key, min, max, step, val, hint) =>
+        '<label class="ee-num"><span>' + label + '</span><input type="number" data-k="' + key + '" min="' + min + '" max="' + max + '" step="' + (step || 1) + '" value="' + val + '">' + (hint ? '<em>' + hint + '</em>' : '') + '</label>';
+
+      function renderMembers() {
+        membersWrap.classList.toggle('ee-no-offsets', modeSel.value === 'stack');
+        membersWrap.innerHTML = def.members.map((m, i) =>
+          '<div class="ee-member" data-i="' + i + '">' +
+            '<div class="ee-member-head">' +
+              '<select class="ee-voice" data-i="' + i + '"></select>' +
+              '<button type="button" class="ee-mini ee-prev" data-i="' + i + '" title="Preview this tone">▶</button>' +
+              '<button type="button" class="ee-mini ee-rm" data-i="' + i + '" title="Remove tone"' + (def.members.length <= 1 ? ' disabled' : '') + '>✕</button>' +
+            '</div>' +
+            '<div class="ee-adsr">' +
+              numField('A', 'attack', 0, 4000, 1, m.attack, 'ms') +
+              numField('D', 'decay', 0, 4000, 1, m.decay, 'ms') +
+              numField('S', 'sustain', 0, 100, 1, m.sustain, '%') +
+              numField('R', 'release', 0, 8000, 1, m.release, 'ms') +
+            '</div>' +
+            '<div class="ee-offsets">' +
+              numField('Oct', 'octave', -3, 3, 1, m.octave, '') +
+              numField('Detune', 'detune', -1200, 1200, 5, m.detune, '¢') +
+              numField('Pan', 'pan', -100, 100, 1, m.pan, '') +
+              numField('Level', 'level', 0, 100, 1, m.level, '%') +
+            '</div>' +
+          '</div>').join('');
+        // Populate voice selects + set current value.
+        membersWrap.querySelectorAll('.ee-voice').forEach(sel => {
+          const i = +sel.dataset.i;
+          populateGroupedToneSelect(sel, voiceOpts);
+          sel.value = def.members[i].type || 'sine';
+        });
+      }
+
+      // Delegated input/click handling on the members container.
+      membersWrap.addEventListener('input', (e) => {
+        const t = e.target;
+        if (t.classList.contains('ee-voice')) { def.members[+t.dataset.i].type = t.value || 'sine'; return; }
+        const wrap = t.closest('.ee-member'); if (!wrap) return;
+        const i = +wrap.dataset.i, k = t.dataset.k; if (k == null) return;
+        def.members[i][k] = parseFloat(t.value);
+        if (Number.isNaN(def.members[i][k])) def.members[i][k] = 0;
+      });
+      membersWrap.addEventListener('change', (e) => {
+        if (e.target.classList.contains('ee-voice')) def.members[+e.target.dataset.i].type = e.target.value || 'sine';
+      });
+      membersWrap.addEventListener('click', (e) => {
+        const prev = e.target.closest('.ee-prev'); if (prev) { previewMember(def.members[+prev.dataset.i]); return; }
+        const rm = e.target.closest('.ee-rm'); if (rm && def.members.length > 1) { def.members.splice(+rm.dataset.i, 1); renderMembers(); }
+      });
+
+      modeSel.addEventListener('change', () => { def.mode = modeSel.value; renderMembers(); });
+      modal.querySelector('#ee-add').addEventListener('click', () => { def.members.push(_ensembleDefaultMember()); renderMembers(); });
+      const nameInput = modal.querySelector('#ee-name');
+
+      const loadSel = modal.querySelector('#ee-load');
+      if (loadSel) loadSel.addEventListener('change', () => { close(); showEnsembleEditor(loadSel.value || undefined); });
+
+      const delBtn = modal.querySelector('#ee-delete');
+      if (delBtn) delBtn.addEventListener('click', () => {
+        if (!existing) return;
+        if (typeof confirm === 'function' && !confirm('Delete ensemble "' + (existing.name || existing.id) + '"?')) return;
+        if (typeof ensembles !== 'undefined') ensembles.delete(String(existing.id));
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        close();
+      });
+
+      modal.querySelector('#ee-preview').addEventListener('click', () => {
+        // Audition through the real ensemble path via a temp registration.
+        try {
+          def.mode = modeSel.value; def.name = nameInput.value || def.name;
+          if (typeof ensembles !== 'undefined') {
+            ensembles.set('__ens_preview__', JSON.parse(JSON.stringify(def)));
+            playNote(C4, { type: 'ensemble:__ens_preview__' }, 750);
+            setTimeout(() => { try { ensembles.delete('__ens_preview__'); } catch (e) {} }, 1500);
+          }
+        } catch (e) {}
+      });
+      modal.querySelector('#ee-cancel').addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+      modal.querySelector('#ee-save').addEventListener('click', () => {
+        def.mode = modeSel.value;
+        def.name = (nameInput.value || '').trim();
+        def.members = def.members.filter(m => m && m.type);
+        if (!def.members.length) { alert('Add at least one tone.'); return; }
+        if (typeof ensembles === 'undefined') { close(); return; }
+        let id = existing ? String(existing.id) : null;
+        if (!id) { let n = 1; while (ensembles.has(String(n))) n++; id = String(n); }
+        if (!def.name) def.name = 'Ensemble ' + id;
+        def.id = id;
+        ensembles.set(id, JSON.parse(JSON.stringify(def)));
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        // Make it the live grid voice so the user hears it immediately.
+        if (typeof applyToneToAllCells === 'function') { try { applyToneToAllCells('ensemble:' + id); } catch (e) {} }
+        close();
+      });
+
+      renderMembers();
+    }
+
     function showSampleEditor(sampleId, onSaved) {
       const buf = _getSampleAudioBuffer(sampleId);
       if (!buf) { alert('This sample buffer isn’t loaded yet (or it’s a multi-sampled instrument, which can’t be waveform-edited).'); return; }

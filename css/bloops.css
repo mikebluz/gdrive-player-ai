@@ -6669,6 +6669,52 @@
       width: min(380px, 92vw);
       box-shadow: 0 16px 48px rgba(0,0,0,0.65), 0 0 28px rgba(0, 191, 255, 0.06);
     }
+    /* Ensemble editor. */
+    .ensemble-editor-modal { width: min(620px, 95vw); max-height: 90vh; overflow-y: auto; }
+    .ensemble-editor-modal .ee-top {
+      display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 6px 0 12px;
+    }
+    .ee-field { display: flex; flex-direction: column; gap: 3px; min-width: 0;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; }
+    .ee-field.ee-name { flex: 1 1 160px; }
+    .ee-field input, .ee-field select {
+      background: #0c0c18; border: 1px solid #2d2d3f; border-radius: 7px; color: #e2e8f0;
+      padding: 5px 8px; font-size: 0.82rem; min-width: 0;
+    }
+    .ee-del {
+      margin-left: auto; align-self: flex-end; background: transparent; color: #fc8181;
+      border: 1px solid rgba(252,129,129,0.4); border-radius: 8px; padding: 5px 10px;
+      font-size: 0.76rem; cursor: pointer;
+    }
+    @media (hover: hover) { .ee-del:hover { background: rgba(252,129,129,0.12); border-color: #fc8181; } }
+    .ee-members { display: flex; flex-direction: column; gap: 8px; }
+    .ee-member {
+      border: 1px solid #232333; border-radius: 10px; padding: 8px 10px;
+      background: rgba(159,122,234,0.05);
+    }
+    .ee-member-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .ee-voice {
+      flex: 1 1 auto; min-width: 0; background: #0c0c18; border: 1px solid #2d2d3f;
+      border-radius: 7px; color: #e2e8f0; padding: 5px 8px; font-size: 0.82rem;
+    }
+    .ee-mini {
+      flex: 0 0 auto; width: 30px; height: 28px; border-radius: 7px; cursor: pointer;
+      background: transparent; border: 1px solid #2d2d3f; color: #cbd5e0; font-size: 0.82rem;
+    }
+    @media (hover: hover) { .ee-mini:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    .ee-mini:disabled { opacity: 0.35; cursor: default; }
+    .ee-adsr, .ee-offsets { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+    .ee-offsets { margin-top: 6px; }
+    .ee-members.ee-no-offsets .ee-offsets { opacity: 0.4; }
+    .ee-num { display: flex; flex-direction: column; gap: 2px; flex: 1 1 64px; min-width: 0;
+      color: #8b95a7; font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; }
+    .ee-num span { font-weight: 700; }
+    .ee-num em { font-style: normal; opacity: 0.6; }
+    .ee-num input {
+      width: 100%; min-width: 0; background: #0c0c18; border: 1px solid #2d2d3f;
+      border-radius: 6px; color: #e2e8f0; padding: 4px 6px; font-size: 0.8rem;
+    }
+    .ee-addrow { margin: 10px 0 14px; }
     /* Waveform sample editor. */
     .sample-editor-modal { width: min(560px, 94vw); }
     .se-wave-canvas {

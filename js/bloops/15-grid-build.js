@@ -1068,7 +1068,7 @@
     // ---- Tone families -- two-level menu (top: family list, drilldown:
     // family's tones). Keeps the panel short and lets us add more
     // instruments without scrolling forever.
-    const TONE_FAMILY_ORDER = ['synths', 'keys', 'mallets', 'strings', 'winds', 'leads', 'drums', 'imports', 'samples', 'other'];
+    const TONE_FAMILY_ORDER = ['ensembles', 'synths', 'keys', 'mallets', 'strings', 'winds', 'leads', 'drums', 'imports', 'samples', 'other'];
     const TONE_FAMILY_LABELS = {
       synths:  'Synths',
       keys:    'Keys',
@@ -1079,6 +1079,7 @@
       drums:   'Drums',
       imports: 'Imports',
       samples: 'Samples',
+      ensembles: 'Ensembles',
       other:   'Other',
     };
     const _SYNTH_KEYS = new Set(['sine', 'square', 'triangle', 'sawtooth', 'pulse', 'fat', 'wavetable', 'fm', 'am', 'mono', 'duo', 'bass', 'pad', 'xylo']);
@@ -1136,6 +1137,7 @@
     const _SAMPLE_DRUM_IDS    = new Set(['tr808', 'drumtraks', 'drumkit', 'dr55']);
     function toneFamilyFor(value) {
       if (typeof value !== 'string') return 'other';
+      if (value.startsWith('ensemble:')) return 'ensembles';
       if (value.startsWith('sample:')) {
         const id = value.slice(7);
         if (_SAMPLE_KEYS_IDS.has(id))    return 'keys';
@@ -1197,7 +1199,7 @@
     // or 'samples' (sample-buffer based, played via Tone.Sampler /
     // GrainPlayer). The string 'sample:' prefix is the discriminator.
     const _toneTopBucketFor = (value) =>
-      (typeof value === 'string' && value.startsWith('sample:')) ? 'samples' : 'synths';
+      (typeof value === 'string' && (value.startsWith('sample:') || value.startsWith('ensemble:'))) ? 'samples' : 'synths';
     let _toneMenuView = 'top'; // 'top' | 'synths' | 'samples'
     function populateTonePanel() {
       const panel = document.getElementById('tone-panel');
@@ -1211,6 +1213,14 @@
       sculpt.id = 'tone-sculpt-btn';
       sculpt.textContent = '⚙ Sculpt sound…';
       panel.appendChild(sculpt);
+      // Create / edit a multi-tone "ensemble" voice (saved, appears everywhere
+      // a tone is picked).
+      const ensBtn = document.createElement('button');
+      ensBtn.type = 'button';
+      ensBtn.className = 'tone-sculpt-btn';
+      ensBtn.id = 'tone-ensemble-btn';
+      ensBtn.textContent = '✚ Create ensemble…';
+      panel.appendChild(ensBtn);
       // Surface the current "Custom" state as a non-clickable marker at the
       // top of the panel, mirroring the Tone banner label. Picking any of
       // the regular options below applies that tone to every cell, which
@@ -1351,6 +1361,11 @@
       panel.addEventListener('click', (e) => {
         // Sculpt — open the sound editor (ADSR / level / effects) in
         // apply-to-all mode so the user can shape the current tone.
+        if (e.target.closest('#tone-ensemble-btn')) {
+          setOpen(false);
+          if (typeof showEnsembleEditor === 'function') showEnsembleEditor();
+          return;
+        }
         if (e.target.closest('.tone-sculpt-btn')) {
           setOpen(false);
           if (typeof showSoundEditor === 'function') showSoundEditor(0, { applyAll: true });

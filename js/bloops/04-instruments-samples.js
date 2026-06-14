@@ -24,6 +24,58 @@
     function isSampleType(type) {
       return typeof type === 'string' && type.startsWith('sample:');
     }
+
+    // ---- Ensembles: user-built multi-tone voices ----
+    // An ensemble is a composite voice referenced by the value 'ensemble:<id>'.
+    // It appears everywhere a tone is picked (via getAllSoundOptions) and is
+    // expanded at playNote time into its member tones. Shape of a def:
+    //   { id, name, mode: 'stack'|'stackOffset'|'rr', members: [member] }
+    //   member: { type, octave, detune, pan, level, attack, decay, sustain, release }
+    //     type   = a real voice value ('sine', 'sample:piano', …) — never an ensemble
+    //     octave/detune/pan/level honored in 'stackOffset' and 'rr' modes
+    //     attack/decay/sustain/release = optional per-member ADSR overrides (ms / %)
+    const ensembles = new Map();   // id -> def (runtime registry; persisted in the workspace snapshot)
+    const _ensembleRR = {};        // id -> next member index (round-robin cursor; runtime only)
+    function isEnsembleType(type) { return typeof type === 'string' && type.startsWith('ensemble:'); }
+    function getEnsemble(id) { return ensembles.get(String(id)) || null; }
+    // Expand an ensemble note into its member triggers. Each member flows
+    // through playNote so it picks up the normal voice/FX/capture plumbing.
+    function _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {
+      const id = params.type.slice(9); // 'ensemble:'.length === 9
+      const def = ensembles.get(id);
+      if (!def || !Array.isArray(def.members) || !def.members.length) {
+        // Unknown / empty ensemble — stay audible with a plain sine.
+        const p = { ...params, type: 'sine' };
+        playNote(freq, p, durationMs, startTime, destination, trackIdx, laneIdx);
+        return;
+      }
+      const mode = def.mode || 'stack';
+      const useOffsets = (mode !== 'stack');
+      let members = def.members;
+      if (mode === 'rr') {
+        const i = (_ensembleRR[id] | 0) % members.length;
+        _ensembleRR[id] = (i + 1) % members.length;
+        members = [members[i]];
+      }
+      members.forEach(m => {
+        if (!m || isEnsembleType(m.type)) return; // never nest ensembles
+        const p = { ...params };
+        p.type = m.type || 'sine';
+        ['attack', 'decay', 'sustain', 'release'].forEach(k => { if (Number.isFinite(m[k])) p[k] = m[k]; });
+        let f = freq;
+        if (useOffsets) {
+          if (Number.isFinite(m.octave) && m.octave) f = freq * Math.pow(2, m.octave);
+          if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
+          if (Number.isFinite(m.pan)) p.pan = m.pan;
+          if (Number.isFinite(m.level)) {
+            const base = (p.volume != null ? p.volume : 100);
+            p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100))));
+          }
+        }
+        delete p._detuneMod; // a single LFO node can't fan out to multiple voices
+        try { playNote(f, p, durationMs, startTime, destination, trackIdx, laneIdx); } catch (e) {}
+      });
+    }
     // A "sliceable" sample is a SINGLE-buffer one-shot (imported / recorded /
     // TEXT-frozen) — one recording mapped to one note, not a drum kit. The 100+
     // multi-sampled tuned instruments (piano/organ/GM) map many notes and are
@@ -246,6 +298,9 @@
       const opts = SOUNDS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));
       for (const [id, info] of sampleSamplers) {
         opts.push({ value: 'sample:' + id, label: info.name });
+      }
+      for (const [id, def] of ensembles) {
+        opts.push({ value: 'ensemble:' + id, label: (def && def.name) ? def.name : ('Ensemble ' + id) });
       }
       return opts;
     }
@@ -1711,6 +1766,10 @@
     }
 
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
+      if (typeof params === 'string') params = { type: params };
+      // Ensemble voices expand into their member tones BEFORE the capture hook,
+      // so each member (not the wrapper) is what gets captured/replayed.
+      if (isEnsembleType(params.type)) { _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx); return; }
       // Bloom layer Freeze "recording": tee scheduled notes to the active
       // capture sink (set around a recording layer's emit in the Bloom tick).
       if (typeof window !== 'undefined' && window._ambCaptureSink) {

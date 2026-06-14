@@ -897,6 +897,9 @@
         masterAmbient: (typeof masterAmbient !== 'undefined' && masterAmbient)
           ? JSON.parse(JSON.stringify({ ...masterAmbient, playing: false })) : null,
         savedGridStates: JSON.parse(JSON.stringify(savedGridStates || [])),
+        // Ensembles — user-built multi-tone voices (referenced as 'ensemble:<id>').
+        ensembles: (typeof ensembles !== 'undefined' && ensembles)
+          ? Array.from(ensembles.values()).map(d => JSON.parse(JSON.stringify(d))) : [],
       };
     }
 

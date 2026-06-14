@@ -2086,9 +2086,15 @@
       const unit = _ambUnitFromLane(laneIdx);
       if (!unit) { try { alert('That lane has no playable notes to send to Bloom.'); } catch (e) {} return; }
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Send lane to Bloom');
-      if (!lane.ambient || typeof lane.ambient !== 'object') lane.ambient = _defaultAmbientConfig();
+      const wasFresh = !lane.ambient || typeof lane.ambient !== 'object';
+      if (wasFresh) lane.ambient = _defaultAmbientConfig();
       lane.ambientMode = true;
       if (typeof activateLane === 'function') activateLane(laneIdx); // → _ambientInit(_laneEng)
+      // Fresh Bloom config defaults Bed ON (grid voice). With the sent Seq added
+      // too, both sound — so the seq's notes come out in its layer tone while
+      // Bed's come out in the grid voice. Silence the default generative layers
+      // on a fresh send so ONLY the sequence plays.
+      if (wasFresh) { ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (lane.ambient[k]) lane.ambient[k].on = false; }); }
       // Now the active lane IS this lane, so _laneEng targets its cfg.
       _ambSendSeedToInstance(_laneEng, unit, mode, targetSeqId);
       try { _ambSyncControls(_laneEng); } catch (e) {}
@@ -2930,6 +2936,21 @@
 
     // Apply a distilled sequence "unit" to an engine's Seq layers.
     // mode: 'new' (new SeqN) | 'append' (grow first unit) | 'interleave' (add a unit).
+    // Total wall-time of a unit's phrase (sum of every event's durMs) — the
+    // length one full pass of the sequence takes.
+    function _unitTotalMs(unit) {
+      if (!unit || !Array.isArray(unit.events)) return 0;
+      return unit.events.reduce((s, e) => s + Math.max(0, e.durMs | 0), 0);
+    }
+    // Size a seq layer's Interval (and Length) to its phrase so the loop fires
+    // exactly when the previous pass ends — no silence gaps, no overlap-cut.
+    // Interleaved units use the longest so none gets truncated.
+    function _ambFitSeqInterval(seq) {
+      if (!seq || !Array.isArray(seq.units) || !seq.units.length) return;
+      let total = 0;
+      seq.units.forEach(u => { total = Math.max(total, _unitTotalMs(u)); });
+      if (total > 0) { seq.intervalMs = Math.max(100, Math.round(total)); seq.lengthMs = seq.intervalMs; }
+    }
     function _ambSendSeedToInstance(E, unit, mode, targetSeqId) {
       if (!_ambValidUnit(unit)) return false;
       const cfg = E.getCfg(); if (!cfg) return false;
@@ -2941,6 +2962,7 @@
         const seq = _defaultSeqLayer(id);
         seq.units = [unit];
         seq.scale = (unit.scale && typeof SCALES !== 'undefined' && SCALES[unit.scale]) ? unit.scale : '';
+        _ambFitSeqInterval(seq);
         cfg.seqs.push(seq);
       } else {
         const seq = cfg.seqs.find(s => s.id === targetSeqId) || cfg.seqs[cfg.seqs.length - 1];
@@ -2952,6 +2974,7 @@
           if (seq.units.length > 1) seq.unitMode = 'interleave';
         }
         seq.on = true;
+        _ambFitSeqInterval(seq);
       }
       if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();

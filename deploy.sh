@@ -78,6 +78,21 @@ echo "📦 Staging files..."
 cp -r index.html bloops.html player.html artwork.html game.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
 
 # -----------------------------------------------
+# Cache-bust: stamp a fresh version onto the staged HTML's asset URLs so
+# browsers (and GoDaddy's edge cache) always fetch the just-deployed JS/CSS
+# instead of a stale copy. The repo keeps the literal "?v=DEPLOYVER" token;
+# only the uploaded copies get the timestamp. Avoids per-file stale-cache
+# bugs where one module updates and another is served from cache.
+# -----------------------------------------------
+DEPLOY_VER=$(date +%Y%m%d%H%M%S)
+echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
+for f in index.html bloops.html player.html artwork.html game.html; do
+  if [[ -f "$STAGE_DIR/$f" ]]; then
+    sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
+  fi
+done
+
+# -----------------------------------------------
 # Upload via SFTP using lftp
 # -----------------------------------------------
 echo "🔌 Testing connection to $FTP_HOST on port 21..."

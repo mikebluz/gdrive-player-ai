@@ -636,7 +636,9 @@
             return;
           }
           const _wasSelected = isSelectedStep(step);
+          try { console.log('[PERF] chip click', { i, wasSelected: _wasSelected, stepMode, performMode: (typeof performMode !== 'undefined' ? performMode : '?'), seqLen: sequence.length, label: step && step.label }); } catch (e) {}
           _toggleSelectedStep(i);
+          try { console.log('[PERF] after toggle selected=', selectedStepRefs.length); } catch (e) {}
           if (_wasSelected) { renderSequence(); return; }
           // Clicking a chord/sub chip captures it as the active wrap
           // form so future cell taps audition that structure transposed,

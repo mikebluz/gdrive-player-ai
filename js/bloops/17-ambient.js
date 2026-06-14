@@ -1688,14 +1688,21 @@
       const N = Math.max(1, (((cfg && cfg.freezeLenMs) | 0) / 1000) || 10);
       let buf = null; try { buf = await _segsToBuffer(ac, st.segs.slice(), N); } catch (e) {}
       st.segs = [];
-      if (!buf) { st.frozen = false; _ambFreezeSyncAll(E); return; }
+      if (!buf || !(buf.duration > 0.02)) {
+        // Nothing usable captured yet (armed too briefly, or the layer was
+        // silent for the window). Resume generation and tell the user.
+        st.frozen = false; _ambFreezeSyncAll(E);
+        if (typeof showToast === 'function') showToast('Freeze: nothing captured yet — let it play a few seconds, then Freeze again.');
+        return;
+      }
+      // Use a Tone source so it connects to the layer's Tone-node chain input
+      // (a raw AudioBufferSourceNode can't connect to a Tone node).
       const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
       try {
-        const src = ac.createBufferSource();
-        src.buffer = buf; src.loop = true;
+        const src = new Tone.ToneBufferSource({ url: buf, loop: true });
         src.connect(dest);
         src.start();
-        st.loopSrc = src; st.loopLen = buf.duration; st.loopStart = ac.currentTime;
+        st.loopSrc = src; st.loopLen = buf.duration; st.loopStart = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       } catch (e) { st.frozen = false; }
       _ambFreezeSyncAll(E);
     }
@@ -1703,11 +1710,11 @@
       const st = E.freeze && E.freeze[key];
       if (!st) return;
       const src = st.loopSrc;
-      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { ac = null; }
-      if (src && ac && st.loopLen > 0) {
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      if (src && st.loopLen > 0) {
         // Let the current loop finish, then stop + resume generation.
-        const elapsed = Math.max(0.01, ac.currentTime - (st.loopStart || ac.currentTime));
-        const end = (st.loopStart || ac.currentTime) + Math.ceil(elapsed / st.loopLen) * st.loopLen;
+        const elapsed = Math.max(0.01, now - (st.loopStart || now));
+        const end = (st.loopStart || now) + Math.ceil(elapsed / st.loopLen) * st.loopLen;
         src.onended = () => { st.frozen = false; st.loopSrc = null; _ambFreezeSyncAll(E); };
         try { src.loop = false; src.stop(end); } catch (e) { try { src.stop(); } catch (_) {} st.frozen = false; st.loopSrc = null; }
       } else {

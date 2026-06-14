@@ -1076,64 +1076,108 @@
       }, 1100);
     }
 
-    document.getElementById('save-btn').addEventListener('click', () => {
-      if (subEditState) {
-        commitSubEditAndExit();
-        return;
-      }
-      if (sequence.length === 0) return;
+    // Save also resets the selection state and unchecks Multi so a fresh
+    // edit session starts from a clean slate.
+    function _resetSaveSelectionAndMulti() {
+      clearSelection();
+      multiSelectMode = false;
+      const multiCb = document.getElementById('multi-select-toggle');
+      if (multiCb) multiCb.checked = false;
+    }
 
-      // Save also resets the selection state and unchecks Multi so a fresh
-      // edit session starts from a clean slate.
-      const resetSelectionAndMulti = () => {
-        clearSelection();
-        multiSelectMode = false;
-        const multiCb = document.getElementById('multi-select-toggle');
-        if (multiCb) multiCb.checked = false;
-      };
-
-      // Re-save: when a saved sequence is loaded, Save overwrites that entry
-      // in place (preserving its name) and leaves the workspace alone so the
-      // user can keep iterating. New entries get pushed and clear the workspace.
+    // Overwrite the currently-selected saved sequence in place (preserving its
+    // name) and leave the workspace alone so the user can keep iterating.
+    function saveOverwriteActiveSeq() {
       const existing = activeSeqIndex !== null ? savedSequences[activeSeqIndex] : null;
-      if (existing && existing.type !== 'audio') {
-        const updated = {
-          ...existing,
-          ...currentSequenceSnapshot({ name: existing.name }),
-        };
-        savedSequences[activeSeqIndex] = updated;
-        persistSaved();
-        // Propagate to any track items that came from this saved sequence so
-        // edits show up everywhere the sequence appears, not just in the bank.
-        propagateSavedToTracks(existing.name, updated);
-        renderSavedSequences();
-        flashSaveConfirm();
-        resetSelectionAndMulti();
-        renderSequence();
-        return;
-      }
+      if (!existing || existing.type === 'audio') return false;
+      const updated = {
+        ...existing,
+        ...currentSequenceSnapshot({ name: existing.name }),
+      };
+      savedSequences[activeSeqIndex] = updated;
+      persistSaved();
+      // Propagate to any track items that came from this saved sequence so
+      // edits show up everywhere the sequence appears, not just in the bank.
+      propagateSavedToTracks(existing.name, updated);
+      renderSavedSequences();
+      flashSaveConfirm();
+      _resetSaveSelectionAndMulti();
+      renderSequence();
+      return true;
+    }
 
-      const name = seqName(savedSequences.length);
+    // Push a brand-new saved sequence under `name` (falling back to the next
+    // auto-name) and clear the workspace — the entry now lives in the bank.
+    function saveAsNewSeq(name) {
+      name = (name && name.trim()) || seqName(savedSequences.length);
       savedSequences.push({ name, ...currentSequenceSnapshot() });
       persistSaved();
 
-      // Clear the sequence workspace — the saved entry is in the bank now.
       stopSequence();
       sequence = [];
       pendingChord = [];
       activeSeqIndex = null;
       insertionPoint = null;
       document.getElementById('save-btn').disabled = true;
-      resetSelectionAndMulti();
+      _resetSaveSelectionAndMulti();
 
       renderSequence();
       renderSavedSequences();
+      flashSaveConfirm();
       // Persist the post-save workspace state. Without this the user's
       // most recent edits across lanes (which may not have triggered a
       // persist on their own — addToSequence aside, many mutation
       // paths don't auto-persist) would be lost on reload, since
       // persistSaved only writes the bank, not the workspace snapshot.
       if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+
+    // Save workflow: ask whether to overwrite the currently-selected sequence
+    // or create a new one (prompting for a name). With no active selection the
+    // popover offers just the named "Save as new" path.
+    function showSavePopover() {
+      const existing = activeSeqIndex !== null ? savedSequences[activeSeqIndex] : null;
+      const canOverwrite = !!(existing && existing.type !== 'audio');
+      const defName = seqName(savedSequences.length);
+      const escName = canOverwrite ? String(existing.name).replace(/[<>&"]/g, '') : '';
+
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal save-seq-modal';
+      modal.innerHTML =
+        '<div class="sm-title">Save sequence</div>' +
+        (canOverwrite
+          ? '<button type="button" class="sm-apply save-seq-overwrite">Overwrite “' + escName + '”</button>' +
+            '<div class="save-seq-or">— or create a new one —</div>'
+          : '') +
+        '<label class="ee-field ee-name"><span>New sequence name</span>' +
+          '<input type="text" id="save-seq-name" placeholder="' + defName.replace(/"/g, '&quot;') + '"></label>' +
+        '<div class="se-wave-actions">' +
+          '<button type="button" class="sm-wave save-seq-cancel">Cancel</button>' +
+          '<button type="button" class="sm-apply save-seq-new">Save as new</button>' +
+        '</div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const close = () => { try { overlay.remove(); } catch (e) {} };
+      const nameInput = modal.querySelector('#save-seq-name');
+      setTimeout(() => { try { nameInput.focus(); } catch (e) {} }, 0);
+      const doNew = () => { const n = nameInput.value; close(); saveAsNewSeq(n); };
+      if (canOverwrite) {
+        modal.querySelector('.save-seq-overwrite').addEventListener('click', () => { close(); saveOverwriteActiveSeq(); });
+      }
+      modal.querySelector('.save-seq-new').addEventListener('click', doNew);
+      modal.querySelector('.save-seq-cancel').addEventListener('click', close);
+      nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doNew(); } });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    }
+
+    document.getElementById('save-btn').addEventListener('click', () => {
+      if (subEditState) {
+        commitSubEditAndExit();
+        return;
+      }
+      if (sequence.length === 0) return;
+      showSavePopover();
     });
 
     // ---- Audio recording (mic → saved as an 'audio' sequence) ----

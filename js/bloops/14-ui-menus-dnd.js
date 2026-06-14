@@ -1636,9 +1636,20 @@
       modal.querySelector('#ee-preview').addEventListener('click', () => {
         // Audition through the real ensemble path via a temp registration.
         try {
+          if (typeof ensembles === 'undefined') return;
           def.mode = modeSel.value; def.name = nameInput.value || def.name;
-          if (typeof ensembles !== 'undefined') {
-            ensembles.set('__ens_preview__', JSON.parse(JSON.stringify(def)));
+          ensembles.set('__ens_preview__', JSON.parse(JSON.stringify(def)));
+          if (def.mode === 'rr') {
+            // Round-robin: play the rotation as a short sequence (one note per
+            // member, cursor reset to the start) so the rotation is audible
+            // without notes overlapping on rapid clicks.
+            _ensembleRR['__ens_preview__'] = 0;
+            const n = Math.max(1, def.members.length);
+            const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+            const gap = 0.5;
+            for (let k = 0; k < n; k++) playNote(C4, { type: 'ensemble:__ens_preview__' }, 420, now + k * gap);
+            setTimeout(() => { try { ensembles.delete('__ens_preview__'); } catch (e) {} }, n * gap * 1000 + 1600);
+          } else {
             playNote(C4, { type: 'ensemble:__ens_preview__' }, 750);
             setTimeout(() => { try { ensembles.delete('__ens_preview__'); } catch (e) {} }, 1500);
           }

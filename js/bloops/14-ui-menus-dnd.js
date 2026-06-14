@@ -2081,12 +2081,6 @@
           '<label class="ee-field"><span>Low-pass <em id="pad-lpf-v">off</em></span>' +
             '<input type="range" id="pad-lpf" min="0" max="100" step="1" value="100"></label>' +
         '</div>' +
-        '<div class="ee-top">' +
-          '<label class="ee-field"><span>Attack <em id="pad-attack-v">300 ms</em></span>' +
-            '<input type="range" id="pad-attack" min="0" max="3000" step="10" value="300"></label>' +
-          '<label class="ee-field"><span>Release <em id="pad-release-v">800 ms</em></span>' +
-            '<input type="range" id="pad-release" min="0" max="4000" step="10" value="800"></label>' +
-        '</div>' +
         '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
         '<div class="se-wave-actions">' +
           '<button type="button" class="sm-wave" id="pad-preview">▶ Preview loop</button>' +
@@ -2114,12 +2108,8 @@
       const spreadV = modal.querySelector('#pad-spread-v');
       const detuneEl = modal.querySelector('#pad-detune');
       const detuneV = modal.querySelector('#pad-detune-v');
-      const attackEl = modal.querySelector('#pad-attack');
-      const attackV = modal.querySelector('#pad-attack-v');
-      const releaseEl = modal.querySelector('#pad-release');
-      const releaseV = modal.querySelector('#pad-release-v');
       let copies = 1, offsetSec = 0.025, crossfadeSec = 0, lpfPos = 100, spread = 0;
-      let detuneCents = 0, padAttackMs = 300, padReleaseMs = 800, reverse = false;
+      let detuneCents = 0, reverse = false;
       // Slider 0..100 → log cutoff ~80 Hz..20 kHz; 100 = fully open (off).
       const lpfHz = () => Math.round(80 * Math.pow(2, lpfPos * 8 / 100));
 
@@ -2138,7 +2128,7 @@
         const s = previewSrc, g = previewGain;
         previewSrc = null; previewGain = null; previewBtn.textContent = '▶ Preview loop';
         try {
-          const r = Math.max(0.02, padReleaseMs / 1000), now = Tone.now();
+          const r = 0.02, now = Tone.now();   // tiny fade so Stop doesn't click
           g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now);
           g.gain.linearRampToValueAtTime(0, now + r);
           setTimeout(() => { try { s.stop(); } catch (e) {} try { s.dispose(); } catch (e) {} try { g.dispose(); } catch (e) {} }, (r + 0.1) * 1000);
@@ -2158,9 +2148,9 @@
         if (lpfPos < 100) _lowpassBufferInPlace(b, lpfHz(), 0.707);
         return b;
       };
-      // withAttack=true (Preview button) ramps in over the pad's Attack so the
-      // swell is audible; re-renders during slider drags pass falsy for an
-      // instant restart (no repeated fade-in while dragging).
+      // Preview the looping pad. A tiny fade-in on a fresh Preview press avoids a
+      // click; slider-drag re-renders pass falsy for an instant restart. (Attack/
+      // Release are set later on the lane, not here.)
       const startPreview = (withAttack) => {
         if (!buf) return;
         _disposePreview();
@@ -2168,7 +2158,7 @@
           const g = new Tone.Gain(1).toDestination();
           const src = new Tone.ToneBufferSource({ url: buildOut(), loop: true }).connect(g);
           if (withAttack) {
-            const a = Math.max(0.005, padAttackMs / 1000), now = Tone.now();
+            const a = 0.01, now = Tone.now();
             g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(0, now);
             g.gain.linearRampToValueAtTime(1, now + a);
           }
@@ -2297,16 +2287,6 @@
         detuneCents = parseInt(detuneEl.value, 10) || 0; detuneV.textContent = detuneCents + '¢';
         if (previewSrc) startPreview();
       });
-      // Attack/Release shape the held note's swell (not the baked loop), so they
-      // only update their labels here and are stored on the pad at save.
-      attackEl.addEventListener('input', () => {
-        padAttackMs = parseInt(attackEl.value, 10) || 0;
-        attackV.textContent = padAttackMs >= 1000 ? (padAttackMs / 1000).toFixed(2).replace(/0$/, '') + ' s' : padAttackMs + ' ms';
-      });
-      releaseEl.addEventListener('input', () => {
-        padReleaseMs = parseInt(releaseEl.value, 10) || 0;
-        releaseV.textContent = padReleaseMs >= 1000 ? (padReleaseMs / 1000).toFixed(2).replace(/0$/, '') + ' s' : padReleaseMs + ' ms';
-      });
       previewBtn.addEventListener('click', () => {
         if (previewSrc) releasePreview(); else startPreview(true);
       });
@@ -2322,7 +2302,7 @@
         try {
           const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(buildOut()) : null;
           if (!wav) throw new Error('WAV encoder unavailable.');
-          const reg = await registerSampleFromBlob(wav, nm, { padLoop: true, padAttack: padAttackMs, padRelease: padReleaseMs });
+          const reg = await registerSampleFromBlob(wav, nm, { padLoop: true });
           if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();
           if (reg && typeof applyToneToAllCells === 'function') { try { applyToneToAllCells('sample:' + reg.id, 'none'); } catch (e) {} }
           if (typeof showToast === 'function') showToast('Saved pad “' + (reg ? reg.name : nm) + '”');

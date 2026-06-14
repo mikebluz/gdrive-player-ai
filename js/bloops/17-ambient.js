@@ -1105,7 +1105,12 @@
         else pushFrom(s);
       });
       if (!events.length) return null;
-      return { events, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm };
+      // Capture the source's grid voice (cell 0) so the Bloom layer plays with
+      // the settings the sequence was MADE with — not whatever lane happens to
+      // be active (critical for the lane-agnostic master Bloom).
+      let voice = null;
+      try { if (Array.isArray(saved.cellParams) && saved.cellParams[0]) voice = JSON.parse(JSON.stringify(saved.cellParams[0])); } catch (e) {}
+      return { events, voice, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm };
     }
     // Nudge an absolute freq to a nearby scale degree (seeded random walk).
     // Probability of moving = depth; magnitude 1..(1+2·depth) degrees.
@@ -1173,8 +1178,13 @@
       const key = 'seq:' + seq.id;
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const depth = Math.max(0, Math.min(100, seq.varyDepth | 0)) / 100;
-      const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
-      const type = _ambLayerType(seq.tone);
+      // Voice base: the unit's CAPTURED voice (from the source lane at send
+      // time) so playback is lane-agnostic — falls back to the live grid only
+      // for legacy units with no captured voice.
+      const base = (unit && unit.voice) ? unit.voice
+        : ((typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' });
+      const fallbackType = (base && base.type) ? base.type : 'sine';
+      const type = (seq.tone && seq.tone !== '') ? seq.tone : fallbackType;
       // When the layer Tone is "Grid voice" ('') we honor each note's own
       // captured source voice (so a merged/multi-voice sequence plays piano
       // notes as piano, square as square, instead of forcing them all through
@@ -2084,9 +2094,14 @@
       if (!lane || !Array.isArray(lane.steps)) return null;
       const bpmEl = document.getElementById('tempo-input') || (typeof tempoInput !== 'undefined' ? tempoInput : null);
       const bpm = bpmEl ? (parseInt(bpmEl.value, 10) || 120) : 120;
+      // Prefer the lane's own captured voice (so a sent lane keeps its own
+      // tone/settings, independent of which lane is active); fall back to the
+      // live grid voice when this IS the active lane.
+      const laneCellParams = (lane.voice && Array.isArray(lane.voice.cellParams)) ? lane.voice.cellParams
+        : ((laneIdx === activeLaneIdx && typeof cellParams !== 'undefined') ? cellParams : null);
       return _seqSeedFromSaved({
-        steps: lane.steps, bpm,
-        scale: (typeof currentScale !== 'undefined') ? currentScale : '',
+        steps: lane.steps, bpm, cellParams: laneCellParams,
+        scale: (lane.voice && lane.voice.scale) ? lane.voice.scale : ((typeof currentScale !== 'undefined') ? currentScale : ''),
         rootIdx: (typeof rootIdx !== 'undefined') ? rootIdx : 0,
         baseOctave: (typeof baseOctave !== 'undefined') ? baseOctave : 4,
       });

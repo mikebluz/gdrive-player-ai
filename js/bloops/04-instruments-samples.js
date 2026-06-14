@@ -49,23 +49,23 @@
         playNote(freq, p, durationMs, startTime, destination, trackIdx, laneIdx);
         return;
       }
-      let mode = def.mode || 'stack';
+      const mode = def.mode || 'stack';
       let members = def.members;
-      // Caller overrides (used by the Bloom Seq lock/unlock control):
-      //  _ensembleForceStack → play ALL members together (locked), ignoring mode.
-      //  _ensembleMemberIdx   → play ONLY that one member (unlocked: the seq
-      //                          spreads members across notes as independent voices).
+      // Default: honor the ensemble's own mode. Caller overrides (Bloom Seq
+      // lock/unlock) force the behavior and ALWAYS keep per-member offsets so
+      // stacked voices stay distinct (octave/detune/pan/level) instead of
+      // piling on the same pitch and masking each other.
+      let useOffsets = (mode !== 'stack');
       if (Number.isFinite(params._ensembleMemberIdx)) {
         const i = ((params._ensembleMemberIdx % members.length) + members.length) % members.length;
-        members = [members[i]]; mode = def.mode || 'stack';
+        members = [members[i]]; useOffsets = true;       // unlocked: one member per note, keep its offset
       } else if (params._ensembleForceStack) {
-        mode = 'stack';
+        members = def.members; useOffsets = true;          // locked: ALL members together, each distinct
       } else if (mode === 'rr') {
         const i = (_ensembleRR[id] | 0) % members.length;
         _ensembleRR[id] = (i + 1) % members.length;
         members = [members[i]];
       }
-      const useOffsets = (mode !== 'stack');
       members.forEach(m => {
         if (!m || isEnsembleType(m.type)) return; // never nest ensembles
         const p = { ...params };

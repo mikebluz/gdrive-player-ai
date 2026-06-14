@@ -2255,12 +2255,16 @@
                || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
                || globalSendTap);
           // Pad voices loop to fill the step (native looping voice, bounded by
-          // scheduleStop). Skipped if the step carries a slice window.
+          // scheduleStop). Hold at full level for the WHOLE step (targetDur),
+          // then release — unlike the synth path's preReleaseDur (= targetDur −
+          // release), which with a pad's long release would collapse the hold and
+          // make the pad fade out almost immediately (ending before the step).
+          // Skipped if the step carries a slice window.
           if ((sampleSamplers.get(type.slice(7)) || {}).padLoop
               && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)) {
             const padAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, padAt, { pan });
-            if (padH) { try { padH.scheduleStop(Math.max(0.02, preReleaseDur)); } catch (e) {} return; }
+            if (padH) { try { padH.scheduleStop(Math.max(0.02, targetDur)); } catch (e) {} return; }
           }
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
             { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,

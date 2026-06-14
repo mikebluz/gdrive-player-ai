@@ -4306,7 +4306,6 @@
         step = { freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined, duration: noteUnits, subdivision: unitSub };
       }
       addToSequence(step);
-      try { console.log('[PERF] added step', { idx: sequence.indexOf(step), isChord: !!step.chord, label: step.label, seqLen: sequence.length }); } catch (e) {}
       _performEmittedUnits = desiredStart + noteUnits;
     }
     function polyFinalizeSession() {

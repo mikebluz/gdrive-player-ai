@@ -257,21 +257,13 @@
           head = filter;
         }
         // Pad voices loop their whole (pre-trimmed) buffer so the sound holds for
-        // the full note duration. Tone.ToneBufferSource is a OneShotSource whose
-        // output Gain starts at 0 and ramps up at start(); its `loop` setter calls
-        // cancelStop() → cancelScheduledValues(), which (if called after start)
-        // cancels that fade-in ramp and leaves the gain at 0 (silence). So we
-        // can't make it loop reliably. Tone.Player is purpose-built for gapless
-        // looping — use it for pads (start/stop/dispose share the same API the
-        // trigger sites use). playbackRate is a plain number on Player (no VCO
-        // connect), which is fine: grid pad presses don't drive a detune LFO.
+        // the full note duration. We loop by setting `loop` DIRECTLY on the native
+        // AudioBufferSourceNode after start() (see the trigger sites) — Tone's
+        // `loop` SETTER calls cancelStop()→cancelScheduledValues(), which cancels
+        // the OneShotSource fade-in ramp and leaves the gain at 0 (silence). The
+        // native property has no such side effect.
         const _padLoop = !!(info && info.padLoop);
-        if (_padLoop) {
-          source = new Tone.Player({ url: audioBuf, loop: true, loopStart: 0, loopEnd: audioBuf.duration,
-            playbackRate, fadeIn: 0, fadeOut: 0 }).connect(head);
-        } else {
-          source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
-        }
+        source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch
@@ -279,7 +271,7 @@
         // vibrato as base·(ln2/1200)·cents. A per-voice Gain applies that scale
         // and sums onto the constant playbackRate (the LFO is zero-mean, so the
         // sampled pitch centre is preserved); it's disposed with the voice.
-        if (!_padLoop && opts && opts.detuneMod && typeof opts.detuneMod.connect === 'function'
+        if (opts && opts.detuneMod && typeof opts.detuneMod.connect === 'function'
             && source.playbackRate && playbackRate > 0) {
           detuneScale = new Tone.Gain(playbackRate * (Math.LN2 / 1200));
           opts.detuneMod.connect(detuneScale);
@@ -302,6 +294,25 @@
       const sliceOffset = (opts && Number.isFinite(opts.sampleOffsetSec)) ? Math.max(0, Math.min(audioBuf.duration, opts.sampleOffsetSec * playbackRate)) : 0;
       const sliceBufSec = (opts && Number.isFinite(opts.sliceDurSec)) ? Math.max(0.005, opts.sliceDurSec * playbackRate) : null;
       return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec, padLoop: _padLoop };
+    }
+    // Make a (just-started) ToneBufferSource loop by setting `loop` straight on
+    // the underlying native AudioBufferSourceNode — NOT via Tone's loop setter,
+    // whose cancelStop() would cancel the OneShotSource fade-in ramp (→ silence).
+    // Called immediately after start(); with no duration passed to start() there
+    // is no auto-stop, so the buffer loops indefinitely until the voice is
+    // stopped/disposed. Returns true if the native node was reachable.
+    function _padLoopNativeSource(toneSrc) {
+      try {
+        const ns = toneSrc && (toneSrc._source || toneSrc._sourceNode || toneSrc.sourceNode);
+        if (ns && typeof ns === 'object' && 'loop' in ns) {
+          const dur = (ns.buffer && ns.buffer.duration) || (toneSrc.buffer && toneSrc.buffer.duration) || 0;
+          ns.loop = true;
+          ns.loopStart = 0;
+          if (dur > 0) ns.loopEnd = dur;
+          return true;
+        }
+      } catch (e) {}
+      return false;
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -1551,7 +1562,8 @@
         if (v) {
           const triggerAt = _warmAt();
           try {
-            v.source.start(triggerAt);   // pad = Tone.Player(loop) → loops while held
+            v.source.start(triggerAt);
+            if (v.padLoop) _padLoopNativeSource(v.source); // loop while held
             v.ampEnv.triggerAttack(triggerAt, velocity);
           } catch (e) { _disposeSampleAdsrVoice(v); }
           let released = false;
@@ -2183,8 +2195,7 @@
               // the plain whole-buffer start — byte-identical to the prior path.
               if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
               else v.source.start(triggerAt);
-              // Pad = Tone.Player(loop): loops to fill the step; the explicit
-              // stop below bounds it to the slot.
+              if (v.padLoop) _padLoopNativeSource(v.source); // loop to fill the step (stop below bounds it)
               // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
               // release over `rel` — same envelope timing the synth path uses,
               // so a sample voice and a synth voice sit identically in a slot.

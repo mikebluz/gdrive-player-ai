@@ -1722,8 +1722,12 @@
       }
       st.events = win.map(e => ({ t: Math.max(0, e.at - loopStart), freq: e.freq, dur: e.dur, params: e.params }));
       st.loopLen = loopEnd - loopStart;
-      // Start looping immediately from the next scheduling tick (tiny lead).
-      const A = P2 + 0.12;
+      // Begin the loop when the current generative iteration reaches its end —
+      // i.e. at the layer's next scheduled onset (E.clocks[key]), so the handoff
+      // from generation to loop lands cleanly on the grid. Fall back to a small
+      // lead past the press if no clock is available.
+      const nextOnset = E.clocks && E.clocks[key];
+      const A = (typeof nextOnset === 'number' && nextOnset > P2) ? nextOnset : (P2 + 0.12);
       st.anchor = A; st.scheduledUpto = A;
       st.recording = false; st.frozen = true;
       _ambFreezeSyncAll(E);

@@ -1480,7 +1480,7 @@
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
       // generate normally while teeing each note into the capture sink.
       const stepLayer = (key, lc, guardMax, minSec, emit) => {
-        if (_ambFreezeFrozen(E, key)) { _ambReplayFrozen(E, key, now, horizon); return; }
+        if (_ambFreezeGate(E, key, now, horizon)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
         try { runLayer(key, lc, guardMax, minSec, emit); }
         finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
@@ -1495,7 +1495,7 @@
         for (const seq of cfg.seqs) {
           if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
-          if (_ambFreezeFrozen(E, key)) { _ambReplayFrozen(E, key, now, horizon); continue; }
+          if (_ambFreezeGate(E, key, now, horizon)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
           let g = 0;
@@ -1516,7 +1516,7 @@
         for (const L of cfg.samples) {
           if (!L || !L.on || !L.sampleId) continue;
           const key = 'samp:' + L.id;
-          if (_ambFreezeFrozen(E, key)) { _ambReplayFrozen(E, key, now, horizon); continue; }
+          if (_ambFreezeGate(E, key, now, horizon)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
           let g = 0;
@@ -1644,7 +1644,7 @@
     // again to Thaw and resume generation. Symbolic (not audio), so it's seamless.
     function _ambFreezeState(E, key) {
       E.freeze = E.freeze || {};
-      return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0 });
+      return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null });
     }
     function _ambFreezeFrozen(E, key) { return !!(E && E.freeze && E.freeze[key] && E.freeze[key].frozen); }
     // Resolve a freeze key ('bed' | 'bed:5' | 'seq:3' | 'samp:2') → its layer cfg.
@@ -1679,7 +1679,7 @@
     // becomes the loop.
     function _ambFreezeArm(E, key) {
       const st = _ambFreezeState(E, key);
-      st.recording = true; st.frozen = false; st.events = [];
+      st.recording = true; st.frozen = false; st.events = []; st.pendingThawAt = null;
       st.recStart = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
     }
     // Nearest captured note onset to a target time (within a sane range), so the
@@ -1729,7 +1729,7 @@
       const nextOnset = E.clocks && E.clocks[key];
       const A = (typeof nextOnset === 'number' && nextOnset > P2) ? nextOnset : (P2 + 0.12);
       st.anchor = A; st.scheduledUpto = A;
-      st.recording = false; st.frozen = true;
+      st.recording = false; st.frozen = true; st.pendingThawAt = null;
       _ambFreezeSyncAll(E);
     }
     // Schedule the frozen layer's looped events that fall in [now, horizon].
@@ -1752,11 +1752,42 @@
       }
       st.scheduledUpto = horizon;
     }
+    // Thaw is deferred: schedule generation to resume at the end of the loop's
+    // current iteration (symmetric with Freeze, which starts on the grid). The
+    // actual flip happens in _ambFreezeGate once that boundary enters the
+    // scheduling horizon.
     function _ambFreezeThaw(E, key) {
       const st = E.freeze && E.freeze[key];
       if (!st) return;
-      st.frozen = false; st.recording = false; st.scheduledUpto = 0; st.events = [];
+      if (st.recording) { st.recording = false; st.events = []; _ambFreezeSyncAll(E); return; }
+      if (!st.frozen) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const A = st.anchor || now, L = st.loopLen || 0;
+      if (L > 0) {
+        const k = Math.max(1, Math.ceil((now - A) / L)); // end of the current iteration
+        st.pendingThawAt = A + k * L;
+      } else {
+        st.frozen = false; st.scheduledUpto = 0; st.events = [];
+      }
       _ambFreezeSyncAll(E);
+    }
+    // Per-tick freeze gate. Returns true if the caller should SKIP generation
+    // (the loop is playing); false if it should generate. Handles the deferred
+    // thaw: when the iteration boundary enters the horizon, it flushes the loop
+    // tail up to the boundary, flips back to generation, and re-grids the clock.
+    function _ambFreezeGate(E, key, now, horizon) {
+      const st = E.freeze && E.freeze[key];
+      if (!st || !st.frozen) return false;
+      const tA = st.pendingThawAt;
+      if (tA != null && horizon >= tA) {
+        _ambReplayFrozen(E, key, now, tA);          // flush remaining loop events up to the boundary
+        st.frozen = false; st.scheduledUpto = 0; st.pendingThawAt = null; st.events = [];
+        try { _ambFreezeSyncAll(E); } catch (e) {}
+        if (E.clocks && tA > now) E.clocks[key] = tA; // generation resumes exactly on the grid
+        return false;
+      }
+      _ambReplayFrozen(E, key, now, (tA != null) ? Math.min(horizon, tA) : horizon);
+      return true;
     }
     // One button, three states: idle → (arm) recording → (commit) looping → (thaw) idle.
     function _ambFreezeCycle(E, key) {

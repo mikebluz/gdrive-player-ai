@@ -2063,6 +2063,7 @@
         '<label class="ee-field ee-name"><span>Source sample</span><select id="pad-src">' + optsHtml + '</select></label>' +
         '<canvas class="se-wave-canvas" id="pad-wave-canvas"></canvas>' +
         '<div class="se-wave-info"><span id="pad-wave-sel">full</span>' +
+          '<label class="se-wave-rev"><input type="checkbox" id="pad-reverse"> Reverse</label>' +
           '<label class="se-wave-rev"><input type="checkbox" id="pad-zerolock"> Lock to zero</label></div>' +
         '<div class="ee-top" style="margin-top:6px;">' +
           '<label class="ee-field"><span>Overlaid copies <em id="pad-copies-v">1</em></span>' +
@@ -2118,7 +2119,7 @@
       const releaseEl = modal.querySelector('#pad-release');
       const releaseV = modal.querySelector('#pad-release-v');
       let copies = 1, offsetSec = 0.025, crossfadeSec = 0, lpfPos = 100, spread = 0;
-      let detuneCents = 0, padAttackMs = 300, padReleaseMs = 800;
+      let detuneCents = 0, padAttackMs = 300, padReleaseMs = 800, reverse = false;
       // Slider 0..100 → log cutoff ~80 Hz..20 kHz; 100 = fully open (off).
       const lpfHz = () => Math.round(80 * Math.pow(2, lpfPos * 8 / 100));
 
@@ -2147,7 +2148,7 @@
       // offset copies (optionally stereo-spread) → loop-boundary crossfade →
       // optional low-pass. All baked synchronously so preview == saved audio.
       const buildOut = () => {
-        let b = _sliceAudioBuffer(ac, buf, startF, endF, false);
+        let b = _sliceAudioBuffer(ac, buf, startF, endF, reverse);
         _dcBlockBufferInPlace(b); // strip DC before looping
         b = _buildPadBuffer(ac, b, copies, offsetSec, spread / 100, detuneCents);
         // Detuned copies aren't periodic at the loop length, so force a small
@@ -2259,6 +2260,11 @@
       canvas.addEventListener('pointercancel', endDrag);
 
       srcSel.addEventListener('change', () => loadSample(srcSel.value));
+      const reverseEl = modal.querySelector('#pad-reverse');
+      reverseEl.addEventListener('change', () => {
+        reverse = reverseEl.checked;
+        if (previewSrc) startPreview();
+      });
       const zeroLockEl = modal.querySelector('#pad-zerolock');
       zeroLockEl.addEventListener('change', () => {
         zeroLock = zeroLockEl.checked;

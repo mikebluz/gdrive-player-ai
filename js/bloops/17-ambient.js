@@ -79,6 +79,9 @@
         // Dynamic list of Sample layers — each plays a single-buffer sample
         // (chopped/whole) per Interval. See _defaultSampleLayer(). Empty default.
         samples: [],
+        // Additional Bed/Motif/Texture/Beat instances beyond the four primaries
+        // (each {type,id,...layerParams}). Empty default. See _ambDefaultLayer().
+        extras:  [],
         // `playing` is never persisted as true — the generator only starts on
         // an explicit gesture (a suspended AudioContext would swallow autostart).
       };
@@ -292,6 +295,21 @@
       cfg.samples.forEach(s => { if (s && Number.isFinite(s.id) && s.id > maxSid) maxSid = s.id; });
       cfg.samples.forEach(s => { if (s && !Number.isFinite(s.id)) s.id = ++maxSid; });
       cfg.samples = cfg.samples.filter(s => s && typeof s === 'object').map(s => _normalizeSampleLayer(s, s.id));
+      // Extra layer instances (additional Bed/Motif/Texture/Beat).
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      let maxXid = 0;
+      cfg.extras.forEach(x => { if (x && Number.isFinite(x.id) && x.id > maxXid) maxXid = x.id; });
+      cfg.extras = cfg.extras.filter(x => x && typeof x === 'object' && _AMB_LAYER_SCHEMA[x.type]).map(x => {
+        if (!Number.isFinite(x.id)) x.id = ++maxXid;
+        const d = _ambDefaultLayer(x.type, x.id);
+        Object.keys(d).forEach(k => { if (k === 'mod' || k === 'delay' || k === 'dist' || k === 'notes') return; if (typeof x[k] === 'undefined') x[k] = d[k]; });
+        if (typeof x.on !== 'boolean') x.on = true;
+        if (typeof x.present !== 'boolean') x.present = true;
+        _ambNormalizeModObj(x, _ambDefaultMod());
+        _ambNormalizeFx(x);
+        if (x.type !== 'beat') _ambNormalizeNotes(x);
+        return x;
+      });
       // Parameter ramps (LFO automation of a layer param between A and B).
       if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
       let maxRid = 0;
@@ -776,13 +794,14 @@
       }
       return order;
     }
-    function _ambEmitBed(at, bed, space) {
+    function _ambEmitBed(at, bed, space, key) {
+      key = key || 'bed';
       const voicing = _ambPickVoicing(bed);
       if (!voicing.length) return;
       const durMs = Math.max(80, bed.lengthMs | 0);
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
       const pans = _ambSpacePans(voicing.length, space);
-      const dest = _ambLayerDest('bed'), dmod = _ambLayerDetuneMod('bed');
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const n = voicing.length;
       // Strum: spread the chord's notes across a fraction of the bed's interval
       // (0 = a near-simultaneous pad, 100 = arpeggiated across the whole cycle),
@@ -844,7 +863,8 @@
       _E.motifDeg = next;
       return _ambDegreeFreq(((next % N) + N) % N, Math.floor(next / N), _ambNotesOf(motif));
     }
-    function _ambEmitMotif(at, motif, space) {
+    function _ambEmitMotif(at, motif, space, key) {
+      key = key || 'motif';
       if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return;
       const lenMs = Math.max(60, motif.lengthMs | 0);
       // Twist: 0 = a single note per fire (steady cadence). As it rises, the
@@ -854,7 +874,7 @@
       let count = 1;
       if (tw > 0 && _ambRand() < tw) count = 2 + Math.floor(_ambRand() * (1 + tw * 5)); // 2..~7
       const burstGap = Math.min(0.12, (lenMs / 1000) / Math.max(1, count)); // fast, ≤120 ms apart
-      const dmod = _ambLayerDetuneMod('motif');
+      const dmod = _ambLayerDetuneMod(key);
       for (let i = 0; i < count; i++) {
         const f = _ambMotifNextNote(motif);
         if (f == null) continue;
@@ -864,7 +884,7 @@
         const mp = _ambMotifParams(lenMs, pan, motif.tone);
         mp.volume = _ambApplyLevel(mp.volume, motif.level);
         if (dmod) mp._detuneMod = dmod;
-        try { playNote(f, mp, lenMs, at + i * burstGap, _ambLayerDest('motif'), undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, mp, lenMs, at + i * burstGap, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       }
     }
 
@@ -898,7 +918,8 @@
         volume: Math.max(2, Math.round(baseVol * 0.2)), pan: pan | 0,
       };
     }
-    function _ambEmitTexture(at, texture, space) {
+    function _ambEmitTexture(at, texture, space, key) {
+      key = key || 'texture';
       if (!_E.texPattern) _ambTexBuildPattern(texture);
       const center = Math.max(1, Math.min(8, texture.register | 0));
       const slot = _E.texPattern[_E.texStep % _E.texPattern.length];
@@ -909,8 +930,8 @@
         const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
         const tp = _ambTexParams(lenMs, pan, texture.tone);
         tp.volume = _ambApplyLevel(tp.volume, texture.level);
-        const dmod = _ambLayerDetuneMod('texture'); if (dmod) tp._detuneMod = dmod;
-        try { playNote(f, tp, lenMs, at, _ambLayerDest('texture'), undefined, _E.laneIdx()); } catch (e) {}
+        const dmod = _ambLayerDetuneMod(key); if (dmod) tp._detuneMod = dmod;
+        try { playNote(f, tp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       }
       const mr = Math.max(0, Math.min(100, texture.mutateRate | 0));
       if (!_E.texMutateAt) _E.texMutateAt = at + (6 - mr / 100 * 5);
@@ -985,7 +1006,8 @@
         pan: pan | 0,
       };
     }
-    function _ambEmitBeat(at, beat, space) {
+    function _ambEmitBeat(at, beat, space, key) {
+      key = key || 'beat';
       if (_ambRand() * 100 < Math.max(0, Math.min(100, beat.restProb | 0))) return;
       const pc = _ambPickDrumPc();
       const midi = 36 + pc; // C2 = 36
@@ -995,8 +1017,8 @@
       const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
       const bp = _ambBeatParams(beat.kit, lenMs, pan);
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
-      const dmod = _ambLayerDetuneMod('beat'); if (dmod) bp._detuneMod = dmod;
-      try { playNote(f, bp, lenMs, at, _ambLayerDest('beat'), undefined, _E.laneIdx()); } catch (e) {}
+      const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
+      try { playNote(f, bp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
     }
 
     // ================= SEQ engine ===================================
@@ -1378,6 +1400,9 @@
       if (Array.isArray(cfg.samples)) cfg.samples.forEach(L => {
         if (L.on && L.sampleId) want['samp:' + L.id] = L;
       });
+      if (Array.isArray(cfg.extras)) cfg.extras.forEach(ex => {
+        if (ex && ex.present !== false && ex.on && _AMB_LAYER_SCHEMA[ex.type]) want[ex.type + ':' + ex.id] = ex;
+      });
       // Build/update wanted chains (pass a one-key cfg-shim so the existing
       // _ambSyncTarget keeps reading cfg[layerKey].mod unchanged), then FX.
       Object.keys(want).forEach(key => { _ambBuildMod(key, { [key]: want[key] }); _ambApplyLayerFx(key, want[key]); });
@@ -1493,6 +1518,22 @@
             I[key] = (I[key] | 0) + 1;
             C[key] += _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
           }
+        }
+      }
+      // Extra layer instances (additional Bed/Motif/Texture/Beat). runLayer
+      // gates present/on/frozen and reads the instance's intervalMs/when.
+      if (Array.isArray(cfg.extras)) {
+        for (const ex of cfg.extras) {
+          if (!ex || !_AMB_LAYER_SCHEMA[ex.type]) continue;
+          const key = ex.type + ':' + ex.id;
+          const gm = ex.type === 'bed' ? 8 : 16;
+          const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
+          runLayer(key, ex, gm, ms, (at) => {
+            if (ex.type === 'bed') _ambEmitBed(at, ex, space, key);
+            else if (ex.type === 'motif') _ambEmitMotif(at, ex, space, key);
+            else if (ex.type === 'texture') _ambEmitTexture(at, ex, space, key);
+            else _ambEmitBeat(at, ex, space, key);
+          });
         }
       }
     }
@@ -2365,6 +2406,123 @@
       _ambRenderSampleLayers(E);
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // ---- Extra layer instances (multiple Bed/Motif/Texture/Beat) -----------
+    // cfg.extras holds ADDITIONAL instances beyond the four primaries. Each is
+    // a full layer of a built-in type, reusing the same emit functions (routed
+    // by a 'type:id' mod key) and one data-driven card builder/wirer. (This card
+    // system is what the later cleanup will use for the primaries too.)
+    const _AMB_LAYER_SCHEMA = {
+      bed: { label: 'Bed', ctrls: [['tone'], ['notes'],
+        ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['tm', 'lengthMs', 'Length', 300, 16000, 100],
+        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+      motif: { label: 'Motif', ctrls: [['tone'], ['notes'],
+        ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
+        ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20],
+        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+      texture: { label: 'Texture', ctrls: [['tone'], ['notes'],
+        ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
+        ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
+        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+      beat: { label: 'Beat', ctrls: [['kit'],
+        ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
+        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['sl', 'restProb', 'Rests', 0, 100, '%'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+    };
+    function _ambDefaultLayer(type, id) {
+      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, mod: _ambDefaultMod(), ..._ambDefaultFx() };
+      if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0 });
+      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40 });
+      if (type === 'beat') return Object.assign(base, { kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25 });
+      return base;
+    }
+    function _ambInstCardHtml(inst) {
+      const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
+      const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
+      let html = '<div class="ambient-layer collapsed" data-inst="' + fkey + '">' + _ambHead(sch.label, p + '-on', p + '-del', fkey);
+      sch.ctrls.forEach(c => {
+        const k = c[0];
+        if (k === 'tone') html += '<div class="ambient-ctrl"><label for="' + p + '-tone">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
+        else if (k === 'kit') html += '<div class="ambient-ctrl"><label for="' + p + '-kit">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
+        else if (k === 'notes') html += _ambNotesButtonHtml(p);
+        else if (k === 'sl') html += _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
+        else if (k === 'tm') html += _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
+        else if (k === 'cond') html += _ambCondCtrl(lk);
+        else if (k === 'mod') html += _ambModUi(lk);
+        else if (k === 'fx') html += _ambFxUi(lk);
+      });
+      return html + '</div>';
+    }
+    function _ambWireInst(E, inst) {
+      const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return;
+      const id = inst.id, p = 'ambient-' + type + '-' + id + '-';
+      const get = () => { const c = E.getCfg(); return (c && Array.isArray(c.extras)) ? c.extras.find(x => x.id === id && x.type === type) : null; };
+      const el = (suf) => _ambGet(E, p + suf);
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
+      const setVal = (suf, val) => { const e = el(suf); if (e && val != null) e.value = String(val); };
+      sch.ctrls.forEach(c => {
+        const k = c[0];
+        if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: 'Grid voice' }); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
+        else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
+        else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
+        else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
+        else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
+        else if (k === 'cond') { const s = el('when'); if (s) { s.value = inst.when || 'always'; s.addEventListener('change', () => { const L = get(); if (L) { L.when = s.value || 'always'; persist(); } }); } }
+      });
+      ['vca', 'vco', 'vcf'].forEach(t => {
+        ['depth', 'rate'].forEach(kk => { const e = el('mod-' + t + '-' + kk); if (e) e.addEventListener('input', () => { const L = get(); if (!L) return; L.mod[t][kk] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
+        const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { const L = get(); if (!L) return; L.mod[t].shape = sh.value || 'sine'; sync(); persist(); });
+      });
+      const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { const L = get(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
+      bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
+      ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); const sh = el('mod-' + t + '-shape'); if (sh) sh.value = inst.mod[t].shape; } });
+      setVal('fx-rev', inst.revSend);
+      if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); }
+      if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { const L = get(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); sync(); persist(); }); }
+      const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteExtra(E, type, id));
+      const layerDiv = onB ? onB.closest('.ambient-layer') : null;
+      const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
+      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
+    }
+    function _ambRenderExtras(E) {
+      const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => _ambInstCardHtml(inst)).join(''));
+      cfg.extras.forEach(inst => _ambWireInst(E, inst));
+    }
+    function _ambAddExtra(E, type) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      cfg.extras.push(_ambDefaultLayer(type, newId));
+      _ambRenderExtras(E);
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _ambDeleteExtra(E, type, id) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras)) return;
+      const idx = cfg.extras.findIndex(x => x.id === id && x.type === type);
+      if (idx < 0) return;
+      const key = type + ':' + id;
+      cfg.extras.splice(idx, 1);
+      try { if (E.mod[key]) _ambTeardownMod(key); } catch (e) {}
+      try { if (E.freeze) delete E.freeze[key]; } catch (e) {}
+      if (E.seqState) delete E.seqState[key];
+      _ambRenderExtras(E);
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     // ---- Parameter ramps (LFO automation) ------------------------------
     // A ramp continuously sweeps one layer parameter between A and B over a
     // period, shaped by a waveform: sine/triangle go A→B→A, saw ramps A→B then
@@ -2623,7 +2781,7 @@
         if (card) card.style.display = absent ? 'none' : '';
       });
       const addBtn = document.getElementById(tr('ambient-add-layer'));
-      if (addBtn) addBtn.disabled = (_absentCount === 0);
+      if (addBtn) addBtn.disabled = false; // can always add another instance
       chk('ambient-bed-on', cfg.bed.on);
       set('ambient-bed-tone', cfg.bed.tone);
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
@@ -2679,6 +2837,7 @@
       // Seq + Sample layers are dynamic lists — (re)render for this engine.
       _ambRenderSeqLayers(E);
       _ambRenderSampleLayers(E);
+      _ambRenderExtras(E);
       _ambRenderRamps(E);
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
@@ -2796,6 +2955,7 @@
         '<div class="ambient-add-layer-row">' +
           '<button type="button" class="ambient-regen ambient-add-layer" id="ambient-add-layer" title="Add a layer">+ Add layer</button>' +
         '</div>' +
+        '<div class="ambient-seq-layers" id="ambient-extra-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-sample-layers"></div>' +
         // Parameter ramps — LFO automation of a layer param (A→B, period, wave).
@@ -3016,12 +3176,15 @@
       if (addLayerBtn) addLayerBtn.addEventListener('click', () => {
         _E = E; const cfg = cfg0(); if (!cfg) return;
         const LABELS = { bed: 'Bed', motif: 'Motif', texture: 'Texture', beat: 'Beat' };
-        const absent = ['bed', 'motif', 'texture', 'beat'].filter(l => cfg[l] && cfg[l].present === false);
-        if (!absent.length) return;
-        const actions = absent.map(l => ({ label: LABELS[l], fn: () => _ambAddLayer(E, l) }));
+        // Always offer all four types. Picking one activates the absent primary,
+        // or — if the primary is already present — adds another instance.
+        const actions = ['bed', 'motif', 'texture', 'beat'].map(l => {
+          const primaryAbsent = !!(cfg[l] && cfg[l].present === false);
+          return { label: LABELS[l] + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, l) : _ambAddExtra(E, l)) };
+        });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
-        else _ambAddLayer(E, absent[0]);
+        else _ambAddExtra(E, 'bed');
       });
       // Delete (✕) on each built-in layer head → remove it (settings retained).
       ['bed', 'motif', 'texture', 'beat'].forEach(l => {

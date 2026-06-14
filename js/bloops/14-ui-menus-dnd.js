@@ -1510,6 +1510,36 @@
       }
       return out;
     }
+    // Overlay `copies` time-shifted copies of a loop slice onto itself to smooth
+    // the loop seam (and thicken the sound). Each copy k is rotated CIRCULARLY by
+    // k·offset samples (modulo the length), so the result stays the exact same
+    // length and still loops perfectly — the discontinuity at any one copy's wrap
+    // point is masked by the others, which are continuous there. The sum is
+    // peak-normalized back to the input's peak so adding copies never clips.
+    function _buildPadBuffer(ac, slice, copies, offsetSec) {
+      copies = Math.max(1, Math.min(8, copies | 0));
+      if (copies <= 1) return slice;
+      const L = slice.length, ch = slice.numberOfChannels, sr = slice.sampleRate;
+      if (L < 2) return slice;
+      const offSamp = Math.max(0, Math.round((offsetSec || 0) * sr));
+      const out = ac.createBuffer(ch, L, sr);
+      let peakIn = 0;
+      for (let c = 0; c < ch; c++) { const s = slice.getChannelData(c); for (let i = 0; i < L; i++) { const a = s[i] < 0 ? -s[i] : s[i]; if (a > peakIn) peakIn = a; } }
+      for (let c = 0; c < ch; c++) {
+        const s = slice.getChannelData(c), d = out.getChannelData(c);
+        for (let k = 0; k < copies; k++) {
+          const sh = ((offSamp * k) % L + L) % L;
+          for (let i = 0; i < L; i++) d[i] += s[(i + sh) % L];
+        }
+      }
+      let peakOut = 0;
+      for (let c = 0; c < ch; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) { const a = d[i] < 0 ? -d[i] : d[i]; if (a > peakOut) peakOut = a; } }
+      if (peakOut > 1e-6) {
+        const g = (peakIn > 1e-6 ? peakIn : 0.9) / peakOut;
+        for (let c = 0; c < ch; c++) { const d = out.getChannelData(c); for (let i = 0; i < L; i++) d[i] *= g; }
+      }
+      return out;
+    }
     // Waveform sample editor: trim (draggable start/end) + reverse + preview,
     // save as a NEW sample. `onSaved(newId)` fires after a successful save.
     // ---- Capture sample (record from mic → tuned, named voice) ---------
@@ -1948,6 +1978,12 @@
         '<label class="ee-field ee-name"><span>Source sample</span><select id="pad-src">' + optsHtml + '</select></label>' +
         '<canvas class="se-wave-canvas" id="pad-wave-canvas"></canvas>' +
         '<div class="se-wave-info"><span id="pad-wave-sel">full</span></div>' +
+        '<div class="ee-top" style="margin-top:6px;">' +
+          '<label class="ee-field"><span>Overlaid copies <em id="pad-copies-v">1</em></span>' +
+            '<input type="range" id="pad-copies" min="1" max="8" step="1" value="1"></label>' +
+          '<label class="ee-field"><span>Copy offset <em id="pad-offset-v">25 ms</em></span>' +
+            '<input type="range" id="pad-offset" min="0" max="500" step="1" value="25"></label>' +
+        '</div>' +
         '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
         '<div class="se-wave-actions">' +
           '<button type="button" class="sm-wave" id="pad-preview">▶ Preview loop</button>' +
@@ -1963,10 +1999,26 @@
       const nameEl = modal.querySelector('#pad-name');
       const saveBtn = modal.querySelector('#pad-save');
       const previewBtn = modal.querySelector('#pad-preview');
+      const copiesEl = modal.querySelector('#pad-copies');
+      const copiesV = modal.querySelector('#pad-copies-v');
+      const offsetEl = modal.querySelector('#pad-offset');
+      const offsetV = modal.querySelector('#pad-offset-v');
+      let copies = 1, offsetSec = 0.025;
 
       const stopPreview = () => {
         try { previewSrc && previewSrc.stop(); } catch (e) {}
         previewSrc = null; previewBtn.textContent = '▶ Preview loop';
+      };
+      // The exact buffer that gets saved/previewed: the trimmed slice with
+      // `copies` overlaid, offset copies summed in (1 copy = the plain slice).
+      const buildOut = () => _buildPadBuffer(ac, _sliceAudioBuffer(ac, buf, startF, endF, false), copies, offsetSec);
+      const startPreview = () => {
+        if (!buf) return;
+        stopPreview();
+        try {
+          const src = new Tone.ToneBufferSource({ url: buildOut(), loop: true }).toDestination();
+          src.start(); previewSrc = src; previewBtn.textContent = '■ Stop';
+        } catch (e) {}
       };
       const fmtSel = () => {
         if (!buf) { selEl.textContent = '—'; return; }
@@ -2023,16 +2075,16 @@
       canvas.addEventListener('pointercancel', endDrag);
 
       srcSel.addEventListener('change', () => loadSample(srcSel.value));
+      copiesEl.addEventListener('input', () => {
+        copies = parseInt(copiesEl.value, 10) || 1; copiesV.textContent = String(copies);
+        if (previewSrc) startPreview(); // re-render the loop live
+      });
+      offsetEl.addEventListener('input', () => {
+        const ms = parseInt(offsetEl.value, 10) || 0; offsetSec = ms / 1000; offsetV.textContent = ms + ' ms';
+        if (previewSrc) startPreview();
+      });
       previewBtn.addEventListener('click', () => {
-        if (!buf) return;
-        if (previewSrc) { stopPreview(); return; }
-        try {
-          const sliced = _sliceAudioBuffer(ac, buf, startF, endF, false);
-          const src = new Tone.ToneBufferSource({ url: sliced, loop: true }).toDestination();
-          src.start();
-          previewSrc = src;
-          previewBtn.textContent = '■ Stop';
-        } catch (e) {}
+        if (previewSrc) stopPreview(); else startPreview();
       });
       const close = () => { stopPreview(); try { overlay.remove(); } catch (e) {} };
       modal.querySelector('#pad-cancel').addEventListener('click', close);
@@ -2044,8 +2096,7 @@
         const nm = (nameEl.value || '').trim() || (srcName + ' pad');
         saveBtn.disabled = true;
         try {
-          const sliced = _sliceAudioBuffer(ac, buf, startF, endF, false);
-          const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(sliced) : null;
+          const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(buildOut()) : null;
           if (!wav) throw new Error('WAV encoder unavailable.');
           const reg = await registerSampleFromBlob(wav, nm, { padLoop: true });
           if (typeof _ambRefreshAllToneSelects === 'function') _ambRefreshAllToneSelects();

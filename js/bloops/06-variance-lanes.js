@@ -1400,7 +1400,8 @@
         { label: lane.solo ? 'Unsolo' : 'Solo', fn: () => { lane.solo = !lane.solo; renderSequence(); persist(); } },
         { label: lane.muted ? 'Unmute' : 'Mute', fn: () => { lane.muted = !lane.muted; renderSequence(); persist(); } },
         'hr',
-        { label: 'Save',  disabled: !saveBtn  || saveBtn.disabled,  fn: () => saveBtn && saveBtn.click() },
+        // Save moved out of the lane menu — it saves the whole workspace (all
+        // lanes), so it lives next to "+ Lane" as a half-row button.
         { label: 'Clear', danger: true, disabled: !clearBtn || clearBtn.disabled, fn: () => clearBtn && clearBtn.click() },
         // Normalize: stamp the current grid voice (tone + sculpting + FX)
         // onto every step in this lane, leaving each step's pitch and

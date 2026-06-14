@@ -1074,13 +1074,26 @@
        the DOM (hidden) so its buttons + all their existing wiring and
        disabled gating are reused by the menu, which delegates via .click(). */
     /* Add-lane bar — a big "+" just below the lane/sequence area. */
-    .add-lane-row { padding: 6px 18px; background: #050510; flex-shrink: 0; }
+    /* Save (left) + Add-lane (right), each half the row. */
+    .add-lane-row { display: flex; gap: 10px; padding: 6px 18px; background: #050510; flex-shrink: 0; }
+    .add-lane-row > #save-btn,
+    .add-lane-row > #add-lane-btn { flex: 1 1 0; min-width: 0; }
     #add-lane-btn {
-      width: 100%; padding: 9px; border: 1px dashed #2d2d3f; border-radius: 8px;
+      width: auto; padding: 9px; border: 1px dashed #2d2d3f; border-radius: 8px;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
       font-size: 1rem; font-weight: 700; letter-spacing: 0.02em; cursor: pointer;
       transition: all 0.15s ease;
     }
+    /* Save saves the WHOLE workspace (all lanes) — solid accent, distinct from
+       the dashed Add-lane affordance. */
+    .add-lane-row > #save-btn {
+      padding: 9px; border: 1px solid #4299e1; border-radius: 8px;
+      background: rgba(66,153,225,0.12); color: #90cdf4;
+      font-family: 'Segoe UI', sans-serif; font-size: 1rem; font-weight: 700; cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .add-lane-row > #save-btn:hover:not(:disabled) { border-color: #63b3ed; color: #bee3f8; background: rgba(66,153,225,0.20); } }
+    .add-lane-row > #save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     #add-lane-btn:hover { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.10); }
     #add-lane-btn:active { background: rgba(159,122,234,0.18); }
     .clear-riff-row {

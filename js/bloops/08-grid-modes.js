@@ -1437,6 +1437,8 @@
       }
       if (newChip) _setChipActive(newChip, true);
       _activeChipMono = newChip;
+      if (newChip && scope) _followChipInLane(scope, newChip);
+      else if (scope)       _hideLaneCursor(scope);
     }
 
     // Update just the label segment of a chip's text without rebuilding
@@ -1486,20 +1488,50 @@
       if (newChip) _setChipActive(newChip, true);
       if (newChip) _activeChipsByLane.set(laneIdx, newChip);
       else         _activeChipsByLane.delete(laneIdx);
-      // Auto-scroll the single-row timeline so the playing step stays centered.
-      if (newChip && chipsScope) _centerChipInLane(chipsScope, newChip);
+      // Auto-scroll the single-row timeline so the playing step stays centered,
+      // and pin the playback cursor onto it. No chip → drop the lane's cursor.
+      if (newChip && chipsScope) _followChipInLane(chipsScope, newChip);
+      else if (chipsScope)       _hideLaneCursor(chipsScope);
     }
-    // Scroll a lane's step strip so `chip` sits centered in the viewport.
-    // Computed from bounding rects so nesting (key-group containers) is fine.
-    function _centerChipInLane(scope, chip) {
+    // Center the playing `chip` in `scope` AND pin the playback cursor onto it,
+    // reading layout rects only once (called per step per lane, so it stays off
+    // the audio path's way). The cursor's `left` is the chip's CENTER in the
+    // strip's CONTENT coordinates — invariant under scrolling, so it's computed
+    // before the scroll is applied. As an absolute child that scrolls with the
+    // content, the cursor then sits exactly on the step: when the strip
+    // auto-scrolls to center it the cursor reads as a fixed middle line; for
+    // short loops that can't scroll it tracks the step in place.
+    function _followChipInLane(scope, chip) {
+      if (!scope || !chip) return;
       try {
         const sRect = scope.getBoundingClientRect();
         const cRect = chip.getBoundingClientRect();
         const chipLeftInContent = (cRect.left - sRect.left) + scope.scrollLeft;
+        const centerInContent = chipLeftInContent + cRect.width / 2;
         const target = chipLeftInContent - (scope.clientWidth - cRect.width) / 2;
         const max = scope.scrollWidth - scope.clientWidth;
         scope.scrollLeft = Math.max(0, Math.min(max, target));
+        let cur = scope._laneCursor;
+        if (!cur || cur.parentNode !== scope) {
+          cur = document.createElement('div');
+          cur.className = 'lane-cursor';
+          scope.appendChild(cur);
+          scope._laneCursor = cur;
+        }
+        cur.style.left = centerInContent + 'px';
       } catch (e) {}
+    }
+    // Hide/remove the cursor for one lane strip (e.g. its stream ended).
+    function _hideLaneCursor(scope) {
+      if (!scope || !scope._laneCursor) return;
+      try { scope._laneCursor.remove(); } catch (e) {}
+      scope._laneCursor = null;
+    }
+    // Remove every lane playback cursor (called on stop).
+    function _removeLaneCursors() {
+      document.querySelectorAll('.lane-cursor').forEach((el) => {
+        try { if (el.parentNode) el.parentNode._laneCursor = null; el.remove(); } catch (e) {}
+      });
     }
 
     function playSequence(index = 0, freshStart = true) {

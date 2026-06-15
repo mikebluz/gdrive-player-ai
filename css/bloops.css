@@ -3533,6 +3533,7 @@
     .lane-chips {
       flex: 1 1 auto;
       min-width: 0;
+      position: relative; /* containing block for the playback cursor */
       display: flex;
       flex-direction: row;
       /* Single-row timeline: chips fill logically to the right at
@@ -3582,6 +3583,25 @@
     .lane-row-collapsed-strip > .lane-row.collapsed .lane-controls {
       width: auto;
       min-width: auto;
+    }
+    /* Playback cursor — a vertical playhead line pinned to the lane's
+       currently-playing step. It's an absolutely-positioned child of the
+       (scrolling) .lane-chips content, so it scrolls WITH the chips and stays
+       glued to the active step: when the strip auto-scrolls to keep that step
+       centered, the cursor reads as a fixed line at the lane's middle; for
+       short loops that don't scroll it simply tracks the step in place. Out
+       of flex flow (position:absolute) so it never affects chip widths. */
+    .lane-cursor {
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      width: 2px;
+      margin-left: -1px;       /* center the 2px line on its x coordinate */
+      background: #ffd34d;
+      box-shadow: 0 0 6px rgba(255, 211, 77, 0.85);
+      border-radius: 1px;
+      pointer-events: none;
+      z-index: 4;
     }
     .lane-chips::-webkit-scrollbar { height: 4px; }
     .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }

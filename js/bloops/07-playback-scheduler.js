@@ -115,6 +115,9 @@
       }
       clearVisualTimers();
       clearHighlights();
+      // Drop the per-lane playback cursors (renderSequence below also rebuilds
+      // the strips, but remove explicitly so they vanish the instant we stop).
+      if (typeof _removeLaneCursors === 'function') _removeLaneCursors();
       // Immediate silence: a user "stop" should cut sounding playback voices
       // (synths + samples) at once rather than letting their release tails
       // ring on. Click-free (short ramps), and held LIVE cell presses are

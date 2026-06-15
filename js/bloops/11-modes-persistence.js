@@ -1028,6 +1028,12 @@
               driveFileId: up.id,
               mimeType: rec.blob.type || 'application/octet-stream',
               rootNote: sampleSamplers.get(id)?.rootNote || 'C4',
+              // Persist the pad/voice metadata too — without padLoop the sample
+              // reloads as a one-shot voice (no looping pad) on another device.
+              tuneCents: Number.isFinite(rec.tuneCents) ? rec.tuneCents : 0,
+              padLoop: !!rec.padLoop,
+              padAttack: Number.isFinite(rec.padAttack) ? rec.padAttack : undefined,
+              padRelease: Number.isFinite(rec.padRelease) ? rec.padRelease : undefined,
             });
           }
         }

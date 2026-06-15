@@ -23,51 +23,36 @@
     function laneChipWidthPx(step) {
       return Math.max(10, Math.round(LANE_SCROLL_BASE_PX * stepLengthFactor(step)));
     }
-    // The inter-chip gap on a lane timeline (matches .lane-chips `gap` in CSS).
-    const LANE_CHIP_GAP_PX = 4;
-    // Lane-timeline width allocator. Returns { widths, gap, total } such that
-    //   Σ widths + gap·(n−1)  ===  round(LANE_SCROLL_BASE_PX · Σ stepLengthFactor)
-    // EXACTLY, for ANY step count. So two lanes whose step lengths add up to the
-    // same numeric total render to the IDENTICAL content width — gaps (white
-    // space) included — no matter how that total is split into steps.
+    // Lane-timeline width allocator. Returns { widths, gap, total } where each
+    // step's RIGHT EDGE is placed at the exact proportional pixel
+    //   edge_k = round(LANE_SCROLL_BASE_PX · Σ factor up to step k)
+    // and width_i = edge_i − edge_{i-1}. Two consequences, both wanted:
     //
-    // Why each piece matters for that guarantee:
-    //  • Cumulative rounding (round the running edge, diff against the previous
-    //    edge) — sums to round(BASE·total) with zero per-step round() drift,
-    //    unlike summing independently-rounded per-step widths.
-    //  • No per-step min-width floor — a floor inflates lanes with many tiny
-    //    steps, so equal totals would diverge. Widths may get thin instead.
-    //  • The gap is ABSORBED into the budget (chips shrink to make room) rather
-    //    than added on top, so the n-dependent gap·(n−1) term can't change the
-    //    total. The gap stays the usual 4px but shrinks (down to 0) only if the
-    //    lane is so dense the gaps alone would exceed the budget — protection
-    //    that keeps the total exact instead of letting white space inflate it.
+    //  • ALIGNMENT across lanes — any boundary at the same cumulative musical
+    //    position lands on the SAME pixel regardless of how a lane subdivides
+    //    its steps (one ¼-note ends exactly where another lane's two ⅛-notes
+    //    do). This is why there is NO inter-chip gap: a positive gap would push
+    //    each successive edge right by gap·index, and a lane with more steps
+    //    would drift out of alignment. Chips separate visually via their 1px
+    //    borders instead (same trick grid-mode uses).
+    //  • EQUAL TOTALS → EQUAL WIDTH — the last edge is round(BASE·Σfactor), a
+    //    function of the total alone, so two lanes whose steps sum to the same
+    //    numeric total are exactly the same width. Cumulative rounding (diffing
+    //    successive rounded edges) keeps Σwidths == total with no drift, and no
+    //    per-step min-width floor (which would inflate many-tiny-step lanes).
     function laneTimelineLayout(steps, skip) {
       const n = steps.length;
       if (n === 0) return { widths: [], gap: 0, total: 0 };
-      let totalF = 0;
-      const f = new Array(n);
-      for (let i = 0; i < n; i++) {
-        f[i] = (skip && skip(steps[i])) ? 0 : Math.max(0, stepLengthFactor(steps[i]));
-        totalF += f[i];
-      }
-      const total = Math.max(0, Math.round(LANE_SCROLL_BASE_PX * totalF));
-      if (n === 1) return { widths: [total], gap: 0, total };
-      if (totalF <= 0) return { widths: f.map(() => 0), gap: 0, total: 0 };
-      // Largest gap that still leaves ≥1px for every chip; normally the full 4px.
-      let gap = LANE_CHIP_GAP_PX;
-      const maxGap = Math.floor((total - n) / (n - 1));
-      if (maxGap < gap) gap = Math.max(0, maxGap);
-      const chipBudget = total - gap * (n - 1);
       const widths = new Array(n);
       let cum = 0, prevEdge = 0;
       for (let i = 0; i < n; i++) {
-        cum += f[i];
-        const edge = Math.round(chipBudget * (cum / totalF)); // running pixel edge
+        const f = (skip && skip(steps[i])) ? 0 : Math.max(0, stepLengthFactor(steps[i]));
+        cum += f;
+        const edge = Math.round(LANE_SCROLL_BASE_PX * cum); // proportional boundary
         widths[i] = edge - prevEdge;
         prevEdge = edge;
       }
-      return { widths, gap, total };
+      return { widths, gap: 0, total: prevEdge };
     }
 
     // Render a semitone count as a traditional chromatic interval name

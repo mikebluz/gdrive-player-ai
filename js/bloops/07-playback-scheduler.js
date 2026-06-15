@@ -923,11 +923,16 @@
             if (stream.subStack.length === 0) {
               const myIdx = stream.idx;
               const chipAudioTime = _playBaseTime + stream.offsetSec;
+              // Step's musical length in ms — drives the smooth real-time
+              // scroll sweep. (240/bpm)·factor == (60/bpm)·sub·dur for any
+              // step (incl. subsequences, whose factor sums their children).
+              const _bpmVis = parseInt(tempoInput.value) || 120;
+              const _durMs = (240 / _bpmVis) * stepLengthFactor(step) * 1000;
               if (polyMode && stream.laneIdx != null) {
                 const li = stream.laneIdx;
-                scheduleVisual(() => setActiveChipForLane(li, myIdx), chipAudioTime);
+                scheduleVisual(() => setActiveChipForLane(li, myIdx, _durMs), chipAudioTime);
               } else {
-                scheduleVisual(() => setActiveSequenceChip(myIdx), chipAudioTime);
+                scheduleVisual(() => setActiveSequenceChip(myIdx, _durMs), chipAudioTime);
               }
             }
             if (step.isSub && Array.isArray(step.subSteps) && step.subSteps.length > 0) {

@@ -345,18 +345,34 @@
           if (sampleSamplers.has(entry.id)) continue; // already registered
           try {
             const blob = await fetchDriveBinaryAsBlob(entry.driveFileId);
-            await persistImportedSample(entry.id, entry.name || entry.id, blob);
-            const url = URL.createObjectURL(blob);
             const rootNote = entry.rootNote || 'C4';
+            const tuneCents = Number.isFinite(entry.tuneCents) ? entry.tuneCents : 0;
+            // Carry the pad/voice metadata through to IndexedDB so the sample
+            // reloads as a pad (looping) on this device too — without padLoop it
+            // would silently play as a one-shot voice.
+            await persistImportedSample(entry.id, entry.name || entry.id, blob, {
+              rootNote, tuneCents,
+              padLoop: !!entry.padLoop,
+              padAttack: Number.isFinite(entry.padAttack) ? entry.padAttack : undefined,
+              padRelease: Number.isFinite(entry.padRelease) ? entry.padRelease : undefined,
+            });
+            const url = URL.createObjectURL(blob);
             const urls = { [rootNote]: url };
             const sampler = new Tone.Sampler({ urls, release: 1 }).connect(masterBus);
-            sampleSamplers.set(entry.id, {
+            const _info = {
               sampler,
               name: entry.name || entry.id,
               rootNote,
+              tuneCents,
               imported: true,
               urls,
-            });
+              padLoop: !!entry.padLoop,
+            };
+            if (entry.padLoop) {
+              if (Number.isFinite(entry.padAttack)) _info.padAttack = entry.padAttack;
+              if (Number.isFinite(entry.padRelease)) _info.padRelease = entry.padRelease;
+            }
+            sampleSamplers.set(entry.id, _info);
           } catch (e) {
             console.warn('Could not restore imported sample', entry.id, e);
           }

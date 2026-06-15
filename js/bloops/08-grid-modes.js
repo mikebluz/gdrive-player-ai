@@ -1422,7 +1422,7 @@
       }
     }
 
-    function setActiveSequenceChip(index) {
+    function setActiveSequenceChip(index, durMs) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
       // Scope the playback highlight to the active lane's chip strip.
@@ -1437,7 +1437,7 @@
       }
       if (newChip) _setChipActive(newChip, true);
       _activeChipMono = newChip;
-      if (newChip && scope) _followChipInLane(scope, newChip);
+      if (newChip && scope) _followChipInLane(scope, newChip, durMs);
       else if (scope)       _hideLaneCursor(scope);
     }
 
@@ -1471,7 +1471,7 @@
     // Each lane's chip strip is independent in Poly mode, so the
     // 'active' class is scoped per-lane and multiple lanes can have
     // their own active chip simultaneously.
-    function setActiveChipForLane(laneIdx, index) {
+    function setActiveChipForLane(laneIdx, index, durMs) {
       const display = document.getElementById('sequence-display');
       if (!display) return;
       // Skip the lane-expander when indexing AND look inside
@@ -1490,27 +1490,58 @@
       else         _activeChipsByLane.delete(laneIdx);
       // Auto-scroll the single-row timeline so the playing step stays centered,
       // and pin the playback cursor onto it. No chip → drop the lane's cursor.
-      if (newChip && chipsScope) _followChipInLane(chipsScope, newChip);
+      if (newChip && chipsScope) _followChipInLane(chipsScope, newChip, durMs);
       else if (chipsScope)       _hideLaneCursor(chipsScope);
     }
-    // Center the playing `chip` in `scope` AND pin the playback cursor onto it,
-    // reading layout rects only once (called per step per lane, so it stays off
-    // the audio path's way). The cursor's `left` is the chip's CENTER in the
-    // strip's CONTENT coordinates — invariant under scrolling, so it's computed
-    // before the scroll is applied. As an absolute child that scrolls with the
-    // content, the cursor then sits exactly on the step: when the strip
-    // auto-scrolls to center it the cursor reads as a fixed middle line; for
-    // short loops that can't scroll it tracks the step in place.
-    function _followChipInLane(scope, chip) {
+    // ---- Smooth, real-time lane auto-scroll ----------------------------
+    // The timeline scrolls CONTINUOUSLY (not one jump per step) so the
+    // playback cursor reads as a fixed line at the lane's middle while the
+    // steps glide under it in real time. Each played step registers a
+    // "segment" — the content-x range to sweep (the chip plus the gap after
+    // it, so the playhead lands exactly on the next chip's edge) and the
+    // duration to sweep it over. A single rAF interpolates scrollLeft across
+    // the segment; because every step re-anchors the segment's start time to
+    // the moment its visual fires (which scheduleVisual aligns to the audio
+    // clock), the scroll re-syncs each step and can't drift. When the strip
+    // can't scroll far enough (loop ends, or a short loop that fits on
+    // screen), scrollLeft clamps and the cursor itself moves to the true
+    // playhead x — so the playhead stays accurate either way.
+    let _laneScrollRaf = 0;
+    const _laneScrollScopes = new Set();
+    const _nowMs = () => (typeof performance !== 'undefined' && performance.now)
+      ? performance.now() : Date.now();
+    function _laneScrollTick() {
+      _laneScrollRaf = 0;
+      const now = _nowMs();
+      for (const scope of _laneScrollScopes) {
+        const seg = scope._scrollSeg;
+        if (!seg) continue;
+        let frac = seg.durMs > 0 ? (now - seg.startMs) / seg.durMs : 1;
+        if (frac < 0) frac = 0; else if (frac > 1) frac = 1;
+        const contentX = seg.startX + (seg.endX - seg.startX) * frac;
+        // Uses metrics cached at segment start (clientW/maxScroll) so the tick
+        // only WRITES scrollLeft + cursor.left — no per-frame layout reflow.
+        let sl = contentX - seg.clientW / 2;
+        if (sl < 0) sl = 0; else if (sl > seg.maxScroll) sl = seg.maxScroll;
+        scope.scrollLeft = sl;
+        // Cursor stays pinned to the viewport center (only the steps move). The
+        // half-viewport scroll padding added below lets every step — first and
+        // last included — reach center, so it never has to drift off-center.
+        if (scope._laneCursor) scope._laneCursor.style.left = (sl + seg.clientW / 2) + 'px';
+      }
+      if (_laneScrollScopes.size > 0) _laneScrollRaf = requestAnimationFrame(_laneScrollTick);
+    }
+    function _ensureLaneScrollRaf() {
+      if (!_laneScrollRaf && _laneScrollScopes.size > 0) {
+        _laneScrollRaf = requestAnimationFrame(_laneScrollTick);
+      }
+    }
+    // Start a smooth scroll segment that sweeps the playhead across `chip`
+    // (and the inter-chip gap after it) over `durMs`, creating the cursor if
+    // needed. `durMs` is the step's musical length; the rAF does the gliding.
+    function _followChipInLane(scope, chip, durMs) {
       if (!scope || !chip) return;
       try {
-        const sRect = scope.getBoundingClientRect();
-        const cRect = chip.getBoundingClientRect();
-        const chipLeftInContent = (cRect.left - sRect.left) + scope.scrollLeft;
-        const centerInContent = chipLeftInContent + cRect.width / 2;
-        const target = chipLeftInContent - (scope.clientWidth - cRect.width) / 2;
-        const max = scope.scrollWidth - scope.clientWidth;
-        scope.scrollLeft = Math.max(0, Math.min(max, target));
         let cur = scope._laneCursor;
         if (!cur || cur.parentNode !== scope) {
           cur = document.createElement('div');
@@ -1518,19 +1549,57 @@
           scope.appendChild(cur);
           scope._laneCursor = cur;
         }
-        cur.style.left = centerInContent + 'px';
+        const clientW = scope.clientWidth;
+        if (clientW <= 0) return; // strip not laid out yet (hidden/0-width) — retry next step
+        // Leading/trailing scroll space = half the viewport, so the FIRST and
+        // LAST steps can also be scrolled to the exact center — letting the
+        // cursor stay dead-centered while only the steps move. Set before
+        // measuring so the chip coords reflect the padded layout.
+        const halfPx = Math.round(clientW / 2) + 'px';
+        if (scope.style.paddingLeft !== halfPx) {
+          scope.style.paddingLeft = halfPx;
+          scope.style.paddingRight = halfPx;
+        }
+        // Rect-based content position — robust to chips nested inside a
+        // .key-group-container (which is position:relative, so offsetLeft would
+        // be relative to the GROUP, not the strip → a wrong start x and a lane
+        // that never scrolls). getBoundingClientRect is offsetParent-agnostic.
+        const sRect = scope.getBoundingClientRect();
+        const cRect = chip.getBoundingClientRect();
+        const startX = (cRect.left - sRect.left) + scope.scrollLeft;
+        const gap = parseFloat(scope.style.gap) || 0;
+        // Sweep across the chip + trailing gap so the playhead reaches the next
+        // chip's left edge exactly at the step boundary (no per-step hop).
+        const endX = startX + cRect.width + gap;
+        scope._scrollSeg = {
+          startX, endX, startMs: _nowMs(),
+          durMs: (Number.isFinite(durMs) && durMs > 0) ? durMs : 0,
+          clientW, maxScroll: Math.max(0, scope.scrollWidth - clientW),
+        };
+        _laneScrollScopes.add(scope);
+        _ensureLaneScrollRaf();
       } catch (e) {}
     }
-    // Hide/remove the cursor for one lane strip (e.g. its stream ended).
+    // Hide/remove the cursor + stop scrolling for one lane strip, and drop the
+    // half-viewport scroll padding so the strip returns to its resting layout.
     function _hideLaneCursor(scope) {
-      if (!scope || !scope._laneCursor) return;
-      try { scope._laneCursor.remove(); } catch (e) {}
-      scope._laneCursor = null;
+      if (!scope) return;
+      _laneScrollScopes.delete(scope);
+      scope._scrollSeg = null;
+      scope.style.paddingLeft = '';
+      scope.style.paddingRight = '';
+      if (scope._laneCursor) { try { scope._laneCursor.remove(); } catch (e) {} scope._laneCursor = null; }
     }
-    // Remove every lane playback cursor (called on stop).
+    // Remove every lane playback cursor and stop the scroll loop (on stop).
     function _removeLaneCursors() {
+      if (_laneScrollRaf) { cancelAnimationFrame(_laneScrollRaf); _laneScrollRaf = 0; }
+      _laneScrollScopes.clear();
       document.querySelectorAll('.lane-cursor').forEach((el) => {
-        try { if (el.parentNode) el.parentNode._laneCursor = null; el.remove(); } catch (e) {}
+        try {
+          const p = el.parentNode;
+          if (p) { p._scrollSeg = null; p._laneCursor = null; p.style.paddingLeft = ''; p.style.paddingRight = ''; }
+          el.remove();
+        } catch (e) {}
       });
     }
 

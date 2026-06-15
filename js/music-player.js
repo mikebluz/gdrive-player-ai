@@ -382,7 +382,21 @@ class MusicPlayer {
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
     }
 
+    // True when the Player (Listen) is the user's active surface. In the
+    // tabbed Bloops shell, that means the Listen view is showing; on the
+    // standalone player.html there are no tabs (no #bloops-tab) so it's
+    // always active. Used to keep the Listen panel's keyboard shortcuts
+    // (Space play/pause, arrows) from firing while the user is working on
+    // the Make or Mix tab.
+    _isListenViewActive() {
+        return document.body.classList.contains('view-serialbox')
+            || !document.getElementById('bloops-tab');
+    }
+
     handleKeyboardControls(event) {
+        // Listen panel is fully disabled on other tabs — ignore its keyboard
+        // shortcuts (Space, arrows, volume) unless the Listen view is active.
+        if (!this._isListenViewActive()) return;
         // Don't hijack keys (Space, arrows) while the user is typing in a
         // text field or editable element — e.g. the TEXT-mode speech box.
         const t = event.target;

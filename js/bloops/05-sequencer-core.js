@@ -23,6 +23,52 @@
     function laneChipWidthPx(step) {
       return Math.max(10, Math.round(LANE_SCROLL_BASE_PX * stepLengthFactor(step)));
     }
+    // The inter-chip gap on a lane timeline (matches .lane-chips `gap` in CSS).
+    const LANE_CHIP_GAP_PX = 4;
+    // Lane-timeline width allocator. Returns { widths, gap, total } such that
+    //   Σ widths + gap·(n−1)  ===  round(LANE_SCROLL_BASE_PX · Σ stepLengthFactor)
+    // EXACTLY, for ANY step count. So two lanes whose step lengths add up to the
+    // same numeric total render to the IDENTICAL content width — gaps (white
+    // space) included — no matter how that total is split into steps.
+    //
+    // Why each piece matters for that guarantee:
+    //  • Cumulative rounding (round the running edge, diff against the previous
+    //    edge) — sums to round(BASE·total) with zero per-step round() drift,
+    //    unlike summing independently-rounded per-step widths.
+    //  • No per-step min-width floor — a floor inflates lanes with many tiny
+    //    steps, so equal totals would diverge. Widths may get thin instead.
+    //  • The gap is ABSORBED into the budget (chips shrink to make room) rather
+    //    than added on top, so the n-dependent gap·(n−1) term can't change the
+    //    total. The gap stays the usual 4px but shrinks (down to 0) only if the
+    //    lane is so dense the gaps alone would exceed the budget — protection
+    //    that keeps the total exact instead of letting white space inflate it.
+    function laneTimelineLayout(steps, skip) {
+      const n = steps.length;
+      if (n === 0) return { widths: [], gap: 0, total: 0 };
+      let totalF = 0;
+      const f = new Array(n);
+      for (let i = 0; i < n; i++) {
+        f[i] = (skip && skip(steps[i])) ? 0 : Math.max(0, stepLengthFactor(steps[i]));
+        totalF += f[i];
+      }
+      const total = Math.max(0, Math.round(LANE_SCROLL_BASE_PX * totalF));
+      if (n === 1) return { widths: [total], gap: 0, total };
+      if (totalF <= 0) return { widths: f.map(() => 0), gap: 0, total: 0 };
+      // Largest gap that still leaves ≥1px for every chip; normally the full 4px.
+      let gap = LANE_CHIP_GAP_PX;
+      const maxGap = Math.floor((total - n) / (n - 1));
+      if (maxGap < gap) gap = Math.max(0, maxGap);
+      const chipBudget = total - gap * (n - 1);
+      const widths = new Array(n);
+      let cum = 0, prevEdge = 0;
+      for (let i = 0; i < n; i++) {
+        cum += f[i];
+        const edge = Math.round(chipBudget * (cum / totalF)); // running pixel edge
+        widths[i] = edge - prevEdge;
+        prevEdge = edge;
+      }
+      return { widths, gap, total };
+    }
 
     // Render a semitone count as a traditional chromatic interval name
     // (P1, m2, M2, m3, M3, P4, TT, P5, m6, M6, m7, M7, P8 …) with a
@@ -292,9 +338,10 @@
             if (steps.length === 0) {
               chipsEl.innerHTML = '<span class="seq-empty">Empty</span>';
             } else {
-              // Preview lanes share the same wrap-aware placement as
-              // the active lane: long steps split across rows with
-              // .cont-start / .cont-mid / .cont-end segments.
+              // Pixel-perfect proportional widths: Σ widths + gaps depends only
+              // on the lane's total step length, so equal totals → equal width.
+              const _pvLayout = laneTimelineLayout(steps);
+              chipsEl.style.gap = _pvLayout.gap + 'px';
               let _previewCol = 1;
               steps.forEach((step, stepIdx) => {
                 const chip = document.createElement('div');
@@ -312,7 +359,7 @@
                 else             label = step.label || '';
                 chip.textContent = label;
                 // Single-row timeline: proportional fixed width, no wrap/split.
-                chip.style.width = laneChipWidthPx(step) + 'px';
+                chip.style.width = _pvLayout.widths[stepIdx] + 'px';
                 {
                   const pc = stepColorPitchClass(step);
                   if (pc != null && chipPalette[pc]) {
@@ -371,6 +418,15 @@
 
         chipHost = activeLaneChipsEl || display;
         _placeLaneExpander();
+      }
+
+      // Pixel-perfect proportional widths for the active lane (same invariant as
+      // the preview lanes above): Σ widths + gap·(n−1) == round(BASE · Σ factor),
+      // independent of step count, so equal totals render to equal width. Skip
+      // the transient wrap-edit stash step (it isn't rendered as a chip).
+      const _activeLayout = laneTimelineLayout(sequence, (s) => s && s._wrapEditing);
+      if (chipHost && chipHost.classList && chipHost.classList.contains('lane-chips')) {
+        chipHost.style.gap = _activeLayout.gap + 'px';
       }
 
       const isEmpty = sequence.length === 0 && pendingChord.length === 0;
@@ -535,7 +591,7 @@
         // width — no grid spans, no row-boundary continuation splitting.
         const _continuationPlan = null;
         chip.style.gridColumn = '';
-        chip.style.width = laneChipWidthPx(step) + 'px';
+        chip.style.width = _activeLayout.widths[i] + 'px';
         if (isSelectedStep(step)) chip.classList.add('selected');
         // Variance markers — blinking outline while editing the pool,
         // a small ⟳ glyph (via CSS) for committed variance steps.

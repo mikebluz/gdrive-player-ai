@@ -1625,6 +1625,147 @@
       }
       return out;
     }
+    // ---- Pad reverb (Freeverb, baked synchronously into a seamless loop) ----
+    // Classic Schroeder–Moorer Freeverb: 8 parallel damped feedback-comb filters
+    // → series allpass diffusers, per channel (canonical tuning.h delays/gains).
+    // Because a pad is a perfect loop, we can bake a *seamless* reverb wash into
+    // it: feed the loop in repeatedly until the tail reaches steady state, then
+    // extract exactly one loop period from the end. A periodic input through a
+    // stable LTI reverb produces a periodic output (same period), so that period
+    // loops with no seam — the reverb tail wraps into itself as a continuous wash
+    // (the right behaviour for a sustained, looping pad).
+    //
+    // Types vary the comb/allpass topology for distinct tone: Room/Hall/Plate/
+    // Spring/Cathedral. `mix` 0..1 equal-power crossfades dry⇄wet (0 = 100% dry,
+    // 1 = 100% wet, dry killed). `size` 0..100 scales decay length + room
+    // feedback; `tone` 0..100 sets brightness (high = bright, low = dark/damped).
+    // Output is stereo (the L/R Freeverb stereospread decorrelates even a mono
+    // source into a natural stereo field). Returns a NEW buffer; mix<=0 → input.
+    const _REVERB_TYPES = {
+      // combScale: multiplies comb delays (small = denser/brighter, e.g. plate);
+      // apFb: allpass diffusion feedback; apN: number of allpass stages;
+      // tail: base decay seconds at size 50; width: stereo width 0..1.
+      room:      { combScale: 1.00, apFb: 0.50, apN: 4, tail: 1.1, width: 0.9, roomBias: 0.00 },
+      hall:      { combScale: 1.18, apFb: 0.50, apN: 4, tail: 2.6, width: 1.0, roomBias: 0.06 },
+      plate:     { combScale: 0.68, apFb: 0.55, apN: 4, tail: 1.6, width: 1.0, roomBias: 0.03 },
+      spring:    { combScale: 0.86, apFb: 0.66, apN: 6, tail: 1.8, width: 0.45, roomBias: 0.05 },
+      cathedral: { combScale: 1.34, apFb: 0.50, apN: 4, tail: 4.6, width: 1.0, roomBias: 0.09 },
+    };
+    function _reverbBufferOffline(ac, buf, type, mix, size, tone) {
+      mix = Math.max(0, Math.min(1, mix || 0));
+      if (mix <= 0) return buf;
+      const T = _REVERB_TYPES[type] || _REVERB_TYPES.room;
+      const L = buf.length, sr = buf.sampleRate;
+      if (L < 4) return buf;
+      // Canonical Freeverb tuning (delays at 44.1 kHz), scaled to this sr & type.
+      const COMB = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+      const ALLP = [556, 441, 341, 225, 180, 141];
+      const STEREOSPREAD = 23, FIXEDGAIN = 0.015;
+      const srScale = sr / 44100;
+      const sizeN = Math.max(0, Math.min(1, (Number.isFinite(size) ? size : 70) / 100));
+      const toneN = Math.max(0, Math.min(1, (Number.isFinite(tone) ? tone : 50) / 100));
+      // roomsize → comb feedback (Freeverb: room*0.28 + 0.7). Bigger size → longer.
+      const room = Math.max(0, Math.min(0.97, 0.55 + sizeN * 0.40 + T.roomBias));
+      const feedback = room * 0.28 + 0.7;
+      // damping (Freeverb: damp*0.4). Bright tone → low damping.
+      const damp1 = (1 - toneN) * 0.4, damp2 = 1 - damp1;
+      const apFb = T.apFb;
+      const apN = Math.max(1, Math.min(ALLP.length, T.apN | 0));
+      // Warm-up: feed the loop until the tail is well past its decay before we
+      // grab a period, so the extracted window is deep in steady state (seamless).
+      const tailSec = T.tail * (0.45 + sizeN * 1.5);
+      const warmup = Math.max(L, Math.ceil(sr * tailSec * 1.6));
+      // Render `xf` EXTRA samples past one loop so the wet loop's tail can be
+      // equal-power crossfaded over its head. That guarantees a seamless wet
+      // loop even when the reverb tail hasn't fully decayed within the warm-up
+      // (high feedback / long sizes) — which is what was popping at the wrap.
+      const xf = Math.max(1, Math.min(Math.round(sr * 0.06), Math.floor(L / 2)));
+      const wetLen = L + xf;
+      const total = warmup + wetLen;
+      const out = ac.createBuffer(2, L, sr);
+      const wetTmp = [new Float32Array(wetLen), new Float32Array(wetLen)];
+      // Build per-channel comb + allpass banks. Channel 1 adds stereospread.
+      const makeBank = (chOff) => {
+        const combs = COMB.map((d) => {
+          const len = Math.max(1, Math.round(d * T.combScale * srScale) + chOff);
+          return { buf: new Float32Array(len), i: 0, store: 0, len };
+        });
+        const allps = [];
+        for (let a = 0; a < apN; a++) {
+          const len = Math.max(1, Math.round(ALLP[a] * T.combScale * srScale) + chOff);
+          allps.push({ buf: new Float32Array(len), i: 0, len });
+        }
+        return { combs, allps };
+      };
+      const banks = [makeBank(0), makeBank(STEREOSPREAD)];
+      const srcCh = buf.numberOfChannels;
+      const src0 = buf.getChannelData(0);
+      const src1 = srcCh > 1 ? buf.getChannelData(1) : src0;
+      let peakWet = 0, peakDry = 0;
+      for (let c = 0; c < srcCh; c++) {
+        const s = buf.getChannelData(c);
+        for (let i = 0; i < L; i++) { const a = s[i] < 0 ? -s[i] : s[i]; if (a > peakDry) peakDry = a; }
+      }
+      for (let ch = 0; ch < 2; ch++) {
+        const { combs, allps } = banks[ch];
+        const src = ch === 0 ? src0 : src1;
+        const dst = wetTmp[ch];
+        for (let n = 0; n < total; n++) {
+          const input = src[n % L] * FIXEDGAIN;
+          let acc = 0;
+          for (let k = 0; k < combs.length; k++) {
+            const cb = combs[k], outv = cb.buf[cb.i];
+            cb.store = outv * damp2 + cb.store * damp1;
+            cb.buf[cb.i] = input + cb.store * feedback;
+            if (++cb.i >= cb.len) cb.i = 0;
+            acc += outv;
+          }
+          for (let a = 0; a < allps.length; a++) {
+            const ap = allps[a], bufout = ap.buf[ap.i];
+            ap.buf[ap.i] = acc + bufout * apFb;
+            acc = bufout - acc;
+            if (++ap.i >= ap.len) ap.i = 0;
+          }
+          if (n >= warmup) {
+            const o = n - warmup;
+            dst[o] = acc;
+            const aa = acc < 0 ? -acc : acc; if (aa > peakWet) peakWet = aa;
+          }
+        }
+      }
+      // Crossfade the wet loop seamless: blend its last `xf` samples (the tail,
+      // s[i+L]) over its first `xf` (the head) with an equal-power curve, writing
+      // the L-length result into the output channels. No wrap discontinuity → no
+      // pop, independent of how far the tail decayed.
+      const wL = out.getChannelData(0), wR = out.getChannelData(1);
+      for (let ch = 0; ch < 2; ch++) {
+        const s = wetTmp[ch], d = ch === 0 ? wL : wR;
+        for (let i = xf; i < L; i++) d[i] = s[i];
+        for (let i = 0; i < xf; i++) {
+          const t = (i + 0.5) / xf;
+          const gin = Math.sin(t * Math.PI / 2), gout = Math.cos(t * Math.PI / 2);
+          d[i] = s[i] * gin + s[i + L] * gout;
+        }
+      }
+      // Normalize wet to the dry peak so the mix slider reads consistently across
+      // types/sizes, then apply stereo width, then equal-power dry⇄wet crossfade.
+      const wetNorm = peakWet > 1e-6 ? (peakDry > 1e-6 ? peakDry : 0.9) / peakWet : 0;
+      const width = T.width;
+      const dryGain = Math.cos(mix * Math.PI / 2), wetGain = Math.sin(mix * Math.PI / 2);
+      let peakOut = 0;
+      for (let i = 0; i < L; i++) {
+        let l = wL[i] * wetNorm, r = wR[i] * wetNorm;
+        const mid = (l + r) * 0.5;
+        l = mid + (l - mid) * width; r = mid + (r - mid) * width;
+        const dl = src0[i], dr = src1[i];
+        const ol = dl * dryGain + l * wetGain, or = dr * dryGain + r * wetGain;
+        wL[i] = ol; wR[i] = or;
+        const al = ol < 0 ? -ol : ol, ar = or < 0 ? -or : or;
+        if (al > peakOut) peakOut = al; if (ar > peakOut) peakOut = ar;
+      }
+      if (peakOut > 0.99) { const g = 0.99 / peakOut; for (let i = 0; i < L; i++) { wL[i] *= g; wR[i] *= g; } }
+      return out;
+    }
     // Waveform sample editor: trim (draggable start/end) + reverse + preview,
     // save as a NEW sample. `onSaved(newId)` fires after a successful save.
     // ---- Capture sample (record from mic → tuned, named voice) ---------
@@ -2081,7 +2222,25 @@
           '<label class="ee-field"><span>Low-pass <em id="pad-lpf-v">off</em></span>' +
             '<input type="range" id="pad-lpf" min="0" max="100" step="1" value="100"></label>' +
         '</div>' +
-        '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name</span><input type="text" id="pad-name" placeholder="My pad"></label>' +
+        '<div class="ee-top">' +
+          '<label class="ee-field"><span>Reverb</span>' +
+            '<select id="pad-rev-type">' +
+              '<option value="room">Room</option>' +
+              '<option value="hall">Hall</option>' +
+              '<option value="plate">Plate</option>' +
+              '<option value="spring">Spring</option>' +
+              '<option value="cathedral">Cathedral</option>' +
+            '</select></label>' +
+          '<label class="ee-field"><span>Mix (dry→wet) <em id="pad-rev-v">off</em></span>' +
+            '<input type="range" id="pad-rev" min="0" max="100" step="1" value="0"></label>' +
+        '</div>' +
+        '<div class="ee-top">' +
+          '<label class="ee-field"><span>Reverb size <em id="pad-rev-size-v">70%</em></span>' +
+            '<input type="range" id="pad-rev-size" min="0" max="100" step="1" value="70"></label>' +
+          '<label class="ee-field"><span>Reverb tone <em id="pad-rev-tone-v">50%</em></span>' +
+            '<input type="range" id="pad-rev-tone" min="0" max="100" step="1" value="50"></label>' +
+        '</div>' +
+        '<label class="ee-field ee-name" style="margin-top:6px;"><span>Pad name (required)</span><input type="text" id="pad-name" placeholder="Name your pad…"></label>' +
         '<div class="se-wave-actions">' +
           '<button type="button" class="sm-wave" id="pad-preview">▶ Preview loop</button>' +
           '<button type="button" class="sm-wave" id="pad-cancel">Cancel</button>' +
@@ -2108,8 +2267,16 @@
       const spreadV = modal.querySelector('#pad-spread-v');
       const detuneEl = modal.querySelector('#pad-detune');
       const detuneV = modal.querySelector('#pad-detune-v');
+      const revTypeEl = modal.querySelector('#pad-rev-type');
+      const revEl = modal.querySelector('#pad-rev');
+      const revV = modal.querySelector('#pad-rev-v');
+      const revSizeEl = modal.querySelector('#pad-rev-size');
+      const revSizeV = modal.querySelector('#pad-rev-size-v');
+      const revToneEl = modal.querySelector('#pad-rev-tone');
+      const revToneV = modal.querySelector('#pad-rev-tone-v');
       let copies = 1, offsetSec = 0.025, crossfadeSec = 0, lpfPos = 100, spread = 0;
       let detuneCents = 0, reverse = false;
+      let revType = 'room', revMix = 0, revSize = 70, revTone = 50;
       // Slider 0..100 → log cutoff ~80 Hz..20 kHz; 100 = fully open (off).
       const lpfHz = () => Math.round(80 * Math.pow(2, lpfPos * 8 / 100));
 
@@ -2146,6 +2313,8 @@
         const effX = (detuneCents > 0 && copies > 1) ? Math.max(crossfadeSec, 0.025) : crossfadeSec;
         b = _crossfadeLoopBuffer(ac, b, effX);
         if (lpfPos < 100) _lowpassBufferInPlace(b, lpfHz(), 0.707);
+        // Reverb last: bake a seamless wash into the (already seamless) loop.
+        if (revMix > 0) b = _reverbBufferOffline(ac, b, revType, revMix / 100, revSize, revTone);
         return b;
       };
       // Preview the looping pad. A tiny fade-in on a fresh Preview press avoids a
@@ -2192,14 +2361,17 @@
         ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); ctx.stroke();
         fmtSel();
       };
+      // Save needs both a loaded buffer AND a name — a pad must be named to save.
+      const refreshSaveEnabled = () => { saveBtn.disabled = !(buf && nameEl.value.trim()); };
       const loadSample = (id) => {
         stopPreview();
         buf = (typeof _getSampleAudioBuffer === 'function') ? _getSampleAudioBuffer(id) : null;
         startF = 0; endF = 1;
-        saveBtn.disabled = !buf;
+        refreshSaveEnabled();
         if (!buf) selEl.textContent = 'This sample buffer isn’t loaded yet.';
         requestAnimationFrame(draw);
       };
+      nameEl.addEventListener('input', refreshSaveEnabled);
 
       // Nearest zero-crossing (fraction) to a given fraction, searching outward
       // on channel 0. Snapping start/end here means the loop begins and ends at
@@ -2287,6 +2459,28 @@
         detuneCents = parseInt(detuneEl.value, 10) || 0; detuneV.textContent = detuneCents + '¢';
         if (previewSrc) startPreview();
       });
+      // Reverb baking is heavier than the other stages, so update the readouts
+      // live on `input` but only re-render the preview on `change` (drag release)
+      // to keep the dialog responsive and avoid stacking renders mid-drag.
+      revTypeEl.addEventListener('change', () => {
+        revType = revTypeEl.value || 'room';
+        if (previewSrc && revMix > 0) startPreview();
+      });
+      revEl.addEventListener('input', () => {
+        revMix = parseInt(revEl.value, 10) || 0;
+        revV.textContent = revMix ? revMix + '%' : 'off';
+      });
+      revEl.addEventListener('change', () => { if (previewSrc) startPreview(); });
+      revSizeEl.addEventListener('input', () => {
+        revSize = parseInt(revSizeEl.value, 10); if (!Number.isFinite(revSize)) revSize = 70;
+        revSizeV.textContent = revSize + '%';
+      });
+      revSizeEl.addEventListener('change', () => { if (previewSrc && revMix > 0) startPreview(); });
+      revToneEl.addEventListener('input', () => {
+        revTone = parseInt(revToneEl.value, 10); if (!Number.isFinite(revTone)) revTone = 50;
+        revToneV.textContent = revTone + '%';
+      });
+      revToneEl.addEventListener('change', () => { if (previewSrc && revMix > 0) startPreview(); });
       previewBtn.addEventListener('click', () => {
         if (previewSrc) releasePreview(); else startPreview(true);
       });
@@ -2295,9 +2489,9 @@
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       saveBtn.addEventListener('click', async () => {
         if (!buf) return;
+        const nm = (nameEl.value || '').trim();
+        if (!nm) { refreshSaveEnabled(); nameEl.focus(); return; } // name required
         stopPreview();
-        const srcName = (srcSel.options[srcSel.selectedIndex] && srcSel.options[srcSel.selectedIndex].textContent) || 'pad';
-        const nm = (nameEl.value || '').trim() || (srcName + ' pad');
         saveBtn.disabled = true;
         try {
           const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(buildOut()) : null;

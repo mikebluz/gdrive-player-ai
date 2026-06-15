@@ -3810,11 +3810,16 @@
        so chips still flow but the visual container still appears. */
     .lane-chips:not(.grid-mode) > .key-group-container {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       gap: inherit;
-      border: 1px solid rgba(192, 38, 211, 0.6);
+      /* outline (not border) + zero padding so the group box draws its purple
+         frame WITHOUT adding any layout width — the container measures exactly
+         the sum of its chips. This keeps the lane-width invariant (equal step
+         totals → equal width) intact even when steps are key-grouped. */
+      outline: 1px solid rgba(192, 38, 211, 0.6);
+      outline-offset: -1px;
       border-radius: 8px;
-      padding: 2px;
+      padding: 0;
       position: relative;
     }
     /* The key name floats just above the container's top-left edge.

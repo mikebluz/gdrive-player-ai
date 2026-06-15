@@ -158,7 +158,10 @@
       flex-wrap: wrap;
       justify-content: center;
     }
-    .hero-cta-top { margin-bottom: 20px; }
+    /* Lift the top CTA group above the banner so its buttons' hover glow
+       (and the Grains frame glow) layers on top of the Mercy Wizard banner
+       instead of being painted over by it (the banner is later in the DOM). */
+    .hero-cta-top { margin-bottom: 20px; position: relative; z-index: 2; }
 
     /* Bottom hero CTA group (Music / Artwork / Merch / Guitars and the
        Mailing List button) — uniform min-width so the four buttons

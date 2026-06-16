@@ -27,17 +27,25 @@
     if ((location.hash || '').toLowerCase() === '#player') {
       document.body.classList.add('view-serialbox');
     }
-    // Sign-in is REQUIRED. If SharedAuth already has a fresh token, drop
-    // the `.no-google` class synchronously so the user lands in the
-    // signed-in state on first paint (Listen tab + Save/Load enabled)
-    // without a flash of the signed-out chrome on a cross-page return.
-    // Otherwise add `.signin-required` so the full-screen #signin-gate
-    // shows on first paint with no flash of the gated-off app behind it.
+    // Sign-in is REQUIRED only when DEPLOYED. On localhost (npm start) the
+    // gate is skipped so the app is usable for non-Drive work without an
+    // OAuth round-trip; Drive-only controls stay disabled via `.no-google`
+    // until the user optionally signs in. `window.BLOOPS_LOCAL` is reused by
+    // initSigninGate so the gate isn't re-raised on local sign-out.
+    window.BLOOPS_LOCAL = ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(location.hostname)
+      || location.hostname.endsWith('.local')
+      || location.protocol === 'file:';
+    // If SharedAuth already has a fresh token, drop the `.no-google` class
+    // synchronously so the user lands in the signed-in state on first paint
+    // (Listen tab + Save/Load enabled) without a flash of the signed-out
+    // chrome on a cross-page return. Otherwise add `.signin-required` so the
+    // full-screen #signin-gate shows on first paint with no flash of the
+    // gated-off app behind it — except on local, where the gate never shows.
     // The async bloopsAuth init (initSigninGate) re-syncs both classes as
     // auth state changes; doing it here makes the transition immediate.
     if (window.SharedAuth?.load?.()?.token) {
       document.body.classList.remove('no-google');
-    } else {
+    } else if (!window.BLOOPS_LOCAL) {
       document.body.classList.add('signin-required');
     }
   </script>
@@ -318,21 +326,23 @@
        parked in #lane-expander-stash so the bindings stay alive. -->
   <div id="lane-expander-stash" hidden>
     <div id="lane-expander">
-      <button type="button" id="lane-expander-close" class="lane-expander-close" aria-label="Close voice editor" title="Close voice editor (Esc)">×</button>
       <div class="banner-row">
-        <!-- Mode tabs (Grid / Graph / Game / Prog / Bloom / TEXT) replace the
-             old single Grid↔Graph cycle button. Each tab sets the active
-             lane's mode flags via initModeTabs (13). #fluid-grid-toggle lives
-             on as a hidden anchor so initFluidGridToggle and
-             _syncFluidGridToActiveLane (which still write its label) keep
-             resolving. -->
-        <div class="mode-tabs" id="mode-tabs" role="tablist" aria-label="Lane mode">
-          <button type="button" class="mode-tab" data-mode="grid"  role="tab" aria-selected="true"  title="Grid — discrete cells">Grid</button>
-          <button type="button" class="mode-tab" data-mode="graph" role="tab" aria-selected="false" title="Graph — continuous pitch field; press anywhere, drag for fluid bends">Graph</button>
-          <button type="button" class="mode-tab" data-mode="game"  role="tab" aria-selected="false" title="Game — chord-progression game">Game</button>
-          <button type="button" class="mode-tab" data-mode="prog"  role="tab" aria-selected="false" title="Prog — progression pad">Prog</button>
-          <button type="button" class="mode-tab" data-mode="bloom" role="tab" aria-selected="false" title="Bloom — generative ambient">Bloom</button>
-          <button type="button" class="mode-tab" data-mode="text"  role="tab" aria-selected="false" title="TEXT — text-to-speech voice">TEXT</button>
+        <!-- Lane mode picker — a single dropdown (collapsed from the old
+             Grid/Graph/Game/Prog/Bloom/TEXT/Seq tab strip). initModeTabs (13)
+             sets the active lane's mode flags from the selected value;
+             _syncFluidGridToActiveLane mirrors the active lane back into it.
+             #fluid-grid-toggle lives on as a hidden anchor so the legacy
+             cycle/label code keeps resolving. -->
+        <div class="mode-tabs" id="mode-tabs" aria-label="Lane mode">
+          <select class="mode-select" id="mode-select" title="Lane mode" aria-label="Lane mode">
+            <option value="grid">Grid</option>
+            <option value="graph">Graph</option>
+            <option value="game">Game</option>
+            <option value="prog">Prog</option>
+            <option value="bloom">Bloom</option>
+            <option value="text">TEXT</option>
+            <option value="seq">Seq</option>
+          </select>
         </div>
         <button type="button" id="fluid-grid-toggle" hidden aria-hidden="true" tabindex="-1" style="display:none"></button>
         <!-- Note-shift + octave-nudge buttons moved to the vertical rail to
@@ -412,6 +422,12 @@
            speech engine is lazy-loaded from /vendor/mespeak/ on first entry. -->
       <div id="text-pad" hidden>
         <div class="ambient-inner" id="text-inner"></div>
+      </div>
+      <!-- Seq pad — seventh mode. A grid of saved-sequence squares; press to
+           audition (Loop / Gate / Layer⇄Queue), or with Keep ON append to the
+           active lane. Built by 19-seq-pad.js when the lane enters Seq mode. -->
+      <div id="seq-pad" hidden>
+        <div class="seq-inner" id="seq-inner"></div>
       </div>
       <!-- Game pad — third mode of the Grid/Graph toggle. A polygon with
            one side per (scale-degree × octave) cell encloses a free
@@ -514,17 +530,22 @@
         </label>
       </div>
       </div>
-      <!-- Step Pan / Vol / Slip faders + the Edit button. Sits between
-           the Keep/Wrap/Rest trio and the active lane row, matching
-           the original layout, but now reparented into the per-lane
-           voice editor so it travels with whichever lane is active. -->
+    </div>
+      <!-- Step Edit row — the Edit button + Mix / Groove tabs (Pan / Vol /
+           Slip and Strum / Roll / Chance / When). Relocated OUT of the
+           voice editor so it sits directly BELOW the active lane's step
+           strip: _placeStepEditRow() reparents it under the active
+           .lane-row on every render and parks it back here in the stash
+           between renders so its IDs / bindings stay alive. The multi-step
+           accent lights up and the Edit button shows the step count when
+           2+ steps are selected. -->
       <div class="step-edit-row" id="step-edit-row" hidden>
-        <button type="button" id="step-edit-btn" hidden aria-label="Edit" title="Open the step edit menu for the selected step">✎</button>
         <button type="button" id="step-all-btn" hidden aria-pressed="false" title="Apply Pan / Vol / Slip to every step in this lane while active. Click again to return to per-step editing.">All</button>
         <div class="step-edit-bars">
           <div class="step-tabs" role="tablist">
             <button type="button" class="step-tab active" id="step-tab-mix-btn" data-tab="mix" role="tab" aria-selected="true">Mix</button>
             <button type="button" class="step-tab" id="step-tab-groove-btn" data-tab="groove" role="tab" aria-selected="false">Groove</button>
+            <button type="button" id="step-edit-btn" hidden aria-label="Edit" title="Open the step edit menu for the selected step">✎</button>
           </div>
           <div class="step-tab-panel" id="step-tab-mix" data-panel="mix">
             <div class="step-pan-bar" id="step-pan-bar" hidden>
@@ -566,7 +587,6 @@
           </div>
         </div>
       </div>
-    </div>
   </div>
 
   <!-- Keep / Wrap / Rest moved into #lane-expander above so they
@@ -704,7 +724,9 @@
   <div class="footer-bar">
     <div class="footer-transport">
       <button id="loop-btn" title="Loop the current sequence">Loop</button>
+      <button id="rewind-btn" class="menu-btn" type="button" title="Rewind — move the cursor back to the previous cut point (where all lanes line up)" aria-label="Rewind to previous cut point">⏮</button>
       <button id="play-btn" class="menu-btn" title="Play / stop sequence">▶</button>
+      <button id="fast-forward-btn" class="menu-btn" type="button" title="Fast-forward — move the cursor to the next cut point (where all lanes line up)" aria-label="Fast-forward to next cut point">⏭</button>
     </div>
   </div>
   <!-- Master-bus oscilloscope. Pinned to the very bottom of the viewport
@@ -829,6 +851,7 @@
   <script src="js/bloops/16-grid-controls.js?v=DEPLOYVER"></script>
   <script src="js/bloops/17-ambient.js?v=DEPLOYVER"></script>
   <script src="js/bloops/18-text.js?v=DEPLOYVER"></script>
+  <script src="js/bloops/19-seq-pad.js?v=DEPLOYVER"></script>
 
   <!-- ===================== Serialbox view ============================== -->
   <!-- Hidden by default; the Serialbox tab in the top bar reveals it via

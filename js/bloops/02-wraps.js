@@ -40,6 +40,8 @@
     function renderSavedSequences() {
       const grid = document.getElementById('saved-grid');
       refreshClearBankBtn();
+      // Keep the Seq-mode clip grid in sync when the bank changes.
+      try { if (typeof _seqRefreshIfActive === 'function') _seqRefreshIfActive(); } catch (e) {}
       if (savedSequences.length === 0) {
         grid.innerHTML = '<span class="saved-empty">No saved sequences yet.</span>';
         return;
@@ -167,6 +169,7 @@
               ambientMode: !!l?.ambientMode,
               ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
               textMode: !!l?.textMode,
+              seqMode: !!l?.seqMode,
               text: (l?.text && typeof l.text === 'object') ? JSON.parse(JSON.stringify(l.text)) : null,
               // Restore per-lane FX wet levels. _migrateLaneSends handles
               // the three save-generations (new `sends`, mid-refactor

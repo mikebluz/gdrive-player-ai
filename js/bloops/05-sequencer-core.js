@@ -5,6 +5,10 @@
     // anything longer grows. A subsequence's width is the sum of its subSteps.
     const STEP_BASE_PX = 80;
     function stepLengthFactor(step) {
+      // Seq-pad clip chips render compact (one tidy block) instead of expanding
+      // to the saved sequence's full internal length — coarser than a Grid note.
+      // Visual only: the scheduler still unrolls subSteps for correct timing.
+      if (step._seqClip) return 0.25;
       if (step.isSub && Array.isArray(step.subSteps)) {
         if (step.subSteps.length === 0) return 1;
         return step.subSteps.reduce((sum, s) => sum + stepLengthFactor(s), 0);
@@ -20,8 +24,24 @@
     // legacy STEP_BASE_PX so chips stay readable/tappable on the scrolling row.
     // A 1/4 note ≈ 70px, 1/8 ≈ 35px; floored so very short steps don't vanish.
     const LANE_SCROLL_BASE_PX = 280;
+    // User-adjustable horizontal zoom for the lane step-timeline. 1 = the
+    // default LANE_SCROLL_BASE_PX density; <1 zooms out (more steps fit on the
+    // row), >1 zooms in (each step wider). Persisted globally; the zoom slider
+    // in the banner row writes it via setLaneViewScale, which re-renders lanes.
+    let laneViewScale = (() => {
+      try { const v = parseFloat(localStorage.getItem('lane-view-scale')); return (Number.isFinite(v) && v >= 0.05 && v <= 4) ? v : 1; }
+      catch (e) { return 1; }
+    })();
+    function _laneViewBasePx() { return LANE_SCROLL_BASE_PX * laneViewScale; }
+    function setLaneViewScale(s) {
+      s = (typeof s === 'number' && isFinite(s)) ? s : 1;
+      s = Math.max(0.05, Math.min(4, s));
+      laneViewScale = s;
+      try { localStorage.setItem('lane-view-scale', String(s)); } catch (e) {}
+      if (typeof renderSequence === 'function') renderSequence();
+    }
     function laneChipWidthPx(step) {
-      return Math.max(10, Math.round(LANE_SCROLL_BASE_PX * stepLengthFactor(step)));
+      return Math.max(10, Math.round(_laneViewBasePx() * stepLengthFactor(step)));
     }
     // Lane-timeline width allocator. Returns { widths, gap, total } where each
     // step's RIGHT EDGE is placed at the exact proportional pixel
@@ -48,7 +68,7 @@
       for (let i = 0; i < n; i++) {
         const f = (skip && skip(steps[i])) ? 0 : Math.max(0, stepLengthFactor(steps[i]));
         cum += f;
-        const edge = Math.round(LANE_SCROLL_BASE_PX * cum); // proportional boundary
+        const edge = Math.round(_laneViewBasePx() * cum); // proportional boundary
         widths[i] = edge - prevEdge;
         prevEdge = edge;
       }
@@ -196,6 +216,25 @@
       // chip-level operations below.
       let chipHost = display;
 
+      // Preserve each lane strip's horizontal scroll across this rebuild so a
+      // user who side-scrolled a lane to edit a far step doesn't get yanked
+      // back to step 0 every time the display re-renders. Captured by document
+      // order (collapsed lanes route to the menubar strip and are excluded from
+      // both capture and restore, so indices stay aligned) and re-applied
+      // (clamped) once the new strips exist. Skipped for the active lane when
+      // an append/active-index scroll-into-view is about to take over below.
+      const _prevLaneScroll = [];
+      display.querySelectorAll('.lane-chips').forEach((s) => _prevLaneScroll.push(s.scrollLeft));
+      const _restorePrevLaneScroll = () => {
+        if (!_prevLaneScroll.length) return;
+        display.querySelectorAll('.lane-chips').forEach((s, i) => {
+          const v = _prevLaneScroll[i];
+          if (!v) return;
+          const max = s.scrollWidth - s.clientWidth;
+          s.scrollLeft = max > 0 ? Math.min(v, max) : 0;
+        });
+      };
+
       {
         display.classList.add('polymode');
         display.classList.remove('grid-mode');
@@ -211,6 +250,13 @@
         const exp0 = document.getElementById('lane-expander');
         if (stash0 && exp0 && exp0.parentNode !== stash0) {
           stash0.appendChild(exp0);
+        }
+        // The step-edit-row lives below the active lane row (inside the
+        // display) between renders — rescue it into the stash too before
+        // the wipe, or display.innerHTML = '' would orphan/destroy it.
+        const editRow0 = document.getElementById('step-edit-row');
+        if (stash0 && editRow0 && editRow0.parentNode !== stash0) {
+          stash0.appendChild(editRow0);
         }
         display.innerHTML = '';
 
@@ -338,7 +384,7 @@
                   + (isCh   ? ' chord'  : '')
                   + (isRest ? ' rest'   : '');
                 let label = '';
-                if (isSub)       label = '▤';
+                if (isSub)       label = step._seqClip ? ('▤ ' + (step._seqName || 'Seq')) : '▤';
                 else if (isCh)   label = step.chord.map(n => n.label).join('·');
                 else if (isRest) label = '—';
                 else             label = step.label || '';
@@ -403,6 +449,7 @@
 
         chipHost = activeLaneChipsEl || display;
         _placeLaneExpander();
+        _placeStepEditRow();
       }
 
       // Pixel-perfect proportional widths for the active lane (same invariant as
@@ -429,6 +476,14 @@
         if (shiftDownBtn) shiftDownBtn.disabled = true;
         const repeatBtn = document.getElementById('repeat-btn');
         if (repeatBtn) repeatBtn.disabled = true;
+        // Active lane is empty, but the other lanes' preview strips were just
+        // rebuilt — restore their scroll so they don't snap to 0.
+        _restorePrevLaneScroll();
+        // Keep the always-on cursor drawn on the other lanes (no scroll —
+        // idle redraw leaves any manual side-scroll untouched).
+        if (sequenceTimer === null && typeof _positionCursorsAtTick === 'function') {
+          _positionCursorsAtTick(_cursorTick, false);
+        }
         return;
       }
 
@@ -551,7 +606,8 @@
           }).filter(Boolean);
           const preview = labels.slice(0, SUB_PREVIEW_MAX).join(' ')
                         + (labels.length > SUB_PREVIEW_MAX ? ' …' : '');
-          chip.textContent = count > 0 ? `▤  ${preview}` : '▤';
+          chip.textContent = step._seqClip ? ('▤ ' + (step._seqName || 'Seq'))
+                           : (count > 0 ? `▤  ${preview}` : '▤');
         } else if (step.chord) {
           chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '') + (bendDir ? ' ' + bendDir : '');
           chip.textContent = step.chord.map(n => n.label).join('·') + (durSuffix ? ' ' + durSuffix : '');
@@ -588,7 +644,8 @@
         }
         // Click behaviour: in step mode (and only on non-sub chips) toggle
         // the slot between rest and the armed note; otherwise select the
-        // step (so the step controls retarget it) and preview its audio.
+        // step (so the step controls retarget it) and open its edit menu
+        // below the lane. A click no longer auditions the step's audio.
         // The click runs immediately on the FIRST click (event.detail===1)
         // and skips the second click of a double-click pair so the
         // dblclick → duplicate handler can run cleanly without us
@@ -627,8 +684,11 @@
           }
           // Selection IS the edit scope (no "Multi" mode). A plain click/tap
           // TOGGLES this chip's membership; shift-click selects the contiguous
-          // range from the primary chip to this one. Deselecting just dismisses
-          // (no preview); a fresh select previews + captures wrap/key below.
+          // range from the primary chip to this one. A click no longer
+          // auditions audio — it just selects the step for editing; the
+          // Edit / Mix / Groove row that sits below this lane retargets to
+          // the selection (via syncStepEditorFromSelection in the toggle
+          // helpers) and signals how many steps are in scope.
           const _shiftSel = !!(ev && ev.shiftKey);
           if (_shiftSel && selectedStepRefs.length) {
             const anchor = sequence.indexOf(lastSelectedStep());
@@ -667,7 +727,6 @@
             try { _applyKeyContext(step.keyContext); } catch (e) {}
           }
           renderSequence();
-          previewStep(sequence[i]);
         };
         chip.addEventListener('click', (e) => {
           // event.detail is the click-count: 1 = single, 2 = the second
@@ -784,6 +843,12 @@
         chipHost.appendChild(makeInsertCursor());
       }
 
+      // Restore the pre-render horizontal scroll on every lane strip first, so
+      // an edit re-render keeps the user's scroll place. The chord-pending /
+      // activeIndex scroll-into-view below can then still override the ACTIVE
+      // lane when a note was just appended (the strip should follow the new tail).
+      _restorePrevLaneScroll();
+
       // Show in-progress chord as a dashed pending chip
       // Pending-Wrap preview chip — only shown while Keep is on so the
        // user can see the in-progress chord/sub being captured. With
@@ -818,6 +883,13 @@
       // a microtask so chip widths have settled (esp. in flex/grid mode
       // where stretching is computed after layout).
       requestAnimationFrame(() => renderIntervalBars(display));
+      // Keep the always-on playback cursor visible while stopped. Idle redraw
+      // only (no scroll) so a manual side-scroll to edit isn't yanked back;
+      // Stop / Rewind / Fast-Forward do the centering. During playback the
+      // live scheduler owns the cursors, so skip.
+      if (sequenceTimer === null && typeof _positionCursorsAtTick === 'function') {
+        _positionCursorsAtTick(_cursorTick, false);
+      }
       persistWorkspace();
     }
 
@@ -1452,6 +1524,18 @@
       const _anySel = selectedStepRefs.length > 0;
       if (editRow) editRow.hidden = !(showBars || _anySel);
       if (editBtn) editBtn.hidden = !_anySel;
+      // Multi-step signal: when 2+ steps are in the edit scope the row
+      // wears a distinct accent (.multi) and the step count is folded into
+      // the Edit button label ("✎ N"), so the user can see at a glance that
+      // every control here writes to all selected steps at once.
+      const _selCount = selectedStepRefs.length;
+      if (editRow) editRow.classList.toggle('multi', _selCount > 1);
+      if (editBtn) {
+        const _multi = _selCount > 1;
+        editBtn.textContent = _multi ? ('✎ ' + _selCount) : '✎';
+        editBtn.classList.toggle('multi', _multi);
+        editBtn.setAttribute('aria-label', _multi ? ('Edit ' + _selCount + ' steps') : 'Edit');
+      }
       // "All" toggle — visible whenever the bars are. Its active-state
       // styling is owned by the toggle itself (set in the click
       // handler below) so just track presence here.

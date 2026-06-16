@@ -138,6 +138,27 @@
         stash.hidden = true; // stash itself is always display:none via [hidden]
       }
     }
+    // Park the #step-edit-row (Edit button + Mix / Groove tabs) directly
+    // BELOW the active lane's step strip so the controls read as that
+    // lane's step editor. Mirrors _placeLaneExpander (which sits ABOVE the
+    // lane) — together they bracket the active lane row: grid above, the
+    // Edit / Mix / Groove controls below. Parked back in the persistent
+    // stash when there's no expanded active lane on screen so the node's
+    // IDs / bindings survive renderSequence's display wipe. Idempotent.
+    function _placeStepEditRow() {
+      const row = document.getElementById('step-edit-row');
+      const stash = document.getElementById('lane-expander-stash');
+      if (!row || !stash) return;
+      const display = document.getElementById('sequence-display');
+      const activeRow = display
+        ? display.querySelector(':scope > .lane-row.active')
+        : null;
+      if (activeRow) {
+        if (activeRow.nextSibling !== row) activeRow.after(row);
+      } else {
+        if (row.parentNode !== stash) stash.appendChild(row);
+      }
+    }
     // Close button + Esc collapse the voice editor. Bound here at
     // module scope so a single listener serves every render — the
     // expander DOM node persists across renderSequence calls so its

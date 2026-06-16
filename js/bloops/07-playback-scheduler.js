@@ -115,6 +115,10 @@
       }
       clearVisualTimers();
       clearHighlights();
+      // Freeze the persistent cursor exactly where playback stopped: capture
+      // the global transport tick BEFORE _removeLaneCursors / renderSequence
+      // tear the playback cursors down and reset scroll.
+      if (typeof _transportTick === 'function') _cursorTick = _transportTick();
       // Drop the per-lane playback cursors (renderSequence below also rebuilds
       // the strips, but remove explicitly so they vanish the instant we stop).
       if (typeof _removeLaneCursors === 'function') _removeLaneCursors();
@@ -124,6 +128,9 @@
       // untracked so they survive.
       try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {}
       renderSequence();
+      // "Stop where they are": scroll each lane to center the frozen cursor at
+      // the stop position, leaving the cursor visible for side-scroll editing.
+      if (typeof _positionCursorsAtTick === 'function') _positionCursorsAtTick(_cursorTick, true);
       document.getElementById('play-btn').textContent = '▶';
       // Stop driving the Keep button off the playback step — fall back
       // to the wrap state (or "KEEP" if no wrap is active).

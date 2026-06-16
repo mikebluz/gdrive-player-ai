@@ -67,10 +67,10 @@
         // `when` is an Elektron-style per-event conditional ('always' | '1st' |
         // 'A:B') that gates which of the layer's generated events actually fire —
         // e.g. '1:2' = every other event, for sparser/polymetric interplay.
-        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
         // "units", improvising variations and periodically returning to verbatim.
@@ -164,13 +164,24 @@
     // among units each cycle). `id` is a stable monotonic int; display name is
     // positional (Seq1, Seq2…).
     function _defaultSeqLayer(id) {
-      return { id: id | 0, on: true, intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always',
+      // intervalMode 'auto' (default) → one iteration == the played unit's own
+      // natural length, so the loop closes exactly on the sequence (and breathes
+      // per-unit in Interleave). 'manual' → honor the Interval knob, as a knob.
+      return { id: id | 0, on: true, intervalMode: 'auto', intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always',
+               panMode: 'spread', space: 0,
                level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
                unitMode: 'single', units: [], ..._ambDefaultFx() };
     }
     function _ambValidUnit(u) {
       return !!(u && typeof u === 'object' && Array.isArray(u.events) && u.events.length > 0);
+    }
+    // Per-layer stereo (Spread/Pan) validation, shared by every layer type.
+    function _ambNormalizeSpread(L) {
+      if (!L || typeof L !== 'object') return;
+      if (L.panMode !== 'pan' && L.panMode !== 'spread') L.panMode = 'spread';
+      if (!Number.isFinite(L.space)) L.space = 0;
+      L.space = Math.max(-100, Math.min(100, L.space | 0));
     }
     function _normalizeSeqLayer(s, id) {
       const d = _defaultSeqLayer(id);
@@ -181,6 +192,7 @@
       if (typeof s.when !== 'string') s.when = 'always';
       if (typeof s.ensembleLock !== 'boolean') s.ensembleLock = true;
       if (s.varyMode !== 'pitch' && s.varyMode !== 'rhythm' && s.varyMode !== 'pad') s.varyMode = 'pitch';
+      if (s.intervalMode !== 'auto' && s.intervalMode !== 'manual') s.intervalMode = 'auto';
       if (s.returnMode !== 'everyN' && s.returnMode !== 'chance') s.returnMode = 'everyN';
       if (s.unitMode !== 'single' && s.unitMode !== 'interleave') s.unitMode = 'single';
       if (!Array.isArray(s.units)) s.units = [];
@@ -188,6 +200,7 @@
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
       _ambNormalizeNotes(s);
+      _ambNormalizeSpread(s);
       return s;
     }
     // A Sample layer plays a single-buffer `sample:<id>` raw. `chop` 1 = retrigger
@@ -196,7 +209,7 @@
     function _defaultSampleLayer(id) {
       return { id: id | 0, on: true, sampleId: '', name: '',
                chop: 1, order: 'forward',
-               intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always', level: 70,
+               intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0,
                mod: _ambDefaultMod(), ..._ambDefaultFx() };
     }
     function _normalizeSampleLayer(s, id) {
@@ -211,6 +224,7 @@
       if (typeof s.when !== 'string') s.when = 'always';
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
+      _ambNormalizeSpread(s);
       return s;
     }
     // Migrate + backfill a Bloom config in place (shared by per-lane + master).
@@ -232,6 +246,24 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         if (!cfg[layer] || typeof cfg[layer] !== 'object') cfg[layer] = { ...d[layer] };
       });
+      // Spread → per-layer migration. The old single global `cfg.space` is gone;
+      // carry its width onto every layer that predates this change so existing
+      // Blooms keep their stereo image. Must run BEFORE the field backfills below
+      // (which would otherwise stamp the new `space: 0` default over it). New
+      // layers default to centred Spread (space 0, set by the layer factories).
+      {
+        const legacy = Number.isFinite(cfg.space) ? (cfg.space | 0) : 0;
+        const mig = (L) => {
+          if (!L || typeof L !== 'object') return;
+          if (L.panMode !== 'pan' && L.panMode !== 'spread') L.panMode = 'spread';
+          if (!Number.isFinite(L.space)) L.space = legacy;
+          L.space = Math.max(-100, Math.min(100, L.space | 0));
+        };
+        ['bed','motif','texture','beat'].forEach(l => mig(cfg[l]));
+        if (Array.isArray(cfg.seqs)) cfg.seqs.forEach(mig);
+        if (Array.isArray(cfg.samples)) cfg.samples.forEach(mig);
+        if (Array.isArray(cfg.extras)) cfg.extras.forEach(mig);
+      }
       ['bed','motif','texture','beat'].forEach(layer => {
         const L = cfg[layer];
         if (!L || typeof L !== 'object') return;
@@ -262,7 +294,7 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         Object.keys(d[layer]).forEach(k => {
           if (k === 'on') { if (typeof cfg[layer].on !== 'boolean') cfg[layer].on = d[layer].on; }
-          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
+          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when' || k === 'panMode') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
           else if (k === 'mod') { _ambNormalizeModObj(cfg[layer], d[layer].mod); }
           else if (k === 'delay' || k === 'dist') { /* handled by _ambNormalizeFx below */ }
           else if (!Number.isFinite(cfg[layer][k])) cfg[layer][k] = d[layer][k];
@@ -654,6 +686,29 @@
       }
       return out;
     }
+    // Per-layer stereo placement (replaces the old single global `space`).
+    // Each layer carries `panMode` + `space`: in 'spread' mode `space` is a
+    // 0..100 WIDTH (voices fan across the field — deterministic for chords /
+    // slices, random ± for single hits); in 'pan' mode `space` is a -100..100
+    // POSITION (every voice sits at one fixed L/R spot).
+    function _ambLayerSpace(layer) {
+      return (layer && Number.isFinite(layer.space)) ? (layer.space | 0) : 0;
+    }
+    // Pan array for an n-voice event (bed voicings, sample slices, seq notes).
+    function _ambLayerPans(layer, n) {
+      const val = _ambLayerSpace(layer);
+      if (layer && layer.panMode === 'pan') {
+        const p = Math.max(-100, Math.min(100, val));
+        const out = []; for (let i = 0; i < n; i++) out.push(p); return out;
+      }
+      return _ambSpacePans(n, Math.max(0, Math.min(100, val)));
+    }
+    // Single pan for a one-shot event (motif note, texture/beat hit).
+    function _ambLayerPan(layer) {
+      const val = _ambLayerSpace(layer);
+      if (layer && layer.panMode === 'pan') return Math.max(-100, Math.min(100, val));
+      return Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, val)));
+    }
 
     // ---- Timing helpers ------------------------------------------------
     function _ambBpm() {
@@ -831,7 +886,7 @@
       if (!voicing.length) return;
       const durMs = Math.max(80, bed.lengthMs | 0);
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
-      const pans = _ambSpacePans(voicing.length, space);
+      const pans = _ambLayerPans(bed, voicing.length);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const n = voicing.length;
       // Strum: spread the chord's notes across a fraction of the bed's interval
@@ -911,7 +966,7 @@
         if (f == null) continue;
         // Sequential single notes can't be "distributed" simultaneously, so
         // Space spreads them by panning each randomly within ±space.
-        const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
+        const pan = _ambLayerPan(motif);
         const mp = _ambMotifParams(lenMs, pan, motif.tone);
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
         if (dmod) mp._detuneMod = dmod;
@@ -958,7 +1013,7 @@
       if (slot && slot.on) {
         const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0), _ambNotesOf(texture));
         const lenMs = Math.max(60, texture.lengthMs | 0);
-        const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
+        const pan = _ambLayerPan(texture);
         const tp = _ambTexParams(lenMs, pan, texture.tone);
         tp.volume = _ambApplyLevel(tp.volume, texture.level);
         const dmod = _ambLayerDetuneMod(key); if (dmod) tp._detuneMod = dmod;
@@ -1063,7 +1118,7 @@
       let f;
       try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, beat.lengthMs | 0);
-      const pan = Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, space)));
+      const pan = _ambLayerPan(beat);
       const bp = _ambBeatParams(beat.kit, lenMs, pan);
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
@@ -1150,7 +1205,7 @@
       const chop = Math.max(1, Math.min(16, layer.chop | 0));
       const sliceSec = Math.max(0.02, (layer.intervalMs | 0) / 1000 / chop);
       const vol = _ambApplyLevel(100, layer.level);
-      const pans = _ambSpacePans(chop, space);
+      const pans = _ambLayerPans(layer, chop);
       for (let j = 0; j < chop; j++) {
         const idx = (chop === 1) ? 0 : (layer.order === 'random' ? Math.floor(_ambRand() * chop) : j);
         const dur = (chop > 1) ? sliceSec * 1000 : Math.max(80, layer.lengthMs | 0);
@@ -1174,6 +1229,9 @@
         unit = seq.units[0];
       }
       if (!_ambValidUnit(unit)) return;
+      // Record THIS pass's unit length so the scheduler can advance the loop by
+      // exactly one sequence in auto interval mode (per-picked-unit in Interleave).
+      if (st) st._lastUnitMs = _unitTotalMs(unit);
       const seed = unit; // walk/pad code below reads `seed`
       const key = 'seq:' + seq.id;
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
@@ -1206,7 +1264,7 @@
       }
       const emitEvent = (freqs, durMs, vel, t, padStyle, sounds) => {
         if (!freqs || !freqs.length) return;
-        const pans = _ambSpacePans(freqs.length, space);
+        const pans = _ambLayerPans(seq, freqs.length);
         const vol = _ambAccentVol(_ambApplyLevel(Math.round((vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
         freqs.forEach((f, vi) => {
           const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
@@ -1598,14 +1656,25 @@
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
           let g = 0;
+          const stSeq = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
           while (C[key] < horizon && g++ < 4) {
             if (_ambCondFires(seq.when, I[key] | 0)) {
-              const st = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
-              st.iter = I[key] | 0;
-              _ambEmitSeq(C[key], seq, space, st);
+              stSeq.iter = I[key] | 0;
+              _ambEmitSeq(C[key], seq, space, stSeq); // sets stSeq._lastUnitMs for the unit it played
             }
             I[key] = (I[key] | 0) + 1;
-            C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
+            // Auto (default): advance by the just-played unit's own natural length
+            // so one iteration == one sequence (no gap / no early cut), and an
+            // Interleave layer breathes per picked unit. Manual: the Interval knob,
+            // snapped to the musical grid in sync timing.
+            if (seq.intervalMode !== 'manual') {
+              const unitMs = (stSeq._lastUnitMs > 0)
+                ? stSeq._lastUnitMs
+                : _unitTotalMs(seq.units && seq.units[0]); // first/skipped cycle fallback
+              C[key] += (unitMs > 0) ? (unitMs / 1000) : Math.max(0.1, (seq.intervalMs | 0) / 1000);
+            } else {
+              C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
+            }
           }
           window._ambCaptureSink = null; _ambPruneCap(E, key, now);
         }
@@ -2051,7 +2120,7 @@
         const slot = [];
         if (cfg.bed && cfg.bed.on && (i % bedEvery === 0)) {
           const v = _ambPickVoicing(cfg.bed);
-          const pans = _ambSpacePans(v.length, space);
+          const pans = _ambLayerPans(cfg.bed, v.length);
           v.forEach((f, vi) => slot.push({ f, pan: pans[vi], tone: cfg.bed.tone }));
         }
         if (cfg.motif && cfg.motif.on && (i % motifEvery === 0)) {
@@ -2575,6 +2644,62 @@
       return (E.idPrefix === 'ambient') ? html : html.replace(/((?:id|for)=")ambient-/g, '$1' + E.idPrefix + '-');
     }
 
+    // ---- Per-layer Stereo control (Spread | Pan toggle + fader) ----------
+    // Shared by every layer surface (primaries, extras, seqs, samples). `stem`
+    // is the layer's id prefix WITHOUT a trailing dash (e.g. 'ambient-bed',
+    // 'ambient-samp-3'); ids become '<stem>-spread' + '<stem>-spread-mode-*'.
+    // Spread mode → fader is 0..100 WIDTH; Pan mode → fader is L100..C..R100.
+    // Toggling either mode resets the fader to 0 (centre / no spread).
+    const _ambSpreadLabel = (mode, val) =>
+      (mode === 'pan') ? ((val | 0) === 0 ? 'C' : ((val < 0 ? 'L' : 'R') + Math.abs(val | 0))) : String(val | 0);
+    // Element ids use a '-stereo' suffix (NOT '-spread') because some layers
+    // already own a '-spread' slider (Bed's pitch voicing Spread) — reusing it
+    // would collide on getElementById.
+    const _ambSpreadCtrl = (stem, layer) => {
+      const mode = (layer && layer.panMode === 'pan') ? 'pan' : 'spread';
+      const val = (layer && Number.isFinite(layer.space)) ? (layer.space | 0) : 0;
+      return '<div class="ambient-ctrl ambient-spread"><label>Stereo</label>' +
+        '<span class="ambient-spread-seg">' +
+          '<button type="button" class="ambient-seg' + (mode === 'spread' ? ' active' : '') + '" id="' + stem + '-stereo-mode-spread">Spread</button>' +
+          '<button type="button" class="ambient-seg' + (mode === 'pan' ? ' active' : '') + '" id="' + stem + '-stereo-mode-pan">Pan</button>' +
+        '</span>' +
+        '<input type="range" id="' + stem + '-stereo" min="' + (mode === 'pan' ? -100 : 0) + '" max="100" step="1" value="' + val + '" />' +
+        '<span class="ambient-hint" id="' + stem + '-stereo-v">' + _ambSpreadLabel(mode, val) + '</span></div>';
+    };
+    // Push current layer state into an already-rendered Stereo control (used by
+    // the primaries, whose HTML is built once and synced separately).
+    function _ambSyncSpread(E, stem, layer) {
+      if (!layer) return;
+      const mode = (layer.panMode === 'pan') ? 'pan' : 'spread';
+      const slider = _ambGet(E, stem + '-stereo'), lbl = _ambGet(E, stem + '-stereo-v');
+      const segS = _ambGet(E, stem + '-stereo-mode-spread'), segP = _ambGet(E, stem + '-stereo-mode-pan');
+      if (slider) { slider.min = (mode === 'pan') ? '-100' : '0'; slider.value = String(layer.space | 0); }
+      if (lbl) lbl.textContent = _ambSpreadLabel(mode, layer.space | 0);
+      if (segS) segS.classList.toggle('active', mode === 'spread');
+      if (segP) segP.classList.toggle('active', mode === 'pan');
+    }
+    // Wire the Stereo control. getLayer() → the live layer cfg; persist/sync as
+    // the surrounding surface defines (sync may be null — pan is read live at
+    // emit time, so no node re-wiring is needed).
+    function _ambWireSpread(E, stem, getLayer, persist, sync) {
+      const slider = _ambGet(E, stem + '-stereo'), lbl = _ambGet(E, stem + '-stereo-v');
+      const segS = _ambGet(E, stem + '-stereo-mode-spread'), segP = _ambGet(E, stem + '-stereo-mode-pan');
+      if (!slider) return;
+      const refresh = (L) => { if (lbl) lbl.textContent = _ambSpreadLabel((L.panMode === 'pan') ? 'pan' : 'spread', L.space | 0); };
+      slider.addEventListener('input', () => { _E = E; const L = getLayer(); if (!L) return; L.space = parseInt(slider.value, 10) || 0; refresh(L); if (sync) sync(); if (persist) persist(); });
+      const setMode = (mode) => { _E = E; const L = getLayer(); if (!L) return;
+        L.panMode = (mode === 'pan') ? 'pan' : 'spread';
+        L.space = 0;                                    // reset fader to 0/centre on toggle
+        slider.min = (mode === 'pan') ? '-100' : '0';
+        slider.value = '0';
+        refresh(L);
+        if (segS) segS.classList.toggle('active', mode === 'spread');
+        if (segP) segP.classList.toggle('active', mode === 'pan');
+        if (sync) sync(); if (persist) persist(); };
+      if (segS) segS.addEventListener('click', () => setMode('spread'));
+      if (segP) segP.addEventListener('click', () => setMode('pan'));
+    }
+
     // ---- Dynamic Seq layers (Seq1, Seq2…) ------------------------------
     function _ambSeqLayerHtml(s, i) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
@@ -2591,6 +2716,11 @@
         // sequence; the note set is fixed by the sequence, not a scale/chord pick.
         '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
         _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
+        // Loop length: Auto (one pass == the played sequence's own length) vs
+        // Manual (the Interval knob below). Auto greys out / ignores Interval.
+        '<div class="ambient-ctrl"><label for="' + p + 'intervalmode">Loop</label>' +
+          '<button type="button" id="' + p + 'intervalmode" class="ambient-seg ambient-interval-mode"></button>' +
+          '<span class="ambient-hint">= seq length / manual</span></div>' +
         _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
         _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
         _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
@@ -2601,6 +2731,7 @@
         _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') +
         _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
         _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
+        _ambSpreadCtrl('ambient-seq-' + id, s) +
         _ambModUi('seq-' + id) +
         _ambFxUi('seq-' + id) +
       '</div>';
@@ -2636,6 +2767,39 @@
       if (n) n.style.display = (sq.returnMode === 'chance') ? 'none' : '';
       if (ch) ch.style.display = (sq.returnMode === 'chance') ? '' : 'none';
     }
+    // Reflect the Auto/Manual loop-length toggle: button label + state, the
+    // Interval row greyed/disabled in Auto, and its value readout showing the
+    // sequence's own length (longest unit) in Auto vs the manual ms otherwise.
+    function _ambSeqIntervalModeVis(E, id) {
+      const c = E.getCfg(); if (!c) return;
+      const sq = (c.seqs || []).find(x => x.id === id); if (!sq) return;
+      const p = 'ambient-seq-' + id + '-';
+      const auto = (sq.intervalMode !== 'manual');
+      const btn = _ambGet(E, p + 'intervalmode');
+      if (btn) {
+        btn.textContent = auto ? '🔒 Auto' : '🎚 Manual';
+        btn.classList.toggle('active', auto);
+        btn.title = auto
+          ? 'Auto: each pass lasts exactly one sequence (per picked unit in Interleave). The Interval knob is ignored.'
+          : 'Manual: the Interval knob sets the re-trigger time.';
+      }
+      const ivInput = _ambGet(E, p + 'interval');
+      if (ivInput) {
+        ivInput.disabled = auto;
+        const row = ivInput.closest('.ambient-ctrl');
+        if (row) row.style.opacity = auto ? '0.45' : '';
+      }
+      const v = _ambGet(E, p + 'interval-v');
+      if (v) {
+        if (auto) {
+          let total = 0;
+          (sq.units || []).forEach(u => { total = Math.max(total, _unitTotalMs(u)); });
+          v.textContent = total > 0 ? ('≈ ' + _ambFmtMs(total)) : _ambFmtMs(sq.intervalMs);
+        } else {
+          v.textContent = _ambFmtMs(sq.intervalMs);
+        }
+      }
+    }
     function _ambWireSeqLayer(E, s) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const getSq = () => { const c = E.getCfg(); return (c && Array.isArray(c.seqs)) ? c.seqs.find(x => x.id === id) : null; };
@@ -2650,9 +2814,16 @@
       if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
       _ambSeqEnsLockVis(E, id);
       bindInt('depth', 'varyDepth'); bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
+      // Loop-length Auto/Manual toggle. Dragging the Interval knob implies a
+      // manual override, so it flips the mode to Manual and refreshes the UI.
+      const ivModeBtn = el('intervalmode');
+      if (ivModeBtn) ivModeBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.intervalMode = (sq.intervalMode === 'manual') ? 'auto' : 'manual'; _ambSeqIntervalModeVis(E, id); persist(); });
+      const ivInput = el('interval');
+      if (ivInput) ivInput.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; if (sq.intervalMode !== 'manual') { sq.intervalMode = 'manual'; _ambSeqIntervalModeVis(E, id); } });
       bindInt('drift', 'drift'); bindStr('when', 'when');
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));
       bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent');
+      _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist, null);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t][k] = parseInt(e.value, 10) || 0; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); });
         const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t].shape = sh.value || 'sine'; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); });
@@ -2680,6 +2851,7 @@
       if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
       _ambSeqReturnVis(E, id);
+      _ambSeqIntervalModeVis(E, id); // sets the interval readout too (overrides the line above in Auto)
     }
     function _ambRenderSeqLayers(E) {
       const wrap = _ambGet(E, 'ambient-seq-layers');
@@ -2715,6 +2887,7 @@
         _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
         '<div class="ambient-ctrl"><label for="' + p + 'when">When</label><select id="' + p + 'when" class="ambient-select">' + opts([['always', 'Always'], ['1st', '1st'], ['1:2', '1:2'], ['2:2', '2:2'], ['1:3', '1:3'], ['1:4', '1:4']], s.when) + '</select><span class="ambient-hint">cond</span></div>' +
         _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+        _ambSpreadCtrl('ambient-samp-' + id, s) +
         _ambModUi('samp-' + id) +
         _ambFxUi('samp-' + id) +
       '</div>';
@@ -2731,6 +2904,7 @@
       bindInt('chop', 'chop'); bindStr('order', 'order');
       bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); bindStr('when', 'when'); bindInt('level', 'level');
+      _ambWireSpread(E, 'ambient-samp-' + id, getL, persist, sync);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L.mod[t][k] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
         const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L.mod[t].shape = sh.value || 'sine'; sync(); persist(); });
@@ -2785,28 +2959,28 @@
         ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['tm', 'lengthMs', 'Length', 300, 16000, 100],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       motif: { label: 'Motif', ctrls: [['tone'], ['notes'],
         ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
         ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'],
         ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       texture: { label: 'Texture', ctrls: [['tone'], ['notes'],
         ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
         ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       beat: { label: 'Beat', ctrls: [['kit'], ['rate'],
         ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['mod'], ['fx']] },
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     function _ambDefaultLayer(type, id) {
-      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, mod: _ambDefaultMod(), ..._ambDefaultFx() };
+      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0 });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40 });
@@ -2826,6 +3000,7 @@
         else if (k === 'sl') html += _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
         else if (k === 'tm') html += _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
         else if (k === 'cond') html += _ambCondCtrl(lk);
+        else if (k === 'spread') html += _ambSpreadCtrl(p, inst);
         else if (k === 'mod') html += _ambModUi(lk);
         else if (k === 'fx') html += _ambFxUi(lk);
       });
@@ -2856,6 +3031,7 @@
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
           else if (k === 'cond') { const s = el('when'); if (s) { s.value = inst.when || 'always'; s.addEventListener('change', () => { const L = get(); if (L) { L.when = s.value || 'always'; persist(); } }); } }
+          else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
@@ -3161,7 +3337,6 @@
       const set = (id, v) => { const el = document.getElementById(tr(id)); if (el && v != null) el.value = String(v); };
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
-      set('ambient-space', cfg.space);
       set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
@@ -3250,6 +3425,7 @@
           set('ambient-' + layer + '-mod-' + t + '-shape', m[t].shape);
         });
       });
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => _ambSyncSpread(E, 'ambient-' + layer, cfg[layer]));
       const seedEl = document.getElementById(E.seedId);
       if (seedEl) seedEl.textContent = '#' + (cfg.seed >>> 0);
       _ambRefreshPlayBtn(E);
@@ -3284,8 +3460,7 @@
           '<button type="button" class="ambient-seg" id="ambient-timing-free">Free</button>' +
           '<button type="button" class="ambient-seg" id="ambient-timing-sync">Sync</button>' +
         '</div>' +
-        sl('Space', 'ambient-space', 0, 100, 0, 'centre → wide') +
-        tm('Chord rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
+        tm('Prog rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
         tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +
         // Dedicated reverb (fed by each layer's "Reverb send").
         '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
@@ -3306,6 +3481,7 @@
           sl('Strum', 'ambient-bed-strum', 0, 100, 0, 'chord → arp') +
           sl('Fidelity', 'ambient-bed-strumfid', 0, 100, 0, 'in order → random') +
           sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
+          _ambSpreadCtrl('ambient-bed', null) +
           modUi('bed') +
           fxUi('bed') +
         '</div>' +
@@ -3322,6 +3498,7 @@
           sl('Twist', 'ambient-motif-twist', 0, 100, 0, 'steady → bursts') +
           sl('Accent', 'ambient-motif-accent', 0, 100, 0, 'flat → dynamic') +
           sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
+          _ambSpreadCtrl('ambient-motif', null) +
           modUi('motif') +
           fxUi('motif') +
         '</div>' +
@@ -3336,6 +3513,7 @@
           condCtrl('texture') +
           sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') +
           sl('Level', 'ambient-texture-level', 0, 100, 70, 'soft → boost') +
+          _ambSpreadCtrl('ambient-texture', null) +
           modUi('texture') +
           fxUi('texture') +
         '</div>' +
@@ -3349,6 +3527,7 @@
           condCtrl('beat') +
           sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') +
           sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
+          _ambSpreadCtrl('ambient-beat', null) +
           modUi('beat') +
           fxUi('beat') +
         '</div>' +
@@ -3482,7 +3661,6 @@
           persist();
         });
       };
-      bind('ambient-space', null, 'space');
       { const el = G('ambient-prog-rate'), vEl = G('ambient-prog-rate-v');
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 4000; c.progRateMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       { const el = G('ambient-freeze-len'), vEl = G('ambient-freeze-len-v');
@@ -3528,6 +3706,8 @@
       bind('ambient-beat-drift', 'beat', 'drift');
       bind('ambient-beat-rest', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer =>
+        _ambWireSpread(E, 'ambient-' + layer, () => { const c = cfg0(); return c ? c[layer] : null; }, persist, null));
       // Per-layer FX (reverb send / delay / distortion). Apply live when playing.
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const fxBind = (suf, setter) => {

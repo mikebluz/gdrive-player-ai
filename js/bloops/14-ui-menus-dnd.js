@@ -1003,13 +1003,49 @@
       if (!e.target.closest('.ctx-menu')) dismissCtxMenu();
     });
 
-    function showCtxMenu(x, y, actions) {
+    function showCtxMenu(x, y, actions, opts) {
+      opts = opts || {};
       dismissCtxMenu();
       ctxMenu = document.createElement('div');
       ctxMenu.className = 'ctx-menu';
 
+      // Multi-step edit signal: when the selection spans 2+ steps the
+      // menu wears a distinct accent + a header telling the user how
+      // many steps every action will apply to. Built BEFORE the body so
+      // the header is included in the height we measure for clamping.
+      if (opts.multiCount && opts.multiCount > 1) {
+        ctxMenu.classList.add('multi');
+        const hdr = document.createElement('div');
+        hdr.className = 'ctx-menu-header';
+        hdr.textContent = `Editing ${opts.multiCount} steps`;
+        ctxMenu.appendChild(hdr);
+      }
+
       actions.forEach(a => {
         if (a === 'hr') { const hr = document.createElement('hr'); ctxMenu.appendChild(hr); return; }
+        // Slider row: { slider:true, label, min, max, step, value, valFmt?, oninput }.
+        // Stays put while dragged (pointerdown stopPropagation keeps the
+        // outside-click dismiss from firing) and never auto-dismisses the menu.
+        if (a.slider) {
+          const row = document.createElement('div');
+          row.className = 'ctx-menu-slider';
+          const lab = document.createElement('span');
+          lab.className = 'ctx-menu-slider-label';
+          lab.textContent = a.label || '';
+          const inp = document.createElement('input');
+          inp.type = 'range';
+          inp.min = a.min; inp.max = a.max; inp.step = (a.step != null ? a.step : 1); inp.value = a.value;
+          const valEl = document.createElement('span');
+          valEl.className = 'ctx-menu-slider-val';
+          const fmt = (v) => a.valFmt ? a.valFmt(v) : String(v);
+          valEl.textContent = fmt(parseFloat(inp.value));
+          inp.addEventListener('pointerdown', (e) => e.stopPropagation());
+          inp.addEventListener('click', (e) => e.stopPropagation());
+          inp.addEventListener('input', () => { const v = parseFloat(inp.value); valEl.textContent = fmt(v); if (a.oninput) a.oninput(v); });
+          row.appendChild(lab); row.appendChild(inp); row.appendChild(valEl);
+          ctxMenu.appendChild(row);
+          return;
+        }
         const btn = document.createElement('button');
         btn.textContent = a.label;
         if (a.danger) btn.classList.add('danger');
@@ -3362,6 +3398,16 @@
       let clone = null;
       let offX = 0, offY = 0;
       let dropIdx = null;
+      // ---- Drag-to-scroll state (the chip strip is a horizontal timeline).
+      // A quick horizontal swipe STARTING on a chip drags the whole lane
+      // sideways (chips fill the strip, so without this there's nowhere to
+      // grab on mobile). Distinguished from drag-to-reorder by intent: a
+      // swipe moves before the hold timer fires; a deliberate hold (no move)
+      // arms the reorder. Vertical swipes fall through to native page scroll.
+      let scroller = null;      // the .lane-chips this chip lives in
+      let startSL = 0;          // scrollLeft captured at touchstart
+      let scrolling = false;    // true once we've taken over as a lane scroll
+      let lastSL = 0, lastTS = 0, slVel = 0; // for release momentum
       // Shorter hold-to-arm so touch users discover drag-to-reorder
       // more easily — 280 ms felt sluggish and read as "nothing
       // happened" before users tried moving the chip. 160 ms still
@@ -3395,24 +3441,58 @@
         startY = t.clientY;
         readyToDrag = false;
         dragging = false;
+        scrolling = false;
         dropIdx = null;
+        scroller = chip.closest('.lane-chips');
+        startSL = scroller ? scroller.scrollLeft : 0;
+        lastSL = startSL; lastTS = e.timeStamp; slVel = 0;
         readyTimer = setTimeout(() => { readyTimer = null; readyToDrag = true; }, READY_DELAY);
       }, { passive: true });
+
+      // Follow the finger sideways, clamping to the scrollable range, and
+      // track scrollLeft velocity so the release can fling. Pausing the
+      // lane's auto-centering each frame keeps playback from yanking it back.
+      const _dragScrollTo = (clientX, ts) => {
+        if (!scroller) return;
+        const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+        let sl = startSL - (clientX - startX);
+        if (sl < 0) sl = 0; else if (sl > max) sl = max;
+        const dt = ts - lastTS;
+        if (dt > 0) slVel = (sl - lastSL) / dt;
+        scroller.scrollLeft = sl;
+        lastSL = sl; lastTS = ts;
+        if (typeof _pauseLaneAutoScroll === 'function') _pauseLaneAutoScroll(scroller);
+      };
 
       chip.addEventListener('touchmove', (e) => {
         const t = e.touches[0];
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
-        const moved = Math.abs(dx) > MOVE_THRESHOLD || Math.abs(dy) > MOVE_THRESHOLD;
+        const adx = Math.abs(dx), ady = Math.abs(dy);
+        const moved = adx > MOVE_THRESHOLD || ady > MOVE_THRESHOLD;
+
+        // Already dragging the lane sideways — keep following the finger.
+        if (scrolling) {
+          e.preventDefault();
+          _dragScrollTo(t.clientX, e.timeStamp);
+          return;
+        }
 
         if (readyTimer) {
-          // Moved before the hold threshold — cancel the ready timer so
-          // the browser can do native scroll, and let the long-press
-          // pointermove cancel the menu timer as usual.
+          // Pre-hold window: a swipe means scroll (horizontal) or native
+          // page scroll (vertical); only a deliberate hold arms reorder.
           if (moved) {
             clearTimeout(readyTimer);
             readyTimer = null;
             readyToDrag = false;
+            const canScroll = scroller && (scroller.scrollWidth - scroller.clientWidth) > 1;
+            if (adx > ady && canScroll) {
+              // Horizontal intent → take over as a lane scroll.
+              scrolling = true;
+              e.preventDefault();
+              _dragScrollTo(t.clientX, e.timeStamp);
+            }
+            // Vertical (or non-scrollable) → fall through to native scroll.
           }
           return;
         }
@@ -3442,6 +3522,22 @@
       const onTouchEnd = () => {
         if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
         readyToDrag = false;
+        // Release of a lane drag-scroll → carry on with momentum.
+        if (scrolling) {
+          scrolling = false;
+          if (typeof _laneFlingScroll === 'function') _laneFlingScroll(scroller, slVel);
+          scroller = null;
+          // Swallow the click the browser may synthesize after the drag so the
+          // scroll gesture doesn't also select/edit the chip it started on. The
+          // timeout drops the guard if no click fires, so a later real tap on
+          // this chip still selects normally.
+          const cleanup = () => { chip.removeEventListener('click', swallow, true); clearTimeout(tmo); };
+          const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); cleanup(); };
+          const tmo = setTimeout(cleanup, 400);
+          chip.addEventListener('click', swallow, true);
+          return;
+        }
+        scroller = null;
         if (dragging) {
           clone?.remove();
           clone = null;

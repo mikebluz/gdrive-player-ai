@@ -1070,8 +1070,10 @@
       const btn = e.currentTarget;
       const rect = btn.getBoundingClientRect();
       // Anchor the menu at the button's right edge so it opens
-      // alongside the sliders rather than overlapping the button.
-      showCtxMenu(rect.right + 6, rect.top, actions);
+      // alongside the sliders rather than overlapping the button. When
+      // 2+ steps are selected the menu wears the multi-step header/accent.
+      const count = (typeof selectedStepRefs !== 'undefined') ? selectedStepRefs.length : 1;
+      showCtxMenu(rect.right + 6, rect.top, actions, { multiCount: count });
     });
 
     // ---- Selected-step pan slider ----

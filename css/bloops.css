@@ -1051,6 +1051,30 @@
       font-size: 2.4rem;
     }
     .footer-transport > #loop-btn { flex: 1 1 0; align-self: center; }
+    /* Rewind / Fast-Forward — half the Play circle (52px), flanking it. Same
+       cyan chrome as Play but lighter so Play stays the hero. */
+    .footer-transport > #rewind-btn,
+    .footer-transport > #fast-forward-btn {
+      width: 52px;
+      height: 52px;
+      min-width: 52px;
+      min-height: 52px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      padding: 0;
+      font-size: 1.3rem;
+      background: rgba(0, 0, 0, 0.5);
+      color: #00bfff;
+      border: 2px solid #00bfff;
+      box-shadow: 0 0 8px rgba(0, 191, 255, 0.3);
+    }
+    @media (hover: hover) {
+      .footer-transport > #rewind-btn:hover,
+      .footer-transport > #fast-forward-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 0 12px rgba(0, 191, 255, 0.55);
+      }
+    }
     /* Transparent footer: the Rec / Loop / Play buttons get a 50%-translucent
        fill so the page shows through behind the locked transport. */
     .footer-transport > #rec-btn,
@@ -1564,36 +1588,25 @@
       display: flex;
       flex: 1 1 auto;
       min-width: 0;
-      align-items: stretch;
+      align-items: center;
+      gap: 8px;
     }
-    .mode-tab {
-      flex: 1 1 0;
-      min-width: 0;
-      padding: 6px 2px;
-      background: transparent;
-      border: none;
-      border-right: 1px solid #1a1a2e;
-      color: #6b6b8a;
+    /* Lane mode picker (collapsed from the old tab strip). */
+    .mode-select {
+      flex: 0 0 auto;
+      min-width: 92px;
+      padding: 5px 8px;
+      background: #14142a;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.62rem;
+      font-size: 0.72rem;
       font-weight: 700;
-      letter-spacing: 0.6px;
-      text-transform: uppercase;
-      text-align: center;
+      letter-spacing: 0.4px;
       cursor: pointer;
-      user-select: none;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      transition: background 0.15s ease, color 0.15s ease;
     }
-    @media (hover: hover) {
-      .mode-tab:hover { background: #0a0a14; color: #d6bcfa; }
-    }
-    .mode-tab.active {
-      color: #ede9fe;
-      background: rgba(159, 122, 234, 0.18);
-    }
+    @media (hover: hover) { .mode-select:hover { border-color: #9f7aea; } }
     /* Grid + right-side control rail. The wrapper takes the vertical space
        the bare grid used to (flex: 1 in #lane-expander's column); inside, the
        grid grows horizontally and the rail sits flush on the right, stretched
@@ -1655,7 +1668,8 @@
     body.game-mode    .grid-with-rail,
     body.prog-mode    .grid-with-rail,
     body.ambient-mode .grid-with-rail,
-    body.text-mode    .grid-with-rail { display: none; }
+    body.text-mode    .grid-with-rail,
+    body.seq-mode     .grid-with-rail { display: none; }
     /* Sounds menu — pinned to the right edge at 25% of the banner width
        (where the master-vol speaker used to be). */
     .banner-row #scale-banner-half.banner-sounds {
@@ -2015,6 +2029,61 @@
     body.text-mode #ambient-pad { display: none; }
     body.text-mode #text-pad    { display: flex; }
     body.text-mode .grid-settings-panel .grid-only { display: none !important; }
+    /* Seq pad — clip launcher of saved-sequence squares. */
+    #seq-pad {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      min-height: var(--grid-natural-h, 210px);
+      padding: 12px;
+      background: #0a0a14;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    body.seq-mode #grid        { display: none; }
+    body.seq-mode #xy-pad      { display: none; }
+    body.seq-mode #game-pad    { display: none; }
+    body.seq-mode #prog-pad    { display: none; }
+    body.seq-mode #ambient-pad { display: none; }
+    body.seq-mode #text-pad    { display: none; }
+    body.seq-mode #seq-pad     { display: flex; }
+    body.seq-mode .grid-settings-panel .grid-only { display: none !important; }
+    .seq-inner { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+    .seq-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .seq-toolbar-spacer { flex: 1 1 auto; }
+    .seq-toggle {
+      padding: 6px 12px; border: 1px solid #2d2d3f; border-radius: 8px;
+      background: transparent; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.74rem; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+      cursor: pointer; transition: all 0.15s ease; touch-action: manipulation;
+    }
+    @media (hover: hover) { .seq-toggle:hover { border-color: #4fd1c5; color: #b2f5ea; } }
+    .seq-toggle.active { border-color: #4fd1c5; color: #b2f5ea; background: rgba(79,209,197,0.16); }
+    .seq-toggle.seq-overlap.queue { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.16); }
+    .seq-commit {
+      padding: 6px 14px; border: 1px solid #4299e1; border-radius: 8px;
+      background: rgba(66,153,225,0.12); color: #90cdf4; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.74rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease; touch-action: manipulation;
+    }
+    .seq-commit:disabled { opacity: 0.4; cursor: default; }
+    .seq-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 8px; align-content: start; flex: 1; min-height: 0; overflow: auto;
+    }
+    .seq-square {
+      aspect-ratio: 1 / 1; display: flex; flex-direction: column; justify-content: space-between;
+      padding: 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: #14142a;
+      color: #cbd5e0; cursor: pointer; text-align: left; overflow: hidden;
+      transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+      touch-action: none; user-select: none; -webkit-user-select: none;
+    }
+    @media (hover: hover) { .seq-square:hover { border-color: #4fd1c5; } }
+    .seq-square:active { background: #1c1c3a; }
+    .seq-square.playing { border-color: #4fd1c5; box-shadow: 0 0 0 1px #4fd1c5, 0 0 14px rgba(79,209,197,0.4); background: rgba(79,209,197,0.12); }
+    .seq-square-name { font-size: 0.78rem; font-weight: 700; line-height: 1.15; overflow: hidden; }
+    .seq-square-meta { font-size: 0.66rem; color: #718096; align-self: flex-end; }
+    .seq-empty-note { grid-column: 1 / -1; color: #718096; font-size: 0.82rem; padding: 18px 4px; }
     .text-input {
       width: 100%;
       box-sizing: border-box;
@@ -2048,6 +2117,10 @@
     .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
     .ambient-ctrl label { font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; color: #a0aec0; }
     .ambient-ctrl input[type="range"] { width: 100%; min-width: 0; accent-color: #9f7aea; }
+    /* Per-layer Stereo control: label | Spread/Pan toggle | fader | value. */
+    .ambient-ctrl.ambient-spread { grid-template-columns: 84px auto 1fr auto; }
+    .ambient-spread-seg { display: inline-flex; gap: 4px; }
+    .ambient-spread-seg .ambient-seg { padding: 3px 9px; font-size: 0.68rem; }
     .ambient-select {
       width: 100%; min-width: 0; padding: 4px 8px; border: 1px solid #2d2d3f;
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
@@ -3389,27 +3462,6 @@
          the default outer margins so it lines up inside the panel. */
       margin: 0;
     }
-    .lane-expander-close {
-      position: absolute;
-      top: 4px;
-      right: 6px;
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 50%;
-      background: rgba(0, 0, 0, 0.35);
-      color: #cbd5e0;
-      font-size: 14px;
-      line-height: 1;
-      cursor: pointer;
-      z-index: 2;
-    }
-    .lane-expander-close:hover {
-      color: #fff;
-      border-color: rgba(255, 255, 255, 0.45);
-      background: rgba(0, 0, 0, 0.55);
-    }
     /* The stash itself is hidden via [hidden]. We also belt-and-
        brace with display:none so any rule that relies on layout
        can't accidentally surface the parked element. */
@@ -3544,6 +3596,10 @@
       gap: 4px;
       overflow-x: auto;
       overflow-y: hidden;
+      /* Momentum scrolling on iOS, and keep a sideways swipe from chaining
+         into page back-nav / vertical scroll — the strip owns the gesture. */
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
       padding: 4px 6px;
       background: rgba(10, 10, 20, 0.55);
       border-radius: 6px;
@@ -3927,35 +3983,48 @@
       border-bottom: 1px solid #1a1a2e;
     }
     .step-edit-row[hidden] { display: none; }
+    /* Multi-step edit scope — 2+ steps selected. A teal accent on the row,
+       plus the step count folded into the Edit button label ("✎ N") with a
+       matching teal highlight, distinguish it from single-step editing (and
+       from the amber all-mode): every control here writes to ALL selected
+       steps at once. */
+    .step-edit-row.multi {
+      background: #07121a;
+      box-shadow: inset 3px 0 0 #4fd1c5;
+    }
+    #step-edit-btn.multi {
+      border-color: #4fd1c5;
+      color: #b2f5ea;
+      background: rgba(79, 209, 197, 0.12);
+    }
     /* Mixed-state: the selected steps diverge on this attribute. The value
        reads "Mixed"; editing the control unifies just this one attribute. */
     #step-pan-bar.mixed #step-pan-val,
     #step-vol-bar.mixed #step-vol-val,
     #step-slip-bar.mixed #step-slip-val { font-style: italic; color: #c9a8ff; }
-    .step-edit-row > #step-edit-btn {
-      flex: 0 0 10vw;
-      width: 10vw;
-      max-width: 10vw;
-      margin: 4px 6px 4px 18px;
-      padding: 6px 4px;
+    /* Edit button — sits in the tab row to the right of Groove. flex:0 0 auto
+       so it keeps its content width (the Mix/Groove tabs flex-fill the rest),
+       and the row's default align-items:stretch matches it to the tab height. */
+    .step-tabs > #step-edit-btn {
+      flex: 0 0 auto;
+      padding: 6px 14px;
       border: 1px solid #2d2d3f;
-      border-radius: 10px;
+      border-radius: 8px;
       background: transparent;
       color: #a0aec0;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem;
+      font-size: 0.85rem;
       font-weight: 700;
       letter-spacing: 0.6px;
-      text-transform: uppercase;
       cursor: pointer;
       transition: all 0.15s ease;
       touch-action: manipulation;
     }
-    .step-edit-row > #step-edit-btn[hidden] { display: none; }
+    .step-tabs > #step-edit-btn[hidden] { display: none; }
     @media (hover: hover) {
-      .step-edit-row > #step-edit-btn:hover { border-color: #4299e1; color: #4299e1; }
+      .step-tabs > #step-edit-btn:hover { border-color: #4299e1; color: #4299e1; }
     }
-    .step-edit-row > #step-edit-btn:active { background: rgba(66,153,225,0.18); }
+    .step-tabs > #step-edit-btn:active { background: rgba(66,153,225,0.18); }
     /* "All" toggle — sits between Edit and the Pan/Vol/Slip bars. When
        active the slider writes broadcast to every step in the active
        lane (instead of just the selected step). The active style picks
@@ -4203,8 +4272,10 @@
       border-top: 1px solid #1a1a2e;
     }
     body.bloops-loading .footer-bar { display: none; }
-    /* Play sits on the right of the transport row. */
-    .footer-transport > #play-btn { margin-left: auto; }
+    /* The Rewind · Play · Fast-Forward cluster sits on the right of the
+       transport row; margin-left:auto on the first of the three pushes the
+       whole group right while Loop fills the remaining space on the left. */
+    .footer-transport > #rewind-btn { margin-left: auto; }
     /* Row that hosts the moved Step controls (Wrap / Size / Multi) —
        sits between the BPM bar and the sequence display so step
        creation defaults are right where the user is reading. */
@@ -6170,6 +6241,27 @@
     .ctx-menu button:disabled { opacity: 0.4; cursor: default; }
     .ctx-menu button:disabled:hover { background: none; }
     .ctx-menu hr { border: none; border-top: 1px solid #2d2d3f; margin: 0; }
+    /* Slider row inside a context menu (e.g. lane menu Zoom). */
+    .ctx-menu-slider { display: flex; align-items: center; gap: 8px; padding: 8px 16px; }
+    .ctx-menu-slider-label { color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; white-space: nowrap; }
+    .ctx-menu-slider input[type="range"] { flex: 1 1 auto; min-width: 80px; accent-color: #9f7aea; }
+    .ctx-menu-slider-val { color: #cbd5e0; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; min-width: 34px; text-align: right; }
+    /* Multi-step edit: a distinct amber accent + a count header so the
+       user knows every action hits more than one step (and how many). */
+    .ctx-menu.multi {
+      border-color: #d69e2e;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(214, 158, 46, 0.45);
+    }
+    .ctx-menu-header {
+      padding: 9px 16px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #1a1a2e;
+      background: #d69e2e;
+    }
     /* Wraps menu — lit Cycle item while cycling is active. */
     .wrap-bank-menu button.active {
       color: #fff;

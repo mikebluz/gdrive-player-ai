@@ -880,6 +880,9 @@
         // TEXT (speech synthesis) mode + its config, built lazily by 18-text.js.
         textMode: false,
         text: null,
+        // Seq (sequence-bank clip launcher) mode — no per-lane config; the pad
+        // reads the shared savedSequences bank. See 19-seq-pad.js.
+        seqMode: false,
       };
     }
     // Snapshot the currently-mirrored voice globals into a plain object
@@ -1267,13 +1270,43 @@
       if (!Array.isArray(lanes) || lanes.length <= 1) return;
       if (idx == null || idx < 0 || idx >= lanes.length) return;
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Delete lane');
+      // Whether we're removing the lane the user is currently editing, and a
+      // reference to the active lane object so we can find where it lands once
+      // the splice shifts indices.
+      const deletingActive = (idx === activeLaneIdx);
+      const activeObj = (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) ? lanes[activeLaneIdx] : null;
+      // Free the removed lane's Tone nodes (panner / volume / samplers) so
+      // deleting a lane doesn't leak audio graph nodes — mirrors the trim path
+      // in _resizeLanesToGridRows.
+      const removed = lanes[idx];
+      if (removed && typeof disposeAllLaneAudio === 'function') {
+        try { disposeAllLaneAudio([removed]); } catch (e) {}
+      }
       lanes.splice(idx, 1);
       if (typeof gridRows !== 'undefined') gridRows = lanes.length;
       const rowsEl = document.getElementById('grid-rows-input');
       if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));
-      let next = (activeLaneIdx | 0);
-      if (next >= lanes.length) next = lanes.length - 1;
-      if (next < 0) next = 0;
+      // Re-establish a consistent active-lane state BEFORE activateLane so its
+      // "sync the working `sequence` back to the previously-active lane" step
+      // can't write the now-stale `sequence` (still aliasing the DELETED lane's
+      // steps) into the shifted-in lane — the bug where the deleted lane's
+      // steps bled into the remaining lane until the next full re-render.
+      let next;
+      if (deletingActive) {
+        // The active lane is gone: pick the lane now occupying the deleted
+        // slot (clamped). Mark activeLaneIdx invalid so activateLane SKIPS its
+        // sync-back and instead loads the new lane's own steps + voice fresh.
+        next = Math.min(idx, lanes.length - 1);
+        activeLaneIdx = -1;
+      } else {
+        // The active lane survives: find its new (possibly shifted) index and
+        // point activeLaneIdx + `sequence` at it, so activateLane's sync-back
+        // correctly flushes the active lane's live edits back into it.
+        next = activeObj ? lanes.indexOf(activeObj) : (activeLaneIdx | 0);
+        if (next < 0 || next >= lanes.length) next = Math.min(Math.max(0, activeLaneIdx | 0), lanes.length - 1);
+        activeLaneIdx = next;
+        _aliasSequenceToActiveLane();
+      }
       if (typeof activateLane === 'function') activateLane(next);
       else { _aliasSequenceToActiveLane(); if (typeof renderSequence === 'function') renderSequence(); }
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -1481,6 +1514,15 @@
         // tear down the submenu we just opened.
         actions.push({ label: 'Riff ▸', fn: () => setTimeout(() => showCtxMenu(x, y, riffActions), 0) });
       }
+      // Lane view-resolution zoom — horizontal density of the step timeline
+      // (global). Lives here now instead of the banner row.
+      actions.push('hr');
+      actions.push({
+        slider: true, label: 'Zoom', min: 5, max: 200, step: 5,
+        value: Math.round(((typeof laneViewScale === 'number') ? laneViewScale : 1) * 100),
+        valFmt: (v) => v + '%',
+        oninput: (v) => { if (typeof setLaneViewScale === 'function') setLaneViewScale(v / 100); },
+      });
       showCtxMenu(x, y, actions);
     }
 
@@ -1498,39 +1540,40 @@
       const wantProg    = !!(lane && lane.progMode);
       const wantAmbient = !!(lane && lane.ambientMode);
       const wantText    = !!(lane && lane.textMode);
+      const wantSeq     = !!(lane && lane.seqMode);
       const wasFluid   = fluidGridMode;
       const wasGame    = gameMode;
       const wasProg    = progMode;
       const wasAmbient = (typeof ambientMode !== 'undefined') ? ambientMode : false;
       const wasText    = (typeof textMode !== 'undefined') ? textMode : false;
+      const wasSeq     = (typeof seqMode !== 'undefined') ? seqMode : false;
       fluidGridMode = wantFluid;
       gameMode      = wantGame;
       progMode      = wantProg;
       if (typeof ambientMode !== 'undefined') ambientMode = wantAmbient;
       if (typeof textMode !== 'undefined') textMode = wantText;
+      if (typeof seqMode !== 'undefined') seqMode = wantSeq;
       document.body.classList.toggle('fluid-grid',  wantFluid);
       document.body.classList.toggle('game-mode',   wantGame);
       document.body.classList.toggle('prog-mode',   wantProg);
       document.body.classList.toggle('ambient-mode', wantAmbient);
       document.body.classList.toggle('text-mode', wantText);
+      document.body.classList.toggle('seq-mode', wantSeq);
       const btn = document.getElementById('fluid-grid-toggle');
       if (btn) {
-        btn.textContent = wantText ? 'TEXT'
+        btn.textContent = wantSeq ? 'Seq'
+                        : wantText ? 'TEXT'
                         : wantAmbient ? 'Bloom'
                         : wantProg ? 'Prog'
                         : wantGame ? 'Game'
                         : wantFluid ? 'Graph' : 'Grid';
       }
-      // Reflect the active mode onto the banner-row tab strip.
+      // Reflect the active mode onto the banner-row mode dropdown.
       {
-        const _mode = wantText ? 'text' : wantAmbient ? 'bloom' : wantProg ? 'prog'
+        const _mode = wantSeq ? 'seq' : wantText ? 'text' : wantAmbient ? 'bloom' : wantProg ? 'prog'
                     : wantGame ? 'game' : wantFluid ? 'graph' : 'grid';
-        const tabs = document.querySelectorAll('#mode-tabs .mode-tab');
-        tabs.forEach(t => {
-          const on = t.dataset.mode === _mode;
-          t.classList.toggle('active', on);
-          t.setAttribute('aria-selected', on ? 'true' : 'false');
-        });
+        const sel = document.getElementById('mode-select');
+        if (sel && sel.value !== _mode) sel.value = _mode;
       }
       if (wasAmbient !== wantAmbient) {
         try { if (typeof _onAmbientModeChanged === 'function') _onAmbientModeChanged(wantAmbient); } catch (e) {}
@@ -1540,6 +1583,9 @@
       }
       if (wasText !== wantText) {
         try { if (typeof _onTextModeChanged === 'function') _onTextModeChanged(wantText); } catch (e) {}
+      }
+      if (wasSeq !== wantSeq) {
+        try { if (typeof _onSeqModeChanged === 'function') _onSeqModeChanged(wantSeq); } catch (e) {}
       }
       if (wasFluid && !wantFluid) {
         try { if (typeof _endFluidPress === 'function') _endFluidPress(); } catch (e) {}

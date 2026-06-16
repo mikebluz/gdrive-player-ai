@@ -1070,18 +1070,20 @@
         const lane = lanes[activeLaneIdx];
         if (lane) {
           // Cycle: Grid → Graph → Game → Prog → Bloom → TEXT → Grid
-          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode && !lane.textMode) {
-            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false;
+          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode && !lane.textMode && !lane.seqMode) {
+            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
           } else if (lane.fluidGridMode) {
-            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false; lane.textMode = false;
+            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
           } else if (lane.gameMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false; lane.textMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
           } else if (lane.progMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;  lane.textMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;  lane.textMode = false; lane.seqMode = false;
           } else if (lane.ambientMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = true;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = true;  lane.seqMode = false;
+          } else if (lane.textMode) {
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = true;
           } else {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
           }
         }
         _syncFluidGridToActiveLane();
@@ -1091,22 +1093,22 @@
     // Mode tabs — banner-row tab strip that replaces the old cycle button.
     // Each tab sets the active lane's mode flags directly, then syncs.
     (function initModeTabs() {
-      const tabs = document.getElementById('mode-tabs');
-      if (!tabs) return;
-      tabs.addEventListener('click', (e) => {
-        const tab = e.target.closest('.mode-tab[data-mode]');
-        if (!tab) return;
-        const lane = lanes[activeLaneIdx];
-        if (!lane) return;
-        const m = tab.dataset.mode;
-        lane.fluidGridMode = (m === 'graph');
-        lane.gameMode      = (m === 'game');
-        lane.progMode      = (m === 'prog');
-        lane.ambientMode   = (m === 'bloom');
-        lane.textMode      = (m === 'text');
-        _syncFluidGridToActiveLane();
-        if (typeof persistWorkspace === 'function') persistWorkspace();
-      });
+      const sel = document.getElementById('mode-select');
+      if (sel) {
+        sel.addEventListener('change', () => {
+          const lane = lanes[activeLaneIdx];
+          if (!lane) return;
+          const m = sel.value;
+          lane.fluidGridMode = (m === 'graph');
+          lane.gameMode      = (m === 'game');
+          lane.progMode      = (m === 'prog');
+          lane.ambientMode   = (m === 'bloom');
+          lane.textMode      = (m === 'text');
+          lane.seqMode       = (m === 'seq');
+          _syncFluidGridToActiveLane();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+      }
     })();
     // Octave-nudge buttons (grid rail) — bump baseOctave by ±1 within the
     // Octaves dropdown's 1–7 range, then rebuild + persist exactly like a

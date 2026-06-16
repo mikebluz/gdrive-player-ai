@@ -92,7 +92,10 @@
       const gateBtn = document.getElementById('signin-btn');
       const syncGate = () => {
         const on = !!(window.bloopsAuth && window.bloopsAuth.isSignedIn());
-        document.body.classList.toggle('signin-required', !on);
+        // Sign-in is only REQUIRED when deployed. On localhost the boot
+        // script sets window.BLOOPS_LOCAL and skips the gate, so never
+        // re-raise it here (a local sign-out shouldn't lock the app).
+        document.body.classList.toggle('signin-required', !on && !window.BLOOPS_LOCAL);
       };
       if (gateBtn) {
         gateBtn.addEventListener('click', async () => {
@@ -837,6 +840,7 @@
             // generator only ever starts on an explicit gesture).
             ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
             textMode: !!l.textMode,
+            seqMode: !!l.seqMode,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             // Per-lane voice. The active lane's live voice lives in
             // the globals (cellSounds / palette / etc.), so capture
@@ -868,6 +872,7 @@
             ambientMode: !!l.ambientMode,
             ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
             textMode: !!l.textMode,
+            seqMode: !!l.seqMode,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
             sends: l.sends ? { ...l.sends } : null,
@@ -1683,6 +1688,7 @@
     // boot-time _syncFluidGridToActiveLane() call (13-prog-pad.js) reads it.
     let ambientMode = false;
     let textMode = false;
+    let seqMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;

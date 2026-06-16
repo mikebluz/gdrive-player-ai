@@ -1516,6 +1516,13 @@
       for (const scope of _laneScrollScopes) {
         const seg = scope._scrollSeg;
         if (!seg) continue;
+        // Respect a manual scroll: while the user is dragging/flinging this
+        // lane (or just did, within the grace window) don't fight them — keep
+        // the cursor pinned to viewport center and leave scrollLeft alone.
+        if (scope._userScrollUntil && now < scope._userScrollUntil) {
+          if (scope._laneCursor) scope._laneCursor.style.left = (scope.scrollLeft + seg.clientW / 2) + 'px';
+          continue;
+        }
         let frac = seg.durMs > 0 ? (now - seg.startMs) / seg.durMs : 1;
         if (frac < 0) frac = 0; else if (frac > 1) frac = 1;
         const contentX = seg.startX + (seg.endX - seg.startX) * frac;
@@ -1535,6 +1542,38 @@
       if (!_laneScrollRaf && _laneScrollScopes.size > 0) {
         _laneScrollRaf = requestAnimationFrame(_laneScrollTick);
       }
+    }
+    // ---- Manual lane scroll (touch drag + fling) -----------------------
+    // How long to suspend a lane's playback auto-centering after the user
+    // manually scrolls it, so the auto-scroll doesn't immediately yank the
+    // view back. Refreshed on every drag/fling frame.
+    const LANE_USER_SCROLL_PAUSE_MS = 2600;
+    function _pauseLaneAutoScroll(scope, ms) {
+      if (!scope) return;
+      scope._userScrollUntil = _nowMs() + (ms || LANE_USER_SCROLL_PAUSE_MS);
+    }
+    // Momentum: after a finger-drag releases with velocity `vel` (scrollLeft
+    // px per ms), keep gliding with ~5%/frame decay until it stalls or hits an
+    // edge. Keeps the lane's auto-centering paused for the whole glide.
+    function _laneFlingScroll(scope, vel) {
+      if (!scope) return;
+      let v = Number.isFinite(vel) ? vel : 0;
+      const MAXV = 4;
+      if (v > MAXV) v = MAXV; else if (v < -MAXV) v = -MAXV;
+      if (Math.abs(v) < 0.03) { _pauseLaneAutoScroll(scope, 700); return; }
+      const max = Math.max(0, scope.scrollWidth - scope.clientWidth);
+      let last = _nowMs();
+      const step = () => {
+        const now = _nowMs();
+        const dt = Math.max(1, now - last); last = now;
+        let sl = scope.scrollLeft + v * dt;
+        if (sl <= 0) { sl = 0; v = 0; } else if (sl >= max) { sl = max; v = 0; }
+        scope.scrollLeft = sl;
+        v *= Math.pow(0.95, dt / 16);
+        _pauseLaneAutoScroll(scope, 900);
+        if (Math.abs(v) > 0.03) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
     }
     // Start a smooth scroll segment that sweeps the playhead across `chip`
     // (and the inter-chip gap after it) over `durMs`, creating the cursor if
@@ -1601,6 +1640,157 @@
           el.remove();
         } catch (e) {}
       });
+    }
+    // ---- Persistent cursor + cut-point transport -----------------------
+    // The lane playhead survives stop: `_cursorTick` is a global musical
+    // position (in ticks) that persists while stopped, drives an always-on
+    // `.lane-cursor` in every lane, and is moved by Rewind / Fast-Forward to
+    // "cut points" — times where EVERY active lane starts a step at once.
+    //
+    // Because the timeline is linear (pixel = LANE_SCROLL_BASE_PX · musical
+    // whole-notes), a musical tick maps to the same proportional pixel in
+    // every lane, and each lane loops at its own length — so a lane shorter
+    // than the cursor's position simply wraps (the "loop-back-on-itself"
+    // model). TPW divides cleanly by 2/3/4/5/6/8/… so common subdivisions
+    // (incl. triplets & quintuplets) land on exact integer ticks.
+    const TPW = 1920; // ticks per whole note
+    let _cursorTick = 0;
+
+    // Lanes that participate in the cursor / cut-point math: step-sequenced
+    // lanes with content (Bloom/ambient lanes are generative, not stepped).
+    function _isCutLane(l) { return l && (l.steps || []).length > 0 && !l.ambientMode; }
+    // Step-start offsets (ticks) within one loop + the loop length (ticks).
+    function _laneStartTicks(steps) {
+      const starts = [];
+      let cum = 0;
+      for (const s of (steps || [])) {
+        if (!s || s._wrapEditing) continue;
+        starts.push(Math.round(cum * TPW));
+        cum += Math.max(0, stepLengthFactor(s));
+      }
+      return { starts, lenTicks: Math.round(cum * TPW) };
+    }
+    function _laneLenTicks(laneIdx) {
+      const l = lanes[laneIdx];
+      if (!l) return 0;
+      let cum = 0;
+      for (const s of (l.steps || [])) {
+        if (!s || s._wrapEditing) continue;
+        cum += Math.max(0, stepLengthFactor(s));
+      }
+      return Math.round(cum * TPW);
+    }
+    function _gcdInt(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t; } return a; }
+    function _lcmInt(a, b) { if (!a || !b) return Math.max(a, b) || 0; return (a / _gcdInt(a, b)) * b; }
+    // Sorted unique cut-point ticks within one global period, where ALL
+    // active lanes coincide on a step start. Single lane → its own starts.
+    function _computeCutTicks() {
+      const data = lanes.filter(_isCutLane)
+        .map(l => _laneStartTicks(l.steps))
+        .filter(d => d.lenTicks > 0);
+      if (data.length === 0) return { cuts: [0], period: TPW };
+      if (data.length === 1) {
+        return { cuts: data[0].starts.slice().sort((a, b) => a - b), period: data[0].lenTicks };
+      }
+      const CAP = TPW * 192; // bound the LCM so pathological coprime lengths can't blow up
+      let P = data[0].lenTicks;
+      for (let i = 1; i < data.length; i++) { P = _lcmInt(P, data[i].lenTicks); if (P > CAP) { P = CAP; break; } }
+      const count = new Map();
+      for (const d of data) {
+        const reps = Math.max(1, Math.floor(P / d.lenTicks));
+        for (let k = 0; k < reps; k++) {
+          const base = k * d.lenTicks;
+          for (const s of d.starts) {
+            const t = base + s;
+            if (t >= P) continue;
+            count.set(t, (count.get(t) || 0) + 1);
+          }
+        }
+      }
+      const n = data.length;
+      const cuts = [];
+      count.forEach((c, t) => { if (c >= n) cuts.push(t); });
+      if (cuts.indexOf(0) === -1) cuts.push(0); // origin is always a full coincidence
+      cuts.sort((a, b) => a - b);
+      return { cuts, period: P };
+    }
+
+    // Draw/scroll every active lane's cursor to global tick `tick`. When
+    // `doScroll` is true (Stop / Rewind / Fast-Forward) each lane scrolls so
+    // the cursor sits at viewport center (clamped near the loop ends); when
+    // false (idle re-render) the cursor is only redrawn at its musical pixel
+    // so a manual side-scroll is left untouched. The cursor is a content
+    // child of .lane-chips, so it scrolls with the steps and stays glued to
+    // its musical position — scroll away to edit and it simply moves off.
+    function _positionCursorsAtTick(tick, doScroll) {
+      const display = document.getElementById('sequence-display');
+      if (!display) return;
+      const rows = display.querySelectorAll('.lane-row');
+      lanes.forEach((lane, li) => {
+        if (!_isCutLane(lane)) return;
+        const row = rows[li];
+        if (!row) return;
+        const scope = row.querySelector(':scope > .lane-chips');
+        if (!scope) return;
+        try {
+          let cur = scope._laneCursor;
+          if (!cur || cur.parentNode !== scope) {
+            cur = document.createElement('div');
+            cur.className = 'lane-cursor';
+            scope.appendChild(cur);
+            scope._laneCursor = cur;
+          }
+          const lenTicks = _laneLenTicks(li);
+          const within = lenTicks > 0 ? (((tick % lenTicks) + lenTicks) % lenTicks) : 0;
+          const padL = parseFloat(getComputedStyle(scope).paddingLeft) || 0;
+          const contentX = padL + Math.round(LANE_SCROLL_BASE_PX * within / TPW);
+          if (doScroll) {
+            const clientW = scope.clientWidth;
+            if (clientW > 0) {
+              const maxScroll = Math.max(0, scope.scrollWidth - clientW);
+              let sl = contentX - clientW / 2;
+              if (sl < 0) sl = 0; else if (sl > maxScroll) sl = maxScroll;
+              scope.scrollLeft = sl;
+            }
+          }
+          cur.style.left = contentX + 'px';
+        } catch (e) {}
+      });
+    }
+
+    // Current global transport position (ticks) derived from the audio clock
+    // — used on stop to freeze the cursor exactly where playback left it.
+    function _transportTick() {
+      try {
+        if (typeof Tone === 'undefined' || !Tone.now) return _cursorTick;
+        const dt = Tone.now() - _playBaseTime;
+        if (!(dt >= 0)) return _cursorTick;
+        const bpm = parseInt((document.getElementById('tempo-input') || {}).value, 10) || 120;
+        return Math.round(dt * (bpm / 240) * TPW); // 1 whole note = 240/bpm sec
+      } catch (e) { return _cursorTick; }
+    }
+
+    // Rewind (dir -1) / Fast-Forward (dir +1): jump the cursor to the prev /
+    // next cut point and scroll every lane to center it. Stopped-only. Wraps
+    // using the loop-back model — past the last cut forward returns to the
+    // start; before the first cut backward backs into the cycle's ending.
+    function _moveCursorToCut(dir) {
+      if (sequenceTimer !== null) return; // only when stopped
+      const { cuts, period } = _computeCutTicks();
+      if (!cuts.length || !(period > 0)) return;
+      const cur = (((_cursorTick % period) + period) % period);
+      const EPS = 1;
+      let target;
+      if (dir > 0) {
+        target = cuts.find(t => t > cur + EPS);
+        if (target == null) target = cuts[0] + period; // wrap to next cycle's first cut
+      } else {
+        target = null;
+        for (let i = cuts.length - 1; i >= 0; i--) { if (cuts[i] < cur - EPS) { target = cuts[i]; break; } }
+        if (target == null) target = cuts[cuts.length - 1] - period; // back into previous cycle's ending
+      }
+      _cursorTick = (((target % period) + period) % period);
+      _positionCursorsAtTick(_cursorTick, true);
     }
 
     function playSequence(index = 0, freshStart = true) {
@@ -1758,6 +1948,15 @@
       if (warm) startNow();
       else setTimeout(startNow, 60);
     });
+
+    // Rewind / Fast-Forward — move the (stopped) cursor to the previous /
+    // next cut point where all active lanes align. No-op during playback.
+    {
+      const rw = document.getElementById('rewind-btn');
+      const ff = document.getElementById('fast-forward-btn');
+      if (rw) rw.addEventListener('click', () => _moveCursorToCut(-1));
+      if (ff) ff.addEventListener('click', () => _moveCursorToCut(1));
+    }
 
     // ---- WebMIDI input ----
     // A MIDI key press should behave identically to clicking the

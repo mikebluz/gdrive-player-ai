@@ -296,9 +296,11 @@
       _shapeReflectSpinBtn();
     }
     function _shapeSpinStop() {
+      const was = _shapeSpin.running;
       _shapeSpin.running = false;
       if (_shapeSpin.raf) { cancelAnimationFrame(_shapeSpin.raf); _shapeSpin.raf = 0; }
       if (_shapeRecording) { _shapeRecording = false; _shapeReflectRecBtn(); }   // stop also disarms record
+      if (was) { try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {} }  // cut ringing notes only when actually stopping
       _shapeReflectSpinBtn();
       if (_shapeInited) _shapeDraw(0);
     }
@@ -715,9 +717,11 @@
       _shapeMaster.raf = requestAnimationFrame(_shapeMasterTick); _shapeMasterReflectBtn();
     }
     function _shapeMasterStop() {
+      const was = _shapeMaster.running;
       try { _shapeSpinStop(); } catch (e) {}   // Stop halts any shape audition
       _shapeMaster.running = false;
       if (_shapeMaster.raf) { cancelAnimationFrame(_shapeMaster.raf); _shapeMaster.raf = 0; }
+      if (was) { try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {} }  // cut ringing notes only when actually stopping
       _shapeMasterReflectBtn();
       if (_shapeMaster.inited) _shapeMasterDraw(0);
     }
@@ -739,9 +743,17 @@
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
       const dpr = window.devicePixelRatio || 1;
       const cx = (cv.width / dpr) / 2, cy = (cv.height / dpr) / 2;
-      const d = Math.hypot(x - cx, y - cy);
-      let best = -1, bd = 40;
-      (_shapeMaster.rings || []).forEach(r => { const dd = Math.abs(d - r.radius); if (dd < bd) { bd = dd; best = r.idx; } });
+      // Jump to edit ONLY when a NODE is clicked (within ~14px) — not anywhere
+      // on the ring, which would yank you to Make on almost any click.
+      let best = -1, bd = 14;
+      (_shapeMaster.rings || []).forEach(r => {
+        const rotFrac = (r.cfg.rotationDeg || 0) / 360;
+        r.cfg.nodes.forEach(nd => {
+          const p = _shapeNodeXY(cx, cy, r.radius, nd.angleFrac, rotFrac);
+          const dd = Math.hypot(x - p.x, y - p.y);
+          if (dd < bd) { bd = dd; best = r.idx; }
+        });
+      });
       if (best >= 0) _shapeMasterJump(best);
     }
     function _shapeMasterInit() {
@@ -752,15 +764,23 @@
         const bar = document.getElementById('shape-master-bar');
         if (bar) {
           bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-play">▶ Play all</button>' +
-            '<span style="color:#8a8aa8;font-size:0.72rem">All Shape lanes share one bar clock — click a ring to edit its lane.</span>';
+            '<span style="color:#8a8aa8;font-size:0.72rem">All Shape lanes share one bar clock — click a node (or a legend entry) to edit its lane.</span>';
           const pb = bar.querySelector('#shape-master-play');
           if (pb) pb.addEventListener('click', () => { if (_shapeMaster.running) _shapeMasterStop(); else _shapeMasterStart(); });
         }
         _shapeMaster.canvas.addEventListener('click', _shapeMasterClick);
-        window.addEventListener('resize', () => {
+        const _redrawIfShapes = () => {
           const v = document.getElementById('mix-view');
-          if (v && v.classList.contains('mix-sub-shapes')) { _shapeMasterResize(); _shapeMasterDraw(_shapeMaster.running ? _shapeMaster.lastPhase : 0); }
-        });
+          if (v && v.classList.contains('mix-sub-shapes')) {
+            requestAnimationFrame(() => { _shapeMasterResize(); _shapeMasterDraw(_shapeMaster.running ? _shapeMaster.lastPhase : 0); });
+          }
+        };
+        window.addEventListener('resize', _redrawIfShapes);
+        // Returning to Mix (Make → Mix) with Shapes already the active subtab
+        // doesn't re-run selectSub, so re-read + redraw here to pick up any
+        // wheels sent since the pane was last drawn.
+        const mixTab = document.getElementById('mix-tab');
+        if (mixTab) mixTab.addEventListener('click', _redrawIfShapes);
         _shapeMaster.inited = true;
       }
       try { _shapeSpinStop(); } catch (e) {}   // opening the master halts any editor audition

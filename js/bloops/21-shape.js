@@ -28,14 +28,22 @@
     //  - Tidy: hide the Grid-only GEN/WRAP/PERF/KEEP bars while in Shape mode.
 
     // ---- Data model --------------------------------------------------------
+    // The grid's current default voice type — snapshotted into a shape so each
+    // shape OWNS its voice (multiple master shapes stay distinct) instead of all
+    // deferring to one shared global that the latest pick overwrites.
+    function _shapeGridVoiceType() {
+      return (typeof cellParams !== 'undefined' && cellParams[0] && cellParams[0].type) || 'sine';
+    }
     function _shapeDefault() {
       return {
         nodeCount: 4,
         timingMode: 'equal',   // 'equal' (locked even) | 'free' (drag anywhere) | 'snap'
         snapDiv: 16,           // snap subdivisions per bar (timingMode 'snap')
         rotationDeg: 0,        // whole-wheel phase offset (off-beat)
-        tone: '',              // '' = follow the lane/grid voice
+        tone: _shapeGridVoiceType(), // this shape's own voice (snapshot of the grid voice)
+        soundParams: null,     // full per-shape voice params (env/fx) when sound-edited; null = {type:tone}
         baseNote: null,        // default pitch for nodes (null = grid default)
+        progression: null,     // { name, chords:[{root,intervals}] } → nodes play chords clockwise
         gatePct: 80,           // note length as a % of the gap to the next node
         // nodes carry their bar position (0..1, 0 = downbeat) + mute + optional
         // per-node override (pitch / sound params, set via the Sound Editor).
@@ -52,7 +60,15 @@
       const out = [];
       for (let i = 0; i < n; i++) {
         const old = prev && prev[i];
-        out.push({ angleFrac: i / n, muted: old ? !!old.muted : false, override: old && old.override });
+        out.push({
+          angleFrac: i / n,
+          muted: old ? !!old.muted : false,
+          override: old && old.override,
+          // Carry a manually-tweaked chord forward; new nodes (no `old`) get no
+          // manual chord, so they fall through to the progression mapping by
+          // their clockwise index — i.e. the progression repeats forward.
+          chord: (old && old.chord) || null,
+        });
       }
       return out;
     }
@@ -65,7 +81,13 @@
       if (!Number.isFinite(s.snapDiv)) s.snapDiv = d.snapDiv;
       if (!Number.isFinite(s.rotationDeg)) s.rotationDeg = d.rotationDeg;
       s.rotationDeg = ((s.rotationDeg % 360) + 360) % 360;
-      if (typeof s.tone !== 'string') s.tone = d.tone;
+      // Each shape owns a concrete voice. Legacy shapes saved with '' (follow
+      // grid) collapsed onto one shared global voice, so multiple master shapes
+      // all played the latest pick — freeze '' to the current grid voice ONCE so
+      // they become independent (the user can then re-pick each via Tone).
+      if (typeof s.tone !== 'string' || !s.tone) s.tone = _shapeGridVoiceType();
+      if (s.soundParams && typeof s.soundParams !== 'object') s.soundParams = null;
+      if (s.progression && !(s.progression.chords && Array.isArray(s.progression.chords) && s.progression.chords.length)) s.progression = null;
       if (!Number.isFinite(s.gatePct)) s.gatePct = d.gatePct;
       if (!Array.isArray(s.nodes) || !s.nodes.length) s.nodes = _shapeEqualNodes(s.nodeCount);
       // Normalize each node IN PLACE so node objects keep their identity across
@@ -76,6 +98,8 @@
       s.nodes.forEach(nd => {
         nd.angleFrac = ((Number.isFinite(nd.angleFrac) ? nd.angleFrac : 0) % 1 + 1) % 1;
         nd.muted = !!nd.muted;
+        nd.chordOff = !!nd.chordOff;
+        if (nd.chord && !(Array.isArray(nd.chord.intervals) && nd.chord.intervals.length)) nd.chord = null;
       });
       // Keep nodeCount and nodes.length in agreement.
       if (s.nodes.length !== s.nodeCount) {
@@ -161,28 +185,47 @@
       ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
       // Corner nodes (flash when recently struck).
       const tnow = performance.now();
+      const idxOf = _shapeSortedEff(cfg).idxOf;
       pts.forEach((p) => {
         const flash = p.nd._flash ? Math.max(0, 1 - (tnow - p.nd._flash) / 180) : 0;
         const rad = 9 + flash * 6;
+        const chord = _shapeNodeChord(cfg, p.nd, idxOf.get(p.nd));
+        // Chorded nodes get an outer halo ring so they read as "more than a note".
+        if (chord && !p.nd.muted) {
+          ctx.beginPath(); ctx.arc(p.x, p.y, rad + 4, 0, 2 * Math.PI);
+          ctx.strokeStyle = 'rgba(246,173,85,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
+        }
         ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, 2 * Math.PI);
         if (p.nd.muted) {
           ctx.fillStyle = 'rgba(40,40,60,0.9)'; ctx.fill();
           ctx.strokeStyle = 'rgba(120,120,150,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
         } else {
-          ctx.fillStyle = flash > 0 ? '#ffffff' : '#4fd1c5'; ctx.fill();
+          ctx.fillStyle = flash > 0 ? '#ffffff' : (chord ? '#f6ad55' : '#4fd1c5'); ctx.fill();
           ctx.strokeStyle = flash > 0 ? 'rgba(79,209,197,0.9)' : 'rgba(13,13,24,0.9)';
           ctx.lineWidth = 2; ctx.stroke();
         }
-        // Pitch label outside the node when it's tuned off the base note.
-        const off = _shapeNodeOffset(p.nd);
-        if (off !== 0 && !p.nd.muted) {
-          const base = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60;
+        // Label outside the node: chord name when chorded, else pitch when tuned
+        // off the base note.
+        if (!p.nd.muted) {
           const a = 2 * Math.PI * (((p.nd.angleFrac + rotFrac) % 1 + 1) % 1);
-          ctx.fillStyle = 'rgba(203,213,224,0.9)';
-          ctx.font = '10px Segoe UI, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText(_shapeNoteName(base + off), p.x + Math.sin(a) * 17, p.y - Math.cos(a) * 17);
+          let lbl = '';
+          if (chord) lbl = _shapeChordLabel(chord);
+          else { const off = _shapeNodeOffset(p.nd); if (off !== 0) lbl = _shapeNoteName((Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60) + off); }
+          if (lbl) {
+            ctx.fillStyle = chord ? 'rgba(246,173,85,0.95)' : 'rgba(203,213,224,0.9)';
+            ctx.font = '10px Segoe UI, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(lbl, p.x + Math.sin(a) * 18, p.y - Math.cos(a) * 18);
+          }
         }
       });
+    }
+    // Compact chord name (root + quality suffix) for node labels.
+    function _shapeChordLabel(chord) {
+      const names = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      const root = names[(((chord.root | 0) % 12) + 12) % 12] || '';
+      const q = _shapeQualityFromIntervals(chord.intervals);
+      const suffix = (q === 'maj') ? '' : (q === 'min' ? 'm' : q);
+      return root + suffix;
     }
 
     // ---- Audio: audition spin (live wheel) ---------------------------------
@@ -248,17 +291,235 @@
         ? 'Flatten all node pitches back to the base note'
         : 'Spray ascending scale pitches around the ring (scroll a node to fine-tune)';
     }
-    function _shapeTriggerNode(cfg, nd, a, sortedAngles) {
+    // ---- Edit mode (tap a node → its Sound / Chord editor) -----------------
+    let _shapeEditMode = false;
+    function _shapeReflectEditBtn() {
+      const b = document.getElementById('shape-edit-btn');
+      if (b) { b.classList.toggle('active', !!_shapeEditMode); b.title = _shapeEditMode
+        ? 'Edit mode ON — tap a node to edit its sound / chord (tap again to turn off)'
+        : 'Edit mode: tap a node to open its Sound / Chord editor (instead of mute)'; }
+    }
+
+    // ---- Progression assignment (built-in + user, mapped onto nodes) -------
+    // Builds the Prog <select>: None, the user's published progressions, then
+    // the built-in catalog grouped by scale (current scale listed first).
+    function _shapePopulateProgSelect(sel) {
+      if (!sel) return;
+      sel.innerHTML = '';
+      const add = (val, label, parent) => { const o = document.createElement('option'); o.value = val; o.textContent = label; (parent || sel).appendChild(o); };
+      add('', '— None (single notes)');
+      try {
+        const ups = (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+        if (ups.length) {
+          const g = document.createElement('optgroup'); g.label = 'Your progressions'; sel.appendChild(g);
+          ups.forEach(p => add('u:' + (p.id | 0), p.name || ('Prog ' + (p.id | 0)), g));
+        }
+      } catch (e) {}
+      try {
+        if (typeof PROGRESSIONS !== 'undefined') {
+          const scales = Object.keys(PROGRESSIONS);
+          const cur = (typeof currentScale === 'string' && PROGRESSIONS[currentScale]) ? currentScale : null;
+          const ordered = cur ? [cur].concat(scales.filter(s => s !== cur)) : scales;
+          ordered.forEach(scale => {
+            const g = document.createElement('optgroup'); g.label = scale.charAt(0).toUpperCase() + scale.slice(1);
+            sel.appendChild(g);
+            PROGRESSIONS[scale].forEach((t, i) => add('b:' + scale + ':' + i, t.name, g));
+          });
+        }
+      } catch (e) {}
+    }
+    // Resolve a Prog <select> key to { name, key, chords:[{root,intervals}] }.
+    function _shapeProgFromKey(key) {
+      if (!key) return null;
+      try {
+        if (key.indexOf('u:') === 0) {
+          const id = parseInt(key.slice(2), 10);
+          const ups = (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+          const p = ups.find(x => (x.id | 0) === id);
+          if (p && Array.isArray(p.chords) && p.chords.length) {
+            return { name: p.name || ('Prog ' + id), key, chords: p.chords.map(c => ({ root: c.root | 0, intervals: (c.intervals || []).slice() })) };
+          }
+          return null;
+        }
+        if (key.indexOf('b:') === 0) {
+          const rest = key.slice(2); const li = rest.lastIndexOf(':');
+          const scale = rest.slice(0, li); const idx = parseInt(rest.slice(li + 1), 10);
+          const tmpl = (typeof PROGRESSIONS !== 'undefined' && PROGRESSIONS[scale]) ? PROGRESSIONS[scale][idx] : null;
+          if (!tmpl) return null;
+          const keyRoot = (typeof rootIdx === 'number') ? rootIdx : 0;
+          const blocks = (typeof _progAutoFillProgression === 'function') ? _progAutoFillProgression(keyRoot, scale, tmpl) : [];
+          const chords = (typeof _ambProgChordsFromBlocks === 'function') ? _ambProgChordsFromBlocks(blocks) : [];
+          if (!chords.length) return null;
+          return { name: tmpl.name, key, chords };
+        }
+      } catch (e) {}
+      return null;
+    }
+    // Assign (or clear) a progression. A fresh assignment resets manual per-node
+    // chord tweaks so the new progression maps cleanly; nodes then read their
+    // chord by clockwise index (repeating forward as nodes are added).
+    function _shapeApplyProgByKey(cfg, key) {
+      if (!cfg) return;
+      cfg.progression = _shapeProgFromKey(key);
+      (cfg.nodes || []).forEach(nd => { nd.chord = null; nd.chordOff = false; });
+    }
+
+    // Open the full Sound Editor scoped to ONE node: its params live on
+    // nd.override.params, which the editor writes in place (change-only).
+    function _shapeEditNodeSound(nd, cfg) {
+      if (!nd || !cfg) return;
+      nd.override = nd.override || {};
+      if (!nd.override.params || !nd.override.params.type) nd.override.params = Object.assign({}, _shapeNodeSound(cfg, nd));
+      const freq = _shapeBaseFreq(cfg) * Math.pow(2, _shapeNodeOffset(nd) / 12);
+      const ps = { label: 'Shape node', freq, params: nd.override.params, sound: nd.override.params.type };
+      try { if (typeof showSoundEditor === 'function') showSoundEditor(0, { steps: [ps] }); } catch (e) {}
+    }
+
+    // Compact per-node editor popover (opened by a tap in Edit mode): mute,
+    // chord (follow progression / single / custom root+quality), and a button
+    // into the full Sound Editor for the node's timbre.
+    function _shapeEditNode(idx) {
+      const cfg = _shapeCfg(); if (!cfg) return;
+      const nd = cfg.nodes[idx]; if (!nd) return;
+      const hasProg = !!(cfg.progression && cfg.progression.chords && cfg.progression.chords.length);
+      const persist = () => { try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
+      const close = () => { try { overlay.remove(); } catch (e) {} _shapeDraw(); persist(); };
+
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      modal.style.maxWidth = '320px';
+      const qOpts = (typeof CHORDS !== 'undefined')
+        ? Object.keys(CHORDS).map(k => '<option value="' + k + '">' + (CHORDS[k].label || k) + '</option>').join('')
+        : '<option value="maj">Major</option>';
+      const rootOpts = (typeof CHROMATIC !== 'undefined' ? CHROMATIC : ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'])
+        .map((n, i) => '<option value="' + i + '">' + n + '</option>').join('');
+      const mode = nd.chordOff ? 'single' : (nd.chord ? 'custom' : (hasProg ? 'follow' : 'single'));
+      modal.innerHTML =
+        '<div class="sm-title">Node ' + (idx + 1) + '</div>' +
+        '<label class="sm-apply-all"><input type="checkbox" id="snode-mute"' + (nd.muted ? ' checked' : '') + ' /> Muted</label>' +
+        '<details class="sm-fold" open><summary>Chord</summary><div class="sm-fold-body">' +
+          '<div class="sm-param"><select id="snode-chmode" class="sm-select">' +
+            (hasProg ? '<option value="follow">Follow progression</option>' : '') +
+            '<option value="single">Single note</option>' +
+            '<option value="custom">Custom chord</option>' +
+          '</select></div>' +
+          '<div class="sm-param" id="snode-custom" style="display:none">' +
+            '<div class="sm-param-row">Root / Quality</div>' +
+            '<div style="display:flex;gap:6px">' +
+              '<select id="snode-root" class="sm-select" style="flex:0 0 70px">' + rootOpts + '</select>' +
+              '<select id="snode-qual" class="sm-select" style="flex:1">' + qOpts + '</select>' +
+            '</div>' +
+          '</div>' +
+        '</div></details>' +
+        '<div style="display:flex;gap:8px;margin-top:10px">' +
+          '<button type="button" class="sm-preview" id="snode-sound" style="flex:1">Sound editor…</button>' +
+          '<button type="button" class="sm-apply" id="snode-done" style="flex:1">Done</button>' +
+        '</div>';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+      const modeEl = modal.querySelector('#snode-chmode');
+      const customWrap = modal.querySelector('#snode-custom');
+      const rootEl = modal.querySelector('#snode-root');
+      const qualEl = modal.querySelector('#snode-qual');
+      modeEl.value = mode;
+      // Seed the custom pickers from the node's chord, or the progression chord
+      // it currently follows, or a plain major on the shape's base pitch class.
+      let seed = nd.chord || (hasProg ? cfg.progression.chords[((_shapeSortedEff(cfg).idxOf.get(nd) || 0) % cfg.progression.chords.length)] : null);
+      const baseM = Number.isFinite(cfg.baseNote) ? Math.round(cfg.baseNote) : 60;
+      rootEl.value = String(seed ? (seed.root | 0) : (((baseM % 12) + 12) % 12));
+      qualEl.value = seed ? _shapeQualityFromIntervals(seed.intervals) : 'maj';
+      const syncCustomVis = () => { customWrap.style.display = (modeEl.value === 'custom') ? '' : 'none'; };
+      syncCustomVis();
+
+      const applyChord = () => {
+        const m = modeEl.value;
+        if (m === 'single') { nd.chordOff = true; nd.chord = null; }
+        else if (m === 'follow') { nd.chordOff = false; nd.chord = null; }
+        else { // custom
+          nd.chordOff = false;
+          const q = qualEl.value;
+          const ivs = (typeof CHORDS !== 'undefined' && CHORDS[q]) ? CHORDS[q].semis.slice() : [0, 4, 7];
+          nd.chord = { root: parseInt(rootEl.value, 10) || 0, intervals: ivs };
+        }
+        _shapeDraw(); persist();
+      };
+      modeEl.addEventListener('change', () => { syncCustomVis(); applyChord(); });
+      rootEl.addEventListener('change', applyChord);
+      qualEl.addEventListener('change', applyChord);
+      modal.querySelector('#snode-mute').addEventListener('change', (e) => { nd.muted = !!e.target.checked; _shapeDraw(); persist(); });
+      modal.querySelector('#snode-sound').addEventListener('click', () => _shapeEditNodeSound(nd, cfg));
+      modal.querySelector('#snode-done').addEventListener('click', close);
+    }
+    // Best-effort chord quality name from an interval set (for the custom picker).
+    function _shapeQualityFromIntervals(intervals) {
+      if (!Array.isArray(intervals) || !intervals.length || typeof CHORDS === 'undefined') return 'maj';
+      const norm = (a) => Array.from(new Set(a.map(x => ((x % 12) + 12) % 12))).sort((p, q) => p - q).join(',');
+      const want = norm(intervals);
+      for (const k of Object.keys(CHORDS)) { if (norm(CHORDS[k].semis) === want) return k; }
+      return 'maj';
+    }
+
+    // ---- Per-node / per-shape sound + chord resolution ---------------------
+    // A node's effective voice params: its own Sound-Editor override wins, then
+    // the shape's edited voice, then a bare {type} from the shape's tone.
+    function _shapeNodeSound(cfg, nd) {
+      if (nd && nd.override && nd.override.params && nd.override.params.type) return Object.assign({}, nd.override.params);
+      if (cfg.soundParams && cfg.soundParams.type) return Object.assign({}, cfg.soundParams);
+      return { type: _shapeToneType(cfg) };
+    }
+    // The chord a node plays (or null = single note): a manual per-node chord
+    // wins; else the assigned progression mapped by the node's CLOCKWISE index
+    // (so adding nodes simply continues the progression, repeating forward).
+    function _shapeNodeChord(cfg, nd, sortedIdx) {
+      if (nd && nd.chordOff) return null;   // node forced to a single note
+      if (nd && nd.chord && Array.isArray(nd.chord.intervals) && nd.chord.intervals.length) return nd.chord;
+      const prog = cfg.progression;
+      if (prog && Array.isArray(prog.chords) && prog.chords.length && Number.isFinite(sortedIdx)) {
+        return prog.chords[((sortedIdx % prog.chords.length) + prog.chords.length) % prog.chords.length] || null;
+      }
+      return null;
+    }
+    // Absolute frequencies for a chord {root(pc), intervals[semis]} anchored in
+    // the shape's base octave, transposed by the node's pitch offset.
+    function _shapeChordFreqs(cfg, nd, chord) {
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const baseM = Number.isFinite(cfg.baseNote) ? Math.round(cfg.baseNote) : 60;
+      const basePc = ((baseM % 12) + 12) % 12;
+      const rootM = (baseM - basePc) + (((chord.root | 0) % 12) + 12) % 12;
+      const off = _shapeNodeOffset(nd);
+      return chord.intervals.map(iv => A * Math.pow(2, (rootM + iv + off - 69) / 12));
+    }
+    // Effective angles + each node's clockwise index (for progression mapping).
+    function _shapeSortedEff(cfg) {
+      const eff = _shapeEffAngles(cfg);
+      const order = eff.slice().sort((x, y) => x.a - y.a);
+      const idxOf = new Map();
+      order.forEach((o, i) => idxOf.set(o.nd, i));
+      return { eff, sortedAngles: order.map(o => o.a), idxOf };
+    }
+    function _shapeTriggerNode(cfg, nd, a, sortedAngles, sortedIdx) {
       let next = null;
       for (let i = 0; i < sortedAngles.length; i++) { if (sortedAngles[i] > a + 1e-6) { next = sortedAngles[i]; break; } }
       if (next == null) next = (sortedAngles[0] != null ? sortedAngles[0] : a) + 1;
       const gap = Math.max(0.02, next - a);
       const durMs = Math.max(40, gap * _shapeBarSec() * 1000 * (Math.max(5, cfg.gatePct) / 100));
-      const offset = (nd.override && Number.isFinite(nd.override.noteOffset)) ? nd.override.noteOffset : 0;
-      const freq = _shapeBaseFreq(cfg) * Math.pow(2, offset / 12);
-      const params = { type: _shapeToneType(cfg) };
+      const sound = _shapeNodeSound(cfg, nd);
+      const chord = _shapeNodeChord(cfg, nd, sortedIdx);
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
-      try { if (typeof playNote === 'function') playNote(freq, params, durMs); } catch (e) {}
+      try {
+        if (typeof playNote === 'function') {
+          if (chord) {
+            _shapeChordFreqs(cfg, nd, chord).forEach(f => playNote(f, Object.assign({}, sound), durMs));
+          } else {
+            const freq = _shapeBaseFreq(cfg) * Math.pow(2, _shapeNodeOffset(nd) / 12);
+            playNote(freq, sound, durMs);
+          }
+        }
+      } catch (e) {}
       nd._flash = performance.now();
     }
     function _shapeSpinTick() {
@@ -270,13 +531,12 @@
       const phase = (((now - _shapeSpin.t0) % barSec) / barSec + 1) % 1;
       const last = _shapeSpin.lastPhase;
       const wrapped = phase < last;
-      const eff = _shapeEffAngles(cfg);
-      const sorted = eff.map(e => e.a).slice().sort((x, y) => x - y);
+      const { eff, sortedAngles: sorted, idxOf } = _shapeSortedEff(cfg);
       eff.forEach(e => {
         if (e.nd.muted) return;
         const a = e.a;
         const crossed = wrapped ? (a > last || a <= phase) : (a > last && a <= phase);
-        if (crossed) _shapeTriggerNode(cfg, e.nd, a, sorted);
+        if (crossed) _shapeTriggerNode(cfg, e.nd, a, sorted, idxOf.get(e.nd));
       });
       if (wrapped && _shapeRecording) _shapeRecordBar();   // completed bar → append
       _shapeSpin.lastPhase = phase;
@@ -328,29 +588,38 @@
     function _shapeRecordBar() {
       const cfg = _shapeCfg(); if (!cfg) return;
       if (typeof sequence === 'undefined' || !Array.isArray(sequence)) return;
-      const tone = _shapeToneType(cfg);
       const baseM = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60;
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const idxOf = _shapeSortedEff(cfg).idxOf;
       const eff = _shapeEffAngles(cfg).filter(e => !e.nd.muted).sort((x, y) => x.a - y.a);
       if (!eff.length) return;
+      const freqLabel = (freq) => { try { return (typeof Tone !== 'undefined') ? Tone.Frequency(freq).toNote() : ('' + Math.round(freq)); } catch (e) { return '' + Math.round(freq); } };
+      const mkVoice = (freq, sound) => ({
+        freq, label: freqLabel(freq),
+        cellIndex: (typeof _findCellIdxForFreq === 'function') ? (_findCellIdxForFreq(freq) || null) : null,
+        sound: sound.type, params: Object.assign({}, sound),
+      });
       const mkRest = (beats) => ({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: Math.max(0.0625, beats) });
-      const mkNote = (midi, beats) => {
-        const freq = A * Math.pow(2, (midi - 69) / 12);
-        let label; try { label = (typeof Tone !== 'undefined') ? Tone.Frequency(freq).toNote() : ('M' + midi); } catch (e) { label = 'M' + midi; }
-        return {
-          freq, label,
-          cellIndex: (typeof _findCellIdxForFreq === 'function') ? (_findCellIdxForFreq(freq) || null) : null,
-          sound: tone, params: { type: tone }, duration: 1, subdivision: Math.max(0.0625, beats),
-        };
+      // A node records as a chord step when it plays a chord, else a single note;
+      // either way it captures the node's own (per-node / per-shape) voice.
+      const mkStep = (nd, beats) => {
+        const sub = Math.max(0.0625, beats);
+        const sound = _shapeNodeSound(cfg, nd);
+        const chord = _shapeNodeChord(cfg, nd, idxOf.get(nd));
+        if (chord) {
+          const voices = _shapeChordFreqs(cfg, nd, chord).map(f => mkVoice(f, sound));
+          return { chord: voices, label: voices.map(v => v.label).join('·'), duration: 1, subdivision: sub };
+        }
+        const offset = _shapeNodeOffset(nd);
+        const v = mkVoice(A * Math.pow(2, (baseM + offset - 69) / 12), sound);
+        return Object.assign(v, { duration: 1, subdivision: sub });
       };
       const out = [];
       if (eff[0].a > 1e-4) out.push(mkRest(eff[0].a * 4));            // leading rest (bar = 4 beats)
       for (let i = 0; i < eff.length; i++) {
         const a = eff[i].a;
         const next = (i + 1 < eff.length) ? eff[i + 1].a : (eff[0].a + 1);   // wrap to first
-        const beats = (next - a) * 4;
-        const offset = (eff[i].nd.override && Number.isFinite(eff[i].nd.override.noteOffset)) ? eff[i].nd.override.noteOffset : 0;
-        out.push(mkNote(baseM + offset, beats));
+        out.push(mkStep(eff[i].nd, (next - a) * 4));
       }
       out.forEach(s => sequence.push(s));
       try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
@@ -412,6 +681,7 @@
       bar.innerHTML =
         '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ ▾</button>' +
         '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
+        '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎</button>' +
         '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎</button>' +
         '<button type="button" class="shape-btn" id="shape-clear-btn" title="Clear this lane\'s recorded steps">Clear</button>' +
         '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶</button>' +
@@ -423,6 +693,7 @@
           '</select></span>' +
           stepper('Rotate', 'shape-rot', 0, 359, 15, '°') +
           '<span class="shape-ctrl"><label>Tone</label><select id="shape-tone" class="shape-tone-sel"></select></span>' +
+          '<span class="shape-ctrl"><label>Prog</label><select id="shape-prog" class="shape-tone-sel"></select></span>' +
           stepper('Note', 'shape-note', 24, 96, 1, '') +
           stepper('Gate', 'shape-gate', 5, 100, 5, '%') +
         '</div>';
@@ -430,17 +701,20 @@
       const timingEl = bar.querySelector('#shape-timing');
       const rotEl = bar.querySelector('#shape-rot');
       const toneEl = bar.querySelector('#shape-tone');
+      const progEl = bar.querySelector('#shape-prog');
       const noteEl = bar.querySelector('#shape-note');
       const gateEl = bar.querySelector('#shape-gate');
       const spinEl = bar.querySelector('#shape-spin-btn');
       try {
         if (typeof populateGroupedToneSelect === 'function' && typeof getAllSoundOptions === 'function') {
-          populateGroupedToneSelect(toneEl, getAllSoundOptions(), { value: '', label: 'Grid voice' });
+          populateGroupedToneSelect(toneEl, getAllSoundOptions(), { value: '', label: 'Grid voice (copy)' });
         }
       } catch (e) {}
+      _shapePopulateProgSelect(progEl);
       if (cfg) {
         nodesEl.value = cfg.nodeCount; timingEl.value = cfg.timingMode; rotEl.value = Math.round(cfg.rotationDeg);
         toneEl.value = cfg.tone || ''; noteEl.value = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60; gateEl.value = cfg.gatePct;
+        progEl.value = (cfg.progression && cfg.progression.key) ? cfg.progression.key : '';
       }
       const persist = () => { try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
       nodesEl.addEventListener('change', () => {
@@ -457,7 +731,20 @@
         c.rotationDeg = ((parseInt(rotEl.value, 10) || 0) % 360 + 360) % 360;
         rotEl.value = Math.round(c.rotationDeg); _shapeDraw(); persist();
       });
-      toneEl.addEventListener('change', () => { const c = _shapeCfg(); if (!c) return; c.tone = toneEl.value || ''; persist(); });
+      // Selecting a concrete voice sets it; selecting "Grid voice (copy)" ('')
+      // freezes a copy of the CURRENT grid voice so the shape keeps its own.
+      toneEl.addEventListener('change', () => {
+        const c = _shapeCfg(); if (!c) return;
+        c.tone = toneEl.value || _shapeGridVoiceType();
+        c.soundParams = null;   // explicit tone pick clears any shape-level Sound-Editor voice
+        toneEl.value = c.tone;
+        persist();
+      });
+      progEl.addEventListener('change', () => {
+        const c = _shapeCfg(); if (!c) return;
+        _shapeApplyProgByKey(c, progEl.value);
+        _shapeDraw(); persist();
+      });
       noteEl.addEventListener('change', () => { const c = _shapeCfg(); if (!c) return; c.baseNote = Math.max(24, Math.min(96, parseInt(noteEl.value, 10) || 60)); noteEl.value = c.baseNote; persist(); });
       gateEl.addEventListener('change', () => { const c = _shapeCfg(); if (!c) return; c.gatePct = Math.max(5, Math.min(100, parseInt(gateEl.value, 10) || 80)); gateEl.value = c.gatePct; persist(); });
       if (spinEl) spinEl.addEventListener('click', () => { if (_shapeSpin.running) _shapeSpinStop(); else _shapeSpinStart(); });
@@ -479,6 +766,9 @@
       if (sprayEl) sprayEl.addEventListener('click', () => {
         if (_shapeIsPitched()) _shapeFlattenPitch(); else _shapeSprayScale();
       });
+      const editEl = bar.querySelector('#shape-edit-btn');
+      if (editEl) editEl.addEventListener('click', () => { _shapeEditMode = !_shapeEditMode; _shapeReflectEditBtn(); });
+      _shapeReflectEditBtn();
       const sendEl = bar.querySelector('#shape-send-btn');
       if (sendEl) sendEl.addEventListener('click', () => {
         const lane = _shapeLane(); if (!lane) return;
@@ -540,7 +830,12 @@
         const endDrag = (e) => {
           if (drag.idx < 0) return;
           const cfg = _shapeCfg();
-          if (!drag.moved && cfg) { cfg.nodes[drag.idx].muted = !cfg.nodes[drag.idx].muted; _shapeDraw(); }
+          if (!drag.moved && cfg) {
+            // Edit mode: a tap opens the node's Sound / Chord editor. Otherwise
+            // a tap toggles mute (the default interaction).
+            if (_shapeEditMode) _shapeEditNode(drag.idx);
+            else { cfg.nodes[drag.idx].muted = !cfg.nodes[drag.idx].muted; _shapeDraw(); }
+          }
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
           try { _shapeCanvas.releasePointerCapture(e.pointerId); } catch (ex) {}
           drag = { idx: -1, moved: false, sx: 0, sy: 0 };
@@ -697,13 +992,12 @@
       const phase = (((now - _shapeMaster.t0) % barSec) / barSec + 1) % 1;
       const last = _shapeMaster.lastPhase, wrapped = phase < last;
       _shapeMasterLanes().forEach(s => {
-        const eff = _shapeEffAngles(s.cfg);
-        const sorted = eff.map(e => e.a).slice().sort((x, y) => x - y);
+        const { eff, sortedAngles: sorted, idxOf } = _shapeSortedEff(s.cfg);
         eff.forEach(e => {
           if (e.nd.muted) return;
           const a = e.a;
           const crossed = wrapped ? (a > last || a <= phase) : (a > last && a <= phase);
-          if (crossed) _shapeTriggerNode(s.cfg, e.nd, a, sorted);
+          if (crossed) _shapeTriggerNode(s.cfg, e.nd, a, sorted, idxOf.get(e.nd));
         });
       });
       _shapeMaster.lastPhase = phase;

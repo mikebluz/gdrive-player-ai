@@ -1528,16 +1528,16 @@
         const contentX = seg.startX + (seg.endX - seg.startX) * frac;
         // Uses metrics cached at segment start (clientW/maxScroll) so the tick
         // only WRITES scrollLeft + cursor.left — no per-frame layout reflow.
-        if (!seg.fits) {
-          let sl = contentX - seg.clientW / 2;
-          if (sl < 0) sl = 0; else if (sl > seg.maxScroll) sl = seg.maxScroll;
-          scope.scrollLeft = sl;
-        }
-        // The cursor is a content child, so its `left` IS the true playhead in
-        // content coords: it reads as centred while the strip scrolls to follow,
-        // and as the actual playhead when scrolling is clamped or the strip fits
-        // (zoomed out) — instead of drifting to viewport-centre.
-        if (scope._laneCursor) scope._laneCursor.style.left = contentX + 'px';
+        let sl = contentX - seg.clientW / 2;
+        if (sl < 0) sl = 0; else if (sl > seg.maxScroll) sl = seg.maxScroll;
+        scope.scrollLeft = sl;
+        // Cursor stays pinned to the viewport center (only the steps move). The
+        // half-viewport scroll padding added below lets every step — first and
+        // last included — reach center, so it never has to drift off-center.
+        // This holds even for short loops that fit the viewport: the padding
+        // keeps the steps scrolling under a stationary centered cursor rather
+        // than letting the cursor sweep across static steps.
+        if (scope._laneCursor) scope._laneCursor.style.left = (sl + seg.clientW / 2) + 'px';
       }
       if (_laneScrollScopes.size > 0) _laneScrollRaf = requestAnimationFrame(_laneScrollTick);
     }
@@ -1597,19 +1597,16 @@
         // LAST steps can also be scrolled to the exact center — letting the
         // cursor stay dead-centered while only the steps move. Set before
         // measuring so the chip coords reflect the padded layout.
-        // If the whole strip already fits the viewport (e.g. zoomed out), don't
-        // scroll the steps under a centred cursor — drop the half-viewport
-        // padding and let the cursor SWEEP across the static steps instead.
-        const padL0 = parseFloat(scope.style.paddingLeft) || 0;
-        const padR0 = parseFloat(scope.style.paddingRight) || 0;
-        const contentW = Math.max(0, scope.scrollWidth - padL0 - padR0);
-        const fits = contentW <= clientW;
-        const halfPx = fits ? '0px' : (Math.round(clientW / 2) + 'px');
+        // Always pad by half the viewport (both sides) so EVERY step — first
+        // and last, and short loops that would otherwise fit on screen — can be
+        // scrolled to the exact center. The cursor stays dead-centered; only
+        // the steps move (auto-scrolling left from the middle, looping back on
+        // themselves), per spec.
+        const halfPx = Math.round(clientW / 2) + 'px';
         if (scope.style.paddingLeft !== halfPx) {
           scope.style.paddingLeft = halfPx;
           scope.style.paddingRight = halfPx;
         }
-        if (fits) scope.scrollLeft = 0;
         // Rect-based content position — robust to chips nested inside a
         // .key-group-container (which is position:relative, so offsetLeft would
         // be relative to the GROUP, not the strip → a wrong start x and a lane
@@ -1624,7 +1621,7 @@
         scope._scrollSeg = {
           startX, endX, startMs: _nowMs(),
           durMs: (Number.isFinite(durMs) && durMs > 0) ? durMs : 0,
-          clientW, fits, maxScroll: Math.max(0, scope.scrollWidth - clientW),
+          clientW, maxScroll: Math.max(0, scope.scrollWidth - clientW),
         };
         _laneScrollScopes.add(scope);
         _ensureLaneScrollRaf();

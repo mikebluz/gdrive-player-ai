@@ -1,14 +1,32 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
+    /* The page has no horizontal scroll (the layout always fits the content
+       width). Without this, a Mac two-finger horizontal trackpad swipe falls
+       through to the browser's history back/forward gesture + a rubber-band
+       shift — which reads as the app "sidescrolling" even though nothing
+       overflows. Contain horizontal overscroll at the root so the gesture is
+       a no-op. overflow-x:hidden on html also blocks any sub-pixel scroll. */
+    html {
+      overflow-x: hidden;
+      overscroll-behavior-x: none;
+    }
+
     body {
-      width: 100vw;
+      overscroll-behavior-x: none;
+      /* width:100% — NOT 100vw. 100vw is the full viewport INCLUDING the
+         vertical scrollbar gutter, so once the page scrolls (content taller
+         than the viewport) the body is ~15px wider than the content area and
+         the whole app picks up a phantom horizontal scrollbar on desktop.
+         Mobile uses overlay scrollbars (no gutter) so it never showed there.
+         width:100% fills the content box and excludes the scrollbar. */
+      width: 100%;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       /* Allow the page to scroll vertically when the sequence display
          grows past the viewport — chip rows expand to show every step
          instead of internal scrolling inside .sequence-display. The
-         master-scope is position:fixed so it stays visible regardless
+         footer transport is position:fixed so it stays visible regardless
          of how far the user scrolls. */
       overflow-y: auto;
       overflow-x: hidden;
@@ -118,8 +136,8 @@
       margin: 0;
     }
 
-    /* Project bar — sits between the saved-sequence bank and the
-       master-scope waveform. Hosts the Project ▾ button + the active
+    /* Project bar — sits between the saved-sequence bank and the fixed
+       footer transport. Hosts the Project ▾ button + the active
        project name label. The Project panel itself lives back up in
        the menubar; pinPanelToButton positions it absolutely under the
        button when opened. */
@@ -936,29 +954,10 @@
        above the step controls. In Mono only three buttons live here;
        in Poly the Drift button takes a fourth slot, so Rec and Loop
        shrink proportionally to keep the row on a single line. */
-    /* Master-bus oscilloscope. Pinned to the very bottom of the viewport
-       as a full-width status strip. body gets a matching padding-bottom
-       so the footer transport and saved-viewer aren't covered. The
-       canvas buffer width is synced to clientWidth in the draw loop
-       (bloops.html initMasterScope) so the waveform stays crisp at any
-       viewport width without per-frame canvas.width churn. */
-    /* Clear the fixed master scope (40px) + the now-fixed footer transport
-       (~64px) so scrolled content isn't hidden under them. */
-    body { padding-bottom: 168px; }
-    .master-scope {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: 100vw;
-      height: 40px;
-      background: #050510;
-      border-top: 1px solid #1a1a2e;
-      border-radius: 0;
-      margin: 0;
-      display: block;
-      z-index: 100;
-    }
+    /* Clear the fixed footer transport (now pinned to bottom:0) so scrolled
+       content isn't hidden under it. The master-bus oscilloscope that used to
+       occupy the bottom 40px has been removed. */
+    body { padding-bottom: 128px; }
     .footer-transport {
       display: flex;
       align-items: center;
@@ -2049,6 +2048,38 @@
     body.seq-mode #text-pad    { display: none; }
     body.seq-mode #seq-pad     { display: flex; }
     body.seq-mode .grid-settings-panel .grid-only { display: none !important; }
+    /* Shape pad — radial wheel sequencer. */
+    #shape-pad {
+      display: none; flex-direction: column; flex: 1;
+      min-height: var(--grid-natural-h, 210px);
+      padding: 12px; background: #0a0a14; border: 1px solid #2d2d3f;
+      border-radius: 8px; overflow: hidden;
+    }
+    body.shape-mode #grid        { display: none; }
+    body.shape-mode #xy-pad      { display: none; }
+    body.shape-mode #game-pad    { display: none; }
+    body.shape-mode #prog-pad    { display: none; }
+    body.shape-mode #ambient-pad { display: none; }
+    body.shape-mode #text-pad    { display: none; }
+    body.shape-mode #seq-pad     { display: none; }
+    body.shape-mode #shape-pad   { display: flex; }
+    body.shape-mode .grid-settings-panel .grid-only { display: none !important; }
+    .shape-inner { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+    .shape-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .shape-stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+    .shape-canvas { display: block; touch-action: none; max-width: 100%; max-height: 100%; }
+    .shape-ctrl { display: flex; align-items: center; gap: 6px; color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; }
+    .shape-ctrl label { color: #8a8aa8; }
+    .shape-ctrl select, .shape-ctrl input[type=number] {
+      background: #0a0a16; border: 1px solid #2d2d44; color: #cbd5e0; border-radius: 6px; padding: 4px 6px; font-size: 0.74rem;
+    }
+    .shape-btn {
+      padding: 6px 12px; border: 1px solid #2d2d3f; border-radius: 8px; background: transparent;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; font-weight: 700;
+      letter-spacing: 0.6px; text-transform: uppercase; cursor: pointer; transition: all 0.15s ease;
+    }
+    .shape-btn:hover { border-color: #4fd1c5; color: #b2f5ea; }
+    .shape-btn.active { border-color: #f56565; color: #feb2b2; background: rgba(245,101,101,0.16); }
     .seq-inner { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
     .seq-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .seq-toolbar-spacer { flex: 1 1 auto; }
@@ -2338,6 +2369,16 @@
     .mix-pane { display: none; }
     #mix-view.mix-sub-bloom    #mix-pane-bloom    { display: block; }
     #mix-view.mix-sub-mixdown  #mix-pane-mixdown  { display: block; }
+    #mix-view.mix-sub-shapes   #mix-pane-shapes   { display: block; }
+    /* Master Shape — concentric wheels overview. */
+    .shape-master-inner { display: flex; flex-direction: column; gap: 10px; padding: 8px; }
+    .shape-master-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .shape-master-stage { position: relative; display: flex; align-items: center; justify-content: center; height: min(60vh, 560px); }
+    .shape-master-stage .shape-canvas { cursor: pointer; }
+    .shape-master-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; }
+    .shape-master-legend .sm-leg { display: flex; align-items: center; gap: 6px; color: #a0aec0; cursor: pointer; }
+    .shape-master-legend .sm-swatch { width: 11px; height: 11px; border-radius: 50%; }
+    .shape-master-empty { color: #6a6a88; font-style: italic; padding: 24px; text-align: center; }
 
     .prog-blocks {
       display: flex;
@@ -3891,9 +3932,17 @@
       grid-template-columns: subgrid;
       grid-auto-rows: auto;
       gap: inherit;
-      border: 1px solid rgba(192, 38, 211, 0.6);
+      /* outline (not border) + zero padding so the purple frame draws WITHOUT
+         adding layout width. With border+padding the container's chips — which
+         align to the PARENT subgrid's column lines, not this box's padded
+         content edge — overflowed it by exactly 6px (2px border + 4px padding),
+         spilling past the lane and getting clipped by body's overflow-x:hidden.
+         Matches the non-grid-mode fallback below; keeps the lane-width
+         invariant (equal step totals → equal width) intact. */
+      outline: 1px solid rgba(192, 38, 211, 0.6);
+      outline-offset: -1px;
       border-radius: 8px;
-      padding: 2px;
+      padding: 0;
       position: relative;
       box-shadow: 0 0 8px rgba(192, 38, 211, 0.18);
     }
@@ -4276,14 +4325,14 @@
       align-items: center;
       padding: 6px 20px;
       gap: 10px;
-      /* Locked to the bottom of the viewport (just above the 40px master
-         scope) so the transport stays reachable while the page scrolls.
-         Hidden during the loading gate so it appears under the same
-         conditions as the rest of the page. */
+      /* Locked to the very bottom of the viewport so the transport stays
+         reachable while the page scrolls. (The master-bus oscilloscope that
+         used to sit below it has been removed.) Hidden during the loading
+         gate so it appears under the same conditions as the rest of the page. */
       position: fixed;
       left: 0;
       right: 0;
-      bottom: 40px;
+      bottom: 0;
       z-index: 95;
       border-top: 1px solid #1a1a2e;
     }
@@ -8119,3 +8168,164 @@
       cursor: pointer;
     }
     .step-cond-btn.active { background: rgba(192,38,211,0.35); border-color: #c026d3; color: #fff; }
+
+    /* ===================== Sound Design view ("✦ Design…") ============== */
+    .sd-overlay {
+      position: fixed; inset: 0; z-index: 600;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(4, 4, 12, 0.78);
+      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+    }
+    .sd-overlay.open { display: flex; }
+    .sd-modal {
+      width: min(880px, 94vw); max-height: 90vh;
+      display: flex; flex-direction: column;
+      background: #0e0e1a;
+      border: 1px solid rgba(159, 122, 234, 0.5);
+      border-radius: 14px;
+      box-shadow: 0 0 40px rgba(159, 122, 234, 0.22);
+      overflow: hidden;
+      font-family: 'Segoe UI', sans-serif; color: #cbd5e0;
+    }
+    .sd-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid #20203a;
+      background: linear-gradient(to right, rgba(159,122,234,0.12), transparent);
+    }
+    .sd-title { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.6px; color: #d6bcfa; }
+    .sd-close {
+      background: transparent; border: none; color: #8a8aa8; font-size: 1.1rem;
+      cursor: pointer; padding: 2px 6px; border-radius: 6px;
+    }
+    .sd-close:hover { color: #fff; background: rgba(255,255,255,0.06); }
+    .sd-body { padding: 16px; overflow-y: auto; }
+    .sd-step-label {
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1.2px;
+      color: #8a8aa8; margin-bottom: 12px;
+    }
+    /* --- Seed picker --- */
+    .sd-seed-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 8px;
+    }
+    .sd-seed-btn {
+      padding: 12px 10px; border-radius: 8px;
+      background: #16162a; border: 1px solid #2d2d44; color: #cbd5e0;
+      font-size: 0.82rem; cursor: pointer; text-align: center;
+      transition: border-color 0.12s ease, background-color 0.12s ease;
+    }
+    .sd-seed-btn:hover { border-color: #9f7aea; background: #1d1d38; color: #f5d0fe; }
+    /* --- Editor top bar --- */
+    .sd-editor-top {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .sd-mini {
+      padding: 7px 11px; border-radius: 7px; background: #16162a;
+      border: 1px solid #2d2d44; color: #cbd5e0; font-size: 0.78rem; cursor: pointer;
+    }
+    .sd-mini:hover { border-color: #9f7aea; color: #f5d0fe; }
+    .sd-preview { color: #4fd1c5; }
+    .sd-name {
+      flex: 1 1 200px; min-width: 0;
+      padding: 8px 12px; border-radius: 7px;
+      background: #0a0a16; border: 1px solid #2d2d44; color: #fff; font-size: 0.85rem;
+    }
+    .sd-name:focus { outline: none; border-color: #4fd1c5; }
+    .sd-name-err { border-color: #e53e3e; box-shadow: 0 0 0 2px rgba(229,62,62,0.25); }
+    .sd-save {
+      padding: 8px 18px; border-radius: 7px; cursor: pointer;
+      background: rgba(159,122,234,0.22); border: 1px solid #9f7aea; color: #f5d0fe;
+      font-weight: 700; font-size: 0.82rem;
+    }
+    .sd-save:hover { background: rgba(159,122,234,0.34); color: #fff; }
+    /* --- Sections / knob rows --- */
+    .sd-panes { display: flex; flex-direction: column; gap: 14px; }
+    .sd-section {
+      border: 1px solid #20203a; border-radius: 10px; padding: 12px 14px;
+      background: #11111f;
+    }
+    .sd-section-head {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.74rem; text-transform: uppercase; letter-spacing: 1px;
+      color: #9a9ac0; margin-bottom: 12px;
+    }
+    .sd-toggle {
+      margin-left: auto; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+      background: #1a1a2e; border: 1px solid #3a3a52; color: #8a8aa8; font-size: 0.7rem;
+    }
+    .sd-toggle.on { background: rgba(79,209,197,0.18); border-color: #4fd1c5; color: #4fd1c5; }
+    .sd-knob-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+    /* --- Knob widget --- */
+    .sd-knob {
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      width: 64px; user-select: none; -webkit-user-select: none;
+    }
+    .sd-knob-label { font-size: 0.66rem; color: #8a8aa8; text-align: center; white-space: nowrap; }
+    .sd-knob-dial {
+      width: 46px; height: 46px; border-radius: 50%;
+      background: radial-gradient(circle at 50% 38%, #2c2c44, #131320);
+      border: 2px solid #3a3a52; position: relative;
+      cursor: ns-resize; touch-action: none;
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.55);
+    }
+    .sd-knob-dial.dragging { border-color: #9f7aea; box-shadow: inset 0 2px 5px rgba(0,0,0,0.55), 0 0 8px rgba(159,122,234,0.4); }
+    .sd-knob-ind {
+      position: absolute; left: 50%; top: 5px; width: 3px; height: 15px; margin-left: -1.5px;
+      background: #4fd1c5; border-radius: 2px;
+      transform-origin: 50% 18px;
+      transform: rotate(var(--sd-ang, -135deg));
+    }
+    .sd-knob-val { font-size: 0.66rem; color: #cbd5e0; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    /* --- Inline select (filter type) styled like a knob cell --- */
+    .sd-select-wrap { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 96px; }
+    .sd-select-wrap label { font-size: 0.66rem; color: #8a8aa8; }
+    .sd-select {
+      width: 100%; padding: 7px 8px; border-radius: 7px;
+      background: #0a0a16; border: 1px solid #2d2d44; color: #cbd5e0; font-size: 0.76rem;
+    }
+    .sd-select:focus { outline: none; border-color: #4fd1c5; }
+    @media (max-width: 600px) {
+      .sd-modal { width: 96vw; max-height: 92vh; }
+      .sd-knob { width: 58px; }
+    }
+
+    /* --- Mod matrix + compact knobs --- */
+    .sd-matrix-hint { margin-left: auto; font-size: 0.62rem; text-transform: none; letter-spacing: 0; color: #6a6a88; }
+    .sd-matrix { display: grid; gap: 4px 6px; align-items: center; }
+    .sd-matrix-corner { }
+    .sd-matrix-colh {
+      font-size: 0.66rem; font-weight: 700; color: #9f7aea; text-align: center;
+      text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 2px;
+    }
+    .sd-matrix-rowh { font-size: 0.68rem; color: #4fd1c5; font-weight: 600; }
+    .sd-matrix-cell { display: flex; justify-content: center; }
+    .sd-knob-compact { width: 44px; gap: 2px; }
+    .sd-knob-compact .sd-knob-label { display: none; }
+    .sd-knob-compact .sd-knob-dial { width: 30px; height: 30px; }
+    .sd-knob-compact .sd-knob-ind { top: 4px; height: 10px; transform-origin: 50% 11px; }
+    .sd-knob-compact .sd-knob-val { font-size: 0.6rem; color: #8a8aa8; }
+
+    /* --- Design: Surprise + Rate + Preview cycling --- */
+    .sd-surprise { color: #f6ad55; }
+    .sd-surprise:hover { border-color: #f6ad55; color: #fbd38d; }
+    .sd-rate-wrap { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+    .sd-rate-cap { font-size: 0.6rem; color: #8a8aa8; text-transform: uppercase; letter-spacing: 0.6px; }
+    #sd-rate-host { display: flex; }
+    .sd-preview.sd-preview-on { color: #fff; background: rgba(79,209,197,0.22); border-color: #4fd1c5; }
+
+    /* --- Design: wavetable note --- */
+    .sd-wt-note { font-size: 0.66rem; color: #6a6a88; align-self: center; font-style: italic; }
+
+    /* --- Tone menu: User patch rows + actions --- */
+    .tone-opt-user { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .tone-user-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tone-user-actions { display: flex; gap: 1px; flex-shrink: 0; }
+    .tone-user-act {
+      background: transparent; border: none; color: #8a8aa8; cursor: pointer;
+      font-size: 0.78rem; padding: 2px 4px; border-radius: 4px; line-height: 1;
+    }
+    .tone-user-act:hover { background: rgba(159,122,234,0.22); color: #f5d0fe; }
+    .tone-user-act.danger:hover { background: rgba(229,62,62,0.25); color: #feb2b2; }
+
+    .shape-btn.shape-rec.active { border-color: #f56565; color: #fff; background: rgba(245,101,101,0.28); box-shadow: 0 0 8px rgba(245,101,101,0.4); }

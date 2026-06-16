@@ -424,6 +424,9 @@
       for (const [id, def] of ensembles) {
         opts.push({ value: 'ensemble:' + id, label: (def && def.name) ? def.name : ('Ensemble ' + id) });
       }
+      // "User" design patches (Design view, 20-sound-design.js — loaded later,
+      // so guard by typeof). Each plays via its stored base voice + design.
+      try { if (typeof _userPatchOptions === 'function') _userPatchOptions().forEach(o => opts.push(o)); } catch (e) {}
       return opts;
     }
 
@@ -1892,16 +1895,24 @@
         // triggerAttack / triggerRelease so the press is held. The
         // default Tone.Synth fallback below would be silent here
         // because Tone.OmniOscillator rejects type='wavetable'.
-        const wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
-          ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
-          : [1.0, 0.5, 0.3];
+        // Design wavetable position (4-frame morph) with legacy mix fallback.
+        let _wtTypes, wt;
+        if (params.wtPosition != null && typeof _sdWavetableGains === 'function') {
+          _wtTypes = SD_WT_FRAMES; wt = _sdWavetableGains(params.wtPosition);
+        } else {
+          _wtTypes = ['sine', 'sawtooth', 'triangle'];
+          wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
+            ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+            : [1.0, 0.5, 0.3];
+        }
         const ampEnv = new Tone.AmplitudeEnvelope({
           attack: env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,
         }).connect(chainHead);
         const wtOscs = [];
         const wtGains = [];
-        ['sine', 'sawtooth', 'triangle'].forEach((t, i) => {
+        _wtTypes.forEach((t, i) => {
+          if (!(wt[i] > 0.0001)) return;
           const osc = new Tone.Oscillator({ type: t, frequency: freq, detune });
           const g = new Tone.Gain(wt[i]);
           osc.connect(g);
@@ -2018,6 +2029,21 @@
 
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       if (typeof params === 'string') params = { type: params };
+      // "User" Design patches: resolve to the patch's stored voice (base
+      // oscillator/sample + amp env + filter + design blocks), letting any
+      // incoming step-level overrides (bend/pan/volume/detune from the
+      // sequencer) win. Done before everything else so the rest of playNote
+      // sees a concrete base type.
+      if (typeof params.type === 'string' && params.type.indexOf('user:') === 0) {
+        const _up = (typeof _resolveUserPatch === 'function') ? _resolveUserPatch(params.type) : null;
+        if (_up) {
+          const keep = {};
+          ['bend', 'pan'].forEach(k => { if (params[k] != null) keep[k] = params[k]; });
+          params = Object.assign({}, _up.params, { type: _up.baseType }, keep);
+        } else {
+          params = Object.assign({}, params, { type: 'sawtooth' }); // patch gone → audible fallback
+        }
+      }
       // Ensemble voices expand into their member tones BEFORE the capture hook,
       // so each member (not the wrapper) is what gets captured/replayed.
       if (isEnsembleType(params.type)) { _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx); return; }
@@ -2185,8 +2211,11 @@
           // into the buffer. Loop is on so a duration longer than
           // the buffer wraps within itself, matching the "sustained
           // grain texture" expectation.
+          // Design "Position" (grainOffset 0..1) seeks into the buffer.
+          const _grainOff = Math.max(0, Math.min(0.999, Number.isFinite(params.grainOffset) ? params.grainOffset : 0))
+            * ((grainInfo.buffer && grainInfo.buffer.duration) || 0);
           const fire = () => {
-            try { player.start(triggerAt, 0, dur); }
+            try { player.start(triggerAt, _grainOff, dur); }
             catch (e) { console.warn('[grain] start failed', e); }
           };
           // Use the player's own loaded state; Tone.GrainPlayer
@@ -2440,9 +2469,44 @@
         effectNodes.unshift(node);
         chainHead = node;
       }
+      // Per-voice subtractive filter + filter envelope (Design patches). Built
+      // closest to the synth (before the FX chain) and only when the patch
+      // turns it on, so ordinary cells pay nothing. Disposed with the chain.
+      // _sdVoiceFilter / _sdModPanner are kept so the mod rig (below, after the
+      // synth exists) can modulate their params.
+      let _sdVoiceFilter = null, _sdModPanner = null, _sdModGain = null;
+      if (params.filter && params.filter.on && typeof _sdBuildVoiceFilter === 'function') {
+        _sdVoiceFilter = _sdBuildVoiceFilter(params, {
+          startTime: (typeof startTime === 'number') ? startTime : undefined,
+          dur: targetDur, velocity,
+        });
+        if (_sdVoiceFilter) { _sdVoiceFilter.connect(chainHead); effectNodes.unshift(_sdVoiceFilter); chainHead = _sdVoiceFilter; }
+      }
+      // A dedicated mod panner (base centred) when the matrix targets pan, so
+      // it can be modulated independently of the static per-note panner above.
+      if (typeof _sdNeedsModPan === 'function' && _sdNeedsModPan(params)) {
+        try { _sdModPanner = new Tone.Panner(0).connect(chainHead); effectNodes.unshift(_sdModPanner); chainHead = _sdModPanner; } catch (e) {}
+      }
+      // A mod gain (base unity) when the matrix targets amp — modulated for
+      // tremolo / AM on top of the voice's own envelope.
+      if (typeof _sdNeedsModGain === 'function' && _sdNeedsModGain(params)) {
+        try { _sdModGain = new Tone.Gain(1).connect(chainHead); effectNodes.unshift(_sdModGain); chainHead = _sdModGain; } catch (e) {}
+      }
       const disposeEffectChain = () => {
         effectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
       };
+
+      // Resolved oscillator-design (Phase 2: unison / FM-AM timbre / sub-osc).
+      // Computed once; the construction branches + the sub-osc below read it.
+      const _sdOscD = (typeof _sdOscDesign === 'function') ? _sdOscDesign(params) : null;
+
+      // Ring mod: a gain (base unity) the synth feeds, whose gain is multiplied
+      // by a modulator oscillator (built after the synth). Inserted before the
+      // synth so the synth connects through it.
+      let _sdRingGain = null;
+      if (_sdOscD && _sdOscD.ring > 0) {
+        try { _sdRingGain = new Tone.Gain(1).connect(chainHead); effectNodes.unshift(_sdRingGain); chainHead = _sdRingGain; } catch (e) {}
+      }
 
       let synth;
 
@@ -2454,7 +2518,8 @@
       // recorded on the voice entry so the dispose timer + steal path
       // route the synth back to the pool instead of disposing it.
       let pooledPreset = null;
-      if (VOICE_POOL_ENABLED && !_offlineSamplerOverride && _isPooledPreset(type)) {
+      const _sdFreshVoice = (typeof _sdOscNeedsFreshVoice === 'function') && _sdOscNeedsFreshVoice(_sdOscD, type);
+      if (VOICE_POOL_ENABLED && !_offlineSamplerOverride && !_sdFreshVoice && _isPooledPreset(type)) {
         synth = _buildPooledSynthForPreset(type, env);
         if (synth) {
           pooledPreset = type;
@@ -2555,8 +2620,8 @@
         return;
       } else if (type === 'fm') {
         synth = new Tone.FMSynth({
-          harmonicity: 3,
-          modulationIndex: 10,
+          harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 3,
+          modulationIndex: (_sdOscD && _sdOscD.modIndex != null) ? _sdOscD.modIndex : 10,
           oscillator: { type: 'sine' },
           envelope: env,
           modulation: { type: 'square' },
@@ -2566,13 +2631,13 @@
         synth = new Tone.DuoSynth({
           voice0: { oscillator: { type: 'sine'    }, envelope: env },
           voice1: { oscillator: { type: 'sawtooth'}, envelope: env },
-          harmonicity: 1.5,
+          harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 1.5,
           vibratoAmount: 0.3,
           vibratoRate: 5,
         }).connect(chainHead);
       } else if (type === 'am') {
         synth = new Tone.AMSynth({
-          harmonicity: 2,
+          harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 2,
           oscillator: { type: 'sine' },
           envelope: env,
           modulation: { type: 'square' },
@@ -2641,37 +2706,60 @@
         // Wavetable: stack three native oscillators (sine + sawtooth
         // + triangle) blended at user-defined amplitudes, gated by
         // a single Tone.AmplitudeEnvelope.
-        const wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
-          ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
-          : [1.0, 0.5, 0.3];
-        try {
-          console.log('[wavetable] fire freq=', freq,
-            'mix=', wt,
-            'velocity=', velocity,
-            'preReleaseDur=', preReleaseDur,
-            'startTime=', startTime,
-            'destination=', destination ? 'set' : 'null',
-            'laneIdx=', laneIdx);
-        } catch (e) {}
+        // Design wavetable: morph a 4-frame bank (sine→triangle→sawtooth→
+        // square) by params.wtPosition (0-100). Falls back to the legacy
+        // 3-osc sine/saw/tri mix for old `wavetableMix` data.
+        let oscTypes, wt;
+        if (params.wtPosition != null && typeof _sdWavetableGains === 'function') {
+          oscTypes = SD_WT_FRAMES; wt = _sdWavetableGains(params.wtPosition);
+        } else {
+          oscTypes = ['sine', 'sawtooth', 'triangle'];
+          wt = (Array.isArray(params.wavetableMix) && params.wavetableMix.length === 3)
+            ? params.wavetableMix.map(v => Math.max(0, Math.min(1, Number(v) || 0)))
+            : [1.0, 0.5, 0.3];
+        }
         const ampEnv = new Tone.AmplitudeEnvelope({
           attack:  env.attack, decay: env.decay,
           sustain: env.sustain, release: env.release,
         }).connect(chainHead);
-        const oscTypes = ['sine', 'sawtooth', 'triangle'];
         const oscs = [];
         const gains = [];
-        oscTypes.forEach((t, i) => {
-          const osc = new Tone.Oscillator({
-            type: t,
-            frequency: freq,
-            detune,
+        // When the mod matrix sweeps WT Pos, build a live 2-frame crossfade
+        // (the two frames bracketing the base position) driven by a position
+        // Signal that the mod rig writes into; otherwise the static blend.
+        const _wtMod = params.wtPosition != null && params.modMatrix
+          && params.modMatrix.some(r => r.dest === 'wtpos' && r.amount)
+          && typeof _sdBuildModRig === 'function';
+        if (_wtMod) {
+          const N = SD_WT_FRAMES.length;
+          const pp = Math.max(0, Math.min(1, (params.wtPosition || 0) / 100)) * (N - 1);
+          const fi = Math.min(N - 2, Math.floor(pp)); const x0 = pp - fi;
+          const oscA = new Tone.Oscillator({ type: SD_WT_FRAMES[fi], frequency: freq, detune });
+          const oscB = new Tone.Oscillator({ type: SD_WT_FRAMES[fi + 1], frequency: freq, detune });
+          const gA = new Tone.Gain(1), gB = new Tone.Gain(0);
+          const xSig = new Tone.Signal(x0), inv = new Tone.Gain(-1);
+          xSig.connect(gB.gain);          // gB.gain = x0 + mod
+          xSig.connect(inv); inv.connect(gA.gain); // gA.gain = 1 - (x0 + mod)
+          oscA.connect(gA); gA.connect(ampEnv);
+          oscB.connect(gB); gB.connect(ampEnv);
+          oscs.push(oscA, oscB); gains.push(gA, gB, xSig, inv);
+          try {
+            const mn = _sdBuildModRig(params,
+              { synth: null, filter: _sdVoiceFilter, panner: _sdModPanner, gain: _sdModGain, wtpos: xSig },
+              { startTime: (typeof startTime === 'number') ? startTime : undefined, dur: targetDur, velocity });
+            if (mn) mn.forEach(n => gains.push(n));
+          } catch (e) {}
+        } else {
+          oscTypes.forEach((t, i) => {
+            if (!(wt[i] > 0.0001)) return;   // skip silent frames
+            const osc = new Tone.Oscillator({ type: t, frequency: freq, detune });
+            const g = new Tone.Gain(wt[i]);
+            osc.connect(g);
+            g.connect(ampEnv);
+            oscs.push(osc);
+            gains.push(g);
           });
-          const g = new Tone.Gain(wt[i]);
-          osc.connect(g);
-          g.connect(ampEnv);
-          oscs.push(osc);
-          gains.push(g);
-        });
+        }
         const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? startTime : Tone.now();
         ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
@@ -2703,11 +2791,15 @@
         // pulse / fat. (Wavetable is handled above as an FMSynth
         // preset — the additive-partials route through OmniOscillator
         // wasn't reliable on Tone v14.)
+        // Design "unison" (Phase 2): basic shapes become Tone fat oscillators
+        // (count detuned copies, `spread` cents) when a patch asks for >1 voice.
         const oscOpts = type === 'fat'
-          ? { type: 'fatsawtooth', count: 3, spread: 30 }
+          ? { type: 'fatsawtooth', count: (_sdOscD && _sdOscD.unison > 1 ? _sdOscD.unison : 3), spread: (_sdOscD ? _sdOscD.spread : 30) }
           : type === 'pulse'
             ? { type: 'pulse', width: 0.4 }
-            : { type };
+            : (_sdOscD && _sdOscD.unison > 1)
+              ? { type: 'fat' + type, count: _sdOscD.unison, spread: _sdOscD.spread }
+              : { type };
         synth = new Tone.Synth({
           oscillator: oscOpts,
           envelope: env,
@@ -2720,6 +2812,45 @@
       // Bloom's per-layer mod. Disposing the synth severs the connection.
       if (synth.detune && params._detuneMod && typeof params._detuneMod.connect === 'function') {
         try { params._detuneMod.connect(synth.detune); } catch (e) {}
+      }
+      // Design mod-matrix: LFOs / Env2 / Vel / Macros → pitch / cutoff / reso /
+      // pan. Built once the synth (and its .detune), filter and mod panner all
+      // exist; nodes are pushed onto effectNodes so they're disposed with the
+      // voice. No-op (and zero nodes) when the patch has no routings.
+      if (typeof _sdBuildModRig === 'function' && params.modMatrix && params.modMatrix.length) {
+        try {
+          const _modNodes = _sdBuildModRig(params,
+            { synth, filter: _sdVoiceFilter, panner: _sdModPanner, gain: _sdModGain },
+            { startTime: (typeof startTime === 'number') ? startTime : undefined, dur: targetDur, velocity });
+          if (_modNodes && _modNodes.length) _modNodes.forEach(n => effectNodes.unshift(n));
+        } catch (e) {}
+      }
+      // Ring modulator (Phase 4 follow-up): a sine at freq×ratio drives the
+      // ring gain inserted above, multiplying the voice for metallic timbres.
+      if (_sdRingGain && _sdOscD && _sdOscD.ring > 0) {
+        try {
+          const ringOsc = new Tone.Oscillator({ frequency: freq * (_sdOscD.ringRatio || 1), type: 'sine' });
+          const ringDepth = new Tone.Gain(_sdOscD.ring / 100);
+          ringOsc.connect(ringDepth); ringDepth.connect(_sdRingGain.gain);
+          const _rt = (typeof startTime === 'number') ? startTime : Tone.now();
+          ringOsc.start(_rt);
+          effectNodes.unshift(ringOsc, ringDepth);
+        } catch (e) {}
+      }
+      // Design sub-oscillator (Phase 2): an extra oscillator one octave below
+      // the note, following the amp envelope, mixed in for low-end weight. Only
+      // built when the patch sets sub > 0; disposed with the voice chain.
+      if (_sdOscD && _sdOscD.sub > 0) {
+        try {
+          const subOsc = new Tone.Oscillator({ frequency: freq / 2, type: _sdOscD.subShape || 'sine' });
+          const subEnv = new Tone.AmplitudeEnvelope(env);
+          const subGain = new Tone.Gain((_sdOscD.sub / 100) * velocity);
+          subOsc.connect(subEnv); subEnv.connect(subGain); subGain.connect(chainHead);
+          const _st = (typeof startTime === 'number') ? startTime : Tone.now();
+          subOsc.start(_st);
+          subEnv.triggerAttackRelease(preReleaseDur, _st);
+          effectNodes.unshift(subOsc, subEnv, subGain);
+        } catch (e) {}
       }
       synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
 

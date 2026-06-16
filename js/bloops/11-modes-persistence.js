@@ -841,6 +841,8 @@
             ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
             textMode: !!l.textMode,
             seqMode: !!l.seqMode,
+            shapeMode: !!l.shapeMode,
+            shape: l.shape ? JSON.parse(JSON.stringify(l.shape)) : null,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             // Per-lane voice. The active lane's live voice lives in
             // the globals (cellSounds / palette / etc.), so capture
@@ -873,6 +875,8 @@
             ambient: l.ambient ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
             textMode: !!l.textMode,
             seqMode: !!l.seqMode,
+            shapeMode: !!l.shapeMode,
+            shape: l.shape ? JSON.parse(JSON.stringify(l.shape)) : null,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
             sends: l.sends ? { ...l.sends } : null,
@@ -1689,6 +1693,7 @@
     let ambientMode = false;
     let textMode = false;
     let seqMode = false;
+    let shapeMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;

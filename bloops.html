@@ -342,6 +342,7 @@
             <option value="bloom">Bloom</option>
             <option value="text">TEXT</option>
             <option value="seq">Seq</option>
+            <option value="shape">Shape</option>
           </select>
         </div>
         <button type="button" id="fluid-grid-toggle" hidden aria-hidden="true" tabindex="-1" style="display:none"></button>
@@ -428,6 +429,19 @@
            active lane. Built by 19-seq-pad.js when the lane enters Seq mode. -->
       <div id="seq-pad" hidden>
         <div class="seq-inner" id="seq-inner"></div>
+      </div>
+      <!-- Shape pad — eighth mode. A radial "wheel" sequencer: 360° = 1 bar,
+           a polygon whose corner nodes are timed hits (node angle = position
+           in the bar). One shape per lane; playing it records what's struck
+           into the lane (accumulative overdub). Built by 21-shape.js when the
+           lane enters Shape mode. -->
+      <div id="shape-pad" hidden>
+        <div class="shape-inner" id="shape-inner">
+          <div class="shape-toolbar" id="shape-toolbar"></div>
+          <div class="shape-stage" id="shape-stage">
+            <canvas id="shape-canvas" class="shape-canvas"></canvas>
+          </div>
+        </div>
       </div>
       <!-- Game pad — third mode of the Grid/Graph toggle. A polygon with
            one side per (scale-degree × octave) cell encloses a free
@@ -729,11 +743,6 @@
       <button id="fast-forward-btn" class="menu-btn" type="button" title="Fast-forward — move the cursor to the next cut point (where all lanes line up)" aria-label="Fast-forward to next cut point">⏭</button>
     </div>
   </div>
-  <!-- Master-bus oscilloscope. Pinned to the very bottom of the viewport
-       as a full-width status strip — see .master-scope CSS. Position is
-       fixed so it stays visible regardless of scroll; body has a matching
-       padding-bottom so nothing slides under it. -->
-  <canvas id="master-scope" class="master-scope" width="240" height="40" title="Master bus waveform"></canvas>
 
   <div class="saved-viewer">
     <!-- Action bar for the currently-selected (active) saved sequence.
@@ -769,6 +778,7 @@
          multi-track sequencer + export/share). -->
     <div class="mix-subtabs">
       <button id="mix-subtab-bloom" class="mix-subtab" type="button">Bloom</button>
+      <button id="mix-subtab-shapes" class="mix-subtab" type="button">Shapes</button>
       <button id="mix-subtab-mixdown" class="mix-subtab" type="button">Mixdown</button>
     </div>
 
@@ -779,6 +789,19 @@
            "Send to Bloom" on a saved sequence adds Seq layers here. -->
       <div class="mix-bloom-section" id="mix-bloom-section">
         <div class="ambient-inner" id="mix-bloom-host"></div>
+      </div>
+    </div>
+
+    <!-- Master Shape — every Shape-mode lane's wheel superimposed
+         concentrically on one shared bar clock. Read-only overview; click a
+         ring to jump to that lane in Make. Built by 21-shape.js. -->
+    <div class="mix-pane" id="mix-pane-shapes">
+      <div class="shape-master-inner" id="shape-master-inner">
+        <div class="shape-master-bar" id="shape-master-bar"></div>
+        <div class="shape-master-stage" id="shape-master-stage">
+          <canvas id="shape-master-canvas" class="shape-canvas"></canvas>
+        </div>
+        <div class="shape-master-legend" id="shape-master-legend"></div>
       </div>
     </div>
 
@@ -852,6 +875,8 @@
   <script src="js/bloops/17-ambient.js?v=DEPLOYVER"></script>
   <script src="js/bloops/18-text.js?v=DEPLOYVER"></script>
   <script src="js/bloops/19-seq-pad.js?v=DEPLOYVER"></script>
+  <script src="js/bloops/20-sound-design.js?v=DEPLOYVER"></script>
+  <script src="js/bloops/21-shape.js?v=DEPLOYVER"></script>
 
   <!-- ===================== Serialbox view ============================== -->
   <!-- Hidden by default; the Serialbox tab in the top bar reveals it via

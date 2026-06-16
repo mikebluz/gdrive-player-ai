@@ -1069,21 +1069,23 @@
       btn.addEventListener('click', () => {
         const lane = lanes[activeLaneIdx];
         if (lane) {
-          // Cycle: Grid → Graph → Game → Prog → Bloom → TEXT → Grid
-          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode && !lane.textMode && !lane.seqMode) {
-            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
+          // Cycle: Grid → Graph → Game → Prog → Bloom → TEXT → Seq → Shape → Grid
+          if (!lane.fluidGridMode && !lane.gameMode && !lane.progMode && !lane.ambientMode && !lane.textMode && !lane.seqMode && !lane.shapeMode) {
+            lane.fluidGridMode = true;  lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false; lane.shapeMode = false;
           } else if (lane.fluidGridMode) {
-            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
+            lane.fluidGridMode = false; lane.gameMode = true;  lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false; lane.shapeMode = false;
           } else if (lane.gameMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = true;  lane.ambientMode = false; lane.textMode = false; lane.seqMode = false; lane.shapeMode = false;
           } else if (lane.progMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;  lane.textMode = false; lane.seqMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = true;  lane.textMode = false; lane.seqMode = false; lane.shapeMode = false;
           } else if (lane.ambientMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = true;  lane.seqMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = true;  lane.seqMode = false; lane.shapeMode = false;
           } else if (lane.textMode) {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = true;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = true;  lane.shapeMode = false;
+          } else if (lane.seqMode) {
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false; lane.shapeMode = true;
           } else {
-            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
+            lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false; lane.ambientMode = false; lane.textMode = false; lane.seqMode = false; lane.shapeMode = false;
           }
         }
         _syncFluidGridToActiveLane();
@@ -1105,6 +1107,7 @@
           lane.ambientMode   = (m === 'bloom');
           lane.textMode      = (m === 'text');
           lane.seqMode       = (m === 'seq');
+          lane.shapeMode     = (m === 'shape');
           _syncFluidGridToActiveLane();
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });

@@ -508,6 +508,41 @@
     function _defaultCellParams() {
       return { type: 'sawtooth', attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0, reverb: 0, reverbSize: 70, reverbTone: 50, delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null, distortion: 0, chorus: 0, chorusFreq: 4, chorusDepth: 70, vibrato: 0, vibratoFreq: 5, vibratoDepth: 30, tremolo: 0, tremoloFreq: 5, tremoloDepth: 70, phaser: 0, phaserFreq: 0.5, phaserOctaves: 3, autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200, pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null, autoPan: 0, autoPanFreq: 1, autoPanDepth: 100 };
     }
+    // ---- Advanced sound-design params (Design view / "User" patches) -------
+    // All ADDITIVE and optional: a cell without these behaves exactly as before
+    // (the synth-design module only builds extra nodes when a block is `on`).
+    // Kept out of _defaultCellParams so the warm path stays untouched; merged in
+    // by _sdEnsureDesignParams (20-sound-design.js) when a Design patch needs it.
+    //   filter:    { on, type:'lowpass'|'highpass'|'bandpass'|'notch', cutoff(Hz), q, drive(0-100) }
+    //   filterEnv: { on, attack,decay,release(ms), sustain(0-100), amount(-100..100 → ±octaves), vel(0-100) }
+    //   ampEnv is the existing attack/decay/sustain/release fields.
+    //   lfos:      [{ on, shape, rateHz, sync, depth }]   (wired in a later phase)
+    //   macros:    [{ name, value }]                        (later)
+    //   modMatrix: [{ src, dest, amount }]                  (later)
+    function _sdDefaultDesignParams() {
+      return {
+        // Oscillator richness (Phase 2). unison/spread/sub apply to basic-shape
+        // seeds (sine/saw/…) via Tone's fat oscillators; harmonicity/modIndex
+        // apply to FM/AM/Duo seeds. Shown seed-dependently in the editor.
+        osc: { unison: 1, spread: 20, sub: 0, subShape: 'sine', harmonicity: 2, modIndex: 10, ring: 0, ringRatio: 1 },
+        filter:    { on: false, type: 'lowpass', cutoff: 12000, q: 0.7, drive: 0 },
+        filterEnv: { on: false, attack: 5, decay: 220, sustain: 40, release: 300, amount: 0, vel: 0 },
+        // Two per-voice LFOs + one aux envelope (Env2). Sources for the matrix.
+        lfos: [
+          { on: false, shape: 'sine',     rateHz: 5 },
+          { on: false, shape: 'triangle', rateHz: 0.5 },
+        ],
+        env2: { on: false, attack: 5, decay: 200, sustain: 0, release: 300 },
+        // Macros: named constants (0-100) usable as matrix sources.
+        macros: [
+          { name: 'Macro 1', value: 0 }, { name: 'Macro 2', value: 0 },
+          { name: 'Macro 3', value: 0 }, { name: 'Macro 4', value: 0 },
+        ],
+        // Sparse routings: { src, dest, amount(-100..100) }. src ∈ lfo1/lfo2/
+        // env2/vel/macro1..4 ; dest ∈ pitch/cutoff/reso/pan.
+        modMatrix: [],
+      };
+    }
 
     function rebuildGrid(opts) {
       // Snapshot pre-rebuild tones so they survive root/octave/scale/A4
@@ -1218,21 +1253,25 @@
     // or 'samples' (sample-buffer based, played via Tone.Sampler /
     // GrainPlayer). The string 'sample:' prefix is the discriminator.
     const _toneTopBucketFor = (value) =>
-      (typeof value === 'string' && (value.startsWith('sample:') || value.startsWith('ensemble:'))) ? 'samples' : 'synths';
+      (typeof value === 'string' && value.startsWith('user:')) ? 'user'
+        : (typeof value === 'string' && (value.startsWith('sample:') || value.startsWith('ensemble:'))) ? 'samples'
+        : 'synths';
     let _toneMenuView = 'top'; // 'top' | 'synths' | 'samples'
     let _toneSearchQuery = '';  // type-to-search filter; empty = bucketed nav
     function populateTonePanel() {
       const panel = document.getElementById('tone-panel');
       if (!panel) return;
       panel.innerHTML = '';
-      // Sculpt — opens the full sound editor (envelope / level / effects) in
-      // apply-to-all mode so the chosen tone can be shaped grid-wide.
-      const sculpt = document.createElement('button');
-      sculpt.type = 'button';
-      sculpt.className = 'tone-sculpt-btn';
-      sculpt.id = 'tone-sculpt-btn';
-      sculpt.textContent = '⚙ Sculpt sound…';
-      panel.appendChild(sculpt);
+      // Design — opens the dedicated sound-design view (pick a seed voice →
+      // sculpt envelope / filter / mod → name → saved as a "User" voice).
+      // Replaces the old "Sculpt" entry (editing is done in the step-level
+      // Sound Editor).
+      const designBtn = document.createElement('button');
+      designBtn.type = 'button';
+      designBtn.className = 'tone-sculpt-btn';
+      designBtn.id = 'tone-design-btn';
+      designBtn.textContent = '✦ Design…';
+      panel.appendChild(designBtn);
       // Create / edit a multi-tone "ensemble" voice (saved, appears everywhere
       // a tone is picked).
       const ensBtn = document.createElement('button');
@@ -1293,7 +1332,7 @@
       // axis the user picks) and then by family (the existing sub-
       // categorization, used as section headers within each bucket).
       const allOpts = getAllSoundOptions();
-      const byBucket = { synths: [], samples: [] };
+      const byBucket = { synths: [], samples: [], user: [] };
       allOpts.forEach(opt => byBucket[_toneTopBucketFor(opt.value)].push(opt));
       const groupByFamily = (opts) => {
         const m = new Map();
@@ -1344,6 +1383,7 @@
         [
           { id: 'synths',  label: 'Synths',  count: byBucket.synths.length },
           { id: 'samples', label: 'Samples', count: byBucket.samples.length },
+          { id: 'user',    label: 'User',    count: byBucket.user.length },
         ].forEach(b => {
           if (b.count === 0) return;
           const btn = document.createElement('button');
@@ -1363,11 +1403,13 @@
           panel.appendChild(btn);
         });
       } else {
-        const bucket = _toneMenuView === 'synths' ? byBucket.synths : byBucket.samples;
+        const bucket = _toneMenuView === 'synths' ? byBucket.synths
+          : _toneMenuView === 'user' ? byBucket.user : byBucket.samples;
         const back = document.createElement('button');
         back.type = 'button';
         back.className = 'tone-opt tone-opt-back';
-        back.textContent = _toneMenuView === 'synths' ? '← Synths' : '← Samples';
+        back.textContent = _toneMenuView === 'synths' ? '← Synths'
+          : _toneMenuView === 'user' ? '← User' : '← Samples';
         back.addEventListener('click', (e) => {
           e.stopPropagation();
           _toneMenuView = 'top';
@@ -1376,6 +1418,42 @@
           if (trigger && panel.classList.contains('open')) pinPanelToButton(trigger, panel);
         });
         panel.appendChild(back);
+        // User patches aren't family-categorized — flat list with per-row
+        // management actions (edit / rename / duplicate / export / delete),
+        // plus an Import button.
+        if (_toneMenuView === 'user') {
+          const imp = document.createElement('button');
+          imp.type = 'button'; imp.className = 'tone-sculpt-btn'; imp.id = 'tone-import-btn';
+          imp.textContent = '⤒ Import sound…';
+          imp.addEventListener('click', (e) => { e.stopPropagation(); if (typeof _sdImportPatch === 'function') _sdImportPatch(); });
+          panel.appendChild(imp);
+          if (!bucket.length) { renderHeader('No saved sounds yet'); return; }
+          renderHeader('User sounds');
+          bucket.forEach(opt => {
+            const id = opt.value.slice(5);
+            const row = document.createElement('div');
+            row.className = 'tone-opt tone-opt-user';
+            row.dataset.tone = opt.value;   // click name → apply (panel delegation)
+            const nm = document.createElement('span');
+            nm.className = 'tone-user-name'; nm.textContent = opt.label;
+            row.appendChild(nm);
+            const acts = document.createElement('span'); acts.className = 'tone-user-actions';
+            [['edit', '✎', 'Edit', _sdEditPatch],
+             ['rename', '✏', 'Rename', _sdRenamePatch],
+             ['dup', '⧉', 'Duplicate', _sdDuplicatePatch],
+             ['export', '⤓', 'Export', _sdExportPatch],
+             ['del', '✕', 'Delete', _sdDeletePatchUI]].forEach(([act, glyph, title, fn]) => {
+              const ab = document.createElement('button');
+              ab.type = 'button'; ab.className = 'tone-user-act' + (act === 'del' ? ' danger' : '');
+              ab.textContent = glyph; ab.title = title;
+              ab.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); if (typeof fn === 'function') fn(id); });
+              acts.appendChild(ab);
+            });
+            row.appendChild(acts);
+            panel.appendChild(row);
+          });
+          return;
+        }
         const grouped = groupByFamily(bucket);
         // Walk the existing family order; any family with zero tones
         // in this bucket is skipped. The header text falls back to
@@ -1451,9 +1529,9 @@
           if (typeof showSampleToPadDialog === 'function') showSampleToPadDialog();
           return;
         }
-        if (e.target.closest('.tone-sculpt-btn')) {
+        if (e.target.closest('#tone-design-btn')) {
           setOpen(false);
-          if (typeof showSoundEditor === 'function') showSoundEditor(0, { applyAll: true });
+          if (typeof _sdOpenDesign === 'function') _sdOpenDesign();
           return;
         }
         const opt = e.target.closest('.tone-opt');

@@ -929,26 +929,32 @@
       (function initMixSubtabs() {
         const view = document.getElementById('mix-view');
         const bBtn = document.getElementById('mix-subtab-bloom');
+        const sBtn = document.getElementById('mix-subtab-shapes');
         const mBtn = document.getElementById('mix-subtab-mixdown');
         if (!view || !bBtn || !mBtn) return;
         const selectSub = (which) => {
-          const bloom = which === 'bloom';
-          view.classList.toggle('mix-sub-bloom', bloom);
-          view.classList.toggle('mix-sub-mixdown', !bloom);
-          bBtn.classList.toggle('active', bloom);
-          mBtn.classList.toggle('active', !bloom);
-          if (bloom) {
+          view.classList.toggle('mix-sub-bloom', which === 'bloom');
+          view.classList.toggle('mix-sub-shapes', which === 'shapes');
+          view.classList.toggle('mix-sub-mixdown', which === 'mixdown');
+          bBtn.classList.toggle('active', which === 'bloom');
+          if (sBtn) sBtn.classList.toggle('active', which === 'shapes');
+          mBtn.classList.toggle('active', which === 'mixdown');
+          // Stop the master wheel animation whenever we leave the Shapes pane.
+          if (which !== 'shapes') { try { if (typeof _shapeMasterStop === 'function') _shapeMasterStop(); } catch (e) {} }
+          if (which === 'bloom') {
             try { if (typeof _ambInitMaster === 'function') _ambInitMaster(); } catch (e) {}
+          } else if (which === 'shapes') {
+            try { if (typeof _shapeMasterInit === 'function') _shapeMasterInit(); } catch (e) {}
           } else if (typeof renderTracksLoopRuler === 'function') {
-            // Mixdown pane just became visible — realign the ruler (it measured
-            // zero-width rects while hidden).
             requestAnimationFrame(() => { try { renderTracksLoopRuler(); } catch (e) {} });
           }
         };
         bBtn.addEventListener('click', () => selectSub('bloom'));
+        if (sBtn) sBtn.addEventListener('click', () => selectSub('shapes'));
         mBtn.addEventListener('click', () => selectSub('mixdown'));
         // Reflect the default (Bloom) in the button state.
-        selectSub(view.classList.contains('mix-sub-mixdown') ? 'mixdown' : 'bloom');
+        selectSub(view.classList.contains('mix-sub-mixdown') ? 'mixdown'
+                : view.classList.contains('mix-sub-shapes') ? 'shapes' : 'bloom');
       })();
       // Pick the initial view in this order of preference:
       //   1. URL hash (#player / #mix) — survives mobile browsers that

@@ -883,6 +883,9 @@
         // Seq (sequence-bank clip launcher) mode — no per-lane config; the pad
         // reads the shared savedSequences bank. See 19-seq-pad.js.
         seqMode: false,
+        // Shape (radial wheel) mode + its config, built lazily by 21-shape.js.
+        shapeMode: false,
+        shape: null,
       };
     }
     // Snapshot the currently-mirrored voice globals into a plain object
@@ -1541,27 +1544,32 @@
       const wantAmbient = !!(lane && lane.ambientMode);
       const wantText    = !!(lane && lane.textMode);
       const wantSeq     = !!(lane && lane.seqMode);
+      const wantShape   = !!(lane && lane.shapeMode);
       const wasFluid   = fluidGridMode;
       const wasGame    = gameMode;
       const wasProg    = progMode;
       const wasAmbient = (typeof ambientMode !== 'undefined') ? ambientMode : false;
       const wasText    = (typeof textMode !== 'undefined') ? textMode : false;
       const wasSeq     = (typeof seqMode !== 'undefined') ? seqMode : false;
+      const wasShape   = (typeof shapeMode !== 'undefined') ? shapeMode : false;
       fluidGridMode = wantFluid;
       gameMode      = wantGame;
       progMode      = wantProg;
       if (typeof ambientMode !== 'undefined') ambientMode = wantAmbient;
       if (typeof textMode !== 'undefined') textMode = wantText;
       if (typeof seqMode !== 'undefined') seqMode = wantSeq;
+      if (typeof shapeMode !== 'undefined') shapeMode = wantShape;
       document.body.classList.toggle('fluid-grid',  wantFluid);
       document.body.classList.toggle('game-mode',   wantGame);
       document.body.classList.toggle('prog-mode',   wantProg);
       document.body.classList.toggle('ambient-mode', wantAmbient);
       document.body.classList.toggle('text-mode', wantText);
       document.body.classList.toggle('seq-mode', wantSeq);
+      document.body.classList.toggle('shape-mode', wantShape);
       const btn = document.getElementById('fluid-grid-toggle');
       if (btn) {
-        btn.textContent = wantSeq ? 'Seq'
+        btn.textContent = wantShape ? 'Shape'
+                        : wantSeq ? 'Seq'
                         : wantText ? 'TEXT'
                         : wantAmbient ? 'Bloom'
                         : wantProg ? 'Prog'
@@ -1570,7 +1578,7 @@
       }
       // Reflect the active mode onto the banner-row mode dropdown.
       {
-        const _mode = wantSeq ? 'seq' : wantText ? 'text' : wantAmbient ? 'bloom' : wantProg ? 'prog'
+        const _mode = wantShape ? 'shape' : wantSeq ? 'seq' : wantText ? 'text' : wantAmbient ? 'bloom' : wantProg ? 'prog'
                     : wantGame ? 'game' : wantFluid ? 'graph' : 'grid';
         const sel = document.getElementById('mode-select');
         if (sel && sel.value !== _mode) sel.value = _mode;
@@ -1586,6 +1594,12 @@
       }
       if (wasSeq !== wantSeq) {
         try { if (typeof _onSeqModeChanged === 'function') _onSeqModeChanged(wantSeq); } catch (e) {}
+      }
+      if (wasShape !== wantShape) {
+        try { if (typeof _onShapeModeChanged === 'function') _onShapeModeChanged(wantShape); } catch (e) {}
+      } else if (wasShape && wantShape) {
+        // Shape → Shape lane switch: rebind the canvas to the new lane.
+        try { if (typeof _shapeRetargetLane === 'function') _shapeRetargetLane(); } catch (e) {}
       }
       if (wasFluid && !wantFluid) {
         try { if (typeof _endFluidPress === 'function') _endFluidPress(); } catch (e) {}

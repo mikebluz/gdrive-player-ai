@@ -42,6 +42,17 @@
         timing: 'free',                 // 'free' | 'sync'
         seed:   1,
         space:  0,                      // 0 = centred → 100 = half full-L / half full-R
+        // Instance "Key": when keyOn, the Bloom is constrained to one key —
+        // root `keyRoot` (0..11 pc) + quality `keyScale` (a SCALES name). The
+        // key drives two things: (1) every layer's Notes menu only offers
+        // material that "works in the key" — diatonic, borrowed (modal
+        // interchange from the parallel major/minor pool), or with ≤1 chromatic
+        // passing tone (see _ambPcsWorkInKey); (2) scales/progressions root to
+        // the key tonic (chords/wraps keep their own root so degrees & borrowed
+        // chords play true). keyOff = behaviour exactly as before.
+        keyOn:    false,
+        keyRoot:  0,
+        keyScale: 'major',
         progRateMs: 4000,               // ms per chord for "Progression" note sources
         freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
         // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
@@ -146,6 +157,12 @@
           if (!Number.isFinite(mm[tg].rate)) mm[tg].rate = dt.rate;
           if (typeof mm[tg].shape !== 'string') mm[tg].shape = 'sine';
         }
+        // Sequence-as-waveform fields (used when shape === 'seq').
+        const o = mm[tg];
+        if (!Number.isFinite(o.seqRef)) o.seqRef = 0;
+        if (['pitch','velocity','gate'].indexOf(o.seqSource) < 0) o.seqSource = 'velocity';
+        if (['step','smooth'].indexOf(o.seqInterp) < 0) o.seqInterp = 'step';
+        if (['zero','hold'].indexOf(o.seqRest) < 0) o.seqRest = 'zero';
       });
     }
     // Backfill a layer's FX block in place (preserves objects across reload).
@@ -239,6 +256,11 @@
       if (cfg.timing !== 'free' && cfg.timing !== 'sync') cfg.timing = d.timing;
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
+      if (typeof cfg.keyOn !== 'boolean') cfg.keyOn = d.keyOn;
+      if (!Number.isFinite(cfg.keyRoot)) cfg.keyRoot = d.keyRoot;
+      cfg.keyRoot = ((((cfg.keyRoot | 0) % 12) + 12) % 12);
+      if (typeof cfg.keyScale !== 'string' || !cfg.keyScale) cfg.keyScale = d.keyScale;
+      if (typeof SCALES !== 'undefined' && SCALES && !SCALES[cfg.keyScale]) cfg.keyScale = d.keyScale;
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.freezeLenMs)) cfg.freezeLenMs = d.freezeLenMs;
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
@@ -419,7 +441,116 @@
       const step = (_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0;
       return chs[((step % chs.length) + chs.length) % chs.length] || null;
     }
+    // ---- Instance "Key" -------------------------------------------------
+    // Read the current engine's (already-normalized) cfg cheaply: the tick
+    // caches it on E._cfg, so generation reads keyOn/keyRoot without a fresh
+    // normalize. Returns null off the audio path (UI-only calls fall through).
+    function _ambKeyCfg() {
+      try { return (_E && (_E._cfg || (typeof _E.getCfg === 'function' && _E.getCfg()))) || null; } catch (e) { return null; }
+    }
+    function _ambKeyRootPc(cfg) {
+      const c = cfg || _ambKeyCfg();
+      return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
+    }
+    function _ambKeyScaleName(cfg) {
+      const c = cfg || _ambKeyCfg();
+      const q = (c && typeof c.keyScale === 'string' && c.keyScale) ? c.keyScale : 'major';
+      return (typeof SCALES !== 'undefined' && SCALES[q]) ? q : 'major';
+    }
+    // Absolute pitch-class Set of the key's own scale, rooted at keyRoot.
+    function _ambKeyDiatonicPcs(cfg) {
+      const c = cfg || _ambKeyCfg();
+      const root = _ambKeyRootPc(c);
+      const iv = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(c)]) || [0, 2, 4, 5, 7, 9, 11];
+      const s = new Set();
+      iv.forEach(x => s.add((((root + x) % 12) + 12) % 12));
+      return s;
+    }
+    // Modal-interchange "borrowing pool": the parallel major ∪ parallel natural
+    // minor rooted at keyRoot — the standard set a key can borrow chords from
+    // (covers iv, ♭III, ♭VI, ♭VII, Picardy III, etc.). Excludes only ♭2 and the
+    // bare tritone, which the ≤1-passing-tone rule still admits as single tones.
+    function _ambKeyExtendedPcs(cfg) {
+      const c = cfg || _ambKeyCfg();
+      const root = _ambKeyRootPc(c);
+      const pools = [
+        (typeof SCALES !== 'undefined' && SCALES['major']) || [0, 2, 4, 5, 7, 9, 11],
+        (typeof SCALES !== 'undefined' && SCALES['minor']) || [0, 2, 3, 5, 7, 8, 10],
+      ];
+      const s = new Set();
+      pools.forEach(iv => iv.forEach(x => s.add((((root + x) % 12) + 12) % 12)));
+      return s;
+    }
+    // Does a set of ABSOLUTE pitch classes "work in the key"? Allowed when every
+    // tone is diatonic/borrowed (in the interchange pool), OR it strays by at
+    // most one chromatic passing tone (covers secondary dominants, Lydian ♯4,
+    // bluesy ♭5, etc.). keyOff → everything works (no constraint).
+    function _ambPcsWorkInKey(pcs, cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (!c || !c.keyOn) return true;
+      const D = _ambKeyDiatonicPcs(c), E = _ambKeyExtendedPcs(c);
+      let allInE = true, foreign = 0;
+      (pcs || []).forEach(p => { p = (((p % 12) + 12) % 12); if (!E.has(p)) allInE = false; if (!D.has(p)) foreign++; });
+      return allInE || foreign <= 1;
+    }
+    function _ambScalePcs(name, root) {
+      const iv = (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
+      return iv.map(x => (((root + x) % 12) + 12) % 12);
+    }
+    function _ambChordPcsOf(form, root) {
+      return _ambChordIntervals(form, 0).map(x => (((root + x) % 12) + 12) % 12);
+    }
+    // A scale name rooted at the KEY tonic (scales play at keyRoot in key mode).
+    function _ambScaleWorksInKey(name, cfg) {
+      const c = cfg || _ambKeyCfg();
+      return _ambPcsWorkInKey(_ambScalePcs(_ambResolveScale(name), _ambKeyRootPc(c)), c);
+    }
+    function _ambChordWorksInKey(form, root, cfg) {
+      return _ambPcsWorkInKey(_ambChordPcsOf(form, root), cfg);
+    }
+    // Classify a chord against the key: 'diatonic' | 'borrowed' | 'passing' | null
+    // (null = doesn't work / shouldn't be offered).
+    function _ambChordKeyClass(form, root, cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (!c || !c.keyOn) return 'diatonic';
+      const D = _ambKeyDiatonicPcs(c), E = _ambKeyExtendedPcs(c);
+      const pcs = _ambChordPcsOf(form, root);
+      let allInD = true, allInE = true, foreign = 0;
+      pcs.forEach(p => { if (!D.has(p)) { allInD = false; foreign++; } if (!E.has(p)) allInE = false; });
+      if (allInD) return 'diatonic';
+      if (allInE) return 'borrowed';
+      if (foreign <= 1) return 'passing';
+      return null;
+    }
+    function _ambWrapWorksInKey(w, cfg) {
+      if (!w || !Array.isArray(w.intervals)) return true;
+      const root = ((((w.root | 0) % 12) + 12) % 12);
+      return _ambPcsWorkInKey(w.intervals.map(x => (((root + x) % 12) + 12) % 12), cfg);
+    }
+    // Transpose offset that maps a progression's reference tonic (its first
+    // chord's root) onto keyRoot, so the whole progression is rooted in the key
+    // while keeping its relative chord motion.
+    function _ambProgKeyOffset(n, keyRoot) {
+      const chs = Array.isArray(n.chords) ? n.chords : [];
+      const ref = (chs[0] && Number.isFinite(chs[0].root)) ? (((chs[0].root % 12) + 12) % 12) : 0;
+      return (((keyRoot - ref) % 12) + 12) % 12;
+    }
+    function _ambProgWorksInKey(n, cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (!c || !c.keyOn) return true;
+      const chs = Array.isArray(n.chords) ? n.chords : [];
+      if (!chs.length) return true;
+      const off = _ambProgKeyOffset(n, _ambKeyRootPc(c));
+      return chs.every(ch => {
+        const r = (((((ch.root | 0) + off) % 12) + 12) % 12);
+        const iv = Array.isArray(ch.intervals) ? ch.intervals : [0, 4, 7];
+        return _ambPcsWorkInKey(iv.map(x => (((r + x) % 12) + 12) % 12), c);
+      });
+    }
     // Interval set for a note source. Chord/Wrap/Prog → pitch-class set; scale → SCALES.
+    // Key mode does NOT alter tones here (no conforming): the Notes menu only
+    // offers material that already fits, so borrowed chords / passing tones play
+    // true. The key's runtime effect is purely re-rooting (see _ambSrcRootPc).
     function _ambScaleIntervals(src) {
       const n = _ambAsNotes(src);
       if (n.type === 'chord') return _ambChordIntervals(n.form, n.inversion);
@@ -430,9 +561,22 @@
     }
     function _ambSrcRootPc(src) {
       const n = _ambAsNotes(src);
+      const kc = _ambKeyCfg();
+      const keyOn = !!(kc && kc.keyOn);
+      const keyRoot = keyOn ? _ambKeyRootPc(kc) : 0;
+      // Chords & wraps keep their OWN root in key mode, so degrees (IV, vi) and
+      // borrowed chords (♭VI, ♭VII) play on their real roots.
       if (n.type === 'chord' && Number.isFinite(n.root)) return ((n.root % 12) + 12) % 12;
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); if (w && Number.isFinite(w.root)) return ((w.root % 12) + 12) % 12; }
-      if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); if (ch && Number.isFinite(ch.root)) return ((ch.root % 12) + 12) % 12; }
+      // Progressions transpose so their tonic = keyRoot (relative motion kept).
+      if (n.type === 'prog') {
+        const ch = _ambProgCurrentChord(n);
+        let r = (ch && Number.isFinite(ch.root)) ? (((ch.root % 12) + 12) % 12) : ((typeof rootIdx === 'number') ? rootIdx : 0);
+        if (keyOn) r = ((r + _ambProgKeyOffset(n, keyRoot)) % 12 + 12) % 12;
+        return r;
+      }
+      // Scales root to the key tonic.
+      if (keyOn) return keyRoot;
       return (typeof rootIdx === 'number') ? rootIdx : 0;
     }
     // Human label for the Notes button.
@@ -567,6 +711,10 @@
     }
     function _ambOpenNotesMenu(E, getLayer, x, y, afterChange) {
       if (typeof showCtxMenu !== 'function') return;
+      _E = E;
+      const kcfg = E.getCfg();
+      const keyOn = !!(kcfg && kcfg.keyOn);
+      const keyTag = keyOn ? (' — in ' + ((typeof CHROMATIC !== 'undefined' && CHROMATIC[_ambKeyRootPc(kcfg)]) || '') + ' ' + _ambKeyScaleName(kcfg)) : '';
       const apply = (notes) => {
         _E = E; const L = getLayer(); if (!L) return;
         L.notes = notes;
@@ -581,42 +729,63 @@
           populateGroupedScaleSelect(tmp, { value: '', label: 'Workspace scale' });
           Array.from(tmp.children).forEach(node => {
             if (node.tagName === 'OPTGROUP') {
+              const kids = Array.from(node.children).filter(o => !keyOn || _ambScaleWorksInKey(o.value, kcfg));
+              if (!kids.length) return;
               items.push({ label: node.label, disabled: true });
-              Array.from(node.children).forEach(o => items.push({ label: '  ' + o.textContent, fn: () => apply({ type: 'scale', scale: o.value }) }));
+              kids.forEach(o => items.push({ label: '  ' + o.textContent, fn: () => apply({ type: 'scale', scale: o.value }) }));
             } else {
+              if (keyOn && !_ambScaleWorksInKey(node.value, kcfg)) return;
               items.push({ label: node.textContent, fn: () => apply({ type: 'scale', scale: node.value }) });
             }
           });
         } catch (e) {}
+        if (!items.length) items.push({ label: 'No scales fit this key', disabled: true });
         showCtxMenu(x, y, items);
       };
       const wrapSub = () => {
-        const wraps = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
+        let wraps = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
+        if (keyOn) wraps = wraps.filter(w => _ambWrapWorksInKey(w, kcfg));
         if (!wraps.length) {
-          showCtxMenu(x, y, [{ label: 'No published wraps', disabled: true }, { label: 'Right-click a wrap chip → Publish to Bloom', disabled: true }]);
+          showCtxMenu(x, y, keyOn
+            ? [{ label: 'No published wraps fit this key', disabled: true }]
+            : [{ label: 'No published wraps', disabled: true }, { label: 'Right-click a wrap chip → Publish to Bloom', disabled: true }]);
           return;
         }
         showCtxMenu(x, y, wraps.map(w => ({ label: '⊕ ' + w.name, fn: () => apply({ type: 'wrap', id: w.id }) })));
       };
       const progSub = () => {
         const items = [{ label: 'Standards', disabled: true }];
-        _AMB_PROG_STANDARDS.forEach(([nm, fam, steps]) => items.push({ label: '  ' + nm, fn: () => apply({ type: 'prog', name: nm, chords: _ambResolveStandard(fam, steps) }) }));
+        _AMB_PROG_STANDARDS.forEach(([nm, fam, steps]) => {
+          const chords = _ambResolveStandard(fam, steps);
+          if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return;
+          items.push({ label: '  ' + nm, fn: () => apply({ type: 'prog', name: nm, chords }) });
+        });
         const pub = (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
         if (pub.length) {
-          items.push('hr', { label: 'Published', disabled: true });
-          pub.forEach(p => items.push({ label: '  ' + p.name, fn: () => apply({ type: 'prog', name: p.name, chords: (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals })) }) }));
+          const pubItems = [];
+          pub.forEach(p => {
+            const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals }));
+            if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return;
+            pubItems.push({ label: '  ' + p.name, fn: () => apply({ type: 'prog', name: p.name, chords }) });
+          });
+          if (pubItems.length) { items.push('hr', { label: 'Published', disabled: true }); pubItems.forEach(i => items.push(i)); }
         }
+        if (items.length <= 1) items.push({ label: 'No progressions fit this key', disabled: true });
         showCtxMenu(x, y, items);
       };
       showCtxMenu(x, y, [
+        (keyTag ? { label: 'Key' + keyTag, disabled: true } : null),
         { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
         { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
         { label: '⇶ Progression ▸', fn: () => setTimeout(progSub, 0) },
-      ]);
+      ].filter(Boolean));
     }
     function _ambOpenChordPicker(E, getLayer, afterChange) {
+      _E = E;
       const L = getLayer(); if (!L) return;
+      const kcfg = E.getCfg();
+      const keyOn = !!(kcfg && kcfg.keyOn);
       const curN = _ambNotesOf(L);
       const cur = (curN.type === 'chord') ? curN : { form: 'maj', root: (typeof rootIdx === 'number') ? rootIdx : 0, inversion: 0 };
       const CHROM = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -625,19 +794,42 @@
         const def = _AMB_CHORD_FORMS.find(c => c[0] === form) || _AMB_CHORD_FORMS[0];
         return def[2].map((_, i) => '<option value="' + i + '"' + (i === (sel | 0) ? ' selected' : '') + '>' + ordinal(i) + '</option>').join('');
       };
+      // Root <option>s. Key off → all 12. Key on → only roots where this form
+      // works, grouped In key / Borrowed / Color (passing).
+      const rootOptsFor = (form, selRoot) => {
+        if (!keyOn) return CHROM.map((nm, i) => '<option value="' + i + '"' + (i === (selRoot | 0) ? ' selected' : '') + '>' + nm + '</option>').join('');
+        const groups = { diatonic: [], borrowed: [], passing: [] };
+        for (let i = 0; i < 12; i++) { const cls = _ambChordKeyClass(form, i, kcfg); if (cls && groups[cls]) groups[cls].push(i); }
+        const valid = groups.diatonic.concat(groups.borrowed, groups.passing);
+        const sel = (valid.indexOf(selRoot | 0) >= 0) ? (selRoot | 0) : (valid.length ? valid[0] : (selRoot | 0));
+        const lbl = { diatonic: 'In key', borrowed: 'Borrowed', passing: 'Color (passing)' };
+        let html = '';
+        ['diatonic', 'borrowed', 'passing'].forEach(k => {
+          if (!groups[k].length) return;
+          html += '<optgroup label="' + lbl[k] + '">' +
+            groups[k].map(i => '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + CHROM[i] + '</option>').join('') + '</optgroup>';
+        });
+        if (!html) html = '<option value="' + (selRoot | 0) + '">' + CHROM[(selRoot | 0) % 12] + '</option>';
+        return html;
+      };
       const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
       const modal = document.createElement('div'); modal.className = 'step-div-modal amb-chord-modal';
-      modal.innerHTML = '<div class="keep-sdiv-title">Chord</div>' +
-        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Root</span><select id="amb-chord-root" class="sm-select">' +
-          CHROM.map((nm, i) => '<option value="' + i + '"' + (i === (cur.root | 0) ? ' selected' : '') + '>' + nm + '</option>').join('') + '</select></div>' +
+      modal.innerHTML = '<div class="keep-sdiv-title">Chord' + (keyOn ? ' · ' + ((CHROM[_ambKeyRootPc(kcfg)]) || '') + ' ' + _ambKeyScaleName(kcfg) + ' key' : '') + '</div>' +
         '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Form</span><select id="amb-chord-form" class="sm-select">' +
           _AMB_CHORD_FORMS.map(c => '<option value="' + c[0] + '"' + (c[0] === cur.form ? ' selected' : '') + '>' + c[1] + '</option>').join('') + '</select></div>' +
+        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Root</span><select id="amb-chord-root" class="sm-select">' +
+          rootOptsFor(cur.form, cur.root) + '</select></div>' +
         '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Inversion</span><select id="amb-chord-inv" class="sm-select">' + invOptsFor(cur.form, cur.inversion) + '</select></div>' +
         '<div class="keep-sdiv-actions"><button type="button" class="keep-sdiv-apply" id="amb-chord-apply">Apply</button></div>';
       overlay.appendChild(modal); document.body.appendChild(overlay);
       const formSel = modal.querySelector('#amb-chord-form');
+      const rootSel = modal.querySelector('#amb-chord-root');
       const invSel = modal.querySelector('#amb-chord-inv');
-      formSel.addEventListener('change', () => { invSel.innerHTML = invOptsFor(formSel.value, 0); });
+      formSel.addEventListener('change', () => {
+        const keep = parseInt(rootSel.value, 10) || 0;
+        rootSel.innerHTML = rootOptsFor(formSel.value, keep);
+        invSel.innerHTML = invOptsFor(formSel.value, 0);
+      });
       modal.querySelector('#amb-chord-apply').addEventListener('click', () => {
         _E = E; const layer = getLayer();
         if (layer) {
@@ -1264,7 +1456,11 @@
       }
       const emitEvent = (freqs, durMs, vel, t, padStyle, sounds) => {
         if (!freqs || !freqs.length) return;
-        const pans = _ambLayerPans(seq, freqs.length);
+        // Spread on a melodic (single-note) sequence has nothing to fan across,
+        // so a lone note would always land centred — give each event its own
+        // pan (random ±spread in Spread mode, the fixed value in Pan mode);
+        // chords still fan their voices across the field.
+        const pans = (freqs.length > 1) ? _ambLayerPans(seq, freqs.length) : [_ambLayerPan(seq)];
         const vol = _ambAccentVol(_ambApplyLevel(Math.round((vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
         freqs.forEach((f, vi) => {
           const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
@@ -1368,15 +1564,22 @@
         else if (target === 'vcf') e.vcf.frequency.value = 20000;
       } catch (x) {}
     }
-    function _ambMakeSrc(e, target, shape, hz, min, max) {
+    function _ambMakeSrc(e, target, shape, hz, min, max, t) {
+      const isSeq = (shape === 'seq');
       const stochastic = _ambIsStochastic(shape);
-      const src = { target, stochastic, min, max };
+      const src = { target, kind: isSeq ? 'seq' : (stochastic ? 'sh' : 'lfo'), stochastic, seq: isSeq, min, max };
       let node;
       try {
-        if (stochastic) {
+        if (isSeq || stochastic) {
           node = new Tone.Signal((min + max) / 2);
-          src.smooth = (shape === 'smooth');
-          src.intervalSec = 1 / Math.max(0.001, hz);
+          if (isSeq) {
+            src.curve = _seqRefCurve(t || {});
+            src.smooth = !!(t && t.seqInterp === 'smooth');
+            src.periodSec = 1 / Math.max(0.001, hz);
+          } else {
+            src.smooth = (shape === 'smooth');
+            src.intervalSec = 1 / Math.max(0.001, hz);
+          }
           src.nextAt = 0;
         } else {
           node = new Tone.LFO({ frequency: hz, type: shape, min, max });
@@ -1398,19 +1601,23 @@
         if (existing) { _ambDisposeSrc(existing); e.src[target] = null; _ambResetTargetParam(e, target); }
         return;
       }
-      const shape = (_AMB_MOD_SHAPES.indexOf(t.shape) >= 0) ? t.shape : 'sine';
-      const stochastic = _ambIsStochastic(shape);
+      const shape = (t.shape === 'seq' || _AMB_MOD_SHAPES.indexOf(t.shape) >= 0) ? t.shape : 'sine';
+      const kind = (shape === 'seq') ? 'seq' : (_ambIsStochastic(shape) ? 'sh' : 'lfo');
       const hz = _ambModRateHz(t.rate, cfg);
       const range = _ambTargetRange(target, depth);
-      // Rebuild when the kind (periodic↔stochastic) changes or nothing exists.
-      if (!existing || existing.stochastic !== stochastic) {
+      // Rebuild when the kind (lfo / stochastic / seq) changes or none exists.
+      if (!existing || existing.kind !== kind) {
         if (existing) _ambDisposeSrc(existing);
-        e.src[target] = _ambMakeSrc(e, target, shape, hz, range[0], range[1]);
+        e.src[target] = _ambMakeSrc(e, target, shape, hz, range[0], range[1], t);
         return;
       }
       // Update in place.
       existing.min = range[0]; existing.max = range[1];
-      if (stochastic) {
+      if (kind === 'seq') {
+        existing.curve = _seqRefCurve(t);
+        existing.smooth = (t.seqInterp === 'smooth');
+        existing.periodSec = 1 / Math.max(0.001, hz);
+      } else if (kind === 'sh') {
         existing.smooth = (shape === 'smooth');
         existing.intervalSec = 1 / Math.max(0.001, hz);
       } else {
@@ -1572,7 +1779,9 @@
         if (!e.src) continue;
         ['vca', 'vco', 'vcf'].forEach(tg => {
           const src = e.src[tg];
-          if (!src || !src.stochastic || !src.node) return;
+          if (!src || !src.node) return;
+          if (src.seq) { _ambScheduleSeqSrc(src, now, horizon); return; }
+          if (!src.stochastic) return;
           if (!src.nextAt || src.nextAt < now) src.nextAt = now + 0.05;
           let g = 0;
           while (src.nextAt < horizon && g++ < 48) {
@@ -1584,6 +1793,27 @@
             src.nextAt += src.intervalSec;
           }
         });
+      }
+    }
+    // Schedule-ahead a 'seq' modulation source: sample its sequence curve on a
+    // uniform time grid (phase locked to the audio clock) and write it into the
+    // Signal — stepped (setValueAtTime) or smooth (linearRampToValueAtTime).
+    function _ambScheduleSeqSrc(src, now, horizon) {
+      const curve = src.curve;
+      if (!curve || !curve.points || !curve.points.length) return;
+      const period = Math.max(0.02, src.periodSec || 1);
+      const dt = Math.max(0.01, Math.min(period / 64, 0.04));
+      if (!src.nextAt || src.nextAt < now) src.nextAt = now;
+      let g = 0;
+      while (src.nextAt < horizon && g++ < 256) {
+        const phase = (src.nextAt / period) % 1;
+        const f = _seqCurveAt(curve, phase, src.smooth ? 'smooth' : 'step');
+        const v = src.min + f * (src.max - src.min);
+        try {
+          if (src.smooth) src.node.linearRampToValueAtTime(v, src.nextAt);
+          else src.node.setValueAtTime(v, src.nextAt);
+        } catch (x) {}
+        src.nextAt += dt;
       }
     }
     // Routing helpers for the emit functions.
@@ -1624,6 +1854,7 @@
       try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
       const runLayer = (key, lc, guardMax, minSec, emit) => {
         if (!lc || lc.present === false || !lc.on || _ambFreezeFrozen(E, key)) return;
+        if (E.windingDown) return; // Capture finalize: no new iterations (current ones, already scheduled, play out)
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(lc, cfg);
         let g = 0;
         while (C[key] < horizon && g++ < guardMax) {
@@ -1652,6 +1883,7 @@
           if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
           if (_muted(seq)) continue;
+          if (E.windingDown) continue; // Capture finalize: let the current unit finish, start no more
           if (_ambFreezeGate(E, key, now, horizon)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
@@ -1685,6 +1917,7 @@
           if (!L || !L.on || !L.sampleId) continue;
           const key = 'samp:' + L.id;
           if (_muted(L)) continue;
+          if (E.windingDown) continue; // Capture finalize: start no more slices
           if (_ambFreezeGate(E, key, now, horizon)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
@@ -1896,12 +2129,13 @@
       const intervalSec = Math.max(0.05, (((layer && layer.intervalMs) | 0) / 1000) || 1);
       const P1 = st.recStart || 0;
       const P2 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-      // Round the start/end presses to the nearest note onset (search a little
-      // past P2 so the end can snap up to the next note for seamless tiling).
-      const startOnset = _ambNearestOnset(cap, P1, P1 - intervalSec, P2 + intervalSec);
-      const endOnset = _ambNearestOnset(cap, P2, P1, P2 + intervalSec * 1.5);
-      let loopStart = (startOnset != null) ? startOnset : P1;
-      let loopEnd = (endOnset != null) ? endOnset : P2;
+      // Capture EXACTLY what played between the two presses. Earlier this snapped
+      // the window to the nearest captured onsets, which on a sparse layer (long
+      // Interval) could slide the window off the notes the user actually heard.
+      // The loop length is the held duration; the `anchor` below still snaps the
+      // loop START onto the grid so the handoff lands cleanly.
+      let loopStart = P1;
+      let loopEnd = P2;
       if (loopEnd <= loopStart + 0.01) loopEnd = loopStart + intervalSec; // too-fast double press
       const eps = 0.001;
       const win = cap.filter(e => e.at >= loopStart - eps && e.at < loopEnd - eps);
@@ -1956,7 +2190,13 @@
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       const A = st.anchor || now, L = st.loopLen || 0;
       if (L > 0) {
-        const k = Math.max(1, Math.ceil((now - A) / L)); // end of the current iteration
+        // Resume generation only AFTER the furthest already-scheduled loop
+        // iteration finishes. Loop events are committed across the lookahead
+        // window (up to scheduledUpto); deferring merely to the next boundary
+        // past `now` would let those queued iterations keep sounding past the
+        // handoff and overlap the freshly generated notes.
+        const ref = Math.max(now, st.scheduledUpto || now);
+        const k = Math.max(1, Math.ceil((ref - A) / L)); // boundary at/after the last queued loop
         st.pendingThawAt = A + k * L;
       } else {
         st.frozen = false; st.scheduledUpto = 0; st.events = [];
@@ -2355,10 +2595,11 @@
     let _ambCaptureBank = [];   // [{ id, name, ext, mime, folder, durSec, bytes, blob, url, uploaded }]
     let _ambCapBankSeq = 0;
     let _ambBankPreviewAudio = null;
-    async function _ambCaptureToBank(E) {
-      if (_ambExportBusy) return;
+    function _ambCaptureToBank(E) {
       E = E || _laneEng;
       _E = E;
+      if (E.capRec) { _ambCaptureFinalize(E); return; } // 2nd press → wind down + end on silence
+      if (_ambExportBusy) return;
       const cfg = E.getCfg();
       if (!cfg) return;
       const anyOn = ['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].present !== false && cfg[k].on)
@@ -2366,41 +2607,99 @@
         || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length))
         || (Array.isArray(cfg.samples) && cfg.samples.some(s => s.on && s.sampleId));
       if (!anyOn) { alert('Turn on at least one Bloom layer before capturing.'); return; }
-      const durStr = (typeof prompt === 'function') ? prompt('Capture length in seconds:', '60') : '60';
-      if (durStr == null) return;
-      const durSec = Math.max(2, Math.min(600, parseFloat(durStr) || 60));
-      if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
-      const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
-      const choice = await showExportOptionsDialog({
-        title: 'Capture Bloom', defaultName: 'bloom-' + stamp,
-        defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Capture',
-      });
-      if (!choice) return;
-      const { filename, fmt, folder } = choice;
-      const ext = fmt === 'mp3' ? 'mp3' : 'wav';
-      const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
-      _ambExportBusy = true;
-      // Records the LIVE output in real time → non-blocking progress so the user
-      // can keep tweaking; edits are captured until the recording ends.
-      const progress = (typeof showRenderProgressModal === 'function')
-        ? showRenderProgressModal('Capturing Bloom…', { nonBlocking: true, note: 'Keep tweaking — edits are captured live until the recording ends.' })
-        : null;
+      // Live capture: start recording the master output now; the button becomes
+      // "Finalize", which winds Bloom down (each layer stops starting new
+      // iterations once its current one completes) and ends the recording when
+      // the output has decayed to silence — a clean tail with no fade-cut.
+      _ambCaptureStart(E);
+    }
+    // Reflect the capture state onto the Capture/Finalize button.
+    function _ambRefreshCaptureBtn(E) {
+      const btn = _ambGet(E, 'ambient-export-btn');
+      if (!btn) return;
+      if (E.capRec && E.windingDown) { btn.textContent = '⏳ Finalizing…'; btn.disabled = true; btn.classList.add('recording'); }
+      else if (E.capRec) { btn.textContent = '■ Finalize'; btn.disabled = false; btn.classList.add('recording'); }
+      else { btn.textContent = '⤓ Capture'; btn.disabled = false; btn.classList.remove('recording'); }
+    }
+    // Begin live recording the master output (fan-out tap, no seed restart).
+    function _ambCaptureStart(E) {
+      if (typeof MediaRecorder === 'undefined') { alert('This browser cannot record audio output.'); return; }
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('No audio context'); return; }
+      const tap = (typeof masterLimiter !== 'undefined' && masterLimiter) ? masterLimiter : null;
+      if (!tap) { alert('Master output unavailable.'); return; }
+      E.windingDown = false;
+      try { if (!E.timer) _ambStartGenerator(E); } catch (e) {}    // make sure something is generating
+      let dest, analyser, rec;
       try {
-        progress && progress.setStatus('Recording ' + durSec + 's…');
-        const buffer = await _ambCaptureToBuffer(E, durSec, (pct, sec, tot) => progress && progress.setProgress(pct, sec, tot));
-        progress && progress.setStatus(fmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…');
-        const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(buffer) : audioBufferToWav(buffer);
+        dest = ac.createMediaStreamDestination(); tap.connect(dest);
+        analyser = ac.createAnalyser(); analyser.fftSize = 1024; tap.connect(analyser);
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
+      } catch (e) { try { tap.disconnect(dest); } catch (_) {} alert('Capture failed: ' + ((e && e.message) || e)); return; }
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      rec.onstop = () => _ambCaptureFinish(E, chunks, rec);
+      E.capRec = { rec, dest, analyser, tap, chunks, silentMs: 0, pollTimer: null, finalizing: false };
+      try { rec.start(); } catch (e) { try { tap.disconnect(dest); } catch (_) {} E.capRec = null; alert('Capture failed.'); return; }
+      _ambRefreshCaptureBtn(E);
+      if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
+    }
+    // Wind Bloom down (no new iterations) and end the recording once the output
+    // has been silent for a short sustained window (so release/reverb tails ring
+    // out fully), with a safety ceiling so it can't hang on an endless tail.
+    function _ambCaptureFinalize(E) {
+      const r = E.capRec; if (!r || r.finalizing) return;
+      r.finalizing = true;
+      E.windingDown = true;
+      _ambRefreshCaptureBtn(E);
+      if (typeof showToast === 'function') showToast('Finalizing — winding down, ending on silence…');
+      const buf = new Float32Array(r.analyser.fftSize);
+      const SILENCE = 0.0025, NEED_SILENT_MS = 450, MAX_TAIL_MS = 30000;
+      const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+      r.pollTimer = setInterval(() => {
+        let rms = 0;
+        try { r.analyser.getFloatTimeDomainData(buf); let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; rms = Math.sqrt(s / buf.length); } catch (e) {}
+        r.silentMs = (rms < SILENCE) ? (r.silentMs + 100) : 0;
+        const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - t0;
+        if (r.silentMs >= NEED_SILENT_MS || elapsed >= MAX_TAIL_MS) {
+          clearInterval(r.pollTimer); r.pollTimer = null;
+          try { r.rec.stop(); } catch (e) {}
+        }
+      }, 100);
+    }
+    // Recorder stopped: tear down the tap, stop the (now-silent) generator,
+    // then ask for name/format and save the take to the capture bank.
+    async function _ambCaptureFinish(E, chunks, rec) {
+      const r = E.capRec;
+      if (r && r.pollTimer) { clearInterval(r.pollTimer); r.pollTimer = null; }
+      try { if (r) r.tap.disconnect(r.dest); } catch (e) {}
+      try { if (r) r.tap.disconnect(r.analyser); } catch (e) {}
+      try { _ambStopGenerator(E); } catch (e) {}
+      E.windingDown = false;
+      E.capRec = null;
+      _ambRefreshCaptureBtn(E);
+      try { _ambRefreshPlayBtn(E); } catch (e) {}
+      if (!chunks || !chunks.length) return;
+      try {
+        const ac = Tone.getContext().rawContext;
+        const arr = await new Blob(chunks, { type: rec.mimeType || 'audio/webm' }).arrayBuffer();
+        const audioBuf = await ac.decodeAudioData(arr);
+        if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
+        const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
+        const choice = await showExportOptionsDialog({ title: 'Save capture', defaultName: 'bloom-' + stamp, defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Save' });
+        if (!choice) return;
+        const { filename, fmt, folder } = choice;
+        const ext = fmt === 'mp3' ? 'mp3' : 'wav';
+        const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+        const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(audioBuf) : audioBufferToWav(audioBuf);
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
-        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false });
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false });
         _ambRenderCaptureBank();
-        progress && progress.markDone();
         if (typeof showToast === 'function') showToast('Captured “' + filename + '” — upload it from the bank below.');
       } catch (e) {
         console.error('Bloom capture failed', e);
         alert('Bloom capture failed: ' + ((e && e.message) || e));
-      } finally {
-        progress && progress.close();
-        _ambExportBusy = false;
       }
     }
     async function _ambUploadBankItem(item) {
@@ -2592,8 +2891,60 @@
       '<div class="ambient-ctrl"><label for="' + id + '">' + label + '</label>' +
       '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '" />' +
       '<span class="ambient-hint" id="' + id + '-v"></span></div>';
+    // Saved sequences as a "Sequence" optgroup for shape/wave dropdowns.
+    function _ambSeqWaveOptgroup() {
+      const list = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const o = list.map((s, i) => (s && s.type !== 'audio' && Array.isArray(s.steps) && s.steps.length)
+        ? '<option value="seq:' + i + '">' + String(s.name || ('Seq ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>' : '').join('');
+      return o ? ('<optgroup label="Sequence">' + o + '</optgroup>') : '';
+    }
     const _ambShapeSel = (id) => '<select id="' + id + '" class="ambient-select">' +
-      ['sine', 'triangle', 'sawtooth', 'square', 'smooth', 'sharp'].map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select>';
+      ['sine', 'triangle', 'sawtooth', 'square', 'smooth', 'sharp'].map(s => '<option value="' + s + '">' + s + '</option>').join('') +
+      _ambSeqWaveOptgroup() + '</select>';
+    // The Pitch/Velocity/Gate · Stepped/Smooth · Zero/Hold sub-row shown under a
+    // mod target's Shape when a sequence is selected. `base` = the target's id
+    // stem ('ambient-<layer>-mod-<target>'). Values are set later via sync.
+    function _ambModSeqRow(base) {
+      const sel = (suf, opts) => '<select id="' + base + '-' + suf + '" class="ambient-select">' + opts.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select>';
+      return '<div class="ambient-ctrl ambient-mod-seqrow" id="' + base + '-seqrow" hidden>' +
+        '<label>Read</label>' + sel('seqsrc', [['pitch','Pitch'],['velocity','Velocity'],['gate','Gate']]) +
+        '<label>Curve</label>' + sel('seqinterp', [['step','Step'],['smooth','Smooth']]) +
+        '<label>Rest</label>' + sel('seqrest', [['zero','Zero'],['hold','Hold']]) + '</div>';
+    }
+    // Set a mod target's shape from a dropdown value ('seq:<idx>' → seq + ref).
+    function _ambSetModShape(m, value) {
+      const v = value || 'sine';
+      if (v.indexOf('seq:') === 0) {
+        m.shape = 'seq'; m.seqRef = parseInt(v.slice(4), 10) || 0;
+        if (['pitch','velocity','gate'].indexOf(m.seqSource) < 0) m.seqSource = 'velocity';
+        if (['step','smooth'].indexOf(m.seqInterp) < 0) m.seqInterp = 'step';
+        if (['zero','hold'].indexOf(m.seqRest) < 0) m.seqRest = 'zero';
+      } else { m.shape = v; }
+    }
+    // Push a mod target's stored shape/seq state into its rendered controls.
+    // `el(suf)` resolves an element whose id ends '...-mod-<t>-<suf>'.
+    function _ambSyncModShapeEl(el, m, t) {
+      if (!m) return;
+      const sh = el('mod-' + t + '-shape');
+      if (sh) sh.value = (m.shape === 'seq') ? ('seq:' + (m.seqRef | 0)) : (m.shape || 'sine');
+      const sr = el('mod-' + t + '-seqrow'); if (sr) sr.hidden = (m.shape !== 'seq');
+      const setS = (suf, val) => { const e = el('mod-' + t + '-' + suf); if (e && val) e.value = val; };
+      setS('seqsrc', m.seqSource); setS('seqinterp', m.seqInterp); setS('seqrest', m.seqRest);
+    }
+    // Wire one mod target's Shape select (seq-aware) + the seq sub-row.
+    // get() → the mod host object (has .mod); sync optional (resync audio).
+    function _ambWireModTarget(E, el, get, t, sync) {
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const sh = el('mod-' + t + '-shape');
+      if (sh) sh.addEventListener('change', () => {
+        _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return;
+        _ambSetModShape(L.mod[t], sh.value);
+        const sr = el('mod-' + t + '-seqrow'); if (sr) sr.hidden = (L.mod[t].shape !== 'seq');
+        if (sync) sync(); persist();
+      });
+      const bindSub = (suf, key) => { const e = el('mod-' + t + '-' + suf); if (e) e.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return; L.mod[t][key] = e.value; if (sync) sync(); persist(); }); };
+      bindSub('seqsrc', 'seqSource'); bindSub('seqinterp', 'seqInterp'); bindSub('seqrest', 'seqRest');
+    }
     const _ambCondCtrl = (layer) => '<div class="ambient-ctrl"><label for="ambient-' + layer + '-when">When</label>' +
       '<select id="ambient-' + layer + '-when" class="ambient-select">' +
       ['always', '1st', '1:2', '2:2', '1:3', '1:4'].map(c => '<option value="' + c + '">' + (c === 'always' ? 'Always' : c) + '</option>').join('') +
@@ -2603,7 +2954,8 @@
         _ambSl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, 0, hint) +
         _ambSl('Rate', 'ambient-' + layer + '-mod-' + target + '-rate', 0, 100, defRate, 'slow → fast') +
         '<div class="ambient-ctrl"><label for="ambient-' + layer + '-mod-' + target + '-shape">Shape</label>' +
-          _ambShapeSel('ambient-' + layer + '-mod-' + target + '-shape') + '<span class="ambient-hint">wave</span></div></div>';
+          _ambShapeSel('ambient-' + layer + '-mod-' + target + '-shape') + '<span class="ambient-hint">wave</span></div>' +
+        _ambModSeqRow('ambient-' + layer + '-mod-' + target) + '</div>';
     const _ambModUi = (layer) =>
       '<details class="ambient-mod"><summary class="ambient-mod-head">Mod · VCA / VCO / VCF</summary>' +
         _ambModTarget(layer, 'vca', 'VCA · amplitude', 'tremolo', 30) +
@@ -2826,7 +3178,7 @@
       _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist, null);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t][k] = parseInt(e.value, 10) || 0; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); });
-        const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t].shape = sh.value || 'sine'; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); });
+        _ambWireModTarget(E, el, getSq, t, () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } });
       });
       // Per-layer FX wiring.
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; setter(sq, val); if (v) v.textContent = _ambFmtMs(val); if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); };
@@ -2846,7 +3198,7 @@
       setVal('tone', s.tone); setVal('scale', s.scale);
       const iv = el('interval-v'); if (iv) iv.textContent = _ambFmtMs(s.intervalMs);
       const lv = el('length-v'); if (lv) lv.textContent = _ambFmtMs(s.lengthMs);
-      ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); const sh = el('mod-' + t + '-shape'); if (sh) sh.value = s.mod[t].shape; });
+      ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
       setVal('fx-rev', s.revSend);
       if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
@@ -2907,7 +3259,7 @@
       _ambWireSpread(E, 'ambient-samp-' + id, getL, persist, sync);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L.mod[t][k] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
-        const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L.mod[t].shape = sh.value || 'sine'; sync(); persist(); });
+        _ambWireModTarget(E, el, getL, t, sync);
       });
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
       bindFx('rev', (q, v) => { q.revSend = v; });
@@ -2924,7 +3276,7 @@
       const setVal = (suf, v) => { const e = el(suf); if (e && v != null) e.value = String(v); };
       const iv = el('interval-v'); if (iv) iv.textContent = _ambFmtMs(s.intervalMs);
       const lv = el('length-v'); if (lv) lv.textContent = _ambFmtMs(s.lengthMs);
-      ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); const sh = el('mod-' + t + '-shape'); if (sh) sh.value = s.mod[t].shape; });
+      ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
       setVal('fx-rev', s.revSend);
       if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
@@ -3036,11 +3388,11 @@
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(kk => { const e = el('mod-' + t + '-' + kk); if (e) e.addEventListener('input', () => { const L = get(); if (!L) return; L.mod[t][kk] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
-        const sh = el('mod-' + t + '-shape'); if (sh) sh.addEventListener('change', () => { const L = get(); if (!L) return; L.mod[t].shape = sh.value || 'sine'; sync(); persist(); });
+        _ambWireModTarget(E, el, get, t, sync);
       });
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { const L = get(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
       bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
-      ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); const sh = el('mod-' + t + '-shape'); if (sh) sh.value = inst.mod[t].shape; } });
+      ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); _ambSyncModShapeEl(el, inst.mod[t], t); } });
       setVal('fx-rev', inst.revSend);
       if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
@@ -3097,7 +3449,12 @@
       if (!Number.isFinite(r.b)) r.b = 100;
       if (!Number.isFinite(r.periodMs)) r.periodMs = 4000;
       r.periodMs = Math.max(50, r.periodMs | 0);
-      if (['sine','triangle','saw','square'].indexOf(r.wave) < 0) r.wave = 'sine';
+      if (['sine','triangle','saw','square','seq'].indexOf(r.wave) < 0) r.wave = 'sine';
+      // Sequence-as-waveform fields (only meaningful when wave === 'seq').
+      if (!Number.isFinite(r.seqRef)) r.seqRef = 0;
+      if (['pitch','velocity','gate'].indexOf(r.seqSource) < 0) r.seqSource = 'velocity';
+      if (['step','smooth'].indexOf(r.seqInterp) < 0) r.seqInterp = 'step';
+      if (['zero','hold'].indexOf(r.seqRest) < 0) r.seqRest = 'zero';
       return r;
     }
     // Resolve a ramp target ("bed.level", "seq:3.intervalMs", "samp:1.chop")
@@ -3131,6 +3488,70 @@
       (cfg.samples || []).forEach((s, i) => add('Sample' + (i + 1), 'samp:' + s.id, 'samp'));
       return g;
     }
+    // ---- Sequence-as-waveform translation -----------------------------
+    // Turn a saved sequence into a looping control curve in [0,1], sampled by
+    // phase. `source`: 'pitch' (note contour) | 'velocity' (step volume) |
+    // 'gate' (note=1 / rest=0). `rest`: 'zero' | 'hold' (last value), ignored
+    // for gate. Pitch/velocity auto-normalize to the sequence's own range so
+    // the full modulation depth is used. Steps are flattened (subs expanded),
+    // chords use their lowest note, and each step occupies its proportional
+    // slice of the cycle. Returns { points:[{frac,val}] } (frac at step START).
+    function _seqToCurve(saved, opts) {
+      opts = opts || {};
+      const source = (['pitch', 'velocity', 'gate'].indexOf(opts.source) >= 0) ? opts.source : 'velocity';
+      const restMode = (opts.rest === 'hold') ? 'hold' : 'zero';
+      const flat = [];
+      (function walk(arr) { for (const s of (arr || [])) { if (s && s.isSub && Array.isArray(s.subSteps) && s.subSteps.length) walk(s.subSteps); else if (s) flat.push(s); } })(saved && saved.steps);
+      if (!flat.length) return null;
+      const lenOf = (s) => { const dur = s.duration || 1; const sub = (s.subdivision != null) ? s.subdivision : 1; return Math.max(1e-4, dur * sub); };
+      const isRest = (s) => !s || (s.freq == null && !(Array.isArray(s.chord) && s.chord.length));
+      const lowFreq = (s) => { if (Array.isArray(s.chord) && s.chord.length) { let m = Infinity; s.chord.forEach(n => { if (n && n.freq != null && n.freq < m) m = n.freq; }); return isFinite(m) ? m : null; } return (s.freq != null) ? s.freq : null; };
+      const vel = (s) => { const p = s.params; return (p && Number.isFinite(p.volume)) ? p.volume : 100; };
+      // Raw value per step (null = rest, to be filled by rest mode below).
+      let raws = flat.map(s => {
+        if (source === 'gate') return isRest(s) ? 0 : 1;
+        if (isRest(s)) return null;
+        return (source === 'pitch') ? lowFreq(s) : vel(s);
+      });
+      if (source !== 'gate') {
+        let lo = Infinity, hi = -Infinity;
+        raws.forEach(v => { if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } });
+        const span = hi - lo;
+        raws = raws.map(v => (v == null) ? null : (span > 1e-6 ? (v - lo) / span : 0.5));
+      }
+      let last = 0;
+      const filled = raws.map(v => { if (v == null) { return (restMode === 'hold') ? last : 0; } last = v; return v; });
+      const total = flat.reduce((a, s) => a + lenOf(s), 0) || 1;
+      const points = []; let cum = 0;
+      for (let i = 0; i < flat.length; i++) { points.push({ frac: cum / total, val: filled[i] }); cum += lenOf(flat[i]); }
+      return { points };
+    }
+    // Sample a sequence curve at phase [0,1). interp 'smooth' linearly ramps
+    // between consecutive step values (wrapping); otherwise it holds (stepped).
+    function _seqCurveAt(curve, phase, interp) {
+      if (!curve || !curve.points || !curve.points.length) return 0;
+      const pts = curve.points, n = pts.length;
+      phase = ((phase % 1) + 1) % 1;
+      let i = n - 1;
+      for (let k = 0; k < n; k++) { const f0 = pts[k].frac, f1 = (k + 1 < n) ? pts[k + 1].frac : 1; if (phase >= f0 && phase < f1) { i = k; break; } }
+      if (interp === 'smooth') {
+        const f0 = pts[i].frac, v0 = pts[i].val;
+        const nx = (i + 1) % n, f1 = (i + 1 < n) ? pts[i + 1].frac : 1, v1 = pts[nx].val;
+        const t = (f1 > f0) ? (phase - f0) / (f1 - f0) : 0;
+        return v0 + t * (v1 - v0);
+      }
+      return pts[i].val;
+    }
+    // Build (and cache on the ramp/mod object) the curve for a 'seq' waveform.
+    function _seqRefCurve(host) {
+      const idx = host.seqRef | 0;
+      const saved = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences[idx] : null;
+      const key = idx + '|' + (host.seqSource || 'velocity') + '|' + (host.seqRest || 'zero');
+      if (host._seqKey === key && host._seqCurve !== undefined) return host._seqCurve;
+      host._seqKey = key;
+      host._seqCurve = saved ? _seqToCurve(saved, { source: host.seqSource, rest: host.seqRest }) : null;
+      return host._seqCurve;
+    }
     // Waveform position factor in [0,1] for phase in [0,1).
     function _ambRampFactor(wave, phase) {
       switch (wave) {
@@ -3150,7 +3571,13 @@
         if (!res) continue;
         const period = Math.max(50, r.periodMs | 0);
         const phase = ((nowSec * 1000) % period) / period;
-        const f = _ambRampFactor(r.wave, phase);
+        let f;
+        if (r.wave === 'seq') {
+          const c = _seqRefCurve(r);
+          f = c ? _seqCurveAt(c, phase, (r.seqInterp === 'smooth') ? 'smooth' : 'step') : 0;
+        } else {
+          f = _ambRampFactor(r.wave, phase);
+        }
         let v = r.a + f * (r.b - r.a);
         v = Math.max(res.min, Math.min(res.max, v));
         res.obj[res.key] = Math.round(v);
@@ -3165,6 +3592,16 @@
         '</optgroup>').join('');
       const waveOpts = [['sine','Sine'],['triangle','Triangle'],['saw','Saw'],['square','Square']]
         .map(w => '<option value="' + w[0] + '"' + (r.wave === w[0] ? ' selected' : '') + '>' + w[1] + '</option>').join('');
+      // Saved sequences as selectable waveforms (value 'seq:<idx>').
+      const _seqList = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+      const seqWaveOpts = _seqList.map((s, i) => (s && s.type !== 'audio' && Array.isArray(s.steps) && s.steps.length)
+        ? '<option value="seq:' + i + '"' + ((r.wave === 'seq' && (r.seqRef | 0) === i) ? ' selected' : '') + '>' + String(s.name || ('Seq ' + (i + 1))).replace(/[<>&"]/g, '') + '</option>' : '').join('');
+      const _msel = (sid, opts, cur) => '<select id="' + sid + '" class="ambient-select">' + opts.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
+      const seqRowHtml = '<div class="ambient-ramp-seq" id="' + p + 'seqrow"' + (r.wave === 'seq' ? '' : ' hidden') + '>' +
+        '<label>Read' + _msel(p + 'seqsrc', [['pitch','Pitch'],['velocity','Velocity'],['gate','Gate']], r.seqSource || 'velocity') + '</label>' +
+        '<label>Curve' + _msel(p + 'seqinterp', [['step','Stepped'],['smooth','Smooth']], r.seqInterp || 'step') + '</label>' +
+        '<label>Rest' + _msel(p + 'seqrest', [['zero','Zero'],['hold','Hold']], r.seqRest || 'zero') + '</label>' +
+        '</div>';
       return '<div class="ambient-ramp-row" data-ramp-id="' + id + '">' +
         '<div class="ambient-ramp-head">' +
           '<button type="button" class="ambient-toggle ambient-ramp-on" id="' + p + 'on">Ramp</button>' +
@@ -3176,8 +3613,9 @@
           '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" value="' + r.a + '"></label>' +
           '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" value="' + r.b + '"></label>' +
           '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="50" step="50" value="' + r.periodMs + '"><span class="ambient-hint">ms</span></label>' +
-          '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + '</select></label>' +
+          '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
         '</div>' +
+        seqRowHtml +
       '</div>';
     }
     function _ambRampSyncABRange(E, id) {
@@ -3218,7 +3656,22 @@
       const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.a = parseFloat(a.value) || 0; persist(); });
       const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.b = parseFloat(b.value) || 0; persist(); });
       const per = el('period'); if (per) per.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.periodMs = Math.max(50, parseInt(per.value, 10) || 1000); persist(); });
-      const wv = el('wave'); if (wv) wv.addEventListener('change', () => { _E = E; const R = getR(); if (!R) return; R.wave = wv.value || 'sine'; persist(); });
+      const wv = el('wave'); if (wv) wv.addEventListener('change', () => {
+        _E = E; const R = getR(); if (!R) return;
+        const v = wv.value || 'sine';
+        if (v.indexOf('seq:') === 0) {
+          R.wave = 'seq'; R.seqRef = parseInt(v.slice(4), 10) || 0;
+          if (['pitch','velocity','gate'].indexOf(R.seqSource) < 0) R.seqSource = 'velocity';
+          if (['step','smooth'].indexOf(R.seqInterp) < 0) R.seqInterp = 'step';
+          if (['zero','hold'].indexOf(R.seqRest) < 0) R.seqRest = 'zero';
+        } else { R.wave = v; }
+        R._seqKey = null;                       // invalidate cached curve
+        const sr = el('seqrow'); if (sr) sr.hidden = (R.wave !== 'seq');
+        persist();
+      });
+      // Sequence translation sub-controls (source / interp / rest).
+      const bindSeq = (suf, key) => { const e = el(suf); if (e) e.addEventListener('change', () => { _E = E; const R = getR(); if (!R) return; R[key] = e.value; R._seqKey = null; persist(); }); };
+      bindSeq('seqsrc', 'seqSource'); bindSeq('seqinterp', 'seqInterp'); bindSeq('seqrest', 'seqRest');
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteRamp(E, id));
     }
     function _ambRenderRamps(E) {
@@ -3337,6 +3790,15 @@
       const set = (id, v) => { const el = document.getElementById(tr(id)); if (el && v != null) el.value = String(v); };
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
+      { const kOn = document.getElementById(tr('ambient-key-on'));
+        if (kOn) kOn.classList.toggle('active', !!cfg.keyOn);
+        set('ambient-key-root', cfg.keyRoot);
+        set('ambient-key-scale', cfg.keyScale);
+        const kSel = document.getElementById(tr('ambient-key-root')); if (kSel) kSel.disabled = !cfg.keyOn;
+        const kqSel = document.getElementById(tr('ambient-key-scale')); if (kqSel) kqSel.disabled = !cfg.keyOn;
+        const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[cfg.keyRoot | 0]) || '';
+        const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(cfg.keyScale) : cfg.keyScale;
+        hint('ambient-key-hint', cfg.keyOn ? (kName + ' ' + kQual) : 'off'); }
       set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
@@ -3422,13 +3884,14 @@
           if (!m[t]) return;
           set('ambient-' + layer + '-mod-' + t + '-depth', m[t].depth);
           set('ambient-' + layer + '-mod-' + t + '-rate', m[t].rate);
-          set('ambient-' + layer + '-mod-' + t + '-shape', m[t].shape);
+          { const elf = (suf) => document.getElementById(tr('ambient-' + layer + '-' + suf)); _ambSyncModShapeEl(elf, m[t], t); }
         });
       });
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => _ambSyncSpread(E, 'ambient-' + layer, cfg[layer]));
       const seedEl = document.getElementById(E.seedId);
       if (seedEl) seedEl.textContent = '#' + (cfg.seed >>> 0);
       _ambRefreshPlayBtn(E);
+      try { _ambRefreshCaptureBtn(E); } catch (e) {}
     }
     function _ambientInit(E) {
       if (E.inited) { _ambSyncControls(E); _ambStartViz(E); return; }
@@ -3438,6 +3901,9 @@
       // _ambNamespaceHtml rewrites the stems to E.idPrefix below.
       const sl = _ambSl, tm = _ambTm, head = _ambHead, shapeSel = _ambShapeSel,
             condCtrl = _ambCondCtrl, modTarget = _ambModTarget, modUi = _ambModUi, fxUi = _ambFxUi;
+      const _keyNames = (typeof CHROMATIC !== 'undefined' && Array.isArray(CHROMATIC) && CHROMATIC.length === 12)
+        ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+      const keyOpts = _keyNames.map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('');
       let html =
         '<div class="ambient-title">Bloom — generative ambient' + (E.isLane ? '' : ' (master)') + '</div>' +
         '<canvas id="ambient-viz" class="ambient-viz"></canvas>' +
@@ -3459,6 +3925,14 @@
           '<span class="ambient-hint">Timing</span>' +
           '<button type="button" class="ambient-seg" id="ambient-timing-free">Free</button>' +
           '<button type="button" class="ambient-seg" id="ambient-timing-sync">Sync</button>' +
+        '</div>' +
+        // Instance Key — when on, every layer roots its scales/wraps/chords at
+        // the chosen root and snaps chord/wrap tones to that key's scale.
+        '<div class="ambient-row ambient-key">' +
+          '<button type="button" class="ambient-seg" id="ambient-key-on" title="Constrain every layer to one key — only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
+          '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
+          '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
+          '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
         '</div>' +
         tm('Prog rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
         tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +
@@ -3611,13 +4085,7 @@
               persist();
             });
           });
-          const shapeEl = G('ambient-' + layer + '-mod-' + target + '-shape');
-          if (shapeEl) shapeEl.addEventListener('change', () => {
-            _E = E; const cfg = cfg0(); if (!cfg) return;
-            cfg[layer].mod[target].shape = shapeEl.value || 'sine';
-            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
-            persist();
-          });
+          _ambWireModTarget(E, (suf) => G('ambient-' + layer + '-' + suf), () => { const c = cfg0(); return c ? c[layer] : null; }, target, () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } });
         });
       });
 
@@ -3763,6 +4231,29 @@
           persist();
         });
       });
+
+      { const kOn = G('ambient-key-on');
+        if (kOn) kOn.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.keyOn = !cfg.keyOn; _ambSyncControls(E); persist();
+        });
+        const kRoot = G('ambient-key-root');
+        if (kRoot) kRoot.addEventListener('change', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.keyRoot = ((((parseInt(kRoot.value, 10) || 0) % 12) + 12) % 12);
+          _ambSyncControls(E); persist();
+        });
+        const kScale = G('ambient-key-scale');
+        if (kScale) {
+          try { populateGroupedScaleSelect(kScale, null); } catch (e) {}
+          const c0 = cfg0(); if (c0) kScale.value = c0.keyScale || 'major';
+          kScale.addEventListener('change', () => {
+            _E = E; const cfg = cfg0(); if (!cfg) return;
+            cfg.keyScale = kScale.value || 'major';
+            _ambSyncControls(E); persist();
+          });
+        }
+      }
 
       const addRampBtn = G('ambient-ramp-add');
       if (addRampBtn) addRampBtn.addEventListener('click', () => _ambAddRamp(E));

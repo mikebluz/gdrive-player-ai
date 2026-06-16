@@ -214,7 +214,7 @@
       // Baked-in fine tune (cents) from sample capture — pulls the buffer into
       // tune relative to its mapped root so the keyboard tracks chromatically.
       if (info && Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
-      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, detuneScale = null;
+      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, detuneScale = null, _padLoop = false;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
         // Per-note pan: place the voice in the stereo field (e.g. Bloom's
@@ -262,7 +262,7 @@
         // `loop` SETTER calls cancelStop()→cancelScheduledValues(), which cancels
         // the OneShotSource fade-in ramp and leaves the gain at 0 (silence). The
         // native property has no such side effect.
-        const _padLoop = !!(info && info.padLoop);
+        _padLoop = !!(info && info.padLoop);
         source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has

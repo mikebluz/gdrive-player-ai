@@ -2207,6 +2207,9 @@
     .ambient-add-layer-row { display: flex; }
     .ambient-add-layer { width: 100%; }
     .ambient-regen:disabled { opacity: 0.4; cursor: default; }
+    /* Live capture in progress — the Capture button reads "Finalize". */
+    .ambient-regen.recording { border-color: #fc8181; color: #feb2b2; background: rgba(252,129,129,0.16); }
+    .ambient-regen.recording:disabled { opacity: 0.7; }
     /* Parameter ramps (LFO automation of a layer param). */
     .ambient-ramps-section { display: flex; flex-direction: column; gap: 8px; }
     .ambient-ramps-head { display: flex; align-items: center; gap: 8px; }
@@ -2231,6 +2234,16 @@
     }
     .ambient-ramp-params .ambient-ramp-wave { width: auto; }
     .ambient-ramp-range { flex: 1 0 100%; color: #6b6b8a; font-size: 0.74rem; }
+    /* Sequence-as-waveform sub-controls (shown when Wave = a saved sequence). */
+    .ambient-ramp-seq { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #1a1a2e; }
+    .ambient-ramp-seq[hidden] { display: none; }
+    .ambient-ramp-seq > label { display: flex; align-items: center; gap: 5px; color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; font-weight: 700; }
+    .ambient-ramp-seq select { width: auto; }
+    /* Mod-target sequence-waveform sub-row (Read / Curve / Rest). */
+    .ambient-ctrl.ambient-mod-seqrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+    .ambient-ctrl.ambient-mod-seqrow[hidden] { display: none; }
+    .ambient-mod-seqrow > label { color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; font-weight: 700; }
+    .ambient-mod-seqrow select { width: auto; }
     .ambient-layer-head { display: flex; align-items: center; position: relative; }
     /* Per-layer playhead: thin bar pinned to the bottom edge of the layer head,
        filled left→right across the current iteration / frozen loop. */
@@ -2275,8 +2288,11 @@
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
       font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
     }
-    .ambient-toggle:hover { border-color: #9f7aea; color: #d6bcfa; }
-    .ambient-toggle.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.16); }
+    /* Hover is NEUTRAL (not the on-accent) so an off layer never looks on. */
+    .ambient-toggle:hover { border-color: #5a5a7a; color: #a8a8c8; }
+    /* On = clear purple fill + bright text, unmistakable vs off/hover. */
+    .ambient-toggle.on { border-color: #9f7aea; color: #ede9fe; background: rgba(159,122,234,0.30); }
+    .ambient-toggle.on:hover { border-color: #b794f4; background: rgba(159,122,234,0.40); }
     /* Dim a layer's sliders when the layer is off (still adjustable). */
     .ambient-layer:has(> .ambient-layer-head > .ambient-toggle:not(.on)) .ambient-ctrl { opacity: 0.5; }
     /* Per-layer expand/collapse caret (sits at the right of the layer head). */

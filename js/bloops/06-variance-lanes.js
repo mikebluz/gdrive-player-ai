@@ -886,6 +886,8 @@
         // Shape (radial wheel) mode + its config, built lazily by 21-shape.js.
         shapeMode: false,
         shape: null,
+        // Whether this lane's shape is sent to the Mix "Master Shape" overview.
+        sentToMaster: false,
       };
     }
     // Snapshot the currently-mirrored voice globals into a plain object

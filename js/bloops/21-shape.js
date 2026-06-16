@@ -68,11 +68,15 @@
       if (typeof s.tone !== 'string') s.tone = d.tone;
       if (!Number.isFinite(s.gatePct)) s.gatePct = d.gatePct;
       if (!Array.isArray(s.nodes) || !s.nodes.length) s.nodes = _shapeEqualNodes(s.nodeCount);
-      s.nodes = s.nodes.map(nd => ({
-        angleFrac: ((Number.isFinite(nd && nd.angleFrac) ? nd.angleFrac : 0) % 1 + 1) % 1,
-        muted: !!(nd && nd.muted),
-        override: nd && nd.override ? nd.override : undefined,
-      }));
+      // Normalize each node IN PLACE so node objects keep their identity across
+      // calls — transient render state (_flash) and per-node refs survive (the
+      // playhead lighting depends on this). .filter keeps the same element refs.
+      s.nodes = s.nodes.filter(nd => nd && typeof nd === 'object');
+      if (!s.nodes.length) s.nodes = _shapeEqualNodes(s.nodeCount);
+      s.nodes.forEach(nd => {
+        nd.angleFrac = ((Number.isFinite(nd.angleFrac) ? nd.angleFrac : 0) % 1 + 1) % 1;
+        nd.muted = !!nd.muted;
+      });
       // Keep nodeCount and nodes.length in agreement.
       if (s.nodes.length !== s.nodeCount) {
         if (s.timingMode === 'equal') s.nodes = _shapeEqualNodes(s.nodeCount, s.nodes);
@@ -221,13 +225,28 @@
         o.nd.override.noteOffset = semis;
       });
       _shapeDraw();
+      _shapeReflectSprayBtn();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
     function _shapeFlattenPitch() {
       const cfg = _shapeCfg(); if (!cfg) return;
       cfg.nodes.forEach(nd => { if (nd.override) nd.override.noteOffset = 0; });
       _shapeDraw();
+      _shapeReflectSprayBtn();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    }
+    function _shapeIsPitched() {
+      const cfg = _shapeCfg();
+      return !!(cfg && cfg.nodes.some(nd => _shapeNodeOffset(nd) !== 0));
+    }
+    function _shapeReflectSprayBtn() {
+      const btn = document.getElementById('shape-spray-btn');
+      if (!btn) return;
+      const pitched = _shapeIsPitched();
+      btn.textContent = pitched ? 'Flat' : 'Spray';
+      btn.title = pitched
+        ? 'Flatten all node pitches back to the base note'
+        : 'Spray ascending scale pitches around the ring (scroll a node to fine-tune)';
     }
     function _shapeTriggerNode(cfg, nd, a, sortedAngles) {
       let next = null;
@@ -266,9 +285,13 @@
     }
     function _shapeSpinStart() {
       if (_shapeSpin.running) return;
+      try { if (typeof _shapeMasterStop === 'function') _shapeMasterStop(); } catch (e) {}
       _shapeSpin.running = true;
       _shapeSpin.t0 = performance.now() / 1000;
-      _shapeSpin.lastPhase = 0;
+      // Start just before the downbeat so a node AT 12 o'clock (angle 0) fires
+      // on the very first sweep (a > last needs last < 0); otherwise the first
+      // note the arm reaches plays as normal.
+      _shapeSpin.lastPhase = -1e-9;
       _shapeSpin.raf = requestAnimationFrame(_shapeSpinTick);
       _shapeReflectSpinBtn();
     }
@@ -281,7 +304,17 @@
     }
     function _shapeReflectSpinBtn() {
       const btn = document.getElementById('shape-spin-btn');
-      if (btn) { btn.textContent = _shapeSpin.running ? '■ Stop' : '▶ Spin'; btn.classList.toggle('active', _shapeSpin.running); }
+      if (btn) { btn.textContent = _shapeSpin.running ? '■' : '▶'; btn.classList.toggle('active', _shapeSpin.running); }
+    }
+    function _shapeReflectSendBtn() {
+      const btn = document.getElementById('shape-send-btn');
+      const lane = _shapeLane();
+      if (btn) {
+        const on = !!(lane && lane.sentToMaster);
+        btn.classList.toggle('active', on);
+        btn.textContent = on ? '◉' : '◎';
+        btn.title = on ? 'In the Mix ▸ Shapes master — click to remove' : 'Send this wheel to the Mix ▸ Shapes master overview';
+      }
     }
 
     // ---- Record-to-lane (accumulative overdub) -----------------------------
@@ -328,7 +361,7 @@
     }
     function _shapeReflectRecBtn() {
       const btn = document.getElementById('shape-rec-btn');
-      if (btn) { btn.classList.toggle('active', _shapeRecording); btn.textContent = _shapeRecording ? '● REC' : '● Record'; }
+      if (btn) { btn.classList.toggle('active', _shapeRecording); btn.textContent = '●'; btn.title = _shapeRecording ? 'Recording… click to stop' : 'Record what plays into this lane (accumulative)'; }
     }
     function _shapeClearLane() {
       if (typeof sequence !== 'undefined' && Array.isArray(sequence)) {
@@ -362,21 +395,35 @@
       const bar = document.getElementById('shape-toolbar');
       if (!bar) return;
       const cfg = _shapeCfg();
+      // Numeric controls render as −/+ steppers (large tap targets) around a
+      // numeric-keypad input, so they're usable on touch.
+      const stepper = (label, id, min, max, step, suffix) =>
+        '<span class="shape-ctrl"><label>' + label + '</label>' +
+          '<span class="shape-step">' +
+            '<button type="button" class="shape-step-btn" data-for="' + id + '" data-step="-' + step + '" data-min="' + min + '" data-max="' + max + '" aria-label="decrease">−</button>' +
+            '<input type="number" inputmode="numeric" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '">' +
+            '<button type="button" class="shape-step-btn" data-for="' + id + '" data-step="' + step + '" data-min="' + min + '" data-max="' + max + '" aria-label="increase">+</button>' +
+          '</span>' + (suffix ? '<span style="color:#6a6a88">' + suffix + '</span>' : '') +
+        '</span>';
+      // Actions live in the toolbar row; all numeric/dropdown inputs live in a
+      // single collapsible "⚙ Wheel" panel below it.
       bar.innerHTML =
-        '<span class="shape-ctrl"><label>Nodes</label><input type="number" id="shape-nodes" min="1" max="32" step="1"></span>' +
-        '<span class="shape-ctrl"><label>Timing</label><select id="shape-timing">' +
-          '<option value="equal">Equal</option><option value="free">Free</option><option value="snap">Snap</option>' +
-        '</select></span>' +
-        '<span class="shape-ctrl"><label>Rotate</label><input type="number" id="shape-rot" min="0" max="359" step="1"><span style="color:#6a6a88">°</span></span>' +
-        '<span class="shape-ctrl"><label>Tone</label><select id="shape-tone" class="shape-tone-sel"></select></span>' +
-        '<span class="shape-ctrl"><label>Note</label><input type="number" id="shape-note" min="24" max="96" step="1"></span>' +
-        '<span class="shape-ctrl"><label>Gate</label><input type="number" id="shape-gate" min="5" max="100" step="1"><span style="color:#6a6a88">%</span></span>' +
-        '<button type="button" class="shape-btn" id="shape-spray-btn" title="Assign ascending scale pitches around the ring (scroll a node to fine-tune)">Spray</button>' +
-        '<button type="button" class="shape-btn" id="shape-flat-btn" title="Reset all node pitches to the base note">Flat</button>' +
-        '<span style="flex:1 1 auto"></span>' +
+        '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ ▾</button>' +
+        '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
+        '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎</button>' +
         '<button type="button" class="shape-btn" id="shape-clear-btn" title="Clear this lane\'s recorded steps">Clear</button>' +
-        '<button type="button" class="shape-btn" id="shape-spin-btn">▶ Spin</button>' +
-        '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Record</button>';
+        '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶</button>' +
+        '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">●</button>' +
+        '<div class="shape-params" id="shape-params" hidden>' +
+          stepper('Nodes', 'shape-nodes', 1, 32, 1, '') +
+          '<span class="shape-ctrl"><label>Timing</label><select id="shape-timing">' +
+            '<option value="equal">Equal</option><option value="free">Free</option><option value="snap">Snap</option>' +
+          '</select></span>' +
+          stepper('Rotate', 'shape-rot', 0, 359, 15, '°') +
+          '<span class="shape-ctrl"><label>Tone</label><select id="shape-tone" class="shape-tone-sel"></select></span>' +
+          stepper('Note', 'shape-note', 24, 96, 1, '') +
+          stepper('Gate', 'shape-gate', 5, 100, 5, '%') +
+        '</div>';
       const nodesEl = bar.querySelector('#shape-nodes');
       const timingEl = bar.querySelector('#shape-timing');
       const rotEl = bar.querySelector('#shape-rot');
@@ -412,16 +459,48 @@
       noteEl.addEventListener('change', () => { const c = _shapeCfg(); if (!c) return; c.baseNote = Math.max(24, Math.min(96, parseInt(noteEl.value, 10) || 60)); noteEl.value = c.baseNote; persist(); });
       gateEl.addEventListener('change', () => { const c = _shapeCfg(); if (!c) return; c.gatePct = Math.max(5, Math.min(100, parseInt(gateEl.value, 10) || 80)); gateEl.value = c.gatePct; persist(); });
       if (spinEl) spinEl.addEventListener('click', () => { if (_shapeSpin.running) _shapeSpinStop(); else _shapeSpinStart(); });
+      const paramsBtn = bar.querySelector('#shape-params-btn');
+      const paramsPanel = bar.querySelector('#shape-params');
+      if (paramsBtn && paramsPanel) paramsBtn.addEventListener('click', () => {
+        const open = paramsPanel.hasAttribute('hidden');
+        if (open) paramsPanel.removeAttribute('hidden'); else paramsPanel.setAttribute('hidden', '');
+        paramsBtn.textContent = '⚙ ' + (open ? '▴' : '▾');
+        paramsBtn.classList.toggle('active', open);
+      });
       const recEl = bar.querySelector('#shape-rec-btn');
       if (recEl) recEl.addEventListener('click', () => _shapeSetRecording(!_shapeRecording));
       const clearEl = bar.querySelector('#shape-clear-btn');
       if (clearEl) clearEl.addEventListener('click', () => _shapeClearLane());
+      // Spray/Flat is one toggle: when the wheel is flat it sprays a scale;
+      // when it's already pitched it flattens. The label shows the action.
       const sprayEl = bar.querySelector('#shape-spray-btn');
-      if (sprayEl) sprayEl.addEventListener('click', () => _shapeSprayScale());
-      const flatEl = bar.querySelector('#shape-flat-btn');
-      if (flatEl) flatEl.addEventListener('click', () => _shapeFlattenPitch());
+      if (sprayEl) sprayEl.addEventListener('click', () => {
+        if (_shapeIsPitched()) _shapeFlattenPitch(); else _shapeSprayScale();
+      });
+      const sendEl = bar.querySelector('#shape-send-btn');
+      if (sendEl) sendEl.addEventListener('click', () => {
+        const lane = _shapeLane(); if (!lane) return;
+        lane.sentToMaster = !lane.sentToMaster;
+        _shapeReflectSendBtn();
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      });
+      // Stepper −/+ buttons nudge their input and re-fire its change handler.
+      bar.querySelectorAll('.shape-step-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const inp = document.getElementById(btn.dataset.for); if (!inp) return;
+          const step = parseFloat(btn.dataset.step) || 1;
+          const min = parseFloat(btn.dataset.min), max = parseFloat(btn.dataset.max);
+          let v = (parseFloat(inp.value) || 0) + step;
+          if (Number.isFinite(min)) v = Math.max(min, v);
+          if (Number.isFinite(max)) v = Math.min(max, v);
+          inp.value = v;
+          inp.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+      _shapeReflectSendBtn();
       _shapeReflectSpinBtn();
       _shapeReflectRecBtn();
+      _shapeReflectSprayBtn();
     }
 
     // ---- Lifecycle ---------------------------------------------------------
@@ -477,6 +556,7 @@
           const cur = Number.isFinite(nd.override.noteOffset) ? nd.override.noteOffset : 0;
           nd.override.noteOffset = Math.max(-24, Math.min(24, cur + (e.deltaY < 0 ? 1 : -1)));
           _shapeDraw();
+          _shapeReflectSprayBtn();
           try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
         }, { passive: false });
         _shapeInited = true;
@@ -513,7 +593,8 @@
       if (typeof lanes === 'undefined') return [];
       const out = [];
       lanes.forEach((l, i) => {
-        if (l && l.shapeMode) {
+        // Only lanes explicitly SENT to the master (→ Master) appear here.
+        if (l && l.shapeMode && l.sentToMaster) {
           if (!l.shape || typeof l.shape !== 'object') l.shape = _shapeDefault();
           out.push({ lane: l, idx: i, cfg: _shapeNormalize(l.shape), color: SHAPE_COLORS[i % SHAPE_COLORS.length] });
         }
@@ -563,7 +644,7 @@
       _shapeMasterLegend(sl);
       if (!sl.length) {
         ctx.fillStyle = 'rgba(120,120,150,0.7)'; ctx.font = '14px Segoe UI, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('No Shape-mode lanes yet — set a lane to Shape mode.', cx, cy);
+        ctx.fillText('No shapes sent yet — press “→ Master” in a Shape lane.', cx, cy);
         _shapeMaster.rings = []; return;
       }
       const N = sl.length;
@@ -582,13 +663,28 @@
     function _shapeMasterLegend(sl) {
       const el = document.getElementById('shape-master-legend'); if (!el) return;
       el.innerHTML = '';
+      if (!sl.length) {
+        const hint = document.createElement('span'); hint.className = 'sm-leg'; hint.style.cursor = 'default';
+        hint.textContent = 'No shapes sent — open a Shape lane in Make and press “→ Master”.';
+        el.appendChild(hint); return;
+      }
       sl.forEach(s => {
         const item = document.createElement('span'); item.className = 'sm-leg';
         const sw = document.createElement('span'); sw.className = 'sm-swatch'; sw.style.background = s.color;
         const nm = document.createElement('span');
         nm.textContent = (s.lane.name || ('Lane ' + (s.idx + 1))) + ' · ' + s.cfg.nodes.length;
-        item.appendChild(sw); item.appendChild(nm);
-        item.addEventListener('click', () => _shapeMasterJump(s.idx));
+        const jump = () => _shapeMasterJump(s.idx);
+        sw.addEventListener('click', jump); nm.addEventListener('click', jump);
+        const rm = document.createElement('span');
+        rm.textContent = '✕'; rm.title = 'Remove from master';
+        rm.style.cssText = 'cursor:pointer;color:#8a8aa8;margin-left:2px';
+        rm.addEventListener('click', (e) => {
+          e.stopPropagation();
+          s.lane.sentToMaster = false;
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (x) {}
+          _shapeMasterDraw(_shapeMaster.running ? _shapeMaster.lastPhase : 0);
+        });
+        item.appendChild(sw); item.appendChild(nm); item.appendChild(rm);
         el.appendChild(item);
       });
     }
@@ -614,10 +710,12 @@
     }
     function _shapeMasterStart() {
       if (_shapeMaster.running) return;
-      _shapeMaster.running = true; _shapeMaster.t0 = performance.now() / 1000; _shapeMaster.lastPhase = 0;
+      try { _shapeSpinStop(); } catch (e) {}   // never run the editor + master loops together
+      _shapeMaster.running = true; _shapeMaster.t0 = performance.now() / 1000; _shapeMaster.lastPhase = -1e-9;
       _shapeMaster.raf = requestAnimationFrame(_shapeMasterTick); _shapeMasterReflectBtn();
     }
     function _shapeMasterStop() {
+      try { _shapeSpinStop(); } catch (e) {}   // Stop halts any shape audition
       _shapeMaster.running = false;
       if (_shapeMaster.raf) { cancelAnimationFrame(_shapeMaster.raf); _shapeMaster.raf = 0; }
       _shapeMasterReflectBtn();
@@ -665,6 +763,7 @@
         });
         _shapeMaster.inited = true;
       }
+      try { _shapeSpinStop(); } catch (e) {}   // opening the master halts any editor audition
       _shapeMasterReflectBtn();
       requestAnimationFrame(() => { _shapeMasterResize(); _shapeMasterDraw(0); });
     }

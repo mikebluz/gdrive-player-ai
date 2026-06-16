@@ -843,6 +843,7 @@
             seqMode: !!l.seqMode,
             shapeMode: !!l.shapeMode,
             shape: l.shape ? JSON.parse(JSON.stringify(l.shape)) : null,
+            sentToMaster: !!l.sentToMaster,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             // Per-lane voice. The active lane's live voice lives in
             // the globals (cellSounds / palette / etc.), so capture
@@ -877,6 +878,7 @@
             seqMode: !!l.seqMode,
             shapeMode: !!l.shapeMode,
             shape: l.shape ? JSON.parse(JSON.stringify(l.shape)) : null,
+            sentToMaster: !!l.sentToMaster,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
             sends: l.sends ? { ...l.sends } : null,

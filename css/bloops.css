@@ -1668,7 +1668,8 @@
     body.prog-mode    .grid-with-rail,
     body.ambient-mode .grid-with-rail,
     body.text-mode    .grid-with-rail,
-    body.seq-mode     .grid-with-rail { display: none; }
+    body.seq-mode     .grid-with-rail,
+    body.shape-mode   .grid-with-rail { display: none; }
     /* Sounds menu — pinned to the right edge at 25% of the banner width
        (where the master-vol speaker used to be). */
     .banner-row #scale-banner-half.banner-sounds {
@@ -4788,11 +4789,13 @@
     body.prog-mode   .grid-wrap-row,
     body.ambient-mode .grid-wrap-row,
     body.text-mode   .grid-wrap-row,
+    body.shape-mode  .grid-wrap-row,
     body.fluid-grid  #wrap-bank,
     body.game-mode   #wrap-bank,
     body.prog-mode   #wrap-bank,
     body.ambient-mode #wrap-bank,
-    body.text-mode   #wrap-bank { display: none !important; }
+    body.text-mode   #wrap-bank,
+    body.shape-mode  #wrap-bank { display: none !important; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active
@@ -8329,3 +8332,49 @@
     .tone-user-act.danger:hover { background: rgba(229,62,62,0.25); color: #feb2b2; }
 
     .shape-btn.shape-rec.active { border-color: #f56565; color: #fff; background: rgba(245,101,101,0.28); box-shadow: 0 0 8px rgba(245,101,101,0.4); }
+
+    .shape-btn.shape-send.active { border-color: #68d391; color: #c6f6d5; background: rgba(104,211,145,0.18); }
+
+    /* --- Shape numeric steppers (mobile-friendly −/+ around the input) --- */
+    .shape-step { display: inline-flex; align-items: center; }
+    .shape-step input[type=number] {
+      width: 46px; height: 30px; text-align: center; border-radius: 0;
+      border-left: none; border-right: none; -moz-appearance: textfield;
+    }
+    .shape-step input[type=number]::-webkit-inner-spin-button,
+    .shape-step input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    .shape-step-btn {
+      min-width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+      background: #16162a; border: 1px solid #2d2d44; color: #cbd5e0; cursor: pointer;
+      font-size: 1rem; line-height: 1; user-select: none; -webkit-user-select: none; touch-action: manipulation;
+    }
+    .shape-step-btn:first-child { border-radius: 6px 0 0 6px; }
+    .shape-step-btn:last-child { border-radius: 0 6px 6px 0; }
+    @media (hover: hover) { .shape-step-btn:hover { border-color: #4fd1c5; color: #b2f5ea; } }
+    .shape-step-btn:active { background: #1d1d38; }
+    @media (max-width: 700px) {
+      .shape-step-btn { min-width: 42px; height: 42px; font-size: 1.3rem; }
+      .shape-step input[type=number] { width: 54px; height: 42px; font-size: 0.95rem; }
+      .shape-ctrl select { min-height: 42px; }
+      .shape-btn { padding: 11px 15px; }
+      .shape-ctrl label { font-size: 0.8rem; }
+      .shape-toolbar { gap: 10px; }
+    }
+
+    /* --- Shape "⚙ Wheel" collapsible params panel --- */
+    .shape-params {
+      display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+      width: 100%; flex-basis: 100%;
+      padding: 10px 2px 2px; margin-top: 6px; border-top: 1px solid #1a1a2e;
+    }
+    .shape-params[hidden] { display: none; }
+    .shape-btn.active { } /* (spin/rec already style their own active states) */
+    #shape-params-btn.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.14); }
+
+    /* Shape action row — buttons stretch to fill one full-width row; the
+       collapsible params panel (flex-basis:100%) still wraps below. */
+    .shape-toolbar > .shape-btn {
+      flex: 1 1 0; min-width: 0; padding: 9px 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    @media (max-width: 700px) { .shape-toolbar > .shape-btn { padding: 12px 2px; font-size: 0.72rem; } }

@@ -325,15 +325,19 @@
           const stateName = lane.muted ? 'muted' : (lane.solo ? 'solo' : 'off');
           status.dataset.state = stateName;
           if (!isActiveLane) status.classList.add('inactive');
-          status.title = `Lane ${lane.name} — open lane menu (grid / solo / mute / save / clear / riff).`;
-          // Click the label to focus the lane and open its menu. The menu
-          // (grid show/hide, solo, mute, Save / Clear / Riff) replaces the
-          // old direct mute toggle and the removed eye button.
+          status.title = isActiveLane
+            ? `Lane ${lane.name} — open lane menu (grid / solo / mute / save / clear / riff).`
+            : `Lane ${lane.name} — click to focus (click again to open its menu).`;
+          // Click the label to focus the lane and open its menu. The menu only
+          // opens for the ALREADY-active lane — clicking a non-active lane just
+          // focuses it (a second click then opens the menu), so a stray tap on
+          // another lane's label can't pop a menu for a lane you're not on.
           status.addEventListener('click', (e) => {
             e.stopPropagation();
             if (laneIdx !== activeLaneIdx) {
               _laneExpanderOpen = true;
               activateLane(laneIdx);
+              return;
             }
             if (typeof _showLaneMenu === 'function') _showLaneMenu(laneIdx, e.clientX, e.clientY);
           });

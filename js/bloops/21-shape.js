@@ -34,6 +34,31 @@
     function _shapeGridVoiceType() {
       return (typeof cellParams !== 'undefined' && cellParams[0] && cellParams[0].type) || 'sine';
     }
+    // ---- Time grid (divisions per bar) -------------------------------------
+    // The chosen grid governs BOTH the Rotate increment (360°/div per tick) AND
+    // Snap-mode node placement, so rotation and node snapping never cross-rhythm
+    // against each other. 360° = 1 bar (4 beats): /4 = 1/4 note, /8 = 1/8, /16 =
+    // 1/16, /12 = 1/8 triplet, /24 = 1/16 triplet, etc.
+    const _SHAPE_GRIDS = [
+      { div: 4,  name: '1/4 note' },
+      { div: 6,  name: '1/4 triplet' },
+      { div: 8,  name: '1/8 note' },
+      { div: 12, name: '1/8 triplet' },
+      { div: 16, name: '1/16 note' },
+      { div: 24, name: '1/16 triplet' },
+      { div: 32, name: '1/32 note' },
+    ];
+    function _shapeRotStepDeg(cfg) {
+      const d = Math.max(1, (cfg && Number.isFinite(cfg.snapDiv)) ? cfg.snapDiv : 16);
+      return Math.round((360 / d) * 1000) / 1000;
+    }
+    // Snap a degree value to the current grid (and wrap into 0–360).
+    function _shapeSnapRot(v, cfg) {
+      const step = _shapeRotStepDeg(cfg);
+      let r = Math.round((parseFloat(v) || 0) / step) * step;
+      r = ((r % 360) + 360) % 360;
+      return Math.round(r * 100) / 100;
+    }
     function _shapeDefault() {
       return {
         nodeCount: 4,
@@ -395,10 +420,19 @@
         : '<option value="maj">Major</option>';
       const rootOpts = (typeof CHROMATIC !== 'undefined' ? CHROMATIC : ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'])
         .map((n, i) => '<option value="' + i + '">' + n + '</option>').join('');
+      const baseM0 = Number.isFinite(cfg.baseNote) ? Math.round(cfg.baseNote) : 60;
+      let noteOpts = '';
+      for (let m = 24; m <= 96; m++) noteOpts += '<option value="' + m + '">' + _shapeNoteName(m) + '</option>';
       const mode = nd.chordOff ? 'single' : (nd.chord ? 'custom' : (hasProg ? 'follow' : 'single'));
       modal.innerHTML =
         '<div class="sm-title">Node ' + (idx + 1) + '</div>' +
         '<label class="sm-apply-all"><input type="checkbox" id="snode-mute"' + (nd.muted ? ' checked' : '') + ' /> Muted</label>' +
+        '<details class="sm-fold" open><summary>Pitch</summary><div class="sm-fold-body">' +
+          '<div class="sm-param">' +
+            '<div class="sm-param-row">Note <span style="color:#6a6a88">(transposes a chord)</span></div>' +
+            '<select id="snode-note" class="sm-select">' + noteOpts + '</select>' +
+          '</div>' +
+        '</div></details>' +
         '<details class="sm-fold" open><summary>Chord</summary><div class="sm-fold-body">' +
           '<div class="sm-param"><select id="snode-chmode" class="sm-select">' +
             (hasProg ? '<option value="follow">Follow progression</option>' : '') +
@@ -419,7 +453,14 @@
         '</div>';
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      // Backdrop-to-close, but armed on a delay: the canvas TAP that opens this
+      // (a node tap in Edit mode) fires a trailing compatibility `click` at the
+      // same screen point, which would otherwise land on the fresh backdrop and
+      // close it instantly. Arm after a beat, and close on `pointerdown` (not
+      // the synthetic click) so only a deliberate later tap dismisses it.
+      setTimeout(() => {
+        overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
+      }, 250);
 
       const modeEl = modal.querySelector('#snode-chmode');
       const customWrap = modal.querySelector('#snode-custom');
@@ -450,6 +491,17 @@
       modeEl.addEventListener('change', () => { syncCustomVis(); applyChord(); });
       rootEl.addEventListener('change', applyChord);
       qualEl.addEventListener('change', applyChord);
+      // Note picker → the node's pitch as an absolute note, stored as a semitone
+      // offset from the shape's base note (so it rides base-note changes the same
+      // way wheel-scroll tuning does). For a chord node it transposes the chord.
+      const noteEl = modal.querySelector('#snode-note');
+      const curNote = Math.max(24, Math.min(96, baseM0 + _shapeNodeOffset(nd)));
+      noteEl.value = String(curNote);
+      noteEl.addEventListener('change', () => {
+        nd.override = nd.override || {};
+        nd.override.noteOffset = (parseInt(noteEl.value, 10) || baseM0) - baseM0;
+        _shapeDraw(); _shapeReflectSprayBtn(); persist();
+      });
       modal.querySelector('#snode-mute').addEventListener('change', (e) => { nd.muted = !!e.target.checked; _shapeDraw(); persist(); });
       modal.querySelector('#snode-sound').addEventListener('click', () => _shapeEditNodeSound(nd, cfg));
       modal.querySelector('#snode-done').addEventListener('click', close);
@@ -691,7 +743,10 @@
           '<span class="shape-ctrl"><label>Timing</label><select id="shape-timing">' +
             '<option value="equal">Equal</option><option value="free">Free</option><option value="snap">Snap</option>' +
           '</select></span>' +
-          stepper('Rotate', 'shape-rot', 0, 359, 15, '°') +
+          '<span class="shape-ctrl"><label>Grid</label><select id="shape-grid" title="Time grid: sets the Rotate increment (360°/div) and Snap node placement">' +
+            _SHAPE_GRIDS.map(g => '<option value="' + g.div + '">' + g.name + ' · ' + (Math.round((360 / g.div) * 100) / 100) + '°</option>').join('') +
+          '</select></span>' +
+          stepper('Rotate', 'shape-rot', 0, 359, _shapeRotStepDeg(cfg), '°') +
           '<span class="shape-ctrl"><label>Tone</label><select id="shape-tone" class="shape-tone-sel"></select></span>' +
           '<span class="shape-ctrl"><label>Prog</label><select id="shape-prog" class="shape-tone-sel"></select></span>' +
           stepper('Note', 'shape-note', 24, 96, 1, '') +
@@ -699,6 +754,7 @@
         '</div>';
       const nodesEl = bar.querySelector('#shape-nodes');
       const timingEl = bar.querySelector('#shape-timing');
+      const gridEl = bar.querySelector('#shape-grid');
       const rotEl = bar.querySelector('#shape-rot');
       const toneEl = bar.querySelector('#shape-tone');
       const progEl = bar.querySelector('#shape-prog');
@@ -712,7 +768,9 @@
       } catch (e) {}
       _shapePopulateProgSelect(progEl);
       if (cfg) {
-        nodesEl.value = cfg.nodeCount; timingEl.value = cfg.timingMode; rotEl.value = Math.round(cfg.rotationDeg);
+        nodesEl.value = cfg.nodeCount; timingEl.value = cfg.timingMode;
+        gridEl.value = String(Number.isFinite(cfg.snapDiv) ? cfg.snapDiv : 16);
+        rotEl.value = cfg.rotationDeg;
         toneEl.value = cfg.tone || ''; noteEl.value = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60; gateEl.value = cfg.gatePct;
         progEl.value = (cfg.progression && cfg.progression.key) ? cfg.progression.key : '';
       }
@@ -726,10 +784,24 @@
       timingEl.addEventListener('change', () => {
         const c = _shapeCfg(); if (!c) return; c.timingMode = timingEl.value; _shapeDraw(); persist();
       });
+      // Grid sets the time division. Re-snap the current rotation onto it and
+      // update the Rotate stepper's increment (and input step) live, so one tick
+      // = one grid cell with no toolbar rebuild.
+      gridEl.addEventListener('change', () => {
+        const c = _shapeCfg(); if (!c) return;
+        c.snapDiv = parseInt(gridEl.value, 10) || 16;
+        c.rotationDeg = _shapeSnapRot(c.rotationDeg, c);
+        const step = _shapeRotStepDeg(c);
+        if (rotEl) { rotEl.step = step; rotEl.value = c.rotationDeg; }
+        const rb = bar.querySelectorAll('.shape-step-btn[data-for="shape-rot"]');
+        if (rb[0]) rb[0].dataset.step = '-' + step;   // − button (first in DOM order)
+        if (rb[1]) rb[1].dataset.step = '' + step;    // + button
+        _shapeDraw(); persist();
+      });
       rotEl.addEventListener('change', () => {
         const c = _shapeCfg(); if (!c) return;
-        c.rotationDeg = ((parseInt(rotEl.value, 10) || 0) % 360 + 360) % 360;
-        rotEl.value = Math.round(c.rotationDeg); _shapeDraw(); persist();
+        c.rotationDeg = _shapeSnapRot(rotEl.value, c);
+        rotEl.value = c.rotationDeg; _shapeDraw(); persist();
       });
       // Selecting a concrete voice sets it; selecting "Grid voice (copy)" ('')
       // freezes a copy of the CURRENT grid voice so the shape keeps its own.

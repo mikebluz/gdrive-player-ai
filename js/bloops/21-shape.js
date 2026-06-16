@@ -618,7 +618,7 @@
     }
     function _shapeReflectSpinBtn() {
       const btn = document.getElementById('shape-spin-btn');
-      if (btn) { btn.textContent = _shapeSpin.running ? '■' : '▶'; btn.classList.toggle('active', _shapeSpin.running); }
+      if (btn) { btn.textContent = _shapeSpin.running ? '■ Stop' : '▶ Play'; btn.classList.toggle('active', _shapeSpin.running); }
     }
     function _shapeReflectSendBtn() {
       const btn = document.getElementById('shape-send-btn');
@@ -626,7 +626,7 @@
       if (btn) {
         const on = !!(lane && lane.sentToMaster);
         btn.classList.toggle('active', on);
-        btn.textContent = on ? '◉' : '◎';
+        btn.textContent = on ? '◉ Sent' : '◎ Send';
         btn.title = on ? 'In the Mix ▸ Shapes master — click to remove' : 'Send this wheel to the Mix ▸ Shapes master overview';
       }
     }
@@ -684,7 +684,7 @@
     }
     function _shapeReflectRecBtn() {
       const btn = document.getElementById('shape-rec-btn');
-      if (btn) { btn.classList.toggle('active', _shapeRecording); btn.textContent = '●'; btn.title = _shapeRecording ? 'Recording… click to stop' : 'Record what plays into this lane (accumulative)'; }
+      if (btn) { btn.classList.toggle('active', _shapeRecording); btn.textContent = _shapeRecording ? '● Recording' : '● Rec'; btn.title = _shapeRecording ? 'Recording… click to stop' : 'Record what plays into this lane (accumulative)'; }
     }
     function _shapeClearLane() {
       if (typeof sequence !== 'undefined' && Array.isArray(sequence)) {
@@ -728,16 +728,17 @@
             '<button type="button" class="shape-step-btn" data-for="' + id + '" data-step="' + step + '" data-min="' + min + '" data-max="' + max + '" aria-label="increase">+</button>' +
           '</span>' + (suffix ? '<span style="color:#6a6a88">' + suffix + '</span>' : '') +
         '</span>';
-      // Actions live in the toolbar row; all numeric/dropdown inputs live in a
-      // single collapsible "⚙ Wheel" panel below it.
+      // Actions live in a vertical column beside the canvas; all numeric /
+      // dropdown inputs live in a single collapsible "⚙ Wheel" panel that wraps
+      // full-width below the column + canvas row.
       bar.innerHTML =
-        '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ ▾</button>' +
+        '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ Wheel ▾</button>' +
         '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
-        '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎</button>' +
-        '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎</button>' +
+        '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎ Edit</button>' +
+        '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎ Send</button>' +
         '<button type="button" class="shape-btn" id="shape-clear-btn" title="Clear this lane\'s recorded steps">Clear</button>' +
-        '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶</button>' +
-        '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">●</button>' +
+        '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶ Play</button>' +
+        '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Rec</button>' +
         '<div class="shape-params" id="shape-params" hidden>' +
           stepper('Nodes', 'shape-nodes', 1, 32, 1, '') +
           '<span class="shape-ctrl"><label>Timing</label><select id="shape-timing">' +
@@ -825,7 +826,7 @@
       if (paramsBtn && paramsPanel) paramsBtn.addEventListener('click', () => {
         const open = paramsPanel.hasAttribute('hidden');
         if (open) paramsPanel.removeAttribute('hidden'); else paramsPanel.setAttribute('hidden', '');
-        paramsBtn.textContent = '⚙ ' + (open ? '▴' : '▾');
+        paramsBtn.textContent = '⚙ Wheel ' + (open ? '▴' : '▾');
         paramsBtn.classList.toggle('active', open);
       });
       const recEl = bar.querySelector('#shape-rec-btn');
@@ -865,6 +866,17 @@
       _shapeReflectSpinBtn();
       _shapeReflectRecBtn();
       _shapeReflectSprayBtn();
+      // Relocate the collapsible params panel OUT of the button column so it
+      // sits full-width below the [buttons | canvas] row (a narrow column is no
+      // place for the Nodes/Timing/Grid/Tone/Prog/Note/Gate controls). The
+      // panel keeps its wired listeners through the move. Drop any panel left
+      // over from a previous build first so there's never a duplicate.
+      const inner = document.getElementById('shape-inner');
+      if (inner && paramsPanel) {
+        const stale = inner.querySelector(':scope > #shape-params');
+        if (stale && stale !== paramsPanel) stale.remove();
+        inner.appendChild(paramsPanel);
+      }
     }
 
     // ---- Lifecycle ---------------------------------------------------------

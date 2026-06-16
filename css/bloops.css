@@ -2066,8 +2066,12 @@
     body.shape-mode #shape-pad   { display: flex; }
     body.shape-mode .grid-settings-panel .grid-only { display: none !important; }
     .shape-inner { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
-    .shape-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .shape-stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+    /* Buttons (vertical column) beside the canvas; the canvas fills the rest of
+       the row and is sized to the row height — so it grows when the controls
+       move out of a horizontal strip. */
+    .shape-main { display: flex; flex-direction: row; gap: 10px; flex: 1; min-height: 0; align-items: stretch; }
+    .shape-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 8px; flex: 0 0 auto; min-width: 96px; }
+    .shape-stage { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
     .shape-canvas { display: block; touch-action: none; max-width: 100%; max-height: 100%; }
     .shape-ctrl { display: flex; align-items: center; gap: 6px; color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; }
     .shape-ctrl label { color: #8a8aa8; }
@@ -4335,7 +4339,6 @@
       right: 0;
       bottom: 0;
       z-index: 95;
-      border-top: 1px solid #1a1a2e;
     }
     body.bloops-loading .footer-bar { display: none; }
     /* The Rewind · Play · Fast-Forward cluster sits on the right of the
@@ -7922,19 +7925,20 @@
       box-shadow: inset 0 -2px 0 rgba(5, 5, 16, 0.4);
     }
 
-    /* Sign-in / sign-out toggle — compact pill at the right edge of the
-       top-bar tab strip. Sits next to Listen so the "Sign in to enable
-       Listen" affordance reads at a glance. flex: 0 0 auto keeps it from
-       eating tab space; the height matches via align-items: stretch on
-       .top-bar. */
-    .top-bar .signin-toggle {
+    /* Sign-in / sign-out toggle — compact pill pinned to the RIGHT of the
+       Project bottom bar (same row as the Project dropdown). margin-left:auto
+       pushes it to the right edge regardless of whether the project-name label
+       is present (the label is display:none when empty). */
+    .signin-toggle {
       flex: 0 0 auto;
+      margin-left: auto;
+      align-self: center;
       box-sizing: border-box;
       padding: 8px 14px;
+      border-radius: 6px;
       background: #050510;
       color: #4fd1c5;
-      border: none;
-      border-left: 1px solid #2d8478;
+      border: 1px solid #2d8478;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       font-size: 0.85rem;
       font-weight: 700;
@@ -7943,17 +7947,18 @@
       cursor: pointer;
       transition: background 0.15s ease, color 0.15s ease;
     }
-    .top-bar .signin-toggle:hover {
+    .signin-toggle:hover {
       background: #0a1416;
       color: #81e6d9;
     }
-    .top-bar .signin-toggle.signed-in {
+    .signin-toggle.signed-in {
       color: #f6ad55;
+      border-color: #8a5a2b;
     }
-    .top-bar .signin-toggle.signed-in:hover {
+    .signin-toggle.signed-in:hover {
       color: #fbd38d;
     }
-    .top-bar .signin-toggle:disabled {
+    .signin-toggle:disabled {
       opacity: 0.55;
       cursor: progress;
     }
@@ -8371,10 +8376,11 @@
     .shape-btn.active { } /* (spin/rec already style their own active states) */
     #shape-params-btn.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.14); }
 
-    /* Shape action row — buttons stretch to fill one full-width row; the
-       collapsible params panel (flex-basis:100%) still wraps below. */
+    /* Shape action column — buttons stack vertically and stretch to the column
+       width so their labels show in full; the collapsible params panel is
+       relocated by JS to wrap full-width below the column + canvas row. */
     .shape-toolbar > .shape-btn {
-      flex: 1 1 0; min-width: 0; padding: 9px 4px;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      flex: 0 0 auto; width: 100%; padding: 10px 10px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
     }
-    @media (max-width: 700px) { .shape-toolbar > .shape-btn { padding: 12px 2px; font-size: 0.72rem; } }
+    @media (max-width: 700px) { .shape-toolbar > .shape-btn { padding: 12px 8px; font-size: 0.72rem; } }

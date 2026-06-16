@@ -97,11 +97,6 @@
     <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Make)">Make</button>
     <button type="button" class="mix-top-link" id="mix-tab" title="Switch to the Tracks / Mixdown view (Mix)">Mix</button>
     <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in">Listen →</button>
-    <!-- Sign-in toggle. Optional sign-in: Bloops works without Drive
-         access, but Save/Load Project, Save/Load FX, Export, and the
-         Listen view all need it. Toggling on prompts Google OAuth;
-         toggling off clears the cached token. -->
-    <button type="button" class="signin-toggle" id="signin-toggle-btn" title="Sign in with Google to enable Save / Load, Export, and the Listen view">Sign in</button>
   </div>
 
   <div class="menubar">
@@ -437,9 +432,14 @@
            lane enters Shape mode. -->
       <div id="shape-pad" hidden>
         <div class="shape-inner" id="shape-inner">
-          <div class="shape-toolbar" id="shape-toolbar"></div>
-          <div class="shape-stage" id="shape-stage">
-            <canvas id="shape-canvas" class="shape-canvas"></canvas>
+          <!-- Action buttons (a vertical column) sit beside the canvas; the
+               collapsible "⚙ Wheel" params panel is relocated by JS to sit
+               full-width below this row. -->
+          <div class="shape-main" id="shape-main">
+            <div class="shape-toolbar" id="shape-toolbar"></div>
+            <div class="shape-stage" id="shape-stage">
+              <canvas id="shape-canvas" class="shape-canvas"></canvas>
+            </div>
           </div>
         </div>
       </div>
@@ -767,6 +767,11 @@
   <div class="project-bottom-bar">
     <button id="project-menu-btn" title="Project: New, Save, Load">Project ▾</button>
     <span class="project-name-label" id="project-name-label" title="Active project"></span>
+    <!-- Sign-in toggle. Optional sign-in: Bloops works without Drive access,
+         but Save/Load Project, Save/Load FX, Export, and the Listen view all
+         need it. Toggling on prompts Google OAuth; off clears the cached token.
+         Pinned to the right of this row. -->
+    <button type="button" class="signin-toggle" id="signin-toggle-btn" title="Sign in with Google to enable Save / Load, Export, and the Listen view">Sign in</button>
   </div>
 
   <!-- Mix view: holds the multi-track sequencer (Tracks) and the Mixdown

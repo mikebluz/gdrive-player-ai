@@ -1204,7 +1204,7 @@
     // lane in Make.
     // ========================================================================
     const SHAPE_COLORS = ['#4fd1c5', '#9f7aea', '#f6ad55', '#f56565', '#63b3ed', '#68d391', '#ed64a6', '#ecc94b'];
-    let _shapeMaster = { canvas: null, ctx: null, inited: false, raf: 0, running: false, t0: 0, lastPhase: 0, rings: [] };
+    let _shapeMaster = { canvas: null, ctx: null, inited: false, raf: 0, running: false, t0: 0, lastPhase: 0, rings: [], legendKey: null };
     function _shapeRgba(hex, a) {
       const h = hex.replace('#', '');
       const f = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
@@ -1294,6 +1294,16 @@
     }
     function _shapeMasterLegend(sl) {
       const el = document.getElementById('shape-master-legend'); if (!el) return;
+      // _shapeMasterDraw runs every animation frame during Play-all, and it
+      // calls this. Rebuilding the legend DOM (innerHTML + per-item listeners)
+      // 60×/s saturates the main thread on phones and starves touch events —
+      // the "■ Stop" tap then appears to do nothing. Only rebuild when the
+      // master lane SET actually changes (idx / name / node-count / color).
+      const key = sl.length
+        ? sl.map(s => s.idx + '~' + (s.lane.name || '') + '~' + s.cfg.nodes.length + '~' + s.color).join('|')
+        : '∅';
+      if (key === _shapeMaster.legendKey && el.childElementCount) return;
+      _shapeMaster.legendKey = key;
       el.innerHTML = '';
       if (!sl.length) {
         const hint = document.createElement('span'); hint.className = 'sm-leg'; hint.style.cursor = 'default';

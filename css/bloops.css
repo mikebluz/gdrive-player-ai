@@ -3576,14 +3576,23 @@
        can't accidentally surface the parked element. */
     #lane-expander-stash[hidden] { display: none; }
     .lane-row.active {
-      /* Stronger highlight — the editor is now pinned to the top, so the active
-         lane is identified by this accent rather than by sitting under the
-         editor. A left accent bar + brighter ring + fill make it unmistakable. */
+      /* Stronger highlight on top of floating to the top of the stack (see the
+         `order` rules below): a left accent bar + brighter ring + fill make the
+         selected lane unmistakable. */
       background: rgba(66, 153, 225, 0.18);
       box-shadow: inset 0 0 0 2px rgba(66, 153, 225, 0.85),
                   inset 4px 0 0 0 #4299e1;
       cursor: default;
     }
+    /* Selected lane floats to the TOP of the lane stack. CSS `order` is purely
+       VISUAL — it does NOT change DOM order, so the `.lane-row` document-order
+       indexing in 08-grid-modes (playback cursor, chip labels) stays correct.
+       The pinned editor stays above and the step-edit controls below, so the
+       active lane keeps its bracket: editor → active lane → step controls,
+       all three lifted to the top together. */
+    .sequence-display.polymode > #lane-expander   { order: -3; }
+    .sequence-display.polymode > .lane-row.active { order: -2; }
+    .sequence-display.polymode > #step-edit-row   { order: -1; }
     .lane-row.muted .lane-chips,
     .lane-row.muted .lane-label { opacity: 0.35; }
     .lane-row.soloed { box-shadow: inset 0 0 0 1px rgba(246, 173, 85, 0.5); }

@@ -1526,28 +1526,12 @@
             _deleteLane(laneIdx);
           } },
       ];
-      // Send this lane's own sequence into ITS lane-specific Bloom (then switch
-      // the lane into Bloom). Deferred submenu with the 3 send modes.
+      // Lane Bloom (per-lane generative) is on ice — the "🌸 Send to Bloom ▸"
+      // action that routed this lane into its own _laneEng Bloom instance was
+      // removed here. Master Bloom (Mix ▸ Bloom) is untouched; its publish/send
+      // options live elsewhere. _ambSendLaneToBloom/_ambSendSampleToLane stay
+      // wired in 17-ambient.js for an easy restore.
       actions.push('hr');
-      actions.push({ label: '🌸 Send to Bloom ▸', disabled: !lane.steps || lane.steps.length === 0, fn: () => setTimeout(() => {
-        const seqs = (typeof _ambListLaneSeqs === 'function') ? _ambListLaneSeqs(laneIdx) : [];
-        const send = (mode, id) => { try { _ambSendLaneToBloom(laneIdx, mode, id); } catch (e) { console.warn('Send lane to Bloom failed', e); } };
-        const sub = [{ label: '＋ New Seq', fn: () => send('new') }];
-        sub.push('hr');
-        if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => send('append', s.id) }));
-        else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
-        sub.push('hr');
-        if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => send('interleave', s.id) }));
-        else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
-        // If this lane's voice is a single-buffer sample, offer the raw Sample
-        // layer (chopped/whole) — switches the lane to Bloom and adds the layer.
-        const _sid = (typeof _ambSampleIdOfLane === 'function') ? _ambSampleIdOfLane(laneIdx) : null;
-        if (_sid) {
-          sub.push('hr');
-          sub.push({ label: '◫ As Sample layer', fn: () => { try { _ambSendSampleToLane(laneIdx, _sid, { chop: Math.max(1, (lane.steps || []).length) }); } catch (e) { console.warn('Send lane sample to Bloom failed', e); } } });
-        }
-        showCtxMenu(x, y, sub);
-      }, 0) });
       // Send to Shape — turn this lane's sequence into a radial wheel (each
       // sounding step a node; per-node sustain = the step's length) and switch
       // the lane into Shape mode.

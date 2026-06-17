@@ -213,6 +213,11 @@
       if (!lane || _shapeEditTarget) return;          // master-copy edit uses its own data
       const steps = Array.isArray(lane.steps) ? lane.steps : [];
       const fp = _stepsFingerprint(steps);
+      // Empty lane: there's nothing to reconstruct from, and deriving from no
+      // steps would collapse loopBeats to ~1 (total falls back to 1), cramming
+      // the whole wheel into a single beat — far too fast. Keep the current
+      // (default 4-beat) wheel and just adopt the fingerprint.
+      if (!steps.length) { lane._shapeStepsFp = fp; _shapeWheelDirty = false; return; }
       // First encounter on a lane that already has a HAND-BUILT wheel: adopt the
       // current state without rebuilding, so existing shapes aren't clobbered.
       if (lane._shapeStepsFp == null) {

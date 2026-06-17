@@ -2432,6 +2432,42 @@
     .shape-master-legend .sm-swatch { width: 11px; height: 11px; border-radius: 50%; }
     .shape-master-empty { color: #6a6a88; font-style: italic; padding: 24px; text-align: center; }
 
+    /* Version browser — each master-shape copy is a selectable/deletable row.
+       Replaces the old read-only legend's lane jump-links. */
+    .shape-master-legend .sm-ver {
+      display: flex; align-items: center; gap: 7px; padding: 4px 8px;
+      border: 1px solid #2d2d3f; border-radius: 7px; background: #11111c;
+      color: #a0aec0; cursor: pointer; transition: border-color .12s, background .12s;
+    }
+    .shape-master-legend .sm-ver:hover { border-color: #4a5578; }
+    .shape-master-legend .sm-ver.active {
+      border-color: #4fd1c5; background: rgba(79,209,197,0.12); color: #e2e8f0;
+    }
+    .shape-master-legend .sm-ver .sm-swatch { flex: 0 0 auto; }
+    .shape-master-legend .sm-ver .sm-name { white-space: nowrap; }
+    .shape-master-legend .sm-ver .sm-edit,
+    .shape-master-legend .sm-ver .sm-del {
+      flex: 0 0 auto; color: #8a8aa8; padding: 0 2px; border-radius: 4px;
+    }
+    .shape-master-legend .sm-ver .sm-edit:hover { color: #4fd1c5; }
+    .shape-master-legend .sm-ver .sm-del:hover { color: #f56565; }
+
+    /* Edit host — holds the reparented #shape-pad while editing a copy. */
+    .shape-master-edithost { display: none; padding: 6px; }
+    .shape-master-editbar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; color: #cbd5e0;
+    }
+    body.master-shape-edit #shape-master-inner { display: none; }
+    body.master-shape-edit #shape-master-edithost { display: block; }
+    /* Show the reparented editor regardless of the active lane's mode, and
+       hide lane-only actions that don't apply to a standalone master copy. */
+    body.master-shape-edit #shape-pad { display: flex; }
+    body.master-shape-edit #shape-send-btn,
+    body.master-shape-edit #shape-rec-btn,
+    body.master-shape-edit #shape-clear-btn,
+    body.master-shape-edit #shape-tolane-btn { display: none; }
+
     .prog-blocks {
       display: flex;
       flex-wrap: wrap;

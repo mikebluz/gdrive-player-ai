@@ -616,6 +616,32 @@
         if (typeof _masterEng !== 'undefined' && _masterEng.inited) _ambSyncControls(_masterEng);
       } catch (e) {}
 
+      // Master Shapes (Mix) — independent shape copies (global). If the snapshot
+      // predates this feature, migrate any lanes flagged sentToMaster into one
+      // copy each (so older projects keep what they had "sent").
+      try {
+        if (typeof masterShapes !== 'undefined') {
+          try { if (typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
+          if (Array.isArray(snap.masterShapes)) {
+            masterShapes = JSON.parse(JSON.stringify(snap.masterShapes)).filter(c => c && c.shape);
+            activeMasterShapeId = (snap.activeMasterShapeId != null) ? snap.activeMasterShapeId : null;
+          } else {
+            masterShapes = [];
+            (Array.isArray(lanes) ? lanes : []).forEach((l, i) => {
+              if (l && l.sentToMaster && l.shape) {
+                masterShapes.push({ id: i + 1, name: (l.name || ('Lane ' + (i + 1))) + ' v1', shape: JSON.parse(JSON.stringify(l.shape)) });
+              }
+            });
+            activeMasterShapeId = masterShapes.length ? masterShapes[masterShapes.length - 1].id : null;
+          }
+          // Keep the id sequence ahead of every restored id.
+          if (typeof _shapeMasterIdSeq !== 'undefined') {
+            const maxId = masterShapes.reduce((m, c) => Math.max(m, (c && Number.isFinite(c.id)) ? c.id : 0), 0);
+            _shapeMasterIdSeq = maxId + 1;
+          }
+        }
+      } catch (e) { console.warn('master shapes restore failed', e); }
+
       // Global FX — write into the live globalFx and refresh the panel.
       if (snap.globalFx && typeof snap.globalFx === 'object') {
         Object.keys(GLOBAL_FX_DEFAULTS).forEach(k => {
@@ -879,6 +905,10 @@
         ).forEach(el => { try { el.classList.remove('open'); } catch (e) {} });
         document.querySelectorAll('.banner-half.open, .menu-btn.open, button.open')
           .forEach(el => { try { el.classList.remove('open'); } catch (e) {} });
+        // Leaving any view ends a master-shape edit so the reparented
+        // #shape-pad is returned to its Make home (else it'd be orphaned in
+        // the hidden Mix pane and the lane Shape editor would lose its body).
+        try { if (typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
       };
       const showBloops = () => {
         // tracks-fullscreen is a Mix-internal layout class; clear it on
@@ -939,8 +969,12 @@
           bBtn.classList.toggle('active', which === 'bloom');
           if (sBtn) sBtn.classList.toggle('active', which === 'shapes');
           mBtn.classList.toggle('active', which === 'mixdown');
-          // Stop the master wheel animation whenever we leave the Shapes pane.
-          if (which !== 'shapes') { try { if (typeof _shapeMasterStop === 'function') _shapeMasterStop(); } catch (e) {} }
+          // Stop the master wheel animation + end any copy edit whenever we
+          // leave the Shapes pane (returns the reparented #shape-pad home).
+          if (which !== 'shapes') {
+            try { if (typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
+            try { if (typeof _shapeMasterStop === 'function') _shapeMasterStop(); } catch (e) {}
+          }
           if (which === 'bloom') {
             try { if (typeof _ambInitMaster === 'function') _ambInitMaster(); } catch (e) {}
           } else if (which === 'shapes') {

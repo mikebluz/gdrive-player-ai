@@ -911,6 +911,10 @@
         // Master Bloom (Mix) config — global, not per-lane. Never persist playing.
         masterAmbient: (typeof masterAmbient !== 'undefined' && masterAmbient)
           ? JSON.parse(JSON.stringify({ ...masterAmbient, playing: false })) : null,
+        // Master Shapes (Mix) — independent shape COPIES sent from lanes; global.
+        masterShapes: (typeof masterShapes !== 'undefined' && Array.isArray(masterShapes))
+          ? JSON.parse(JSON.stringify(masterShapes)) : [],
+        activeMasterShapeId: (typeof activeMasterShapeId !== 'undefined') ? activeMasterShapeId : null,
         savedGridStates: JSON.parse(JSON.stringify(savedGridStates || [])),
         // Ensembles — user-built multi-tone voices (referenced as 'ensemble:<id>').
         ensembles: (typeof ensembles !== 'undefined' && ensembles)
@@ -1157,6 +1161,11 @@
       lanes = [];
       activeLaneIdx = 0;
       if (typeof ensureLanesInitialized === 'function') ensureLanesInitialized();
+
+      // Master Shapes (Mix) collection.
+      if (typeof masterShapes !== 'undefined') masterShapes = [];
+      if (typeof activeMasterShapeId !== 'undefined') activeMasterShapeId = null;
+      try { if (typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
 
       // Saved sequences bank.
       savedSequences = [];

@@ -137,7 +137,23 @@
       }
       return s;
     }
+    // ---- Master Shapes: a persisted collection of independent shape COPIES ---
+    // "Send" snapshots a lane's wheel into masterShapes; one copy is active at a
+    // time (newest send wins). Browse / select / delete in Mix ▸ Shapes; edit
+    // the active copy with the full wheel editor (the lane's #shape-pad is
+    // reparented into the Mix pane during edit). Declared here — referenced by
+    // 11/14 persistence — mirroring how masterAmbient is shared.
+    let masterShapes = [];
+    let activeMasterShapeId = null;
+    let _shapeMasterIdSeq = 1;       // monotonic id source for copies
+    let _shapeEditTarget = null;     // synthetic lane while editing a copy (else null)
+    let _shapeMasterEditId = null;   // id of the copy currently open in the editor
+    let _shapePadHome = null;        // { parent, next } to restore #shape-pad after edit
     function _shapeLane() {
+      // While editing a master-shape copy, the whole editor binds to a synthetic
+      // lane wrapping that copy — so every existing control edits the copy with
+      // zero changes. Outside an edit session this is the real active lane.
+      if (_shapeEditTarget) return _shapeEditTarget;
       return (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
     }
     // Ensure the active lane has a normalized shape config; returns it (or null).
@@ -688,13 +704,15 @@
       if (btn) { btn.textContent = _shapeSpin.running ? '■ Stop' : '▶ Play'; btn.classList.toggle('active', _shapeSpin.running); }
     }
     function _shapeReflectSendBtn() {
+      // Send is now a one-shot "snapshot a copy into the master collection"
+      // (no live link / toggle). The count of stored copies rides in the title.
       const btn = document.getElementById('shape-send-btn');
-      const lane = _shapeLane();
       if (btn) {
-        const on = !!(lane && lane.sentToMaster);
-        btn.classList.toggle('active', on);
-        btn.textContent = on ? '◉ Sent' : '◎ Send';
-        btn.title = on ? 'In the Mix ▸ Shapes master — click to remove' : 'Send this wheel to the Mix ▸ Shapes master overview';
+        btn.classList.remove('active');
+        btn.textContent = '◎ Send';
+        const n = Array.isArray(masterShapes) ? masterShapes.length : 0;
+        btn.title = 'Send a COPY of this wheel to the Mix ▸ Shapes master'
+          + (n ? ' (' + n + ' there now)' : '');
       }
     }
 
@@ -1086,9 +1104,12 @@
       const sendEl = bar.querySelector('#shape-send-btn');
       if (sendEl) sendEl.addEventListener('click', () => {
         const lane = _shapeLane(); if (!lane) return;
-        lane.sentToMaster = !lane.sentToMaster;
-        _shapeReflectSendBtn();
-        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+        const cfg = _shapeCfg(); if (!cfg) return;
+        _masterAddCopy(cfg, (lane && lane.name) || 'Shape');
+        // Brief confirmation, then revert (no persistent toggle state).
+        sendEl.textContent = '✓ Sent';
+        sendEl.classList.add('active');
+        setTimeout(() => { try { if (sendEl.isConnected) _shapeReflectSendBtn(); } catch (e) {} }, 850);
       });
       // Stepper −/+ buttons nudge their input and re-fire its change handler.
       bar.querySelectorAll('.shape-step-btn').forEach(btn => {
@@ -1211,17 +1232,67 @@
       const n = parseInt(f, 16);
       return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     }
-    function _shapeMasterLanes() {
-      if (typeof lanes === 'undefined') return [];
-      const out = [];
-      lanes.forEach((l, i) => {
-        // Only lanes explicitly SENT to the master (→ Master) appear here.
-        if (l && l.shapeMode && l.sentToMaster) {
-          if (!l.shape || typeof l.shape !== 'object') l.shape = _shapeDefault();
-          out.push({ lane: l, idx: i, cfg: _shapeNormalize(l.shape), color: SHAPE_COLORS[i % SHAPE_COLORS.length] });
-        }
-      });
-      return out;
+    // ----- master-shape collection helpers -----------------------------------
+    function _masterShapeById(id) {
+      if (id == null || !Array.isArray(masterShapes)) return null;
+      return masterShapes.find(c => c && c.id === id) || null;
+    }
+    // The active copy (newest as a fallback so the view is never blank when one
+    // exists but activeMasterShapeId drifted, e.g. after a delete).
+    function _masterActive() {
+      return _masterShapeById(activeMasterShapeId)
+        || (Array.isArray(masterShapes) && masterShapes.length ? masterShapes[masterShapes.length - 1] : null);
+    }
+    function _masterActiveCfg() {
+      const c = _masterActive(); if (!c) return null;
+      if (!c.shape || typeof c.shape !== 'object') c.shape = _shapeDefault();
+      return _shapeNormalize(c.shape);
+    }
+    function _masterColorOf(c) {
+      const i = Array.isArray(masterShapes) ? masterShapes.indexOf(c) : 0;
+      return SHAPE_COLORS[(i < 0 ? 0 : i) % SHAPE_COLORS.length];
+    }
+    // Snapshot a wheel into the collection as a fresh INDEPENDENT copy; it
+    // becomes the active one (newest send wins). Returns the new id.
+    function _masterAddCopy(cfg, baseName) {
+      if (!Array.isArray(masterShapes)) masterShapes = [];
+      const shape = JSON.parse(JSON.stringify(cfg || _shapeDefault()));
+      const id = _shapeMasterIdSeq++;
+      // Version-style naming: re-sending lane "A" yields "A v1", "A v2", …
+      const base = (typeof baseName === 'string' && baseName.trim()) ? baseName.trim() : 'Shape';
+      const n = masterShapes.filter(c => c && typeof c.name === 'string' && c.name.indexOf(base + ' v') === 0).length + 1;
+      masterShapes.push({ id, name: base + ' v' + n, shape });
+      activeMasterShapeId = id;
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      _shapeMaster.legendKey = null;
+      try { if (_shapeMaster.inited) _shapeMasterDraw(0); } catch (e) {}
+      try { _shapeReflectSendBtn(); } catch (e) {}
+      return id;
+    }
+    function _masterSelect(id) {
+      if (!_masterShapeById(id)) return;
+      activeMasterShapeId = id;
+      try { _shapeMasterStop(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      _shapeMaster.legendKey = null;
+      _shapeMasterDraw(0);
+    }
+    function _masterDeleteCopy(id) {
+      if (!Array.isArray(masterShapes)) return;
+      const i = masterShapes.findIndex(c => c && c.id === id);
+      if (i < 0) return;
+      // If this copy is open in the editor, leave edit mode first.
+      if (_shapeMasterEditId === id) { try { _shapeMasterEditClose(); } catch (e) {} }
+      masterShapes.splice(i, 1);
+      if (activeMasterShapeId === id) {
+        activeMasterShapeId = masterShapes.length
+          ? masterShapes[Math.min(i, masterShapes.length - 1)].id : null;
+      }
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { _shapeMasterStop(); } catch (e) {}
+      _shapeMaster.legendKey = null;
+      _shapeMasterDraw(0);
+      try { _shapeReflectSendBtn(); } catch (e) {}
     }
     function _shapeMasterResize() {
       if (!_shapeMaster.canvas) return;
@@ -1271,79 +1342,74 @@
       const W = cv.width / dpr, H = cv.height / dpr;
       ctx.clearRect(0, 0, W, H);
       const cx = W / 2, cy = H / 2;
-      const Rmax = Math.min(W, H) / 2 - 30, Rmin = Rmax * 0.3;
-      const sl = _shapeMasterLanes();
-      _shapeMasterLegend(sl);
-      if (!sl.length) {
+      const R = Math.min(W, H) / 2 - 30;
+      // The browser list (version rows) is its own DOM, refreshed cheaply.
+      _shapeMasterBrowser();
+      const cfg = _masterActiveCfg();
+      if (!cfg) {
         ctx.fillStyle = 'rgba(120,120,150,0.7)'; ctx.font = '14px Segoe UI, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('No shapes sent yet — press “→ Master” in a Shape lane.', cx, cy);
+        ctx.fillText('No master shapes yet — press “◎ Send” in a Shape lane.', cx, cy);
         _shapeMaster.rings = []; return;
       }
-      const N = sl.length;
-      _shapeMaster.rings = sl.map((s, i) => ({
-        idx: s.idx, cfg: s.cfg, color: s.color,
-        radius: N > 1 ? (Rmin + (Rmax - Rmin) * ((N - 1 - i) / (N - 1))) : Rmax,
-      }));
-      // Shared playhead.
+      const color = _masterColorOf(_masterActive());
+      _shapeMaster.rings = [{ id: activeMasterShapeId, cfg, color, radius: R }];
+      // Single sweeping playhead for the active wheel.
       const ph = (typeof phase === 'number') ? phase : (_shapeMaster.running ? _shapeMaster.lastPhase : 0);
       const pa = 2 * Math.PI * (((ph % 1) + 1) % 1);
       ctx.strokeStyle = 'rgba(79,209,197,0.5)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Rmax * Math.sin(pa), cy - Rmax * Math.cos(pa)); ctx.stroke();
-      _shapeMaster.rings.forEach(r => _shapeDrawWheelAt(ctx, cx, cy, r.radius, r.cfg, r.color));
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.sin(pa), cy - R * Math.cos(pa)); ctx.stroke();
+      _shapeDrawWheelAt(ctx, cx, cy, R, cfg, color);
       ctx.fillStyle = 'rgba(203,213,224,0.8)'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
     }
-    function _shapeMasterLegend(sl) {
+    // Version browser: one selectable / editable / deletable row per copy.
+    function _shapeMasterBrowser() {
       const el = document.getElementById('shape-master-legend'); if (!el) return;
-      // _shapeMasterDraw runs every animation frame during Play-all, and it
-      // calls this. Rebuilding the legend DOM (innerHTML + per-item listeners)
-      // 60×/s saturates the main thread on phones and starves touch events —
-      // the "■ Stop" tap then appears to do nothing. Only rebuild when the
-      // master lane SET actually changes (idx / name / node-count / color).
-      const key = sl.length
-        ? sl.map(s => s.idx + '~' + (s.lane.name || '') + '~' + s.cfg.nodes.length + '~' + s.color).join('|')
-        : '∅';
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      // Cheap signature so the per-frame draw doesn't rebuild DOM 60×/s (the
+      // same main-thread / touch-starvation guard the legend used before).
+      const key = list.map(c => c.id + '~' + (c.name || '') + '~'
+        + ((c.shape && Array.isArray(c.shape.nodes)) ? c.shape.nodes.length : '?')).join('|')
+        + '#' + activeMasterShapeId;
       if (key === _shapeMaster.legendKey && el.childElementCount) return;
       _shapeMaster.legendKey = key;
       el.innerHTML = '';
-      if (!sl.length) {
-        const hint = document.createElement('span'); hint.className = 'sm-leg'; hint.style.cursor = 'default';
-        hint.textContent = 'No shapes sent — open a Shape lane in Make and press “→ Master”.';
+      if (!list.length) {
+        const hint = document.createElement('span'); hint.className = 'sm-leg'; hint.style.cssText = 'cursor:default;color:#6a6a88';
+        hint.textContent = 'No master shapes — open a Shape lane in Make and press “◎ Send”.';
         el.appendChild(hint); return;
       }
-      sl.forEach(s => {
-        const item = document.createElement('span'); item.className = 'sm-leg';
-        const sw = document.createElement('span'); sw.className = 'sm-swatch'; sw.style.background = s.color;
-        const nm = document.createElement('span');
-        nm.textContent = (s.lane.name || ('Lane ' + (s.idx + 1))) + ' · ' + s.cfg.nodes.length;
-        const jump = () => _shapeMasterJump(s.idx);
-        sw.addEventListener('click', jump); nm.addEventListener('click', jump);
-        const rm = document.createElement('span');
-        rm.textContent = '✕'; rm.title = 'Remove from master';
-        rm.style.cssText = 'cursor:pointer;color:#8a8aa8;margin-left:2px';
-        rm.addEventListener('click', (e) => {
-          e.stopPropagation();
-          s.lane.sentToMaster = false;
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (x) {}
-          _shapeMasterDraw(_shapeMaster.running ? _shapeMaster.lastPhase : 0);
-        });
-        item.appendChild(sw); item.appendChild(nm); item.appendChild(rm);
-        el.appendChild(item);
+      list.forEach(c => {
+        const cfg = _shapeNormalize(c.shape);
+        const row = document.createElement('span');
+        row.className = 'sm-ver' + (c.id === activeMasterShapeId ? ' active' : '');
+        row.title = 'Click to select (make active); ✎ to edit; ✕ to delete';
+        const sw = document.createElement('span'); sw.className = 'sm-swatch'; sw.style.background = _masterColorOf(c);
+        const nm = document.createElement('span'); nm.className = 'sm-name';
+        nm.textContent = (c.name || 'Shape') + ' · ' + cfg.nodes.length;
+        row.appendChild(sw); row.appendChild(nm);
+        row.addEventListener('click', () => _masterSelect(c.id));
+        const ed = document.createElement('span'); ed.className = 'sm-edit'; ed.textContent = '✎'; ed.title = 'Edit this shape';
+        ed.addEventListener('click', (e) => { e.stopPropagation(); _shapeMasterEditOpen(c.id); });
+        const del = document.createElement('span'); del.className = 'sm-del'; del.textContent = '✕'; del.title = 'Delete this shape';
+        del.addEventListener('click', (e) => { e.stopPropagation(); _masterDeleteCopy(c.id); });
+        row.appendChild(ed); row.appendChild(del);
+        el.appendChild(row);
       });
     }
     function _shapeMasterTick() {
       if (!_shapeMaster.running) return;
-      const barSec = _shapeBarSec();
+      const cfg = _masterActiveCfg();
+      if (!cfg) { _shapeMasterStop(); return; }
+      const barSec = _shapeBarSec(cfg);
       const now = performance.now() / 1000;
       const phase = (((now - _shapeMaster.t0) % barSec) / barSec + 1) % 1;
       const last = _shapeMaster.lastPhase, wrapped = phase < last;
-      _shapeMasterLanes().forEach(s => {
-        const { eff, sortedAngles: sorted, idxOf } = _shapeSortedEff(s.cfg);
-        eff.forEach(e => {
-          if (e.nd.muted) return;
-          const a = e.a;
-          const crossed = wrapped ? (a > last || a <= phase) : (a > last && a <= phase);
-          if (crossed) _shapeTriggerNode(s.cfg, e.nd, a, sorted, idxOf.get(e.nd));
-        });
+      const { eff, sortedAngles: sorted, idxOf } = _shapeSortedEff(cfg);
+      eff.forEach(e => {
+        if (e.nd.muted) return;
+        const a = e.a;
+        const crossed = wrapped ? (a > last || a <= phase) : (a > last && a <= phase);
+        if (crossed) _shapeTriggerNode(cfg, e.nd, a, sorted, idxOf.get(e.nd));
       });
       _shapeMaster.lastPhase = phase;
       _shapeMasterDraw(phase);
@@ -1351,6 +1417,7 @@
     }
     function _shapeMasterStart() {
       if (_shapeMaster.running) return;
+      if (!_masterActiveCfg()) return;        // nothing to play
       try { _shapeSpinStop(); } catch (e) {}   // never run the editor + master loops together
       _shapeMaster.running = true; _shapeMaster.t0 = performance.now() / 1000; _shapeMaster.lastPhase = -1e-9;
       _shapeMaster.raf = requestAnimationFrame(_shapeMasterTick); _shapeMasterReflectBtn();
@@ -1366,34 +1433,72 @@
     }
     function _shapeMasterReflectBtn() {
       const b = document.getElementById('shape-master-play');
-      if (b) { b.textContent = _shapeMaster.running ? '■ Stop' : '▶ Play all'; b.classList.toggle('active', _shapeMaster.running); }
+      if (b) { b.textContent = _shapeMaster.running ? '■ Stop' : '▶ Play'; b.classList.toggle('active', _shapeMaster.running); }
     }
-    function _shapeMasterJump(idx) {
-      if (typeof lanes === 'undefined' || !lanes[idx]) return;
-      _shapeMasterStop();
-      try { activeLaneIdx = idx; } catch (e) {}
-      try { if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } catch (e) {}
-      try { if (typeof _syncFluidGridToActiveLane === 'function') _syncFluidGridToActiveLane(); } catch (e) {}
-      try { const mk = document.getElementById('bloops-tab'); if (mk) mk.click(); } catch (e) {}
-    }
+    // Tap the active wheel → open it in the full editor.
     function _shapeMasterClick(e) {
-      const cv = _shapeMaster.canvas; if (!cv) return;
-      const rect = cv.getBoundingClientRect();
-      const x = e.clientX - rect.left, y = e.clientY - rect.top;
-      const dpr = window.devicePixelRatio || 1;
-      const cx = (cv.width / dpr) / 2, cy = (cv.height / dpr) / 2;
-      // Jump to edit ONLY when a NODE is clicked (within ~14px) — not anywhere
-      // on the ring, which would yank you to Make on almost any click.
-      let best = -1, bd = 14;
-      (_shapeMaster.rings || []).forEach(r => {
-        const rotFrac = (r.cfg.rotationDeg || 0) / 360;
-        r.cfg.nodes.forEach(nd => {
-          const p = _shapeNodeXY(cx, cy, r.radius, nd.angleFrac, rotFrac);
-          const dd = Math.hypot(x - p.x, y - p.y);
-          if (dd < bd) { bd = dd; best = r.idx; }
-        });
-      });
-      if (best >= 0) _shapeMasterJump(best);
+      if (activeMasterShapeId != null) _shapeMasterEditOpen(activeMasterShapeId);
+    }
+    // ----- edit a copy with the full lane editor (reparented #shape-pad) ------
+    function _shapeMasterReflectEditUI() {
+      const bar = document.getElementById('shape-master-editbar'); if (!bar) return;
+      const c = _masterShapeById(_shapeMasterEditId);
+      bar.innerHTML = '';
+      const back = document.createElement('button');
+      back.type = 'button'; back.className = 'shape-btn'; back.id = 'shape-master-done';
+      back.textContent = '◀ Done';
+      back.title = 'Stop editing this master shape and return to the overview';
+      back.addEventListener('click', () => _shapeMasterEditClose());
+      const lbl = document.createElement('span');
+      lbl.textContent = 'Editing master shape: ' + ((c && c.name) || '?');
+      bar.appendChild(back); bar.appendChild(lbl);
+    }
+    function _shapeMasterEditOpen(id) {
+      const copy = _masterShapeById(id); if (!copy) return;
+      if (!copy.shape || typeof copy.shape !== 'object') copy.shape = _shapeDefault();
+      copy.shape = _shapeNormalize(copy.shape);
+      try { _shapeMasterStop(); } catch (e) {}
+      _shapeMasterEditId = id;
+      activeMasterShapeId = id;
+      // Bind the entire editor to a synthetic lane wrapping this copy. Edits to
+      // copy.shape (same object held by masterShapes) persist via persistWorkspace.
+      _shapeEditTarget = { name: copy.name, shape: copy.shape, shapeMode: true, _masterId: id };
+      // Reparent the lane Shape editor into the Mix edit host (ids/listeners
+      // travel with the node). Remember exactly where it was so we restore it.
+      const pad = document.getElementById('shape-pad');
+      const host = document.getElementById('shape-master-edithost');
+      if (pad && host) {
+        if (!_shapePadHome) _shapePadHome = { parent: pad.parentNode, next: pad.nextSibling };
+        host.appendChild(pad);
+      }
+      document.body.classList.add('master-shape-edit');
+      _shapeMasterReflectEditUI();
+      // Make sure the canvas listeners exist (guarded — binds once), then build
+      // the toolbar + size + draw against the override.
+      try { if (typeof _shapeInit === 'function') _shapeInit(); } catch (e) {}
+      requestAnimationFrame(() => { try { _shapeBuildToolbar(); _shapeResize(); _shapeDraw(); } catch (e) {} });
+    }
+    function _shapeMasterEditClose() {
+      if (_shapeMasterEditId == null && !_shapeEditTarget) return;
+      try { _shapeSpinStop(); } catch (e) {}
+      // Move #shape-pad back to its Make home.
+      const pad = document.getElementById('shape-pad');
+      if (pad && _shapePadHome && _shapePadHome.parent) {
+        if (_shapePadHome.next && _shapePadHome.next.parentNode === _shapePadHome.parent)
+          _shapePadHome.parent.insertBefore(pad, _shapePadHome.next);
+        else _shapePadHome.parent.appendChild(pad);
+      }
+      _shapePadHome = null;
+      document.body.classList.remove('master-shape-edit');
+      _shapeEditTarget = null;
+      _shapeMasterEditId = null;
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      // Rebuild the lane editor against the REAL active lane so Make is correct
+      // the next time it's shown.
+      try { if (typeof _shapeRetargetLane === 'function') _shapeRetargetLane(); } catch (e) {}
+      _shapeMaster.legendKey = null;   // force the browser to rebuild
+      try { _shapeMasterReflectBtn(); } catch (e) {}
+      requestAnimationFrame(() => { try { _shapeMasterResize(); _shapeMasterDraw(0); } catch (e) {} });
     }
     function _shapeMasterInit() {
       _shapeMaster.canvas = document.getElementById('shape-master-canvas');
@@ -1402,10 +1507,13 @@
         _shapeMaster.ctx = _shapeMaster.canvas.getContext('2d');
         const bar = document.getElementById('shape-master-bar');
         if (bar) {
-          bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-play">▶ Play all</button>' +
-            '<span style="color:#8a8aa8;font-size:0.72rem">All Shape lanes share one bar clock — click a node (or a legend entry) to edit its lane.</span>';
+          bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-play">▶ Play</button>' +
+            '<button type="button" class="shape-btn" id="shape-master-edit">✎ Edit</button>' +
+            '<span style="color:#8a8aa8;font-size:0.72rem">Each “◎ Send” saves a copy here. Click a version to select it, ✎ to edit, ✕ to delete.</span>';
           const pb = bar.querySelector('#shape-master-play');
           if (pb) pb.addEventListener('click', () => { if (_shapeMaster.running) _shapeMasterStop(); else _shapeMasterStart(); });
+          const eb = bar.querySelector('#shape-master-edit');
+          if (eb) eb.addEventListener('click', () => { if (activeMasterShapeId != null) _shapeMasterEditOpen(activeMasterShapeId); });
         }
         _shapeMaster.canvas.addEventListener('click', _shapeMasterClick);
         const _redrawIfShapes = () => {

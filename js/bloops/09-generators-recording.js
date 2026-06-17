@@ -1096,6 +1096,9 @@
       };
       savedSequences[activeSeqIndex] = updated;
       persistSaved();
+      // Reflect into master Shapes as an independent copy (saves never change
+      // the saved sequence; edits to the copy never change the save).
+      try { if (typeof _shapeReflectSavedSeq === 'function') _shapeReflectSavedSeq(updated); } catch (e) {}
       // Propagate to any track items that came from this saved sequence so
       // edits show up everywhere the sequence appears, not just in the bank.
       propagateSavedToTracks(existing.name, updated);
@@ -1110,8 +1113,11 @@
     // auto-name) and clear the workspace — the entry now lives in the bank.
     function saveAsNewSeq(name) {
       name = (name && name.trim()) || seqName(savedSequences.length);
-      savedSequences.push({ name, ...currentSequenceSnapshot() });
+      const _entry = { name, ...currentSequenceSnapshot() };
+      savedSequences.push(_entry);
       persistSaved();
+      // Reflect into master Shapes as an independent copy (see saveOverwrite…).
+      try { if (typeof _shapeReflectSavedSeq === 'function') _shapeReflectSavedSeq(_entry); } catch (e) {}
 
       stopSequence();
       sequence = [];

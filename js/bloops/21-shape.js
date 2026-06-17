@@ -164,6 +164,100 @@
       return _shapeNormalize(lane.shape);
     }
 
+    // ====================================================================
+    // Trans-mode lane: lane.steps is the single source of truth for the
+    // musical content; the Shape wheel is a VIEW that reconstructs from it.
+    //  - Entering Shape (or switching lane in Shape): rebuild the wheel from
+    //    steps ONLY if the steps changed since the wheel was last in sync —
+    //    so a hand-built wheel survives untouched when you didn't edit notes
+    //    elsewhere. View-settings (rotation / gate / voice) are preserved.
+    //  - Editing the wheel: fold the change back into steps (debounced) so
+    //    Grid/Graph/transport/etc. all see it. We only write when the wheel
+    //    was actually edited (_shapeWheelDirty), never on a passive view —
+    //    so opening a shape never mutates the sequence.
+    // ====================================================================
+    let _shapeWheelDirty = false;       // user edited the wheel since last sync
+    let _shapeFlushTimer = null;
+    // Mark + schedule together so it's independent of whether the caller draws
+    // before or after marking (edit handlers vary in order).
+    function _shapeMarkEdit() { _shapeWheelDirty = true; _shapeScheduleFlush(); }
+    // Cheap content fingerprint: notes + chords + timing (ignores pure view).
+    function _stepsFingerprint(steps) {
+      if (!Array.isArray(steps)) return '0';
+      return steps.map(s => {
+        if (!s) return '_';
+        const t = ':' + (s.duration != null ? s.duration : 1) + 'x' + (s.subdivision != null ? s.subdivision : 1);
+        if (Array.isArray(s.chord)) return 'C' + s.chord.map(v => Math.round((v && v.freq) || 0)).join(',') + t;
+        if (s.isSub && Array.isArray(s.subSteps)) return 'S' + s.subSteps.map(x => Math.round((x && x.freq) || 0)).join(',') + t;
+        if (s.freq == null) return 'R' + t;
+        return 'N' + Math.round(s.freq) + t;
+      }).join('|');
+    }
+    // Pure control-surface settings to carry across a steps→wheel rebuild.
+    function _shapeViewOf(shape) {
+      if (!shape) return null;
+      return {
+        rotationDeg: shape.rotationDeg, gatePct: shape.gatePct,
+        tone: shape.tone, soundParams: shape.soundParams ? JSON.parse(JSON.stringify(shape.soundParams)) : null,
+      };
+    }
+    function _shapeApplyView(shape, v) {
+      if (!shape || !v) return;
+      if (Number.isFinite(v.rotationDeg)) shape.rotationDeg = ((v.rotationDeg % 360) + 360) % 360;
+      if (Number.isFinite(v.gatePct)) shape.gatePct = v.gatePct;
+      if (typeof v.tone === 'string' && v.tone) shape.tone = v.tone;
+      if (v.soundParams) shape.soundParams = JSON.parse(JSON.stringify(v.soundParams));
+    }
+    // Rebuild the lane's wheel from its steps when the steps changed elsewhere.
+    function _shapeMaybeDeriveFromSteps(lane) {
+      if (!lane || _shapeEditTarget) return;          // master-copy edit uses its own data
+      const steps = Array.isArray(lane.steps) ? lane.steps : [];
+      const fp = _stepsFingerprint(steps);
+      // First encounter on a lane that already has a HAND-BUILT wheel: adopt the
+      // current state without rebuilding, so existing shapes aren't clobbered.
+      if (lane._shapeStepsFp == null) {
+        const cur = lane.shape ? _shapeNormalize(lane.shape) : null;
+        if (cur && _shapeIsCustomized(cur)) { lane._shapeStepsFp = fp; _shapeWheelDirty = false; return; }
+      } else if (lane._shapeStepsFp === fp && lane.shape) {
+        return;                                       // steps unchanged → keep the wheel exactly
+      }
+      const view = _shapeViewOf(lane.shape);
+      const derived = _shapeSeqToShape(steps);
+      _shapeApplyView(derived, view);
+      lane.shape = derived;
+      lane._shapeStepsFp = fp;
+      _shapeWheelDirty = false;
+    }
+    // Fold wheel edits back into the lane's steps (the canonical content).
+    function _shapeScheduleFlush() {
+      if (_shapeEditTarget || _shapeRecording || !_shapeWheelDirty) return;
+      const lane = (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
+      if (!lane || !lane.shapeMode) return;
+      clearTimeout(_shapeFlushTimer);
+      _shapeFlushTimer = setTimeout(_shapeFlushNow, 140);
+    }
+    function _shapeFlushNow() {
+      clearTimeout(_shapeFlushTimer); _shapeFlushTimer = null;
+      if (_shapeEditTarget || _shapeRecording || !_shapeWheelDirty) return;
+      const lane = (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
+      if (!lane || !lane.shapeMode || !lane.shape) return;
+      const out = _shapeCompileSteps(_shapeNormalize(lane.shape));
+      const fp = _stepsFingerprint(out);
+      _shapeWheelDirty = false;
+      if (fp === lane._shapeStepsFp) return;          // nothing actually changed
+      lane.steps = out;
+      lane._shapeStepsFp = fp;
+      if (lane === lanes[activeLaneIdx] && typeof _aliasSequenceToActiveLane === 'function') {
+        try { _aliasSequenceToActiveLane(); } catch (e) {}
+      }
+      try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+      // A wheel-built sequence should be saveable just like a grid-built one.
+      try {
+        const sb = document.getElementById('save-btn');
+        if (sb && typeof sequence !== 'undefined' && Array.isArray(sequence)) sb.disabled = sequence.length === 0;
+      } catch (e) {}
+    }
+
     // ---- Canvas geometry + drawing -----------------------------------------
     let _shapeInited = false;
     let _shapeCanvas = null, _shapeCtx = null;
@@ -350,6 +444,7 @@
         o.nd.override = o.nd.override || {};
         o.nd.override.noteOffset = semis;
       });
+      _shapeMarkEdit();
       _shapeDraw();
       _shapeReflectSprayBtn();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -357,6 +452,7 @@
     function _shapeFlattenPitch() {
       const cfg = _shapeCfg(); if (!cfg) return;
       cfg.nodes.forEach(nd => { if (nd.override) nd.override.noteOffset = 0; });
+      _shapeMarkEdit();
       _shapeDraw();
       _shapeReflectSprayBtn();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
@@ -465,7 +561,7 @@
       const cfg = _shapeCfg(); if (!cfg) return;
       const nd = cfg.nodes[idx]; if (!nd) return;
       const hasProg = !!(cfg.progression && cfg.progression.chords && cfg.progression.chords.length);
-      const persist = () => { try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
+      const persist = () => { _shapeMarkEdit(); try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
       const close = () => { try { overlay.remove(); } catch (e) {} _shapeDraw(); persist(); };
 
       const overlay = document.createElement('div');
@@ -778,6 +874,11 @@
       const out = _shapeCompileSteps(cfg);
       if (!out.length) return;
       out.forEach(s => sequence.push(s));   // accumulative overdub
+      // Rec owns the steps while armed — keep the lane's fingerprint in step with
+      // what we just appended so the auto-derive doesn't rebuild the wheel from
+      // (and overwrite) this accumulated take.
+      const _recLane = (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
+      if (_recLane) _recLane._shapeStepsFp = _stepsFingerprint(sequence);
       try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
@@ -807,6 +908,7 @@
       // Dropping a node means the count no longer matches Equal spacing, so the
       // wheel is inherently free-form now — keep angles as-is.
       if (cfg.timingMode === 'equal') cfg.timingMode = 'free';
+      _shapeMarkEdit();
       _shapeDraw();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
@@ -843,13 +945,12 @@
       }
       if (lane) {
         lane.shape = _shapeDefault();
-        if (Array.isArray(lane.steps)) lane.steps.length = 0;
+        lane._shapeStepsFp = null;     // force the steps to re-sync from the fresh wheel
       }
-      if (typeof sequence !== 'undefined' && Array.isArray(sequence)) sequence.length = 0;
-      try { if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } catch (e) {}
+      _shapeMarkEdit();
+      try { _shapeFlushNow(); } catch (e) {}       // lane.steps follow the reset wheel
       try { _shapeBuildToolbar(); } catch (e) {}   // reflect the reset settings (Nodes/Tone/…)
       try { _shapeDraw(); } catch (e) {}
-      try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
 
@@ -989,8 +1090,9 @@
         '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
         '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎ Edit</button>' +
         '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎ Send</button>' +
-        '<button type="button" class="shape-btn" id="shape-clear-btn" title="Reset the wheel to default and clear this lane\'s recorded steps">Clear</button>' +
-        '<button type="button" class="shape-btn" id="shape-tolane-btn" title="Send to lane — replace this lane\'s sequence with the current wheel (reflects node moves / deletes / edits)">→ Lane</button>' +
+        '<button type="button" class="shape-btn" id="shape-clear-btn" title="Reset the wheel (and this lane) to a fresh default">Clear</button>' +
+        // "→ Lane" retired — the wheel now folds into the lane's steps
+        // automatically (trans-mode), so there's nothing to send manually.
         '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶ Play</button>' +
         '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Rec</button>' +
         // ⚙ Wheel sits at the BOTTOM of the column so it's adjacent to the
@@ -1032,7 +1134,7 @@
         toneEl.value = cfg.tone || ''; noteEl.value = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60; gateEl.value = cfg.gatePct;
         progEl.value = (cfg.progression && cfg.progression.key) ? cfg.progression.key : '';
       }
-      const persist = () => { try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
+      const persist = () => { _shapeMarkEdit(); try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
       nodesEl.addEventListener('change', () => {
         const c = _shapeCfg(); if (!c) return;
         const n = Math.max(1, Math.min(32, parseInt(nodesEl.value, 10) || 4));
@@ -1090,8 +1192,7 @@
       if (recEl) recEl.addEventListener('click', () => _shapeSetRecording(!_shapeRecording));
       const clearEl = bar.querySelector('#shape-clear-btn');
       if (clearEl) clearEl.addEventListener('click', () => _shapeClearLane());
-      const toLaneEl = bar.querySelector('#shape-tolane-btn');
-      if (toLaneEl) toLaneEl.addEventListener('click', () => _sendShapeToLane(typeof activeLaneIdx !== 'undefined' ? activeLaneIdx : 0));
+      // (#shape-tolane-btn retired — wheel→steps is automatic now.)
       // Spray/Flat is one toggle: when the wheel is flat it sprays a scale;
       // when it's already pitched it flattens. The label shows the action.
       const sprayEl = bar.querySelector('#shape-spray-btn');
@@ -1182,7 +1283,8 @@
             if (_shapeEditMode) _shapeEditNode(drag.idx);
             else { cfg.nodes[drag.idx].muted = !cfg.nodes[drag.idx].muted; _shapeDraw(); }
           }
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
+          _shapeMarkEdit();
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
           try { _shapeCanvas.releasePointerCapture(e.pointerId); } catch (ex) {}
           drag = { idx: -1, moved: false, sx: 0, sy: 0 };
         };
@@ -1200,7 +1302,8 @@
           nd.override.noteOffset = Math.max(-24, Math.min(24, cur + (e.deltaY < 0 ? 1 : -1)));
           _shapeDraw();
           _shapeReflectSprayBtn();
-          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
+          _shapeMarkEdit();
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}
         }, { passive: false });
         _shapeInited = true;
       }
@@ -1209,11 +1312,19 @@
       requestAnimationFrame(() => { _shapeResize(); _shapeDraw(); });
     }
     function _onShapeModeChanged(active) {
-      if (active) _shapeInit();
-      else _shapeSpinStop();
+      if (active) {
+        const lane = _shapeLane();
+        if (lane && !_shapeEditTarget) _shapeMaybeDeriveFromSteps(lane);   // reflect latest steps
+        _shapeInit();
+      } else {
+        _shapeFlushNow();          // leaving Shape → make sure edits are in steps
+        _shapeSpinStop();
+      }
     }
     function _shapeRetargetLane() {
       if (_shapeInited && document.body.classList.contains('shape-mode')) {
+        const lane = _shapeLane();
+        if (lane && !_shapeEditTarget) _shapeMaybeDeriveFromSteps(lane);
         _shapeBuildToolbar(); _shapeResize(); _shapeDraw();
       }
     }
@@ -1226,6 +1337,7 @@
     // ========================================================================
     const SHAPE_COLORS = ['#4fd1c5', '#9f7aea', '#f6ad55', '#f56565', '#63b3ed', '#68d391', '#ed64a6', '#ecc94b'];
     let _shapeMaster = { canvas: null, ctx: null, inited: false, raf: 0, running: false, t0: 0, lastPhase: 0, rings: [], legendKey: null };
+    let _shapeMasterExpanded = new Set();   // which browser groups are expanded (collapsed by default)
     function _shapeRgba(hex, a) {
       const h = hex.replace('#', '');
       const f = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
@@ -1252,22 +1364,46 @@
       const i = Array.isArray(masterShapes) ? masterShapes.indexOf(c) : 0;
       return SHAPE_COLORS[(i < 0 ? 0 : i) % SHAPE_COLORS.length];
     }
-    // Snapshot a wheel into the collection as a fresh INDEPENDENT copy; it
-    // becomes the active one (newest send wins). Returns the new id.
-    function _masterAddCopy(cfg, baseName) {
+    // Snapshot a wheel into the collection as a fresh INDEPENDENT copy. Versions
+    // sharing a source stack into one group (re-sending lane "A" → A v1, A v2…;
+    // re-saving sequence "Drums" → Drums v1, v2…). opts:
+    //   { name, source:'lane'|'saved-seq'|'capture'|'manual', sourceId, makeActive }
+    // A bare string is treated as a lane name (back-compat). Returns the new id.
+    function _masterAddCopy(cfg, opts) {
       if (!Array.isArray(masterShapes)) masterShapes = [];
+      if (typeof opts === 'string') opts = { name: opts, source: 'lane' };
+      opts = opts || {};
+      const source = opts.source || 'manual';
+      const base = (typeof opts.name === 'string' && opts.name.trim()) ? opts.name.trim() : 'Shape';
+      const groupId = (opts.sourceId != null) ? String(opts.sourceId) : (source + ':' + base);
       const shape = JSON.parse(JSON.stringify(cfg || _shapeDefault()));
       const id = _shapeMasterIdSeq++;
-      // Version-style naming: re-sending lane "A" yields "A v1", "A v2", …
-      const base = (typeof baseName === 'string' && baseName.trim()) ? baseName.trim() : 'Shape';
-      const n = masterShapes.filter(c => c && typeof c.name === 'string' && c.name.indexOf(base + ' v') === 0).length + 1;
-      masterShapes.push({ id, name: base + ' v' + n, shape });
-      activeMasterShapeId = id;
+      const n = masterShapes.filter(c => c && c.groupId === groupId).length + 1;
+      let createdAt = null; try { createdAt = Date.now(); } catch (e) {}
+      masterShapes.push({ id, name: base + ' v' + n, base, source, groupId, createdAt, shape });
+      if (opts.makeActive !== false) {        // auto-reflections (saves) don't steal selection
+        activeMasterShapeId = id;
+        _shapeMasterExpanded.add(groupId);    // reveal the family the new copy landed in
+      }
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       _shapeMaster.legendKey = null;
       try { if (_shapeMaster.inited) _shapeMasterDraw(0); } catch (e) {}
       try { _shapeReflectSendBtn(); } catch (e) {}
       return id;
+    }
+    // Reflect a SAVED step-sequence into master Shapes as an independent copy.
+    // Audio recordings (no step data) are skipped — they have no note/timing to
+    // make a wheel from (they belong to the Capture path instead).
+    function _shapeReflectSavedSeq(entry) {
+      try {
+        if (!entry || entry.type === 'audio') return;
+        const steps = Array.isArray(entry.steps) ? entry.steps
+                    : (Array.isArray(entry.sequence) ? entry.sequence : null);
+        if (!steps || !steps.length) return;
+        if (!steps.some(s => s && (s.freq != null || Array.isArray(s.chord) || (s.isSub && Array.isArray(s.subSteps))))) return;
+        const cfg = _shapeSeqToShape(steps);
+        _masterAddCopy(cfg, { name: entry.name || 'Sequence', source: 'saved-seq', sourceId: 'seq:' + (entry.name || ''), makeActive: false });
+      } catch (e) { console.warn('reflect saved seq → master shape failed', e); }
     }
     function _masterSelect(id) {
       if (!_masterShapeById(id)) return;
@@ -1361,40 +1497,140 @@
       _shapeDrawWheelAt(ctx, cx, cy, R, cfg, color);
       ctx.fillStyle = 'rgba(203,213,224,0.8)'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
     }
-    // Version browser: one selectable / editable / deletable row per copy.
+    const _SHAPE_SRC_LABEL = { lane: 'lane', 'saved-seq': 'saved', capture: 'capture', manual: 'manual' };
+    function _shapeGroupKey(c) { return c.groupId || ((c.source || 'manual') + ':' + (c.base || c.name || ('id' + c.id))); }
+    // Version browser: copies grouped by source (re-sends / re-saves stack into
+    // one collapsible family); each version is selectable / editable / deletable.
     function _shapeMasterBrowser() {
       const el = document.getElementById('shape-master-legend'); if (!el) return;
       const list = Array.isArray(masterShapes) ? masterShapes : [];
-      // Cheap signature so the per-frame draw doesn't rebuild DOM 60×/s (the
-      // same main-thread / touch-starvation guard the legend used before).
+      // Cheap signature so the per-frame draw doesn't rebuild DOM 60×/s.
       const key = list.map(c => c.id + '~' + (c.name || '') + '~'
         + ((c.shape && Array.isArray(c.shape.nodes)) ? c.shape.nodes.length : '?')).join('|')
-        + '#' + activeMasterShapeId;
+        + '#' + activeMasterShapeId + '@' + Array.from(_shapeMasterExpanded).join(',');
       if (key === _shapeMaster.legendKey && el.childElementCount) return;
       _shapeMaster.legendKey = key;
       el.innerHTML = '';
       if (!list.length) {
         const hint = document.createElement('span'); hint.className = 'sm-leg'; hint.style.cssText = 'cursor:default;color:#6a6a88';
-        hint.textContent = 'No master shapes — open a Shape lane in Make and press “◎ Send”.';
+        hint.textContent = 'No master shapes — “◎ Send” a Shape lane, or save a sequence in Make.';
         el.appendChild(hint); return;
       }
+      // Group, preserving first-seen order; newest version first within a group.
+      const groups = new Map();
       list.forEach(c => {
-        const cfg = _shapeNormalize(c.shape);
-        const row = document.createElement('span');
-        row.className = 'sm-ver' + (c.id === activeMasterShapeId ? ' active' : '');
-        row.title = 'Click to select (make active); ✎ to edit; ✕ to delete';
-        const sw = document.createElement('span'); sw.className = 'sm-swatch'; sw.style.background = _masterColorOf(c);
-        const nm = document.createElement('span'); nm.className = 'sm-name';
-        nm.textContent = (c.name || 'Shape') + ' · ' + cfg.nodes.length;
-        row.appendChild(sw); row.appendChild(nm);
-        row.addEventListener('click', () => _masterSelect(c.id));
-        const ed = document.createElement('span'); ed.className = 'sm-edit'; ed.textContent = '✎'; ed.title = 'Edit this shape';
-        ed.addEventListener('click', (e) => { e.stopPropagation(); _shapeMasterEditOpen(c.id); });
-        const del = document.createElement('span'); del.className = 'sm-del'; del.textContent = '✕'; del.title = 'Delete this shape';
-        del.addEventListener('click', (e) => { e.stopPropagation(); _masterDeleteCopy(c.id); });
-        row.appendChild(ed); row.appendChild(del);
-        el.appendChild(row);
+        const g = _shapeGroupKey(c);
+        if (!groups.has(g)) groups.set(g, { label: c.base || c.name || 'Shape', source: c.source || 'manual', items: [] });
+        groups.get(g).items.push(c);
       });
+      groups.forEach((grp, gkey) => {
+        const items = grp.items.slice().reverse();   // newest first
+        const hasActive = items.some(c => c.id === activeMasterShapeId);
+        const open = hasActive || _shapeMasterExpanded.has(gkey);
+        // ---- group header ----
+        const head = document.createElement('div'); head.className = 'sm-group' + (open ? ' open' : '');
+        const tw = document.createElement('span'); tw.className = 'sm-twist'; tw.textContent = open ? '▾' : '▸';
+        const gl = document.createElement('span'); gl.className = 'sm-glabel'; gl.textContent = grp.label;
+        const badge = document.createElement('span'); badge.className = 'sm-badge'; badge.textContent = _SHAPE_SRC_LABEL[grp.source] || grp.source;
+        const cnt = document.createElement('span'); cnt.className = 'sm-count'; cnt.textContent = items.length + (items.length === 1 ? ' version' : ' versions');
+        const gdel = document.createElement('span'); gdel.className = 'sm-del'; gdel.textContent = '✕'; gdel.title = 'Delete all versions in this group';
+        gdel.addEventListener('click', (e) => { e.stopPropagation(); _masterDeleteGroup(gkey); });
+        head.appendChild(tw); head.appendChild(gl); head.appendChild(badge); head.appendChild(cnt); head.appendChild(gdel);
+        head.addEventListener('click', () => {
+          if (_shapeMasterExpanded.has(gkey)) _shapeMasterExpanded.delete(gkey); else _shapeMasterExpanded.add(gkey);
+          _shapeMaster.legendKey = null; _shapeMasterBrowser();
+        });
+        el.appendChild(head);
+        if (!open) return;
+        // ---- version rows ----
+        items.forEach(c => {
+          const cfg = _shapeNormalize(c.shape);
+          const row = document.createElement('span');
+          row.className = 'sm-ver' + (c.id === activeMasterShapeId ? ' active' : '');
+          row.title = 'Click to select (make active); ✎ to edit; ✕ to delete';
+          const sw = document.createElement('span'); sw.className = 'sm-swatch'; sw.style.background = _masterColorOf(c);
+          const nm = document.createElement('span'); nm.className = 'sm-name';
+          nm.textContent = (c.name || 'Shape') + ' · ' + cfg.nodes.length;
+          row.appendChild(sw); row.appendChild(nm);
+          row.addEventListener('click', () => _masterSelect(c.id));
+          const ed = document.createElement('span'); ed.className = 'sm-edit'; ed.textContent = '✎'; ed.title = 'Edit this shape';
+          ed.addEventListener('click', (e) => { e.stopPropagation(); _shapeMasterEditOpen(c.id); });
+          const del = document.createElement('span'); del.className = 'sm-del'; del.textContent = '✕'; del.title = 'Delete this version';
+          del.addEventListener('click', (e) => { e.stopPropagation(); _masterDeleteCopy(c.id); });
+          row.appendChild(ed); row.appendChild(del);
+          el.appendChild(row);
+        });
+      });
+    }
+    function _masterDeleteGroup(gkey) {
+      if (!Array.isArray(masterShapes)) return;
+      const victims = masterShapes.filter(c => _shapeGroupKey(c) === gkey).map(c => c.id);
+      if (!victims.length) return;
+      if (typeof confirm === 'function' && victims.length > 1 && !confirm('Delete all ' + victims.length + ' versions in this group?')) return;
+      victims.forEach(id => _masterDeleteCopy(id));
+    }
+    // ----- Capture / upload (mirrors master Bloom) ---------------------------
+    // Records the master output while the active shape plays, encodes a take,
+    // and drops it into the SHARED capture bank (the same one Bloom uses, so
+    // upload/download/preview reuse _ambRenderCaptureBank + _ambUploadBankItem).
+    let _shapeCap = null;
+    function _shapeRefreshCaptureBtn() {
+      const btn = document.getElementById('shape-master-capture'); if (!btn) return;
+      if (_shapeCap) { btn.textContent = '■ Finalize'; btn.classList.add('recording'); }
+      else { btn.textContent = '⤓ Capture'; btn.classList.remove('recording'); }
+    }
+    function _shapeMasterCaptureToggle() {
+      if (_shapeCap) { try { _shapeCap.rec.stop(); } catch (e) {} return; }   // 2nd press → finalize
+      if (typeof MediaRecorder === 'undefined') { alert('This browser cannot record audio output.'); return; }
+      if (!_masterActiveCfg()) { alert('No master shape to capture — add or select one first.'); return; }
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('No audio context.'); return; }
+      const tap = (typeof masterLimiter !== 'undefined' && masterLimiter) ? masterLimiter
+                : ((typeof masterBus !== 'undefined' && masterBus) ? masterBus : null);
+      if (!tap) { alert('Master output unavailable.'); return; }
+      if (!_shapeMaster.running) { try { _shapeMasterStart(); } catch (e) {} }   // make sure it's sounding
+      let dest, rec;
+      try {
+        dest = ac.createMediaStreamDestination(); tap.connect(dest);
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
+      } catch (e) { try { tap.disconnect(dest); } catch (_) {} alert('Capture failed: ' + ((e && e.message) || e)); return; }
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      rec.onstop = () => _shapeMasterCaptureFinish(chunks, rec);
+      _shapeCap = { rec, dest, tap, chunks };
+      try { rec.start(); } catch (e) { try { tap.disconnect(dest); } catch (_) {} _shapeCap = null; alert('Capture failed.'); return; }
+      _shapeRefreshCaptureBtn();
+      if (typeof showToast === 'function') showToast('Capturing the master shape — press ■ Finalize to end.');
+    }
+    async function _shapeMasterCaptureFinish(chunks, rec) {
+      const r = _shapeCap;
+      try { if (r) r.tap.disconnect(r.dest); } catch (e) {}
+      _shapeCap = null;
+      _shapeRefreshCaptureBtn();
+      if (!chunks || !chunks.length) return;
+      try {
+        const ac = Tone.getContext().rawContext;
+        const arr = await new Blob(chunks, { type: rec.mimeType || 'audio/webm' }).arrayBuffer();
+        const audioBuf = await ac.decodeAudioData(arr);
+        if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
+        const active = _masterActive();
+        const base = (active && (active.base || active.name)) || 'shape';
+        const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
+        const choice = await showExportOptionsDialog({ title: 'Save shape capture', defaultName: base + '-' + stamp, defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Save' });
+        if (!choice) return;
+        const { filename, fmt, folder } = choice;
+        const ext = fmt === 'mp3' ? 'mp3' : 'wav';
+        const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+        const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(audioBuf) : audioBufferToWav(audioBuf);
+        let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
+        if (typeof _ambCaptureBank !== 'undefined' && Array.isArray(_ambCaptureBank)) {
+          const id = (typeof _ambCapBankSeq !== 'undefined') ? (++_ambCapBankSeq) : Date.now();
+          _ambCaptureBank.push({ id, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false });
+          if (typeof _ambRenderCaptureBank === 'function') _ambRenderCaptureBank();
+        }
+        if (typeof showToast === 'function') showToast('Captured “' + filename + '” — upload it from the bank below.');
+      } catch (e) { console.error('Shape capture failed', e); alert('Shape capture failed: ' + ((e && e.message) || e)); }
     }
     function _shapeMasterTick() {
       if (!_shapeMaster.running) return;
@@ -1509,11 +1745,14 @@
         if (bar) {
           bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-play">▶ Play</button>' +
             '<button type="button" class="shape-btn" id="shape-master-edit">✎ Edit</button>' +
+            '<button type="button" class="shape-btn" id="shape-master-capture" title="Record the active shape\'s audio to a take you can upload to Drive">⤓ Capture</button>' +
             '<span style="color:#8a8aa8;font-size:0.72rem">Each “◎ Send” saves a copy here. Click a version to select it, ✎ to edit, ✕ to delete.</span>';
           const pb = bar.querySelector('#shape-master-play');
           if (pb) pb.addEventListener('click', () => { if (_shapeMaster.running) _shapeMasterStop(); else _shapeMasterStart(); });
           const eb = bar.querySelector('#shape-master-edit');
           if (eb) eb.addEventListener('click', () => { if (activeMasterShapeId != null) _shapeMasterEditOpen(activeMasterShapeId); });
+          const cb = bar.querySelector('#shape-master-capture');
+          if (cb) cb.addEventListener('click', () => { try { _shapeMasterCaptureToggle(); } catch (e) { console.warn('shape capture failed', e); } });
         }
         _shapeMaster.canvas.addEventListener('click', _shapeMasterClick);
         const _redrawIfShapes = () => {
@@ -1532,5 +1771,7 @@
       }
       try { _shapeSpinStop(); } catch (e) {}   // opening the master halts any editor audition
       _shapeMasterReflectBtn();
+      try { _shapeRefreshCaptureBtn(); } catch (e) {}
+      try { if (typeof _ambRenderCaptureBank === 'function') _ambRenderCaptureBank(); } catch (e) {}   // populate the shared bank
       requestAnimationFrame(() => { _shapeMasterResize(); _shapeMasterDraw(0); });
     }

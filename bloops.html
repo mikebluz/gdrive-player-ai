@@ -815,6 +815,10 @@
           <canvas id="shape-master-canvas" class="shape-canvas"></canvas>
         </div>
         <div class="shape-master-legend" id="shape-master-legend"></div>
+        <!-- Capture bank — shared with master Bloom (class .ambient-capture-bank
+             is what _ambRenderCaptureBank targets). ⤓ Capture records the active
+             shape's audio here; each take uploads to Drive. -->
+        <div class="ambient-capture-bank" id="shape-master-capbank"></div>
       </div>
       <!-- Edit host — the full lane Shape editor (#shape-pad) is reparented
            here while editing a master-shape COPY, then moved back. Shown only

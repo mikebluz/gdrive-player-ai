@@ -1704,6 +1704,9 @@
     }
     function activateLane(idx) {
       if (idx == null || idx < 0 || idx >= lanes.length) return;
+      // Trans-mode: if we're leaving a Shape lane with pending wheel edits, fold
+      // them into its steps FIRST so the steps writeback just below captures them.
+      try { if (typeof _shapeFlushNow === 'function') _shapeFlushNow(); } catch (e) {}
       // Sync current `sequence` back to the previously-active lane in
       // case it was reassigned (e.g., Clear/Reverse/Shuffle/Random
       // build new arrays). Without this, switching lanes after a

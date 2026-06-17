@@ -2425,6 +2425,8 @@
     /* Master Shape — concentric wheels overview. */
     .shape-master-inner { display: flex; flex-direction: column; gap: 10px; padding: 8px; }
     .shape-master-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* Recording state for the master-shape ⤓ Capture button. */
+    #shape-master-capture.recording { background: #c53030; border-color: #f56565; color: #fff; }
     .shape-master-stage { position: relative; display: flex; align-items: center; justify-content: center; height: min(60vh, 560px); }
     .shape-master-stage .shape-canvas { cursor: pointer; }
     .shape-master-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; }
@@ -2451,6 +2453,25 @@
     }
     .shape-master-legend .sm-ver .sm-edit:hover { color: #4fd1c5; }
     .shape-master-legend .sm-ver .sm-del:hover { color: #f56565; }
+    /* Grouped browser: source families collapse into headers. The legend is a
+       flex-wrap row by default; force a column so groups + their rows stack. */
+    #mix-pane-shapes .shape-master-legend { flex-direction: column; align-items: stretch; gap: 4px; }
+    .shape-master-legend .sm-group {
+      display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer;
+      border-radius: 7px; background: #0d0d16; border: 1px solid #23232f; color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.74rem;
+    }
+    .shape-master-legend .sm-group:hover { border-color: #3a4568; }
+    .shape-master-legend .sm-group .sm-twist { width: 12px; color: #8a8aa8; }
+    .shape-master-legend .sm-group .sm-glabel { font-weight: 600; }
+    .shape-master-legend .sm-group .sm-badge {
+      font-size: 0.62rem; text-transform: uppercase; letter-spacing: .04em;
+      color: #8a8aa8; border: 1px solid #2d2d3f; border-radius: 4px; padding: 0 4px;
+    }
+    .shape-master-legend .sm-group .sm-count { color: #6a6a88; margin-left: auto; }
+    .shape-master-legend .sm-group .sm-del { color: #6a6a88; padding: 0 2px; }
+    .shape-master-legend .sm-group .sm-del:hover { color: #f56565; }
+    .shape-master-legend .sm-ver { margin-left: 14px; }
 
     /* Edit host — holds the reparented #shape-pad while editing a copy. */
     .shape-master-edithost { display: none; padding: 6px; }

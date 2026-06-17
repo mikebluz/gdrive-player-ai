@@ -629,7 +629,8 @@
             masterShapes = [];
             (Array.isArray(lanes) ? lanes : []).forEach((l, i) => {
               if (l && l.sentToMaster && l.shape) {
-                masterShapes.push({ id: i + 1, name: (l.name || ('Lane ' + (i + 1))) + ' v1', shape: JSON.parse(JSON.stringify(l.shape)) });
+                const nm = l.name || ('Lane ' + (i + 1));
+                masterShapes.push({ id: i + 1, name: nm + ' v1', base: nm, source: 'lane', groupId: 'lane:' + nm, createdAt: null, shape: JSON.parse(JSON.stringify(l.shape)) });
               }
             });
             activeMasterShapeId = masterShapes.length ? masterShapes[masterShapes.length - 1].id : null;

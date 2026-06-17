@@ -96,7 +96,9 @@
   <div class="top-bar">
     <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Make)">Make</button>
     <button type="button" class="mix-top-link" id="mix-tab" title="Switch to the Tracks / Mixdown view (Mix)">Mix</button>
-    <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in">Listen →</button>
+    <!-- Listen (Player) tab — hidden for now but kept in the DOM (tab-switching
+         JS and the Player view stay wired). To bring it back, remove `hidden`. -->
+    <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in" hidden>Listen →</button>
   </div>
 
   <div class="menubar">

@@ -3576,14 +3576,18 @@
        can't accidentally surface the parked element. */
     #lane-expander-stash[hidden] { display: none; }
     .lane-row.active {
-      background: rgba(66, 153, 225, 0.10);
-      box-shadow: inset 0 0 0 1px rgba(66, 153, 225, 0.45);
+      /* Stronger highlight — the editor is now pinned to the top, so the active
+         lane is identified by this accent rather than by sitting under the
+         editor. A left accent bar + brighter ring + fill make it unmistakable. */
+      background: rgba(66, 153, 225, 0.18);
+      box-shadow: inset 0 0 0 2px rgba(66, 153, 225, 0.85),
+                  inset 4px 0 0 0 #4299e1;
       cursor: default;
     }
     .lane-row.muted .lane-chips,
     .lane-row.muted .lane-label { opacity: 0.35; }
     .lane-row.soloed { box-shadow: inset 0 0 0 1px rgba(246, 173, 85, 0.5); }
-    .lane-row.active.soloed { box-shadow: inset 0 0 0 1px #f6ad55; }
+    .lane-row.active.soloed { box-shadow: inset 0 0 0 2px #f6ad55, inset 4px 0 0 0 #4299e1; }
     /* Single status-light button per lane — replaces the old separate
        label + Mute + Solo. The button's background colour reflects
        the lane's mute/solo state; the lane label is centred on top.
@@ -3777,13 +3781,13 @@
       position: absolute;
       top: 0; bottom: 0; left: 0;
       pointer-events: none;
-      z-index: 1;
+      z-index: 3;   /* above chips + their borders, just under the playback cursor (4) */
       background-image: repeating-linear-gradient(
         to right,
         transparent 0,
-        transparent calc(var(--lane-bar-px, 280px) - 1px),
-        rgba(170, 158, 225, 0.42) calc(var(--lane-bar-px, 280px) - 1px),
-        rgba(170, 158, 225, 0.42) var(--lane-bar-px, 280px));
+        transparent calc(var(--lane-bar-px, 280px) - 2px),
+        rgba(180, 170, 240, 0.85) calc(var(--lane-bar-px, 280px) - 2px),
+        rgba(180, 170, 240, 0.85) var(--lane-bar-px, 280px));
     }
     .lane-chips::-webkit-scrollbar { height: 4px; }
     .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }

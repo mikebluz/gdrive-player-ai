@@ -125,13 +125,21 @@
       const stash = document.getElementById('lane-expander-stash');
       if (!exp || !stash) return;
       const display = document.getElementById('sequence-display');
-      const activeRow = display
-        ? display.querySelector(':scope > .lane-row.active')
+      // Pin the editor to the TOP of the lane list (above the FIRST lane row),
+      // not above the active lane — so the Grid/Graph/etc component stays put
+      // while you switch lanes; its content still reflects the active lane. The
+      // lanes form a clean stacked list below it.
+      const firstRow = display
+        ? display.querySelector(':scope > .lane-row')
         : null;
-      if (_laneExpanderOpen && activeRow && display) {
-        if (exp.parentNode !== display || exp.nextSibling !== activeRow) {
-          display.insertBefore(exp, activeRow);
+      if (_laneExpanderOpen && display && firstRow) {
+        if (exp.parentNode !== display || exp.nextSibling !== firstRow) {
+          display.insertBefore(exp, firstRow);
         }
+        stash.hidden = true;
+      } else if (_laneExpanderOpen && display && !firstRow) {
+        // No lane rows rendered (edge case) — keep the editor mounted on top.
+        if (exp.parentNode !== display) display.appendChild(exp);
         stash.hidden = true;
       } else {
         if (exp.parentNode !== stash) stash.appendChild(exp);

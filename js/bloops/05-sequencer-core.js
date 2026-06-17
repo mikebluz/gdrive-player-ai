@@ -56,8 +56,7 @@
       if (!chipsEl) return;
       let bars = chipsEl.querySelector(':scope > .lane-bars');
       const basePx = _laneViewBasePx();
-      // Only worth drawing once the lane is longer than a single bar.
-      if (!(totalPx > basePx + 2)) {
+      if (!(totalPx > 4) || !(basePx > 0)) {        // truly empty lane
         if (bars) bars.remove();
         chipsEl._laneBars = null;
         return;
@@ -66,8 +65,14 @@
       chipsEl._laneBars = bars;
       const padL = parseFloat(chipsEl.style && chipsEl.style.paddingLeft) || _LANE_CHIPS_PAD_L;
       chipsEl._barsBaseLeft = padL;
+      // Extend the bar grid to cover whole bars AND fill the visible strip, so a
+      // line shows at each bar boundary even when the sequence stops short of
+      // one (e.g. a 3-beat lane still shows the end-of-bar line ahead of it).
+      let gridW = Math.max(basePx, Math.ceil((totalPx - 0.5) / basePx) * basePx);
+      const visW = (chipsEl.clientWidth || 0) - padL * 2;
+      if (visW > gridW) gridW = Math.ceil(visW / basePx) * basePx;
       bars.style.left = padL + 'px';
-      bars.style.width = totalPx + 'px';
+      bars.style.width = gridW + 'px';
     }
     // Lane-timeline width allocator. Returns { widths, gap, total } where each
     // step's RIGHT EDGE is placed at the exact proportional pixel

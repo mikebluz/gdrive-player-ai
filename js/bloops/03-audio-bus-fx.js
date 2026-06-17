@@ -350,11 +350,19 @@
     // it keeps protecting once visibilitychange re-resumes). gain 0 → truly
     // silent; cost is negligible.
     let _keepAliveStarted = false;
+    let _keepAliveOsc = null;     // persistent ref so the keeper node is never GC'd
+    let _audioUnlocked = false;   // have we ever seen the context actually running?
     function startAudioKeepAlive() {
-      if (_keepAliveStarted) return;
       let ac;
       try { ac = Tone.getContext().rawContext; } catch (e) { return; }
       if (!ac || ac.state !== 'running') return;
+      _audioUnlocked = true;
+      // Already have a live keeper on THIS context? Nothing to do.
+      if (_keepAliveStarted && _keepAliveOsc && _keepAliveOsc.context === ac) return;
+      // Tear down a stale keeper (e.g. the context was recreated) first.
+      try { _keepAliveOsc && _keepAliveOsc.stop && _keepAliveOsc.stop(); } catch (e) {}
+      try { _keepAliveOsc && _keepAliveOsc.disconnect && _keepAliveOsc.disconnect(); } catch (e) {}
+      _keepAliveOsc = null;
       try {
         const osc = ac.createOscillator();
         const g = ac.createGain();
@@ -363,9 +371,39 @@
         osc.connect(g);
         g.connect(ac.destination);
         osc.start();
+        _keepAliveOsc = osc;
         _keepAliveStarted = true;
       } catch (e) {}
     }
+    // Watchdog — a muted oscillator alone doesn't always stop newer iOS (and
+    // some Android Chrome builds) from suspending an idle AudioContext after a
+    // brief screen sleep / low-power blip. Once that happens EVERY tap pays the
+    // ~0.5-1s resume cost, heard as constant per-press lag. While the page is
+    // visible, poll a few times a second and immediately resume + reattach the
+    // keeper the moment the context drops to 'suspended', so taps keep landing
+    // on the warm path. Only resumes after the first gesture has unlocked audio
+    // (an unprompted resume() before any gesture just rejects). Cheap no-op when
+    // the context is already running with a live keeper.
+    let _keepAliveWatchdog = null;
+    (function _ensureKeepAliveWatchdog() {
+      if (_keepAliveWatchdog != null) return;
+      _keepAliveWatchdog = setInterval(() => {
+        if (document.hidden) return;
+        let ac;
+        try { ac = Tone.getContext().rawContext; } catch (e) { return; }
+        if (!ac) return;
+        if (ac.state === 'suspended') {
+          if (!_audioUnlocked) return;          // no gesture yet — don't fight iOS
+          try {
+            const p = ac.resume && ac.resume();
+            if (p && typeof p.then === 'function') p.then(() => startAudioKeepAlive(), () => {});
+            else startAudioKeepAlive();
+          } catch (e) {}
+        } else if (ac.state === 'running') {
+          startAudioKeepAlive();                // (re)attach a keeper if missing
+        }
+      }, 500);
+    })();
     (function bindIosAudioUnlock() {
       const events = ['pointerdown','touchstart','keydown'];
       const handler = () => {

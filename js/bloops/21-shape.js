@@ -65,6 +65,7 @@
         timingMode: 'equal',   // 'equal' (locked even) | 'free' (drag anywhere) | 'snap'
         snapDiv: 16,           // snap subdivisions per bar (timingMode 'snap')
         rotationDeg: 0,        // whole-wheel phase offset (off-beat)
+        loopBeats: 4,          // musical length of one revolution (4 = one bar)
         tone: _shapeGridVoiceType(), // this shape's own voice (snapshot of the grid voice)
         soundParams: null,     // full per-shape voice params (env/fx) when sound-edited; null = {type:tone}
         baseNote: null,        // default pitch for nodes (null = grid default)
@@ -93,6 +94,7 @@
           // manual chord, so they fall through to the progression mapping by
           // their clockwise index — i.e. the progression repeats forward.
           chord: (old && old.chord) || null,
+          sustainFrac: (old && Number.isFinite(old.sustainFrac)) ? old.sustainFrac : null,
         });
       }
       return out;
@@ -106,6 +108,7 @@
       if (!Number.isFinite(s.snapDiv)) s.snapDiv = d.snapDiv;
       if (!Number.isFinite(s.rotationDeg)) s.rotationDeg = d.rotationDeg;
       s.rotationDeg = ((s.rotationDeg % 360) + 360) % 360;
+      if (!Number.isFinite(s.loopBeats) || s.loopBeats <= 0) s.loopBeats = d.loopBeats;
       // Each shape owns a concrete voice. Legacy shapes saved with '' (follow
       // grid) collapsed onto one shared global voice, so multiple master shapes
       // all played the latest pick — freeze '' to the current grid voice ONCE so
@@ -125,6 +128,7 @@
         nd.muted = !!nd.muted;
         nd.chordOff = !!nd.chordOff;
         if (nd.chord && !(Array.isArray(nd.chord.intervals) && nd.chord.intervals.length)) nd.chord = null;
+        if (nd.sustainFrac != null && !(Number.isFinite(nd.sustainFrac) && nd.sustainFrac > 0)) nd.sustainFrac = null;
       });
       // Keep nodeCount and nodes.length in agreement.
       if (s.nodes.length !== s.nodeCount) {
@@ -187,6 +191,22 @@
       if (!cfg) return;
       const rotFrac = (cfg.rotationDeg || 0) / 360;
       const pts = cfg.nodes.map(nd => Object.assign({ nd }, _shapeNodeXY(cx, cy, R, nd.angleFrac, rotFrac)));
+      // Bar-grid spokes: a faint radial tick at each 4-beat bar boundary within
+      // the revolution, so a multi-bar wheel (loopBeats > 4) visibly shows where
+      // its bars fall — the demarcation a linear lane lacks. Aligned to the
+      // playhead frame (12 o'clock = the downbeat), independent of node rotation.
+      {
+        const lb = _shapeLoopBeats(cfg);
+        for (let beat = 4; beat < lb - 0.01; beat += 4) {
+          const ang = 2 * Math.PI * (beat / lb) - Math.PI / 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + R * Math.cos(ang), cy + R * Math.sin(ang));
+          ctx.strokeStyle = 'rgba(159,122,234,0.20)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
       // Sweeping playhead at the current bar phase (12 o'clock = phase 0).
       {
         const pa = 2 * Math.PI * (((ph % 1) + 1) % 1);
@@ -205,6 +225,21 @@
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
+      // Sustain arcs — each node holds for sustainFrac of the bar, drawn as a
+      // clockwise arc along the ring from the node's angle (12 o'clock = 0).
+      // Long held notes read as long arcs; staccato as short stubs.
+      cfg.nodes.forEach(nd => {
+        const sf = Number.isFinite(nd.sustainFrac) ? nd.sustainFrac : 0;
+        if (sf <= 0 || nd.muted) return;
+        const aStart = 2 * Math.PI * (((nd.angleFrac + rotFrac) % 1 + 1) % 1) - Math.PI / 2;
+        const aEnd = aStart + 2 * Math.PI * Math.min(0.999, sf);
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, aStart, aEnd, false);
+        ctx.strokeStyle = 'rgba(79,209,197,0.45)';
+        ctx.lineWidth = 4; ctx.lineCap = 'round';
+        ctx.stroke();
+      });
+      ctx.lineCap = 'butt';
       // Center point.
       ctx.fillStyle = 'rgba(203,213,224,0.8)';
       ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
@@ -254,9 +289,16 @@
     }
 
     // ---- Audio: audition spin (live wheel) ---------------------------------
-    function _shapeBarSec() {
+    // Seconds for one wheel revolution. A shape spans `loopBeats` musical beats
+    // (default 4 = one bar). "Send to Shape" sets loopBeats to the lane's true
+    // length so a multi-bar lane maps to one revolution at its real tempo,
+    // instead of being crammed into a single 4-beat bar.
+    function _shapeLoopBeats(cfg) {
+      return (cfg && Number.isFinite(cfg.loopBeats) && cfg.loopBeats > 0) ? cfg.loopBeats : 4;
+    }
+    function _shapeBarSec(cfg) {
       const bpm = (typeof tempoInput !== 'undefined' && tempoInput) ? (parseInt(tempoInput.value, 10) || 120) : 120;
-      return (60 / bpm) * 4;   // 4 beats per bar
+      return (60 / bpm) * _shapeLoopBeats(cfg);
     }
     function _shapeBaseFreq(cfg) {
       const m = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60;
@@ -449,6 +491,7 @@
         '</div></details>' +
         '<div style="display:flex;gap:8px;margin-top:10px">' +
           '<button type="button" class="sm-preview" id="snode-sound" style="flex:1">Sound editor…</button>' +
+          '<button type="button" class="sm-preview" id="snode-delete" style="flex:0 0 auto;border-color:#a23b3b;color:#feb2b2" title="Remove this node from the wheel">Delete</button>' +
           '<button type="button" class="sm-apply" id="snode-done" style="flex:1">Done</button>' +
         '</div>';
       overlay.appendChild(modal);
@@ -504,6 +547,11 @@
       });
       modal.querySelector('#snode-mute').addEventListener('change', (e) => { nd.muted = !!e.target.checked; _shapeDraw(); persist(); });
       modal.querySelector('#snode-sound').addEventListener('click', () => _shapeEditNodeSound(nd, cfg));
+      const delEl = modal.querySelector('#snode-delete');
+      if (delEl) {
+        if (cfg.nodes.length <= 1) { delEl.disabled = true; delEl.title = 'Can\'t delete the last node'; }
+        delEl.addEventListener('click', () => { _shapeDeleteNode(idx); try { overlay.remove(); } catch (e) {} _shapeDraw(); });
+      }
       modal.querySelector('#snode-done').addEventListener('click', close);
     }
     // Best-effort chord quality name from an interval set (for the custom picker).
@@ -558,8 +606,27 @@
       for (let i = 0; i < sortedAngles.length; i++) { if (sortedAngles[i] > a + 1e-6) { next = sortedAngles[i]; break; } }
       if (next == null) next = (sortedAngles[0] != null ? sortedAngles[0] : a) + 1;
       const gap = Math.max(0.02, next - a);
-      const durMs = Math.max(40, gap * _shapeBarSec() * 1000 * (Math.max(5, cfg.gatePct) / 100));
+      const barMs = _shapeBarSec(cfg) * 1000;
+      // Per-node sustain (set when a sequence is converted to a shape) holds the
+      // note for its OWN length (a fraction of the bar), drawn as a ring arc.
+      // Falls back to the shape-level gate (% of the gap to the next node).
+      const durMs = (Number.isFinite(nd.sustainFrac) && nd.sustainFrac > 0)
+        ? Math.max(40, nd.sustainFrac * barMs)
+        : Math.max(40, gap * barMs * (Math.max(5, cfg.gatePct) / 100));
       const sound = _shapeNodeSound(cfg, nd);
+      // Bare grid-voice notes carry no envelope, so playNote applies its long
+      // 1400ms default release — every wheel hit then rings ~1.4s regardless of
+      // gate. On a busy wheel (often many nodes at the SAME pitch) those tails
+      // pile up and a pure sine sums coherently into pops. Give such notes a
+      // release that fits the note length so each hit decays within its slot.
+      // Voices with an explicit envelope (per-node / shape Sound Editor) are
+      // left exactly as authored.
+      if (sound.release == null) {
+        sound.attack  = Number.isFinite(sound.attack)  ? sound.attack  : 5;
+        sound.decay   = Number.isFinite(sound.decay)   ? sound.decay   : 40;
+        sound.sustain = Number.isFinite(sound.sustain) ? sound.sustain : 75;
+        sound.release = Math.max(40, Math.min(350, durMs * 0.5));
+      }
       const chord = _shapeNodeChord(cfg, nd, sortedIdx);
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
       try {
@@ -578,7 +645,7 @@
       if (!_shapeSpin.running) return;
       const cfg = _shapeCfg();
       if (!cfg) { _shapeSpinStop(); return; }
-      const barSec = _shapeBarSec();
+      const barSec = _shapeBarSec(cfg);
       const now = performance.now() / 1000;
       const phase = (((now - _shapeSpin.t0) % barSec) / barSec + 1) % 1;
       const last = _shapeSpin.lastPhase;
@@ -637,14 +704,20 @@
     // leading rest if the first hit isn't on the downbeat) and APPENDS them to
     // the active lane's sequence — so the lane grows with whatever you play.
     let _shapeRecording = false;
-    function _shapeRecordBar() {
-      const cfg = _shapeCfg(); if (!cfg) return;
-      if (typeof sequence === 'undefined' || !Array.isArray(sequence)) return;
+    // Compile a wheel (cfg) into a one-bar (4-beat) step list — the inverse of
+    // _shapeSeqToShape. Unmuted nodes become steps in clockwise order; the gap
+    // to the next node is the step's slot. A node's SUSTAIN sets how long it
+    // sounds: shorter than the gap → a rest fills the remainder (staccato);
+    // no sustain set (hand-built wheel) → legato (note fills the whole gap).
+    // Chord nodes become chord steps; each step keeps the node's own voice.
+    function _shapeCompileSteps(cfg) {
+      if (!cfg) return [];
+      const BAR = _shapeLoopBeats(cfg); // beats in one revolution (length-aware)
       const baseM = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60;
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       const idxOf = _shapeSortedEff(cfg).idxOf;
       const eff = _shapeEffAngles(cfg).filter(e => !e.nd.muted).sort((x, y) => x.a - y.a);
-      if (!eff.length) return;
+      if (!eff.length) return [];
       const freqLabel = (freq) => { try { return (typeof Tone !== 'undefined') ? Tone.Frequency(freq).toNote() : ('' + Math.round(freq)); } catch (e) { return '' + Math.round(freq); } };
       const mkVoice = (freq, sound) => ({
         freq, label: freqLabel(freq),
@@ -652,8 +725,6 @@
         sound: sound.type, params: Object.assign({}, sound),
       });
       const mkRest = (beats) => ({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: Math.max(0.0625, beats) });
-      // A node records as a chord step when it plays a chord, else a single note;
-      // either way it captures the node's own (per-node / per-shape) voice.
       const mkStep = (nd, beats) => {
         const sub = Math.max(0.0625, beats);
         const sound = _shapeNodeSound(cfg, nd);
@@ -667,14 +738,58 @@
         return Object.assign(v, { duration: 1, subdivision: sub });
       };
       const out = [];
-      if (eff[0].a > 1e-4) out.push(mkRest(eff[0].a * 4));            // leading rest (bar = 4 beats)
+      if (eff[0].a > 1e-4) out.push(mkRest(eff[0].a * BAR));          // leading rest
       for (let i = 0; i < eff.length; i++) {
         const a = eff[i].a;
         const next = (i + 1 < eff.length) ? eff[i + 1].a : (eff[0].a + 1);   // wrap to first
-        out.push(mkStep(eff[i].nd, (next - a) * 4));
+        const gapBeats = (next - a) * BAR;
+        const nd = eff[i].nd;
+        let noteBeats = gapBeats;   // legato by default
+        if (Number.isFinite(nd.sustainFrac) && nd.sustainFrac > 0) {
+          noteBeats = Math.min(gapBeats, Math.max(0.0625, nd.sustainFrac * BAR));
+        }
+        out.push(mkStep(nd, noteBeats));
+        const restBeats = gapBeats - noteBeats;
+        if (restBeats > 0.03) out.push(mkRest(restBeats));            // staccato gap
       }
-      out.forEach(s => sequence.push(s));
+      return out;
+    }
+    function _shapeRecordBar() {
+      if (typeof sequence === 'undefined' || !Array.isArray(sequence)) return;
+      const cfg = _shapeCfg(); if (!cfg) return;
+      const out = _shapeCompileSteps(cfg);
+      if (!out.length) return;
+      out.forEach(s => sequence.push(s));   // accumulative overdub
       try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    }
+    // "Send to lane" — REPLACE the lane's sequence with the current wheel (the
+    // reverse of Send to Shape), so manual node edits / moves / deletes are
+    // reflected back into the lane that the transport plays.
+    function _sendShapeToLane(laneIdx) {
+      const li = Number.isFinite(laneIdx) ? laneIdx : (typeof activeLaneIdx !== 'undefined' ? activeLaneIdx : 0);
+      const lane = (typeof lanes !== 'undefined') ? lanes[li] : null;
+      if (!lane || !lane.shape) return;
+      const cfg = _shapeNormalize(lane.shape);
+      const out = _shapeCompileSteps(cfg);
+      if (!out.length) { try { alert('This shape has no unmuted nodes to send to the lane.'); } catch (e) {} return; }
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Send shape to lane');
+      lane.steps = out;
+      if (li === activeLaneIdx && typeof _aliasSequenceToActiveLane === 'function') { try { _aliasSequenceToActiveLane(); } catch (e) {} }
+      try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('Updated ' + (lane.name || ('Lane ' + (li + 1))) + ' from shape — ' + out.length + ' step' + (out.length === 1 ? '' : 's')); } catch (e) {}
+    }
+    // Delete one node from the active wheel (keeps at least one node).
+    function _shapeDeleteNode(idx) {
+      const cfg = _shapeCfg(); if (!cfg || !Array.isArray(cfg.nodes)) return;
+      if (cfg.nodes.length <= 1 || idx < 0 || idx >= cfg.nodes.length) return;
+      cfg.nodes.splice(idx, 1);
+      cfg.nodeCount = cfg.nodes.length;
+      // Dropping a node means the count no longer matches Equal spacing, so the
+      // wheel is inherently free-form now — keep angles as-is.
+      if (cfg.timingMode === 'equal') cfg.timingMode = 'free';
+      _shapeDraw();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
     function _shapeSetRecording(on) {
@@ -692,6 +807,101 @@
         try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
         try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
       }
+    }
+
+    // ---- Sequence → Shape conversion ---------------------------------------
+    // Turn a lane's linear step sequence into a wheel: each sounding step
+    // becomes a node placed at its proportional position in the bar (360° = the
+    // whole sequence, looped). Pitch → per-node offset, chord → node chord,
+    // run/sub → expanded into individual nodes; rests become empty spacing. Each
+    // node carries its own sustain (the step's length as a fraction of the bar),
+    // drawn as a ring arc. The step's voice params ride along so the shape
+    // sounds like the sequence.
+    function _shapeSeqToShape(steps) {
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const arr = (steps || []).filter(s => s && !s._wrapEditing);
+      const slotBeats = (s) => Math.max(0.0001, (Number.isFinite(s.subdivision) ? s.subdivision : 1) * (Number.isFinite(s.duration) ? s.duration : 1));
+      const total = arr.reduce((a, s) => a + slotBeats(s), 0) || 1;
+      const freqToMidi = (f) => Math.round(69 + 12 * Math.log2((f > 0 ? f : A) / A));
+      const isRest = (s) => (s.freq == null && !Array.isArray(s.chord) && !(s.isSub && Array.isArray(s.subSteps)));
+      // Base note = first sounding pitch (single / chord-low / sub-first), else 60.
+      let baseMidi = 60, firstParams = null;
+      for (const s of arr) {
+        if (isRest(s)) continue;
+        if (Array.isArray(s.chord) && s.chord.length) {
+          const vs = s.chord.filter(v => v && v.freq != null);
+          if (vs.length) { baseMidi = freqToMidi(Math.min(...vs.map(v => v.freq))); firstParams = vs[0].params; break; }
+        } else if (s.isSub && Array.isArray(s.subSteps)) {
+          const f = s.subSteps.find(x => x && x.freq != null);
+          if (f) { baseMidi = freqToMidi(f.freq); firstParams = f.params; break; }
+        } else if (s.freq != null) { baseMidi = freqToMidi(s.freq); firstParams = s.params; break; }
+      }
+      const basePc = ((baseMidi % 12) + 12) % 12;
+      const overrideFor = (midi, params) => {
+        const o = { noteOffset: midi - baseMidi };
+        if (params && params.type) o.params = Object.assign({}, params);
+        return o;
+      };
+      const nodes = [];
+      let cum = 0;
+      for (const s of arr) {
+        const slot = slotBeats(s);
+        const af = ((cum / total) % 1 + 1) % 1;
+        const susFrac = Math.max(0.005, Math.min(0.999, slot / total));
+        if (!isRest(s)) {
+          if (Array.isArray(s.chord) && s.chord.length) {
+            const vs = s.chord.filter(v => v && v.freq != null);
+            if (vs.length) {
+              const midis = vs.map(v => freqToMidi(v.freq)).sort((a, b) => a - b);
+              const rootMidi = midis[0];
+              const rootPc = ((rootMidi % 12) + 12) % 12;
+              const intervals = Array.from(new Set(midis.map(m => m - rootMidi))).sort((a, b) => a - b);
+              const defaultRootM = (baseMidi - basePc) + rootPc;
+              const ov = { noteOffset: rootMidi - defaultRootM };
+              if (vs[0].params && vs[0].params.type) ov.params = Object.assign({}, vs[0].params);
+              nodes.push({ angleFrac: af, muted: false, sustainFrac: susFrac, chord: { root: rootPc, intervals }, override: ov });
+            }
+          } else if (s.isSub && Array.isArray(s.subSteps)) {
+            const subs = s.subSteps.filter(x => x && x.freq != null);
+            const n = Math.max(1, subs.length);
+            subs.forEach((x, i) => {
+              const subAf = (((cum + (i / n) * slot) / total) % 1 + 1) % 1;
+              nodes.push({ angleFrac: subAf, muted: false, sustainFrac: Math.max(0.005, Math.min(0.999, (slot / n) / total)), override: overrideFor(freqToMidi(x.freq), x.params) });
+            });
+          } else if (s.freq != null) {
+            nodes.push({ angleFrac: af, muted: false, sustainFrac: susFrac, override: overrideFor(freqToMidi(s.freq), s.params) });
+          }
+        }
+        cum += slot;
+      }
+      const shape = _shapeDefault();
+      shape.timingMode = 'free';        // converted nodes sit at arbitrary angles
+      shape.loopBeats = total;          // one revolution = the whole lane at its real length
+      shape.baseNote = baseMidi;
+      if (firstParams && firstParams.type) shape.tone = firstParams.type;  // shape-level fallback voice
+      if (nodes.length) { shape.nodes = nodes; shape.nodeCount = nodes.length; }
+      return shape;
+    }
+    // Lane menu "Send to Shape": convert the lane's sequence into its shape and
+    // switch the lane into Shape mode.
+    function _sendLaneToShape(laneIdx) {
+      const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
+      if (!lane || !Array.isArray(lane.steps) || !lane.steps.length) return;
+      const shape = _shapeSeqToShape(lane.steps);
+      if (!shape || !shape.nodes || !shape.nodes.length) {
+        try { alert('That lane has no playable notes to send to Shape.'); } catch (e) {}
+        return;
+      }
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Shape');
+      lane.shape = shape;
+      // Shape is mutually exclusive with the other lane modes.
+      lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false;
+      lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
+      lane.shapeMode = true;
+      if (typeof activateLane === 'function') activateLane(laneIdx);          // → _onShapeModeChanged sync
+      else if (typeof _syncFluidGridToActiveLane === 'function') { try { _syncFluidGridToActiveLane(); } catch (e) {} }
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('Sent ' + (lane.name || ('Lane ' + (laneIdx + 1))) + ' to Shape — ' + shape.nodes.length + ' node' + (shape.nodes.length === 1 ? '' : 's')); } catch (e) {}
     }
 
     // ---- Pointer interactions (click = mute, drag = retime) ----------------
@@ -732,13 +942,16 @@
       // dropdown inputs live in a single collapsible "⚙ Wheel" panel that wraps
       // full-width below the column + canvas row.
       bar.innerHTML =
-        '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ Wheel ▾</button>' +
         '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
         '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎ Edit</button>' +
         '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎ Send</button>' +
         '<button type="button" class="shape-btn" id="shape-clear-btn" title="Clear this lane\'s recorded steps">Clear</button>' +
+        '<button type="button" class="shape-btn" id="shape-tolane-btn" title="Send to lane — replace this lane\'s sequence with the current wheel (reflects node moves / deletes / edits)">→ Lane</button>' +
         '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶ Play</button>' +
         '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Rec</button>' +
+        // ⚙ Wheel sits at the BOTTOM of the column so it's adjacent to the
+        // params panel it toggles (which wraps full-width just below the row).
+        '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ Wheel ▾</button>' +
         '<div class="shape-params" id="shape-params" hidden>' +
           stepper('Nodes', 'shape-nodes', 1, 32, 1, '') +
           '<span class="shape-ctrl"><label>Timing</label><select id="shape-timing">' +
@@ -833,6 +1046,8 @@
       if (recEl) recEl.addEventListener('click', () => _shapeSetRecording(!_shapeRecording));
       const clearEl = bar.querySelector('#shape-clear-btn');
       if (clearEl) clearEl.addEventListener('click', () => _shapeClearLane());
+      const toLaneEl = bar.querySelector('#shape-tolane-btn');
+      if (toLaneEl) toLaneEl.addEventListener('click', () => _sendShapeToLane(typeof activeLaneIdx !== 'undefined' ? activeLaneIdx : 0));
       // Spray/Flat is one toggle: when the wheel is flat it sprays a scale;
       // when it's already pitched it flattens. The label shows the action.
       const sprayEl = bar.querySelector('#shape-spray-btn');
@@ -1006,6 +1221,16 @@
         ctx.fillStyle = _shapeRgba(color, 0.05); ctx.fill();
         ctx.strokeStyle = _shapeRgba(color, 0.6); ctx.lineWidth = 1.5; ctx.stroke();
       }
+      // Sustain arcs (per-node hold length) along this wheel's ring.
+      cfg.nodes.forEach(nd => {
+        const sf = Number.isFinite(nd.sustainFrac) ? nd.sustainFrac : 0;
+        if (sf <= 0 || nd.muted) return;
+        const aStart = 2 * Math.PI * (((nd.angleFrac + rotFrac) % 1 + 1) % 1) - Math.PI / 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, aStart, aStart + 2 * Math.PI * Math.min(0.999, sf), false);
+        ctx.strokeStyle = _shapeRgba(color, 0.45); ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.stroke();
+      });
+      ctx.lineCap = 'butt';
       const tnow = performance.now();
       pts.forEach(p => {
         const flash = p.nd._flash ? Math.max(0, 1 - (tnow - p.nd._flash) / 180) : 0;

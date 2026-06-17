@@ -752,6 +752,13 @@
       try { localStorage.setItem('bloops-wrap-queue', wrapQueueMode ? '1' : '0'); } catch (e) {}
     }
     let _wrapQueueNext = 0; // Tone time the next queued wrap should start
+    // Queue tuning. The look-ahead bound + minimum slot together cap how many
+    // wraps (and therefore voices) can be in flight, so a burst of fast clicks
+    // can't pile voices past VOICE_CAP and starve the audio graph into dropouts.
+    const WRAP_QUEUE_MAX_AHEAD = 1.6;   // seconds of pending wraps before we drop
+    const WRAP_QUEUE_MIN_SLOT  = 0.16;  // min spacing between queued wraps
+    const WRAP_QUEUE_MAX_RELEASE_MS = 600; // cap queued-voice release so tails don't accumulate
+    const WRAP_QUEUE_VOL_SCALE = 0.62;  // headroom so overlapping queued wraps don't clip
     // Audible length (seconds) of a wrap step at the current tempo.
     function _wrapStepDurSec(step) {
       const bpm = (typeof getBpm === 'function') ? (getBpm() || 120) : 120;
@@ -761,44 +768,73 @@
       if (step && step.isSub && Array.isArray(step.subSteps)) return step.subSteps.reduce((a, s) => a + slot(s), 0) || beat;
       return slot(step || {}) || beat;
     }
-    // Reserve the start time for the next wrap. In queue mode that's after the
-    // previous queued wrap finishes; otherwise it's "now". Capped so a flurry
-    // of presses can't queue minutes into the future.
+    // Reserve the start time for the next queued wrap (after the previous one).
+    // Returns null when the queue is already too deep — the press is DROPPED
+    // rather than clamped onto a shared time (the old clamp piled every excess
+    // press at now+cap, firing a wall of simultaneous voices that overloaded the
+    // graph and cut audio out). Dropping bounds the in-flight voice count.
     function _wrapAuditionStart(durSec) {
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       if (!wrapQueueMode) return now;
-      let start = Math.max(now, _wrapQueueNext);
-      if (start - now > 6) start = now + 6;
-      _wrapQueueNext = start + Math.max(0.05, durSec || 0.2);
+      if (_wrapQueueNext < now) _wrapQueueNext = now;   // cursor idle → catch up to now
+      if (_wrapQueueNext - now > WRAP_QUEUE_MAX_AHEAD) return null;  // queue full → drop
+      const start = _wrapQueueNext;
+      _wrapQueueNext = start + Math.max(WRAP_QUEUE_MIN_SLOT, durSec || WRAP_QUEUE_MIN_SLOT);
       return start;
     }
     // Fire a transposed wrap step as a one-shot at `startTime` (chord voices
     // together; sub voices staggered). Routes through playNote so synth AND
-    // sample voices both work. Used by the queued audition path.
-    function _playWrapStepOneShot(step, startTime) {
+    // sample voices both work. opts:
+    //   maxReleaseMs — cap each voice's release so queued tails don't pile up.
+    //   normalize    — apply chordVoiceParams (1/√N) so a chord doesn't sum
+    //                  past 0 dB (otherwise stacked queued chords distort).
+    //   volScale     — extra headroom factor so OVERLAPPING queued wraps don't
+    //                  clip when several ring at once.
+    function _playWrapStepOneShot(step, startTime, opts) {
       if (!step) return;
       const bpm = (typeof getBpm === 'function') ? (getBpm() || 120) : 120;
       const beat = 60 / bpm;
+      const capRel   = opts && Number.isFinite(opts.maxReleaseMs) ? opts.maxReleaseMs : null;
+      const normalize = !!(opts && opts.normalize);
+      const volScale = opts && Number.isFinite(opts.volScale) ? opts.volScale : 1;
       const slotSec = (s) => beat * (Number.isFinite(s.subdivision) ? s.subdivision : (Number.isFinite(stepSubdivision) ? stepSubdivision : 1))
                                   * (Number.isFinite(s.duration) ? s.duration : 1);
       const fire = (freq, params, durSec, when) => {
-        try { playNote(freq, params || { type: 'sine' }, Math.max(40, durSec * 1000), when); } catch (e) {}
+        let p = params || { type: 'sine' };
+        if (volScale !== 1) { const cur = Number.isFinite(p.volume) ? p.volume : 100; p = Object.assign({}, p, { volume: Math.max(0, cur * volScale) }); }
+        if (capRel != null) {
+          const cur = Number.isFinite(p.release) ? p.release : 1400; // playNote's default
+          if (cur > capRel) p = Object.assign({}, p, { release: capRel });
+        }
+        try { playNote(freq, p, Math.max(40, durSec * 1000), when); } catch (e) {}
       };
       if (step.isSub && Array.isArray(step.subSteps)) {
         let t = startTime;
         step.subSteps.forEach(s => { const d = slotSec(s); if (s && s.freq != null) fire(s.freq, s.params || { type: s.sound || 'sine' }, d, t); t += d; });
       } else if (Array.isArray(step.chord)) {
         const d = slotSec(step);
-        step.chord.forEach(v => { if (v && v.freq != null) fire(v.freq, v.params || { type: v.sound || 'sine' }, d, startTime); });
+        const N = step.chord.length;
+        step.chord.forEach(v => {
+          if (!v || v.freq == null) return;
+          const raw = v.params || { type: v.sound || 'sine' };
+          const vp = (normalize && typeof chordVoiceParams === 'function') ? chordVoiceParams(raw, N, step) : raw;
+          fire(v.freq, vp, d, startTime);
+        });
       } else if (step.freq != null) {
         fire(step.freq, step.params || { type: step.sound || 'sine' }, slotSec(step), startTime);
       }
     }
     // Queue-mode audition of an already-transposed wrap step. Returns true when
-    // it handled the audio (so callers skip their immediate/ sustained play).
+    // it HANDLED the press (so callers skip their immediate / sustained play) —
+    // including when the queue is full and the audio is intentionally dropped
+    // (the press still records / advances the cycle in the caller).
     function _auditionWrapQueued(step) {
       if (!wrapQueueMode || !step) return false;
-      _playWrapStepOneShot(step, _wrapAuditionStart(_wrapStepDurSec(step)));
+      const start = _wrapAuditionStart(_wrapStepDurSec(step));
+      if (start == null) return true;   // queue saturated — drop this press's audio
+      // Normalize the chord (1/√N) and leave headroom (volScale) so overlapping
+      // queued wraps stay under 0 dB instead of clipping into distortion.
+      _playWrapStepOneShot(step, start, { maxReleaseMs: WRAP_QUEUE_MAX_RELEASE_MS, normalize: true, volScale: WRAP_QUEUE_VOL_SCALE });
       return true;
     }
 

@@ -1542,6 +1542,12 @@
         }
         showCtxMenu(x, y, sub);
       }, 0) });
+      // Send to Shape — turn this lane's sequence into a radial wheel (each
+      // sounding step a node; per-node sustain = the step's length) and switch
+      // the lane into Shape mode.
+      actions.push({ label: '◆ Send to Shape', disabled: !lane.steps || lane.steps.length === 0, fn: () => {
+        try { if (typeof _sendLaneToShape === 'function') _sendLaneToShape(laneIdx); } catch (e) { console.warn('Send lane to Shape failed', e); }
+      } });
       // "Steps ▸" — the SELECTION actions only (scope readout + select-by-rule).
       actions.push('hr');
       actions.push({ label: '⛬ Steps ▸', fn: () => setTimeout(() => {

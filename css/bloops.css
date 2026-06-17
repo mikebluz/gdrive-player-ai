@@ -2763,7 +2763,7 @@
        widths so values don't jitter horizontally as they change. */
     .xy-readout {
       position: absolute;
-      right: 8px; bottom: 6px;
+      left: 8px; top: 6px;
       font-family: 'SF Mono', 'Menlo', monospace;
       font-size: 0.72rem;
       color: #cbd5e0;

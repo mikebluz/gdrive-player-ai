@@ -758,7 +758,9 @@
     const WRAP_QUEUE_MAX_AHEAD = 1.6;   // seconds of pending wraps before we drop
     const WRAP_QUEUE_MIN_SLOT  = 0.16;  // min spacing between queued wraps
     const WRAP_QUEUE_MAX_RELEASE_MS = 600; // cap queued-voice release so tails don't accumulate
-    const WRAP_QUEUE_VOL_SCALE = 0.62;  // headroom so overlapping queued wraps don't clip
+    const WRAP_QUEUE_VOL_SCALE = 0.9;   // light headroom over overlapping queued wraps (the
+                                         // 1/√N chord normalize + masterLimiter already guard
+                                         // clipping; 0.62 was over-conservative and far too quiet)
     // Audible length (seconds) of a wrap step at the current tempo.
     function _wrapStepDurSec(step) {
       const bpm = (typeof getBpm === 'function') ? (getBpm() || 120) : 120;
@@ -1130,10 +1132,20 @@
       const handles = [];
       if (transposed.freq != null) {
         try {
+          // Single-note wrap (incl. a Set wrap, which is one note + a variance
+          // pool). `wrapAt` above is block-scoped to the chord branch, so we
+          // compute our own schedule time here — without this the reference
+          // threw (silently, via the catch) and single-note / Set wraps made
+          // NO sound. Mirror the chord branch's cold-start cushion.
+          const _suspended = !!(Tone.context && Tone.context.rawContext && Tone.context.rawContext.state === 'suspended');
+          const _pad = _suspended ? 0.08 : 0;
+          const _wrapAtSingle = (typeof Tone.now === 'function')
+            ? Tone.now() + _pad
+            : (((Tone.context && Tone.context.rawContext && Tone.context.rawContext.currentTime) || 0) + _pad);
           const h = startSustainedNote(
             transposed.freq,
             paramsWithBend(transposed.params || transposed.sound || 'sine', transposed.bend),
-            wrapAt
+            _wrapAtSingle
           );
           if (h) handles.push(h);
         } catch (e) {}

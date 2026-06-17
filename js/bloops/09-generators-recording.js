@@ -2953,7 +2953,7 @@
             <div class="we-row-btns">
               <button type="button" class="we-btn${svOrder==='forward'?' active':''}" data-order="forward" title="Cycle forward through the notes">→</button>
               <button type="button" class="we-btn${svOrder==='backward'?' active':''}" data-order="backward" title="Cycle backward through the notes">←</button>
-              <button type="button" class="we-btn${svOrder==='shuffle'?' active':''}" data-order="shuffle" title="Shuffle — each note once per cycle, random order">⤨</button>
+              <button type="button" class="we-btn${svOrder==='shuffle'?' active':''}" data-order="shuffle" title="Shuffle — each note once per cycle, random order">?</button>
             </div>
           </div>
           <div class="we-row">

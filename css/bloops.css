@@ -7500,6 +7500,14 @@
       opacity: 0.35;
       cursor: not-allowed;
     }
+    /* Selected option (Order forward/backward/shuffle, the Stack/Run/Set toggle).
+       Re-rendered on every choice, so exactly one stays filled and the rest
+       revert automatically. */
+    .wrap-edit-modal .we-btn.active {
+      background: #4fd1c5;
+      border-color: #4fd1c5;
+      color: #08302c;
+    }
     .wrap-edit-modal .we-toggle {
       min-width: 130px;
       text-align: center;

@@ -2937,6 +2937,10 @@
             <button type="button" class="we-btn we-toggle" id="we-runstack">${isSub ? 'Run (sub)' : 'Stack (chord)'}</button>
           </div>
           <div class="we-row">
+            <span class="we-label" title="When on, pressing wraps appends them to playback so rapid presses sound one after another (across Grid / Graph / etc) instead of overlapping.">Queue</span>
+            <button type="button" class="we-btn we-toggle${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? ' active' : ''}" id="we-queue" aria-pressed="${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'true' : 'false'}">${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'On' : 'Off'}</button>
+          </div>
+          <div class="we-row">
             <span class="we-label">Edit</span>
             <button type="button" class="we-btn" id="we-open-editor"${wrapTemplate ? '' : ' disabled'} title="${wrapTemplate ? 'Open the full step editor on this wrap' : 'Commit the wrap (Close) before editing fields'}">Open editor…</button>
           </div>
@@ -2959,6 +2963,10 @@
         });
         modal.querySelector('#we-runstack')?.addEventListener('click', () => {
           toggleWrapRunStack();
+          render();
+        });
+        modal.querySelector('#we-queue')?.addEventListener('click', () => {
+          if (typeof setWrapQueueMode === 'function') setWrapQueueMode(!(typeof wrapQueueMode !== 'undefined' && wrapQueueMode));
           render();
         });
         modal.querySelector('#we-open-editor')?.addEventListener('click', () => {

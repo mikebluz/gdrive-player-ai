@@ -1338,13 +1338,12 @@
     let _groovePanelEl = null;
     let _groovePanelOutside = null;
     function refreshGrooveUI() {
-      const btn = document.getElementById('groove-btn');
-      if (btn) {
-        const on = (grooveSwing > 0 || grooveHumanizeMs > 0 || grooveHumanizeVel > 0
-          || (grooveAccentEvery > 0 && grooveAccentAmt > 0));
-        btn.classList.toggle('active', on);
-        btn.setAttribute('aria-expanded', _groovePanelEl ? 'true' : 'false');
-      }
+      const on = (grooveSwing > 0 || grooveHumanizeMs > 0 || grooveHumanizeVel > 0
+        || (grooveAccentEvery > 0 && grooveAccentAmt > 0));
+      // Groove now lives inside the combined Tempo/Volume/Groove menu; reflect
+      // the active state on that trigger (the standalone groove-btn is gone).
+      const xb = document.getElementById('xport-menu-btn');
+      if (xb) xb.classList.toggle('groove-on', on);
       const p = _groovePanelEl;
       if (!p) return;
       const set = (id, val, label, unit) => {
@@ -1362,21 +1361,12 @@
         b.classList.toggle('active', (parseInt(b.dataset.acc, 10) || 0) === grooveAccentEvery);
       });
     }
-    function closeGroovePanel() {
-      if (_groovePanelOutside) {
-        document.removeEventListener('pointerdown', _groovePanelOutside, true);
-        document.removeEventListener('keydown', _groovePanelOutside, true);
-        _groovePanelOutside = null;
-      }
-      if (_groovePanelEl) { _groovePanelEl.remove(); _groovePanelEl = null; }
-      refreshGrooveUI();
-    }
-    function openGroovePanel(anchor) {
-      if (_groovePanelEl) { closeGroovePanel(); return; }
-      const panel = document.createElement('div');
-      panel.className = 'groove-panel';
-      panel.innerHTML =
-        '<div class="groove-title">Groove</div>' +
+    // Build the groove controls into `host` (a section of the combined
+    // Tempo/Volume/Groove menu) and wire them to the global groove state.
+    // `_groovePanelEl` points at the host so refreshGrooveUI keeps it in sync.
+    function _buildGrooveControls(host) {
+      if (!host) return;
+      host.innerHTML =
         '<div class="groove-row"><div class="groove-lab">Swing <span class="groove-val" id="gv-swing-v">0%</span></div>' +
           '<input type="range" id="gv-swing" min="0" max="100" value="0" /></div>' +
         '<div class="groove-row"><div class="groove-lab">Swing grid</div>' +
@@ -1398,13 +1388,12 @@
         '<div class="groove-row"><div class="groove-lab">Accent depth <span class="groove-val" id="gv-acc-v">35%</span></div>' +
           '<input type="range" id="gv-acc" min="0" max="80" value="35" /></div>' +
         '<div class="groove-row groove-reset-row"><button type="button" class="groove-reset" id="gv-reset">Reset</button></div>';
-      document.body.appendChild(panel);
-      _groovePanelEl = panel;
+      _groovePanelEl = host;
 
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const bindSlider = (id, setter, fmt) => {
-        const el = panel.querySelector('#' + id);
-        const lab = panel.querySelector('#' + id + '-v');
+        const el = host.querySelector('#' + id);
+        const lab = host.querySelector('#' + id + '-v');
         if (!el) return;
         el.addEventListener('input', () => {
           const v = parseInt(el.value, 10) || 0;
@@ -1413,14 +1402,12 @@
           refreshGrooveUI();
           persist();
         });
-        el.addEventListener('pointerdown', (e) => e.stopPropagation());
       };
       bindSlider('gv-swing', (v) => { grooveSwing = v; }, (v) => v + '%');
       bindSlider('gv-hum',   (v) => { grooveHumanizeMs = v; }, (v) => v + ' ms');
       bindSlider('gv-vel',   (v) => { grooveHumanizeVel = v; }, (v) => v + '%');
       bindSlider('gv-acc',   (v) => { grooveAccentAmt = v; }, (v) => v + '%');
-      panel.querySelectorAll('.gv-acc-opt').forEach(b => {
-        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      host.querySelectorAll('.gv-acc-opt').forEach(b => {
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           grooveAccentEvery = parseInt(b.dataset.acc, 10) || 0;
@@ -1428,8 +1415,7 @@
           persist();
         });
       });
-      panel.querySelectorAll('.gv-div-opt').forEach(b => {
-        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      host.querySelectorAll('.gv-div-opt').forEach(b => {
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           grooveSwingDiv = parseFloat(b.dataset.div) || 0.5;
@@ -1437,9 +1423,8 @@
           persist();
         });
       });
-      const resetBtn = panel.querySelector('#gv-reset');
+      const resetBtn = host.querySelector('#gv-reset');
       if (resetBtn) {
-        resetBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
         resetBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           grooveSwing = 0; grooveSwingDiv = 0.5;
@@ -1449,26 +1434,62 @@
           persist();
         });
       }
-
-      // Position under the button, clamped to the viewport.
-      const r = anchor.getBoundingClientRect();
-      const pw = panel.offsetWidth || 200, ph = panel.offsetHeight || 200;
-      const vw = window.innerWidth, vh = window.innerHeight;
-      panel.style.left = Math.max(8, Math.min(r.left, vw - pw - 8)) + 'px';
-      panel.style.top  = Math.min(r.bottom + 4, vh - ph - 8) + 'px';
-
-      _groovePanelOutside = (e) => {
-        if (e.type === 'keydown') { if (e.key === 'Escape') closeGroovePanel(); return; }
-        if (!e.target.closest('.groove-panel') && e.target !== anchor) closeGroovePanel();
-      };
-      document.addEventListener('pointerdown', _groovePanelOutside, true);
-      document.addEventListener('keydown', _groovePanelOutside, true);
       refreshGrooveUI();
     }
-    (function bindGrooveButton() {
-      const btn = document.getElementById('groove-btn');
+
+    // Combined Tempo / Volume / Groove dropdown. Relocates the live BPM digits +
+    // metronome and the master-volume fader into one menu (so their existing
+    // wiring keeps working) and builds the groove controls alongside them.
+    (function initTransportMenu() {
+      const btn = document.getElementById('xport-menu-btn');
       if (!btn) return;
-      btn.addEventListener('click', (e) => { e.stopPropagation(); openGroovePanel(btn); });
+      const panel = document.createElement('div');
+      panel.className = 'xport-menu';
+      panel.id = 'xport-menu';
+      panel.innerHTML =
+        '<div class="xport-sec"><div class="xport-sec-title">Tempo</div><div class="xport-row" id="xport-tempo-row"></div></div>' +
+        '<div class="xport-sec"><div class="xport-sec-title">Volume</div><div class="xport-row" id="xport-vol-row"></div></div>' +
+        '<div class="xport-sec"><div class="xport-sec-title">Groove</div><div class="xport-groove" id="xport-groove-row"></div></div>';
+      document.body.appendChild(panel);
+
+      // Relocate the live, already-wired controls into the menu.
+      const metro  = document.getElementById('metronome-btn');
+      const digits = document.getElementById('bpm-digits');
+      const tempoRow = panel.querySelector('#xport-tempo-row');
+      if (metro)  tempoRow.appendChild(metro);
+      if (digits) tempoRow.appendChild(digits);
+      const mvLabel = document.querySelector('#master-vol-panel .master-vol');
+      if (mvLabel) panel.querySelector('#xport-vol-row').appendChild(mvLabel);
+      _buildGrooveControls(panel.querySelector('#xport-groove-row'));
+
+      const setOpen = (open) => {
+        panel.classList.toggle('open', open);
+        btn.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open && typeof pinPanelToButton === 'function') pinPanelToButton(btn, panel);
+      };
+      window.addEventListener('resize', () => {
+        if (panel.classList.contains('open') && typeof pinPanelToButton === 'function') pinPanelToButton(btn, panel);
+      });
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const willOpen = !panel.classList.contains('open');
+        if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: 'xport-menu-btn' } }));
+        setOpen(willOpen);
+      });
+      document.addEventListener('menubar-panel-open', (e) => {
+        if (e.detail?.id !== 'xport-menu-btn' && panel.classList.contains('open')) setOpen(false);
+      });
+      document.addEventListener('click', (e) => {
+        if (!panel.classList.contains('open')) return;
+        // Stay open while interacting with the menu, its trigger, or the BPM
+        // digit's 0–9 picker (a .ctx-menu appended to <body>).
+        if (panel.contains(e.target) || e.target === btn || e.target.closest('.ctx-menu')) return;
+        setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+      });
       refreshGrooveUI();
     })();
 

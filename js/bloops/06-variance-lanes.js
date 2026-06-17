@@ -1268,6 +1268,65 @@
       const b = document.getElementById('add-lane-btn');
       if (b) b.addEventListener('click', _addLaneBelowActive);
     })();
+    // Pick a unique "<base> copy N" name for a cloned lane. Strips an existing
+    // " copy N" suffix off the source so cloning "A copy 1" yields "A copy 2",
+    // not "A copy 1 copy 1". N is the lowest integer that isn't already taken.
+    function _cloneLaneName(srcName) {
+      const base = String(srcName || 'Lane').replace(/\s+copy\s+\d+$/i, '');
+      const taken = new Set(lanes.map(l => l && l.name));
+      let n = 1;
+      while (taken.has(base + ' copy ' + n)) n++;
+      return base + ' copy ' + n;
+    }
+    // Clone a lane: an exact, ref-free copy inserted right below the source,
+    // with a fresh "<name> copy N" name. Mirrors the persist projection so the
+    // copy shares no references with the source (steps/voice/shape/sends/…) and
+    // carries none of the source's live Tone-node fields (the clone builds its
+    // own lane bus lazily when it next plays).
+    function _cloneLane(idx) {
+      if (!Array.isArray(lanes) || idx == null || idx < 0 || idx >= lanes.length) return;
+      if (lanes.length >= 8) return; // grid is laid out as max 8 lanes
+      const src = lanes[idx];
+      if (!src) return;
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Clone lane');
+      const _cs = (typeof cloneStep === 'function') ? cloneStep : (s) => JSON.parse(JSON.stringify(s));
+      const copy = {
+        name: _cloneLaneName(src.name),
+        steps: (src.steps || []).map(_cs),
+        muted: !!src.muted,
+        solo:  !!src.solo,
+        driftMs:        Number.isFinite(src.driftMs)        ? src.driftMs        : 0,
+        driftLocked:    !!src.driftLocked,
+        driftOffsetSec: Number.isFinite(src.driftOffsetSec) ? src.driftOffsetSec : 0,
+        pan:    Number.isFinite(src.pan)    ? src.pan    : 0,
+        volume: Number.isFinite(src.volume) ? src.volume : 100,
+        slip:   Number.isFinite(src.slip)   ? src.slip   : 0,
+        collapsed: !!src.collapsed,
+        fluidGridMode: !!src.fluidGridMode,
+        ambientMode: !!src.ambientMode,
+        ambient: src.ambient ? JSON.parse(JSON.stringify({ ...src.ambient, playing: false })) : null,
+        textMode: !!src.textMode,
+        text: src.text ? JSON.parse(JSON.stringify(src.text)) : null,
+        seqMode: !!src.seqMode,
+        shapeMode: !!src.shapeMode,
+        shape: src.shape ? JSON.parse(JSON.stringify(src.shape)) : null,
+        sentToMaster: !!src.sentToMaster,
+        // Active lane's live voice lives in the globals; capture those so the
+        // clone gets the up-to-date voice rather than a stale lane.voice.
+        voice: (idx === activeLaneIdx && typeof _captureVoiceGlobals === 'function')
+          ? _captureVoiceGlobals()
+          : (src.voice ? JSON.parse(JSON.stringify(src.voice)) : null),
+        sends: src.sends ? { ...src.sends } : null,
+      };
+      const at = idx + 1;
+      lanes.splice(at, 0, copy);
+      if (typeof gridRows !== 'undefined') gridRows = lanes.length;
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));
+      if (typeof activateLane === 'function') activateLane(at);
+      else if (typeof renderSequence === 'function') renderSequence();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     // Delete a lane. Refuses to remove the last remaining lane; clamps the
     // active lane and re-activates so mode sync / Bloom retarget run for the
     // new active lane. Undoable via the snapshot.
@@ -1449,6 +1508,10 @@
             const n = normalizeLaneTones(laneIdx);
             if (n > 0) { renderSequence(); persist(); }
           } },
+        // Clone: exact copy of this lane (steps, voice, FX, shape/Bloom config,
+        // mix) inserted right below, named "<name> copy N". Disabled at the
+        // 8-lane grid cap.
+        { label: 'Clone lane', disabled: lanes.length >= 8, fn: () => _cloneLane(laneIdx) },
         // Delete the whole lane. Disabled when it's the only one. Confirms
         // first if the lane has any steps (undo can still recover it).
         { label: 'Delete lane', danger: true, disabled: lanes.length <= 1, fn: () => {

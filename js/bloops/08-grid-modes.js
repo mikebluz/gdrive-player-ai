@@ -737,6 +737,71 @@
       return true;
     }
 
+    // ---- Wrap "Queue" mode --------------------------------------------------
+    // When ON, pressing a wrap doesn't sound it immediately on top of whatever
+    // is already ringing — instead each press is APPENDED to a running playback
+    // cursor so rapid presses sound one wrap after another (first, then second,
+    // …). Works across modes (Grid cells, Graph XY pad) because both wrap-
+    // audition paths funnel a transposed step through _auditionWrapStep below.
+    // Toggled from the Wrap Edit menu; persisted in localStorage.
+    let wrapQueueMode = false;
+    try { wrapQueueMode = (localStorage.getItem('bloops-wrap-queue') === '1'); } catch (e) {}
+    function setWrapQueueMode(on) {
+      wrapQueueMode = !!on;
+      _wrapQueueNext = 0;   // start the cursor fresh whenever the mode flips
+      try { localStorage.setItem('bloops-wrap-queue', wrapQueueMode ? '1' : '0'); } catch (e) {}
+    }
+    let _wrapQueueNext = 0; // Tone time the next queued wrap should start
+    // Audible length (seconds) of a wrap step at the current tempo.
+    function _wrapStepDurSec(step) {
+      const bpm = (typeof getBpm === 'function') ? (getBpm() || 120) : 120;
+      const beat = 60 / bpm;
+      const slot = (s) => beat * (Number.isFinite(s.subdivision) ? s.subdivision : (Number.isFinite(stepSubdivision) ? stepSubdivision : 1))
+                               * (Number.isFinite(s.duration) ? s.duration : 1);
+      if (step && step.isSub && Array.isArray(step.subSteps)) return step.subSteps.reduce((a, s) => a + slot(s), 0) || beat;
+      return slot(step || {}) || beat;
+    }
+    // Reserve the start time for the next wrap. In queue mode that's after the
+    // previous queued wrap finishes; otherwise it's "now". Capped so a flurry
+    // of presses can't queue minutes into the future.
+    function _wrapAuditionStart(durSec) {
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      if (!wrapQueueMode) return now;
+      let start = Math.max(now, _wrapQueueNext);
+      if (start - now > 6) start = now + 6;
+      _wrapQueueNext = start + Math.max(0.05, durSec || 0.2);
+      return start;
+    }
+    // Fire a transposed wrap step as a one-shot at `startTime` (chord voices
+    // together; sub voices staggered). Routes through playNote so synth AND
+    // sample voices both work. Used by the queued audition path.
+    function _playWrapStepOneShot(step, startTime) {
+      if (!step) return;
+      const bpm = (typeof getBpm === 'function') ? (getBpm() || 120) : 120;
+      const beat = 60 / bpm;
+      const slotSec = (s) => beat * (Number.isFinite(s.subdivision) ? s.subdivision : (Number.isFinite(stepSubdivision) ? stepSubdivision : 1))
+                                  * (Number.isFinite(s.duration) ? s.duration : 1);
+      const fire = (freq, params, durSec, when) => {
+        try { playNote(freq, params || { type: 'sine' }, Math.max(40, durSec * 1000), when); } catch (e) {}
+      };
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        let t = startTime;
+        step.subSteps.forEach(s => { const d = slotSec(s); if (s && s.freq != null) fire(s.freq, s.params || { type: s.sound || 'sine' }, d, t); t += d; });
+      } else if (Array.isArray(step.chord)) {
+        const d = slotSec(step);
+        step.chord.forEach(v => { if (v && v.freq != null) fire(v.freq, v.params || { type: v.sound || 'sine' }, d, startTime); });
+      } else if (step.freq != null) {
+        fire(step.freq, step.params || { type: step.sound || 'sine' }, slotSec(step), startTime);
+      }
+    }
+    // Queue-mode audition of an already-transposed wrap step. Returns true when
+    // it handled the audio (so callers skip their immediate/ sustained play).
+    function _auditionWrapQueued(step) {
+      if (!wrapQueueMode || !step) return false;
+      _playWrapStepOneShot(step, _wrapAuditionStart(_wrapStepDurSec(step)));
+      return true;
+    }
+
     // Sustained variant of playWrapTemplateOnCell — used by the cell
     // pointerdown wrap branch so press-and-hold rings each chord voice
     // for as long as the user holds the cell. Returns a release handle
@@ -810,6 +875,11 @@
         addToSequence(transposed);
         if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
       }
+
+      // Queue mode: append this wrap to the running playback cursor (one-shot)
+      // instead of sustaining it under the press — so rapid presses sound one
+      // after another. No sustain handle, so press-and-hold doesn't ring.
+      if (typeof _auditionWrapQueued === 'function' && _auditionWrapQueued(transposed)) return null;
 
       if (transposed.isSub && Array.isArray(transposed.subSteps)) {
         // Sub wraps play sequentially via Tone scheduling; there's no

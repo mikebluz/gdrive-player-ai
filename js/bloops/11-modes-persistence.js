@@ -2288,6 +2288,61 @@
     // Pointer event wiring on the XY surface. The handlers short-
     // circuit when fluidGridMode is off so they don't run while the
     // pad is hidden.
+    // Play the active wrap (chord / run) on an XY press, transposed so the
+    // wrap's root note lands on the pressed pitch — the Graph-mode analogue of
+    // a Grid wrap-cell press. With Keep on, the transposed copy is also appended
+    // to the lane sequence (mirroring the Grid wrap-with-Keep behavior).
+    function _xyTriggerWrap(p) {
+      if (typeof wrapTemplate === 'undefined' || !wrapTemplate || !p) return false;
+      const isRun  = !!(wrapTemplate.isSub && Array.isArray(wrapTemplate.subSteps));
+      const voices = isRun ? wrapTemplate.subSteps
+                   : (Array.isArray(wrapTemplate.chord) ? wrapTemplate.chord : null);
+      if (!voices || !voices.length) return false;
+      const rootFreq = voices[0] && voices[0].freq;
+      if (!(rootFreq > 0)) return false;
+      const ratio = p.freq / rootFreq;
+      const lbl = (f) => { try { return (typeof Tone !== 'undefined') ? Tone.Frequency(f).toNote() : String(Math.round(f)); } catch (e) { return String(Math.round(f)); } };
+      const sub = Number.isFinite(stepSubdivision) ? stepSubdivision : 1;
+      const len = Number.isFinite(noteLength) ? noteLength : 1;
+      // Apply the XY press position to each voice: the volume axis (Y by
+      // default) SCALES the voice volume, and the pan axis sets pan — so the
+      // pad's axes shape the wrapped chord just like they shape a single voice.
+      const pVol = Number.isFinite(p.volume) ? p.volume : 100;
+      const pPan = Number.isFinite(p.pan) ? p.pan : 0;
+      const voiceParams = (v) => {
+        const params = v.params ? { ...v.params } : { type: v.sound || _currentXyTone() };
+        const base = Number.isFinite(params.volume) ? params.volume : 100;
+        params.volume = Math.max(0, Math.min(100, Math.round(base * (pVol / 100))));
+        params.pan = Math.max(-100, Math.min(100, pPan));
+        return params;
+      };
+      // Build the transposed wrap as a step (same shape Grid uses), then hand it
+      // to the shared one-shot player — which also honors Wrap "Queue" mode, so
+      // rapid pad taps sound one wrap after another instead of overlapping.
+      let step;
+      if (isRun) {
+        step = { isSub: true, label: '▤', duration: len, subdivision: 1,
+          subSteps: voices.map(v => ({ freq: v.freq * ratio, label: lbl(v.freq * ratio), cellIndex: null, sound: v.sound, params: voiceParams(v), duration: 1, subdivision: sub })) };
+      } else {
+        const ch = voices.map(v => ({ freq: v.freq * ratio, label: lbl(v.freq * ratio), cellIndex: null, sound: v.sound, params: voiceParams(v) }));
+        step = { chord: ch, label: ch.map(v => v.label).join('·'), duration: len, subdivision: sub };
+      }
+      // Audition: queued one-shot when Queue is on, else immediate one-shot.
+      if (!(typeof _auditionWrapQueued === 'function' && _auditionWrapQueued(step))) {
+        if (typeof _playWrapStepOneShot === 'function') _playWrapStepOneShot(step, (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+      }
+      if (typeof keepMode !== 'undefined' && keepMode && typeof addToSequence === 'function') {
+        try { addToSequence(JSON.parse(JSON.stringify(step))); if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+      }
+      // Cycle mode: arm the next bank wrap for the next press. Grid does this on
+      // cell pointerup, but the XY wrap is a one-shot on press (we used the
+      // already-armed wrapTemplate above), so advance now.
+      if (typeof wrapCycleMode !== 'undefined' && wrapCycleMode && typeof advanceWrapCycle === 'function') {
+        try { advanceWrapCycle(); } catch (e) {}
+      }
+      return true;
+    }
+
     (function bindXyPadHandlers() {
       const surf = document.getElementById('xy-surface');
       if (!surf) return;
@@ -2297,6 +2352,32 @@
         const p = _xyParamsFromPoint(e.clientX, e.clientY);
         if (!p) return;
         e.preventDefault();
+        // Wrap (Graph): while wrap-collection is on, a tap adds this pitch to
+        // the pending chord instead of starting a sustained bend gesture —
+        // mirroring the grid-cell wrap. Toggling Wrap off commits the chord
+        // (chord-btn handler), same as in Grid mode.
+        if (typeof chordMode !== 'undefined' && chordMode) {
+          const tone = _currentXyTone();
+          let label;
+          try { label = (typeof Tone !== 'undefined') ? Tone.Frequency(p.freq).toNote() : String(Math.round(p.freq)); }
+          catch (err2) { label = String(Math.round(p.freq)); }
+          if (Array.isArray(pendingChord)) pendingChord.push({ freq: p.freq, label, cellIndex: null, sound: tone, params: { type: tone } });
+          try { playNote(p.freq, { type: tone }); } catch (err2) {}
+          _setXyDot(p.xFrac, p.yFrac);
+          _updateXyReadout(p);
+          try { if (typeof updateChordDisplay === 'function') updateChordDisplay(); } catch (err2) {}
+          try { if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals(); } catch (err2) {}
+          return; // discrete tap — no fluid press / recording
+        }
+        // Active wrap (committed/recalled): a press PLAYS the wrap transposed to
+        // the pressed pitch, instead of a single sustained voice — so you can
+        // perform the chord across the pad. Falls through to single-note play
+        // only when no wrap is armed.
+        if (typeof wrapTemplate !== 'undefined' && wrapTemplate && _xyTriggerWrap(p)) {
+          _setXyDot(p.xFrac, p.yFrac);
+          _updateXyReadout(p);
+          return;
+        }
         _fluidPointerId = e.pointerId;
         try { surf.setPointerCapture(e.pointerId); } catch (err) {}
         _startFluidPress(p);

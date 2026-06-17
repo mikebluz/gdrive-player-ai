@@ -57,16 +57,17 @@
     </div>
     <a class="home-bar" href="index.html" title="Back to mikeluz.com">Mercy Wizard</a>
     <div class="tempo-control">
-      <!-- Master volume — speaker button at the far left of the tempo
-           cluster. Opens the #master-vol-panel popover (wired by id in
-           initMasterVolMenu); relocated here from the lane banner row. -->
-      <button type="button" id="master-vol-btn" class="tempo-vol-btn" title="Master volume — scales every Bloops sound (sequencer, tracks, FX tails) before the limiter" aria-label="Master volume">🔊</button>
-      <!-- 3-digit BPM picker — each column has + above and − below to bump
-           that digit's place value (100s / 10s / 1s) up or down. The
-           legacy slider + number input live on hidden, kept in DOM so
-           every existing tempoSlider.value / tempoInput.value reference
-           keeps working. -->
-      <button type="button" id="metronome-btn" title="Metronome — click toggles the count; right-click (or long-press) to set BPM" aria-label="Toggle metronome click; right-click or long-press to set BPM">●</button>
+      <!-- Single combined dropdown — Tempo, Volume and Groove in one menu.
+           The trigger shows the current BPM at a glance. initTransportMenu
+           (16-grid-controls.js) relocates the metronome + BPM digits below,
+           plus the master-volume fader and the groove controls, into the
+           #xport-menu popover. The hidden slider/input stay in the DOM so
+           every existing tempoSlider.value / tempoInput.value reference keeps
+           working. -->
+      <button type="button" id="xport-menu-btn" aria-haspopup="dialog" aria-expanded="false" title="Tempo · Volume · Groove"><span id="xport-bpm">120</span><span class="xport-caret" aria-hidden="true">▾</span></button>
+      <!-- 3-digit BPM picker — each digit opens a 0–9 picker. Relocated into
+           #xport-menu by initTransportMenu. -->
+      <button type="button" id="metronome-btn" title="Metronome — click toggles the count" aria-label="Toggle metronome click">●</button>
       <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
         <button type="button" class="bpm-digit" id="bpm-d-h" data-place="100" aria-label="BPM hundreds — press to pick a digit">1</button>
         <button type="button" class="bpm-digit" id="bpm-d-t" data-place="10"  aria-label="BPM tens — press to pick a digit">2</button>
@@ -74,7 +75,6 @@
       </div>
       <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
       <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
-      <button type="button" id="groove-btn" aria-haspopup="dialog" aria-expanded="false" title="Groove — swing &amp; humanize">≈</button>
     </div>
   </div>
 
@@ -779,12 +779,13 @@
        All audio + sequence state is shared across Make / Mix / Listen
        since it lives in module-scoped JS variables, not in this DOM. -->
   <div id="mix-view" class="mix-sub-bloom">
-    <!-- Mix sub-tabs: Bloom (master generative, default) and Mixdown (the
-         multi-track sequencer + export/share). -->
+    <!-- Mix sub-tabs: Bloom (master generative, default) and Shapes. The
+         Mixdown tab (multi-track sequencer + export/share) is on ice — kept in
+         the DOM (initMixSubtabs needs the element) but hidden. -->
     <div class="mix-subtabs">
       <button id="mix-subtab-bloom" class="mix-subtab" type="button">Bloom</button>
       <button id="mix-subtab-shapes" class="mix-subtab" type="button">Shapes</button>
-      <button id="mix-subtab-mixdown" class="mix-subtab" type="button">Mixdown</button>
+      <button id="mix-subtab-mixdown" class="mix-subtab" type="button" hidden>Mixdown</button>
     </div>
 
     <div class="mix-pane" id="mix-pane-bloom">

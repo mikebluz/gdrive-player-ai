@@ -143,6 +143,10 @@
       if (_bpmDigitH) _bpmDigitH.textContent = String(h);
       if (_bpmDigitT) _bpmDigitT.textContent = String(t);
       if (_bpmDigitO) _bpmDigitO.textContent = String(o);
+      // Mirror onto the combined Tempo/Volume/Groove trigger so BPM stays
+      // glanceable while the digits live inside its dropdown.
+      const xb = document.getElementById('xport-bpm');
+      if (xb) xb.textContent = String(v);
       // One pulse cycle = one step (60/BPM × stepSubdivision seconds)
       // so each step matches a flash. BPM 0 falls back to 0.5s so the
       // animation stays visible instead of stretching to an Infinity-
@@ -217,6 +221,9 @@
     function openBpmPicker(anchor) {
       const d = document.getElementById('bpm-digits');
       if (!d || !anchor) return;
+      // When the digits live inside the combined Tempo/Volume/Groove menu they
+      // are already visible there — skip the separate metronome popover.
+      if (d.closest('#xport-menu')) return;
       if (d.classList.contains('bpm-pop')) { closeBpmPicker(); return; }
       d.classList.add('bpm-pop');
       refreshBpmDigits();

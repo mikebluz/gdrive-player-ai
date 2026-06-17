@@ -1279,6 +1279,53 @@
       color: #81e6d9;
       box-shadow: 0 0 8px rgba(79, 209, 197, 0.4);
     }
+    /* Combined Tempo / Volume / Groove trigger — a compact pill that shows the
+       current BPM at a glance and opens the #xport-menu dropdown. */
+    #xport-menu-btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      height: 26px; padding: 0 9px;
+      border: 1px solid #2d2d3f; border-radius: 13px;
+      background: #050510; color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.82rem;
+      cursor: pointer; flex-shrink: 0; touch-action: manipulation;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { #xport-menu-btn:hover { border-color: #4fd1c5; color: #81e6d9; } }
+    #xport-menu-btn.open { border-color: #4fd1c5; color: #81e6d9; box-shadow: 0 0 8px rgba(79,209,197,0.4); }
+    #xport-menu-btn #xport-bpm { font-weight: 700; letter-spacing: 0.5px; }
+    #xport-menu-btn .xport-caret { font-size: 0.6rem; opacity: 0.6; }
+    /* A dot when any groove is active. */
+    #xport-menu-btn.groove-on { border-color: #c026d3; color: #e9b3f3; }
+
+    /* Combined dropdown panel. */
+    .xport-menu {
+      position: fixed; z-index: 10001; display: none;
+      width: min(260px, 92vw);
+      background: #1a1a2e; border: 1px solid #2d2d3f; border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      padding: 12px 14px 14px;
+    }
+    .xport-menu.open { display: block; }
+    .xport-sec { margin-bottom: 14px; }
+    .xport-sec:last-child { margin-bottom: 0; }
+    .xport-sec-title {
+      font-size: 0.7rem; letter-spacing: 1.2px; text-transform: uppercase;
+      color: #4fd1c5; opacity: 0.85; margin-bottom: 8px;
+    }
+    .xport-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* Volume fader fills the row inside the menu. */
+    .xport-menu .master-vol { display: flex; align-items: center; gap: 8px; width: 100%; }
+    .xport-menu .master-vol input[type=range] { flex: 1 1 auto; min-width: 0; width: auto; }
+    /* BPM digits are hidden by default (they used to surface only as a popover);
+       show them inline inside the Tempo row, never as the fixed .bpm-pop. */
+    .xport-menu #bpm-digits { display: flex; position: static; left: auto; top: auto; }
+    .xport-menu .bpm-digit { min-width: 28px; height: 34px; font-size: 1.15rem; }
+    .xport-menu #metronome-btn { margin-right: 0; }
+    .xport-menu #xport-tempo-row::before {
+      content: 'BPM'; font-size: 0.72rem; color: #8a8aa8; letter-spacing: 0.5px;
+    }
+    /* Groove rows reuse the .groove-* styling; ranges fill the menu width. */
+    .xport-menu input[type=range] { width: 100%; }
     #metronome-btn {
       width: 26px;
       height: 26px;
@@ -4787,13 +4834,16 @@
     }
     /* Hide the wrap row + bank in any mode that doesn't show the cell
        grid (Wrap is a Grid-only feature). */
-    body.fluid-grid  .grid-wrap-row,
+    /* Graph (fluid-grid) keeps the Gen / Wrap row: Gen generates into the
+       lane sequence, and Wrap collects XY taps into a chord (see the chordMode
+       branch in bindXyPadHandlers). Other non-grid modes still hide it. */
     body.game-mode   .grid-wrap-row,
     body.prog-mode   .grid-wrap-row,
     body.ambient-mode .grid-wrap-row,
     body.text-mode   .grid-wrap-row,
     body.shape-mode  .grid-wrap-row,
-    body.fluid-grid  #wrap-bank,
+    /* Graph (fluid-grid) keeps the wrap bank too: recalling a chip arms it as
+       wrapTemplate, which an XY press then performs (see _xyTriggerWrap). */
     body.game-mode   #wrap-bank,
     body.prog-mode   #wrap-bank,
     body.ambient-mode #wrap-bank,

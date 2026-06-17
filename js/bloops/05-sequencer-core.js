@@ -43,6 +43,32 @@
     function laneChipWidthPx(step) {
       return Math.max(10, Math.round(_laneViewBasePx() * stepLengthFactor(step)));
     }
+    // Static left padding of .lane-chips (CSS: padding 4px 6px) — the content
+    // origin when not playing. During playback _followChipInLane swaps in a
+    // half-viewport padding to center the cursor; the bar overlay's left tracks
+    // whichever is active.
+    const _LANE_CHIPS_PAD_L = 6;
+    // Add / refresh the faint bar-line overlay for one .lane-chips strip.
+    // `totalPx` is the strip's content width (the layout total). The overlay
+    // draws OVER the opaque chips and scrolls with them (abs child); its left is
+    // pinned to the content origin so bars line up with the chip boundaries.
+    function _addLaneBars(chipsEl, totalPx) {
+      if (!chipsEl) return;
+      let bars = chipsEl.querySelector(':scope > .lane-bars');
+      const basePx = _laneViewBasePx();
+      // Only worth drawing once the lane is longer than a single bar.
+      if (!(totalPx > basePx + 2)) {
+        if (bars) bars.remove();
+        chipsEl._laneBars = null;
+        return;
+      }
+      if (!bars) { bars = document.createElement('div'); bars.className = 'lane-bars'; chipsEl.appendChild(bars); }
+      chipsEl._laneBars = bars;
+      const padL = parseFloat(chipsEl.style && chipsEl.style.paddingLeft) || _LANE_CHIPS_PAD_L;
+      chipsEl._barsBaseLeft = padL;
+      bars.style.left = padL + 'px';
+      bars.style.width = totalPx + 'px';
+    }
     // Lane-timeline width allocator. Returns { widths, gap, total } where each
     // step's RIGHT EDGE is placed at the exact proportional pixel
     //   edge_k = round(LANE_SCROLL_BASE_PX · Σ factor up to step k)
@@ -192,6 +218,11 @@
       // Cleaning here guarantees a clean slate before re-render.
       document.querySelectorAll('body > .seq-step').forEach(el => el.remove());
       const display = document.getElementById('sequence-display');
+      // Bar grid: one 4/4 bar = one whole note = exactly _laneViewBasePx() px in
+      // the proportional timeline. Expose it so every .lane-chips strip can draw
+      // faint bar lines via a scrolling repeating-gradient (see CSS). Updates
+      // here so it tracks the lane-view zoom (setLaneViewScale re-renders).
+      if (display) display.style.setProperty('--lane-bar-px', _laneViewBasePx() + 'px');
 
       // Grid layout: rows × cols input is always-on now (no "Off"), so
       // the grid-mode CSS class is on whenever cols ≥ 1.
@@ -412,6 +443,7 @@
                 chip.addEventListener('selectstart',  (e) => e.preventDefault());
                 chipsEl.appendChild(chip);
               });
+              _addLaneBars(chipsEl, _pvLayout.total);
             }
           }
 
@@ -864,6 +896,10 @@
         chip.textContent = pendingChord.map(n => n.label).join('·') + '…';
         chipHost.appendChild(chip);
         chip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      // Bar-line overlay for the active lane (preview lanes get theirs above).
+      if (chipHost && chipHost.classList && chipHost.classList.contains('lane-chips')) {
+        _addLaneBars(chipHost, _activeLayout.total);
       }
 
       if (activeIndex >= 0) {

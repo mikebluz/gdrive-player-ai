@@ -1712,6 +1712,9 @@
         if (scope.style.paddingLeft !== halfPx) {
           scope.style.paddingLeft = halfPx;
           scope.style.paddingRight = halfPx;
+          // Keep the bar-line overlay pinned to the (now half-viewport) content
+          // origin so bars still line up with the chips while playing.
+          if (scope._laneBars) scope._laneBars.style.left = halfPx;
         }
         // Rect-based content position — robust to chips nested inside a
         // .key-group-container (which is position:relative, so offsetLeft would
@@ -1741,6 +1744,8 @@
       scope._scrollSeg = null;
       scope.style.paddingLeft = '';
       scope.style.paddingRight = '';
+      // Restore the bar-line overlay to the resting content origin.
+      if (scope._laneBars) scope._laneBars.style.left = ((scope._barsBaseLeft != null ? scope._barsBaseLeft : 6)) + 'px';
       if (scope._laneCursor) { try { scope._laneCursor.remove(); } catch (e) {} scope._laneCursor = null; }
     }
     // Remove every lane playback cursor and stop the scroll loop (on stop).

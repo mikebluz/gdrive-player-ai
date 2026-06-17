@@ -3768,6 +3768,23 @@
       pointer-events: none;
       z-index: 4;
     }
+    /* Bar grid — a faint line every 4/4 bar (one whole note = --lane-bar-px).
+       An overlay child of .lane-chips so it draws OVER the opaque chips (a
+       background would be occluded); it scrolls with the chips like the cursor,
+       and JS pins its `left` to the content origin (the cursor-centering
+       padding) and its `width` to the lane's total length. Under the cursor. */
+    .lane-bars {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      pointer-events: none;
+      z-index: 1;
+      background-image: repeating-linear-gradient(
+        to right,
+        transparent 0,
+        transparent calc(var(--lane-bar-px, 280px) - 1px),
+        rgba(170, 158, 225, 0.42) calc(var(--lane-bar-px, 280px) - 1px),
+        rgba(170, 158, 225, 0.42) var(--lane-bar-px, 280px));
+    }
     .lane-chips::-webkit-scrollbar { height: 4px; }
     .lane-chips::-webkit-scrollbar-track { background: #0a0a14; }
     .lane-chips::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 2px; }

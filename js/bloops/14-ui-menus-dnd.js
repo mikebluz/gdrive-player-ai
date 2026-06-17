@@ -3925,9 +3925,14 @@
       // mirroring the "♪ Sound editor" model. A single step keeps the classic
       // full-replace behavior. `_touched` records edited fields; 'note',
       // 'duration', 'subdivision' and 'bend' are tracked under those keys.
-      const _selTargets = (typeof selectedStepRefs !== 'undefined'
-        && selectedStepRefs.indexOf(step) >= 0 && selectedStepRefs.length > 1)
-        ? selectedStepRefs.slice() : null;
+      // Whenever there's a multi-selection, Apply fans out to it. We don't
+      // require the edited step to be found IN the selection by identity —
+      // that guard silently fell back to single-step editing if refs ever
+      // desynced (the "only the last selected step resizes" bug on mobile).
+      // Always include the edited step so the chip you opened is covered too.
+      const _selTargets = (typeof selectedStepRefs !== 'undefined' && selectedStepRefs.length > 1)
+        ? (selectedStepRefs.indexOf(step) >= 0 ? selectedStepRefs.slice() : selectedStepRefs.concat([step]))
+        : null;
       const _touched = new Set();
       const p = {
         freq:    step.freq,

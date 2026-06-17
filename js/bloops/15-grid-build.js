@@ -884,7 +884,12 @@
             // Retune the selected step(s) in place — preserves duration,
             // subdivision, and bend so the click is just a re-pitch. Skips
             // sub-wrappers and chord steps (those have their own editors).
-            const targets = (multiSelectMode ? selectedStepRefs : [lastSelectedStep()]).filter(Boolean);
+            // The SELECTION is the edit scope (a tap toggles a chip's membership
+            // — there's no separate "Multi" mode), so re-pitch fans out to every
+            // selected step, matching the step editor / Sound editor. Previously
+            // this only retuned the primary unless multiSelectMode was on, so a
+            // multi-selection re-pitch silently changed just the last chip.
+            const targets = selectedStepRefs.filter(Boolean);
             // Rests are editable too — clicking a cell turns a selected rest
             // into that note. Sub-wrappers and chord steps are skipped since
             // they have dedicated editors.

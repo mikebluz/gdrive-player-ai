@@ -4841,6 +4841,7 @@
     body.prog-mode   .grid-wrap-row,
     body.ambient-mode .grid-wrap-row,
     body.text-mode   .grid-wrap-row,
+    body.seq-mode    .grid-wrap-row,
     body.shape-mode  .grid-wrap-row,
     /* Graph (fluid-grid) keeps the wrap bank too: recalling a chip arms it as
        wrapTemplate, which an XY press then performs (see _xyTriggerWrap). */
@@ -4848,6 +4849,7 @@
     body.prog-mode   #wrap-bank,
     body.ambient-mode #wrap-bank,
     body.text-mode   #wrap-bank,
+    body.seq-mode    #wrap-bank,
     body.shape-mode  #wrap-bank { display: none !important; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.

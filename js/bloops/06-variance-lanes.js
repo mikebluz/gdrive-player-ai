@@ -733,7 +733,11 @@
       const itersPer = (Number.isFinite(v.itersPerVariant) && v.itersPerVariant > 0)
         ? Math.floor(v.itersPerVariant) : 1;
       let pickIdx;
-      if (v.randomEachIter || v.mode !== 'linear') {
+      // Shuffle for random/shuffle modes (and randomEachIter); 'linear' cycles
+      // forward and 'backward' cycles in reverse — both hold each variant for
+      // itersPerVariant iterations. (Set wraps use these same modes.)
+      const _useShuffle = v.randomEachIter || (v.mode !== 'linear' && v.mode !== 'backward');
+      if (_useShuffle) {
         let state = _varianceShuffleState.get(v);
         if (!state || state.queue.length === 0) {
           const queue = arr.map((_, i) => i);
@@ -757,7 +761,9 @@
         state.lastPick = pickIdx;
       } else {
         const cycleStep = Math.floor(((iter | 0) / itersPer));
-        pickIdx = ((cycleStep % arr.length) + arr.length) % arr.length;
+        let idx = ((cycleStep % arr.length) + arr.length) % arr.length;
+        if (v.mode === 'backward') idx = arr.length - 1 - idx;   // cycle in reverse
+        pickIdx = idx;
       }
       const variant = arr[pickIdx];
       if (!variant) return step;

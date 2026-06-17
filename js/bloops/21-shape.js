@@ -801,12 +801,38 @@
       const btn = document.getElementById('shape-rec-btn');
       if (btn) { btn.classList.toggle('active', _shapeRecording); btn.textContent = _shapeRecording ? '● Recording' : '● Rec'; btn.title = _shapeRecording ? 'Recording… click to stop' : 'Record what plays into this lane (accumulative)'; }
     }
+    // Has the wheel been customized away from a fresh default (so Clear would
+    // lose real work)? Used to gate the confirm — undo doesn't capture shapes.
+    function _shapeIsCustomized(cfg) {
+      if (!cfg) return false;
+      if (cfg.nodeCount !== 4 || (cfg.loopBeats || 4) !== 4 || cfg.progression || cfg.soundParams) return true;
+      return (cfg.nodes || []).some(n => n && (
+        n.muted || n.chord || n.chordOff || Number.isFinite(n.sustainFrac) ||
+        (n.override && ((Number.isFinite(n.override.noteOffset) && n.override.noteOffset !== 0) || n.override.params))
+      ));
+    }
     function _shapeClearLane() {
-      if (typeof sequence !== 'undefined' && Array.isArray(sequence)) {
-        sequence.length = 0;
-        try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
-        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      // In Shape mode the WHEEL is what's on screen, so Clear resets it to a
+      // fresh default (the old behavior only emptied the lane's recorded steps,
+      // which are off-screen here — so it looked like nothing happened). Also
+      // clears the recorded output. Confirms first when there's real work to
+      // lose, since the undo history doesn't capture per-lane shapes.
+      const lane = _shapeLane();
+      const cfg = (lane && lane.shape) ? _shapeNormalize(lane.shape) : null;
+      const hasSteps = !!(lane && Array.isArray(lane.steps) && lane.steps.length);
+      if ((hasSteps || _shapeIsCustomized(cfg)) && typeof confirm === 'function') {
+        if (!confirm('Reset this wheel to default and clear the lane\'s recorded steps?')) return;
       }
+      if (lane) {
+        lane.shape = _shapeDefault();
+        if (Array.isArray(lane.steps)) lane.steps.length = 0;
+      }
+      if (typeof sequence !== 'undefined' && Array.isArray(sequence)) sequence.length = 0;
+      try { if (typeof _aliasSequenceToActiveLane === 'function') _aliasSequenceToActiveLane(); } catch (e) {}
+      try { _shapeBuildToolbar(); } catch (e) {}   // reflect the reset settings (Nodes/Tone/…)
+      try { _shapeDraw(); } catch (e) {}
+      try { if (typeof renderSequence === 'function') renderSequence(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
 
     // ---- Sequence → Shape conversion ---------------------------------------
@@ -945,7 +971,7 @@
         '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
         '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎ Edit</button>' +
         '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎ Send</button>' +
-        '<button type="button" class="shape-btn" id="shape-clear-btn" title="Clear this lane\'s recorded steps">Clear</button>' +
+        '<button type="button" class="shape-btn" id="shape-clear-btn" title="Reset the wheel to default and clear this lane\'s recorded steps">Clear</button>' +
         '<button type="button" class="shape-btn" id="shape-tolane-btn" title="Send to lane — replace this lane\'s sequence with the current wheel (reflects node moves / deletes / edits)">→ Lane</button>' +
         '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶ Play</button>' +
         '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Rec</button>' +

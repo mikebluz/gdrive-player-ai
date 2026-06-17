@@ -2248,8 +2248,20 @@
       clearWrapPendingHighlights();
       if (pendingChord.length > 0) {
         const useRun = (_wrapShape === 'run') || (_wrapShape == null && gridMode === 'arpeggio');
+        const useSet = (_wrapShape === 'set');
         let newStep;
-        if (useRun) {
+        if (useSet) {
+          // SET: the collected notes become a variance pool the step cycles
+          // through across loop passes (first note is the step's primary).
+          const notes = pendingChord.map(n => ({
+            freq: n.freq, label: n.label, cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+            sound: n.sound, params: n.params ? { ...n.params } : undefined,
+          }));
+          newStep = Object.assign({}, notes[0], {
+            duration: noteLength, subdivision: stepSubdivision,
+            variance: { mode: 'linear', itersPerVariant: 1, randomEachIter: false, notes },
+          });
+        } else if (useRun) {
           const subSteps = pendingChord.map(n => ({
             freq: n.freq,
             label: n.label,
@@ -2328,6 +2340,9 @@
         return { kind: 'pending', notes: pendingChord };
       }
       if (wrapTemplate) {
+        if (wrapTemplate.variance && Array.isArray(wrapTemplate.variance.notes)) {
+          return { kind: 'set', notes: wrapTemplate.variance.notes };
+        }
         if (Array.isArray(wrapTemplate.chord)) {
           return { kind: 'chord', notes: wrapTemplate.chord };
         }
@@ -2417,60 +2432,45 @@
     // (sequential) shapes in place. Pending (uncommitted) wraps are
     // controlled by gridMode at commit time — toggle a flag there so
     // the next Close lands in the chosen shape.
-    function toggleWrapRunStack() {
-      // Committed wrap — restructure wrapTemplate.
+    // The active wrap's current shape: stack (chord), run (sub), or set
+    // (variance pool). Works on a committed wrapTemplate or a pending build.
+    function _wrapCurrentShape() {
       if (wrapTemplate) {
-        snapshotForUndo('Toggle wrap chord/sub');
-        if (Array.isArray(wrapTemplate.chord)) {
-          // Chord → Sub: each voice becomes a subStep at 1-step duration.
-          const baseSub = (wrapTemplate.subdivision != null) ? wrapTemplate.subdivision : stepSubdivision;
-          const subSteps = wrapTemplate.chord.map(n => ({
-            freq:        n.freq,
-            label:       n.label,
-            cellIndex:   n.cellIndex,
-            sound:       n.sound,
-            params:      n.params ? { ...n.params } : undefined,
-            duration:    1,
-            subdivision: baseSub,
-          }));
-          wrapTemplate = {
-            isSub:       true,
-            subSteps,
-            label:       '▤',
-            duration:    wrapTemplate.duration || 1,
-            subdivision: 1,
-          };
-        } else if (wrapTemplate.isSub && Array.isArray(wrapTemplate.subSteps)) {
-          // Sub → Chord: collapse subSteps that have a freq into chord
-          // voices. Inner durations / subdivisions don't apply to chords.
-          const chord = wrapTemplate.subSteps
-            .filter(s => Number.isFinite(s.freq))
-            .map(s => ({
-              freq:      s.freq,
-              label:     s.label,
-              cellIndex: s.cellIndex,
-              sound:     s.sound,
-              params:    s.params ? { ...s.params } : undefined,
-            }));
-          wrapTemplate = {
-            chord,
-            label:       chord.map(n => n.label).join('·'),
-            duration:    wrapTemplate.duration || 1,
-            subdivision: wrapTemplate.subdivision || stepSubdivision,
-          };
-        }
+        if (wrapTemplate.variance && Array.isArray(wrapTemplate.variance.notes)) return 'set';
+        if (wrapTemplate.isSub) return 'run';
+        return 'stack';
+      }
+      if (chordMode) {
+        if (_wrapShape === 'set') return 'set';
+        if (_wrapShape === 'run' || (_wrapShape == null && gridMode === 'arpeggio')) return 'run';
+        return 'stack';
+      }
+      return 'stack';
+    }
+    // Set the active wrap to a specific shape.
+    function setWrapShape(target) {
+      if (wrapTemplate) {
+        snapshotForUndo('Wrap shape');
+        wrapTemplate = _wrapStepToShape(wrapTemplate, target);
         refreshWrapVisuals();
         if (typeof syncActiveWrapToBank === 'function') syncActiveWrapToBank();
         if (typeof persistWorkspace === 'function') persistWorkspace();
         return;
       }
-      // Pending wrap (build in progress) — flip the wrap shape so the
-      // next Close commits the opposite form. _wrapShape was set by the
-      // Wrap-press picker and is what the commit path reads.
       if (chordMode) {
-        _wrapShape = (_wrapShape === 'run') ? 'stack' : 'run';
+        _wrapShape = target;            // commit path reads this on Close
         refreshWrapVisuals();
       }
+    }
+    // Cycle Stack → Run → Set → Stack. (Bound to the Wrap Edit "Shape" button.)
+    function toggleWrapRunStack() {
+      const order = ['stack', 'run', 'set'];
+      const cur = _wrapCurrentShape();
+      setWrapShape(order[(Math.max(0, order.indexOf(cur)) + 1) % order.length]);
+    }
+    function _wrapIsSet() {
+      if (wrapTemplate) return !!(wrapTemplate.variance && Array.isArray(wrapTemplate.variance.notes));
+      return chordMode && _wrapShape === 'set';
     }
     function _wrapIsSubLike() {
       if (chordMode) return _wrapShape === 'run' || (_wrapShape == null && gridMode === 'arpeggio');
@@ -2918,7 +2918,12 @@
         const summary = ref
           ? wrapNotesSummary(ref.notes, showIntervals)
           : '(no active wrap)';
-        const isSub = _wrapIsSubLike();
+        const shape = _wrapCurrentShape();
+        const shapeLabel = shape === 'set' ? 'Set (cycle)' : shape === 'run' ? 'Run (sub)' : 'Stack (chord)';
+        const isSet = (shape === 'set');
+        const sv = (wrapTemplate && wrapTemplate.variance) ? wrapTemplate.variance : null;
+        const svOrder = sv ? (sv.randomEachIter ? 'shuffle' : (sv.mode === 'backward' ? 'backward' : (sv.mode === 'linear' ? 'forward' : 'shuffle'))) : 'forward';
+        const svReps = (sv && Number.isFinite(sv.itersPerVariant) && sv.itersPerVariant > 0) ? sv.itersPerVariant : 1;
         modal.innerHTML = `
           <div class="sm-title">Edit wrap</div>
           <div class="we-summary-row">
@@ -2933,9 +2938,26 @@
             </div>
           </div>
           <div class="we-row">
-            <span class="we-label">Shape</span>
-            <button type="button" class="we-btn we-toggle" id="we-runstack">${isSub ? 'Run (sub)' : 'Stack (chord)'}</button>
+            <span class="we-label" title="Stack = chord (all together) · Run = subsequence (one after another) · Set = the step cycles through the notes across loops">Shape</span>
+            <button type="button" class="we-btn we-toggle${isSet ? ' active' : ''}" id="we-runstack" title="Cycle Stack → Run → Set">${shapeLabel}</button>
           </div>
+          ${isSet ? `
+          <div class="we-row">
+            <span class="we-label" title="The order the step steps through its notes across loop passes">Order</span>
+            <div class="we-row-btns">
+              <button type="button" class="we-btn${svOrder==='forward'?' active':''}" data-order="forward" title="Cycle forward through the notes">→</button>
+              <button type="button" class="we-btn${svOrder==='backward'?' active':''}" data-order="backward" title="Cycle backward through the notes">←</button>
+              <button type="button" class="we-btn${svOrder==='shuffle'?' active':''}" data-order="shuffle" title="Shuffle — each note once per cycle, random order">⤨</button>
+            </div>
+          </div>
+          <div class="we-row">
+            <span class="we-label" title="How many loop passes each note repeats before swapping to the next">Repeat</span>
+            <div class="we-row-btns">
+              <button type="button" class="we-btn" id="we-rep-dn"${svReps<=1?' disabled':''}>−</button>
+              <span class="we-summary" id="we-rep-val" style="min-width:2.2em;text-align:center">×${svReps}</span>
+              <button type="button" class="we-btn" id="we-rep-up"${svReps>=64?' disabled':''}>+</button>
+            </div>
+          </div>` : ''}
           <div class="we-row">
             <span class="we-label" title="When on, pressing wraps appends them to playback so rapid presses sound one after another (across Grid / Graph / etc) instead of overlapping.">Queue</span>
             <button type="button" class="we-btn we-toggle${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? ' active' : ''}" id="we-queue" aria-pressed="${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'true' : 'false'}">${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'On' : 'Off'}</button>
@@ -2965,6 +2987,25 @@
           toggleWrapRunStack();
           render();
         });
+        // Set-only: cycle order + repeats-per-note. Edits the active wrap's
+        // variance pool (the same engine that drives per-step variance).
+        const _editSetVariance = (mut) => {
+          if (!wrapTemplate || !wrapTemplate.variance) return;
+          snapshotForUndo('Set cycle');
+          mut(wrapTemplate.variance);
+          if (typeof syncActiveWrapToBank === 'function') syncActiveWrapToBank();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          render();
+        };
+        modal.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => {
+          const o = b.dataset.order;
+          _editSetVariance(v => {
+            v.randomEachIter = false;
+            v.mode = (o === 'backward') ? 'backward' : (o === 'shuffle') ? 'shuffle' : 'linear';
+          });
+        }));
+        modal.querySelector('#we-rep-dn')?.addEventListener('click', () => _editSetVariance(v => { v.itersPerVariant = Math.max(1, (Number.isFinite(v.itersPerVariant) ? v.itersPerVariant : 1) - 1); }));
+        modal.querySelector('#we-rep-up')?.addEventListener('click', () => _editSetVariance(v => { v.itersPerVariant = Math.min(64, (Number.isFinite(v.itersPerVariant) ? v.itersPerVariant : 1) + 1); }));
         modal.querySelector('#we-queue')?.addEventListener('click', () => {
           if (typeof setWrapQueueMode === 'function') setWrapQueueMode(!(typeof wrapQueueMode !== 'undefined' && wrapQueueMode));
           render();

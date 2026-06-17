@@ -588,6 +588,24 @@
     // note wraps are left untouched (neither form changes them). Carries the
     // wrap-level tone override + keyContext across so a bulk conversion
     // doesn't drop them. Mirrors toggleWrapRunStack's per-wrap logic.
+    // The note list of a wrap step, whatever its shape — chord voices, sub
+    // steps, a single note, or a SET's variance pool. Used to convert between
+    // Stack / Run / Set uniformly.
+    function _wrapNotesOf(step) {
+      if (!step) return [];
+      if (step.variance && Array.isArray(step.variance.notes)) return step.variance.notes;
+      if (Array.isArray(step.chord)) return step.chord;
+      if (step.isSub && Array.isArray(step.subSteps)) return step.subSteps;
+      if (step.freq != null) return [step];
+      return [];
+    }
+    function _wrapVoice(n) {
+      return {
+        freq: n.freq, label: n.label,
+        cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
+        sound: n.sound, params: n.params ? { ...n.params } : undefined,
+      };
+    }
     function _wrapStepToShape(step, shape) {
       if (!step) return step;
       const baseSub = (typeof stepSubdivision !== 'undefined') ? stepSubdivision : 1;
@@ -597,31 +615,35 @@
         if (step.keyContext) out.keyContext = step.keyContext;
         return out;
       };
-      if (shape === 'run') {
-        if (step.isSub) return step;                  // already a Run
-        if (!Array.isArray(step.chord)) return step;  // single note — leave
-        const sub = (step.subdivision != null) ? step.subdivision : baseSub;
-        const subSteps = step.chord.map(n => ({
-          ...n,
-          params: n.params ? { ...n.params } : undefined,
-          duration: 1,
-          subdivision: sub,
+      const notes = _wrapNotesOf(step).filter(n => n && n.freq != null).map(_wrapVoice);
+      if (!notes.length) return step;
+      const sub = (step.subdivision != null) ? step.subdivision : baseSub;
+      if (shape === 'set') {
+        // SET: the notes become a per-step variance pool the step cycles
+        // through across loop passes. Preserve any existing cycle settings.
+        const ex = (step.variance && typeof step.variance === 'object') ? step.variance : {};
+        return carryTop(Object.assign({}, notes[0], {
+          duration: step.duration || 1, subdivision: sub,
+          variance: {
+            mode: ex.mode || 'linear',
+            itersPerVariant: (Number.isFinite(ex.itersPerVariant) && ex.itersPerVariant > 0) ? ex.itersPerVariant : 1,
+            randomEachIter: !!ex.randomEachIter,
+            notes,
+          },
         }));
+      }
+      if (shape === 'run') {
+        if (step.isSub && !step.variance) return step;     // already a Run
+        const subSteps = notes.map(n => ({ ...n, duration: 1, subdivision: sub }));
         return carryTop({ isSub: true, subSteps, label: '▤', duration: step.duration || 1, subdivision: 1 });
       }
       // stack
-      if (Array.isArray(step.chord)) return step;                       // already a Stack
-      if (!step.isSub || !Array.isArray(step.subSteps)) return step;    // single note — leave
-      const chord = step.subSteps.filter(s => Number.isFinite(s.freq)).map(s => {
-        const v = { ...s, params: s.params ? { ...s.params } : undefined };
-        delete v.duration; delete v.subdivision; delete v.isSub; delete v.subSteps;
-        return v;
-      });
+      if (Array.isArray(step.chord) && !step.variance) return step;       // already a Stack
       return carryTop({
-        chord,
-        label: chord.map(n => n.label).join('·'),
+        chord: notes,
+        label: notes.map(n => n.label).join('·'),
         duration: step.duration || 1,
-        subdivision: step.subdivision || baseSub,
+        subdivision: sub,
       });
     }
 

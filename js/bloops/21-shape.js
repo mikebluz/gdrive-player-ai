@@ -129,6 +129,9 @@
         nd.chordOff = !!nd.chordOff;
         if (nd.chord && !(Array.isArray(nd.chord.intervals) && nd.chord.intervals.length)) nd.chord = null;
         if (nd.sustainFrac != null && !(Number.isFinite(nd.sustainFrac) && nd.sustainFrac > 0)) nd.sustainFrac = null;
+        // Set-node variance pool: drop if malformed; a 1-note pool is just a
+        // plain note, so collapse it (keeps the wheel honest).
+        if (nd.variance && !(Array.isArray(nd.variance.notes) && nd.variance.notes.length > 1)) nd.variance = null;
       });
       // Keep nodeCount and nodes.length in agreement.
       if (s.nodes.length !== s.nodeCount) {
@@ -178,6 +181,7 @@
     // ====================================================================
     let _shapeWheelDirty = false;       // user edited the wheel since last sync
     let _shapeFlushTimer = null;
+    let _shapeRunGid = 1;               // unique id source for Run wrap-groups
     // Mark + schedule together so it's independent of whether the caller draws
     // before or after marking (edit handlers vary in order).
     function _shapeMarkEdit() { _shapeWheelDirty = true; _shapeScheduleFlush(); }
@@ -365,17 +369,21 @@
         const flash = p.nd._flash ? Math.max(0, 1 - (tnow - p.nd._flash) / 180) : 0;
         const rad = 9 + flash * 6;
         const chord = _shapeNodeChord(cfg, p.nd, idxOf.get(p.nd));
-        // Chorded nodes get an outer halo ring so they read as "more than a note".
-        if (chord && !p.nd.muted) {
+        // Wrap-type cues: chord (stack) = orange, Set (variance) = purple,
+        // Run-group member = blue. A single plain note stays teal.
+        const isSet = !chord && !!(p.nd.variance && p.nd.variance.notes && p.nd.variance.notes.length);
+        const isRun = !chord && !isSet && !!(p.nd.wrapGroup && p.nd.wrapType === 'run');
+        // Chord / Set nodes get an outer halo ring so they read as "more than a note".
+        if ((chord || isSet) && !p.nd.muted) {
           ctx.beginPath(); ctx.arc(p.x, p.y, rad + 4, 0, 2 * Math.PI);
-          ctx.strokeStyle = 'rgba(246,173,85,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.strokeStyle = isSet ? 'rgba(159,122,234,0.9)' : 'rgba(246,173,85,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
         }
         ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, 2 * Math.PI);
         if (p.nd.muted) {
           ctx.fillStyle = 'rgba(40,40,60,0.9)'; ctx.fill();
           ctx.strokeStyle = 'rgba(120,120,150,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
         } else {
-          ctx.fillStyle = flash > 0 ? '#ffffff' : (chord ? '#f6ad55' : '#4fd1c5'); ctx.fill();
+          ctx.fillStyle = flash > 0 ? '#ffffff' : (chord ? '#f6ad55' : isSet ? '#9f7aea' : isRun ? '#63b3ed' : '#4fd1c5'); ctx.fill();
           ctx.strokeStyle = flash > 0 ? 'rgba(79,209,197,0.9)' : 'rgba(13,13,24,0.9)';
           ctx.lineWidth = 2; ctx.stroke();
         }
@@ -583,6 +591,23 @@
       let noteOpts = '';
       for (let m = 24; m <= 96; m++) noteOpts += '<option value="' + m + '">' + _shapeNoteName(m) + '</option>';
       const mode = nd.chordOff ? 'single' : (nd.chord ? 'custom' : (hasProg ? 'follow' : 'single'));
+      // Wrap retention: Set nodes carry a variance pool (editable cycle); Run
+      // nodes carry a wrapGroup tag. Surface both in the editor.
+      const _v = nd.variance;
+      const _hasSet = !!(_v && Array.isArray(_v.notes) && _v.notes.length);
+      const _ord = _hasSet ? (_v.randomEachIter ? 'shuffle' : (_v.mode === 'backward' ? 'backward' : 'forward')) : null;
+      const _ordBtn = (o, lbl) => '<button type="button" class="sm-preview snode-ord" data-ord="' + o + '" style="flex:1' + (_ord === o ? ';background:#4fd1c5;border-color:#4fd1c5;color:#08302c' : '') + '">' + lbl + '</button>';
+      const _wrapSection = _hasSet
+        ? '<details class="sm-fold" open><summary>Cycle (Set) — ' + _v.notes.length + ' notes</summary><div class="sm-fold-body">' +
+            '<div class="sm-param-row">Order</div>' +
+            '<div style="display:flex;gap:6px;margin-bottom:8px">' + _ordBtn('forward', '→') + _ordBtn('backward', '←') + _ordBtn('shuffle', '?') + '</div>' +
+            '<div class="sm-param"><div class="sm-param-row">Repeats each note</div>' +
+              '<input type="number" inputmode="numeric" id="snode-reps" min="1" max="64" class="sm-select" value="' + ((Number.isFinite(_v.itersPerVariant) && _v.itersPerVariant > 0) ? _v.itersPerVariant : 1) + '"></div>' +
+            '<button type="button" class="sm-preview" id="snode-cycle-off" style="margin-top:8px;border-color:#a23b3b;color:#feb2b2">Stop cycling (single note)</button>' +
+          '</div></details>'
+        : ((nd.wrapGroup && nd.wrapType === 'run')
+            ? '<div class="sm-param-row" style="color:#8a8aa8;margin:6px 0">◆ Part of a Run group — edits stay grouped and recompile back into the Run.</div>'
+            : '');
       modal.innerHTML =
         '<div class="sm-title">Node ' + (idx + 1) + '</div>' +
         '<label class="sm-apply-all"><input type="checkbox" id="snode-mute"' + (nd.muted ? ' checked' : '') + ' /> Muted</label>' +
@@ -606,6 +631,7 @@
             '</div>' +
           '</div>' +
         '</div></details>' +
+        _wrapSection +
         '<div style="display:flex;gap:8px;margin-top:10px">' +
           '<button type="button" class="sm-preview" id="snode-sound" style="flex:1">Sound editor…</button>' +
           '<button type="button" class="sm-preview" id="snode-delete" style="flex:0 0 auto;border-color:#a23b3b;color:#feb2b2" title="Remove this node from the wheel">Delete</button>' +
@@ -669,6 +695,32 @@
         if (cfg.nodes.length <= 1) { delEl.disabled = true; delEl.title = 'Can\'t delete the last node'; }
         delEl.addEventListener('click', () => { _shapeDeleteNode(idx); try { overlay.remove(); } catch (e) {} _shapeDraw(); });
       }
+      // Set-cycle controls: order (forward / backward / shuffle), repeats, off.
+      modal.querySelectorAll('.snode-ord').forEach(btn => btn.addEventListener('click', () => {
+        if (!nd.variance) return;
+        const o = btn.dataset.ord;
+        nd.variance.randomEachIter = (o === 'shuffle');
+        nd.variance.mode = (o === 'backward') ? 'backward' : 'linear';
+        modal.querySelectorAll('.snode-ord').forEach(b2 => {
+          const on = b2.dataset.ord === o;
+          b2.style.background = on ? '#4fd1c5' : '';
+          b2.style.borderColor = on ? '#4fd1c5' : '';
+          b2.style.color = on ? '#08302c' : '';
+        });
+        _shapeDraw(); persist();
+      }));
+      const repsEl = modal.querySelector('#snode-reps');
+      if (repsEl) repsEl.addEventListener('change', () => {
+        if (!nd.variance) return;
+        nd.variance.itersPerVariant = Math.max(1, Math.min(64, parseInt(repsEl.value, 10) || 1));
+        persist();
+      });
+      const cycOff = modal.querySelector('#snode-cycle-off');
+      if (cycOff) cycOff.addEventListener('click', () => {
+        nd.variance = null;             // collapse to a plain single note
+        try { overlay.remove(); } catch (e) {}
+        _shapeDraw(); persist();
+      });
       modal.querySelector('#snode-done').addEventListener('click', close);
     }
     // Best-effort chord quality name from an interval set (for the custom picker).
@@ -700,6 +752,26 @@
       }
       return null;
     }
+    // Set node: pick the variant to play this pass and advance the node's cycle.
+    // Mirrors the sequencer's variance engine (linear / backward hold for
+    // itersPerVariant; shuffle/random pick freely). Returns {noteOffset, params}
+    // or null when the node carries no variance pool.
+    function _shapeNodeVariant(nd) {
+      const v = nd && nd.variance;
+      if (!v || !Array.isArray(v.notes) || !v.notes.length) return null;
+      const pool = v.notes;
+      let idx;
+      if (v.randomEachIter || (v.mode !== 'linear' && v.mode !== 'backward')) {
+        idx = Math.floor(Math.random() * pool.length);
+      } else {
+        nd._varCount = (nd._varCount | 0) + 1;
+        const iters = Math.max(1, Math.floor(v.itersPerVariant || 1));
+        let i = Math.floor((nd._varCount - 1) / iters) % pool.length;
+        if (v.mode === 'backward') i = pool.length - 1 - i;
+        idx = i;
+      }
+      return pool[idx] || pool[0];
+    }
     // Absolute frequencies for a chord {root(pc), intervals[semis]} anchored in
     // the shape's base octave, transposed by the node's pitch offset.
     function _shapeChordFreqs(cfg, nd, chord) {
@@ -717,6 +789,20 @@
       const idxOf = new Map();
       order.forEach((o, i) => idxOf.set(o.nd, i));
       return { eff, sortedAngles: order.map(o => o.a), idxOf };
+    }
+    // Are a Run group's nodes still contiguous in angle order (so they recompile
+    // into ONE Run step)? False when a non-member sits between them — matching
+    // how _shapeCompileSteps re-collects consecutive members.
+    function _shapeRunGroupContiguous(cfg, gid) {
+      if (gid == null || !cfg || !Array.isArray(cfg.nodes)) return true;
+      const flags = cfg.nodes.slice()
+        .map(nd => ({ nd, a: (((nd.angleFrac % 1) + 1) % 1) }))
+        .sort((x, y) => x.a - y.a)
+        .map(o => o.nd.wrapGroup === gid && o.nd.wrapType === 'run');
+      if (flags.filter(Boolean).length < 2) return true;
+      const first = flags.indexOf(true), last = flags.lastIndexOf(true);
+      for (let i = first; i <= last; i++) if (!flags[i]) return false;
+      return true;
     }
     function _shapeTriggerNode(cfg, nd, a, sortedAngles, sortedIdx) {
       let next = null;
@@ -745,14 +831,19 @@
         sound.release = Math.max(40, Math.min(350, durMs * 0.5));
       }
       const chord = _shapeNodeChord(cfg, nd, sortedIdx);
+      // Set node: cycle the pool. A variance pick overrides the node's pitch
+      // (and its own voice, if the variant carries one) for this pass.
+      const variant = chord ? null : _shapeNodeVariant(nd);
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
       try {
         if (typeof playNote === 'function') {
           if (chord) {
             _shapeChordFreqs(cfg, nd, chord).forEach(f => playNote(f, Object.assign({}, sound), durMs));
           } else {
-            const freq = _shapeBaseFreq(cfg) * Math.pow(2, _shapeNodeOffset(nd) / 12);
-            playNote(freq, sound, durMs);
+            const off = (variant && Number.isFinite(variant.noteOffset)) ? variant.noteOffset : _shapeNodeOffset(nd);
+            const freq = _shapeBaseFreq(cfg) * Math.pow(2, off / 12);
+            const eff = (variant && variant.params && variant.params.type) ? Object.assign({}, sound, variant.params) : sound;
+            playNote(freq, eff, durMs);
           }
         }
       } catch (e) {}
@@ -847,6 +938,18 @@
       const mkStep = (nd, beats) => {
         const sub = Math.max(0.0625, beats);
         const sound = _shapeNodeSound(cfg, nd);
+        // Set node → a Set step (single base note + the cycling pool), so the
+        // wrap unity survives the round-trip back into the lane.
+        if (nd.variance && Array.isArray(nd.variance.notes) && nd.variance.notes.length) {
+          const pool = nd.variance.notes.map(v => mkVoice(
+            A * Math.pow(2, (baseM + (Number.isFinite(v.noteOffset) ? v.noteOffset : 0) - 69) / 12),
+            (v.params && v.params.type) ? v.params : sound));
+          const first = pool[0];
+          return Object.assign({}, first, { duration: 1, subdivision: sub, variance: {
+            notes: pool, mode: nd.variance.mode || 'linear',
+            itersPerVariant: (Number.isFinite(nd.variance.itersPerVariant) && nd.variance.itersPerVariant > 0) ? nd.variance.itersPerVariant : 1,
+            randomEachIter: !!nd.variance.randomEachIter } });
+        }
         const chord = _shapeNodeChord(cfg, nd, idxOf.get(nd));
         if (chord) {
           const voices = _shapeChordFreqs(cfg, nd, chord).map(f => mkVoice(f, sound));
@@ -856,13 +959,38 @@
         const v = mkVoice(A * Math.pow(2, (baseM + offset - 69) / 12), sound);
         return Object.assign(v, { duration: 1, subdivision: sub });
       };
+      const gapOf = (k) => {
+        const a = eff[k].a;
+        const next = (k + 1 < eff.length) ? eff[k + 1].a : (eff[0].a + 1);   // wrap to first
+        return (next - a) * BAR;
+      };
       const out = [];
       if (eff[0].a > 1e-4) out.push(mkRest(eff[0].a * BAR));          // leading rest
       for (let i = 0; i < eff.length; i++) {
-        const a = eff[i].a;
-        const next = (i + 1 < eff.length) ? eff[i + 1].a : (eff[0].a + 1);   // wrap to first
-        const gapBeats = (next - a) * BAR;
         const nd = eff[i].nd;
+        // Run group: fold consecutive same-group nodes back into one Run (isSub)
+        // step so the wrap unity survives the round-trip. Each member's slot is
+        // its own gap, so the run's total beats == what the nodes occupied.
+        if (nd.wrapGroup && nd.wrapType === 'run') {
+          let j = i;
+          while (j + 1 < eff.length && eff[j + 1].nd.wrapGroup === nd.wrapGroup && eff[j + 1].nd.wrapType === 'run') j++;
+          if (j > i) {
+            const subSteps = [];
+            let groupBeats = 0;
+            for (let k = i; k <= j; k++) {
+              const gbk = Math.max(0.0625, gapOf(k));
+              groupBeats += gbk;
+              const ndk = eff[k].nd;
+              const vk = mkVoice(A * Math.pow(2, (baseM + _shapeNodeOffset(ndk) - 69) / 12), _shapeNodeSound(cfg, ndk));
+              subSteps.push(Object.assign(vk, { duration: 1, subdivision: gbk }));
+            }
+            out.push({ isSub: true, subSteps, label: '▤', duration: 1, subdivision: groupBeats });
+            i = j;
+            continue;
+          }
+          // Lone group member (the rest were moved/deleted) — emit as a normal note.
+        }
+        const gapBeats = gapOf(i);
         let noteBeats = gapBeats;   // legato by default
         if (Number.isFinite(nd.sustainFrac) && nd.sustainFrac > 0) {
           noteBeats = Math.min(gapBeats, Math.max(0.0625, nd.sustainFrac * BAR));
@@ -999,7 +1127,20 @@
         const af = ((cum / total) % 1 + 1) % 1;
         const susFrac = Math.max(0.005, Math.min(0.999, slot / total));
         if (!isRest(s)) {
-          if (Array.isArray(s.chord) && s.chord.length) {
+          if (s.variance && Array.isArray(s.variance.notes) && s.variance.notes.length) {
+            // Set step → one node carrying the cycling pool (offsets vs baseMidi).
+            const pool = s.variance.notes.filter(v => v && v.freq != null).map(v => ({
+              noteOffset: freqToMidi(v.freq) - baseMidi,
+              params: (v.params && v.params.type) ? Object.assign({}, v.params) : null,
+            }));
+            if (pool.length) {
+              nodes.push({ angleFrac: af, muted: false, sustainFrac: susFrac,
+                override: overrideFor((s.freq != null) ? freqToMidi(s.freq) : (baseMidi + pool[0].noteOffset), s.params),
+                variance: { notes: pool, mode: s.variance.mode || 'linear',
+                  itersPerVariant: (Number.isFinite(s.variance.itersPerVariant) && s.variance.itersPerVariant > 0) ? s.variance.itersPerVariant : 1,
+                  randomEachIter: !!s.variance.randomEachIter } });
+            }
+          } else if (Array.isArray(s.chord) && s.chord.length) {
             const vs = s.chord.filter(v => v && v.freq != null);
             if (vs.length) {
               const midis = vs.map(v => freqToMidi(v.freq)).sort((a, b) => a - b);
@@ -1012,11 +1153,21 @@
               nodes.push({ angleFrac: af, muted: false, sustainFrac: susFrac, chord: { root: rootPc, intervals }, override: ov });
             }
           } else if (s.isSub && Array.isArray(s.subSteps)) {
+            // Run step → spread into one node per sub-note, all tagged with a
+            // shared wrapGroup so compile can re-collect them back into a Run
+            // (the "spread but keep unity" model). Position each by its OWN
+            // cumulative length so a non-uniform run keeps its internal timing.
             const subs = s.subSteps.filter(x => x && x.freq != null);
-            const n = Math.max(1, subs.length);
+            const gid = 'run' + (_shapeRunGid++);
+            const subBeats = subs.map(x => Math.max(0.0001, (Number.isFinite(x.subdivision) ? x.subdivision : 1) * (Number.isFinite(x.duration) ? x.duration : 1)));
+            const subTotal = subBeats.reduce((a, b) => a + b, 0) || subs.length || 1;
+            let subCum = 0;
             subs.forEach((x, i) => {
-              const subAf = (((cum + (i / n) * slot) / total) % 1 + 1) % 1;
-              nodes.push({ angleFrac: subAf, muted: false, sustainFrac: Math.max(0.005, Math.min(0.999, (slot / n) / total)), override: overrideFor(freqToMidi(x.freq), x.params) });
+              const subAf = (((cum + (subCum / subTotal) * slot) / total) % 1 + 1) % 1;
+              nodes.push({ angleFrac: subAf, muted: false,
+                sustainFrac: Math.max(0.005, Math.min(0.999, ((subBeats[i] / subTotal) * slot) / total)),
+                override: overrideFor(freqToMidi(x.freq), x.params), wrapGroup: gid, wrapType: 'run' });
+              subCum += subBeats[i];
             });
           } else if (s.freq != null) {
             nodes.push({ angleFrac: af, muted: false, sustainFrac: susFrac, override: overrideFor(freqToMidi(s.freq), s.params) });
@@ -1143,6 +1294,15 @@
       nodesEl.addEventListener('change', () => {
         const c = _shapeCfg(); if (!c) return;
         const n = Math.max(1, Math.min(32, parseInt(nodesEl.value, 10) || 4));
+        // Changing the node count rebuilds the wheel from scratch, which drops
+        // per-node wrap payloads (Set cycles / Run groups). Warn + let the user
+        // back out when any exist; revert the stepper if they cancel.
+        const hasWrap = (c.nodes || []).some(nd => nd && (nd.variance || (nd.wrapGroup && nd.wrapType === 'run')));
+        if (n !== c.nodeCount && hasWrap && typeof confirm === 'function'
+            && !confirm('Changing the number of nodes rebuilds the wheel and will reset its Set cycles and Run groups back to plain notes. Continue?')) {
+          nodesEl.value = c.nodeCount;   // revert the stepper, keep the wheel as-is
+          return;
+        }
         c.nodeCount = n; c.nodes = _shapeEqualNodes(n, c.nodes);
         nodesEl.value = n; _shapeDraw(); persist();
       });
@@ -1264,7 +1424,14 @@
           const i = _shapeHitNode(x, y);
           if (i < 0) return;
           e.preventDefault();
-          drag = { idx: i, moved: false, sx: x, sy: y };
+          // Remember this node's Run-group state so endDrag can warn if the move
+          // pulls it out of its group (splitting the run) and offer to back out.
+          const _c = _shapeCfg();
+          const _nd = (_c && _c.nodes) ? _c.nodes[i] : null;
+          const _gid = (_nd && _nd.wrapType === 'run') ? _nd.wrapGroup : null;
+          drag = { idx: i, moved: false, sx: x, sy: y,
+            runGid: _gid, origAngle: _nd ? _nd.angleFrac : null,
+            runWasContig: (_gid != null) ? _shapeRunGroupContiguous(_c, _gid) : true };
           try { _shapeCanvas.setPointerCapture(e.pointerId); } catch (ex) {}
         });
         _shapeCanvas.addEventListener('pointermove', (e) => {
@@ -1287,6 +1454,19 @@
             // a tap toggles mute (the default interaction).
             if (_shapeEditMode) _shapeEditNode(drag.idx);
             else { cfg.nodes[drag.idx].muted = !cfg.nodes[drag.idx].muted; _shapeDraw(); }
+          }
+          // Run-split guard: if this move broke a contiguous Run group apart,
+          // warn and let the user back the move out (restore the node's angle).
+          if (drag.moved && drag.runGid != null && cfg && drag.runWasContig
+              && !_shapeRunGroupContiguous(cfg, drag.runGid)) {
+            const ok = (typeof confirm !== 'function') || confirm('Moving this node out of its Run group will split the run into pieces when the wheel recompiles into the lane. Move it anyway?');
+            if (!ok) {
+              if (cfg.nodes[drag.idx] && Number.isFinite(drag.origAngle)) cfg.nodes[drag.idx].angleFrac = drag.origAngle;
+              _shapeDraw();
+              try { _shapeCanvas.releasePointerCapture(e.pointerId); } catch (ex) {}
+              drag = { idx: -1, moved: false, sx: 0, sy: 0 };
+              return;   // backed out — don't persist the rejected move
+            }
           }
           _shapeMarkEdit();
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (ex) {}

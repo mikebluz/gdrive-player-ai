@@ -3142,28 +3142,7 @@
     /* Tone… / FX… entries inside the Sounds panel. Teal gradient lifts
        them as the primary entry points into deeper sub-panels. */
     .sounds-submenus {
-      display: flex; flex-direction: row; gap: 8px; align-items: stretch;
-    }
-    /* Current-tone readout sitting to the left of the "Tone…" selector.
-       Auto-width (doesn't grow like the flex:1 buttons), ellipsised, and
-       turns amber when the grid is "Custom" (cells use different tones). */
-    .sounds-tone-current {
-      flex: 0 1 auto; min-width: 0; max-width: 9em;
-      display: flex; align-items: center; justify-content: center;
-      padding: 0 10px;
-      border: 1px solid rgba(45, 212, 191, 0.22);
-      border-radius: 8px;
-      background: rgba(45, 212, 191, 0.05);
-      color: #8fb9b3;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.8rem; font-weight: 700; letter-spacing: 0.4px;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .sounds-tone-current:empty { display: none; }
-    .sounds-tone-current.is-custom {
-      color: #f6ad55;
-      border-color: rgba(246, 173, 85, 0.40);
-      background: rgba(246, 173, 85, 0.08);
+      display: flex; flex-direction: row; gap: 8px;
     }
     .sounds-submenus .sounds-sub-btn {
       flex: 1;
@@ -3260,6 +3239,21 @@
       border-bottom: 1px solid #1a1a2e;
     }
     .banner-row--fx { border-bottom: 1px solid #1a1a2e; }
+    /* Current grid tone readout, sitting just left of the Sounds menu button.
+       Auto-width + ellipsis so it never forces the row to overflow (the mode
+       picker to its left shrinks first). Amber when the grid is "Custom". */
+    .sounds-tone-current {
+      flex: 0 1 auto; min-width: 0; max-width: 40%;
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 0 10px;
+      border-left: 1px solid #1a1a2e;
+      color: #6f6f93;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem; font-weight: 700; letter-spacing: 0.4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sounds-tone-current:empty { display: none; }
+    .sounds-tone-current.is-custom { color: #f6ad55; }
     /* Radial Tone toggle — small icon-pill that sits to the left of the
        Scale banner. When on, the body gets .radial-tone and cells get a
        subtle radial-gradient overlay so the user can see the bend zones. */

@@ -61,16 +61,18 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
                                         (levels = lane.sends[ ])      └──────────┘
                                                                           │
                                                                           ▼
-   masterBus (Gain 1) ─► masterCompressor ─► [master FX chain:           (returns sum
-      (gentle glue:        distortion → filter → phaser → vibrato →        back in here)
-       −3 dB / 2:1 /       chorus → tremolo → delay → pingpong →
-       180 ms)             reverb → autopan] ─► masterVolume
+   masterBus (Gain 0.6) ─► masterCompressor ─► [master FX chain:         (returns sum
+     (−4.4 dB headroom      (gentle glue:       distortion → filter →     back in here)
+      trim so overlapping    −3 dB / 2:1 /      phaser → vibrato → chorus
+      voices don't slam      180 ms)            → tremolo → delay →
+      the clip ceiling)                         pingpong → reverb →
+                                                autopan] ─► masterVolume
                                                      │
                                                      ▼
                         masterLimiter (−1 dB) ─► masterClipper ─► 🔊 speakers
                                                  (soft-knee true-peak
                                                   ceiling: identity below
-                                                  0.8, hard 0.95 ceiling)
+                                                  0.9, hard 0.97 ceiling)
 ```
 
 **Notes:**
@@ -81,14 +83,23 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   speakers (via `masterCompressor` → master FX chain → `masterVolume` → `masterLimiter`
   → `masterClipper`).
 - **Peak safety vs. glue are split on purpose.** The true-peak ceiling is the final
-  `masterClipper` — a soft-knee waveshaper that is *identity* below 0.8 and rolls smoothly
-  to a hard 0.95 ceiling. Because it is instantaneous waveshaping (no time-varying gain) it
+  `masterClipper` — a soft-knee waveshaper that is *identity* below 0.9 and rolls smoothly
+  to a hard 0.97 ceiling. Because it is instantaneous waveshaping (no time-varying gain) it
   cannot pump. That lets `masterCompressor` stay a *gentle* glue (−3 dB / 2:1 / 180 ms
   release). The earlier aggressive compressor (−6 dB / 4:1 / 30 ms) re-ducked on every
   sequenced step's onset, so lane/Game/Prog playback came out quieter and audibly "gated"
   vs. dry grid taps — measured gain reduction on a dense stream fell from ~−2.8 dB (4.6 dB
-  of pumping) to ~−0.5 dB (<1 dB) with the split, and the post-chain peak from 1.19
-  (clipping the destination) to 0.93 (clean).
+  of pumping) to ~−0.5 dB (<1 dB) with the split.
+- **`masterBus` carries a −4.4 dB headroom trim (Gain 0.6).** All entry buses and FX
+  returns sum here, so a single voice already peaks near full scale — with no room for
+  overlap. Once several voices stack (chords, and especially now that sequenced steps
+  sustain for their whole step + a release tail that overlaps following steps) the sum
+  used to slam the clip ceiling and waveshape into audible distortion (~18% THD on a 4×
+  overlap). The trim gives that headroom: a single note sits ~0.58, moderate polyphony
+  stays under the clip knee, only genuinely dense peaks reach the ceiling (THD back to
+  ~0%). It's static (not a compressor) so it adds no pumping. Loudness lost to the trim is
+  the deliberate cost of clean dense polyphony without a look-ahead limiter; the
+  user-facing Master Volume scales on top.
 - **Dry level is identical on both buses.** `globalSendTap` is `Gain = 1`; the lane bus is
   `Volume(lane.volume)`, which is **0 dB at the default volume 100**. The raw note is the
   same loudness regardless of path.

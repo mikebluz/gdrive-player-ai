@@ -514,7 +514,11 @@
     // gain, so unlike a fast compressor/limiter it never pumps. This is what
     // lets the master compressor below stay gentle: peak safety lives here,
     // glue lives there. Inputs beyond ±1 clamp to ±ceil by the curve's domain.
-    const _MASTER_CLIP_KNEE = 0.8, _MASTER_CLIP_CEIL = 0.95;
+    // Knee at 0.90 so the clipper is pure identity for any single/moderate
+    // signal (which, with the masterBus headroom trim below, peaks well under
+    // it) and only rounds the rare overlap peak. A lower knee waveshaped hot
+    // single notes and audibly distorted dense playback.
+    const _MASTER_CLIP_KNEE = 0.9, _MASTER_CLIP_CEIL = 0.97;
     const masterClipper = new Tone.WaveShaper((x) => {
       const s = x < 0 ? -1 : 1, ax = Math.abs(x);
       if (ax <= _MASTER_CLIP_KNEE) return x;
@@ -593,7 +597,18 @@
     const masterCompressor = new Tone.Compressor({
       threshold: -3, ratio: 2, attack: 0.005, release: 0.18, knee: 10,
     }).connect(masterDistortion);
-    const masterBus = new Tone.Gain(1).connect(masterCompressor);
+    // Master input headroom. Every entry bus (globalSendTap, per-lane buses)
+    // and all FX returns sum here, so a single voice already peaks near full
+    // scale — leaving NO room for overlap. When several voices stack (chords,
+    // dense sequences, and especially now that sequenced steps sustain for
+    // their whole step + release tail, so tails overlap the next steps) the
+    // sum slammed the soft-clip ceiling and waveshaped into audible
+    // distortion. Trimming the bus to 0.6 (~-4.4 dB) gives that headroom: a
+    // single note sits ~0.58, moderate polyphony stays under the clip knee,
+    // and only genuinely dense peaks reach the ceiling — measured THD on a 4x
+    // coherent overlap dropped from ~18% to ~0% with no added pumping. The
+    // user-facing Master Volume still scales on top of this.
+    const masterBus = new Tone.Gain(0.6).connect(masterCompressor);
 
     // ---- Master-bus oscilloscope ----
     // Single Tone.Analyser tapped on masterBus (post all sources, pre

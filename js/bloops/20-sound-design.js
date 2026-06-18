@@ -574,6 +574,7 @@
         '<button type="button" class="sd-mini" id="sd-back">‹ Seed: ' + baseLabel + '</button>' +
         '<input type="text" class="sd-name" id="sd-name" maxlength="40" placeholder="Name this sound…" />' +
         '<button type="button" class="sd-mini sd-surprise" id="sd-surprise" title="Randomize every parameter">🎲 Surprise me</button>' +
+        '<button type="button" class="sd-mini sd-reset" id="sd-reset" title="Reset every setting (envelope, filter, LFOs, matrix…) to this seed\'s defaults">↺ Reset</button>' +
         '<div class="sd-rate-wrap"><span class="sd-rate-cap">Rate</span><span id="sd-rate-host"></span></div>' +
         '<button type="button" class="sd-mini sd-preview" id="sd-preview">▶ Preview</button>' +
         '<button type="button" class="sd-save" id="sd-save">Save</button>';
@@ -590,6 +591,7 @@
         _sdRenderSeedPicker();
       });
       top.querySelector('#sd-surprise').addEventListener('click', _sdSurprise);
+      top.querySelector('#sd-reset').addEventListener('click', _sdResetParams);
       top.querySelector('#sd-preview').addEventListener('click', _sdCyclePreview);
       top.querySelector('#sd-save').addEventListener('click', _sdSaveFromEditor);
       _sdReflectPreviewBtn();
@@ -622,7 +624,10 @@
           osc._row.appendChild(_sdMakeKnob({ label: 'Unison', min: 1, max: 7, value: P.osc.unison || 1, step: 1, defaultValue: 1, format: (v) => (v <= 1 ? 'off' : v + ' ×'), onChange: (v) => P.osc.unison = v }));
           osc._row.appendChild(_sdMakeKnob({ label: 'Spread', min: 0, max: 100, value: P.osc.spread, step: 1, unit: '¢', defaultValue: 20, onChange: (v) => P.osc.spread = v }));
         } else {
-          osc._row.appendChild(_sdMakeKnob({ label: 'Harmonic', min: 0.25, max: 12, value: P.osc.harmonicity, step: 0.05, defaultValue: P.osc.harmonicity, format: (v) => (Math.round(v * 100) / 100) + '', onChange: (v) => P.osc.harmonicity = v }));
+          // Double-click resets to the SEED's default harmonicity (fm 3 / duo
+          // 1.5 / else 2), not the current value — matching _sdNewPatchParams.
+          const _harmDefault = _sdState.baseType === 'fm' ? 3 : _sdState.baseType === 'duo' ? 1.5 : 2;
+          osc._row.appendChild(_sdMakeKnob({ label: 'Harmonic', min: 0.25, max: 12, value: P.osc.harmonicity, step: 0.05, defaultValue: _harmDefault, format: (v) => (Math.round(v * 100) / 100) + '', onChange: (v) => P.osc.harmonicity = v }));
           if (seedClass === 'fm') {
             osc._row.appendChild(_sdMakeKnob({ label: 'FM Index', min: 0, max: 40, value: P.osc.modIndex, step: 0.5, defaultValue: 10, onChange: (v) => P.osc.modIndex = v }));
           }
@@ -832,6 +837,23 @@
       if (!b) return;
       b.textContent = _SD_PREVIEW_LABELS[_sdPreviewMode] || _SD_PREVIEW_LABELS[0];
       b.classList.toggle('sd-preview-on', _sdPreviewMode !== 0);
+    }
+
+    // ---- Reset: restore every design parameter to the seed's defaults ------
+    // Destructive (clears the user's envelope / filter / LFO / matrix edits),
+    // so it confirms first. Keeps the chosen seed + the name field. Preview
+    // reads _sdState.params live, so the change is heard on the next tick.
+    function _sdResetParams() {
+      if (!_sdState) return;
+      try {
+        if (typeof window !== 'undefined' && window.confirm &&
+            !window.confirm('Reset all settings to defaults? This clears your current envelope, filter, LFO and matrix edits.')) return;
+      } catch (e) {}
+      _sdState.params = (typeof _sdNewPatchParams === 'function')
+        ? _sdNewPatchParams(_sdState.baseType)
+        : Object.assign({ attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0 }, _sdDesignDefaults());
+      _sdRenderEditor();   // rebuild knobs to reflect the restored defaults
+      try { if (typeof showToast === 'function') showToast('Sound settings reset to defaults'); } catch (e) {}
     }
 
     // ---- Surprise me: randomize every design parameter --------------------

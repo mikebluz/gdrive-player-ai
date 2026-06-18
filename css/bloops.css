@@ -7393,6 +7393,14 @@
     }
     .sm-preview:hover { border-color: #4299e1; color: #4299e1; }
 
+    .sm-reset-sound {
+      padding: 6px 14px; border-radius: 18px;
+      background: transparent; border: 1px solid #2d2d3f;
+      color: #f6ad55; font-family: 'Segoe UI', sans-serif;
+      font-size: 0.78rem; cursor: pointer; transition: all 0.15s;
+    }
+    .sm-reset-sound:hover { border-color: #f6ad55; color: #fbd38d; }
+
     .sm-apply {
       padding: 6px 18px; border-radius: 18px;
       background: linear-gradient(135deg, #2b6cb0, #4299e1);
@@ -8489,6 +8497,8 @@
     /* --- Design: Surprise + Rate + Preview cycling --- */
     .sd-surprise { color: #f6ad55; }
     .sd-surprise:hover { border-color: #f6ad55; color: #fbd38d; }
+    .sd-reset { color: #fc8181; }
+    .sd-reset:hover { border-color: #fc8181; color: #feb2b2; }
     .sd-rate-wrap { display: flex; flex-direction: column; align-items: center; gap: 1px; }
     .sd-rate-cap { font-size: 0.6rem; color: #8a8aa8; text-transform: uppercase; letter-spacing: 0.6px; }
     #sd-rate-host { display: flex; }

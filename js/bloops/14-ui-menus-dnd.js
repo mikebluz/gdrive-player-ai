@@ -4161,6 +4161,7 @@
         </details>
         <div class="sm-footer">
           <button class="sm-remove-step">Remove</button>
+          <button class="sm-reset-sound" title="Reset envelope, volume, tune, pan and effects to defaults (keeps note, wave and timing)">↺ Reset sound</button>
           <button class="sm-preview">▶ Preview</button>
           <button class="sm-apply">Apply</button>
         </div>
@@ -4284,7 +4285,7 @@
       });
 
       // Sliders. Pan uses an L/C/R formatter instead of a unit suffix.
-      [
+      const seSliders = [
         ['se-atk',       'se-atk-v',       'attack',        ' ms'],
         ['se-dec',       'se-dec-v',       'decay',         ' ms'],
         ['se-sus',       'se-sus-v',       'sustain',       '%'],
@@ -4321,19 +4322,22 @@
         ['se-apan',      'se-apan-v',      'autoPan',            '%'],
         ['se-apan-freq', 'se-apan-freq-v', 'autoPanFreq',        ' Hz'],
         ['se-apan-depth','se-apan-depth-v','autoPanDepth',       '%'],
-      ].forEach(([id, valId, key, unit]) => {
+      ];
+      // Shared value-label formatter (reused by the slider handlers and the
+      // Reset-sound button so the UI re-syncs identically).
+      const seFmtSlider = (label, v, unit) => {
+        if (!label) return;
+        if (unit === 'pan') label.textContent = v === 0 ? 'C' : (v < 0 ? 'L' : 'R') + Math.abs(v);
+        else label.textContent = v + unit;
+      };
+      seSliders.forEach(([id, valId, key, unit]) => {
         const input = modal.querySelector(`#${id}`);
         if (!input) return;
         const label = modal.querySelector(`#${valId}`);
         input.addEventListener('input', () => {
           const v = parseFloat(input.value);
           p[key] = v; _touched.add(key);
-          if (!label) return;
-          if (unit === 'pan') {
-            label.textContent = v === 0 ? 'C' : (v < 0 ? 'L' : 'R') + Math.abs(v);
-          } else {
-            label.textContent = v + unit;
-          }
+          seFmtSlider(label, v, unit);
         });
       });
       const seOverrideCheckbox = modal.querySelector('#se-fx-override');
@@ -4452,6 +4456,46 @@
         sequence[stepIndex] = next;
         renderSequence();
         overlay.remove();
+      });
+
+      // Reset sound — restore the envelope + level/tune/pan + every effect to
+      // their factory defaults (the same values playNote falls back to). Keeps
+      // the note, wave type, length, subdivision and pitch bend, mirroring the
+      // Design editor's Reset (which keeps the seed). Marks each field touched
+      // so the reset also fans out in multi-select scope; the user still has to
+      // press Apply to commit.
+      const SE_SOUND_DEFAULTS = {
+        attack: 10, decay: 100, sustain: 50, release: 1400,
+        volume: 100, detune: 0, pan: 0, fxOverrideGlobal: false,
+        reverb: 0, reverbSize: 70, reverbTone: 50,
+        delay: 0, delayTime: 250, delayFeedback: 40, delaySync: null,
+        distortion: 0,
+        chorus: 0, chorusFreq: 4, chorusDepth: 70,
+        vibrato: 0, vibratoFreq: 5, vibratoDepth: 30,
+        tremolo: 0, tremoloFreq: 5, tremoloDepth: 70,
+        phaser: 0, phaserFreq: 0.5, phaserOctaves: 3,
+        autoFilter: 0, autoFilterFreq: 1, autoFilterDepth: 100, autoFilterBaseFreq: 200,
+        pingPong: 0, pingPongTime: 250, pingPongFeedback: 30, pingPongSync: null,
+        autoPan: 0, autoPanFreq: 1, autoPanDepth: 100,
+      };
+      modal.querySelector('.sm-reset-sound').addEventListener('click', () => {
+        try {
+          if (typeof window !== 'undefined' && window.confirm &&
+              !window.confirm('Reset this step\'s sound — envelope, volume, tune, pan and all effects — to defaults? The note, wave and timing are kept.')) return;
+        } catch (e) {}
+        Object.keys(SE_SOUND_DEFAULTS).forEach(k => { p[k] = SE_SOUND_DEFAULTS[k]; _touched.add(k); });
+        // Re-sync every slider input + its value label to the restored values.
+        seSliders.forEach(([id, valId, key, unit]) => {
+          const input = modal.querySelector(`#${id}`);
+          const label = modal.querySelector(`#${valId}`);
+          if (input && p[key] != null) input.value = p[key];
+          seFmtSlider(label, p[key], unit);
+        });
+        // Re-sync the two BPM-sync selects + the FX-override checkbox.
+        if (seDlySyncSel) seDlySyncSel.value = '';
+        if (sePpSyncSel) sePpSyncSel.value = '';
+        if (seOverrideCheckbox) seOverrideCheckbox.checked = false;
+        try { if (typeof showToast === 'function') showToast('Step sound reset to defaults — press Apply to keep'); } catch (e) {}
       });
     }
 

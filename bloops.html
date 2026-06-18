@@ -458,6 +458,24 @@
       <div id="game-pad" hidden>
         <div class="game-controls">
           <div class="game-ctrl-row">
+            <div class="game-ctrl-group game-type-group">
+              <span class="game-ctrl-label">Type</span>
+              <select id="game-type-select" title="Polygon — a ball bouncing inside a note-sided polygon. Ballpit — every note is a ball bouncing around; wall and ball-to-ball hits sound its note.">
+                <option value="polygon">Polygon</option>
+                <option value="ballpit">Ballpit</option>
+              </select>
+            </div>
+            <div class="game-ctrl-group game-ballpit-only">
+              <button type="button" id="game-balls-menu-btn" class="game-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="game-balls-menu" title="Define the Ballpit notes — how many balls and each ball's pitch">Notes ▾</button>
+              <div class="game-menu game-balls-menu" id="game-balls-menu" role="menu">
+                <div class="game-balls-list" id="game-balls-list"></div>
+                <div class="game-balls-actions">
+                  <button type="button" id="game-balls-add">+ Add ball</button>
+                  <button type="button" id="game-balls-fill" title="Replace the set with the grid's current scale / chord notes">Fill from grid</button>
+                  <button type="button" id="game-balls-clear" title="Clear the custom set and follow the grid scale / chord">Use grid</button>
+                </div>
+              </div>
+            </div>
             <div class="game-ctrl-group">
               <button type="button" id="game-ball-mute" class="game-ctrl-label game-mute" aria-pressed="false" title="Mute / unmute ball note hits">Ball</button>
               <button type="button" id="game-ball-menu-btn" class="game-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="game-ball-menu" title="Ball size, speed, octave, tone">▾</button>

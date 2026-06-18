@@ -19,6 +19,31 @@
     let _gameNotes = [];
     const _gameShape = { cx: 0, cy: 0, vx: 0, vy: 0, rot: 0, omega: 0 };
     const _gameBall  = { x: 0, y: 0, vx: 0, vy: 0, r: 9 };
+    // Game TYPE: 'polygon' = the classic shape+ball game (above); 'ballpit' =
+    // every note becomes a ball that bounces around the canvas, sounding its
+    // note on every wall / ball-ball hit. Same note source (chord / scale /
+    // root) feeds both. Persisted so the choice survives reloads.
+    let _gameType = 'polygon';
+    try { const _gt = localStorage.getItem('bloops-game-type'); if (_gt === 'ballpit' || _gt === 'polygon') _gameType = _gt; } catch (e) {}
+    let _gameBalls = [];   // ballpit: [{ x, y, vx, vy, r, noteIdx, hitMs, flashMs }]
+    // Ballpit voice governor — a hard cap on how many note voices can fire
+    // within a short window, so a synchronized burst (all balls hitting a wall
+    // together) can't pile dozens of overlapping voices into a clipping wash.
+    // Excess hits still FLASH (visual) but drop their audio.
+    let _gameBallHits = [];   // recent play timestamps (ms)
+    const _GAME_BALLPIT_WINDOW_MS  = 60;
+    const _GAME_BALLPIT_MAX_VOICES = 4;
+    // Explicit Ballpit note set — defined at the Game level (count + each ball's
+    // pitch), independent of the grid. Stored as MIDI numbers. EMPTY = follow
+    // the grid scale / chord (the original behavior). Persisted.
+    let _gameBallpitCustom = [];
+    try {
+      const _bn = JSON.parse(localStorage.getItem('bloops-game-ballpit-notes') || '[]');
+      if (Array.isArray(_bn)) _gameBallpitCustom = _bn.filter(m => Number.isFinite(m)).map(m => m | 0);
+    } catch (e) {}
+    function _gameSaveBallpitNotes() { try { localStorage.setItem('bloops-game-ballpit-notes', JSON.stringify(_gameBallpitCustom)); } catch (e) {} }
+    const _GAME_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    function _gameNoteName(midi) { midi = Math.round(midi); return _GAME_NOTE_NAMES[(((midi % 12) + 12) % 12)] + (Math.floor(midi / 12) - 1); }
     // User-tunable values driven by the four sliders. Defaults match
     // the input[type=range] value= attributes in the markup so the
     // first frame matches what the sliders show.
@@ -129,6 +154,21 @@
     function _gameRefresh() {
       _gameNotes = [];
       _gameSideColors = [];
+      // Ballpit with an explicit, Game-level note set: one entry per ball at the
+      // exact pitch the user chose, bypassing the grid scale / chord entirely.
+      if (_gameType === 'ballpit' && _gameBallpitCustom.length) {
+        const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+        for (const midi of _gameBallpitCustom) {
+          const pc = (((midi % 12) + 12) % 12);
+          // Inherit the matching pitch-class's grid tone + palette color.
+          const cellIdx = (typeof rootIdx === 'number') ? (((pc - rootIdx) % 12 + 12) % 12) : pc;
+          const freq = A * Math.pow(2, (midi - 69) / 12);
+          _gameNotes.push({ cellIdx, freq, pc });
+          _gameSideColors.push((palette && palette[pc]) || '#9f7aea');
+        }
+        _gameRefreshFinish();
+        return;
+      }
       // Chord override — when set, the polygon's sides are the chord's
       // notes rooted on rootIdx, repeated across octaveCount octaves.
       // Falls back to the scale-filter path otherwise.
@@ -191,6 +231,11 @@
           }
         }
       }
+      _gameRefreshFinish();
+    }
+    // Shared tail of _gameRefresh — runs after _gameNotes / _gameSideColors are
+    // built by whichever source (custom Ballpit set, chord, or scale).
+    function _gameRefreshFinish() {
       _gameN = _gameNotes.length;
       // Don't wipe the last-hit history on a polygon rebuild —
       // shape-edge bounces echo those indices, and clearing them after
@@ -205,7 +250,11 @@
       _gameSideLastHitMs = new Float64Array(_gameN);
       _gameShapeLastBounceMs = 0;
       _gameSize();
-      if (!_gameRunning) {
+      if (_gameType === 'ballpit') {
+        // Note set changed — rebuild the pit only when the count differs (so a
+        // chord-progression advance with the same count keeps balls in flight).
+        if (_gameBalls.length !== _gameN || !_gameRunning) _gameBuildBalls();
+      } else if (!_gameRunning) {
         _gameRecenter();
       } else {
         // Polygon shape just changed (chord/scale pick, octave change,
@@ -244,6 +293,11 @@
       el.textContent = parts.join(' · ');
     }
     function _gameKick() {
+      if (_gameType === 'ballpit') {
+        if (!_gameBalls.length) _gameBuildBalls();
+        _gameBallpitKick();
+        return;
+      }
       // Shape heads toward one of the four canvas corners (with a small
       // ±0.2 rad jitter) so the initial direction is always diagonal-ish
       // instead of occasionally near-horizontal/vertical.
@@ -307,13 +361,25 @@
       return false;
     }
 
-    function _gamePlayNoteAt(sideIdx, octShift, toneOverride) {
+    function _gamePlayNoteAt(sideIdx, octShift, toneOverride, opts) {
       if (sideIdx == null || !_gameNotes || !_gameNotes[sideIdx] || typeof playNote !== 'function') return;
       const meta = _gameNotes[sideIdx];
       // Clone so the override doesn't mutate the cell's stored params.
       const base = (Array.isArray(cellParams) && cellParams[meta.cellIdx]) ? cellParams[meta.cellIdx] : {};
       const params = { ...base };
       if (toneOverride) params.type = toneOverride;
+      // Ballpit overload guards: leave headroom (volScale) so many simultaneous
+      // ball hits don't sum past 0 dB, and cap the release so tails from a dense
+      // pit don't accumulate into a clipping wash.
+      if (opts) {
+        if (Number.isFinite(opts.volScale) && opts.volScale !== 1) {
+          const cur = Number.isFinite(params.volume) ? params.volume : 100;
+          params.volume = Math.max(0, Math.round(cur * opts.volScale));
+        }
+        if (Number.isFinite(opts.maxReleaseMs)) {
+          params.release = Math.min(Number.isFinite(params.release) ? params.release : opts.maxReleaseMs, opts.maxReleaseMs);
+        }
+      }
       const freq = octShift ? meta.freq * Math.pow(2, octShift) : meta.freq;
       try { playNote(freq, params); } catch (e) {}
     }
@@ -350,6 +416,177 @@
         subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
       };
       try { addToSequence(step); } catch (_) {}
+    }
+    // ---- Ballpit type ----------------------------------------------------
+    // Push overlapping balls apart so the initial scatter doesn't start with
+    // everyone interpenetrating (which would machine-gun note hits on frame 1).
+    function _gameSeparateBalls(iters) {
+      if (!_gameCanvas) return;
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      for (let it = 0; it < (iters || 4); it++) {
+        for (let i = 0; i < _gameBalls.length; i++) {
+          for (let j = i + 1; j < _gameBalls.length; j++) {
+            const a = _gameBalls[i], c = _gameBalls[j];
+            let dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy);
+            const min = a.r + c.r;
+            if (d < min) {
+              if (d < 1e-4) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy) || 1; }
+              const push = (min - d) / 2, nx = dx / d, ny = dy / d;
+              a.x -= nx * push; a.y -= ny * push; c.x += nx * push; c.y += ny * push;
+            }
+          }
+        }
+        for (const b of _gameBalls) {
+          b.x = Math.max(b.r, Math.min(W - b.r, b.x));
+          b.y = Math.max(b.r, Math.min(H - b.r, b.y));
+        }
+      }
+    }
+    // Rebuild the pit: one ball per note, scattered with random headings at the
+    // current speed slider. Colors come from the same per-pitch-class palette.
+    function _gameBuildBalls() {
+      _gameBalls = [];
+      if (!_gameCanvas || !_gameN) return;
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      const r = Math.max(4, _gameUserBallSize | 0);
+      const speed = Math.max(0, _gameUserBallSpeed);
+      for (let i = 0; i < _gameN; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        _gameBalls.push({
+          x: r + Math.random() * Math.max(1, W - 2 * r),
+          y: r + Math.random() * Math.max(1, H - 2 * r),
+          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+          r, noteIdx: i, hitMs: 0, flashMs: 0,
+        });
+      }
+      _gameSeparateBalls(6);
+    }
+    // (Re)fling every ball in a fresh random direction at slider speed.
+    function _gameBallpitKick() {
+      const speed = Math.max(20, _gameUserBallSpeed);
+      for (const b of _gameBalls) {
+        const ang = Math.random() * Math.PI * 2;
+        b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
+      }
+    }
+    function _gameBallpitStep(dt) {
+      if (!_gameBalls.length || !_gameCanvas) return;
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      const nowMs = performance.now();
+      // Drop stale entries from the voice-governor window up front.
+      _gameBallHits = _gameBallHits.filter(t => nowMs - t < _GAME_BALLPIT_WINDOW_MS);
+      // Per-hit headroom on top of the voice cap (worst case ~MAX_VOICES playing
+      // together, so target their RMS sum near 0 dB).
+      const volScale = Math.min(0.7, 1.25 / Math.sqrt(Math.max(1, Math.min(_gameBalls.length, 8))));
+      // Sound a ball's note (flash always; play+record gated by a per-ball
+      // cooldown AND the global voice governor so a dense burst can't clip).
+      const fire = (b) => {
+        b.flashMs = nowMs;
+        if (nowMs - b.hitMs < _GAME_SIDE_COOLDOWN_MS) return;
+        b.hitMs = nowMs;
+        if (_gameBallHits.length >= _GAME_BALLPIT_MAX_VOICES) return;   // governor: drop audio, keep flash
+        _gameBallHits.push(nowMs);
+        if (!_gameBallMuted) _gamePlayNoteAt(b.noteIdx, _gameUserBallOct, _gameUserBallTone, { volScale, maxReleaseMs: 140 });
+        _gameAppendBallStep(b.noteIdx);
+      };
+      for (const b of _gameBalls) {
+        b.x += b.vx * dt; b.y += b.vy * dt;
+        let edge = false;
+        if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx); edge = true; }
+        else if (b.x > W - b.r) { b.x = W - b.r; b.vx = -Math.abs(b.vx); edge = true; }
+        if (b.y < b.r) { b.y = b.r; b.vy = Math.abs(b.vy); edge = true; }
+        else if (b.y > H - b.r) { b.y = H - b.r; b.vy = -Math.abs(b.vy); edge = true; }
+        if (edge) fire(b);
+      }
+      // Equal-mass elastic ball-ball collisions: exchange the velocity
+      // components along the contact normal, but only when approaching.
+      for (let i = 0; i < _gameBalls.length; i++) {
+        for (let j = i + 1; j < _gameBalls.length; j++) {
+          const a = _gameBalls[i], c = _gameBalls[j];
+          const dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy);
+          const min = a.r + c.r;
+          if (d > 0 && d < min) {
+            const nx = dx / d, ny = dy / d, overlap = (min - d) / 2;
+            a.x -= nx * overlap; a.y -= ny * overlap; c.x += nx * overlap; c.y += ny * overlap;
+            const va = a.vx * nx + a.vy * ny, vc = c.vx * nx + c.vy * ny, diff = vc - va;
+            if (diff < 0) {
+              a.vx += diff * nx; a.vy += diff * ny;
+              c.vx -= diff * nx; c.vy -= diff * ny;
+              fire(a); fire(c);
+            }
+          }
+        }
+      }
+    }
+    function _gameBallpitRender() {
+      if (!_gameCtx || !_gameCanvas) return;
+      const W = _gameCanvas.width, H = _gameCanvas.height;
+      _gameCtx.fillStyle = '#0a0a14'; _gameCtx.fillRect(0, 0, W, H);
+      if (!_gameN) {
+        _gameCtx.fillStyle = '#4a5568';
+        _gameCtx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        _gameCtx.textAlign = 'center'; _gameCtx.textBaseline = 'middle';
+        _gameCtx.fillText('No notes — pick a chord or scale', W / 2, H / 2);
+        return;
+      }
+      const nowMs = performance.now();
+      for (const b of _gameBalls) {
+        const flash = b.flashMs ? Math.max(0, 1 - (nowMs - b.flashMs) / 160) : 0;
+        const col = _gameSideColors[b.noteIdx] || '#9f7aea';
+        if (flash > 0) {
+          _gameCtx.beginPath();
+          _gameCtx.arc(b.x, b.y, b.r + 3 + flash * 7, 0, Math.PI * 2);
+          _gameCtx.strokeStyle = 'rgba(255,255,255,' + (flash * 0.6).toFixed(3) + ')';
+          _gameCtx.lineWidth = 2; _gameCtx.stroke();
+        }
+        _gameCtx.beginPath();
+        _gameCtx.arc(b.x, b.y, b.r + flash * 2, 0, Math.PI * 2);
+        _gameCtx.fillStyle = flash > 0.5 ? '#ffffff' : col;
+        _gameCtx.fill();
+      }
+    }
+    // Render the Game-level Ballpit note editor (one row per ball: pitch picker
+    // + color swatch + remove). Empty set → a hint that it's following the grid.
+    function _gameRenderBallsList() {
+      const host = document.getElementById('game-balls-list');
+      if (!host) return;
+      host.innerHTML = '';
+      if (!_gameBallpitCustom.length) {
+        const hint = document.createElement('div');
+        hint.className = 'game-balls-empty';
+        hint.textContent = 'Following the grid scale / chord — add balls to define your own set.';
+        host.appendChild(hint);
+        return;
+      }
+      let opts = '';
+      for (let m = 24; m <= 96; m++) opts += '<option value="' + m + '">' + _gameNoteName(m) + '</option>';
+      _gameBallpitCustom.forEach((midi, idx) => {
+        const row = document.createElement('div');
+        row.className = 'game-balls-row';
+        const pc = (((midi % 12) + 12) % 12);
+        const swatch = document.createElement('span');
+        swatch.className = 'game-balls-swatch';
+        swatch.style.background = (palette && palette[pc]) || '#9f7aea';
+        const sel = document.createElement('select');
+        sel.innerHTML = opts;
+        sel.value = String(Math.max(24, Math.min(96, midi)));
+        sel.addEventListener('change', () => {
+          _gameBallpitCustom[idx] = parseInt(sel.value, 10) || 60;
+          _gameSaveBallpitNotes();
+          _gameRenderBallsList();   // refresh swatch color
+          _gameRefresh();
+        });
+        const rm = document.createElement('button');
+        rm.type = 'button'; rm.className = 'game-balls-rm'; rm.textContent = '✕'; rm.title = 'Remove this ball';
+        rm.addEventListener('click', () => {
+          _gameBallpitCustom.splice(idx, 1);
+          _gameSaveBallpitNotes();
+          _gameRenderBallsList();
+          _gameRefresh();
+        });
+        row.appendChild(swatch); row.appendChild(sel); row.appendChild(rm);
+        host.appendChild(row);
+      });
     }
     // Grid-mode chord progression — when chords are queued, a cell press
     // plays the current chord with the pressed note as root, then
@@ -423,6 +660,7 @@
       try { addToSequence(chordStep); } catch (_) {}
     }
     function _gameUpdate(dt) {
+      if (_gameType === 'ballpit') { _gameBallpitStep(dt); return; }
       if (_gameN < 3) return;
       // Magnet steering — while the user holds the pointer in 'magnet'
       // mode, nudge the shape's velocity toward the pointer. Capped at
@@ -659,6 +897,7 @@
     }
     function _gameRender() {
       if (!_gameCtx) return;
+      if (_gameType === 'ballpit') { _gameBallpitRender(); return; }
       const W = _gameCanvas.width, H = _gameCanvas.height;
       _gameCtx.fillStyle = '#0a0a14';
       _gameCtx.fillRect(0, 0, W, H);
@@ -715,8 +954,10 @@
         if (_gameRunning) {
           _gameRunning = false;
         } else {
-          const moving = Math.abs(_gameShape.vx) > 1 || Math.abs(_gameShape.vy) > 1
-                      || Math.abs(_gameBall.vx) > 1  || Math.abs(_gameBall.vy) > 1;
+          const moving = (_gameType === 'ballpit')
+            ? _gameBalls.some(b => Math.abs(b.vx) > 1 || Math.abs(b.vy) > 1)
+            : (Math.abs(_gameShape.vx) > 1 || Math.abs(_gameShape.vy) > 1
+              || Math.abs(_gameBall.vx) > 1  || Math.abs(_gameBall.vy) > 1);
           if (!moving) _gameKick();
           _gameRunning = true;
         }
@@ -731,7 +972,11 @@
         _gameInteract.startT = performance.now();
         _gameInteract.samples = [{ x, y, t: _gameInteract.startT }];
         _gameInteract.grabbed = false;
-        if (_gameShapeInteraction === 'drag') {
+        // Shape interactions (drag / magnet / tap-shove) are polygon-only —
+        // Ballpit has no shape, so a tap there just runs/pauses (handled on up).
+        if (_gameType !== 'polygon') {
+          // no-op: fall through to the run/pause toggle in _gameEndPointer
+        } else if (_gameShapeInteraction === 'drag') {
           const dx = x - _gameShape.cx, dy = y - _gameShape.cy;
           // Generous grab radius (1.2× polygon radius) so the polygon's
           // pointier sides don't require pixel-perfect aim to grab.
@@ -818,7 +1063,7 @@
         // shape and starting/stopping on the same gesture would feel
         // ambiguous.
         const isTap = totalT < 250 && moveDist < 8;
-        if (isTap && _gameShapeInteraction !== 'tap') {
+        if (isTap && (_gameType === 'ballpit' || _gameShapeInteraction !== 'tap')) {
           _gameToggleRunning();
         }
         _gameInteract.active = false;
@@ -848,6 +1093,45 @@
           _gameBallPhysics = bp.value || 'classic';
         });
       }
+      // ---- Type selector (Polygon ↔ Ballpit) ----
+      const tysel = document.getElementById('game-type-select');
+      if (tysel && _gamePadEl) {
+        tysel.value = _gameType;
+        _gamePadEl.classList.toggle('game-ballpit', _gameType === 'ballpit');
+        tysel.addEventListener('change', () => {
+          _gameType = (tysel.value === 'ballpit') ? 'ballpit' : 'polygon';
+          try { localStorage.setItem('bloops-game-type', _gameType); } catch (e) {}
+          _gamePadEl.classList.toggle('game-ballpit', _gameType === 'ballpit');
+          _gameRunning = false;        // pause on switch so the user opts back in
+          _gameRefresh();              // rebuilds notes; builds the pit when ballpit
+          if (_gameType === 'polygon') _gameRecenter();
+          else _gameRenderBallsList();
+        });
+      }
+      // ---- Ballpit note-set editor (count + each ball's pitch) ----
+      const _bAdd = document.getElementById('game-balls-add');
+      const _bFill = document.getElementById('game-balls-fill');
+      const _bClear = document.getElementById('game-balls-clear');
+      if (_bAdd) _bAdd.addEventListener('click', () => {
+        const last = _gameBallpitCustom.length ? _gameBallpitCustom[_gameBallpitCustom.length - 1] : 60;
+        _gameBallpitCustom.push(Math.max(24, Math.min(96, last + (_gameBallpitCustom.length ? 2 : 0))));
+        _gameSaveBallpitNotes(); _gameRenderBallsList(); _gameRefresh();
+      });
+      if (_bFill) _bFill.addEventListener('click', () => {
+        // Seed the custom set from whatever the grid currently yields.
+        const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+        const prev = _gameBallpitCustom;
+        _gameBallpitCustom = [];           // temporarily follow the grid
+        _gameRefresh();                    // _gameNotes now holds the grid set
+        const seeded = _gameNotes.map(n => Math.max(24, Math.min(96, Math.round(69 + 12 * Math.log2((n.freq > 0 ? n.freq : A) / A)))));
+        _gameBallpitCustom = seeded.length ? seeded : prev;
+        _gameSaveBallpitNotes(); _gameRenderBallsList(); _gameRefresh();
+      });
+      if (_bClear) _bClear.addEventListener('click', () => {
+        _gameBallpitCustom = [];
+        _gameSaveBallpitNotes(); _gameRenderBallsList(); _gameRefresh();
+      });
+      _gameRenderBallsList();
       // ---- sliders ----
       const bsz = document.getElementById('game-ball-size');
       const bsp = document.getElementById('game-ball-speed');
@@ -860,6 +1144,7 @@
           if (!Number.isFinite(v)) return;
           _gameUserBallSize = v;
           _gameBall.r = v;
+          if (_gameType === 'ballpit') _gameBalls.forEach(b => { b.r = Math.max(4, v); });
         });
       }
       if (bsp) {
@@ -874,6 +1159,11 @@
             _gameBall.vx *= k;
             _gameBall.vy *= k;
           }
+          if (_gameType === 'ballpit') _gameBalls.forEach(b => {
+            const m = Math.hypot(b.vx, b.vy);
+            if (m > 0.5) { const k = v / m; b.vx *= k; b.vy *= k; }
+            else { const ang = Math.random() * Math.PI * 2; b.vx = Math.cos(ang) * v; b.vy = Math.sin(ang) * v; }
+          });
         });
       }
       if (ssz) {
@@ -982,6 +1272,7 @@
       }
       // ---- popover menus ----
       const _gameMenuPairs = [
+        { btn: document.getElementById('game-balls-menu-btn'), menu: document.getElementById('game-balls-menu') },
         { btn: document.getElementById('game-ball-menu-btn'),  menu: document.getElementById('game-ball-menu')  },
         { btn: document.getElementById('game-shape-menu-btn'), menu: document.getElementById('game-shape-menu') },
       ];
@@ -1000,8 +1291,22 @@
           _gameCloseAllMenus();
           if (!isOpen) {
             try { _gamePopulateTones(); } catch (_) {}
+            p.menu.style.transform = '';   // reset any prior clamp before measuring
             p.menu.classList.add('open');
             p.btn.setAttribute('aria-expanded', 'true');
+            // Keep the popover on screen — its anchor group can sit far enough
+            // right (Type / Notes groups push it over) that a left-anchored menu
+            // would spill off the right edge. Shift it back inside the viewport.
+            requestAnimationFrame(() => {
+              try {
+                const r = p.menu.getBoundingClientRect();
+                const pad = 8;
+                let shift = 0;
+                if (r.right > window.innerWidth - pad) shift = (window.innerWidth - pad) - r.right;
+                if (r.left + shift < pad) shift = pad - r.left;
+                p.menu.style.transform = shift ? ('translateX(' + Math.round(shift) + 'px)') : '';
+              } catch (_) {}
+            });
           }
         });
         // Keep clicks inside the menu from closing it.

@@ -1876,6 +1876,28 @@
       position: relative; /* positioning context for the popover */
     }
     .game-ctrl-group-right { margin-left: auto; }
+    .game-type-group select {
+      background: #11111c; color: #cbd5e0; border: 1px solid #2d2d3f;
+      border-radius: 6px; padding: 3px 6px; font-size: 0.8rem;
+    }
+    /* Ballpit type: hide the polygon-only controls (the Shape group and the
+       ball Physics selector, which only governs polygon-reflection feel). */
+    #game-pad.game-ballpit .game-ctrl-group-right { display: none; }
+    #game-pad.game-ballpit #game-ball-menu label:has(> #game-ball-physics) { display: none; }
+    /* Ballpit-only controls (the note-set editor): hidden in Polygon. */
+    .game-ballpit-only { display: none; }
+    #game-pad.game-ballpit .game-ballpit-only { display: flex; }
+    .game-balls-menu { min-width: 220px; max-height: 50vh; overflow-y: auto; }
+    .game-balls-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+    .game-balls-empty { color: #6a6a88; font-size: 0.72rem; font-style: italic; padding: 4px 2px; }
+    .game-balls-row { display: flex; align-items: center; gap: 6px; }
+    .game-balls-row .game-balls-swatch { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+    .game-balls-row select { flex: 1; background: #11111c; color: #cbd5e0; border: 1px solid #2d2d3f; border-radius: 5px; padding: 2px 4px; font-size: 0.78rem; }
+    .game-balls-row .game-balls-rm { flex: 0 0 auto; background: transparent; border: 1px solid #2d2d3f; color: #8a8aa8; border-radius: 5px; padding: 1px 6px; cursor: pointer; }
+    .game-balls-row .game-balls-rm:hover { color: #f56565; border-color: #a23b3b; }
+    .game-balls-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .game-balls-actions button { background: #11111c; color: #cbd5e0; border: 1px solid #2d2d3f; border-radius: 5px; padding: 3px 8px; font-size: 0.74rem; cursor: pointer; }
+    .game-balls-actions button:hover { border-color: #4a5578; }
     .game-menu-btn {
       background: transparent;
       border: 1px solid #2d2d3f;

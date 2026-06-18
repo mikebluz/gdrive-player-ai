@@ -468,11 +468,16 @@
             <div class="game-ctrl-group game-ballpit-only">
               <button type="button" id="game-balls-menu-btn" class="game-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="game-balls-menu" title="Define the Ballpit notes — how many balls and each ball's pitch">Notes ▾</button>
               <div class="game-menu game-balls-menu" id="game-balls-menu" role="menu">
+                <div class="game-balls-sources">
+                  <label>Root <select id="game-balls-root" title="Root for the Scale / Chord note sets"></select></label>
+                  <label>Scale <select id="game-balls-scale" title="Load a built-in scale's notes (from the chosen root) as the balls"><option value="">— Scale —</option></select></label>
+                  <label>Chord <select id="game-balls-chord" title="Load a built-in chord's notes (from the chosen root) as the balls"><option value="">— Chord —</option></select></label>
+                  <label>Wrap <select id="game-balls-wrap" title="Load a wrap from the Grid Wrap bank as the balls"><option value="">— Wrap —</option></select></label>
+                </div>
                 <div class="game-balls-list" id="game-balls-list"></div>
                 <div class="game-balls-actions">
                   <button type="button" id="game-balls-add">+ Add ball</button>
-                  <button type="button" id="game-balls-fill" title="Replace the set with the grid's current scale / chord notes">Fill from grid</button>
-                  <button type="button" id="game-balls-clear" title="Clear the custom set and follow the grid scale / chord">Use grid</button>
+                  <button type="button" id="game-balls-clear" title="Clear all balls">Clear</button>
                 </div>
               </div>
             </div>

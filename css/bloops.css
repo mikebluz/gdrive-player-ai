@@ -1887,7 +1887,10 @@
     /* Ballpit-only controls (the note-set editor): hidden in Polygon. */
     .game-ballpit-only { display: none; }
     #game-pad.game-ballpit .game-ballpit-only { display: flex; }
-    .game-balls-menu { min-width: 220px; max-height: 50vh; overflow-y: auto; }
+    .game-balls-menu { min-width: 230px; max-height: 60vh; overflow-y: auto; }
+    .game-balls-sources { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #23232f; }
+    .game-balls-sources label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #a0aec0; font-size: 0.74rem; }
+    .game-balls-sources select { flex: 1; min-width: 0; max-width: 160px; background: #11111c; color: #cbd5e0; border: 1px solid #2d2d3f; border-radius: 5px; padding: 2px 4px; font-size: 0.76rem; }
     .game-balls-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
     .game-balls-empty { color: #6a6a88; font-size: 0.72rem; font-style: italic; padding: 4px 2px; }
     .game-balls-row { display: flex; align-items: center; gap: 6px; }

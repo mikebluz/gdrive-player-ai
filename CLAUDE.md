@@ -11,6 +11,8 @@ Apply these rules to every UI change:
 
 2. **Audio playback must be smooth and immediate.** Every user-triggered sound (cell press, wrap audition, sequence/loop playback, REST tap, sample preview, recording playback, etc.) should fire with no perceptible lag, no distortion, and no fluctuation. When changing audio code, prefer firing the sound *before* DOM work, keep Tone's `lookAhead` minimal (currently 25 ms in `bloops.html`), and don't add unconditional time cushions to interactive triggers — guards for cold-start (suspended `AudioContext`) are fine but should not penalize the warm path. If a change risks audio glitches (under-runs, stagger between voices, dropouts), test it in the browser before declaring done.
 
+3. **Keep the audio signal-flow diagram current.** `README.md` (section *"Bloops — audio signal flow"*) holds an ASCII diagram of how notes route from each source through the two entry buses (`globalSendTap` vs. the per-lane bus) to the shared master chain and speakers. Whenever you change audio routing — `playNote()` destination resolution, `globalSendTap`, `getLaneBus()`, the FX send/return wiring, or the master chain order — **update that diagram in the same change** so it never drifts from the code. Prefer one global routing rule over per-mode volume/FX hacks; if modes sound inconsistent, fix it at the bus/master level (and re-draw the diagram) rather than scaling individual call sites.
+
 ## Commands
 
 ```bash

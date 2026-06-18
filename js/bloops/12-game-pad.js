@@ -44,6 +44,81 @@
     function _gameSaveBallpitNotes() { try { localStorage.setItem('bloops-game-ballpit-notes', JSON.stringify(_gameBallpitCustom)); } catch (e) {} }
     const _GAME_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     function _gameNoteName(midi) { midi = Math.round(midi); return _GAME_NOTE_NAMES[(((midi % 12) + 12) % 12)] + (Math.floor(midi / 12) - 1); }
+    // The Ballpit set can be seeded from a built-in Scale or Chord (at a chosen
+    // root) or a Wrap from the Grid Wrap bank. _gameBallpitSrc remembers the last
+    // seed so changing the root re-applies it. The user can still hand-edit the
+    // resulting per-ball list. Root in [0,11]; default = the grid root.
+    let _gameBallpitRoot = (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
+    let _gameBallpitSrc = { kind: null, key: null };
+    try { const _r = parseInt(localStorage.getItem('bloops-game-ballpit-root'), 10); if (Number.isFinite(_r)) _gameBallpitRoot = ((_r % 12) + 12) % 12; } catch (e) {}
+    try { const _s = JSON.parse(localStorage.getItem('bloops-game-ballpit-src') || 'null'); if (_s && _s.kind) _gameBallpitSrc = _s; } catch (e) {}
+    function _gameSaveBallpitSrc() {
+      try { localStorage.setItem('bloops-game-ballpit-root', String(_gameBallpitRoot)); localStorage.setItem('bloops-game-ballpit-src', JSON.stringify(_gameBallpitSrc)); } catch (e) {}
+    }
+    function _gameNotesFromScale(key, rootPc) {
+      const ivs = (typeof SCALES !== 'undefined' && SCALES && Array.isArray(SCALES[key])) ? SCALES[key] : [];
+      const rootMidi = 60 + (((rootPc % 12) + 12) % 12);
+      return ivs.map(s => rootMidi + s);
+    }
+    function _gameNotesFromChord(key, rootPc) {
+      const ch = (typeof CHORDS !== 'undefined' && CHORDS) ? CHORDS[key] : null;
+      const semis = ch ? (Array.isArray(ch.semis) ? ch.semis : (Array.isArray(ch) ? ch : null)) : null;
+      if (!semis) return [];
+      const rootMidi = 60 + (((rootPc % 12) + 12) % 12);
+      return semis.map(s => rootMidi + s);
+    }
+    function _gameNotesFromWrap(wrapId) {
+      const list = (typeof savedWraps !== 'undefined' && Array.isArray(savedWraps)) ? savedWraps : [];
+      const entry = list.find(w => w && String(w.id) === String(wrapId));
+      if (!entry || !entry.step) return [];
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const ns = (typeof _wrapNotesOf === 'function') ? _wrapNotesOf(entry.step) : [];
+      return ns.filter(n => n && n.freq != null).map(n => Math.round(69 + 12 * Math.log2((n.freq > 0 ? n.freq : A) / A)));
+    }
+    // Build the ball set from the active seed (scale / chord / wrap) + root.
+    function _gameApplyBallSource() {
+      const s = _gameBallpitSrc || {};
+      let midis = [];
+      if (s.kind === 'scale') midis = _gameNotesFromScale(s.key, _gameBallpitRoot);
+      else if (s.kind === 'chord') midis = _gameNotesFromChord(s.key, _gameBallpitRoot);
+      else if (s.kind === 'wrap') midis = _gameNotesFromWrap(s.key);
+      midis = midis.filter(Number.isFinite).map(m => Math.max(24, Math.min(96, Math.round(m))));
+      if (!midis.length) return;
+      _gameBallpitCustom = midis;
+      _gameSaveBallpitNotes();
+      _gameRenderBallsList();
+      _gameRefresh();
+    }
+    // Fill / refresh the Root / Scale / Chord / Wrap selects (wraps repopulate
+    // each open since the bank changes; scale/chord lists fill once).
+    function _gamePopulateBallSources() {
+      const rootSel = document.getElementById('game-balls-root');
+      const scSel = document.getElementById('game-balls-scale');
+      const chSel = document.getElementById('game-balls-chord');
+      const wrSel = document.getElementById('game-balls-wrap');
+      if (rootSel && !rootSel._filled) {
+        rootSel.innerHTML = _GAME_NOTE_NAMES.map((n, i) => '<option value="' + i + '">' + n + '</option>').join('');
+        rootSel._filled = true;
+      }
+      if (rootSel) rootSel.value = String(_gameBallpitRoot);
+      if (scSel && !scSel._filled) {
+        const keys = (typeof SCALES !== 'undefined' && SCALES) ? Object.keys(SCALES) : [];
+        scSel.innerHTML = '<option value="">— Scale —</option>' + keys.map(k => '<option value="' + k + '">' + k + '</option>').join('');
+        scSel._filled = true;
+      }
+      if (chSel && !chSel._filled) {
+        const keys = (typeof CHORDS !== 'undefined' && CHORDS) ? Object.keys(CHORDS) : [];
+        chSel.innerHTML = '<option value="">— Chord —</option>' + keys.map(k => '<option value="' + k + '">' + (((CHORDS[k] && CHORDS[k].label)) || k) + '</option>').join('');
+        chSel._filled = true;
+      }
+      if (wrSel) {
+        const list = (typeof savedWraps !== 'undefined' && Array.isArray(savedWraps)) ? savedWraps : [];
+        wrSel.innerHTML = '<option value="">— Wrap —</option>' + list.map(w => '<option value="' + String(w.id) + '">' + String(w.name || w.id).replace(/[<>&]/g, '') + '</option>').join('');
+      }
+      if (scSel) scSel.value = (_gameBallpitSrc.kind === 'scale') ? _gameBallpitSrc.key : '';
+      if (chSel) chSel.value = (_gameBallpitSrc.kind === 'chord') ? _gameBallpitSrc.key : '';
+      if (wrSel) wrSel.value = (_gameBallpitSrc.kind === 'wrap') ? String(_gameBallpitSrc.key) : '';
+    }
     // User-tunable values driven by the four sliders. Defaults match
     // the input[type=range] value= attributes in the markup so the
     // first frame matches what the sliders show.
@@ -1108,29 +1183,39 @@
           else _gameRenderBallsList();
         });
       }
-      // ---- Ballpit note-set editor (count + each ball's pitch) ----
+      // ---- Ballpit note-set editor (sources + per-ball list) ----
       const _bAdd = document.getElementById('game-balls-add');
-      const _bFill = document.getElementById('game-balls-fill');
       const _bClear = document.getElementById('game-balls-clear');
       if (_bAdd) _bAdd.addEventListener('click', () => {
         const last = _gameBallpitCustom.length ? _gameBallpitCustom[_gameBallpitCustom.length - 1] : 60;
         _gameBallpitCustom.push(Math.max(24, Math.min(96, last + (_gameBallpitCustom.length ? 2 : 0))));
         _gameSaveBallpitNotes(); _gameRenderBallsList(); _gameRefresh();
       });
-      if (_bFill) _bFill.addEventListener('click', () => {
-        // Seed the custom set from whatever the grid currently yields.
-        const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
-        const prev = _gameBallpitCustom;
-        _gameBallpitCustom = [];           // temporarily follow the grid
-        _gameRefresh();                    // _gameNotes now holds the grid set
-        const seeded = _gameNotes.map(n => Math.max(24, Math.min(96, Math.round(69 + 12 * Math.log2((n.freq > 0 ? n.freq : A) / A)))));
-        _gameBallpitCustom = seeded.length ? seeded : prev;
-        _gameSaveBallpitNotes(); _gameRenderBallsList(); _gameRefresh();
-      });
       if (_bClear) _bClear.addEventListener('click', () => {
-        _gameBallpitCustom = [];
-        _gameSaveBallpitNotes(); _gameRenderBallsList(); _gameRefresh();
+        _gameBallpitCustom = []; _gameBallpitSrc = { kind: null, key: null };
+        _gameSaveBallpitNotes(); _gameSaveBallpitSrc();
+        _gamePopulateBallSources(); _gameRenderBallsList(); _gameRefresh();
       });
+      const _rootSel = document.getElementById('game-balls-root');
+      if (_rootSel) _rootSel.addEventListener('change', () => {
+        _gameBallpitRoot = ((parseInt(_rootSel.value, 10) || 0) % 12 + 12) % 12;
+        _gameSaveBallpitSrc();
+        if (_gameBallpitSrc.kind === 'scale' || _gameBallpitSrc.kind === 'chord') _gameApplyBallSource();
+      });
+      const _pickFrom = (sel, kind, others) => {
+        if (!sel) return;
+        sel.addEventListener('change', () => {
+          if (!sel.value) return;
+          _gameBallpitSrc = { kind, key: sel.value };
+          _gameSaveBallpitSrc();
+          others.forEach(id => { const o = document.getElementById(id); if (o) o.value = ''; });
+          _gameApplyBallSource();
+        });
+      };
+      _pickFrom(document.getElementById('game-balls-scale'), 'scale', ['game-balls-chord', 'game-balls-wrap']);
+      _pickFrom(document.getElementById('game-balls-chord'), 'chord', ['game-balls-scale', 'game-balls-wrap']);
+      _pickFrom(document.getElementById('game-balls-wrap'), 'wrap', ['game-balls-scale', 'game-balls-chord']);
+      _gamePopulateBallSources();
       _gameRenderBallsList();
       // ---- sliders ----
       const bsz = document.getElementById('game-ball-size');
@@ -1291,6 +1376,7 @@
           _gameCloseAllMenus();
           if (!isOpen) {
             try { _gamePopulateTones(); } catch (_) {}
+            try { _gamePopulateBallSources(); } catch (_) {}   // refresh wrap bank list
             p.menu.style.transform = '';   // reset any prior clamp before measuring
             p.menu.classList.add('open');
             p.btn.setAttribute('aria-expanded', 'true');

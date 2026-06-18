@@ -743,6 +743,19 @@
         e.stopPropagation();
         openSubPanel(fxPanel, 'fx-banner');
       });
+      // Current-tone readout (left of the Sounds button) is a shortcut to
+      // edit the active grid tone in the sound designer.
+      const toneCurrent = document.getElementById('sounds-tone-current');
+      if (toneCurrent) {
+        const editActive = (e) => {
+          e.stopPropagation();
+          if (typeof _sdEditActiveGridTone === 'function') _sdEditActiveGridTone();
+        };
+        toneCurrent.addEventListener('click', editActive);
+        toneCurrent.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editActive(e); }
+        });
+      }
     })();
 
     // The left half of the scale banner doubles as the trigger — it already

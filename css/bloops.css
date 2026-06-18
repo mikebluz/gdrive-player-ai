@@ -3245,15 +3245,23 @@
     .sounds-tone-current {
       flex: 0 1 auto; min-width: 0; max-width: 40%;
       display: flex; align-items: center; justify-content: flex-end;
-      padding: 0 10px;
+      gap: 5px; padding: 0 10px;
       border-left: 1px solid #1a1a2e;
-      color: #6f6f93;
+      color: #8585ad;
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.78rem; font-weight: 700; letter-spacing: 0.4px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer; transition: color 0.15s ease;
+    }
+    /* Pencil affordance — signals the readout is clickable to edit the tone.
+       A pseudo-element so it doesn't disturb the JS-set textContent. */
+    .sounds-tone-current::after {
+      content: '✎'; flex: 0 0 auto; font-size: 0.72rem; opacity: 0.7;
     }
     .sounds-tone-current:empty { display: none; }
+    .sounds-tone-current:hover, .sounds-tone-current:focus-visible { color: #b9b9e0; outline: none; }
     .sounds-tone-current.is-custom { color: #f6ad55; }
+    .sounds-tone-current.is-custom:hover, .sounds-tone-current.is-custom:focus-visible { color: #fbd38d; }
     /* Radial Tone toggle — small icon-pill that sits to the left of the
        Scale banner. When on, the body gets .radial-tone and cells get a
        subtle radial-gradient overlay so the user can see the bend zones. */

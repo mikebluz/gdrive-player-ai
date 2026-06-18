@@ -506,13 +506,39 @@
       const ov = _sdEnsureOverlay();
       const existing = editValue ? _resolveUserPatch(editValue) : null;
       if (existing) {
+        // Editing an existing User patch — edits save back over it.
         _sdState = { params: JSON.parse(JSON.stringify(existing.params)), baseType: existing.baseType, editId: existing.id, name: existing.name };
+        _sdRenderEditor();
+      } else if (typeof editValue === 'string' && editValue && _sdIsSeedValue(editValue)) {
+        // Editing a built-in tone (e.g. the active grid tone): seed the editor
+        // straight from that voice and skip the seed picker. Built-ins can't be
+        // mutated, so saving forks a new User patch (editId stays null).
+        _sdState = { params: _sdNewPatchParams(editValue), baseType: editValue, editId: null, name: '' };
         _sdRenderEditor();
       } else {
         _sdState = null;
         _sdRenderSeedPicker();
       }
       ov.classList.add('open');
+    }
+    // True when `value` is one of the Design seed voices (a built-in tone the
+    // editor can be seeded from), as opposed to a user:/ensemble: value.
+    function _sdIsSeedValue(value) {
+      try { return _sdSeedOptions().some(o => o.value === value); } catch (e) { return false; }
+    }
+    // Edit the grid's currently-active tone in the sound designer. A uniform
+    // tone opens for editing (User patch → edit in place; built-in → seeded
+    // fork); a "Custom" grid (cells differ — no single tone) falls back to the
+    // seed picker.
+    function _sdEditActiveGridTone() {
+      let value;
+      try {
+        if (Array.isArray(cellSounds) && cellSounds.length &&
+            (typeof cellSoundsAreUniform !== 'function' || cellSoundsAreUniform())) {
+          value = cellSounds[0];
+        }
+      } catch (e) {}
+      _sdOpenDesign(value || undefined);
     }
     function _sdCloseDesign() {
       try { _sdStopPreview(); } catch (e) {}

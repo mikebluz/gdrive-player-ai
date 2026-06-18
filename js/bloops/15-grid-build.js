@@ -346,6 +346,13 @@
         const tonePart = tone ? ` · ${tone}` : '';
         scaleHalf.title = `Sounds — ${root} ${prettyScaleName(currentScale)}${tonePart}`;
       }
+      // Current-tone readout shown to the left of the "Tone…" selector:
+      // the uniform tone name, or "Custom" when cells use different tones.
+      const toneCur = document.getElementById('sounds-tone-current');
+      if (toneCur) {
+        toneCur.textContent = tone || '';
+        toneCur.classList.toggle('is-custom', tone === 'Custom');
+      }
       refreshAllCellToneLabels();
       refreshAllCellNameLabels();
       if (typeof refreshRadialToneAvailability === 'function') refreshRadialToneAvailability();

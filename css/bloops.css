@@ -3142,7 +3142,28 @@
     /* Tone… / FX… entries inside the Sounds panel. Teal gradient lifts
        them as the primary entry points into deeper sub-panels. */
     .sounds-submenus {
-      display: flex; flex-direction: row; gap: 8px;
+      display: flex; flex-direction: row; gap: 8px; align-items: stretch;
+    }
+    /* Current-tone readout sitting to the left of the "Tone…" selector.
+       Auto-width (doesn't grow like the flex:1 buttons), ellipsised, and
+       turns amber when the grid is "Custom" (cells use different tones). */
+    .sounds-tone-current {
+      flex: 0 1 auto; min-width: 0; max-width: 9em;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 10px;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+      border-radius: 8px;
+      background: rgba(45, 212, 191, 0.05);
+      color: #8fb9b3;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem; font-weight: 700; letter-spacing: 0.4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sounds-tone-current:empty { display: none; }
+    .sounds-tone-current.is-custom {
+      color: #f6ad55;
+      border-color: rgba(246, 173, 85, 0.40);
+      background: rgba(246, 173, 85, 0.08);
     }
     .sounds-submenus .sounds-sub-btn {
       flex: 1;

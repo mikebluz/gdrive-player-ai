@@ -1549,6 +1549,23 @@
       };
 
       if (typeof params === 'string') params = { type: params };
+      // "User" Design patches resolve to their stored base voice + params,
+      // exactly like playNote does. Without this, a sustained GRID PRESS of a
+      // user patch (cellParams.type === 'user:<id>') reached the oscillator
+      // builder with that raw value and threw "invalid type: user:<id>", so
+      // the press was silent — even though sequenced playback (via playNote,
+      // which already resolves it) sounded fine. Done before the ensemble
+      // check so a patch whose base voice is an ensemble still expands.
+      if (typeof params.type === 'string' && params.type.indexOf('user:') === 0) {
+        const _up = (typeof _resolveUserPatch === 'function') ? _resolveUserPatch(params.type) : null;
+        if (_up) {
+          const keep = {};
+          ['bend', 'pan'].forEach(k => { if (params[k] != null) keep[k] = params[k]; });
+          params = Object.assign({}, _up.params, { type: _up.baseType }, keep);
+        } else {
+          params = Object.assign({}, params, { type: 'sawtooth' }); // patch gone → audible fallback
+        }
+      }
       // Ensemble voice: hold one sustained voice per member, return a composite
       // handle that releases them together (the live-press / sustain path).
       if (isEnsembleType(params.type)) return _startSustainedEnsemble(freq, params, _coldStartAt);

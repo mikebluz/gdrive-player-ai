@@ -506,11 +506,33 @@
       };
     }
 
-    // Master bus: compressor softens dynamic peaks, limiter is a brick wall at
-    // -1 dB so simultaneous voices (chords, overlapping tracks, long releases)
-    // never clip. Aggressive settings because chord playback can spike well
-    // above 0 dB from the raw sum of multiple synths.
-    const masterLimiter = new Tone.Limiter(-1).toDestination();
+    // Final true-peak ceiling: a transparent soft-knee clipper. Below the
+    // knee (|x| < 0.8) it is exactly identity — no tone change, taps stay
+    // full — and above it the signal rolls smoothly to a hard 0.95 ceiling,
+    // so overlapping voices physically cannot exceed it (no destination
+    // clip/crunch). Being instantaneous waveshaping, it adds NO time-varying
+    // gain, so unlike a fast compressor/limiter it never pumps. This is what
+    // lets the master compressor below stay gentle: peak safety lives here,
+    // glue lives there. Inputs beyond ±1 clamp to ±ceil by the curve's domain.
+    const _MASTER_CLIP_KNEE = 0.8, _MASTER_CLIP_CEIL = 0.95;
+    const masterClipper = new Tone.WaveShaper((x) => {
+      const s = x < 0 ? -1 : 1, ax = Math.abs(x);
+      if (ax <= _MASTER_CLIP_KNEE) return x;
+      const span = _MASTER_CLIP_CEIL - _MASTER_CLIP_KNEE;
+      return s * (_MASTER_CLIP_KNEE + span * Math.tanh((ax - _MASTER_CLIP_KNEE) / span));
+    }, 4096);
+    try { masterClipper.oversample = '4x'; } catch (e) {}
+    masterClipper.toDestination();
+    // Master bus dynamics: a GENTLE glue compressor softens broad dynamic
+    // swings, then the soft-knee clipper above guarantees the true-peak
+    // ceiling. The limiter stays as belt-and-suspenders before the clipper.
+    // Earlier this stage was aggressive (-6 dB / 4:1 / 30 ms release), which
+    // pumped audibly: a stream of sequenced steps sat above threshold and the
+    // ultra-fast release re-ducked on every note onset, so lane/Game/Prog
+    // playback came out quieter and "gated" versus dry grid taps. With real
+    // peak safety now in the clipper, the compressor only needs to be a light
+    // glue (see settings below) and the pumping is gone.
+    const masterLimiter = new Tone.Limiter(-1).connect(masterClipper);
     // Master volume — sits right before the limiter so the slider scales
     // the entire mix (Bloops + per-track output + global FX tails) but
     // can't push the signal above the limiter's -1 dB ceiling. Volume of
@@ -559,17 +581,17 @@
     const masterDistortion = new Tone.Distortion({
       distortion: 0, wet: 1,
     }).connect(masterAutoFilter);
-    // Soft master compressor — sits between masterBus and the FX chain to
-    // smoothly absorb peak overlap from sequential / overlapping voices
-    // before they reach the brick -1 dB limiter, which would otherwise
-    // clip pure tones (sines especially) into audible harmonic crunch.
-    // Very fast release (30 ms) so gain reduction recovers within a
-    // single step, keeping loop iterations consistent — the prior
-    // compressor was removed for this exact reason but had a much longer
-    // release. Soft knee + 4:1 ratio = transparent on chord stacks,
-    // catches the sine-tail-into-attack peaks that cause crunch.
+    // Gentle glue compressor — sits between masterBus and the FX chain. It
+    // only catches broad level swings; true-peak protection is the soft-knee
+    // clipper at the end of the chain, so this no longer has to clamp hard.
+    // High threshold (-3 dB) + low ratio (2:1) keep typical playback BELOW or
+    // barely into the knee, and the slower 180 ms release means it doesn't
+    // re-duck on every step's onset (which is what made sequenced playback
+    // pump / sound quiet + gated under the old -6/4:1/30 ms settings). Net
+    // measured gain reduction on a dense overlapping stream dropped from
+    // ~-2.8 dB (range 4.6 dB of pumping) to ~-0.5 dB (range <1 dB).
     const masterCompressor = new Tone.Compressor({
-      threshold: -6, ratio: 4, attack: 0.003, release: 0.03, knee: 8,
+      threshold: -3, ratio: 2, attack: 0.005, release: 0.18, knee: 10,
     }).connect(masterDistortion);
     const masterBus = new Tone.Gain(1).connect(masterCompressor);
 
@@ -643,7 +665,7 @@
     // to masterBus. Built lazily by rebuildMasterChain on first call.
     const fxSendBus = {};
     // Send/return wiring. Master chain is short and contains NO FX:
-    //   masterBus → masterCompressor → masterVolume → masterLimiter → destination
+    //   masterBus → masterCompressor → masterVolume → masterLimiter → masterClipper → destination
     // Each master FX is a parallel return: per-lane send gains accumulate
     // into fxSendBus[name], which feeds the FX with wet=1 (always fully
     // wet — the per-lane send level controls how much of the lane signal

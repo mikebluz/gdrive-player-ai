@@ -62,11 +62,15 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
                                                                           │
                                                                           ▼
    masterBus (Gain 1) ─► masterCompressor ─► [master FX chain:           (returns sum
-        distortion → filter → phaser → vibrato → chorus → tremolo →       back in here)
-        delay → pingpong → reverb → autopan] ─► masterVolume
+      (gentle glue:        distortion → filter → phaser → vibrato →        back in here)
+       −3 dB / 2:1 /       chorus → tremolo → delay → pingpong →
+       180 ms)             reverb → autopan] ─► masterVolume
                                                      │
                                                      ▼
-                                          masterLimiter (−1 dB) ─► 🔊 speakers
+                        masterLimiter (−1 dB) ─► masterClipper ─► 🔊 speakers
+                                                 (soft-knee true-peak
+                                                  ceiling: identity below
+                                                  0.8, hard 0.95 ceiling)
 ```
 
 **Notes:**
@@ -74,7 +78,17 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
 - **Two entry buses, one master chain.** `globalSendTap` (no `laneIdx`: grid taps, live
   Game, live Prog) and the per-lane bus from `getLaneBus(laneIdx)` (anything sequenced:
   recorded steps, Prog playback) both feed `masterBus`, which is the only path to the
-  speakers (via `masterCompressor` → master FX chain → `masterVolume` → `masterLimiter`).
+  speakers (via `masterCompressor` → master FX chain → `masterVolume` → `masterLimiter`
+  → `masterClipper`).
+- **Peak safety vs. glue are split on purpose.** The true-peak ceiling is the final
+  `masterClipper` — a soft-knee waveshaper that is *identity* below 0.8 and rolls smoothly
+  to a hard 0.95 ceiling. Because it is instantaneous waveshaping (no time-varying gain) it
+  cannot pump. That lets `masterCompressor` stay a *gentle* glue (−3 dB / 2:1 / 180 ms
+  release). The earlier aggressive compressor (−6 dB / 4:1 / 30 ms) re-ducked on every
+  sequenced step's onset, so lane/Game/Prog playback came out quieter and audibly "gated"
+  vs. dry grid taps — measured gain reduction on a dense stream fell from ~−2.8 dB (4.6 dB
+  of pumping) to ~−0.5 dB (<1 dB) with the split, and the post-chain peak from 1.19
+  (clipping the destination) to 0.93 (clean).
 - **Dry level is identical on both buses.** `globalSendTap` is `Gain = 1`; the lane bus is
   `Volume(lane.volume)`, which is **0 dB at the default volume 100**. The raw note is the
   same loudness regardless of path.

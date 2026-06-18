@@ -492,6 +492,27 @@
       };
       try { addToSequence(step); } catch (_) {}
     }
+    // Is Perform (real-time record) armed and actually recording (not counting in)?
+    function _gamePerforming() {
+      return (typeof performMode !== 'undefined' && performMode)
+          && !(typeof _performCountingIn !== 'undefined' && _performCountingIn)
+          && typeof _performEmit === 'function';
+    }
+    // Route a Game ball hit into the sequence: Perform captures it in real time
+    // (quantized to the PERF popover's resolution) when armed; otherwise Keep
+    // appends it as a step. A momentary hit becomes a single voice at "now".
+    function _gameRecordHit(sideIdx) {
+      if (typeof performMode !== 'undefined' && performMode) {
+        if (!_gamePerforming()) return;   // armed but counting in → ignore
+        const v = _gameMakeVoice(sideIdx, _gameUserBallOct, _gameUserBallTone);
+        if (!v) return;
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        v.pressStart = now; v.pressEnd = now;
+        try { _performEmit([v]); } catch (e) { console.warn('Game perform capture failed', e); }
+        return;
+      }
+      _gameAppendBallStep(sideIdx);   // Keep mode (or no-op when neither is on)
+    }
     // ---- Ballpit type ----------------------------------------------------
     // Push overlapping balls apart so the initial scatter doesn't start with
     // everyone interpenetrating (which would machine-gun note hits on frame 1).
@@ -562,7 +583,7 @@
         if (_gameBallHits.length >= _GAME_BALLPIT_MAX_VOICES) return;   // governor: drop audio, keep flash
         _gameBallHits.push(nowMs);
         if (!_gameBallMuted) _gamePlayNoteAt(b.noteIdx, _gameUserBallOct, _gameUserBallTone, { volScale, maxReleaseMs: 140 });
-        _gameAppendBallStep(b.noteIdx);
+        _gameRecordHit(b.noteIdx);
       };
       for (const b of _gameBalls) {
         b.x += b.vx * dt; b.y += b.vy * dt;
@@ -713,7 +734,8 @@
     }
 
     function _gameAppendShapeChordStep(fireIdxs) {
-      if (!_gameKeepAvailable()) return;
+      const performing = _gamePerforming();
+      if (!performing && !_gameKeepAvailable()) return;
       // Default to the recent ball-hit echo when no explicit fire-set
       // is passed; callers in the bounce handler pass the polygon's
       // full set as a fallback so the recorded step matches what the
@@ -726,6 +748,13 @@
         .map(idx => _gameMakeVoice(idx, _gameUserShapeOct, _gameUserShapeTone))
         .filter(Boolean);
       if (voices.length === 0) return;
+      // Perform: emit the edge-bounce chord as a real-time, quantized step.
+      if (performing) {
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        voices.forEach(v => { v.pressStart = now; v.pressEnd = now; });
+        try { _performEmit(voices); } catch (e) { console.warn('Game perform capture failed', e); }
+        return;
+      }
       const chordStep = {
         chord: voices,
         label: voices.map(v => v.label).join('·'),
@@ -949,7 +978,7 @@
               _gameLastNotes.push(i);
               if (_gameLastNotes.length > 3) _gameLastNotes.shift();
             }
-            _gameAppendBallStep(i);
+            _gameRecordHit(i);
           }
         }
       }

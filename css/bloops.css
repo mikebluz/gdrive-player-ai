@@ -9,6 +9,11 @@
     html {
       overflow-x: hidden;
       overscroll-behavior-x: none;
+      /* Width of the octave/pitch-shift rail to the right of the note grid.
+         Shared so the Gen/Perf buttons can subtract it and land their right edge
+         exactly on the grid's first column line (the rail sits OUTSIDE the
+         cells, so the cell area = bar width − rail). */
+      --grid-rail-w: 42px;
     }
 
     body {
@@ -1668,7 +1673,7 @@
       flex: 0 0 auto;
       display: flex;
       flex-direction: column;
-      width: 42px;
+      width: var(--grid-rail-w, 42px);
       background: #050510;
       border-left: 1px solid #1a1a2e;
     }
@@ -2144,7 +2149,20 @@
     .shape-main { display: flex; flex-direction: row; gap: 10px; flex: 1; min-height: 0; align-items: stretch; }
     .shape-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 8px; flex: 0 0 auto; min-width: 96px; }
     .shape-stage { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; }
-    .shape-canvas { display: block; touch-action: none; max-width: 100%; max-height: 100%; }
+    /* Live div/beat readout while dragging a Shape node. Pinned top-centre over
+       the wheel; amber when the node is locked to the grid (Snap), grey-blue
+       when free. pointer-events:none so it never intercepts the drag. */
+    .shape-drag-readout {
+      position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+      padding: 4px 11px; border-radius: 999px;
+      background: rgba(8, 8, 18, 0.86); border: 1px solid #2d2d44;
+      color: #9fb4d4; font: 700 0.74rem 'Segoe UI', sans-serif; letter-spacing: 0.3px;
+      white-space: nowrap; pointer-events: none; z-index: 6;
+      -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+    }
+    .shape-drag-readout.locked { color: #f6ad55; border-color: rgba(246, 173, 85, 0.45); }
+    .shape-drag-readout[hidden] { display: none; }
+    .shape-canvas { display: block; touch-action: none; max-width: 100%; max-height: 100%; background: #0a0a14; }
     .shape-ctrl { display: flex; align-items: center; gap: 6px; color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.74rem; }
     .shape-ctrl label { color: #8a8aa8; }
     .shape-ctrl select, .shape-ctrl input[type=number] {
@@ -2213,14 +2231,59 @@
       font-family: 'Segoe UI', sans-serif; font-size: 0.95rem; font-weight: 700;
       color: #d6bcfa; letter-spacing: 0.02em;
     }
+    /* Collapsible "Bloom settings" menu — holds the viz + all global controls
+       (actions, timing, key, prog rate, freeze, reverb) above the layer stack. */
+    .ambient-master-menu {
+      border: 1px solid #2d2d3f; border-radius: 10px; background: rgba(20, 20, 34, 0.5);
+    }
+    .ambient-master-summary {
+      list-style: none; cursor: pointer; user-select: none;
+      padding: 9px 14px; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem;
+      font-weight: 700; color: #d6bcfa; letter-spacing: 0.02em;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .ambient-master-summary::-webkit-details-marker { display: none; }
+    .ambient-master-summary::after {
+      content: '▾'; margin-left: auto; color: #8a8aa8; font-size: 0.8rem; transition: transform 0.15s ease;
+    }
+    .ambient-master-menu[open] > .ambient-master-summary::after { transform: rotate(180deg); }
+    .ambient-master-summary:hover { color: #f5d0fe; }
+    .ambient-master-menu-body {
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 4px 12px 12px; border-top: 1px solid #23233a;
+    }
     .ambient-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .ambient-play, .ambient-regen {
+    .ambient-regen {
       padding: 8px 16px; border: 1px solid #2d2d3f; border-radius: 20px;
       background: transparent; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
       font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease;
     }
-    .ambient-play:hover, .ambient-regen:hover { border-color: #9f7aea; color: #d6bcfa; }
-    .ambient-play.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.15); }
+    .ambient-regen:hover { border-color: #9f7aea; color: #d6bcfa; }
+    /* Bloom transport bar — pinned to the bottom of the viewport, styled like
+       the Make footer transport (.footer-bar / .footer-transport). It lives
+       inside the namespaced Bloom panel, so it only shows while that panel is
+       the active Mix sub-view (the panes are display:none otherwise). */
+    .ambient-footer-bar {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 96;
+      min-height: 48px; display: flex; flex-wrap: wrap; align-items: center;
+      padding: 6px 20px; gap: 10px;
+      background: linear-gradient(to top, #000 0%, #000 45%, rgba(0, 0, 0, 0.75) 75%, rgba(0, 0, 0, 0) 100%);
+    }
+    /* Play sits bottom-right, like Make's transport cluster. */
+    .ambient-footer-transport { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex: 1 1 100%; }
+    /* Reserve space so the fixed (tall) bar never covers the last panel content. */
+    .ambient-inner { padding-bottom: 128px; }
+    /* Play / Stop — matches the Make footer transport play button exactly
+       (.footer-transport > #play-btn): a large 104px round cyan-glowing icon. */
+    .ambient-play {
+      width: 104px; height: 104px; min-width: 104px; min-height: 104px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: pointer; font-size: 2.4rem; padding: 0; transition: all 0.15s ease;
+      background: rgba(0, 0, 0, 0.5); color: #00bfff; border: 2px solid #00bfff;
+      box-shadow: 0 0 12px rgba(0, 191, 255, 0.45);
+    }
+    .ambient-play:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(0, 191, 255, 0.7); }
+    .ambient-play.active { box-shadow: 0 0 18px rgba(0, 191, 255, 0.85); }
     .ambient-seed { font-family: 'Segoe UI', sans-serif; font-size: 0.75rem; color: #6b6b8a; }
     .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
     .ambient-ctrl label { font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; color: #a0aec0; }
@@ -2432,17 +2495,25 @@
     }
     .ambient-seq-layers { display: flex; flex-direction: column; gap: 12px; }
     .ambient-seq-layers:empty { display: none; }
-    /* Master Bloom block in the Mix view (now its own sub-tab pane). */
-    .mix-bloom-section .ambient-inner { max-width: 520px; }
-    /* Mix sub-tabs: Bloom (default) / Mixdown. */
-    .mix-subtabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-    .mix-subtab {
-      padding: 6px 18px; border: 1px solid #2d2d3f; border-radius: 14px;
-      background: transparent; color: #6b6b8a; font-weight: 700; font-size: 0.85rem;
-      cursor: pointer; transition: all 0.15s ease;
+    /* Master Bloom block in the Mix view (now its own sub-tab pane). Centered on
+       desktop — the max-width box sits in the middle when the pane is wider than
+       it; on narrow viewports the auto margins collapse to 0 and it fills width. */
+    .mix-bloom-section .ambient-inner { max-width: 520px; margin-inline: auto; }
+    /* Mix sub-tabs: Bloom (default) / Shapes — a justified tab strip centred over
+       the (520px) content, each visible tab sharing the width equally, with a
+       bottom-border active indicator. Hidden tabs (Mixdown) take no space. */
+    .mix-subtabs {
+      display: flex; gap: 0; margin: 0 auto 14px; max-width: 520px;
+      border-bottom: 1px solid #2d2d3f;
     }
-    .mix-subtab:hover { border-color: #9f7aea; color: #d6bcfa; }
-    .mix-subtab.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.16); }
+    .mix-subtab {
+      flex: 1 1 0; padding: 10px 12px; border: none; border-bottom: 2px solid transparent;
+      background: transparent; color: #6b6b8a; font-weight: 700; font-size: 0.9rem;
+      cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .mix-subtab[hidden] { display: none; }
+    .mix-subtab:hover { color: #d6bcfa; }
+    .mix-subtab.active { color: #d6bcfa; border-bottom-color: #9f7aea; background: rgba(159,122,234,0.08); }
     .mix-pane { display: none; }
     #mix-view.mix-sub-bloom    #mix-pane-bloom    { display: block; }
     #mix-view.mix-sub-mixdown  #mix-pane-mixdown  { display: block; }
@@ -2513,6 +2584,151 @@
     body.master-shape-edit #shape-rec-btn,
     body.master-shape-edit #shape-clear-btn,
     body.master-shape-edit #shape-tolane-btn { display: none; }
+
+    /* ---- Bloom Shape layer: centered editor overlay + in-card wheel browser ---- */
+    /* The host is a full-screen dimmed backdrop that flex-centers a BOUNDED inner
+       box. We do NOT rely on the fixed host's own height for sizing the editor
+       (iOS Safari mis-resolves height/dvh on a fixed + backdrop-filter element
+       and lets it grow to content). The inner box is capped with min(vw/dvh, px)
+       so it can never exceed the viewport. */
+    .ambient-shape-edithost {
+      position: fixed; inset: 0; z-index: 700;
+      display: flex; align-items: center; justify-content: center;
+      box-sizing: border-box; padding: 12px;
+      background: rgba(4, 4, 12, 0.82);
+      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+    }
+    .ambient-shape-edithost[hidden] { display: none; }
+    .ambient-shape-editbox {
+      display: flex; flex-direction: column; box-sizing: border-box;
+      width: min(94vw, 480px); height: min(88dvh, 640px);
+      max-width: 94vw; max-height: 88dvh;
+      padding: 10px; overflow: hidden;
+      background: rgba(10, 10, 20, 0.97);
+      border: 1px solid #2d2d44; border-radius: 14px;
+      box-shadow: 0 14px 50px rgba(0, 0, 0, 0.6);
+    }
+    .ambient-shape-editbar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; font-size: 0.82rem; color: #cbd5e0;
+    }
+    .ambient-shape-edittitle { font-weight: 700; color: #d6bcfa; }
+    .ambient-shape-editdone {
+      margin-left: auto; padding: 6px 16px; border-radius: 8px; cursor: pointer;
+      background: rgba(159, 122, 234, 0.22); border: 1px solid #9f7aea; color: #f5d0fe; font-weight: 700;
+    }
+    .ambient-shape-editdone:hover { background: rgba(159, 122, 234, 0.34); color: #fff; }
+    /* Show the reparented editor inside the overlay, bounded to the viewport so
+       the wheel canvas (sized to min(stage w,h)) fits — override #shape-pad's
+       natural-grid min-height so it shrinks to the available height instead of
+       overflowing the fixed overlay. */
+    body.ambient-shape-edit #shape-pad {
+      display: flex; flex: 1 1 auto; min-height: 0; max-height: 100%; max-width: 100%;
+    }
+    /* Shape browser: full-width square overlay canvas with an expandable wheel
+       list floating in its upper-right corner. */
+    /* Override the .ambient-ctrl 3-column grid so the wheel view spans the
+       full card width instead of landing in the 84px label column. */
+    .ambient-shape-browser { display: flex; flex-direction: column; align-items: stretch; }
+    /* The SQUARE + dark background + rounded border all live on the wrapper DIV,
+       NOT the <canvas>. The canvas is a bare, unstyled element that paints inline
+       into the wrapper's layer — no border-radius clip / border that would promote
+       it to its own GPU layer (whose async re-uploads flash white on draw). */
+    .ambient-shape-stage {
+      position: relative; width: 100%; aspect-ratio: 1 / 1; min-height: 160px; margin: 4px 0 8px;
+      border-radius: 10px; border: 1px solid #2d2d44; overflow: hidden; background: #0a0a16;
+    }
+    .ambient-shape-stage:hover { border-color: #9f7aea; }
+    .ambient-shape-overlay {
+      position: absolute; inset: 0; display: block; width: 100%; height: 100%;
+      cursor: pointer; background: transparent; box-sizing: border-box;
+    }
+    .ambient-shape-listwrap {
+      position: absolute; top: 8px; right: 8px; z-index: 2;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 5px; max-width: 72%;
+    }
+    .ambient-shape-listtoggle {
+      padding: 4px 11px; border-radius: 999px; cursor: pointer;
+      background: rgba(8, 8, 18, 0.82); border: 1px solid #2d2d44; color: #cbd5e0;
+      font: 700 0.74rem 'Segoe UI', sans-serif; letter-spacing: 0.3px;
+      -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); white-space: nowrap;
+    }
+    .ambient-shape-listtoggle:hover { border-color: #9f7aea; color: #f5d0fe; }
+    /* List hidden until the toggle expands it. */
+    .ambient-shape-list { display: none; }
+    .ambient-shape-listwrap.open .ambient-shape-list {
+      display: flex; flex-direction: column; gap: 4px;
+      max-height: 60%; overflow-y: auto; padding: 6px; min-width: 150px;
+      border-radius: 8px; background: rgba(6, 6, 14, 0.94); border: 1px solid #2d2d44;
+      -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    }
+    .ambient-shape-row { display: flex; gap: 6px; align-items: center; padding: 3px 4px; border-radius: 6px; }
+    .ambient-shape-row.sel { background: rgba(159, 122, 234, 0.10); }
+    .ambient-shape-swatch { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.35); }
+    .ambient-shape-pick {
+      flex: 1; min-width: 0; text-align: left; padding: 5px 9px; border-radius: 6px;
+      background: #16162a; border: 1px solid #2d2d44; color: #cbd5e0; font-size: 0.76rem; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ambient-shape-row.sel .ambient-shape-pick { border-color: #9f7aea; color: #f5d0fe; background: rgba(159, 122, 234, 0.16); }
+    .ambient-shape-pick:hover { border-color: #9f7aea; }
+    .ambient-shape-editrow, .ambient-shape-del {
+      flex: 0 0 auto; width: 26px; border-radius: 6px; background: transparent;
+      border: 1px solid #2d2d44; cursor: pointer;
+    }
+    .ambient-shape-editrow { color: #9f7aea; }
+    .ambient-shape-editrow:hover { border-color: #9f7aea; color: #f5d0fe; }
+    .ambient-shape-del { color: #fc8181; }
+    .ambient-shape-del:hover { border-color: #fc8181; background: rgba(252, 129, 129, 0.08); }
+    /* Add / Edit — small buttons overlaid in the canvas's lower-left corner. */
+    .ambient-shape-btns { position: absolute; left: 8px; bottom: 8px; z-index: 2; display: flex; gap: 6px; }
+    /* NOTE: the edit button is `.ambient-shape-editbtn`, NOT `.ambient-shape-edit`.
+       `ambient-shape-edit` is the body-state class set while the wheel editor is
+       open; a `.ambient-shape-edit` button rule would also match `body` and apply
+       its backdrop-filter to <body>, turning body into a containing block for the
+       fixed editor overlay (host then sizes to body content height, not the
+       viewport). Keep these two names distinct. */
+    .ambient-shape-add, .ambient-shape-editbtn {
+      padding: 4px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+      background: rgba(8, 8, 18, 0.82); border: 1px solid #2d2d44; color: #cbd5e0;
+      font: 700 0.72rem 'Segoe UI', sans-serif; letter-spacing: 0.3px;
+      -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+    }
+    .ambient-shape-add:hover, .ambient-shape-editbtn:hover { border-color: #9f7aea; color: #f5d0fe; }
+
+    /* ---- Arp layer: scale/chord series browser ---- */
+    .ambient-arp-series { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+    .ambient-arp-serieshead { display: flex; align-items: center; gap: 8px; }
+    .ambient-arp-serieshead label { color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; }
+    .ambient-arp-add {
+      margin-left: auto; padding: 4px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+      background: rgba(8, 8, 18, 0.7); border: 1px solid #2d2d44; color: #cbd5e0;
+      font: 700 0.74rem 'Segoe UI', sans-serif;
+    }
+    .ambient-arp-add:hover { border-color: #9f7aea; color: #f5d0fe; }
+    .ambient-arp-list { display: flex; flex-direction: column; gap: 5px; }
+    .ambient-arp-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 5px; border-radius: 7px; border: 1px solid transparent;
+    }
+    .ambient-arp-row.sel { background: rgba(159, 122, 234, 0.10); border-color: rgba(159, 122, 234, 0.4); }
+    .ambient-arp-idx { flex: 0 0 auto; width: 18px; color: #6a6a88; font: 700 0.74rem 'Segoe UI', sans-serif; text-align: right; }
+    .ambient-arp-notes { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-arp-passes {
+      flex: 0 0 auto; display: inline-flex; align-items: center;
+      border: 1px solid #2d2d44; border-radius: 7px; overflow: hidden;
+    }
+    .ambient-arp-pbtn {
+      width: 24px; height: 26px; border: none; background: #16162a; color: #cbd5e0;
+      cursor: pointer; font-size: 1rem; line-height: 1;
+    }
+    .ambient-arp-pbtn:hover { background: #1d1d38; color: #b2f5ea; }
+    .ambient-arp-pval { min-width: 30px; text-align: center; color: #a0aec0; font: 600 0.76rem 'Segoe UI', sans-serif; }
+    .ambient-arp-del {
+      flex: 0 0 auto; width: 24px; height: 26px; border-radius: 6px; cursor: pointer;
+      background: transparent; border: 1px solid #2d2d44; color: #fc8181; font-size: 0.78rem;
+    }
+    .ambient-arp-del:hover { border-color: #fc8181; background: rgba(252, 129, 129, 0.08); }
 
     .prog-blocks {
       display: flex;
@@ -4777,7 +4993,9 @@
        gutters Keep and Rest had as standalone clusters. */
     .kwr-pair {
       display: grid;
-      grid-template-columns: 25% 1fr 25%;
+      /* First column = one note-grid column (cell area ÷ 4), so the Perf|Keep
+         edge lands on the grid's first column line — mirroring Gen|Wrap. */
+      grid-template-columns: calc((100% - var(--grid-rail-w, 42px)) / 4) 1fr 25%;
       align-items: center;
       width: 100%;
       min-width: 0;
@@ -4788,7 +5006,7 @@
        .active class without any JS toggle. Perform mirrors Gen (25%), Keep
        mirrors Wrap (the 1fr middle), Rest mirrors the ✎ Edit pill (25%). */
     .kwr-pair:has(.play-lock:not(.active)) {
-      grid-template-columns: 25% 1fr;
+      grid-template-columns: calc((100% - var(--grid-rail-w, 42px)) / 4) 1fr;
     }
     .kwr-pair:has(.play-lock:not(.active)) > .rest-bar {
       display: none;
@@ -4889,8 +5107,12 @@
     /* Euclid sits to the LEFT of Wrap as a joined segment: rounded on the
        left, square on the right (Wrap squares its left to meet it). Mirrors
        Wrap's black-bg/glow look but in amber to read as a distinct action. */
+    /* Width = exactly one note-grid column (the grid is 4 columns over the cell
+       area = bar width − rail), so the Gen|Wrap edge lands on the grid line
+       between the first two columns instead of 25% of the full bar (rail
+       included), which overshot it. */
     .wrap-segment > #euclid-btn {
-      flex: 0 0 25%;
+      flex: 0 0 calc((100% - var(--grid-rail-w, 42px)) / 4);
       min-width: 0;
       height: 100%;
       box-sizing: border-box;
@@ -8314,7 +8536,7 @@
        all module-scoped JS, so swapping views never resets data. */
     #mix-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; }
     body.view-mix > #mix-view { display: block; }
-    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(script) {
+    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }
@@ -8580,6 +8802,27 @@
     .shape-params[hidden] { display: none; }
     .shape-btn.active { } /* (spin/rec already style their own active states) */
     #shape-params-btn.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.14); }
+
+    /* In the compact Bloom Shape editor the relocated full-width params panel
+       would reflow and overflow the bounded editor box. Render it instead as a
+       small floating dropdown that opens upward from the ⚙ Wheel button
+       (bottom-left of the toolbar column) and scrolls internally. Scoped to the
+       Bloom editor (body.ambient-shape-edit) so the roomy lane editor keeps its
+       original full-width panel. */
+    body.ambient-shape-edit .shape-inner { position: relative; }
+    body.ambient-shape-edit #shape-params:not([hidden]) {
+      position: absolute; left: 0; bottom: 0; z-index: 40;
+      width: max-content; max-width: min(260px, 94%);
+      max-height: 78%; overflow-y: auto;
+      flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px;
+      margin: 0; padding: 12px; border-top: none;
+      background: rgba(12, 12, 24, 0.985);
+      border: 1px solid #3a3a55; border-radius: 12px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.62);
+    }
+    body.ambient-shape-edit #shape-params .shape-ctrl {
+      justify-content: space-between; width: 100%;
+    }
 
     /* Shape action column — buttons stack vertically and stretch to the column
        width so their labels show in full; the collapsible params panel is

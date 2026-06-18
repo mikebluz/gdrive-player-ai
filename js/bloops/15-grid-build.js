@@ -1196,7 +1196,7 @@
       'padnew', 'padwarm', 'padchoir', 'padbowed',
       'padmetal', 'padhalo', 'padsweep',
     ]);
-    const _SAMPLE_DRUM_IDS    = new Set(['tr808', 'drumtraks', 'drumkit', 'dr55']);
+    const _SAMPLE_DRUM_IDS    = new Set(['tr808', 'drumtraks', 'drumkit', 'dr55', 'hardcore', 'house', 'tabla', 'taiko', 'gretsch', 'dbx', 'sequential', 'sid', 'peri']);
     function toneFamilyFor(value) {
       if (typeof value !== 'string') return 'other';
       if (value.startsWith('ensemble:')) return 'ensembles';

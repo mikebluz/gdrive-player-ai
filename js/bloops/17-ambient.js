@@ -362,7 +362,27 @@
         if (typeof x.present !== 'boolean') x.present = true;
         _ambNormalizeModObj(x, _ambDefaultMod());
         _ambNormalizeFx(x);
-        if (x.type !== 'beat') _ambNormalizeNotes(x);
+        if (x.type !== 'beat' && x.type !== 'shape' && x.type !== 'arp') _ambNormalizeNotes(x);
+        if (x.type === 'shape') {
+          if (!Array.isArray(x.shapes) || !x.shapes.length) x.shapes = (typeof _shapeDefault === 'function') ? [_shapeDefault()] : [];
+          if (typeof _shapeNormalize === 'function') x.shapes = x.shapes.map(s => _shapeNormalize(s));
+          x.sel = Math.max(0, Math.min(x.sel | 0, Math.max(0, x.shapes.length - 1)));
+        }
+        if (x.type === 'arp') {
+          if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
+          x.steps = x.steps.map(s => {
+            const st = (s && typeof s === 'object') ? s : {};
+            if (!st.notes || typeof st.notes !== 'object' || typeof st.notes.type !== 'string') st.notes = { type: 'scale', scale: '' };
+            _ambNormalizeNotes(st);
+            st.passes = Math.max(1, Math.min(16, (st.passes | 0) || 1));
+            return st;
+          });
+          x.sel = Math.max(0, Math.min(x.sel | 0, x.steps.length - 1));
+          if (['up', 'down', 'updown', 'downup', 'random'].indexOf(x.dir) < 0) x.dir = 'up';
+          x.randomness = Math.max(0, Math.min(100, x.randomness | 0));
+          x.octaves = Math.max(1, Math.min(4, (x.octaves | 0) || 2));
+          x.register = Math.max(1, Math.min(8, (x.register | 0) || 4));
+        }
         return x;
       });
       // Parameter ramps (LFO automation of a layer param between A and B).
@@ -1099,6 +1119,66 @@
       });
     }
 
+    // ================= SHAPE engine =================================
+    // A Shape layer holds N radial-sequencer wheels. Each wheel loops
+    // continuously, phase-anchored to a downbeat (E.shapePhase[key#i].startAt)
+    // and locked to the global BPM. Per tick we schedule every node occurrence
+    // whose absolute time falls in (lastAt, horizon] — using lastAt (not now) as
+    // the lower bound so the 1.2 s lookahead can't double-fire a node. Node
+    // pitch / chord / Set-variant / voice / duration come from the SAME 21-shape
+    // resolvers a normal Shape instance uses (_shapeResolveNodeEvent); only the
+    // final emit is the Bloom layer path so Level / pan-spread / mod / FX apply.
+    function _ambEmitShape(E, inst, key, now, horizon, lead, space, cfg) {
+      if (!E.shapePhase) E.shapePhase = {};
+      if (!inst || !Array.isArray(inst.shapes) || !inst.shapes.length) return;
+      if (typeof _shapeBarSec !== 'function' || typeof _shapeSortedEff !== 'function' || typeof _shapeResolveNodeEvent !== 'function') return;
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      inst.shapes.forEach((sh, si) => {
+        if (!sh || !Array.isArray(sh.nodes) || !sh.nodes.length) return;
+        const revSec = _shapeBarSec(sh);
+        if (!(revSec > 0.02)) return;
+        const skey = key + '#' + si;
+        let st = E.shapePhase[skey];
+        if (!st) st = E.shapePhase[skey] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+        const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+        const tTo = horizon;
+        if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+        let info; try { info = _shapeSortedEff(sh); } catch (e) { return; }
+        const sortedAngles = info.sortedAngles, idxOf = info.idxOf;
+        // Collect every due occurrence, then play in time order so Set-node
+        // cycles advance in the order they actually sound.
+        const due = [];
+        info.eff.forEach(e => {
+          const nd = e.nd; if (!nd || nd.muted) return;
+          const a = ((e.a % 1) + 1) % 1;
+          let kMin = Math.ceil((tFrom - st.startAt) / revSec - a);
+          const kMax = Math.floor((tTo - st.startAt) / revSec - a - 1e-9);
+          if (kMin < 0) kMin = 0;
+          let guard = 0;
+          for (let k = kMin; k <= kMax && guard < 64; k++, guard++) {
+            const at = st.startAt + (k + a) * revSec;
+            if (at >= tFrom && at < tTo) due.push({ nd, a, sortedIdx: idxOf.get(nd), at });
+          }
+        });
+        due.sort((p, q) => p.at - q.at);
+        let cap = 0;
+        for (const ev of due) {
+          if (cap++ > 96) break;
+          let res; try { res = _shapeResolveNodeEvent(sh, ev.nd, ev.a, sortedAngles, ev.sortedIdx); } catch (e) { continue; }
+          if (!res || !Array.isArray(res.voices) || !res.voices.length) continue;
+          const pans = (res.voices.length > 1) ? _ambLayerPans(inst, res.voices.length) : [_ambLayerPan(inst)];
+          res.voices.forEach((v, vi) => {
+            const params = Object.assign({}, v.params);
+            params.volume = _ambApplyLevel(params.volume != null ? params.volume : 100, inst.level);
+            params.pan = pans[vi % pans.length];
+            if (dmod) params._detuneMod = dmod;
+            try { playNote(v.freq, params, res.durMs, ev.at + vi * 0.012, dest, undefined, _E.laneIdx()); } catch (e) {}
+          });
+        }
+        st.lastAt = tTo;
+      });
+    }
+
     // ================= MOTIF engine =================================
     // motif random-walk position lives on the engine: _E.motifDeg
     function _ambMotifParams(lenMs, pan, tone) {
@@ -1214,6 +1294,79 @@
       const mr = Math.max(0, Math.min(100, texture.mutateRate | 0));
       if (!_E.texMutateAt) _E.texMutateAt = at + (6 - mr / 100 * 5);
       if (at >= _E.texMutateAt) { _ambTexMutate(texture); _E.texMutateAt = at + (6 - mr / 100 * 5); }
+    }
+
+    // ================= ARP engine ==================================
+    // Pool index for the Nth note of a directional sweep over `len` pitches.
+    // Up: 0..len-1; Down: len-1..0; Up-Down / Down-Up: a triangle that visits
+    // each endpoint once per cycle (no doubled top/bottom).
+    function _ambArpIndexFor(dir, n, len) {
+      if (len <= 1) return 0;
+      const m = ((n % len) + len) % len;
+      if (dir === 'down') return (len - 1) - m;
+      if (dir === 'updown' || dir === 'downup') {
+        const cycle = 2 * (len - 1);
+        const k = ((n % cycle) + cycle) % cycle;
+        let tri = (k < len) ? k : (cycle - k);     // 0→top→0 (up first)
+        if (dir === 'downup') tri = (len - 1) - tri; // mirror → top→0→top
+        return tri;
+      }
+      return m; // up
+    }
+    // Notes in one full pass (one entry sweep) for a direction over `len` pitches.
+    function _ambArpPassLen(dir, len) {
+      if (len <= 1) return 1;
+      if (dir === 'updown' || dir === 'downup') return 2 * (len - 1);
+      return len; // up / down / random
+    }
+    // One arp note per fire. Walks the current series entry's pitch pool in the
+    // chosen Direction; after `entry.passes` full sweeps, advances to the next
+    // entry (looping the series). Cursor state lives on _E.arpState[key].
+    function _ambEmitArp(at, arp, space, key) {
+      key = key || ('arp:' + (arp.id | 0));
+      const steps = (Array.isArray(arp.steps) && arp.steps.length) ? arp.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
+      const S = _E.arpState || (_E.arpState = {});
+      let st = S[key];
+      if (!st || st.entry >= steps.length) st = S[key] = { entry: 0, note: 0, pos: 0 };
+      const entry = steps[Math.min(st.entry, steps.length - 1)];
+      const notes = _ambNotesOf(entry);
+      const intervals = _ambScaleIntervals(notes);
+      const N = Math.max(1, intervals.length);
+      const octs = Math.max(1, Math.min(4, (arp.octaves | 0) || 2));
+      const base = Math.max(1, Math.min(8, (arp.register | 0) || 4));
+      const len = N * octs;
+      const dir = arp.dir || 'up';
+      // Index for this note.
+      let idx;
+      if (dir === 'random') {
+        const rnd = Math.max(0, Math.min(100, arp.randomness | 0)) / 100;
+        if (len <= 1) idx = 0;
+        else if (_ambRand() < rnd) idx = Math.floor(_ambRand() * len);      // fully random
+        else { idx = st.pos + (_ambRand() < 0.5 ? -1 : 1); if (idx < 0) idx = 1; if (idx >= len) idx = len - 2; idx = Math.max(0, Math.min(len - 1, idx)); } // small ordered step
+        st.pos = idx;
+      } else {
+        idx = _ambArpIndexFor(dir, st.note, len);
+      }
+      // Advance the pass / entry cursor for NEXT time.
+      const passLen = _ambArpPassLen(dir, len);
+      st.note += 1;
+      if (st.note >= passLen * Math.max(1, (entry.passes | 0) || 1)) { st.note = 0; st.pos = 0; st.entry = (st.entry + 1) % steps.length; }
+      // Rests skip the note (cursor already advanced, so timing stays steady).
+      if (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0))) return;
+      // Resolve an ASCENDING pool: degree d within octave o, lifted so chord/scale
+      // tones keep climbing across octaves (no pitch-class wrap inside one octave).
+      // `carry` lifts a tone whose absolute pc already crossed the octave; passing
+      // the raw interval to _ambNoteFreq still applies scale microtuning.
+      const d = idx % N, o = Math.floor(idx / N);
+      const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[d] | 0)) / 12);
+      const f = _ambNoteFreq(intervals[d] | 0, base + o + carry, notes);
+      if (f == null) return;
+      const lenMs = Math.max(40, arp.lengthMs | 0);
+      const pan = _ambLayerPan(arp);
+      const ap = _ambMotifParams(lenMs, pan, arp.tone);
+      ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
+      const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
+      try { playNote(f, ap, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
     }
 
     // ================= BEAT engine ==================================
@@ -1829,6 +1982,8 @@
       E.clocks = {}; E.iters = {}; E.seqState = {};
       E.motifDeg = null;
       E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
+      E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
+      E.arpState = {};     // per Arp layer: { entry, note, pos } series/sweep cursor
     }
     function _ambTick(E) {
       _E = E;
@@ -1940,12 +2095,24 @@
         for (const ex of cfg.extras) {
           if (!ex || !_AMB_LAYER_SCHEMA[ex.type]) continue;
           const key = ex.type + ':' + ex.id;
-          const gm = ex.type === 'bed' ? 8 : 16;
+          // Shape layers schedule continuously over the lookahead window (not on
+          // the interval grid stepLayer uses), so they get their own path —
+          // still honoring solo / freeze / wind-down / roll-capture.
+          if (ex.type === 'shape') {
+            if (ex.present === false || !ex.on || _muted(ex) || E.windingDown) continue;
+            if (_ambFreezeGate(E, key, now, horizon)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitShape(E, ex, key, now, horizon, lead, space, cfg); }
+            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
+          const gm = ex.type === 'bed' ? 8 : (ex.type === 'arp' ? 24 : 16);
           const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
           stepLayer(key, ex, gm, ms, (at) => {
             if (ex.type === 'bed') _ambEmitBed(at, ex, space, key);
             else if (ex.type === 'motif') _ambEmitMotif(at, ex, space, key);
             else if (ex.type === 'texture') _ambEmitTexture(at, ex, space, key);
+            else if (ex.type === 'arp') _ambEmitArp(at, ex, space, key);
             else _ambEmitBeat(at, ex, space, key);
           });
         }
@@ -2308,6 +2475,7 @@
       cfg.playing = true;
       _ambRefreshPlayBtn(E);
       _ambVizKick(E);
+      try { _ambShapeAnimEnsure(); } catch (e) {}   // spin any in-card Shape wheels
     }
     function _ambStopGenerator(E) {
       _E = E;
@@ -2319,6 +2487,9 @@
       if (cfg) cfg.playing = false;
       _ambRefreshPlayBtn(E);
       try { _ambUpdatePlayheads(E); } catch (e) {} // zero the bars when stopped
+      // Repaint shape wheels once as a clean static frame (no playhead) now that
+      // the rAF loop will stop — leaves them visible, not frozen mid-sweep.
+      try { _ambShapeAnimEnsure(); } catch (e) {}
       // Only hard-silence active voices when NO Bloom engine is still running —
       // otherwise stopping one engine would cut the other engine's ringing
       // voices. The stopped engine's long releases ring out meanwhile.
@@ -2877,7 +3048,7 @@
       const btn = document.getElementById(E.playId);
       if (!btn) return;
       const on = !!E.timer;
-      btn.textContent = on ? '◼ Stop' : '▶ Play';
+      btn.textContent = on ? '⏹' : '▶';   // icon-only, like the Make footer play button
       btn.classList.toggle('active', on);
     }
     // ---- Shared control builders (module scope: used by _ambientInit AND the
@@ -3330,6 +3501,24 @@
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Shape: a generative layer holding N radial-sequencer wheels (the Shape
+      // mode engine, js/bloops/21-shape.js). Pitch/voice/prog/gate live PER SHAPE
+      // inside the wheel editor; the layer only owns Level / Spread / Mod / FX.
+      // No notes/tone/cond/interval here — the wheels drive their own timing.
+      shape: { label: 'Shape', ctrls: [['shapes'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['cond'], ['spread'], ['mod'], ['fx']] },
+      // Arp: arpeggiates through a user-built SERIES of scales/chords. Each entry
+      // is held for N "passes" (one Direction sweep = one pass) before advancing
+      // to the next. Direction + Randomness shape the note order. Pitch material
+      // is the series (no single 'notes' source); the layer owns voice/timing.
+      arp: { label: 'Arp', ctrls: [['tone'], ['arpseries'], ['arpdir'],
+        ['sl', 'randomness', 'Randomness', 0, 100, 'ordered → chaos'],
+        ['rate'], ['tm', 'intervalMs', 'Rate', 40, 2000, 10],
+        ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
+        ['tm', 'lengthMs', 'Length', 40, 2000, 10],
+        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
@@ -3337,12 +3526,26 @@
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40 });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25 });
+      // Shape layer: one wheel to start; the user adds more via the card browser.
+      // _shapeDefault() lives in 21-shape.js (loaded later) — safe to call here
+      // because _ambDefaultLayer only runs at add/normalize time, not file eval.
+      if (type === 'shape') return Object.assign(base, { shapes: (typeof _shapeDefault === 'function') ? [_shapeDefault()] : [], sel: 0 });
+      // Arp: a series of scale/chord entries (each with its own pass count) that
+      // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
+      if (type === 'arp') return Object.assign(base, {
+        tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1 }], sel: 0,
+        dir: 'up', randomness: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
+        lengthMs: 220, restProb: 0, accent: 0,
+      });
       return base;
     }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
-      let html = '<div class="ambient-layer collapsed" data-inst="' + fkey + '">' + _ambHead(sch.label, p + '-on', p + '-del', fkey);
+      // Shape layers open expanded so the wheel preview is visible immediately;
+      // the other layer types start collapsed (just their header).
+      const _collapsed = (type === 'shape') ? '' : ' collapsed';
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(sch.label, p + '-on', p + '-del', fkey);
       sch.ctrls.forEach(c => {
         const k = c[0];
         if (k === 'tone') html += '<div class="ambient-ctrl"><label for="' + p + '-tone">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
@@ -3355,8 +3558,48 @@
         else if (k === 'spread') html += _ambSpreadCtrl(p, inst);
         else if (k === 'mod') html += _ambModUi(lk);
         else if (k === 'fx') html += _ambFxUi(lk);
+        else if (k === 'shapes') html += _ambShapeBrowserHtml(p, inst);
+        else if (k === 'arpseries') html += _ambArpSeriesHtml(p, inst);
+        else if (k === 'arpdir') html += _ambArpDirHtml(p, inst);
       });
       return html + '</div>';
+    }
+    // Arp Direction picker.
+    function _ambArpDirHtml(p, inst) {
+      const dirs = [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Down'], ['downup', 'Down-Up'], ['random', 'Random']];
+      return '<div class="ambient-ctrl"><label for="' + p + '-dir">Direction</label>' +
+        '<select id="' + p + '-dir" class="ambient-select">' +
+        dirs.map(d => '<option value="' + d[0] + '">' + d[1] + '</option>').join('') +
+        '</select><span class="ambient-hint">order</span></div>';
+    }
+    // Arp series browser: the ordered list of scale/chord entries + an Add button.
+    // Rows (Notes button · passes stepper · delete) are filled by _ambRenderArpList.
+    function _ambArpSeriesHtml(p, inst) {
+      return '<div class="ambient-ctrl ambient-arp-series">' +
+        '<div class="ambient-arp-serieshead"><label>Series</label>' +
+          '<button type="button" class="ambient-arp-add" id="' + p + '-arp-add" title="Add a scale / chord to the series">+ Add</button>' +
+        '</div>' +
+        '<div class="ambient-arp-list" id="' + p + '-arp-list"></div>' +
+      '</div>';
+    }
+    // Mini shapes browser inside a Shape layer card: the list of wheels plus
+    // add / edit controls. Rows are filled by _ambRenderShapeList on wire.
+    function _ambShapeBrowserHtml(p, inst) {
+      return '<div class="ambient-ctrl ambient-shape-browser">' +
+        '<div class="ambient-shape-stage">' +
+          '<canvas class="ambient-shape-overlay" id="' + p + '-overlay" title="All wheels in this layer, overlaid — click to edit the selected one"></canvas>' +
+          // Expandable wheel list, overlaid in the canvas's upper-right corner.
+          '<div class="ambient-shape-listwrap" id="' + p + '-listwrap">' +
+            '<button type="button" class="ambient-shape-listtoggle" id="' + p + '-list-toggle" title="Show / hide the wheel list">≡ Shapes</button>' +
+            '<div class="ambient-shape-list" id="' + p + '-shapes-list"></div>' +
+          '</div>' +
+          // Add / Edit — small buttons overlaid in the canvas's lower-left.
+          '<div class="ambient-shape-btns">' +
+            '<button type="button" class="ambient-shape-add" id="' + p + '-shape-add" title="Add a new wheel">+ Shape</button>' +
+            '<button type="button" class="ambient-shape-editbtn" id="' + p + '-shape-edit" title="Edit the selected wheel in the Shape editor">✎ Edit</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
     }
     function _ambWireInst(E, inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return;
@@ -3384,6 +3627,9 @@
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
           else if (k === 'cond') { const s = el('when'); if (s) { s.value = inst.when || 'always'; s.addEventListener('change', () => { const L = get(); if (L) { L.when = s.value || 'always'; persist(); } }); } }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
+          else if (k === 'shapes') { _ambWireShapeBrowser(E, inst, p, get); }
+          else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
+          else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
@@ -3396,6 +3642,293 @@
       setVal('fx-rev', inst.revSend);
       if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
+    }
+    // ---- Arp layer: scale/chord series browser -----------------------------
+    // Clear an Arp layer's playback cursor so a series/direction/passes edit
+    // restarts cleanly from the first entry on the next tick.
+    function _ambResetArp(E, key) {
+      const eng = E || _E;
+      if (eng && eng.arpState) delete eng.arpState[key];
+    }
+    function _ambWireArpSeries(E, inst, p, get) {
+      const addB = _ambGet(E, p + 'arp-add');
+      if (addB && !addB._ambBound) {
+        addB._ambBound = true;
+        addB.addEventListener('click', () => {
+          const L = get(); if (!L) return;
+          if (!Array.isArray(L.steps)) L.steps = [];
+          const src = L.steps[L.sel | 0];
+          const notes = (src && src.notes) ? JSON.parse(JSON.stringify(src.notes)) : { type: 'scale', scale: '' };
+          L.steps.push({ notes, passes: (src && src.passes) || 1 });
+          L.sel = L.steps.length - 1;
+          _ambRenderArpList(E, get, p);
+          _ambResetArp(E, L.type + ':' + L.id);
+          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+      }
+      _ambRenderArpList(E, get, p);
+    }
+    function _ambRenderArpList(E, get, p) {
+      const list = _ambGet(E, p + 'arp-list'); if (!list) return;
+      const L = get(); if (!L) return;
+      const steps = Array.isArray(L.steps) ? L.steps : (L.steps = []);
+      if (L.sel == null || L.sel < 0 || L.sel >= steps.length) L.sel = steps.length ? 0 : -1;
+      const key = L.type + ':' + L.id;
+      list.innerHTML = '';
+      steps.forEach((st, i) => {
+        const row = document.createElement('div');
+        row.className = 'ambient-arp-row' + (i === L.sel ? ' sel' : '');
+        const idx = document.createElement('span'); idx.className = 'ambient-arp-idx'; idx.textContent = (i + 1) + '.';
+        // Notes button — reuses the shared Scale/Chord/Wrap/Prog menu, targeting
+        // this entry (getLayer returns the entry, whose `.notes` the menu sets).
+        const nb = document.createElement('button');
+        nb.type = 'button'; nb.className = 'ambient-select ambient-notes-btn ambient-arp-notes';
+        nb.textContent = _ambNotesLabel(_ambNotesOf(st));
+        nb.addEventListener('click', () => {
+          L.sel = i; _ambRenderArpList(E, get, p);
+          const r = nb.getBoundingClientRect();
+          _ambOpenNotesMenu(E, () => st, r.left, r.bottom + 4, () => {
+            nb.textContent = _ambNotesLabel(_ambNotesOf(st));
+            _ambResetArp(E, key);
+          });
+        });
+        // Passes stepper (1..16 sweeps before advancing to the next entry).
+        const pw = document.createElement('span'); pw.className = 'ambient-arp-passes';
+        const dec = document.createElement('button'); dec.type = 'button'; dec.className = 'ambient-arp-pbtn'; dec.textContent = '−'; dec.title = 'Fewer passes';
+        const pv = document.createElement('span'); pv.className = 'ambient-arp-pval'; pv.textContent = (st.passes || 1) + '×';
+        const inc = document.createElement('button'); inc.type = 'button'; inc.className = 'ambient-arp-pbtn'; inc.textContent = '+'; inc.title = 'More passes';
+        const setP = (d) => { st.passes = Math.max(1, Math.min(16, (st.passes || 1) + d)); pv.textContent = st.passes + '×'; _ambResetArp(E, key); if (typeof persistWorkspace === 'function') persistWorkspace(); };
+        dec.addEventListener('click', () => setP(-1));
+        inc.addEventListener('click', () => setP(1));
+        pw.appendChild(dec); pw.appendChild(pv); pw.appendChild(inc);
+        // Delete (keep ≥1 entry).
+        const del = document.createElement('button'); del.type = 'button'; del.className = 'ambient-arp-del'; del.textContent = '✕'; del.title = 'Remove this entry';
+        del.addEventListener('click', () => {
+          if (steps.length <= 1) return;
+          steps.splice(i, 1);
+          if (L.sel >= steps.length) L.sel = steps.length - 1;
+          _ambRenderArpList(E, get, p);
+          _ambResetArp(E, key);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+        row.appendChild(idx); row.appendChild(nb); row.appendChild(pw); row.appendChild(del);
+        list.appendChild(row);
+      });
+    }
+    // ---- Shape layer: N-wheel browser + editor reuse -----------------------
+    // Tracks which Bloom shape (if any) currently owns the single #shape-pad
+    // editor. Shared by name with 21-shape.js so master-edit can evict it.
+    let _ambShapeEditRef = null;
+    // Live in-card overview: ONE canvas per Shape layer with all its wheels
+    // overlaid concentrically (auto-sized so every node fits). A single rAF
+    // redraws the visible ones, advancing each wheel's own bar phase while the
+    // engine plays and flashing nodes as the playhead crosses them.
+    const _ambShapeCanvases = new Set();
+    let _ambShapeRaf = 0, _ambShapeIO = null;
+    // Draw one overlay canvas's wheels a single time (static frame).
+    function _ambShapeDrawOne(cv) {
+      if (!cv || !cv.isConnected) return;
+      const m = cv._ambShape; if (!m) return;
+      try {
+        if (typeof _shapeRenderOverlay === 'function') {
+          _shapeRenderOverlay(cv, m.inst.shapes, { phaseOf: (i) => _ambShapePhaseOf(cv, i), selIdx: m.inst.sel });
+        }
+      } catch (e) {}
+    }
+    // Event-driven draw-when-visible: an IntersectionObserver paints each wheel
+    // ONCE when it scrolls/toggles into view (covers the Mix sub-view becoming
+    // active, the layer expanding, the page scrolling) — no perpetual idle
+    // redraw loop, which on a hardware GPU re-uploads the canvas every tick and
+    // makes the wheel visibly "dissolve" in instead of appearing at once.
+    function _ambShapeIOEnsure() {
+      if (_ambShapeIO || typeof IntersectionObserver === 'undefined') return;
+      _ambShapeIO = new IntersectionObserver((entries) => {
+        entries.forEach(e => { if (e.isIntersecting) _ambShapeDrawOne(e.target); });
+      }, { threshold: 0.01 });
+    }
+    function _ambShapeObserve(cv) { _ambShapeIOEnsure(); if (_ambShapeIO) { try { _ambShapeIO.observe(cv); } catch (e) {} } }
+    // Paint the current static frame now, and start the continuous rAF loop ONLY
+    // if some engine is playing (moving playheads). Called on render, on shape
+    // edits, and on play/stop.
+    function _ambShapeAnimEnsure() {
+      let anyPlaying = false;
+      _ambShapeCanvases.forEach(cv => {
+        if (!cv.isConnected) { _ambShapeCanvases.delete(cv); return; }
+        if (cv._ambShape && cv._ambShape.engine && cv._ambShape.engine.timer) anyPlaying = true;
+        if (cv.offsetParent || cv.clientWidth > 0) _ambShapeDrawOne(cv);
+      });
+      if (anyPlaying && !_ambShapeRaf) _ambShapeRaf = requestAnimationFrame(_ambShapeAnimTick);
+    }
+    // Per-shape current phase for one layer canvas; also flashes crossed nodes.
+    function _ambShapePhaseOf(cv, i) {
+      const m = cv._ambShape; if (!m) return 0;
+      const E = m.engine, sh = m.inst.shapes[i];
+      if (!sh || !Array.isArray(sh.nodes)) return 0;
+      const revSec = (typeof _shapeBarSec === 'function') ? _shapeBarSec(sh) : 0;
+      const st = (E && E.shapePhase) ? E.shapePhase[m.key + '#' + i] : null;
+      if (!(E && E.timer && st && st.startAt != null && revSec > 0 && typeof Tone !== 'undefined' && Tone.now)) return 0;
+      const ph = ((((Tone.now() - st.startAt) / revSec) % 1) + 1) % 1;
+      if (!cv._ambPrev) cv._ambPrev = [];
+      const prev = cv._ambPrev[i];
+      if (typeof prev === 'number') {
+        const rot = (sh.rotationDeg || 0) / 360;
+        sh.nodes.forEach(nd => {
+          if (nd.muted) return;
+          const a = (((nd.angleFrac + rot) % 1) + 1) % 1;
+          const crossed = (prev <= ph) ? (a > prev && a <= ph) : (a > prev || a <= ph);
+          if (crossed) nd._flash = performance.now();
+        });
+      }
+      cv._ambPrev[i] = ph;
+      return ph;
+    }
+    // Continuous redraw — runs ONLY while an engine is playing, to animate the
+    // moving playheads / node flashes. When nothing is playing the loop stops and
+    // the wheel is left as a single static frame (drawn by _ambShapeDrawOne via
+    // the IntersectionObserver / _ambShapeAnimEnsure) — no idle GPU churn.
+    function _ambShapeAnimTick() {
+      _ambShapeRaf = 0;
+      let anyPlaying = false;
+      _ambShapeCanvases.forEach(cv => {
+        if (!cv.isConnected) { _ambShapeCanvases.delete(cv); return; }
+        if (!cv.offsetParent && !(cv.clientWidth > 0)) return;   // not visible — skip
+        if (cv._ambShape && cv._ambShape.engine && cv._ambShape.engine.timer) anyPlaying = true;
+        _ambShapeDrawOne(cv);
+      });
+      if (anyPlaying) _ambShapeRaf = requestAnimationFrame(_ambShapeAnimTick);
+    }
+    function _ambRenderShapeList(E, inst, p) {
+      const list = _ambGet(E, p + 'shapes-list'); if (!list) return;
+      _ambShapeCanvases.forEach(cv => { if (!cv.isConnected) _ambShapeCanvases.delete(cv); });
+      const shapes = Array.isArray(inst.shapes) ? inst.shapes : (inst.shapes = []);
+      if (inst.sel == null || inst.sel < 0 || inst.sel >= shapes.length) inst.sel = shapes.length ? 0 : -1;
+      const key = inst.type + ':' + inst.id;
+      // Overlay canvas — all wheels concentric; click opens the selected one.
+      const ov = _ambGet(E, p + 'overlay');
+      if (ov) {
+        ov._ambShape = { engine: E, inst, key };
+        if (!ov._ambBound) {
+          ov._ambBound = true;
+          ov.addEventListener('click', (e) => { e.stopPropagation(); if (inst.shapes && inst.shapes.length) _ambShapeEditOpen(E, inst); });
+        }
+        _ambShapeCanvases.add(ov);
+        _ambShapeObserve(ov);   // paint once when it scrolls/toggles into view
+        // Draw now (immediate) AND again after layout settles, so the wheel is
+        // there at first paint at the correct size — not progressively resolved.
+        _ambShapeDrawOne(ov);
+        requestAnimationFrame(() => requestAnimationFrame(() => _ambShapeDrawOne(ov)));
+      }
+      // Rows: colour swatch (matches the overlay ring) + name + edit + delete.
+      list.innerHTML = '';
+      shapes.forEach((sh, i) => {
+        const row = document.createElement('div');
+        row.className = 'ambient-shape-row' + (i === inst.sel ? ' sel' : '');
+        const sw = document.createElement('span'); sw.className = 'ambient-shape-swatch';
+        try { sw.style.background = (typeof _shapeOverlayColor === 'function') ? _shapeOverlayColor(i) : '#4fd1c5'; } catch (e) {}
+        const nc = (sh && Array.isArray(sh.nodes) && sh.nodes.length) || (sh && sh.nodeCount) || 0;
+        const pick = document.createElement('button');
+        pick.type = 'button'; pick.className = 'ambient-shape-pick';
+        pick.textContent = 'Wheel ' + (i + 1) + ' · ' + nc + ' node' + (nc === 1 ? '' : 's');
+        pick.addEventListener('click', () => { inst.sel = i; _ambRenderShapeList(E, inst, p); if (typeof persistWorkspace === 'function') persistWorkspace(); });
+        const ed = document.createElement('button');
+        ed.type = 'button'; ed.className = 'ambient-shape-editrow'; ed.textContent = '✎'; ed.title = 'Edit this wheel';
+        ed.addEventListener('click', (e) => { e.stopPropagation(); inst.sel = i; _ambShapeEditOpen(E, inst); });
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'ambient-shape-del'; del.textContent = '✕'; del.title = 'Remove this wheel';
+        del.addEventListener('click', (e) => { e.stopPropagation(); _ambShapeRemove(E, inst, i, p); });
+        row.appendChild(sw); row.appendChild(pick); row.appendChild(ed); row.appendChild(del);
+        list.appendChild(row);
+      });
+      const tg = _ambGet(E, p + 'list-toggle');
+      if (tg) tg.textContent = '≡ Shapes (' + shapes.length + ')';
+      _ambShapeAnimEnsure();
+    }
+    function _ambWireShapeBrowser(E, inst, p, get) {
+      _ambRenderShapeList(E, inst, p);
+      const addB = _ambGet(E, p + 'shape-add');
+      if (addB) addB.addEventListener('click', () => _ambShapeAdd(E, get() || inst, p));
+      const edB = _ambGet(E, p + 'shape-edit');
+      if (edB) edB.addEventListener('click', () => _ambShapeEditOpen(E, get() || inst));
+      // Expandable overlaid list — toggle its open state.
+      const tg = _ambGet(E, p + 'list-toggle');
+      const wrap = _ambGet(E, p + 'listwrap');
+      if (tg && wrap) tg.addEventListener('click', (e) => { e.stopPropagation(); wrap.classList.toggle('open'); });
+    }
+    function _ambShapeAdd(E, inst, p) {
+      if (!inst || typeof _shapeDefault !== 'function') return;
+      if (!Array.isArray(inst.shapes)) inst.shapes = [];
+      inst.shapes.push(_shapeDefault());
+      inst.sel = inst.shapes.length - 1;
+      _ambRenderShapeList(E, inst, p);
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _ambShapeRemove(E, inst, i, p) {
+      if (!inst || !Array.isArray(inst.shapes) || i < 0 || i >= inst.shapes.length) return;
+      if (_ambShapeEditRef && _ambShapeEditRef.id === inst.id && _ambShapeEditRef.type === inst.type && _ambShapeEditRef.sel === i) _ambShapeEditClose();
+      inst.shapes.splice(i, 1);
+      if (!inst.shapes.length && typeof _shapeDefault === 'function') inst.shapes.push(_shapeDefault()); // keep ≥1
+      inst.sel = Math.max(0, Math.min(inst.sel | 0, inst.shapes.length - 1));
+      // Re-seed this layer's per-shape phase state so wheel indices stay aligned.
+      if (E.shapePhase) { const pre = inst.type + ':' + inst.id + '#'; Object.keys(E.shapePhase).forEach(k => { if (k.indexOf(pre) === 0) delete E.shapePhase[k]; }); }
+      _ambRenderShapeList(E, inst, p);
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Open the FULL Shape wheel editor on a Bloom layer's selected wheel by
+    // retargeting the shared editor (#shape-pad) — same mechanism master shapes
+    // use. bloomMode hides the lane/Send-coupled controls in the toolbar.
+    function _ambShapeEditOpen(E, inst) {
+      if (!inst || !Array.isArray(inst.shapes) || !inst.shapes.length) return;
+      // Single #shape-pad — evict any other editor first (master or bloom).
+      try { if (typeof _shapeMasterEditId !== 'undefined' && _shapeMasterEditId != null && typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
+      if (_ambShapeEditRef) { try { _ambShapeEditClose(); } catch (e) {} }
+      const sel = Math.max(0, Math.min(inst.sel | 0, inst.shapes.length - 1));
+      inst.sel = sel;
+      let sh = inst.shapes[sel];
+      if (typeof _shapeNormalize === 'function') sh = inst.shapes[sel] = _shapeNormalize(sh);
+      try { if (typeof _shapeSpinStop === 'function') _shapeSpinStop(); } catch (e) {}
+      try { _shapeEditTarget = { name: 'Bloom Shape ' + (sel + 1), shape: sh, shapeMode: true, bloomMode: true }; } catch (e) {}
+      const pad = document.getElementById('shape-pad');
+      const host = document.getElementById('ambient-shape-edithost');
+      const box = document.getElementById('ambient-shape-editbox') || host;
+      if (pad && host) {
+        try { if (!_shapePadHome) _shapePadHome = { parent: pad.parentNode, next: pad.nextSibling }; } catch (e) {}
+        box.appendChild(pad);
+        host.hidden = false;
+      }
+      const doneBtn = document.getElementById('ambient-shape-editdone');
+      if (doneBtn) doneBtn.onclick = function () { _ambShapeEditClose(); };
+      document.body.classList.add('ambient-shape-edit');
+      _ambShapeEditRef = { engine: E, type: inst.type, id: inst.id, sel: sel };
+      try { if (typeof _shapeInit === 'function') _shapeInit(); } catch (e) {}
+      requestAnimationFrame(() => { try { if (typeof _shapeBuildToolbar === 'function') _shapeBuildToolbar(); if (typeof _shapeResize === 'function') _shapeResize(); if (typeof _shapeDraw === 'function') _shapeDraw(); } catch (e) {} });
+    }
+    function _ambShapeEditClose() {
+      if (!_ambShapeEditRef) return;
+      const ref = _ambShapeEditRef; _ambShapeEditRef = null;
+      try { if (typeof _shapeSpinStop === 'function') _shapeSpinStop(); } catch (e) {}
+      const pad = document.getElementById('shape-pad');
+      try {
+        if (pad && _shapePadHome && _shapePadHome.parent) {
+          if (_shapePadHome.next && _shapePadHome.next.parentNode === _shapePadHome.parent) _shapePadHome.parent.insertBefore(pad, _shapePadHome.next);
+          else _shapePadHome.parent.appendChild(pad);
+        }
+        _shapePadHome = null;
+      } catch (e) {}
+      const host = document.getElementById('ambient-shape-edithost'); if (host) host.hidden = true;
+      document.body.classList.remove('ambient-shape-edit');
+      try { _shapeEditTarget = null; } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { if (typeof _shapeRetargetLane === 'function') _shapeRetargetLane(); } catch (e) {}
+      // Refresh the layer's wheel list (node counts may have changed) + mods.
+      try {
+        const c = ref.engine && ref.engine.getCfg && ref.engine.getCfg();
+        const L = (c && Array.isArray(c.extras)) ? c.extras.find(x => x.id === ref.id && x.type === ref.type) : null;
+        if (L) _ambRenderShapeList(ref.engine, L, 'ambient-' + ref.type + '-' + ref.id + '-');
+      } catch (e) {}
+      try { if (ref.engine && ref.engine.timer) _ambSyncMods(); } catch (e) {}
     }
     function _ambRenderExtras(E) {
       const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;
@@ -3418,10 +3951,15 @@
       const idx = cfg.extras.findIndex(x => x.id === id && x.type === type);
       if (idx < 0) return;
       const key = type + ':' + id;
+      // If this layer's wheel is open in the shared Shape editor, close it first
+      // so #shape-pad returns home and _shapeEditTarget doesn't dangle.
+      if (type === 'shape' && _ambShapeEditRef && _ambShapeEditRef.id === id && _ambShapeEditRef.type === type) { try { _ambShapeEditClose(); } catch (e) {} }
       cfg.extras.splice(idx, 1);
       try { if (E.mod[key]) _ambTeardownMod(key); } catch (e) {}
       try { if (E.freeze) delete E.freeze[key]; } catch (e) {}
       if (E.seqState) delete E.seqState[key];
+      if (E.arpState) delete E.arpState[key];
+      if (E.shapePhase) { const pre = key + '#'; Object.keys(E.shapePhase).forEach(k => { if (k.indexOf(pre) === 0) delete E.shapePhase[k]; }); }
       _ambRenderExtras(E);
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -3905,10 +4443,13 @@
         ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
       const keyOpts = _keyNames.map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('');
       let html =
-        '<div class="ambient-title">Bloom — generative ambient' + (E.isLane ? '' : ' (master)') + '</div>' +
+        // Everything above the first layer (viz + global Bloom settings) lives in
+        // one collapsible menu so the panel opens straight onto the layer stack.
+        '<details class="ambient-master-menu">' +
+        '<summary class="ambient-master-summary">⚙ Bloom settings' + (E.isLane ? '' : ' · master') + '</summary>' +
+        '<div class="ambient-master-menu-body">' +
         '<canvas id="ambient-viz" class="ambient-viz"></canvas>' +
         '<div class="ambient-row">' +
-          '<button type="button" id="ambient-play-btn" class="ambient-play">▶ Play</button>' +
           '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="New random seed">✨ Regenerate</button>' +
           '<button type="button" id="ambient-reset-btn" class="ambient-regen" title="Reset this Bloom to defaults (one Bed, default settings)">↺ Reset</button>' +
           (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
@@ -3941,6 +4482,7 @@
           sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
           sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
         '</div>' +
+        '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
         '<div class="ambient-layer collapsed">' + head('Bed', 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-bed') +
@@ -4022,7 +4564,13 @@
         '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>' +
         // Capture bank — ⤓ Capture records takes here; upload each to Drive
         // when ready so an upload error never loses the audio.
-        '<div class="ambient-capture-bank"></div>';
+        '<div class="ambient-capture-bank"></div>' +
+        // Play / Stop transport — pinned to the bottom of the viewport, styled
+        // like the Make footer transport. Lives inside the (namespaced) panel so
+        // it only shows while this Bloom panel is the active view.
+        '<div class="ambient-footer-bar"><div class="ambient-footer-transport">' +
+          '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
+        '</div></div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
       try { _ambRenderCaptureBank(); } catch (e) {}
 
@@ -4269,6 +4817,10 @@
           const primaryAbsent = !!(cfg[l] && cfg[l].present === false);
           return { label: LABELS[l] + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, l) : _ambAddExtra(E, l)) };
         });
+        // Shape: a generative wheel layer (extras-only, no primary slot).
+        actions.push({ label: 'Shape', fn: () => _ambAddExtra(E, 'shape') });
+        // Arp: arpeggiates through a built series of scales/chords (extras-only).
+        actions.push({ label: 'Arp', fn: () => _ambAddExtra(E, 'arp') });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

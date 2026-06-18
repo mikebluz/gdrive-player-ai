@@ -947,7 +947,22 @@
         const size = _chordNotes.length;
         const voices = _chordNotes.map(n => {
           if (!n || n.freq == null) return null;
-          const p = chordVoiceParams(n.params || n.sound || 'sine', size, transposed);
+          // Resolve a "user:" Design patch to its base voice + params FIRST.
+          // The synth builder below only understands base oscillator types, so a
+          // raw user:<id> (e.g. when the grid tone is a Design patch, which the
+          // wrap adopts) hit `new Tone.Synth({oscillator:{type:'user:<id>'}})`
+          // and threw "invalid oscillator type" — the whole wrap chord went
+          // silent. (Full per-voice filter/mod isn't rebuilt here; the wrap
+          // plays the patch's base oscillator + envelope, like playNote's
+          // fallback.) Mirrors the user: resolution in playNote/startSustainedNote.
+          let _src = n.params || n.sound || 'sine';
+          const _rt = (typeof _src === 'string') ? _src : (_src && _src.type);
+          if (typeof _rt === 'string' && _rt.indexOf('user:') === 0 && typeof _resolveUserPatch === 'function') {
+            const up = _resolveUserPatch(_rt);
+            _src = up ? Object.assign({}, up.params, { type: up.baseType })
+                      : Object.assign({}, (typeof _src === 'object' ? _src : {}), { type: 'sawtooth' });
+          }
+          const p = chordVoiceParams(_src, size, transposed);
           const vol = Math.max(0.001, (p.volume ?? 100) / 100);
           // Sample-based instrument (Piano, Organ, etc.) — route via
           // the shared Tone.Sampler instead of constructing a synth.

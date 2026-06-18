@@ -881,11 +881,12 @@
         tabs.forEach(t => t.classList.toggle('tab-active', t === which));
       };
       // Update labels so the active tab reads cleanly and inactive tabs
-      // hint at direction ("← Make" on the left, "Listen →" on the right).
+      // hint at direction ("Listen →" on the right). The Seed tab always reads
+      // just "Seed" (no arrow when on Grow/Listen).
       const updateLabels = (active) => {
         // 'make' | 'mix' | 'serialbox'
-        bloopsTab.textContent = (active === 'make') ? 'Make' : '← Make';
-        if (mixTab) mixTab.textContent = 'Mix';
+        bloopsTab.textContent = 'Seed';
+        if (mixTab) mixTab.textContent = 'Grow';
         sbTab.textContent     = (active === 'serialbox') ? 'Listen' : 'Listen →';
       };
       // Close every transient modal + open dropdown so a panel opened
@@ -2628,7 +2629,7 @@
       modal.innerHTML = `
         <div class="sm-title">Sound Editor — ${note.label}</div>
         <label class="sm-apply-all"><input type="checkbox" id="sm-apply-all" /> Apply to all notes</label>
-        <details class="sm-fold" open>
+        <details class="sm-fold">
           <summary>Tone</summary>
           <div class="sm-fold-body">
             <div class="sm-waves" id="sm-waves"></div>
@@ -2793,16 +2794,13 @@
       // them to the live cellParams immediately.
       const applyAllChk = modal.querySelector('#sm-apply-all');
       // Opened from the Tone menu's "Sculpt…" entry → sculpt the whole grid,
-      // so start with Apply-to-all on and lead with the Envelope section.
+      // so start with Apply-to-all on. All sections default closed (the user
+      // expands what they want).
       if (_startApplyAll && applyAllChk) {
         applyAllChk.checked = true;
         const titleEl = modal.querySelector('.sm-title');
         if (titleEl) titleEl.textContent = 'Sculpt sound — all notes';
-        const folds = modal.querySelectorAll('details.sm-fold');
-        folds.forEach(f => {
-          const sum = f.querySelector('summary');
-          f.open = !!(sum && sum.textContent.trim() === 'Envelope');
-        });
+        modal.querySelectorAll('details.sm-fold').forEach(f => { f.open = false; });
       }
       const broadcastAll = (key, value) => {
         // In selection scope the checkbox means "Replace entire voice", not

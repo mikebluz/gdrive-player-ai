@@ -283,7 +283,7 @@
       if (!stage) return;
       const rect = stage.getBoundingClientRect();
       const side = Math.max(120, Math.min(rect.width, rect.height) - 4);
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);   // cap: iOS white-boxes over-large canvas backing stores
       _shapeCanvas.style.width = side + 'px';
       _shapeCanvas.style.height = side + 'px';
       _shapeCanvas.width = Math.round(side * dpr);
@@ -297,17 +297,28 @@
       const cfg = _shapeCfg();
       const W = _shapeCanvas.width / (window.devicePixelRatio || 1);
       const H = _shapeCanvas.height / (window.devicePixelRatio || 1);
-      const ctx = _shapeCtx;
+      const ph = (typeof phase === 'number') ? phase : (_shapeSpin.running ? _shapeSpin.lastPhase : 0);
+      const geo = _shapeDrawCore(_shapeCtx, W, H, cfg, ph, { mini: false });
+      if (geo) _shapeGeo = geo;   // editor hit-testing reads this
+    }
+    // Render a wheel into ANY 2D context (the editor canvas or a small card
+    // preview). Returns { cx, cy, R }. `opts.mini` shrinks margins / node radius
+    // and drops the text labels so it reads at thumbnail size. Pure drawing —
+    // no module-canvas globals — so it's reusable by the Bloom Shape layer's
+    // in-card preview (_shapeRenderTo).
+    function _shapeDrawCore(ctx, W, H, cfg, ph, opts) {
+      opts = opts || {};
+      const mini = !!opts.mini;
       ctx.clearRect(0, 0, W, H);
       const cx = W / 2, cy = H / 2;
-      const R = Math.min(W, H) / 2 - 26;
-      _shapeGeo = { cx, cy, R };
-      const ph = (typeof phase === 'number') ? phase : (_shapeSpin.running ? _shapeSpin.lastPhase : 0);
+      const margin = mini ? Math.max(7, Math.min(W, H) * 0.16) : 26;
+      const R = Math.min(W, H) / 2 - margin;
+      const baseNodeR = mini ? Math.max(2.5, R * 0.16) : 9;
       // Outer guide ring.
       ctx.strokeStyle = 'rgba(120,120,160,0.18)';
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
-      if (!cfg) return;
+      if (!cfg || !Array.isArray(cfg.nodes)) return { cx, cy, R };
       const rotFrac = (cfg.rotationDeg || 0) / 360;
       const pts = cfg.nodes.map(nd => Object.assign({ nd }, _shapeNodeXY(cx, cy, R, nd.angleFrac, rotFrac)));
       // Bar-grid spokes: a faint radial tick at each 4-beat bar boundary within
@@ -330,7 +341,7 @@
       {
         const pa = 2 * Math.PI * (((ph % 1) + 1) % 1);
         ctx.strokeStyle = 'rgba(79,209,197,0.55)';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = mini ? 1.5 : 2;
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.sin(pa), cy - R * Math.cos(pa)); ctx.stroke();
       }
       // Polygon (transparent fill) through nodes in draw order.
@@ -341,7 +352,7 @@
         ctx.fillStyle = 'rgba(159,122,234,0.07)';
         ctx.fill();
         ctx.strokeStyle = 'rgba(159,122,234,0.65)';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = mini ? 1 : 1.5;
         ctx.stroke();
       }
       // Sustain arcs — each node holds for sustainFrac of the bar, drawn as a
@@ -355,19 +366,21 @@
         ctx.beginPath();
         ctx.arc(cx, cy, R, aStart, aEnd, false);
         ctx.strokeStyle = 'rgba(79,209,197,0.45)';
-        ctx.lineWidth = 4; ctx.lineCap = 'round';
+        ctx.lineWidth = mini ? 2.5 : 4; ctx.lineCap = 'round';
         ctx.stroke();
       });
       ctx.lineCap = 'butt';
       // Center point.
       ctx.fillStyle = 'rgba(203,213,224,0.8)';
-      ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
-      // Corner nodes (flash when recently struck).
-      const tnow = performance.now();
-      const idxOf = _shapeSortedEff(cfg).idxOf;
+      ctx.beginPath(); ctx.arc(cx, cy, mini ? 2 : 3, 0, 2 * Math.PI); ctx.fill();
+      // Corner nodes. (No "recently struck" white grow-and-shrink flash: it read
+      // a _flash timestamp left on the shared node data and replayed every time a
+      // wheel was drawn, so shapes appeared to bloom white and shrink into place
+      // instead of just showing. The sweeping playhead line is the play indicator.)
+      let idxOf; try { idxOf = _shapeSortedEff(cfg).idxOf; } catch (e) { idxOf = new Map(); }
       pts.forEach((p) => {
-        const flash = p.nd._flash ? Math.max(0, 1 - (tnow - p.nd._flash) / 180) : 0;
-        const rad = 9 + flash * 6;
+        const flash = 0;
+        const rad = baseNodeR;
         const chord = _shapeNodeChord(cfg, p.nd, idxOf.get(p.nd));
         // Wrap-type cues: chord (stack) = orange, Set (variance) = purple,
         // Run-group member = blue. A single plain note stays teal.
@@ -375,7 +388,7 @@
         const isRun = !chord && !isSet && !!(p.nd.wrapGroup && p.nd.wrapType === 'run');
         // Chord / Set nodes get an outer halo ring so they read as "more than a note".
         if ((chord || isSet) && !p.nd.muted) {
-          ctx.beginPath(); ctx.arc(p.x, p.y, rad + 4, 0, 2 * Math.PI);
+          ctx.beginPath(); ctx.arc(p.x, p.y, rad + (mini ? 2 : 4), 0, 2 * Math.PI);
           ctx.strokeStyle = isSet ? 'rgba(159,122,234,0.9)' : 'rgba(246,173,85,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
         }
         ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, 2 * Math.PI);
@@ -385,11 +398,11 @@
         } else {
           ctx.fillStyle = flash > 0 ? '#ffffff' : (chord ? '#f6ad55' : isSet ? '#9f7aea' : isRun ? '#63b3ed' : '#4fd1c5'); ctx.fill();
           ctx.strokeStyle = flash > 0 ? 'rgba(79,209,197,0.9)' : 'rgba(13,13,24,0.9)';
-          ctx.lineWidth = 2; ctx.stroke();
+          ctx.lineWidth = mini ? 1.5 : 2; ctx.stroke();
         }
-        // Label outside the node: chord name when chorded, else pitch when tuned
-        // off the base note.
-        if (!p.nd.muted) {
+        // Label outside the node (full size only): chord name when chorded,
+        // else pitch when tuned off the base note.
+        if (!mini && !p.nd.muted) {
           const a = 2 * Math.PI * (((p.nd.angleFrac + rotFrac) % 1 + 1) % 1);
           let lbl = '';
           if (chord) lbl = _shapeChordLabel(chord);
@@ -401,6 +414,59 @@
           }
         }
       });
+      return { cx, cy, R };
+    }
+    // Render a wheel into any canvas at its CSS size (DPR-aware). Used by the
+    // Bloom Shape layer's in-card live previews. `ph` = current bar phase (0..1).
+    function _shapeRenderTo(canvas, cfg, ph) {
+      if (!canvas) return;
+      const ctx = canvas.getContext && canvas.getContext('2d');
+      if (!ctx) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);   // cap: iOS white-boxes over-large canvas backing stores
+      const cssW = canvas.clientWidth || parseInt(canvas.getAttribute('width'), 10) || 72;
+      const cssH = canvas.clientHeight || parseInt(canvas.getAttribute('height'), 10) || 72;
+      const bw = Math.max(1, Math.round(cssW * dpr)), bh = Math.max(1, Math.round(cssH * dpr));
+      if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      _shapeDrawCore(ctx, cssW, cssH, cfg, (typeof ph === 'number') ? ph : 0, { mini: true });
+    }
+    // Palette for overlaid wheels (one colour per shape in a Bloom Shape layer).
+    const _SHAPE_OVERLAY_PAL = ['#4fd1c5', '#9f7aea', '#f6ad55', '#63b3ed', '#fc8181', '#68d391', '#f687b3', '#fbd38d'];
+    function _shapeOverlayColor(i) { return _SHAPE_OVERLAY_PAL[((i % _SHAPE_OVERLAY_PAL.length) + _SHAPE_OVERLAY_PAL.length) % _SHAPE_OVERLAY_PAL.length]; }
+    // Draw MANY wheels superimposed concentrically on one canvas, auto-sized so
+    // every node fits (the outermost ring leaves room for the node circles).
+    // Each shape gets its own colour + playhead (its own bar phase). opts:
+    //   { phaseOf(i)->0..1, selIdx } — selIdx brightens that shape's playhead.
+    // Used by the Bloom Shape layer's in-card overview.
+    function _shapeRenderOverlay(canvas, shapes, opts) {
+      if (!canvas) return;
+      const ctx = canvas.getContext && canvas.getContext('2d'); if (!ctx) return;
+      opts = opts || {};
+      const dpr = Math.min(2, window.devicePixelRatio || 1);   // cap: iOS white-boxes over-large canvas backing stores
+      const cssW = canvas.clientWidth || canvas.parentElement && canvas.parentElement.clientWidth || parseInt(canvas.getAttribute('width'), 10) || 160;
+      const cssH = canvas.clientHeight || canvas.parentElement && canvas.parentElement.clientHeight || parseInt(canvas.getAttribute('height'), 10) || 160;
+      const bw = Math.max(1, Math.round(cssW * dpr)), bh = Math.max(1, Math.round(cssH * dpr));
+      if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+      const list = Array.isArray(shapes) ? shapes.filter(s => s && Array.isArray(s.nodes)) : [];
+      const cx = cssW / 2, cy = cssH / 2;
+      if (!list.length) return;
+      const nodeR = 6, margin = nodeR + 9;
+      const Rmax = Math.max(18, Math.min(cssW, cssH) / 2 - margin);
+      const Rmin = Rmax * 0.42;
+      const N = list.length;
+      list.forEach((sh, i) => {
+        const R = (N <= 1) ? Rmax : (Rmax - (i / (N - 1)) * (Rmax - Rmin));
+        const color = _shapeOverlayColor(i);
+        const ph = (typeof opts.phaseOf === 'function') ? (opts.phaseOf(i) || 0) : 0;
+        const pa = 2 * Math.PI * (((ph % 1) + 1) % 1);
+        const sel = (opts.selIdx === i);
+        ctx.strokeStyle = _shapeRgba(color, sel ? 0.75 : 0.30); ctx.lineWidth = sel ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.sin(pa), cy - R * Math.cos(pa)); ctx.stroke();
+        _shapeDrawWheelAt(ctx, cx, cy, R, sh, color, true);   // noFlash: static nodes in the overview
+      });
+      ctx.fillStyle = 'rgba(203,213,224,0.85)'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
     }
     // Compact chord name (root + quality suffix) for node labels.
     function _shapeChordLabel(chord) {
@@ -422,6 +488,26 @@
     function _shapeBarSec(cfg) {
       const bpm = (typeof tempoInput !== 'undefined' && tempoInput) ? (parseInt(tempoInput.value, 10) || 120) : 120;
       return (60 / bpm) * _shapeLoopBeats(cfg);
+    }
+    // Human-readable position of a node (its angleFrac → bar division + beat),
+    // shown in the drag readout so the user can see exactly where a node lands.
+    // The wheel is one revolution = loopBeats beats; the snap grid is snapDiv
+    // cells per bar. When the timing is locked (snap) we also name the grid
+    // resolution and which snap step the node is on.
+    function _shapeNodePosLabel(cfg, frac) {
+      const lb = _shapeLoopBeats(cfg);
+      const div = Math.max(1, (cfg && Number.isFinite(cfg.snapDiv)) ? (cfg.snapDiv | 0) : 16);
+      const f = ((frac % 1) + 1) % 1;
+      const locked = !!(cfg && cfg.timingMode === 'snap');
+      const gName = (_SHAPE_GRIDS.find(g => g.div === div) || {}).name || (div + '/bar');
+      const gShort = gName.replace(' note', '').replace(' triplet', 'T');
+      const step = (Math.round(f * div) % div + div) % div + 1;   // 1..div
+      const totalBeats = f * lb;
+      const beatStr = (Math.round(((totalBeats % 4) + 1) * 100) / 100).toFixed(2);
+      const barStr = (lb > 4) ? ('Bar ' + (Math.floor(totalBeats / 4) + 1) + ' · ') : '';
+      return locked
+        ? ('🔒 ' + gShort + ' · step ' + step + '/' + div + ' · ' + barStr + 'Beat ' + beatStr)
+        : ('○ free · ' + barStr + 'Beat ' + beatStr);
     }
     function _shapeBaseFreq(cfg) {
       const m = Number.isFinite(cfg.baseNote) ? cfg.baseNote : 60;
@@ -804,7 +890,12 @@
       for (let i = first; i <= last; i++) if (!flags[i]) return false;
       return true;
     }
-    function _shapeTriggerNode(cfg, nd, a, sortedAngles, sortedIdx) {
+    // Pure resolver: given a node + its angle context, return { voices:[{freq,
+    // params}], durMs } WITHOUT emitting — the gap→duration, voice, chord, and
+    // Set-variant logic shared by the live wheel (_shapeTriggerNode) and the
+    // Bloom Shape layer (_ambEmitShape). NOTE it advances a Set node's cycle
+    // (via _shapeNodeVariant), so call it exactly once per intended trigger.
+    function _shapeResolveNodeEvent(cfg, nd, a, sortedAngles, sortedIdx) {
       let next = null;
       for (let i = 0; i < sortedAngles.length; i++) { if (sortedAngles[i] > a + 1e-6) { next = sortedAngles[i]; break; } }
       if (next == null) next = (sortedAngles[0] != null ? sortedAngles[0] : a) + 1;
@@ -834,19 +925,21 @@
       // Set node: cycle the pool. A variance pick overrides the node's pitch
       // (and its own voice, if the variant carries one) for this pass.
       const variant = chord ? null : _shapeNodeVariant(nd);
+      let voices;
+      if (chord) {
+        voices = _shapeChordFreqs(cfg, nd, chord).map(f => ({ freq: f, params: Object.assign({}, sound) }));
+      } else {
+        const off = (variant && Number.isFinite(variant.noteOffset)) ? variant.noteOffset : _shapeNodeOffset(nd);
+        const freq = _shapeBaseFreq(cfg) * Math.pow(2, off / 12);
+        const eff = (variant && variant.params && variant.params.type) ? Object.assign({}, sound, variant.params) : sound;
+        voices = [{ freq, params: eff }];
+      }
+      return { voices, durMs };
+    }
+    function _shapeTriggerNode(cfg, nd, a, sortedAngles, sortedIdx) {
+      const ev = _shapeResolveNodeEvent(cfg, nd, a, sortedAngles, sortedIdx);
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
-      try {
-        if (typeof playNote === 'function') {
-          if (chord) {
-            _shapeChordFreqs(cfg, nd, chord).forEach(f => playNote(f, Object.assign({}, sound), durMs));
-          } else {
-            const off = (variant && Number.isFinite(variant.noteOffset)) ? variant.noteOffset : _shapeNodeOffset(nd);
-            const freq = _shapeBaseFreq(cfg) * Math.pow(2, off / 12);
-            const eff = (variant && variant.params && variant.params.type) ? Object.assign({}, sound, variant.params) : sound;
-            playNote(freq, eff, durMs);
-          }
-        }
-      } catch (e) {}
+      try { if (typeof playNote === 'function') ev.voices.forEach(v => playNote(v.freq, v.params, ev.durMs)); } catch (e) {}
       nd._flash = performance.now();
     }
     function _shapeSpinTick() {
@@ -1229,6 +1322,12 @@
       const bar = document.getElementById('shape-toolbar');
       if (!bar) return;
       const cfg = _shapeCfg();
+      // Bloom Shape layer: a purely generative wheel with no lane/sequencer
+      // coupling, so hide the lane-only actions (Send → master overview,
+      // Rec → records into a lane, Clear → resets the lane). Everything else
+      // (node edit, Spray, Play/audition, ⚙ Wheel settings) is data-only and
+      // operates on the override shape, so it stays.
+      const bloomMode = !!(_shapeEditTarget && _shapeEditTarget.bloomMode);
       // Numeric controls render as −/+ steppers (large tap targets) around a
       // numeric-keypad input, so they're usable on touch.
       const stepper = (label, id, min, max, step, suffix) =>
@@ -1245,12 +1344,12 @@
       bar.innerHTML =
         '<button type="button" class="shape-btn" id="shape-spray-btn" title="Spray ascending scale pitches / flatten">Spray</button>' +
         '<button type="button" class="shape-btn" id="shape-edit-btn" title="Edit mode: tap a node to open its Sound / Chord editor (instead of mute)">✎ Edit</button>' +
-        '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎ Send</button>' +
-        '<button type="button" class="shape-btn" id="shape-clear-btn" title="Reset the wheel (and this lane) to a fresh default">Clear</button>' +
+        (bloomMode ? '' : '<button type="button" class="shape-btn shape-send" id="shape-send-btn" title="Send this wheel to the Mix ▸ Shapes master overview">◎ Send</button>') +
+        (bloomMode ? '' : '<button type="button" class="shape-btn" id="shape-clear-btn" title="Reset the wheel (and this lane) to a fresh default">Clear</button>') +
         // "→ Lane" retired — the wheel now folds into the lane's steps
         // automatically (trans-mode), so there's nothing to send manually.
         '<button type="button" class="shape-btn" id="shape-spin-btn" title="Spin (audition) / Stop">▶ Play</button>' +
-        '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Rec</button>' +
+        (bloomMode ? '' : '<button type="button" class="shape-btn shape-rec" id="shape-rec-btn" title="Record what plays into this lane (accumulative)">● Rec</button>') +
         // ⚙ Wheel sits at the BOTTOM of the column so it's adjacent to the
         // params panel it toggles (which wraps full-width just below the row).
         '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ Wheel ▾</button>' +
@@ -1445,8 +1544,18 @@
           if (cfg.timingMode === 'snap') { const div = Math.max(1, cfg.snapDiv | 0); frac = (Math.round(frac * div) / div) % 1; }
           cfg.nodes[drag.idx].angleFrac = ((frac % 1) + 1) % 1;
           _shapeDraw();
+          // Live readout: which bar division / beat the node now sits on (and
+          // whether it's locked to the grid). Shown only while actively dragging.
+          const ro = document.getElementById('shape-drag-readout');
+          if (ro) {
+            ro.textContent = _shapeNodePosLabel(cfg, cfg.nodes[drag.idx].angleFrac);
+            ro.classList.toggle('locked', cfg.timingMode === 'snap');
+            ro.hidden = false;
+          }
         });
         const endDrag = (e) => {
+          const _ro = document.getElementById('shape-drag-readout');
+          if (_ro) _ro.hidden = true;
           if (drag.idx < 0) return;
           const cfg = _shapeCfg();
           if (!drag.moved && cfg) {
@@ -1627,7 +1736,7 @@
       _shapeMaster.canvas.height = Math.round(side * dpr);
       if (_shapeMaster.ctx) _shapeMaster.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    function _shapeDrawWheelAt(ctx, cx, cy, R, cfg, color) {
+    function _shapeDrawWheelAt(ctx, cx, cy, R, cfg, color, noFlash) {
       const rotFrac = (cfg.rotationDeg || 0) / 360;
       const pts = cfg.nodes.map(nd => Object.assign({ nd }, _shapeNodeXY(cx, cy, R, nd.angleFrac, rotFrac)));
       ctx.strokeStyle = 'rgba(120,120,160,0.10)'; ctx.lineWidth = 1;
@@ -1649,12 +1758,13 @@
         ctx.strokeStyle = _shapeRgba(color, 0.45); ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.stroke();
       });
       ctx.lineCap = 'butt';
-      const tnow = performance.now();
       pts.forEach(p => {
-        const flash = p.nd._flash ? Math.max(0, 1 - (tnow - p.nd._flash) / 180) : 0;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 6 + flash * 5, 0, 2 * Math.PI);
+        // No white grow-and-shrink trigger flash (see _shapeDrawCore): nodes
+        // always draw at their final size / colour so every Shape view just shows
+        // the wheel instead of animating in from leftover _flash timestamps.
+        ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI);
         if (p.nd.muted) { ctx.fillStyle = 'rgba(40,40,60,0.85)'; ctx.fill(); ctx.strokeStyle = 'rgba(120,120,150,0.5)'; ctx.lineWidth = 1; ctx.stroke(); }
-        else { ctx.fillStyle = flash > 0 ? '#ffffff' : color; ctx.fill(); }
+        else { ctx.fillStyle = color; ctx.fill(); }
       });
     }
     function _shapeMasterDraw(phase) {
@@ -1876,6 +1986,8 @@
     }
     function _shapeMasterEditOpen(id) {
       const copy = _masterShapeById(id); if (!copy) return;
+      // Single #shape-pad — if a Bloom Shape layer has it open, hand it back first.
+      try { if (typeof _ambShapeEditRef !== 'undefined' && _ambShapeEditRef && typeof _ambShapeEditClose === 'function') _ambShapeEditClose(); } catch (e) {}
       if (!copy.shape || typeof copy.shape !== 'object') copy.shape = _shapeDefault();
       copy.shape = _shapeNormalize(copy.shape);
       try { _shapeMasterStop(); } catch (e) {}

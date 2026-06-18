@@ -829,6 +829,201 @@
           'B2':   'dr2/003_DR110KIK.WAV',
         },
       },
+      {
+        // Gritty rave / breakbeat kit — all 12 hits from one cohesive sample
+        // folder (no cross-folder mixing needed).
+        id: 'hardcore',
+        label: 'Hardcore',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/hardcore/',
+        urls: {
+          'C2':   '004_hckick1.wav',
+          'C#2':  '001_hchit1.wav',
+          'D2':   '010_hcsnare1.wav',
+          'D#2':  '011_hcsnare2.wav',
+          'E2':   '000_hcclosedhh.wav',
+          'F2':   '006_hcopenhh.wav',
+          'F#2':  '005_hckick2.wav',
+          'G2':   '003_hchit2.wav',
+          'G#2':  '007_hcperc1.wav',
+          'A2':   '002_hccrash.wav',
+          'A#2':  '009_hcride.wav',
+          'B2':   '008_hcperc2.wav',
+        },
+      },
+      {
+        // Classic house drum machine — only 8 native sounds, so a few roles
+        // share a sample (cowbell↔rim, fx↔crash) to fill the chromatic row.
+        id: 'house',
+        label: 'House',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/house/',
+        urls: {
+          'C2':   '000_BD.wav',
+          'C#2':  '001_CB.wav',
+          'D2':   '007_SN.wav',
+          'D#2':  '005_P1.wav',
+          'E2':   '003_HH.wav',
+          'F2':   '004_OH.wav',
+          'F#2':  '006_P2.wav',
+          'G2':   '002_FX.wav',
+          'G#2':  '001_CB.wav',
+          'A2':   '002_FX.wav',
+          'A#2':  '005_P1.wav',
+          'B2':   '007_SN.wav',
+        },
+      },
+      {
+        // Indian tabla — tuned hand-percussion; "kick" rows map to the deep bass
+        // strokes, "hats/perc" rows to the higher flicks and hits.
+        id: 'tabla',
+        label: 'Tabla',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/tabla/',
+        urls: {
+          'C2':   '006_d_sharp_hit.wav',
+          'C#2':  '003_dead_hit1.wav',
+          'D2':   '009_hi_hit1.wav',
+          'D#2':  '004_dead_hit2.wav',
+          'E2':   '007_hi_flick1.wav',
+          'F2':   '008_hi_flick2.wav',
+          'F#2':  '000_bass_flick1.wav',
+          'G2':   '001_bass_flick2.wav',
+          'G#2':  '002_bass_lick1.wav',
+          'A2':   '011_hi_hit2.wav',
+          'A#2':  '012_hi_hit3.wav',
+          'B2':   '013_hi_hit4.wav',
+        },
+      },
+      {
+        // Japanese taiko / shime percussion ("east" folder). 9 native samples;
+        // a few roles share a hit to complete the row.
+        id: 'taiko',
+        label: 'Taiko',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/east/',
+        urls: {
+          'C2':   '006_taiko_1.wav',
+          'C#2':  '000_nipon_wood_block.wav',
+          'D2':   '007_taiko_2.wav',
+          'D#2':  '001_ohkawa_mute.wav',
+          'E2':   '003_shime_hi.wav',
+          'F2':   '005_shime_mute.wav',
+          'F#2':  '008_taiko_3.wav',
+          'G2':   '002_ohkawa_open.wav',
+          'G#2':  '000_nipon_wood_block.wav',
+          'A2':   '004_shime_hi_2.wav',
+          'A#2':  '006_taiko_1.wav',
+          'B2':   '002_ohkawa_open.wav',
+        },
+      },
+      {
+        // Acoustic Gretsch kit (brushes + sticks) — 24 native one-shots, so every
+        // role maps to a distinct real drum.
+        id: 'gretsch',
+        label: 'Gretsch (acoustic)',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/gretsch/',
+        urls: {
+          'C2':   '013_kick.wav',
+          'C#2':  '021_snareghost.wav',
+          'D2':   '020_snare.wav',
+          'D#2':  '022_snarehard.wav',
+          'E2':   '004_closedhat.wav',
+          'F2':   '017_openhat.wav',
+          'F#2':  '015_lotom.wav',
+          'G2':   '012_hitom.wav',
+          'G#2':  '006_cowbell.wav',
+          'A2':   '019_ridecymbal.wav',
+          'A#2':  '000_brushhitom.wav',
+          'B2':   '018_ridebell.wav',
+        },
+      },
+      {
+        // DBX12 breakbeat kit — full 13-sample machine, one sound per role.
+        id: 'dbx',
+        label: 'DBX (break)',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/db/',
+        urls: {
+          'C2':   'dbs12kick1.wav',
+          'C#2':  'dbs12hit1.wav',
+          'D2':   'dbs12snare1.wav',
+          'D#2':  'dbs12snare2.wav',
+          'E2':   'dbs12closedhh.wav',
+          'F2':   'dbs12openhh.wav',
+          'F#2':  'dbs12kick2.wav',
+          'G2':   'dbs12hit2.wav',
+          'G#2':  'dbs12perc1.wav',
+          'A2':   'dbs12crash.wav',
+          'A#2':  'dbs12ride.wav',
+          'B2':   'dbs12perc2.wav',
+        },
+      },
+      {
+        // Sequential Circuits Tom — 8 native sounds (literal spaces → %20, see
+        // DrumTraks note); a few roles share a hit to complete the row.
+        id: 'sequential',
+        label: 'Sequential Tom',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/sequential/',
+        urls: {
+          'C2':   '003_Tom Kick.wav',
+          'C#2':  '000_Tom Clap.wav',
+          'D2':   '005_Tom Snare.wav',
+          'D#2':  '000_Tom Clap.wav',
+          'E2':   '002_Tom Hat Closed.wav',
+          'F2':   '004_Tom Openhat.wav',
+          'F#2':  '006_Tom Tom1.wav',
+          'G2':   '007_Tom Tom2.wav',
+          'G#2':  '001_Tom Crash.wav',
+          'A2':   '001_Tom Crash.wav',
+          'A#2':  '006_Tom Tom1.wav',
+          'B2':   '005_Tom Snare.wav',
+        },
+      },
+      {
+        // Commodore 64 SID — lo-fi 8-bit chiptune percussion.
+        id: 'sid',
+        label: 'SID (8-bit)',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/sid/',
+        urls: {
+          'C2':   '002_basd.wav',
+          'C#2':  '003_blipp01.wav',
+          'D2':   '010_sidsnares.wav',
+          'D#2':  '004_blipp02.wav',
+          'E2':   '007_hihat01.wav',
+          'F2':   '008_hihat02.wav',
+          'F#2':  '011_tdrum.wav',
+          'G2':   '001_bas.wav',
+          'G#2':  '005_high.wav',
+          'A2':   '006_high2.wav',
+          'A#2':  '000_bas2.wav',
+          'B2':   '009_lofidrums.wav',
+        },
+      },
+      {
+        // Peri — gritty electro kit with metallic FX percussion.
+        id: 'peri',
+        label: 'Peri (electro)',
+        drumKit: true,
+        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/peri/',
+        urls: {
+          'C2':   '000_bd.wav',
+          'C#2':  '007_xbigclang.wav',
+          'D2':   '005_sd.wav',
+          'D#2':  '004_ksh.wav',
+          'E2':   '002_hh2.wav',
+          'F2':   '003_hhx.wav',
+          'F#2':  '008_xbong.wav',
+          'G2':   '009_xbusket.wav',
+          'G#2':  '010_xchinga.wav',
+          'A2':   '014_xgillclank.wav',
+          'A#2':  '006_sd-rev.wav',
+          'B2':   '011_xfx1.wav',
+        },
+      },
     ];
     function loadRemoteInstruments() {
       REMOTE_INSTRUMENTS.forEach(inst => {
@@ -1822,8 +2017,53 @@
       // synth body; we set the per-press env / detune below and route
       // the disconnect through safeReleaseSynth on release so it
       // returns to the pool instead of being disposed.
+      // ---- Design voice chain (filter / mod / unison / sub / ring) ----------
+      // Mirrors playNote so a sustained GRID/WRAP press of a Design patch
+      // renders the SAME voice as its sequenced playback (it used to play only
+      // the bare base oscillator, so lane and grid diverged in level/timbre).
+      // Gated on _designVoice so plain cells keep their zero-cost fast path.
+      // Held mode: filter-env / mod LFOs get a long dur so they reach and hold
+      // their sustain; the amp envelope's release fades the whole voice on key
+      // up. Every node is pushed onto sustainEffectNodes → disposed on release.
+      const _sdOscD = (typeof _sdOscDesign === 'function') ? _sdOscDesign(params) : null;
+      const _sdFreshVoice = (typeof _sdOscNeedsFreshVoice === 'function') && _sdOscNeedsFreshVoice(_sdOscD, type);
+      const _designVoice = !!((params.filter && params.filter.on)
+        || (params.filterEnv && params.filterEnv.on)
+        || (params.modMatrix && params.modMatrix.length)
+        || _sdFreshVoice);
+      const _sdHeldDur = 3600; // ~"infinite" hold for held-press envelopes
+      // Single start time for the WHOLE design voice (synth + filter env + sub +
+      // ring + mod rig). A freshly-built design voice triggered at the raw
+      // AudioContext currentTime can land in the past once the extra nodes are
+      // built, which makes the amp envelope jump from 0 instantly = an onset
+      // POP; it also left the filter env (which defaults to Tone.now()) running
+      // ~one lookahead ahead of the synth. Use Tone.now() (the engine's 25 ms
+      // lookahead) so every piece is scheduled together, slightly ahead, and
+      // the graph is settled before audio starts. Plain cells keep raw-currentTime
+      // low latency below — this cushion only applies to design voices.
+      const _sdVoiceStart = (startAt != null) ? startAt
+        : (_coldStartAt != null) ? _coldStartAt
+        : ((typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0);
+      let _sdVoiceFilter = null, _sdModPanner = null, _sdModGain = null, _sdRingGain = null, _sdSubEnv = null;
+      if (_designVoice) {
+        if (params.filter && params.filter.on && typeof _sdBuildVoiceFilter === 'function') {
+          _sdVoiceFilter = _sdBuildVoiceFilter(params, { startTime: _sdVoiceStart, dur: _sdHeldDur, velocity });
+          if (_sdVoiceFilter) { _sdVoiceFilter.connect(chainHead); sustainEffectNodes.unshift(_sdVoiceFilter); chainHead = _sdVoiceFilter; }
+        }
+        if (typeof _sdNeedsModPan === 'function' && _sdNeedsModPan(params)) {
+          try { _sdModPanner = new Tone.Panner(0).connect(chainHead); sustainEffectNodes.unshift(_sdModPanner); chainHead = _sdModPanner; } catch (e) {}
+        }
+        if (typeof _sdNeedsModGain === 'function' && _sdNeedsModGain(params)) {
+          try { _sdModGain = new Tone.Gain(1).connect(chainHead); sustainEffectNodes.unshift(_sdModGain); chainHead = _sdModGain; } catch (e) {}
+        }
+        if (_sdOscD && _sdOscD.ring > 0) {
+          try { _sdRingGain = new Tone.Gain(1).connect(chainHead); sustainEffectNodes.unshift(_sdRingGain); chainHead = _sdRingGain; } catch (e) {}
+        }
+      }
       let pooledPresetKey = null;
-      if (VOICE_POOL_ENABLED && _isPooledPreset(type)) {
+      // Skip the pool for osc-design voices (unison / sub / ring) — they need a
+      // freshly-built oscillator, exactly as playNote gates its pool.
+      if (VOICE_POOL_ENABLED && !_sdFreshVoice && _isPooledPreset(type)) {
         const s = _buildPooledSynthForPreset(type, env);
         if (s) {
           try {
@@ -1844,7 +2084,8 @@
         // and fall through to the trigger / handle plumbing below.
       } else if (type === 'fm') {
         synth = new Tone.FMSynth({
-          harmonicity: 3, modulationIndex: 10,
+          harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 3,
+          modulationIndex: (_sdOscD && _sdOscD.modIndex != null) ? _sdOscD.modIndex : 10,
           oscillator: { type: 'sine' }, envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
@@ -1857,13 +2098,13 @@
         synth = new Tone.DuoSynth({
           voice0: { oscillator: { type: 'sine'    }, envelope: env },
           voice1: { oscillator: { type: 'sawtooth'}, envelope: env },
-          harmonicity: 1.5,
+          harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 1.5,
           vibratoAmount: 0.3,
           vibratoRate: 5,
         }).connect(chainHead);
       } else if (type === 'am') {
         synth = new Tone.AMSynth({
-          harmonicity: 2,
+          harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 2,
           oscillator: { type: 'sine' }, envelope: env,
           modulation: { type: 'square' },
           modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 },
@@ -1970,9 +2211,13 @@
           envelope: env,
         }).connect(chainHead);
       } else {
+        // Design "unison": basic shapes become fat oscillators (count detuned
+        // copies, `spread` cents) when the patch asks for >1 voice — mirrors
+        // playNote so a unison patch sounds the same on press and playback.
         let oscOpts;
         if      (type === 'pulse') oscOpts = { type: 'pulse', width: 0.4 };
-        else if (type === 'fat')   oscOpts = { type: 'fatsawtooth', count: 3, spread: 30 };
+        else if (type === 'fat')   oscOpts = { type: 'fatsawtooth', count: (_sdOscD && _sdOscD.unison > 1 ? _sdOscD.unison : 3), spread: (_sdOscD ? _sdOscD.spread : 30) };
+        else if (_sdOscD && _sdOscD.unison > 1) oscOpts = { type: 'fat' + type, count: _sdOscD.unison, spread: _sdOscD.spread };
         else                       oscOpts = { type };
         synth = new Tone.Synth({ oscillator: oscOpts, envelope: env }).connect(chainHead);
       }
@@ -1984,7 +2229,10 @@
       // playback but pure overhead for a touch-driven sustained press.
       // NoiseSynth's signature is (time, velocity) — no freq — so it
       // gets its own trigger call.
-      let _triggerAt = startAt != null ? startAt : _coldStartAt;
+      // Design voices share the lookahead-cushioned _sdVoiceStart (see above) so
+      // the synth, filter env, sub and ring all fire together and never in the
+      // past; plain cells keep the raw low-latency currentTime.
+      let _triggerAt = _designVoice ? _sdVoiceStart : (startAt != null ? startAt : _coldStartAt);
       if (_triggerAt == null) {
         const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext)
           ? Tone.context.rawContext : null;
@@ -1996,11 +2244,45 @@
         else         synth.triggerAttack(freq, _triggerAt, velocity);
       } catch (e) {}
 
+      // Design mod-matrix / ring-mod / sub-oscillator — built once the synth
+      // exists, mirroring playNote. Held: LFOs run continuously, the sub
+      // follows the amp envelope; all nodes ride sustainEffectNodes so the
+      // release handler's disposeSustainFxChain() tears them down.
+      if (_designVoice) {
+        if (typeof _sdBuildModRig === 'function' && params.modMatrix && params.modMatrix.length) {
+          try {
+            const _modNodes = _sdBuildModRig(params,
+              { synth, filter: _sdVoiceFilter, panner: _sdModPanner, gain: _sdModGain },
+              { startTime: _sdVoiceStart, dur: _sdHeldDur, velocity });
+            if (_modNodes && _modNodes.length) _modNodes.forEach(n => sustainEffectNodes.unshift(n));
+          } catch (e) {}
+        }
+        if (_sdRingGain && _sdOscD && _sdOscD.ring > 0) {
+          try {
+            const ringOsc = new Tone.Oscillator({ frequency: freq * (_sdOscD.ringRatio || 1), type: 'sine' });
+            const ringDepth = new Tone.Gain(_sdOscD.ring / 100);
+            ringOsc.connect(ringDepth); ringDepth.connect(_sdRingGain.gain);
+            ringOsc.start(_triggerAt); sustainEffectNodes.unshift(ringOsc, ringDepth);
+          } catch (e) {}
+        }
+        if (_sdOscD && _sdOscD.sub > 0) {
+          try {
+            const subOsc = new Tone.Oscillator({ frequency: freq / 2, type: _sdOscD.subShape || 'sine' });
+            _sdSubEnv = new Tone.AmplitudeEnvelope(env);
+            const subGain = new Tone.Gain((_sdOscD.sub / 100) * velocity);
+            subOsc.connect(_sdSubEnv); _sdSubEnv.connect(subGain); subGain.connect(chainHead);
+            subOsc.start(_triggerAt); _sdSubEnv.triggerAttack(_triggerAt, velocity);
+            sustainEffectNodes.unshift(subOsc, _sdSubEnv, subGain);
+          } catch (e) {}
+        }
+      }
+
       let released = false;
       return {
         release: () => {
           if (released) return; released = true;
           try { synth.triggerRelease(); } catch (e) {}
+          if (_sdSubEnv) { try { _sdSubEnv.triggerRelease(Tone.now()); } catch (e) {} }
           // Pooled voices return to the pool after the release tail so
           // the next press can reacquire them instantly. Non-pooled
           // presets keep the original dispose path. Per-note FX nodes

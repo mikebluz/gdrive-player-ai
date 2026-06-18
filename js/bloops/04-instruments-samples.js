@@ -2119,8 +2119,19 @@
       const env = { attack: atk, decay: dec, sustain: sus, release: rel };
 
       const targetDur = durationMs ? durationMs / 1000 : Math.max(atk + dec, 0.1);
+      // Gate (time held before release is triggered). A sequenced/recorded
+      // step must sound the SAME as holding that note on the grid for the
+      // step's duration: attack → decay → HOLD at the sustain level for the
+      // whole step → release. So the gate is the full step length and the
+      // release tail extends past it (overlapping the next step, exactly as a
+      // sustained instrument does). The old `targetDur - rel` subtracted the
+      // entire release from the step, which — with the default 1400 ms
+      // release — collapsed the gate to the 0.02 s floor, so the note skipped
+      // its sustain plateau and decayed immediately. That made lane playback
+      // sound quieter and "enveloped" versus a grid press. Peak safety for the
+      // resulting overlap now lives in the master soft-clip ceiling, not here.
       const preReleaseDur = durationMs
-        ? Math.max(0.02, targetDur - rel)
+        ? Math.max(0.02, targetDur)
         : atk + dec;
       // Tightened grace from 0.4s → 0.1s. The release envelope is
       // already done at preReleaseDur+rel; keeping disposed-but-silent
@@ -2308,9 +2319,8 @@
                || globalSendTap);
           // Pad voices loop to fill the step (native looping voice, bounded by
           // scheduleStop). Hold at full level for the WHOLE step (targetDur),
-          // then release — unlike the synth path's preReleaseDur (= targetDur −
-          // release), which with a pad's long release would collapse the hold and
-          // make the pad fade out almost immediately (ending before the step).
+          // then release — matching the synth/sample path's preReleaseDur
+          // (now also = targetDur), so the note sustains for its full slot.
           // Skipped if the step carries a slice window.
           if ((sampleSamplers.get(type.slice(7)) || {}).padLoop
               && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)) {
@@ -2328,9 +2338,9 @@
               // the plain whole-buffer start — byte-identical to the prior path.
               if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
               else v.source.start(triggerAt);
-              // Hold for preReleaseDur (= targetDur − release, ≥ 0.02), then
-              // release over `rel` — same envelope timing the synth path uses,
-              // so a sample voice and a synth voice sit identically in a slot.
+              // Hold for preReleaseDur (= the full step, ≥ 0.02), then release
+              // over `rel` — same envelope timing the synth path uses, so a
+              // sample voice and a synth voice sit identically in a slot.
               v.ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
               try { v.source.stop(triggerAt + preReleaseDur + rel + 0.1); } catch (e) {}
             } catch (e) {

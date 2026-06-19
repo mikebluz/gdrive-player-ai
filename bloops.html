@@ -99,6 +99,19 @@
     <!-- Listen (Player) tab — hidden for now but kept in the DOM (tab-switching
          JS and the Player view stay wired). To bring it back, remove `hidden`. -->
     <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in" hidden>Listen →</button>
+    <button type="button" class="midi-launch-btn" id="midi-launch-btn" title="MIDI settings — connect a controller (input) and external gear (output)" aria-label="MIDI settings">🎹 MIDI</button>
+  </div>
+
+  <!-- MIDI control panel — device selection (in/out), enable, channel, thru.
+       Opened from the 🎹 MIDI button; built/wired by js/bloops/22-midi.js. -->
+  <div class="midi-overlay" id="midi-overlay" hidden>
+    <div class="midi-modal" role="dialog" aria-label="MIDI settings">
+      <div class="midi-modal-head">
+        <span class="midi-modal-title">🎹 MIDI</span>
+        <button type="button" class="midi-close-btn" id="midi-close-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="midi-panel" id="midi-panel"></div>
+    </div>
   </div>
 
   <div class="menubar">
@@ -364,6 +377,23 @@
         <button type="button" id="tone-banner-half" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to pick a tone applied to all notes"></button>
         <button type="button" id="fx-banner" class="banner-half" style="display:none" aria-hidden="true" tabindex="-1" title="Click to adjust global reverb / delay / distortion">FX</button>
       </div>
+      <!-- Wrap controls — Gen / Wrap row + wrap bank. Sit ABOVE the cell grid,
+           directly below the mode / Sounds banner row. Wrap only makes sense in
+           Grid mode, so these hide in Graph / Game / Prog via body.fluid-grid /
+           body.game-mode / body.prog-mode rules. Same chord-btn / wrap-edit-btn
+           IDs so every JS handler (wrap toggle, wrap-edit menu, kwr state
+           machine) binds without any rewires. -->
+      <div class="wrap-bank" id="wrap-bank" hidden>
+        <span class="wrap-bank-label" id="wrap-bank-label" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false" title="Wraps menu: Cycle (off → right → left → off), Shuffle, Clear">Wraps ▾</span>
+        <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
+      </div>
+      <div class="grid-wrap-row" id="grid-wrap-row">
+        <div class="wrap-segment">
+          <button id="euclid-btn" type="button" title="Gen: Euclidean rhythm generator — spread K hits as evenly as possible across N steps for instant polyrhythms and grooves">Gen</button>
+          <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
+          <button id="wrap-edit-btn" type="button" hidden aria-label="Edit" title="Edit current wrap — invert, switch chord/subsequence, edit fields">✎</button>
+        </div>
+      </div>
       <!-- Grid + its right-side control rail. The rail matches the grid's
            height (align-items: stretch) and holds the octave-nudge and
            pitch-shift buttons. Hidden alongside the grid in non-Grid modes. -->
@@ -377,25 +407,6 @@
           <button type="button" id="note-shift-mode-btn" class="rail-btn note-shift-mode-btn" aria-label="Note-shift mode" title="Shift step: °=1 scale degree (default, follows the active key), ½=1 semitone (chromatic, the old behavior). Tap to switch.">°</button>
           <button type="button" id="note-shift-down" class="rail-btn note-shift-btn" title="Shift the grid — when Key mode is active, moves by 1 scale degree by default (− shifts UP a degree). Tap the °/½ pill to switch to per-semitone shift (the old behavior).">−</button>
         </div>
-      </div>
-      <!-- Wrap controls — live directly under the cell grid since Wrap
-           only makes sense in Grid mode. Hidden in Graph / Game / Prog
-           via body.fluid-grid / body.game-mode / body.prog-mode rules.
-           Keeps the same chord-btn + wrap-edit-btn IDs so every JS
-           handler (wrap toggle, wrap-edit menu, kwr state machine)
-           binds without any rewires. -->
-      <div class="grid-wrap-row" id="grid-wrap-row">
-        <div class="wrap-segment">
-          <button id="euclid-btn" type="button" title="Gen: Euclidean rhythm generator — spread K hits as evenly as possible across N steps for instant polyrhythms and grooves">Gen</button>
-          <button id="chord-btn" type="button" title="Wrap: collect notes into a single step (toggle on, click notes, then off). In Spell or Stack note mode the result is a chord; in Run note mode it's a subsequence.">Wrap</button>
-          <button id="wrap-edit-btn" type="button" hidden aria-label="Edit" title="Edit current wrap — invert, switch chord/subsequence, edit fields">✎</button>
-        </div>
-      </div>
-      <!-- Wrap bank — moved here from below the Keep/Rest row so it
-           hides in non-Grid modes alongside the Wrap button itself. -->
-      <div class="wrap-bank" id="wrap-bank" hidden>
-        <span class="wrap-bank-label" id="wrap-bank-label" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false" title="Wraps menu: Cycle (off → right → left → off), Shuffle, Clear">Wraps ▾</span>
-        <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
       </div>
       <!-- XY pad — replaces the cell grid when Grid Off (fluid mode)
            is on. X and Y axes each map to a configurable param
@@ -931,6 +942,7 @@
   <script src="js/bloops/19-seq-pad.js?v=DEPLOYVER"></script>
   <script src="js/bloops/20-sound-design.js?v=DEPLOYVER"></script>
   <script src="js/bloops/21-shape.js?v=DEPLOYVER"></script>
+  <script src="js/bloops/22-midi.js?v=DEPLOYVER"></script>
 
   <!-- ===================== Serialbox view ============================== -->
   <!-- Hidden by default; the Serialbox tab in the top bar reveals it via

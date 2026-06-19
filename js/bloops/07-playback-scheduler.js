@@ -106,6 +106,8 @@
       sequenceTimer = null;
       _schedStreams = [];
       _schedStopping = false;
+      // MIDI output: Stop + clock halt + all-notes-off on the output.
+      try { if (typeof midiTransportStop === 'function') midiTransportStop(); } catch (e) {}
       // Wipe any not-yet-fired dispatches before clearing streams —
       // otherwise the worklet might still fire a 'fire' message for a
       // step from the just-ended playback session, and the dispatchFn
@@ -739,10 +741,14 @@
                 const _voiceAt = (_strumSec === 0)
                   ? at
                   : at + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
-                playNote(n.freq, paramsWithBend(_withVel(_withBypass(_withSlice(chordVoiceParams(n.params || n.sound || 'sine', size, step)))), step.bend), dms, _voiceAt, undefined, undefined, laneIdx);
+                const _cp = paramsWithBend(_withVel(_withBypass(_withSlice(chordVoiceParams(n.params || n.sound || 'sine', size, step)))), step.bend);
+                playNote(n.freq, _cp, dms, _voiceAt, undefined, undefined, laneIdx);
+                try { if (typeof midiEmitNote === 'function') midiEmitNote(n.freq, _cp, dms, _voiceAt, laneIdx); } catch (e) {}
               }
             } else {
-              playNote(step.freq, paramsWithBend(_withVel(_withBypass(_withSlice(step.params || step.sound || 'sine'))), step.bend), dms, at, undefined, undefined, laneIdx);
+              const _sp = paramsWithBend(_withVel(_withBypass(_withSlice(step.params || step.sound || 'sine'))), step.bend);
+              playNote(step.freq, _sp, dms, at, undefined, undefined, laneIdx);
+              try { if (typeof midiEmitNote === 'function') midiEmitNote(step.freq, _sp, dms, at, laneIdx); } catch (e) {}
             }
           };
           // Ratchet: split the step into N evenly-spaced sub-hits across its

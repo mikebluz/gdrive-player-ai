@@ -1109,8 +1109,10 @@
       return true;
     }
 
-    // Push a brand-new saved sequence under `name` (falling back to the next
-    // auto-name) and clear the workspace — the entry now lives in the bank.
+    // Push a brand-new saved sequence under `name`, then KEEP it loaded in the
+    // workspace (select it as the active saved entry so a later Save offers
+    // Overwrite). Previously this cleared the workspace, which wiped the active
+    // lane out from under the user right after saving.
     function saveAsNewSeq(name) {
       name = (name && name.trim()) || seqName(savedSequences.length);
       const _entry = { name, ...currentSequenceSnapshot() };
@@ -1119,12 +1121,9 @@
       // Reflect into master Shapes as an independent copy (see saveOverwrite…).
       try { if (typeof _shapeReflectSavedSeq === 'function') _shapeReflectSavedSeq(_entry); } catch (e) {}
 
-      stopSequence();
-      sequence = [];
-      pendingChord = [];
-      activeSeqIndex = null;
-      insertionPoint = null;
-      document.getElementById('save-btn').disabled = true;
+      // Leave the sequence loaded in full — just mark the new entry active so the
+      // bank highlights it and the next Save can overwrite it.
+      activeSeqIndex = savedSequences.length - 1;
       _resetSaveSelectionAndMulti();
 
       renderSequence();

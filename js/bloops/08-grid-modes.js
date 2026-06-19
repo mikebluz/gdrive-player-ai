@@ -1952,6 +1952,8 @@
       const playable = lanes.filter(l => (l.steps || []).length > 0 && !l.ambientMode);
       if (playable.length === 0) { stopSequence(); return; }
       document.getElementById('play-btn').textContent = '⏹';
+      // MIDI output: Start + clock so external gear follows the transport.
+      try { if (typeof midiTransportStart === 'function') midiTransportStart(); } catch (e) {}
       // Build the streams array FIRST so any synchronous setup work
       // (per-lane Tone.Sampler creation, lane-bus node creation,
       // collect() walks of the sources for prefetch) doesn't push

@@ -416,6 +416,25 @@
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
     }
 
+    // Reset the live wrap arming to defaults — used when starting a fresh
+    // context (e.g. a newly added lane). Clears the armed wrap and any half-
+    // built chord, drops back to the default Chords bank view, and turns
+    // cycling off. Leaves the saved User bank (savedWraps) intact.
+    function resetWrapArming() {
+      wrapTemplate = null;
+      activeWrapBankId = null;
+      wrapGenActiveKey = null;
+      wrapBank = 'standard';
+      pendingChord = [];
+      chordMode = false;
+      wrapCycleMode = false;
+      _wrapCyclePendingAdvance = false;
+      if (typeof clearWrapPendingHighlights === 'function') { try { clearWrapPendingHighlights(); } catch (e) {} }
+      if (typeof refreshWrapVisuals === 'function') { try { refreshWrapVisuals(); } catch (e) {} }
+      renderWrapBank();
+      updateWrapCycleLabel();
+    }
+
     function pushWrapToBank(step) {
       if (!step) return;
       const cloned = _stripWrapTone(cloneStep(step));

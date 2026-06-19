@@ -2836,24 +2836,81 @@
         });
         return btn;
       };
-      getAllSoundOptions().forEach(opt => waveRow.appendChild(addToneButton(opt)));
+      // Grouped, collapsible tone picker: one <details> per tone family,
+      // collapsed by default so the editor opens compact — the user expands the
+      // family they want. The family holding the current voice auto-opens. User
+      // (imported/captured) samples carry a × to delete them.
+      const _isUserSample = (val) => {
+        if (typeof val !== 'string' || !val.startsWith('sample:')) return false;
+        const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(val.slice(7)) : null;
+        return !!(info && info.imported);
+      };
+      const renderTonePicker = () => {
+        waveRow.innerHTML = '';
+        const opts = getAllSoundOptions();
+        const famOf = (v) => (typeof toneFamilyFor === 'function') ? toneFamilyFor(v) : 'other';
+        const byFam = new Map();
+        opts.forEach(o => { const f = famOf(o.value); if (!byFam.has(f)) byFam.set(f, []); byFam.get(f).push(o); });
+        const order = (typeof TONE_FAMILY_ORDER !== 'undefined') ? TONE_FAMILY_ORDER.slice() : [];
+        byFam.forEach((_, f) => { if (order.indexOf(f) < 0) order.push(f); });
+        order.forEach(fam => {
+          const items = byFam.get(fam);
+          if (!items || !items.length) return;
+          const det = document.createElement('details');
+          det.className = 'sm-tone-group';
+          const sum = document.createElement('summary');
+          const famLabel = (typeof TONE_FAMILY_LABELS !== 'undefined' && TONE_FAMILY_LABELS[fam]) ? TONE_FAMILY_LABELS[fam] : fam;
+          sum.textContent = famLabel + ' (' + items.length + ')';
+          det.appendChild(sum);
+          const grid = document.createElement('div');
+          grid.className = 'sm-tone-grid';
+          let hasActive = false;
+          items.forEach(o => {
+            if (o.value === p.type) hasActive = true;
+            const btn = addToneButton(o);
+            if (_isUserSample(o.value)) {
+              const wrap = document.createElement('span');
+              wrap.className = 'sm-wave-wrap';
+              wrap.appendChild(btn);
+              const x = document.createElement('button');
+              x.type = 'button';
+              x.className = 'sm-wave-del';
+              x.textContent = '×';
+              x.title = 'Delete sample “' + o.label + '”';
+              x.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
+                try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
+                if (p.type === o.value) { p.type = 'sine'; _touched.add('type'); broadcastAll('type', 'sine'); }
+                renderTonePicker();
+              });
+              wrap.appendChild(x);
+              grid.appendChild(wrap);
+            } else {
+              grid.appendChild(btn);
+            }
+          });
+          if (hasActive) det.open = true;
+          det.appendChild(grid);
+          waveRow.appendChild(det);
+        });
+      };
+      renderTonePicker();
 
-      // Import button — lets the user pick an audio file to use as a tone.
+      // Import / Edit row — sits below the grouped picker, always visible.
+      const toneActions = document.createElement('div');
+      toneActions.className = 'sm-tone-actions';
       const importBtn = document.createElement('button');
       importBtn.className = 'sm-wave';
       importBtn.textContent = '+ Import…';
       importBtn.title = 'Upload an audio file to use as a tone (saved across reloads)';
       importBtn.addEventListener('click', () => {
-        triggerImportSample((id, label) => {
-          const opt = { value: 'sample:' + id, label };
-          const btn = addToneButton(opt);
-          waveRow.insertBefore(btn, importBtn);
-          btn.click(); // auto-select the freshly-imported sample
+        triggerImportSample((id) => {
+          p.type = 'sample:' + id; _touched.add('type'); broadcastAll('type', p.type);
+          renderTonePicker(); // new sample appears in its family group, auto-selected
         });
       });
-      waveRow.appendChild(importBtn);
-      // Waveform editor — only for single-buffer samples (trim / reverse →
-      // save as a new sample, then auto-select it as this voice).
+      toneActions.appendChild(importBtn);
       if (typeof isSliceableSample === 'function' && isSliceableSample(p.type)) {
         const editBtn = document.createElement('button');
         editBtn.className = 'sm-wave';
@@ -2861,14 +2918,13 @@
         editBtn.title = 'Trim / reverse this sample and save it as a new sample';
         editBtn.addEventListener('click', () => {
           showSampleEditor(p.type.slice(7), (newId) => {
-            const opt = { value: 'sample:' + newId, label: (sampleSamplers.get(newId) || {}).name || newId };
-            const btn = addToneButton(opt);
-            waveRow.insertBefore(btn, importBtn);
-            btn.click(); // select the edited sample as this voice
+            p.type = 'sample:' + newId; _touched.add('type'); broadcastAll('type', p.type);
+            renderTonePicker();
           });
         });
-        waveRow.appendChild(editBtn);
+        toneActions.appendChild(editBtn);
       }
+      waveRow.parentElement.appendChild(toneActions);
 
       // Slider bindings — parseFloat so step=0.1 sliders (Hz) keep precision;
       // integer-stepped sliders unaffected since their .value is already int.
@@ -4515,6 +4571,18 @@
       let chordPan = Number.isFinite(step.chordPan) ? step.chordPan : 0;
       let chordBendAt = Math.round(((step.bend?.atFraction ?? 1) * 100));
 
+      // Multi-select scope: when 2+ steps are selected, the step-level
+      // attributes the user changes here (Length, Step subdivision, whole-
+      // chord pitch bend) fan out to EVERY selected step on Apply — mirroring
+      // the note editor's change-only model. Per-voice chord content stays on
+      // the primary (you can't meaningfully copy one chord's voices onto a
+      // different step). Always include the edited step so the chip you opened
+      // is covered. `_touched` records which step-level fields actually moved.
+      const _selTargets = (typeof selectedStepRefs !== 'undefined' && selectedStepRefs.length > 1)
+        ? (selectedStepRefs.indexOf(step) >= 0 ? selectedStepRefs.slice() : selectedStepRefs.concat([step]))
+        : null;
+      const _touched = new Set();
+
       modal.innerHTML = `
         <div class="sm-title">Edit Chord — Step ${stepIndex + 1}</div>
         <details class="sm-fold">
@@ -4576,6 +4644,13 @@
         </div>
       `;
 
+      // In multi-select scope, retitle so it's clear Length / subdivision /
+      // bend hit every selected step (other fields stay on this chord).
+      if (_selTargets) {
+        const t = modal.querySelector('.sm-title');
+        if (t) t.textContent = 'Edit ' + _selTargets.length + ' steps — Length / size / bend apply to all';
+      }
+
       const chordSubRow = modal.querySelector('#se-chord-sub-row');
       const SUBS_C = [
         [4,    '1/1'],
@@ -4593,7 +4668,7 @@
         btn.className = 'sm-wave' + (v === chordSubdivision ? ' active' : '');
         btn.textContent = lbl;
         btn.addEventListener('click', () => {
-          chordSubdivision = v;
+          chordSubdivision = v; _touched.add('subdivision');
           chordSubRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -4606,7 +4681,7 @@
         btn.className = 'sm-wave' + (len === chordDuration ? ' active' : '');
         btn.textContent = String(len);
         btn.addEventListener('click', () => {
-          chordDuration = len;
+          chordDuration = len; _touched.add('duration');
           chordLenRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
         });
@@ -4860,11 +4935,11 @@
       const cBendAtSlider = modal.querySelector('#se-cbend-at');
       const cBendAtValEl  = modal.querySelector('#se-cbend-at-v');
       cBendSlider.addEventListener('input', () => {
-        chordBendSemitones = parseInt(cBendSlider.value) || 0;
+        chordBendSemitones = parseInt(cBendSlider.value) || 0; _touched.add('bend');
         cBendValEl.textContent = (chordBendSemitones >= 0 ? '+' : '') + chordBendSemitones + ' st';
       });
       cBendAtSlider.addEventListener('input', () => {
-        chordBendAt = parseInt(cBendAtSlider.value) || 100;
+        chordBendAt = parseInt(cBendAtSlider.value) || 100; _touched.add('bend');
         cBendAtValEl.textContent = chordBendAt + '%';
       });
 
@@ -4891,6 +4966,9 @@
         const bendObj = (chordBendSemitones !== 0)
           ? { semitones: chordBendSemitones, atFraction: chordBendAt / 100 }
           : null;
+        if (_selTargets && _touched.size && typeof snapshotForUndo === 'function') {
+          try { snapshotForUndo('Edit step'); } catch (e) {}
+        }
         if (chordNotes.length === 0) {
           sequence.splice(stepIndex, 1);
         } else if (chordNotes.length === 1) {
@@ -4912,6 +4990,22 @@
           // the override fast path at playback when the field is absent.
           if (chordPan !== 0) next.chordPan = chordPan;
           sequence[stepIndex] = next;
+        }
+        // Fan the changed STEP-LEVEL fields out to every other selected step
+        // (change-only). The primary was already fully written above; the
+        // others keep their own content and just adopt the moved length /
+        // subdivision / bend.
+        if (_selTargets) {
+          _selTargets.forEach(st => {
+            if (!st || st === step) return;
+            if (_touched.has('duration'))    st.duration = chordDuration;
+            if (_touched.has('subdivision') && !st.isSub) st.subdivision = chordSubdivision;
+            if (_touched.has('bend')) {
+              if (bendObj) st.bend = { semitones: bendObj.semitones, atFraction: bendObj.atFraction };
+              else delete st.bend;
+            }
+          });
+          if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
         }
         renderSequence();
         overlay.remove();

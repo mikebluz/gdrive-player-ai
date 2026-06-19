@@ -1007,6 +1007,40 @@
       });
       return out;
     }
+    // All-off FX sends — a freshly *added* lane starts dry, ignoring whatever
+    // FX the active lane / globalFx currently has dialed in (so a new lane
+    // shares no effects state with its neighbors).
+    function _zeroLaneSends() {
+      const out = {};
+      FX_NAMES.forEach(name => { out[name] = 0; });
+      return out;
+    }
+    // The canonical "fresh grid" voice — default sawtooth tones, chromatic
+    // scale, C root, one octave at A=440, default palette. A newly *added*
+    // lane gets this instead of inheriting the active lane's sounds / scale /
+    // root, so each new lane is an independent blank slate.
+    function _defaultVoice() {
+      const oc = 1;                       // default octave count
+      const cellCount = 12 * oc;
+      const mk = (typeof _defaultCellParams === 'function')
+        ? _defaultCellParams
+        : () => ({ type: 'sawtooth' });
+      const params = [];
+      for (let i = 0; i < cellCount; i++) params.push(mk());
+      const pal = (typeof DEFAULT_PALETTE !== 'undefined') ? [...DEFAULT_PALETTE] : [...palette];
+      return {
+        cellSounds: params.map(p => p.type || 'sawtooth'),
+        cellParams: params,
+        scale: 'chromatic',
+        palette: pal,
+        chipPalette: [...pal],
+        rootIdx: 0,
+        baseOctave: 4,
+        octaveCount: oc,
+        masterFreqA: 440,
+        restColor: (typeof DEFAULT_REST_COLOR !== 'undefined') ? DEFAULT_REST_COLOR : restColor,
+      };
+    }
     // Pull send levels out of a persisted lane object. Handles three
     // generations of state: new `sends`, mid-refactor `fx`, and
     // pre-per-lane (no field at all).
@@ -1248,7 +1282,14 @@
     }
     function _resizeLanesToGridRows() {
       const target = Math.max(1, gridRows | 0);
-      while (lanes.length < target) lanes.push(_makeLane(lanes.length));
+      while (lanes.length < target) {
+        // Grid-rows-added lanes get their OWN default voice up front (not the
+        // lazy voice:null that would inherit the active lane's tone on first
+        // activation) so each lane stays discrete — see activateLane.
+        const ln = _makeLane(lanes.length);
+        if (typeof _defaultVoice === 'function') ln.voice = _defaultVoice();
+        lanes.push(ln);
+      }
       if (lanes.length > target) {
         // Dispose audio nodes on lanes about to be trimmed so they
         // don't leak Tone.Panner / Tone.Volume / Tone.Sampler instances.
@@ -1265,12 +1306,24 @@
       if (lanes.length >= 8) return; // grid is laid out as max 8 lanes
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Add lane');
       const at = Math.min(lanes.length, (activeLaneIdx | 0) + 1);
-      lanes.splice(at, 0, _makeLane(at, []));
+      // A newly added lane is a blank slate: default sounds / scale / root
+      // (voice) and dry FX (sends), sharing nothing with the active lane.
+      // We set an explicit default voice (rather than the lazy `voice: null`,
+      // which would capture the current globals on activate) so activateLane
+      // rebuilds the grid to defaults instead of cloning the neighbor.
+      const lane = _makeLane(at, []);
+      lane.voice = _defaultVoice();
+      lane.sends = _zeroLaneSends();
+      lanes.splice(at, 0, lane);
       if (typeof gridRows !== 'undefined') gridRows = lanes.length;
       const rowsEl = document.getElementById('grid-rows-input');
       if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));
       if (typeof activateLane === 'function') activateLane(at);
       else if (typeof renderSequence === 'function') renderSequence();
+      // Wraps are global, not per-lane — clear any armed wrap and reset the
+      // bank view to default so the new lane doesn't start "holding" the
+      // previous lane's wrap.
+      if (typeof resetWrapArming === 'function') { try { resetWrapArming(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     (function initAddLaneBtn() {
@@ -1488,6 +1541,21 @@
       return count;
     }
 
+    // Set a lane's volume (0-100) and push it to the live lane bus Volume node
+    // immediately (lazily building the bus if needed), so a drag is audible
+    // without restarting playback. Mirrors the step-vol slider's poly path.
+    function _setLaneVolumeLive(laneIdx, v) {
+      const lane = lanes[laneIdx];
+      if (!lane) return;
+      lane.volume = Math.max(0, Math.min(100, v | 0));
+      try {
+        if (typeof getLaneBus === 'function') getLaneBus(laneIdx);
+        const volNorm = Math.max(0, Math.min(1, lane.volume / 100));
+        if (lane._volume && lane._volume.volume) {
+          lane._volume.volume.value = volNorm <= 0 ? -Infinity : Tone.gainToDb(volNorm);
+        }
+      } catch (e) {}
+    }
     function _showLaneMenu(laneIdx, x, y) {
       const lane = lanes[laneIdx];
       if (!lane) return;
@@ -1512,6 +1580,13 @@
           } },
         { label: lane.solo ? 'Unsolo' : 'Solo', fn: () => { lane.solo = !lane.solo; renderSequence(); persist(); try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {} } },
         { label: lane.muted ? 'Unmute' : 'Mute', fn: () => { lane.muted = !lane.muted; renderSequence(); persist(); try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {} } },
+        // Per-lane volume — drives the lane bus Volume node live (built lazily
+        // by getLaneBus) and stores lane.volume so it persists + carries into
+        // track/Bloom playback like every other lane mix setting.
+        { slider: true, label: 'Volume', min: 0, max: 100, step: 1,
+          value: Number.isFinite(lane.volume) ? lane.volume : 100,
+          valFmt: (v) => Math.round(v) + '%',
+          oninput: (v) => { _setLaneVolumeLive(laneIdx, v); persist(); } },
         'hr',
         // Save moved out of the lane menu — it saves the whole workspace (all
         // lanes), so it lives next to "+ Lane" as a half-row button.
@@ -1735,13 +1810,20 @@
       // voice expander has a row to dock above.
       if (lanes[activeLaneIdx]) lanes[activeLaneIdx].collapsed = false;
       _aliasSequenceToActiveLane();
-      // Apply the new lane's voice — first activation of a lane that
-      // never had a voice set just keeps the current globals (no
-      // disruptive grid rebuild) and seeds the lane's voice from them.
+      // Apply the new lane's voice. A lane that never had a voice set (added via
+      // the grid-rows resize, or a legacy/voice-less save) must NOT just keep
+      // the current globals — those still hold the PREVIOUS lane's (possibly
+      // just-edited) tone, so the new lane would silently adopt it, and every
+      // unvoiced lane visited afterward would inherit the same tone. That's the
+      // "changing one lane's tone changes them all" bug. Instead seed an
+      // INDEPENDENT default voice and apply it, so each lane is discrete.
       if (lanes[activeLaneIdx].voice) {
         _applyVoiceToGlobals(lanes[activeLaneIdx].voice);
       } else {
-        lanes[activeLaneIdx].voice = _captureVoiceGlobals();
+        lanes[activeLaneIdx].voice = (typeof _defaultVoice === 'function')
+          ? _defaultVoice()
+          : _captureVoiceGlobals();
+        _applyVoiceToGlobals(lanes[activeLaneIdx].voice);
       }
       // Per-lane FX sends: notify the FX panel its source-of-truth
       // changed so Mix sliders + bypass UI re-read from the new lane.

@@ -2395,6 +2395,56 @@
       border: 1px solid #20203a; border-radius: 8px; padding: 10px 12px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
     }
+    /* Two colour schemes so the layer's origin reads at a glance:
+       — Generative layers (Bed / Motif / Texture / Beat + their extra
+         instances) get a purple accent.
+       — Sent layers (Seq / Sample, created via "Send to Bloom") get a teal
+         accent + tint. */
+    .ambient-layer {
+      border-left: 3px solid rgba(159, 122, 234, 0.6);   /* generative = purple */
+    }
+    .ambient-layer[data-seq-id],
+    .ambient-layer[data-samp-id] {
+      border-left-color: rgba(45, 212, 191, 0.75);       /* sent = teal */
+      background: rgba(45, 212, 191, 0.05);
+    }
+    .ambient-layer[data-seq-id] .ambient-toggle,
+    .ambient-layer[data-samp-id] .ambient-toggle { color: #5eead4; }
+    /* Mixer — one vertical fader per layer, balancing levels in one place. */
+    .ambient-mixer {
+      border: 1px solid #20203a; border-radius: 8px;
+      padding: 8px 10px; background: rgba(255,255,255,0.02);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .ambient-mixer-head { display: flex; align-items: center; gap: 8px; }
+    .ambient-mixer-toggle {
+      background: none; border: none; color: #9f7aea; cursor: pointer;
+      font-size: 0.9rem; line-height: 1; padding: 0 2px;
+    }
+    .ambient-mixer.collapsed .ambient-mixer-strip { display: none; }
+    .ambient-mixer-strip {
+      display: flex; flex-wrap: nowrap; gap: 10px;
+      overflow-x: auto; overflow-y: hidden;
+      padding: 6px 2px 2px; align-items: flex-end;
+      -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+    }
+    .ambient-mix-ch {
+      flex: 0 0 auto; display: flex; flex-direction: column; align-items: center;
+      gap: 4px; width: 46px;
+    }
+    .ambient-mix-val {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; color: #cbd5e0;
+    }
+    .ambient-mix-slider {
+      writing-mode: vertical-lr; direction: rtl;        /* standard: low at bottom */
+      -webkit-appearance: slider-vertical;              /* WebKit fallback */
+      width: 22px; height: 104px; accent-color: #9f7aea; cursor: pointer;
+    }
+    .ambient-mix-label {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; color: #a0aec0;
+      max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-align: center;
+    }
     /* Add-layer button — Bloom starts with just Bed; this adds the rest. */
     .ambient-add-layer-row { display: flex; }
     .ambient-add-layer { width: 100%; }
@@ -3926,15 +3976,12 @@
                   inset 4px 0 0 0 #4299e1;
       cursor: default;
     }
-    /* Selected lane floats to the TOP of the lane stack. CSS `order` is purely
-       VISUAL — it does NOT change DOM order, so the `.lane-row` document-order
-       indexing in 08-grid-modes (playback cursor, chip labels) stays correct.
-       The pinned editor stays above and the step-edit controls below, so the
-       active lane keeps its bracket: editor → active lane → step controls,
-       all three lifted to the top together. */
-    .sequence-display.polymode > #lane-expander   { order: -3; }
-    .sequence-display.polymode > .lane-row.active { order: -2; }
-    .sequence-display.polymode > #step-edit-row   { order: -1; }
+    /* Lanes keep their natural document order — the selected lane does NOT
+       float to the top (that reorder-on-select read as confusing). The grid
+       editor still sits at the top (it's DOM-inserted before the first lane row
+       by _placeLaneExpander) and the step-edit controls sit directly under the
+       active lane (DOM-inserted after it by _placeStepEditRow), so everything
+       follows document order without any `order` shuffling. */
     .lane-row.muted .lane-chips,
     .lane-row.muted .lane-label { opacity: 0.35; }
     .lane-row.soloed { box-shadow: inset 0 0 0 1px rgba(246, 173, 85, 0.5); }
@@ -7695,6 +7742,29 @@
       font-family: 'Segoe UI', sans-serif;
       cursor: pointer; transition: all 0.15s;
     }
+    /* Grouped, collapsible tone picker — one <details> per family, collapsed by
+       default so the editor opens compact; the active family auto-opens. */
+    .sm-tone-group { border: 1px solid #20203a; border-radius: 8px; margin-bottom: 6px; }
+    .sm-tone-group > summary {
+      cursor: pointer; padding: 7px 10px; list-style: none;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; font-weight: 600;
+      letter-spacing: 0.03em; color: #cbd5e0;
+    }
+    .sm-tone-group > summary::-webkit-details-marker { display: none; }
+    .sm-tone-group > summary::before { content: '▸ '; color: #718096; }
+    .sm-tone-group[open] > summary::before { content: '▾ '; }
+    .sm-tone-group[open] > summary { border-bottom: 1px solid #20203a; }
+    .sm-tone-grid { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+    /* Sample button + its inline delete-× */
+    .sm-wave-wrap { display: inline-flex; align-items: center; gap: 2px; }
+    .sm-wave-del {
+      width: 18px; height: 18px; line-height: 1; padding: 0;
+      border: 1px solid rgba(252,129,129,0.4); border-radius: 50%;
+      background: rgba(252,129,129,0.12); color: #fc8181;
+      font-size: 0.8rem; cursor: pointer; flex: 0 0 auto;
+    }
+    .sm-wave-del:hover { background: rgba(252,129,129,0.28); color: #fff; }
+    .sm-tone-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     @media (hover: hover) {
       .sm-wave:hover { border-color: #4299e1; color: #4299e1; }
     }

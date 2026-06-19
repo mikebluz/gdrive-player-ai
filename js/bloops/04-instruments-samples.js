@@ -1181,6 +1181,29 @@
         // No DB or read failure — not fatal.
       }
     }
+    // Delete a USER sample (imported file / captured recording / TTS / grab):
+    // dispose its sampler, drop it from the live registry, and remove its
+    // IndexedDB blob so it's gone across reloads. Built-in GM/soundfont voices
+    // and drum kits are not user samples and aren't deletable. Cells/steps still
+    // pointing at the id fall back to a sine at playback (playNote guards an
+    // unknown sample), so no reference surgery is needed.
+    async function deleteUserSample(id) {
+      const info = sampleSamplers.get(id);
+      if (!info || !info.imported) return false;
+      try { if (info.sampler && info.sampler.dispose) info.sampler.dispose(); } catch (e) {}
+      try { if (info.urls) Object.values(info.urls).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); } catch (e) {}
+      sampleSamplers.delete(id);
+      try {
+        const db = await getImportedDB();
+        await new Promise((resolve) => {
+          const tx = db.transaction('blobs', 'readwrite');
+          tx.objectStore('blobs').delete(id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+        });
+      } catch (e) {}
+      return true;
+    }
     function makeImportedSampleId(filename) {
       const base = (filename || '')
         .replace(/\.[^.]+$/, '')
@@ -1584,9 +1607,36 @@
       const i = _activeVoices.indexOf(entry);
       if (i >= 0) _activeVoices.splice(i, 1);
     }
+    // Voices dispatched with a future start time (a whole Bloom phrase is fired
+    // synchronously, every note carrying its own future startTime) must NOT
+    // count toward the steal-cap until they actually SOUND. Registering them
+    // immediately makes the cap treat the entire scheduled phrase as
+    // concurrent and shed its earliest notes before they ever play — the
+    // ensemble "cuts out after a split second, then one voice finishes the
+    // phrase" bug (force-stacking an ensemble multiplies the voice count, so a
+    // single locked-ensemble phrase blows past VOICE_CAP at dispatch). Defer
+    // far-ahead voices to their start; near-immediate voices (live presses,
+    // the sequencer's ~100 ms lookahead) register right away as before. A stop
+    // cancels anything still pending via silenceActiveVoices.
+    const _VOICE_DEFER_MS = 150;
+    const _pendingVoices = new Set();
+    function _registerVoiceAtStart(entry, leadMs) {
+      if (Number.isFinite(leadMs) && leadMs > _VOICE_DEFER_MS) {
+        _pendingVoices.add(entry);
+        entry.registerTimer = setTimeout(() => {
+          entry.registerTimer = null;
+          _pendingVoices.delete(entry);
+          if (!entry._stolen) _registerVoice(entry);
+        }, leadMs);
+      } else {
+        _registerVoice(entry);
+      }
+    }
     function _stealVoice(entry) {
       if (!entry || entry._stolen) return;
       entry._stolen = true;
+      if (entry.registerTimer) { clearTimeout(entry.registerTimer); entry.registerTimer = null; }
+      _pendingVoices.delete(entry);
       if (entry.disposeTimer) {
         clearTimeout(entry.disposeTimer);
         entry.disposeTimer = null;
@@ -1619,6 +1669,23 @@
     // first entry is the earliest-started — usually already in its release tail)
     // with a click-free fast kill. Held/sustained user notes aren't tracked here.
     const MAX_SAMPLE_VOICES = 48;
+    // Same scheduled-ahead deferral as the synth path: a Bloom phrase fires
+    // every sample voice up front with a future start, so counting them all
+    // immediately would shed the phrase's earliest notes. Far-ahead sample
+    // voices wait here until their start; a stop drains this set too.
+    const _pendingSampleVoices = new Set();
+    function _registerSampleVoiceAtStart(v, leadMs) {
+      if (Number.isFinite(leadMs) && leadMs > _VOICE_DEFER_MS) {
+        _pendingSampleVoices.add(v);
+        v.registerTimer = setTimeout(() => {
+          v.registerTimer = null;
+          _pendingSampleVoices.delete(v);
+          if (!v._killed) _registerSampleVoice(v);
+        }, leadMs);
+      } else {
+        _registerSampleVoice(v);
+      }
+    }
     function _registerSampleVoice(v) {
       if (!v) return;
       while (_activeSampleVoices.size >= MAX_SAMPLE_VOICES) {
@@ -1635,6 +1702,8 @@
     function _killSampleVoiceFast(v) {
       if (!v || v._killed) return;
       v._killed = true;
+      if (v.registerTimer) { clearTimeout(v.registerTimer); v.registerTimer = null; }
+      _pendingSampleVoices.delete(v);
       if (v.disposeTimer) { clearTimeout(v.disposeTimer); v.disposeTimer = null; }
       const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
       try {
@@ -1653,8 +1722,17 @@
     // user stop gesture (transport stop, Bloom stop) so release tails don't
     // keep ringing after the user asked for silence.
     function silenceActiveVoices() {
+      // Drain pending (scheduled-ahead, not-yet-registered) voices too — a stop
+      // must cancel notes the Bloom phrase dispatched for the near future, or
+      // they'd register at their start time and ring on after the user stopped.
+      const pendVictims = Array.from(_pendingVoices);
+      _pendingVoices.clear();
+      pendVictims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
       const synthVictims = _activeVoices.splice(0, _activeVoices.length);
       synthVictims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
+      const pendSampVictims = Array.from(_pendingSampleVoices);
+      _pendingSampleVoices.clear();
+      pendSampVictims.forEach(v => { try { _killSampleVoiceFast(v); } catch (e) {} });
       const sampVictims = Array.from(_activeSampleVoices);
       _activeSampleVoices.clear();
       sampVictims.forEach(v => { try { _killSampleVoiceFast(v); } catch (e) {} });
@@ -2647,10 +2725,12 @@
               return;
             }
             // Track as a playback voice so a user stop can cut it immediately;
-            // skip during offline export (no real-time stop there).
-            if (!_offlineSamplerOverride) _registerSampleVoice(v);
+            // skip during offline export (no real-time stop there). Register at
+            // the voice's real start (not now) so a scheduled-ahead phrase
+            // doesn't trip the polyphony cap at dispatch time.
             const leadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
               ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
+            if (!_offlineSamplerOverride) _registerSampleVoiceAtStart(v, leadMs);
             v.disposeTimer = setTimeout(() => {
               _unregisterSampleVoice(v);
               _disposeSampleAdsrVoice(v);
@@ -2891,13 +2971,13 @@
         const pluckLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
-        const pluckEntry = { synth, effectNodes, disposeTimer: null };
+        const pluckEntry = { synth, effectNodes, disposeTimer: null, registerTimer: null };
         pluckEntry.disposeTimer = setTimeout(() => {
           _unregisterVoice(pluckEntry);
           safeDisposeSynth(synth);
           disposeEffectChain();
         }, pluckLeadMs + (targetDur + 1.5) * 1000);
-        _registerVoice(pluckEntry);
+        _registerVoiceAtStart(pluckEntry, pluckLeadMs);
         return;
       } else if (typeof type === 'string' && type.startsWith('noise')) {
         // NoiseSynth — like pluck, doesn't take a frequency, so it needs
@@ -2919,13 +2999,13 @@
         const noiseLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? Math.max(0, (startTime - Tone.context.now()) * 1000)
           : 0;
-        const noiseEntry = { synth: ns, effectNodes, disposeTimer: null };
+        const noiseEntry = { synth: ns, effectNodes, disposeTimer: null, registerTimer: null };
         noiseEntry.disposeTimer = setTimeout(() => {
           _unregisterVoice(noiseEntry);
           safeDisposeSynth(ns);
           disposeEffectChain();
         }, noiseLeadMs + disposeMs);
-        _registerVoice(noiseEntry);
+        _registerVoiceAtStart(noiseEntry, noiseLeadMs);
         return;
       } else if (type === 'fm') {
         synth = new Tone.FMSynth({
@@ -3216,7 +3296,7 @@
       const synthLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
-      const voiceEntry = { synth, effectNodes, pooledPreset, disposeTimer: null };
+      const voiceEntry = { synth, effectNodes, pooledPreset, disposeTimer: null, registerTimer: null };
       voiceEntry.disposeTimer = setTimeout(() => {
         _unregisterVoice(voiceEntry);
         if (pooledPreset) safeReleaseSynth(pooledPreset, synth);
@@ -3227,6 +3307,6 @@
         // and clicks (the steal path already waits this out).
         setTimeout(disposeEffectChain, 80);
       }, synthLeadMs + disposeMs);
-      _registerVoice(voiceEntry);
+      _registerVoiceAtStart(voiceEntry, synthLeadMs);
     }
 

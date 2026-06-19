@@ -1392,6 +1392,21 @@
     // Melodic tones for Bed/Motif/Texture (drum kits excluded — Beat owns those).
     // The "Grid voice" follow option is added separately at wiring time, so this
     // returns only the instruments and can be fed straight to the grouped builder.
+    // Label for the "follow the grid voice" option ('' tone): show the actual
+    // voice the grid is currently using (cell 0) rather than the generic "Grid
+    // voice", so the dropdown reads e.g. "Sawtooth (grid)". Falls back to the
+    // generic label when no grid voice is determinable.
+    function _ambGridVoiceLabel() {
+      try {
+        const t = (typeof cellParams !== 'undefined' && cellParams[0] && cellParams[0].type) ? cellParams[0].type : null;
+        if (t && typeof getAllSoundOptions === 'function') {
+          const o = getAllSoundOptions().find(x => x.value === t);
+          if (o && o.label) return o.label + ' (grid)';
+        }
+      } catch (e) {}
+      return 'Grid voice';
+    }
+    function _ambGridVoiceOption() { return { value: '', label: _ambGridVoiceLabel() }; }
     function _ambToneOptions() {
       const out = [];
       try {
@@ -1416,7 +1431,7 @@
       const opts = _ambToneOptions();
       host.querySelectorAll('select[id$="-tone"]').forEach(sel => {
         const cur = sel.value;
-        populateGroupedToneSelect(sel, opts, { value: '', label: 'Grid voice' });
+        populateGroupedToneSelect(sel, opts, _ambGridVoiceOption());
         sel.value = cur;
         if (sel.value !== cur) sel.value = ''; // chosen voice no longer exists → Grid voice
       });
@@ -1562,10 +1577,15 @@
         try { playNote(baseFreq, p, dur, at + j * sliceSec, dest, undefined, _E.laneIdx()); } catch (e) {}
       }
     }
-    function _ambEmitSeq(at, seq, space, st) {
-      if (!Array.isArray(seq.units) || !seq.units.length) return;
-      // Pick the unit for this cycle: 'single' iterates units[0]; 'interleave'
-      // stochastically picks among the units so the layer wanders between them.
+    // Realize ONE iteration of a seq into a concrete, schedulable plan:
+    //   { events:[{freqs,durMs,vel,sounds,padStyle,offMs}], advanceMs, ctx, baseAt, cur }
+    // All the per-cycle generative decisions (unit pick, verbatim, pad/pitch/
+    // rhythm vary) are made HERE, once. The scheduler then emits the plan's
+    // events at their own pace — windowed across ticks in auto mode so a long
+    // phrase doesn't dump its entire node creation in a single tick (the burst
+    // that glitched/cut out long seq layers ~4/5 through each phrase).
+    function _ambRealizeSeqPhrase(at, seq, space, st) {
+      if (!Array.isArray(seq.units) || !seq.units.length) return null;
       let unit;
       if (seq.unitMode === 'interleave' && seq.units.length > 1) {
         st.pick = Math.floor(_ambRand() * seq.units.length);
@@ -1573,13 +1593,12 @@
       } else {
         unit = seq.units[0];
       }
-      if (!_ambValidUnit(unit)) return;
-      // Record THIS pass's unit length so the scheduler can advance the loop by
-      // exactly one sequence in auto interval mode (per-picked-unit in Interleave).
+      if (!_ambValidUnit(unit)) return null;
+      // Record THIS pass's unit length so the scheduler advances the loop by
+      // exactly one sequence in auto mode (per-picked-unit in Interleave).
       if (st) st._lastUnitMs = _unitTotalMs(unit);
-      const seed = unit; // walk/pad code below reads `seed`
+      const seed = unit;
       const key = 'seq:' + seq.id;
-      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const depth = Math.max(0, Math.min(100, seq.varyDepth | 0)) / 100;
       // Voice base: the unit's CAPTURED voice (from the source lane at send
       // time) so playback is lane-agnostic — falls back to the live grid only
@@ -1589,17 +1608,16 @@
       const fallbackType = (base && base.type) ? base.type : 'sine';
       const type = (seq.tone && seq.tone !== '') ? seq.tone : fallbackType;
       // When the layer Tone is "Grid voice" ('') we honor each note's own
-      // captured source voice (so a merged/multi-voice sequence plays piano
-      // notes as piano, square as square, instead of forcing them all through
-      // whatever the grid voice happens to be — e.g. an ensemble). An explicit
-      // layer Tone still overrides every note uniformly.
+      // captured source voice (piano notes as piano, square as square, an
+      // ensemble as that ensemble); an explicit layer Tone overrides uniformly.
       const layerSet = !!(seq.tone && seq.tone !== '');
       // Ensemble lock: locked (default) → an ensemble-voiced note fires ALL its
-      // members together; unlocked → members are spread across notes as
-      // independent voices (one per note, rotating) — part of the generative flow.
+      // members together; unlocked → members spread across notes (one per note,
+      // rotating). dest/dmod are resolved per-event at emit time (the mod chain
+      // can rebuild between ticks), so only the stable bits live in ctx.
       const seqEnsLock = (seq.ensembleLock !== false);
-      let _ensPick = (st && Number.isFinite(st._ensPick)) ? st._ensPick : 0;
-      // Verbatim (return-to-original) decision for THIS cycle, on the picked unit.
+      const ctx = { seq, key, base, type, layerSet, seqEnsLock };
+      // Verbatim (return-to-original) decision for THIS cycle.
       let verbatim;
       if (seq.returnMode === 'chance') {
         verbatim = (_ambRand() * 100) < Math.max(0, Math.min(100, seq.returnChance | 0));
@@ -1607,66 +1625,88 @@
         const Nr = Math.max(1, seq.returnN | 0);
         verbatim = (((st && st.iter) | 0) % Nr) === 0;
       }
-      const emitEvent = (freqs, durMs, vel, t, padStyle, sounds) => {
-        if (!freqs || !freqs.length) return;
-        // Spread on a melodic (single-note) sequence has nothing to fan across,
-        // so a lone note would always land centred — give each event its own
-        // pan (random ±spread in Spread mode, the fixed value in Pan mode);
-        // chords still fan their voices across the field.
-        const pans = (freqs.length > 1) ? _ambLayerPans(seq, freqs.length) : [_ambLayerPan(seq)];
-        const vol = _ambAccentVol(_ambApplyLevel(Math.round((vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
-        freqs.forEach((f, vi) => {
-          const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
-          const p = padStyle
-            ? { ...base, type: vtype, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
-            : { ...base, type: vtype, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] };
-          if (isEnsembleType(vtype)) {
-            if (seqEnsLock) p._ensembleForceStack = true;   // locked: all members together
-            else p._ensembleMemberIdx = _ensPick++;          // unlocked: one member per note, rotating
-          }
-          if (dmod) p._detuneMod = dmod;
-          try { playNote(f, p, durMs, t + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
-        });
-      };
+      const events = [];
+      const advanceMs = (st && st._lastUnitMs > 0) ? st._lastUnitMs : _unitTotalMs(seed);
       // PAD mode (non-verbatim): ignore rhythm, build one sustained voicing from
       // the seed's note pool, sized by depth.
       if (seq.varyMode === 'pad' && !verbatim) {
         const pool = [];
         let poolVel = 0;
         seed.events.forEach(e => { e.freqs.forEach(f => pool.push(f)); if (e.vel > poolVel) poolVel = e.vel; });
-        if (!pool.length) return;
-        const want = Math.max(1, Math.min(pool.length, 2 + Math.round(depth * (pool.length - 2))));
-        const chosen = []; const used = new Set(); let g = 0;
-        while (chosen.length < want && g++ < 64) { const i = Math.floor(_ambRand() * pool.length); if (!used.has(i)) { used.add(i); chosen.push(pool[i]); } }
-        chosen.sort((a, b) => a - b);
-        emitEvent(chosen, Math.max(300, seq.lengthMs | 0), poolVel || 100, at, true);
-        return;
+        if (pool.length) {
+          const want = Math.max(1, Math.min(pool.length, 2 + Math.round(depth * (pool.length - 2))));
+          const chosen = []; const used = new Set(); let g = 0;
+          while (chosen.length < want && g++ < 64) { const i = Math.floor(_ambRand() * pool.length); if (!used.has(i)) { used.add(i); chosen.push(pool[i]); } }
+          chosen.sort((a, b) => a - b);
+          events.push({ freqs: chosen, durMs: Math.max(300, seq.lengthMs | 0), vel: poolVel || 100, sounds: null, padStyle: true, offMs: 0 });
+        }
+        return { events, advanceMs, ctx, baseAt: at, cur: 0 };
       }
-      // PITCH / RHYTHM / verbatim: walk the phrase on a within-phrase cursor.
-      let t = at;
+      // PITCH / RHYTHM / verbatim: walk the phrase, accumulating an ms offset.
       const intervals = _ambScaleIntervals(_ambNotesOf(seq));
       const N = Math.max(1, intervals.length);
+      let off = 0;
       for (let i = 0; i < seed.events.length; i++) {
         const ev = seed.events[i];
         let durMs = Math.max(20, ev.durMs | 0);
         let freqs = ev.freqs;
         if (!verbatim && seq.varyMode === 'rhythm') {
-          if (freqs.length && _ambRand() < 0.12 * depth) { t += durMs / 1000; continue; } // drop step
+          if (freqs.length && _ambRand() < 0.12 * depth) { off += durMs; continue; } // drop step
           durMs = Math.max(40, Math.round(durMs * (1 + (_ambRand() * 2 - 1) * 0.6 * depth)));
         }
         if (!verbatim && freqs.length && (seq.varyMode === 'pitch' || seq.varyMode === 'rhythm')) {
-          if (_ambRand() < 0.15 * depth) { t += durMs / 1000; continue; } // drop note (keep timing)
+          if (_ambRand() < 0.15 * depth) { off += durMs; continue; } // drop note (keep timing)
           freqs = freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq)));
         }
-        emitEvent(freqs, durMs, ev.vel, t, false, ev.sounds);
-        t += durMs / 1000;
+        events.push({ freqs, durMs, vel: ev.vel, sounds: ev.sounds, padStyle: false, offMs: off });
+        off += durMs;
       }
       // RHYTHM mode: occasionally append an extra nudged echo at the phrase tail.
       if (!verbatim && seq.varyMode === 'rhythm' && _ambRand() < 0.2 * depth) {
         const ev = seed.events[Math.floor(_ambRand() * seed.events.length)];
-        if (ev && ev.freqs.length) emitEvent(ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), Math.max(40, ev.durMs | 0), ev.vel, t, false, ev.sounds);
+        if (ev && ev.freqs.length) {
+          events.push({ freqs: ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), durMs: Math.max(40, ev.durMs | 0), vel: ev.vel, sounds: ev.sounds, padStyle: false, offMs: off });
+        }
       }
+      return { events, advanceMs, ctx, baseAt: at, cur: 0 };
+    }
+    // Emit ONE realized event at an absolute time. dest/dmod resolved fresh so
+    // a mod-chain rebuild between ticks can't strand a phrase on a dead node.
+    function _ambEmitSeqEvent(ctx, ev, atAbs, st) {
+      const freqs = ev.freqs;
+      if (!freqs || !freqs.length) return;
+      const seq = ctx.seq;
+      const dest = _ambLayerDest(ctx.key), dmod = _ambLayerDetuneMod(ctx.key);
+      const durMs = ev.durMs, padStyle = ev.padStyle, sounds = ev.sounds;
+      const base = ctx.base, type = ctx.type, layerSet = ctx.layerSet, seqEnsLock = ctx.seqEnsLock;
+      // Spread on a melodic (single-note) sequence has nothing to fan across, so
+      // a lone note gets its own pan; chords fan their voices across the field.
+      const pans = (freqs.length > 1) ? _ambLayerPans(seq, freqs.length) : [_ambLayerPan(seq)];
+      const vol = _ambAccentVol(_ambApplyLevel(Math.round((ev.vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
+      let _ensPick = (st && Number.isFinite(st._ensPick)) ? st._ensPick : 0;
+      freqs.forEach((f, vi) => {
+        const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
+        const p = padStyle
+          ? { ...base, type: vtype, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
+          : { ...base, type: vtype, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] };
+        if (isEnsembleType(vtype)) {
+          if (seqEnsLock) p._ensembleForceStack = true;   // locked: all members together
+          else p._ensembleMemberIdx = _ensPick++;          // unlocked: one member per note, rotating
+        }
+        if (dmod) p._detuneMod = dmod;
+        try { playNote(f, p, durMs, atAbs + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+      });
       if (st) st._ensPick = _ensPick; // carry the unlocked-ensemble rotation across fires
+    }
+    // Whole-phrase emit (manual interval mode, where phrases can overlap and the
+    // single-plan windowing model doesn't apply). Realize + emit every event now.
+    function _ambEmitSeq(at, seq, space, st) {
+      const plan = _ambRealizeSeqPhrase(at, seq, space, st);
+      if (!plan) return;
+      for (let i = 0; i < plan.events.length; i++) {
+        const ev = plan.events[i];
+        _ambEmitSeqEvent(plan.ctx, ev, plan.baseAt + ev.offMs / 1000, st);
+      }
     }
 
     // ================= Modulation (VCO / VCA / VCF) =================
@@ -2031,37 +2071,73 @@
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
       stepLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
       stepLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
-      // Seq layers (dynamic list). Each fire schedules a whole phrase, so a
-      // smaller per-tick guard bounds overlapping voices.
+      // Seq layers (dynamic list). Auto mode WINDOWS each phrase: only the
+      // events falling inside the 1.2 s horizon are scheduled per tick, and the
+      // rest resume on later ticks (the phrase plan persists in stSeq.plan).
+      // This spreads a long phrase's node creation across ticks the same way
+      // bed/motif/etc. already do — fixing the "long seq glitches/cuts out ~4/5
+      // through, then choppily resumes next iteration" burst. Manual mode (where
+      // phrases can overlap) still emits a whole phrase per fire.
       if (Array.isArray(cfg.seqs)) {
         for (const seq of cfg.seqs) {
           if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
+          const stSeq = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
           if (_muted(seq)) continue;
           if (E.windingDown) continue; // Capture finalize: let the current unit finish, start no more
-          if (_ambFreezeGate(E, key, now, horizon)) continue;
+          if (_ambFreezeGate(E, key, now, horizon)) { stSeq.plan = null; continue; }
           window._ambCaptureSink = _ambCapSink(E, key);
-          if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(seq, cfg);
+          // C[key] tracks the NEXT phrase's start (always in the future); the
+          // in-flight phrase streams separately via stSeq.plan, so C[key] never
+          // sits in the past and the re-anchor guard below can't misfire.
+          if (!C[key] || C[key] < now - 0.001) { C[key] = lead + _ambDriftOffset(seq, cfg); stSeq.plan = null; }
+          const manual = (seq.intervalMode === 'manual');
+          // Schedule a plan's events whose absolute start is inside the horizon;
+          // returns true when the whole plan is scheduled (nothing left).
+          const _streamPlan = (plan) => {
+            for (; plan.cur < plan.events.length; plan.cur++) {
+              const ev = plan.events[plan.cur];
+              const evAt = plan.baseAt + ev.offMs / 1000;
+              if (evAt >= horizon) return false;
+              _ambEmitSeqEvent(plan.ctx, ev, evAt, stSeq);
+            }
+            return true;
+          };
+          // (A) Continue an in-flight auto phrase from where the last tick left off.
+          if (stSeq.plan && _streamPlan(stSeq.plan)) stSeq.plan = null;
+          // (B) Start new phrases whose start falls within the horizon.
           let g = 0;
-          const stSeq = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
-          while (C[key] < horizon && g++ < 4) {
-            if (_ambCondFires(seq.when, I[key] | 0)) {
-              stSeq.iter = I[key] | 0;
-              _ambEmitSeq(C[key], seq, space, stSeq); // sets stSeq._lastUnitMs for the unit it played
-            }
+          while (C[key] < horizon && g++ < 64) {
+            if (!manual && stSeq.plan) break; // auto: one phrase streams at a time
+            const fires = _ambCondFires(seq.when, I[key] | 0);
+            stSeq.iter = I[key] | 0;
             I[key] = (I[key] | 0) + 1;
-            // Auto (default): advance by the just-played unit's own natural length
-            // so one iteration == one sequence (no gap / no early cut), and an
-            // Interleave layer breathes per picked unit. Manual: the Interval knob,
-            // snapped to the musical grid in sync timing.
-            if (seq.intervalMode !== 'manual') {
-              const unitMs = (stSeq._lastUnitMs > 0)
-                ? stSeq._lastUnitMs
-                : _unitTotalMs(seq.units && seq.units[0]); // first/skipped cycle fallback
-              C[key] += (unitMs > 0) ? (unitMs / 1000) : Math.max(0.1, (seq.intervalMs | 0) / 1000);
-            } else {
-              C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
+            if (!fires) {
+              const skipMs = (stSeq._lastUnitMs > 0) ? stSeq._lastUnitMs : _unitTotalMs(seq.units[0]);
+              C[key] += manual ? _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg)
+                               : Math.max(0.1, (skipMs > 0 ? skipMs : (seq.intervalMs | 0)) / 1000);
+              continue;
             }
+            const plan = _ambRealizeSeqPhrase(C[key], seq, space, stSeq);
+            if (!plan) { C[key] += Math.max(0.1, (seq.intervalMs | 0) / 1000); continue; }
+            if (manual) {
+              // Whole phrase now; next starts after the (snapped) Interval knob.
+              for (let i = 0; i < plan.events.length; i++) {
+                const ev = plan.events[i];
+                _ambEmitSeqEvent(plan.ctx, ev, plan.baseAt + ev.offMs / 1000, stSeq);
+              }
+              C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
+              continue;
+            }
+            // Auto: stream within the horizon now, advance C[key] to the NEXT
+            // phrase start (future) by the unit's natural length, and keep the
+            // plan if it didn't finish so the next tick resumes it.
+            const done = _streamPlan(plan);
+            const advMs = (plan.advanceMs > 0) ? plan.advanceMs
+              : (stSeq._lastUnitMs > 0 ? stSeq._lastUnitMs : (seq.intervalMs | 0));
+            C[key] = plan.baseAt + Math.max(0.1, advMs / 1000);
+            stSeq.plan = done ? null : plan;
+            if (!done) break; // still streaming this phrase across ticks
           }
           window._ambCaptureSink = null; _ambPruneCap(E, key, now);
         }
@@ -2574,13 +2650,48 @@
     function _ambListMasterSeqs() {
       try { return (_masterEng.getCfg().seqs || []).map((s, i) => ({ id: s.id, name: 'Seq' + (i + 1) })); } catch (e) { return []; }
     }
+    // One seq unit per lane that has playable notes — so a multi-lane
+    // sequence sends each lane to Bloom as its OWN independent Seq layer
+    // (lanes play in parallel; collapsing them into one polyphonic phrase
+    // played as choppy rests/chords). Each lane keeps its own per-note tone.
+    // Single-lane / legacy saves yield a single unit from saved.steps.
+    function _ambLaneUnitsFromSaved(saved) {
+      const _hasNote = (steps) => Array.isArray(steps) && steps.some(function chk(s) {
+        return s && (s.freq != null || (Array.isArray(s.chord) && s.chord.length)
+          || (s.isSub && Array.isArray(s.subSteps) && s.subSteps.some(chk)));
+      });
+      const lanesArr = (saved && Array.isArray(saved.lanes)) ? saved.lanes : null;
+      if (lanesArr && lanesArr.length >= 2) {
+        const out = [];
+        lanesArr.forEach((l, i) => {
+          if (!l || !_hasNote(l.steps)) return;
+          const laneSaved = {
+            steps: l.steps, bpm: saved.bpm, scale: saved.scale,
+            rootIdx: saved.rootIdx, baseOctave: saved.baseOctave, cellParams: saved.cellParams,
+          };
+          const u = _seqSeedFromSaved(laneSaved);
+          if (u) out.push({ unit: u, name: (l.name || ('Lane ' + (i + 1))) });
+        });
+        if (out.length) return out;
+      }
+      // Single lane / legacy / nothing matched → fall back to the whole save.
+      const u = _seqSeedFromSaved(saved);
+      return u ? [{ unit: u, name: null }] : [];
+    }
+
     function _ambSendSavedToMaster(seqIndex, mode, targetSeqId) {
       const saved = (typeof savedSequences !== 'undefined') ? savedSequences[seqIndex] : null;
       if (!saved) return;
-      const unit = _seqSeedFromSaved(saved);
-      if (!unit) { try { alert('That sequence has no playable notes to send to Bloom.'); } catch (e) {} return; }
+      const laneUnits = _ambLaneUnitsFromSaved(saved);
+      if (!laneUnits.length) { try { alert('That sequence has no playable notes to send to Bloom.'); } catch (e) {} return; }
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Bloom');
-      _ambSendSeedToInstance(_masterEng, unit, mode, targetSeqId);
+      // Multi-lane: each lane becomes its own Seq layer. With 'new' that's a
+      // fresh Seq per lane; with append/interleave each lane's unit folds into
+      // the chosen target (only the first resolves the target — the rest chain
+      // onto whatever it created/landed in).
+      laneUnits.forEach((lu) => {
+        _ambSendSeedToInstance(_masterEng, lu.unit, mode, targetSeqId, lu.name);
+      });
       // Reflect immediately if the Mix Bloom panel is built.
       try { if (_masterEng.inited) _ambRenderSeqLayers(_masterEng); } catch (e) {}
     }
@@ -3331,7 +3442,7 @@
       const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = parseInt(e.value, 10) || 0; persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };
-      const toneSel = el('tone'); if (toneSel) populateGroupedToneSelect(toneSel, _ambToneOptions(), { value: '', label: 'Grid voice' });
+      const toneSel = el('tone'); if (toneSel) populateGroupedToneSelect(toneSel, _ambToneOptions(), _ambGridVoiceOption());
       bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
       const lockBtn = el('enslock');
       if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
@@ -3375,6 +3486,78 @@
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
       _ambSeqReturnVis(E, id);
       _ambSeqIntervalModeVis(E, id); // sets the interval readout too (overrides the line above in Auto)
+    }
+    // Enumerate every PRESENT layer (built-ins + extras + seqs + samples) as
+    // { key, name, layer } where `layer` is the live cfg object carrying a
+    // `level`. Powers the Mixer's one-fader-per-layer strip.
+    function _ambMixerLayers(cfg) {
+      const out = [];
+      if (!cfg) return out;
+      [['bed', 'Bed'], ['motif', 'Motif'], ['texture', 'Texture'], ['beat', 'Beat']].forEach(([k, name]) => {
+        const L = cfg[k];
+        if (L && L.present !== false) out.push({ key: k, name, layer: L });
+      });
+      (Array.isArray(cfg.extras) ? cfg.extras : []).forEach((ex) => {
+        if (!ex) return;
+        const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[ex.type] : null;
+        out.push({ key: ex.type + ':' + ex.id, name: (sch && sch.label) ? sch.label : (ex.type || 'Layer'), layer: ex });
+      });
+      // Seq / Sample channel names mirror the layer CARD headers exactly
+      // (_ambSeqLayerHtml uses 'Seq'+(i+1), _ambSampleLayerHtml 'Sample'+(i+1))
+      // so the mixer reads the same as the layer it controls.
+      (Array.isArray(cfg.seqs) ? cfg.seqs : []).forEach((s, i) => {
+        if (!s) return;
+        out.push({ key: 'seq:' + s.id, name: 'Seq' + (i + 1), layer: s });
+      });
+      (Array.isArray(cfg.samples) ? cfg.samples : []).forEach((s, i) => {
+        if (!s) return;
+        out.push({ key: 'samp:' + s.id, name: 'Sample' + (i + 1), layer: s });
+      });
+      return out;
+    }
+    // (Re)render the Mixer strip — one vertical fader per layer, bound to that
+    // layer's `level`. Level is applied per-note at emit time, so a drag affects
+    // subsequent notes (same as each card's Level slider, which this mirrors).
+    function _ambRenderMixer(E) {
+      const strip = _ambGet(E, 'ambient-mixer-strip');
+      if (!strip) return;
+      const cfg = E.getCfg();
+      const layers = cfg ? _ambMixerLayers(cfg) : [];
+      strip.innerHTML = '';
+      if (!layers.length) {
+        const hint = document.createElement('span');
+        hint.className = 'ambient-hint';
+        hint.textContent = 'No layers yet.';
+        strip.appendChild(hint);
+        return;
+      }
+      layers.forEach(({ name, layer }) => {
+        const lvl = Number.isFinite(layer.level) ? layer.level : 70;
+        const ch = document.createElement('div');
+        ch.className = 'ambient-mix-ch';
+        const val = document.createElement('span');
+        val.className = 'ambient-mix-val';
+        val.textContent = lvl + '%';
+        const sld = document.createElement('input');
+        sld.type = 'range'; sld.min = '0'; sld.max = '100'; sld.step = '1'; sld.value = String(lvl);
+        sld.className = 'ambient-mix-slider';
+        sld.setAttribute('orient', 'vertical');
+        sld.title = name + ' level';
+        sld.addEventListener('input', () => {
+          const v = Math.max(0, Math.min(100, parseInt(sld.value, 10) || 0));
+          layer.level = v;
+          val.textContent = v + '%';
+          if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+        });
+        const lab = document.createElement('span');
+        lab.className = 'ambient-mix-label';
+        lab.textContent = name;
+        lab.title = name;
+        ch.appendChild(val);
+        ch.appendChild(sld);
+        ch.appendChild(lab);
+        strip.appendChild(ch);
+      });
     }
     function _ambRenderSeqLayers(E) {
       const wrap = _ambGet(E, 'ambient-seq-layers');
@@ -3619,7 +3802,7 @@
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {
-          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: 'Grid voice' }); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
+          if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
           else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
           else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; sync(); persist(); } }); } }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
@@ -4275,6 +4458,20 @@
       if (!unit || !Array.isArray(unit.events)) return 0;
       return unit.events.reduce((s, e) => s + Math.max(0, e.durMs | 0), 0);
     }
+    // The single grid voice a unit was built from, if uniform: every captured
+    // note `sound` is the same non-empty type → return it; mixed (or none) →
+    // '' so the Seq layer follows each note's own voice. Used to set a sent
+    // lane's Seq layer Tone to that lane's grid tone.
+    function _seqUnitTone(unit) {
+      if (!unit || !Array.isArray(unit.events)) return '';
+      const set = new Set();
+      for (const e of unit.events) {
+        const sounds = (e && Array.isArray(e.sounds)) ? e.sounds : [];
+        for (const s of sounds) { if (s) set.add(s); }
+        if (set.size > 1) return ''; // mixed → follow per-note voices
+      }
+      return (set.size === 1) ? Array.from(set)[0] : '';
+    }
     // Size a seq layer's Interval (and Length) to its phrase so the loop fires
     // exactly when the previous pass ends — no silence gaps, no overlap-cut.
     // Interleaved units use the longest so none gets truncated.
@@ -4284,7 +4481,7 @@
       seq.units.forEach(u => { total = Math.max(total, _unitTotalMs(u)); });
       if (total > 0) { seq.intervalMs = Math.max(100, Math.round(total)); seq.lengthMs = seq.intervalMs; }
     }
-    function _ambSendSeedToInstance(E, unit, mode, targetSeqId) {
+    function _ambSendSeedToInstance(E, unit, mode, targetSeqId, nameHint) {
       if (!_ambValidUnit(unit)) return false;
       const cfg = E.getCfg(); if (!cfg) return false;
       if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
@@ -4293,8 +4490,15 @@
       if (eff === 'new') {
         const id = cfg.seqs.reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
         const seq = _defaultSeqLayer(id);
+        if (typeof nameHint === 'string' && nameHint) seq.name = nameHint;
         seq.units = [unit];
         seq.scale = (unit.scale && typeof SCALES !== 'undefined' && SCALES[unit.scale]) ? unit.scale : '';
+        // Lock the Seq layer's Tone to the SOURCE lane's grid voice when that
+        // lane used a single, uniform tone — so a sent lane plays in its own
+        // voice instead of following the live grid. Mixed-voice sources stay on
+        // '' (follow each note's captured voice) to preserve their variety.
+        const _srcTone = _seqUnitTone(unit);
+        if (_srcTone) seq.tone = _srcTone;
         // Play the sent sequence FAITHFULLY by default — the generative walk
         // (pitch/rhythm vary) would otherwise drop ~6% of notes and nudge
         // pitches on non-verbatim cycles, so you'd hear a thinned/altered take
@@ -4412,6 +4616,7 @@
       _ambRenderSeqLayers(E);
       _ambRenderSampleLayers(E);
       _ambRenderExtras(E);
+      _ambRenderMixer(E);   // one fader per layer, after the layer set is known
       _ambRenderRamps(E);
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render
@@ -4446,7 +4651,7 @@
         // Everything above the first layer (viz + global Bloom settings) lives in
         // one collapsible menu so the panel opens straight onto the layer stack.
         '<details class="ambient-master-menu">' +
-        '<summary class="ambient-master-summary">⚙ Bloom settings' + (E.isLane ? '' : ' · master') + '</summary>' +
+        '<summary class="ambient-master-summary">⚙ Configure</summary>' +
         '<div class="ambient-master-menu-body">' +
         '<canvas id="ambient-viz" class="ambient-viz"></canvas>' +
         '<div class="ambient-row">' +
@@ -4483,6 +4688,16 @@
           sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
         '</div>' +
         '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
+        // Mixer — one vertical fader per layer for balancing overall levels in
+        // one place. Collapsible; the strip is (re)rendered by _ambRenderMixer
+        // whenever the layer set changes.
+        '<div class="ambient-mixer" id="ambient-mixer">' +
+          '<div class="ambient-mixer-head">' +
+            '<button type="button" class="ambient-mixer-toggle" id="ambient-mixer-toggle" title="Collapse / expand the mixer">▾</button>' +
+            '<span class="ambient-mod-sub">Mixer</span>' +
+          '</div>' +
+          '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
+        '</div>' +
         '<div class="ambient-layer collapsed">' + head('Bed', 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-bed') +
@@ -4550,7 +4765,7 @@
         // Add-layer button — Bloom starts with just Bed; this adds the other
         // built-in layer types (Motif / Texture / Beat) on demand.
         '<div class="ambient-add-layer-row">' +
-          '<button type="button" class="ambient-regen ambient-add-layer" id="ambient-add-layer" title="Add a layer">+ Add layer</button>' +
+          '<button type="button" class="ambient-regen ambient-add-layer" id="ambient-add-layer" title="Add a generative layer">+ Add generative layer</button>' +
         '</div>' +
         '<div class="ambient-seq-layers" id="ambient-extra-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
@@ -4583,6 +4798,15 @@
           if (layer) layer.classList.toggle('collapsed');
         });
       });
+      // Mixer collapse toggle (UI-only; the strip itself is re-rendered by
+      // _ambRenderMixer as layers change).
+      { const mxBtn = host.querySelector('.ambient-mixer-toggle');
+        if (mxBtn) mxBtn.addEventListener('click', () => {
+          const mx = mxBtn.closest('.ambient-mixer');
+          if (mx) { const c = mx.classList.toggle('collapsed'); mxBtn.textContent = c ? '▸' : '▾'; }
+        });
+        try { _ambRenderMixer(E); } catch (e) {}
+      }
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
       host.addEventListener('click', (e) => {
@@ -4615,7 +4839,7 @@
       };
       ['bed', 'motif', 'texture'].forEach(layer => {
         wireSelect('ambient-' + layer + '-tone', layer, 'tone',
-          (sel) => populateGroupedToneSelect(sel, _ambToneOptions(), { value: '', label: 'Grid voice' }));
+          (sel) => populateGroupedToneSelect(sel, _ambToneOptions(), _ambGridVoiceOption()));
         // "Notes" source button (Scale / Chord) replaces the old scale select.
         _ambWireNotesBtn(E, 'ambient-' + layer + '-notes', () => { const c = cfg0(); return c ? c[layer] : null; });
       });

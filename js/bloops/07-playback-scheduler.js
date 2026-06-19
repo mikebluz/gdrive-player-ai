@@ -108,6 +108,8 @@
       _schedStopping = false;
       // MIDI output: Stop + clock halt + all-notes-off on the output.
       try { if (typeof midiTransportStop === 'function') midiTransportStop(); } catch (e) {}
+      // Reset lane-sum headroom (nothing summing while stopped).
+      try { if (typeof setLaneSumCompensation === 'function') setLaneSumCompensation(1); } catch (e) {}
       // Wipe any not-yet-fired dispatches before clearing streams —
       // otherwise the worklet might still fire a 'fire' message for a
       // step from the just-ended playback session, and the dispatchFn

@@ -865,6 +865,33 @@
     // calls so FX panel slider changes propagate live.
     const globalSendTap = new Tone.Gain(1);
     globalSendTap.connect(masterBus);
+
+    // ---- Lane sum bus: headroom that scales with the playing-lane count ----
+    // Every sequenced lane's dry output (volume → panner → FX → here) sums into
+    // laneSumBus before masterBus. Its gain is set to 1/sqrt(N) for N sounding
+    // lanes, so N uncorrelated lanes sum to roughly the same level as one — the
+    // fix for "runaway summing" where stacking lanes overran the static masterBus
+    // trim and slammed the clipper into distortion. Live grid taps (globalSendTap,
+    // no laneIdx) bypass this and stay full-level. Set on play / mute / solo.
+    const laneSumBus = new Tone.Gain(1);
+    laneSumBus.connect(masterBus);
+    function setLaneSumCompensation(n) {
+      const t = 1 / Math.sqrt(Math.max(1, n | 0));
+      try {
+        if (laneSumBus.gain.rampTo) laneSumBus.gain.rampTo(t, 0.04);
+        else laneSumBus.gain.value = t;
+      } catch (e) {}
+    }
+    // Count lanes that will actually sound (solo wins; else non-muted), among
+    // step-bearing non-Bloom lanes — the ones that sum through laneSumBus.
+    function _soundingLaneCount() {
+      if (typeof lanes === 'undefined' || !Array.isArray(lanes)) return 1;
+      const playable = lanes.filter(l => l && Array.isArray(l.steps) && l.steps.length > 0 && !l.ambientMode);
+      const anySolo = playable.some(l => l.solo);
+      const sounding = playable.filter(l => anySolo ? l.solo : !l.muted);
+      return Math.max(1, sounding.length);
+    }
+    function updateLaneSumCompensation() { setLaneSumCompensation(_soundingLaneCount()); }
     const _globalSendGains = {};
     function applyGlobalSendGains() {
       FX_NAMES.forEach(name => {

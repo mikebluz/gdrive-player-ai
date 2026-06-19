@@ -1952,6 +1952,8 @@
       const playable = lanes.filter(l => (l.steps || []).length > 0 && !l.ambientMode);
       if (playable.length === 0) { stopSequence(); return; }
       document.getElementById('play-btn').textContent = '⏹';
+      // Set master headroom for how many lanes are about to sum (anti-runaway).
+      try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {}
       // MIDI output: Start + clock so external gear follows the transport.
       try { if (typeof midiTransportStart === 'function') midiTransportStart(); } catch (e) {}
       // Build the streams array FIRST so any synchronous setup work

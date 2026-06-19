@@ -983,7 +983,9 @@
       try { if (panner._panner) { panner._panner.channelCount = 2; panner._panner.channelCountMode = 'max'; } } catch (e) {}
       const volume = new Tone.Volume(volDb);
       volume.connect(panner);
-      panner.connect(masterBus);
+      // → laneSumBus (count-compensated) → masterBus, so stacking lanes doesn't
+      // run away (live grid taps via globalSendTap stay on masterBus, full level).
+      panner.connect(typeof laneSumBus !== 'undefined' ? laneSumBus : masterBus);
       lane._panner    = panner;
       lane._volume    = volume;
       lane._fxNodes   = {};   // name → Tone FX node, only entries with non-zero send exist
@@ -1074,7 +1076,8 @@
         try { upstream.connect(node); } catch (e) {}
         upstream = node;
       }
-      try { upstream.connect(masterBus); } catch (e) {}
+      // Lane chain tail → laneSumBus (count-compensated) → masterBus.
+      try { upstream.connect(typeof laneSumBus !== 'undefined' ? laneSumBus : masterBus); } catch (e) {}
     }
     // Push shape params + wet to one lane FX node. FX shape (size, freq,
     // depth, etc.) reads from globalFx — a single project-wide character
@@ -1500,8 +1503,8 @@
             if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
             persist();
           } },
-        { label: lane.solo ? 'Unsolo' : 'Solo', fn: () => { lane.solo = !lane.solo; renderSequence(); persist(); } },
-        { label: lane.muted ? 'Unmute' : 'Mute', fn: () => { lane.muted = !lane.muted; renderSequence(); persist(); } },
+        { label: lane.solo ? 'Unsolo' : 'Solo', fn: () => { lane.solo = !lane.solo; renderSequence(); persist(); try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {} } },
+        { label: lane.muted ? 'Unmute' : 'Mute', fn: () => { lane.muted = !lane.muted; renderSequence(); persist(); try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {} } },
         'hr',
         // Save moved out of the lane menu — it saves the whole workspace (all
         // lanes), so it lives next to "+ Lane" as a half-row button.

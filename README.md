@@ -56,11 +56,14 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
  Prog playback       ┘     Volume(lane.vol) ─► Panner         │  buses        │──┐
                                     │                         │ reverb/delay/ │  │
                                     ├───────────────────────► │ chorus / …    │  │ (wet)
-                                    │       (DRY) ─► masterBus └──────────────┘  │
-                                    └─► lane send gains ──────────►   ▲          │
-                                        (levels = lane.sends[ ])      └──────────┘
+                                    │    (DRY+FX) ─► laneSumBus └───────────┘  │
+                                    └─► lane send gains ──────────►   ▲         │
+                                        (levels = lane.sends[ ])      └─────────┘
                                                                           │
                                                                           ▼
+   laneSumBus (Gain = 1/√N, N = sounding lanes) ─► masterBus    ← every sequenced
+     so N uncorrelated lanes sum to ≈ one lane's level            lane sums here
+     (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
    masterBus (Gain 0.6) ─► masterCompressor ─► [master FX chain:         (returns sum
      (−4.4 dB headroom      (gentle glue:       distortion → filter →     back in here)
       trim so overlapping    −3 dB / 2:1 /      phaser → vibrato → chorus
@@ -100,6 +103,14 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   ~0%). It's static (not a compressor) so it adds no pumping. Loudness lost to the trim is
   the deliberate cost of clean dense polyphony without a look-ahead limiter; the
   user-facing Master Volume scales on top.
+- **`laneSumBus` scales headroom with the lane count (anti-runaway summing).** Every
+  sequenced lane's output sums into `laneSumBus` before `masterBus`; its gain is set to
+  `1/√N` for `N` *sounding* lanes (solo wins, else non-muted — see `_soundingLaneCount`),
+  recomputed on play / mute / solo (`updateLaneSumCompensation`). N uncorrelated lanes then
+  sum to roughly one lane's level instead of `√N`×, so stacking lanes no longer overruns the
+  static `masterBus` trim and slams the clipper into distortion. It's set once per change
+  (ramped 40 ms), not a per-sample compressor, so it doesn't pump. Live grid taps go through
+  `globalSendTap` (not `laneSumBus`), so single live presses stay full-level.
 - **Dry level is identical on both buses.** `globalSendTap` is `Gain = 1`; the lane bus is
   `Volume(lane.volume)`, which is **0 dB at the default volume 100**. The raw note is the
   same loudness regardless of path.

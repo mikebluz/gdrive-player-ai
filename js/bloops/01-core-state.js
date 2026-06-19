@@ -692,3 +692,18 @@
     // changes to something not minted by this bank.
     let activeWrapBankId = null;
 
+    // Which wrap bank the chip row currently shows:
+    //   'standard'  — generated chord-type palette (the default), every
+    //                 CHORDS quality rooted at the live key root. Read-only.
+    //   'user'      — the user-built savedWraps. Editable (save/delete/
+    //                 reorder/clear all act here).
+    //   'prog:<i>'  — one generated bank per standard progression for the
+    //                 live key/scale (its chords become the chips). Read-only.
+    // Generated banks are recall-only; building a wrap always lands in (and
+    // switches the view to) 'user'.
+    let wrapBank = 'standard';
+    // Render-key of the active chip while a generated bank is showing —
+    // generated chips have no savedWraps id, so this mirrors
+    // activeWrapBankId's "keep the armed chip lit" role for them.
+    let wrapGenActiveKey = null;
+

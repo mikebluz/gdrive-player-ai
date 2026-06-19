@@ -384,8 +384,9 @@
            IDs so every JS handler (wrap toggle, wrap-edit menu, kwr state
            machine) binds without any rewires. -->
       <div class="wrap-bank" id="wrap-bank" hidden>
-        <span class="wrap-bank-label" id="wrap-bank-label" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false" title="Wraps menu: Cycle (off → right → left → off), Shuffle, Clear">Wraps ▾</span>
-        <div class="wrap-bank-chips" id="wrap-bank-chips"></div>
+        <span class="wrap-bank-label" id="wrap-bank-label" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false" title="Wraps menu: Bank picker, Cycle (off → right → left → off), Shuffle, Clear">Wraps ▾</span>
+        <select class="wrap-bank-select" id="wrap-bank-select" title="Recall a wrap from the active bank"></select>
+        <button type="button" class="wrap-bank-del" id="wrap-bank-del" title="Delete the selected wrap" aria-label="Delete the selected wrap" hidden>×</button>
       </div>
       <div class="grid-wrap-row" id="grid-wrap-row">
         <div class="wrap-segment">

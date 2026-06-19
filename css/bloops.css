@@ -5241,13 +5241,21 @@
       align-items: center;
       gap: 8px;
       padding: 6px 16px 4px;
-      flex-wrap: wrap;
+      /* Keep the "Wraps" label fixed on the left and let the chip strip
+         take the rest of the row and scroll, instead of wrapping. */
+      flex-wrap: nowrap;
     }
     /* renderWrapBank sets [hidden] when there are no saved wraps; without
        this the .wrap-bank display:flex above outranks the UA [hidden] rule
        and the empty bank stays visible. */
     .wrap-bank[hidden] { display: none; }
     .wrap-bank-label {
+      /* Two stacked lines: "Wraps" title over the active bank name. */
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      line-height: 1.1;
       font-size: 0.65rem;
       letter-spacing: 1.2px;
       text-transform: uppercase;
@@ -5264,6 +5272,15 @@
                   background-color 0.12s ease, border-color 0.12s ease,
                   box-shadow 0.12s ease;
     }
+    .wrap-bank-label-title {
+      font-size: 0.6rem;
+      opacity: 0.85;
+    }
+    .wrap-bank-label-bank {
+      font-size: 0.62rem;
+      letter-spacing: 0.6px;
+      white-space: nowrap;
+    }
     @media (hover: hover) {
       .wrap-bank-label:hover { opacity: 1; }
     }
@@ -5279,15 +5296,54 @@
       border-color: #c026d3;
       box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
     }
-    .wrap-bank-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+    /* Wrap selector is a native dropdown (mobile-friendly; reflects the
+       armed wrap during recall AND cycle). Fills the row beside the label. */
+    .wrap-bank-select {
+      flex: 1 1 auto;
       min-width: 0;
-      flex: 1;
+      max-width: 100%;
+      background: rgba(159, 122, 234, 0.10);
+      color: #e2e8f0;
+      border: 1px solid rgba(159, 122, 234, 0.45);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease;
     }
+    .wrap-bank-select:hover { border-color: rgba(159, 122, 234, 0.7); }
+    .wrap-bank-select:focus-visible {
+      outline: none;
+      border-color: #c026d3;
+      box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
+    }
+    .wrap-bank-select:disabled { opacity: 0.55; cursor: default; }
+    .wrap-bank-select option { color: #e2e8f0; background: #1a1a2e; }
+    /* Inline delete-× for the armed User wrap (the dropdown has no per-row
+       affordances). Hidden by default; renderWrapBank shows it on the User
+       bank when a wrap is selected. */
+    .wrap-bank-del {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(192, 38, 211, 0.12);
+      color: #d6a3e0;
+      border: 1px solid rgba(192, 38, 211, 0.4);
+      border-radius: 6px;
+      font-size: 1.05rem;
+      line-height: 1;
+      cursor: pointer;
+      transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    }
+    .wrap-bank-del:hover { background: rgba(192, 38, 211, 0.28); color: #fff; border-color: #c026d3; }
+    .wrap-bank-del[hidden] { display: none; }
     .wrap-bank-chip {
       display: inline-flex;
+      flex: 0 0 auto;
       align-items: center;
       background: rgba(159, 122, 234, 0.10);
       border: 1px solid rgba(159, 122, 234, 0.32);
@@ -6770,6 +6826,47 @@
       box-shadow: inset 3px 0 0 #c026d3;
     }
     .wrap-bank-menu button.active:hover { background: rgba(192, 38, 211, 0.45); }
+
+    /* Wraps menu — bank picker (Standard / User / one per progression). */
+    .wrap-bank-menu-head {
+      padding: 7px 16px 3px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #c026d3;
+      opacity: 0.85;
+    }
+    .wrap-bank-menu-head.sub {
+      color: #a0aec0;
+      font-weight: 600;
+      opacity: 0.7;
+      padding-top: 6px;
+    }
+    .wrap-bank-picker {
+      display: flex;
+      flex-direction: column;
+      max-height: 240px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .wrap-bank-pick {
+      /* inherits .ctx-menu button base; this just tightens the dense list */
+      font-size: 0.82rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Empty-User-bank hint in the chip row. */
+    .wrap-bank-empty {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      color: #718096;
+      font-style: italic;
+      align-self: center;
+    }
 
     /* Groove (≈) transport button + swing/humanize popover. */
     #groove-btn {

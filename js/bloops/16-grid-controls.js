@@ -223,6 +223,10 @@
       applyScale();
       refreshAllCellFreqLabels();
       updateScaleBanner();
+      // Generated wrap banks (Standard / Progressions) are keyed off the
+      // live root + scale, so refresh them after a Surprise reroll.
+      try { if (typeof renderWrapBank === 'function') renderWrapBank(); } catch (e) {}
+      try { if (typeof refreshKeyButton === 'function') refreshKeyButton(); } catch (e) {}
     }
 
     // Surprise lives inside the Sounds dropdown now (below Tone… / FX…).

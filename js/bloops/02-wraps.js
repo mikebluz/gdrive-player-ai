@@ -299,6 +299,123 @@
       return step;
     }
 
+    // ---- Wrap banks (Standard / User) -----------------------------------
+    // The chip row is a *view* over one of two banks. Standard is generated
+    // on the fly from the live key/scale (the CHORDS catalog) and is recall-
+    // only; User is the editable savedWraps. Standard chips carry a tone-
+    // agnostic chord step so a recall arms wrapTemplate exactly like a saved
+    // wrap (and a later grid press transposes it the same way).
+
+    // Musical display order for the Standard chord-type palette (mirrors the
+    // buildChordCatalog TYPES order, which Object.keys can't preserve).
+    const _WRAP_STD_ORDER = [
+      'maj', 'min', 'dim', 'aug', 'sus2', 'sus4',
+      'maj7', '7', 'min7', 'dim7', 'm7b5', 'minMaj7',
+      '6', 'm6', '6/9', 'add9', 'madd9',
+      '9', 'maj9', 'min9', '7sus4', '7b9', '7#9', '7b5', '7#11',
+      '11', 'min11', 'maj11', '13', 'maj13', 'min13',
+    ];
+
+    // Build a tone-agnostic chord wrap step from a pitch-class root + chord
+    // quality, voiced in the grid's lowest-cell octave register. Mirrors
+    // _progPlayBlock's voice math (so generated wraps sit in the same octave
+    // as everything else) but omits sound/params — wraps adopt the grid tone.
+    function _wrapChordStepFromBlock(chordRootPC, chordQuality) {
+      const chordType = (typeof CHORDS !== 'undefined') && CHORDS[chordQuality];
+      if (!chordType || !Array.isArray(chordType.semis) || !chordType.semis.length) return null;
+      const baseFreq = (typeof notes !== 'undefined' && Array.isArray(notes) && notes[0]) ? notes[0].freq : 261.63;
+      const rIdx = (typeof rootIdx === 'number') ? rootIdx : 0;
+      const rootOffset = (((chordRootPC - rIdx) % 12) + 12) % 12;
+      const rootFreq = baseFreq * Math.pow(2, rootOffset / 12);
+      const voices = chordType.semis.map(semi => {
+        const freq = rootFreq * Math.pow(2, semi / 12);
+        const noteIdx = (((rIdx + rootOffset + semi) % 12) + 12) % 12;
+        const label = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[noteIdx] || '') : '';
+        return { freq, label, cellIndex: 0 };
+      });
+      if (!voices.length) return null;
+      return {
+        chord: voices,
+        label: voices.map(v => v.label).join('·'),
+        duration: 1,
+        subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
+      };
+    }
+
+    // The chip descriptors for the active bank. User chips carry `userId`
+    // (a savedWraps id → editable); Standard chips carry only a render
+    // `key`. `readOnly` gates the delete-× / publish affordances.
+    function _wrapBankList() {
+      if (wrapBank === 'user') {
+        return {
+          kind: 'user', readOnly: false,
+          chips: savedWraps.map(w => ({
+            key: w.id, userId: w.id, name: w.name,
+            label: wrapBankChipLabel(w.step), step: w.step,
+          })),
+        };
+      }
+      // 'standard' (and any unknown value) → the full chord-type palette,
+      // each quality rooted at the live key root. Iterate an explicit
+      // musical order rather than Object.keys(CHORDS): integer-like quality
+      // keys ('6','7','9','11','13') would otherwise hoist to the front of
+      // the key list and scramble the palette. Any quality not in the list
+      // is appended so a future CHORDS addition still shows up.
+      const rIdx = (typeof rootIdx === 'number') ? rootIdx : 0;
+      const rootName = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[rIdx] || '') : '';
+      const chips = [];
+      if (typeof CHORDS !== 'undefined') {
+        const seen = new Set();
+        const order = _WRAP_STD_ORDER.filter(q => CHORDS[q]);
+        Object.keys(CHORDS).forEach(q => { if (order.indexOf(q) < 0) order.push(q); });
+        order.forEach(q => {
+          if (seen.has(q)) return;
+          seen.add(q);
+          const step = _wrapChordStepFromBlock(rIdx, q);
+          if (!step) return;
+          chips.push({ key: 'standard:' + q, name: q, label: (rootName + ' ' + (CHORDS[q].label || q)).trim(), step });
+        });
+      }
+      return { kind: 'standard', readOnly: true, chips };
+    }
+
+    // Short bank name for the "Wraps" label.
+    function _wrapBankLabel() {
+      return (wrapBank === 'user') ? 'User' : 'Chords';
+    }
+
+    // Switch the visible bank. Generated banks are read-only palettes; the
+    // active cycle (if any) re-anchors to the new bank's first chip.
+    function setWrapBank(bankId) {
+      if (wrapBank === bankId) return;
+      wrapBank = bankId;
+      wrapCycleIndex = 0;
+      if (wrapCycleMode) {
+        const chips = _wrapCycleChips();
+        if (chips.length === 0) { wrapCycleMode = false; _wrapCyclePendingAdvance = false; }
+        else armCycleWrap(0);
+      }
+      renderWrapBank();
+      updateWrapCycleLabel();
+    }
+
+    // Recall a generated (read-only) chip: arm it as the live wrapTemplate
+    // without touching savedWraps. Mirrors recallWrapFromBank's build-
+    // teardown so a half-built wrap doesn't bleed into the armed shape.
+    function recallGeneratedWrap(chip) {
+      if (!chip || !chip.step) return;
+      if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Recall wrap'); } catch (e) {} }
+      chordMode = false;
+      pendingChord = [];
+      if (typeof clearWrapPendingHighlights === 'function') { try { clearWrapPendingHighlights(); } catch (e) {} }
+      wrapTemplate = cloneStep(chip.step);
+      activeWrapBankId = null;
+      wrapGenActiveKey = chip.key;
+      if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
+      renderWrapBank();
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+    }
+
     function pushWrapToBank(step) {
       if (!step) return;
       const cloned = _stripWrapTone(cloneStep(step));
@@ -331,8 +448,14 @@
       };
       savedWraps.push(entry);
       activeWrapBankId = entry.id;
+      wrapGenActiveKey = null;
+      // Building a wrap always lands in the User bank — and switches the
+      // view there if a generated bank (Standard / a progression) was up,
+      // so the new chip is immediately visible and armed.
+      wrapBank = 'user';
       persistSavedWraps();
       renderWrapBank();
+      updateWrapCycleLabel();
     }
 
     function recallWrapFromBank(id) {
@@ -351,6 +474,7 @@
       }
       wrapTemplate = cloneStep(entry.step);
       activeWrapBankId = entry.id;
+      wrapGenActiveKey = null;
       // Keep the cycle cursor in sync when the user hand-picks a chip mid-
       // cycle, so the very next press continues from the chip they tapped.
       if (wrapCycleMode) {
@@ -394,26 +518,35 @@
     // recallWrapFromBank does (those would spam undo history and add work
     // on every tap). Mirrors recallWrapFromBank's build-teardown so a
     // half-built wrap doesn't bleed into the armed shape.
+    // The chip list cycling walks — the *active* bank, so cycling steps
+    // through whatever the user is viewing (Standard chords, a progression,
+    // or their saved wraps).
+    function _wrapCycleChips() { return _wrapBankList().chips; }
+
     function armCycleWrap(idx) {
-      const entry = savedWraps[idx];
-      if (!entry) return;
+      const chips = _wrapCycleChips();
+      const chip = chips[idx];
+      if (!chip) return;
       chordMode = false;
       pendingChord = [];
       if (typeof clearWrapPendingHighlights === 'function') {
         try { clearWrapPendingHighlights(); } catch (e) {}
       }
-      wrapTemplate = cloneStep(entry.step);
-      activeWrapBankId = entry.id;
+      wrapTemplate = cloneStep(chip.step);
+      if (chip.userId) { activeWrapBankId = chip.userId; wrapGenActiveKey = null; }
+      else { activeWrapBankId = null; wrapGenActiveKey = chip.key; }
       if (typeof refreshWrapVisuals === 'function') refreshWrapVisuals();
       renderWrapBank();
     }
 
-    // Advance one step through the bank in the active direction (wrapping
-    // around either end). Called from the cell pointerup once a cycling
-    // press's sound event is over.
+    // Advance one step through the active bank in the active direction
+    // (wrapping around either end). Called from the cell pointerup once a
+    // cycling press's sound event is over.
     function advanceWrapCycle() {
-      if (!wrapCycleMode || savedWraps.length === 0) return;
-      const len = savedWraps.length;
+      if (!wrapCycleMode) return;
+      const chips = _wrapCycleChips();
+      const len = chips.length;
+      if (len === 0) return;
       wrapCycleIndex = ((wrapCycleIndex + wrapCycleDir) % len + len) % len;
       armCycleWrap(wrapCycleIndex);
     }
@@ -426,17 +559,24 @@
       label.classList.toggle('cycling', wrapCycleMode);
       label.setAttribute('aria-expanded', _wrapsMenuEl ? 'true' : 'false');
       const arrow = wrapCycleMode ? (wrapCycleDir > 0 ? ' →' : ' ←') : '';
-      label.textContent = 'Wraps' + arrow + ' ▾';
+      // Stack the active bank name UNDER the "Wraps" title (two lines) so a
+      // long progression name reads cleanly without widening the pinned-left
+      // label and squeezing the side-scrolling chip strip.
+      label.innerHTML =
+        '<span class="wrap-bank-label-title">Wraps</span>' +
+        '<span class="wrap-bank-label-bank">' + _wrapBankLabel() + arrow + ' ▾</span>';
     }
 
     function setWrapCycleMode(on) {
       // Nothing to cycle through with an empty bank — stay off.
-      if (on && savedWraps.length === 0) on = false;
+      const chips = _wrapCycleChips();
+      if (on && chips.length === 0) on = false;
       wrapCycleMode = !!on;
       _wrapCyclePendingAdvance = false;
       if (wrapCycleMode) {
-        // Begin from the already-armed wrap if there is one, else the first.
-        let start = savedWraps.findIndex(w => w.id === activeWrapBankId);
+        // Begin from the already-armed chip if there is one, else the first.
+        let start = chips.findIndex(c => (c.userId && c.userId === activeWrapBankId)
+          || (!c.userId && c.key === wrapGenActiveKey));
         if (start < 0) start = 0;
         wrapCycleIndex = start;
         armCycleWrap(wrapCycleIndex);
@@ -448,7 +588,7 @@
     // direction keeps the cycle armed (no re-seed of the cursor); only the
     // off↔on transitions go through setWrapCycleMode.
     function advanceWrapCycleState() {
-      if (savedWraps.length === 0) { setWrapCycleMode(false); return; }
+      if (_wrapCycleChips().length === 0) { setWrapCycleMode(false); return; }
       if (!wrapCycleMode) {
         wrapCycleDir = 1;
         setWrapCycleMode(true);          // off → right
@@ -689,6 +829,33 @@
       const menu = document.createElement('div');
       menu.className = 'ctx-menu wrap-bank-menu';
 
+      // ---- Bank picker: Standard (generated chord-type palette) or User
+      // (saved wraps). Selecting a bank swaps the dropdown's view; the
+      // destructive items below always act on the User bank.
+      const pickHead = document.createElement('div');
+      pickHead.className = 'wrap-bank-menu-head';
+      pickHead.textContent = 'Bank';
+      menu.appendChild(pickHead);
+
+      const picker = document.createElement('div');
+      picker.className = 'wrap-bank-picker';
+      const addBankBtn = (id, text) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'wrap-bank-pick' + (wrapBank === id ? ' active' : '');
+        b.textContent = text;
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.addEventListener('click', (e) => { e.stopPropagation(); setWrapBank(id); closeWrapsMenu(); });
+        picker.appendChild(b);
+        return b;
+      };
+      addBankBtn('standard', 'Chords');
+      addBankBtn('user', 'User' + (savedWraps.length ? ` (${savedWraps.length})` : ''));
+      menu.appendChild(picker);
+
+      const sepHr = document.createElement('hr');
+      menu.appendChild(sepHr);
+
       const cycleBtn = document.createElement('button');
       cycleBtn.type = 'button';
       const paintCycle = () => {
@@ -737,6 +904,24 @@
       shuffleBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
       shuffleBtn.addEventListener('click', (e) => { e.stopPropagation(); shuffleWrapBank(); closeWrapsMenu(); });
       menu.appendChild(shuffleBtn);
+
+      // Publish the armed User wrap to the master Bloom's Notes menu — the
+      // dropdown has no per-row right-click, so this lives here (enabled only
+      // when a saved wrap is currently selected).
+      const pubBtn = document.createElement('button');
+      pubBtn.type = 'button';
+      pubBtn.textContent = '🌸 Publish to Bloom';
+      const _pubEntry = activeWrapBankId ? savedWraps.find(w => w.id === activeWrapBankId) : null;
+      if (!_pubEntry) pubBtn.disabled = true;
+      pubBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      pubBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeWrapsMenu();
+        if (!_pubEntry) return;
+        const ok = (typeof _ambPublishWrap === 'function') && _ambPublishWrap(_pubEntry.name, _pubEntry.step);
+        if (typeof showToast === 'function') showToast(ok ? ('Published “' + _pubEntry.name + '” to Bloom Notes') : 'Could not publish this wrap');
+      });
+      menu.appendChild(pubBtn);
 
       const clearBtn = document.createElement('button');
       clearBtn.type = 'button';
@@ -819,63 +1004,107 @@
       renderWrapBank();
     }
 
+    // Human-readable option text for a wrap in the dropdown. User wraps keep
+    // their bank letter (A, B…) as a prefix; generated chips read by their
+    // chord label alone.
+    function _wrapOptionText(chip) {
+      if (chip.userId) {
+        return (chip.label && chip.label !== '·') ? (chip.name + ' · ' + chip.label) : chip.name;
+      }
+      return chip.label || chip.name;
+    }
+
+    // Show the inline delete-× only on the editable User bank with a wrap
+    // currently armed (there's nothing to delete on the generated banks, and
+    // nothing selected to act on otherwise).
+    function _refreshWrapDelBtn(kind) {
+      const del = document.getElementById('wrap-bank-del');
+      if (!del) return;
+      del.hidden = !(kind === 'user' && activeWrapBankId);
+    }
+
     function renderWrapBank() {
       const bank = document.getElementById('wrap-bank');
-      const chips = document.getElementById('wrap-bank-chips');
-      if (!bank || !chips) return;
-      if (savedWraps.length === 0) {
-        bank.hidden = true;
-        chips.innerHTML = '';
-        // No wraps left to cycle through — drop out of cycle mode so the
-        // label doesn't stay lit over an empty bank.
-        if (wrapCycleMode) {
-          wrapCycleMode = false;
-          _wrapCyclePendingAdvance = false;
-          if (typeof updateWrapCycleLabel === 'function') updateWrapCycleLabel();
-        }
+      const sel = document.getElementById('wrap-bank-select');
+      if (!bank || !sel) return;
+      const data = _wrapBankList();
+      // The row is always visible: Standard / progression banks always have
+      // entries, and even an empty User bank needs its label (the bank
+      // picker) reachable to switch back to a populated bank.
+      bank.hidden = false;
+      sel.innerHTML = '';
+
+      if (data.chips.length === 0) {
+        // Only the (empty) User bank reaches here.
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        opt.textContent = (data.kind === 'user')
+          ? 'No saved wraps yet'
+          : 'No chords for this bank';
+        sel.appendChild(opt);
+        sel.disabled = true;
+        _refreshWrapDelBtn(data.kind);
+        if (wrapCycleMode) { wrapCycleMode = false; _wrapCyclePendingAdvance = false; }
+        updateWrapCycleLabel();
         return;
       }
-      bank.hidden = false;
-      chips.innerHTML = '';
-      savedWraps.forEach((entry) => {
-        const chip = document.createElement('div');
-        chip.className = 'wrap-bank-chip' + (entry.id === activeWrapBankId ? ' active' : '');
-        const label = wrapBankChipLabel(entry.step);
-        chip.title = `Recall wrap ${entry.name}: ${label}`;
-        const recall = document.createElement('button');
-        recall.type = 'button';
-        recall.className = 'wrap-bank-chip-recall';
-        recall.innerHTML =
-          `<span class="wrap-bank-chip-name">${entry.name}</span>` +
-          `<span class="wrap-bank-chip-label">${label}</span>`;
-        recall.addEventListener('click', () => recallWrapFromBank(entry.id));
-        chip.appendChild(recall);
-        const close = document.createElement('button');
-        close.type = 'button';
-        close.className = 'wrap-bank-chip-x';
-        close.setAttribute('aria-label', `Delete wrap ${entry.name}`);
-        close.title = `Delete wrap ${entry.name}`;
-        close.textContent = '×';
-        close.addEventListener('click', (e) => {
-          e.stopPropagation();
-          removeWrapFromBank(entry.id);
-        });
-        chip.appendChild(close);
-        // Right-click / long-press → publish this wrap to the master Bloom's
-        // Notes menu (so layers can use it as a pitch source).
-        chip.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          if (typeof showCtxMenu !== 'function') return;
-          showCtxMenu(e.clientX, e.clientY, [
-            { label: '🌸 Publish to Bloom', fn: () => {
-                const ok = (typeof _ambPublishWrap === 'function') && _ambPublishWrap(entry.name, entry.step);
-                if (typeof showToast === 'function') showToast(ok ? ('Published “' + entry.name + '” to Bloom Notes') : 'Could not publish this wrap');
-              } },
-          ]);
-        });
-        chips.appendChild(chip);
+
+      sel.disabled = false;
+      // The currently-armed wrap (so the dropdown reflects recall AND cycle).
+      const activeKey = activeWrapBankId
+        ? (data.chips.find(c => c.userId === activeWrapBankId) || {}).key
+        : wrapGenActiveKey;
+      let matched = false;
+      data.chips.forEach((entry) => {
+        const opt = document.createElement('option');
+        opt.value = entry.key;
+        opt.textContent = _wrapOptionText(entry);
+        if (entry.key === activeKey) { opt.selected = true; matched = true; }
+        sel.appendChild(opt);
       });
+      // Nothing armed in this bank yet — show a neutral placeholder rather
+      // than implying the first wrap is selected.
+      if (!matched) {
+        const ph = document.createElement('option');
+        ph.value = '';
+        ph.textContent = 'Pick a wrap…';
+        ph.selected = true;
+        sel.insertBefore(ph, sel.firstChild);
+      }
+      _refreshWrapDelBtn(data.kind);
+      updateWrapCycleLabel();
     }
+
+    // Recall whichever wrap the dropdown lands on. User wraps route through
+    // recallWrapFromBank (highlights + persist); generated chips through
+    // recallGeneratedWrap. Wired once — options rebuild under it each render.
+    (function bindWrapBankSelect() {
+      const sel = document.getElementById('wrap-bank-select');
+      if (!sel) return;
+      sel.addEventListener('change', () => {
+        const key = sel.value;
+        if (!key) return;
+        const chip = _wrapBankList().chips.find(c => c.key === key);
+        if (!chip) return;
+        // Keep the cycle cursor in sync with a hand-pick, mirroring the old
+        // chip-click behavior so the next cycle step continues from here.
+        if (wrapCycleMode) {
+          const idx = _wrapCycleChips().findIndex(c => c.key === key);
+          if (idx >= 0) wrapCycleIndex = idx;
+        }
+        if (chip.userId) recallWrapFromBank(chip.userId);
+        else recallGeneratedWrap(chip);
+      });
+      const del = document.getElementById('wrap-bank-del');
+      if (del) {
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (activeWrapBankId) removeWrapFromBank(activeWrapBankId);
+        });
+      }
+    })();
 
     // ---- Clear bank ----
     // Wipes every saved sequence after a confirm prompt. Also replaces

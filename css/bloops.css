@@ -8455,6 +8455,14 @@
     body.no-google #serialbox-tab {
       display: none;
     }
+    /* The Listen tab is intentionally `hidden` in the DOM (kept wired for later).
+       The shared .serialbox-top-link rule sets display:flex, which overrode the
+       [hidden] attribute once the user signed in (body.no-google removed),
+       making Listen reappear. Force the hidden attribute to win so it stays gone
+       until the attribute is removed. */
+    #serialbox-tab[hidden] {
+      display: none !important;
+    }
 
     /* Sign-in gate — covers everything below the home bar until the user
        has signed in with Google. Both Bloops and the Player need Drive

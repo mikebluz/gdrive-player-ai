@@ -518,12 +518,19 @@
     // signal (which, with the masterBus headroom trim below, peaks well under
     // it) and only rounds the rare overlap peak. A lower knee waveshaped hot
     // single notes and audibly distorted dense playback.
-    const _MASTER_CLIP_KNEE = 0.9, _MASTER_CLIP_CEIL = 0.97;
+    // Knee 0.85 (single/moderate notes pass identity). Above it the curve rolls
+    // to a hard CEIL, but the tanh's INPUT width (_MASTER_CLIP_SOFT) is decoupled
+    // from the small output span and made WIDE (0.6) so the rare dense-overlap
+    // peak (measured ~1.3–1.4 after the limiter, which has no lookahead to catch
+    // onset transients) saturates GRADUALLY — warm, low-order harmonics — instead
+    // of slamming the old 0.07-wide wall, which fizzed into audible hard-clip
+    // distortion at phrase ends. e.g. 1.4 → ~0.94 smoothly; 0.84 → identity.
+    const _MASTER_CLIP_KNEE = 0.85, _MASTER_CLIP_CEIL = 0.97, _MASTER_CLIP_SOFT = 0.6;
     const masterClipper = new Tone.WaveShaper((x) => {
       const s = x < 0 ? -1 : 1, ax = Math.abs(x);
       if (ax <= _MASTER_CLIP_KNEE) return x;
       const span = _MASTER_CLIP_CEIL - _MASTER_CLIP_KNEE;
-      return s * (_MASTER_CLIP_KNEE + span * Math.tanh((ax - _MASTER_CLIP_KNEE) / span));
+      return s * (_MASTER_CLIP_KNEE + span * Math.tanh((ax - _MASTER_CLIP_KNEE) / _MASTER_CLIP_SOFT));
     }, 4096);
     try { masterClipper.oversample = '4x'; } catch (e) {}
     masterClipper.toDestination();
@@ -536,12 +543,102 @@
     // playback came out quieter and "gated" versus dry grid taps. With real
     // peak safety now in the clipper, the compressor only needs to be a light
     // glue (see settings below) and the pumping is gone.
-    const masterLimiter = new Tone.Limiter(-1).connect(masterClipper);
+    // Threshold -3 dBFS (not -1): at -1 the limiter sat right at the clipper's
+    // 0.9 knee, so accumulating release tails over a phrase reached the clipper
+    // at ~1.6 (measured) and waveshaped into audible distortion at phrase ends.
+    // -3 gives the limiter room to catch the sustained accumulation — dense
+    // multi-lane phrases now reach the clipper at ~1.0 (gentle soft-clip) instead
+    // of 1.6, while single / moderate notes (peak ~-4.7 dBFS, below threshold)
+    // stay transparent. Residual ~1.0 transient onsets (no lookahead) get only a
+    // ~0.3 dB soft-clip — inaudible vs. the old ~3 dB hard squash.
+    const masterLimiter = new Tone.Limiter(-3).connect(masterClipper);
     // Master volume — sits right before the limiter so the slider scales
     // the entire mix (Bloops + per-track output + global FX tails) but
     // can't push the signal above the limiter's -1 dB ceiling. Volume of
     // 0 dB at unity; the UI slider drives this in dB.
     const masterVolume = new Tone.Volume(0).connect(masterLimiter);
+
+    // ---- True lookahead brickwall limiter (AudioWorklet) -------------------
+    // The Tone.Limiter / soft-clipper above are FEEDFORWARD (no lookahead), so a
+    // momentary in-phase overlap peak (a step's release tail + the next step's
+    // attack at the same pitch reaches ~1.0 — measured) slips past them and the
+    // clipper soft-saturates it: audible as distortion "between steps", worst on
+    // a pure sine. A lookahead limiter delays the signal a few ms and reduces the
+    // gain BEFORE the peak emerges, catching it transparently — so we can keep
+    // full per-voice loudness (masterBus back to 0.6) and still never clip.
+    //
+    // Inserted as masterVolume → worklet → masterClipper (replacing the Tone
+    // limiter in the live path). Ceiling 0.84 sits just under the clipper's 0.85
+    // knee, so the clipper stays identity on the limiter's output and only acts
+    // as a final hard safety. If the worklet can't load (very old browser), the
+    // original Tone-limiter + clipper chain remains as the fallback.
+    let masterLookaheadLimiter = null;
+    (function installLookaheadLimiter() {
+      const rawCtx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+      if (!rawCtx || !rawCtx.audioWorklet || typeof rawCtx.audioWorklet.addModule !== 'function') return;
+      const code = `
+        class LookaheadLimiter extends AudioWorkletProcessor {
+          constructor(opt){
+            super();
+            const o=(opt&&opt.processorOptions)||{};
+            this.ceil=o.ceiling||0.84;
+            this.look=Math.max(1,Math.round((o.lookaheadMs||3)/1000*sampleRate));
+            this.relC=Math.exp(-1/((o.releaseMs||90)/1000*sampleRate));     // peak-hold release
+            this.gAtt=Math.exp(-1/((o.gainAttackMs||0.4)/1000*sampleRate));  // gain-reduce smoothing
+            this.gRel=Math.exp(-1/((o.gainReleaseMs||90)/1000*sampleRate));  // gain-recover smoothing
+            this.L=this.look+1; this.wi=0; this.delay=null; this.peak=0; this.gain=1;
+          }
+          process(inputs,outputs){
+            const inp=inputs[0], out=outputs[0];
+            if(!inp||inp.length===0) return true;
+            const ch=inp.length, n=inp[0].length, L=this.L, look=this.look;
+            if(!this.delay||this.delay.length!==ch){ this.delay=[]; for(let c=0;c<ch;c++) this.delay.push(new Float32Array(L)); }
+            for(let i=0;i<n;i++){
+              let p=0; for(let c=0;c<ch;c++){ const a=Math.abs(inp[c][i]); if(a>p)p=a; }
+              // peak hold: instant attack, exp release — keeps the gain ducked
+              // across the lookahead window so the upcoming peak is covered.
+              this.peak = (p>this.peak) ? p : (p+(this.peak-p)*this.relC);
+              const target = this.peak>this.ceil ? this.ceil/this.peak : 1;
+              // smooth the gain (fast when reducing, slower when recovering)
+              this.gain = (target<this.gain) ? target+(this.gain-target)*this.gAtt
+                                             : target+(this.gain-target)*this.gRel;
+              const ri=(this.wi+L-look)%L;
+              for(let c=0;c<ch;c++){ const buf=this.delay[c]; const d=buf[ri]; buf[this.wi]=inp[c][i]; out[c][i]=d*this.gain; }
+              this.wi=(this.wi+1)%L;
+            }
+            return true;
+          }
+        }
+        registerProcessor('bloops-lookahead-limiter', LookaheadLimiter);`;
+      let url;
+      try { url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' })); } catch (e) { return; }
+      rawCtx.audioWorklet.addModule(url).then(() => {
+        let node;
+        // Tone v14 wraps the AudioContext (standardized-audio-context), so the
+        // native `new AudioWorkletNode(rawCtx, …)` constructor rejects it. Use
+        // Tone's own factory, which returns a node wired into Tone's graph.
+        try {
+          node = Tone.context.createAudioWorkletNode('bloops-lookahead-limiter', {
+            numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+            channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+            processorOptions: { ceiling: 0.84, lookaheadMs: 3, releaseMs: 90 },
+          });
+        } catch (e) { return; }
+        try {
+          // Rewire: masterVolume → worklet → masterClipper (drop the Tone limiter
+          // from the live path). Keep the Tone limiter object alive as fallback.
+          masterVolume.disconnect();
+          try { masterLimiter.disconnect(); } catch (e) {}
+          masterVolume.connect(node);                 // Tone → native (Tone handles it)
+          Tone.connect(node, masterClipper);          // native → Tone input
+          masterLookaheadLimiter = node;
+        } catch (e) {
+          // Rewire failed mid-way — restore the original feedforward chain.
+          try { masterVolume.disconnect(); masterVolume.connect(masterLimiter); masterLimiter.connect(masterClipper); } catch (e2) {}
+        }
+        try { URL.revokeObjectURL(url); } catch (e) {}
+      }).catch(() => { /* worklet unavailable — keep the Tone-limiter fallback */ });
+    })();
     // Global FX chain — sits post-compressor / pre-limiter so the dynamics
     // settle before reverb/delay tails layer on. wet=0 / distortion=0 are
     // effective pass-throughs; the FX panel UI updates these in place.
@@ -602,12 +699,13 @@
     // scale — leaving NO room for overlap. When several voices stack (chords,
     // dense sequences, and especially now that sequenced steps sustain for
     // their whole step + release tail, so tails overlap the next steps) the
-    // sum slammed the soft-clip ceiling and waveshaped into audible
-    // distortion. Trimming the bus to 0.6 (~-4.4 dB) gives that headroom: a
-    // single note sits ~0.58, moderate polyphony stays under the clip knee,
-    // and only genuinely dense peaks reach the ceiling — measured THD on a 4x
-    // coherent overlap dropped from ~18% to ~0% with no added pumping. The
-    // user-facing Master Volume still scales on top of this.
+    // sum slammed the soft-clip ceiling and waveshaped into audible distortion.
+    // 0.6 (~-4.4 dB): a single voice sits ~0.58. Even a 2x COHERENT overlap (one
+    // note's release tail + the next note's attack at the SAME pitch) reaches
+    // ~1.0 pre-clip, which a feedforward limiter can't catch. That's now handled
+    // by the true LOOKAHEAD limiter below (masterVolume → worklet), which ducks
+    // before the peak — so the trim can stay at 0.6 for full loudness AND stay
+    // clean. Master Volume scales on top.
     const masterBus = new Tone.Gain(0.6).connect(masterCompressor);
 
     // ---- Master-bus oscilloscope ----

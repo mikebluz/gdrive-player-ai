@@ -2143,6 +2143,27 @@
     body.shape-mode #shape-pad   { display: flex; }
     body.shape-mode .grid-settings-panel .grid-only { display: none !important; }
     .shape-inner { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+    /* Per-bar wheel selector strip (a lane = a list of one-bar wheels). */
+    .shape-bars { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .shape-bars[hidden] { display: none; }
+    .shape-bar-chip {
+      position: relative; min-width: 34px; height: 30px; padding: 0 10px; border-radius: 7px;
+      background: #0a0a14; border: 1px solid #2d2d3f; color: #a0aec0;
+      font: 700 0.82rem 'Segoe UI', sans-serif; cursor: pointer;
+    }
+    .shape-bar-chip:hover { border-color: #4fd1c5; color: #b2f5ea; }
+    .shape-bar-chip.sel { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.16); }
+    .shape-bar-chip.playing { box-shadow: 0 0 8px rgba(79,209,197,0.55); border-color: #4fd1c5; }
+    .shape-bar-del {
+      margin-left: 6px; color: #fc8181; font-size: 0.72rem; opacity: 0.6;
+    }
+    .shape-bar-del:hover { opacity: 1; }
+    .shape-bar-add {
+      height: 30px; padding: 0 12px; border-radius: 7px; cursor: pointer;
+      background: transparent; border: 1px dashed #2d2d3f; color: #8a8aa8;
+      font: 700 0.78rem 'Segoe UI', sans-serif;
+    }
+    .shape-bar-add:hover { border-color: #9f7aea; color: #d6bcfa; }
     /* Buttons (vertical column) beside the canvas; the canvas fills the rest of
        the row and is sized to the row height — so it grows when the controls
        move out of a horizontal strip. */

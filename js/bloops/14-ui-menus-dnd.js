@@ -5172,28 +5172,46 @@
       const bpm = parseInt(tempoInput?.value, 10) || 120;
       const unitSub = performQuantize ? performResolution : 0.125;
       const unitMs = Math.max(1, (60000 / bpm) * unitSub);
-      let startMs = Infinity, endMs = -Infinity;
-      live.forEach(v => { startMs = Math.min(startMs, v.pressStart); endMs = Math.max(endMs, v.pressEnd ?? performance.now()); });
       if (_performStartMs == null) {
-        _performStartMs = startMs; _performEmittedUnits = 0;
+        _performStartMs = Math.min.apply(null, live.map(v => v.pressStart)); _performEmittedUnits = 0;
         // Listen mode: recording begins on this first note — start the lanes so
         // the performance overdubs in time with the existing playback.
         try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
       }
-      const desiredStart = Math.max(0, Math.round((startMs - _performStartMs) / unitMs));
-      const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
+      // A perform "chord" is only notes pressed (near-)SIMULTANEOUSLY. Cluster the
+      // session's voices by press time: notes within a tight window become a chord,
+      // notes spread over time become SEPARATE timed steps. This makes recording
+      // robust to a session that accumulated many notes over time (which otherwise
+      // collapsed the whole run into one giant chord) — they now land as the
+      // distinct, correctly-timed notes the user actually played.
+      const chordWinMs = Math.min(60, unitMs * 0.5);
+      const sorted = live.slice().sort((a, b) => a.pressStart - b.pressStart);
+      const clusters = [];
+      sorted.forEach(v => {
+        const last = clusters[clusters.length - 1];
+        const end = v.pressEnd ?? performance.now();
+        if (last && (v.pressStart - last.startMs) <= chordWinMs) {
+          last.voices.push(v); last.endMs = Math.max(last.endMs, end);
+        } else {
+          clusters.push({ startMs: v.pressStart, endMs: end, voices: [v] });
+        }
+      });
       snapshotForUndo('Perform');
-      if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
-      const noteUnits = Math.max(1, Math.round((endMs - startMs) / unitMs));
-      let step;
-      if (live.length >= 2) {
-        step = { chord: live.map(v => ({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined })), label: live.map(v => v.label).join('·'), duration: noteUnits, subdivision: unitSub };
-      } else {
-        const v = live[0];
-        step = { freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined, duration: noteUnits, subdivision: unitSub };
-      }
-      addToSequence(step);
-      _performEmittedUnits = desiredStart + noteUnits;
+      clusters.forEach(cl => {
+        const desiredStart = Math.max(0, Math.round((cl.startMs - _performStartMs) / unitMs));
+        const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
+        if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
+        const noteUnits = Math.max(1, Math.round((cl.endMs - cl.startMs) / unitMs));
+        let step;
+        if (cl.voices.length >= 2) {
+          step = { chord: cl.voices.map(v => ({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined })), label: cl.voices.map(v => v.label).join('·'), duration: noteUnits, subdivision: unitSub };
+        } else {
+          const v = cl.voices[0];
+          step = { freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined, duration: noteUnits, subdivision: unitSub };
+        }
+        addToSequence(step);
+        _performEmittedUnits = desiredStart + noteUnits;
+      });
     }
     function polyFinalizeSession() {
       _polySession.endTimer = null;

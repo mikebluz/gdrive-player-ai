@@ -82,7 +82,7 @@
       };
     }
     function _shapeEqualNodes(n, prev) {
-      n = Math.max(1, Math.min(32, n | 0));
+      n = Math.max(0, Math.min(32, n | 0));   // 0 = empty
       const out = [];
       for (let i = 0; i < n; i++) {
         const old = prev && prev[i];
@@ -103,7 +103,7 @@
       const d = _shapeDefault();
       if (!s || typeof s !== 'object') return d;
       if (!Number.isFinite(s.nodeCount)) s.nodeCount = d.nodeCount;
-      s.nodeCount = Math.max(1, Math.min(32, s.nodeCount | 0));
+      s.nodeCount = Math.max(0, Math.min(32, s.nodeCount | 0));   // 0 = empty wheel (Task: empty by default)
       if (['equal', 'free', 'snap'].indexOf(s.timingMode) < 0) s.timingMode = d.timingMode;
       if (!Number.isFinite(s.snapDiv)) s.snapDiv = d.snapDiv;
       if (!Number.isFinite(s.rotationDeg)) s.rotationDeg = d.rotationDeg;
@@ -117,12 +117,15 @@
       if (s.soundParams && typeof s.soundParams !== 'object') s.soundParams = null;
       if (s.progression && !(s.progression.chords && Array.isArray(s.progression.chords) && s.progression.chords.length)) s.progression = null;
       if (!Number.isFinite(s.gatePct)) s.gatePct = d.gatePct;
-      if (!Array.isArray(s.nodes) || !s.nodes.length) s.nodes = _shapeEqualNodes(s.nodeCount);
+      if (!Array.isArray(s.nodes)) s.nodes = [];
       // Normalize each node IN PLACE so node objects keep their identity across
       // calls — transient render state (_flash) and per-node refs survive (the
       // playhead lighting depends on this). .filter keeps the same element refs.
       s.nodes = s.nodes.filter(nd => nd && typeof nd === 'object');
-      if (!s.nodes.length) s.nodes = _shapeEqualNodes(s.nodeCount);
+      // Auto-fill only when nodeCount asks for nodes but none exist (corrupt
+      // legacy). An explicitly-empty wheel (nodeCount 0) STAYS empty.
+      if (s.nodeCount > 0 && !s.nodes.length) s.nodes = _shapeEqualNodes(s.nodeCount);
+      if (!s.nodes.length) s.nodeCount = 0;
       s.nodes.forEach(nd => {
         nd.angleFrac = ((Number.isFinite(nd.angleFrac) ? nd.angleFrac : 0) % 1 + 1) % 1;
         nd.muted = !!nd.muted;
@@ -159,12 +162,133 @@
       if (_shapeEditTarget) return _shapeEditTarget;
       return (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
     }
-    // Ensure the active lane has a normalized shape config; returns it (or null).
+    // ---- Per-bar shapes -----------------------------------------------------
+    // A lane holds an ORDERED LIST of wheels, one per bar (each loopBeats = 4 =
+    // one bar / one rotation). A 4-bar lane → 4 wheels, NOT one 16-beat wheel
+    // with everything crammed into a single revolution. lane.shapeBar selects the
+    // wheel currently shown/edited; playback advances it bar by bar.
+    const _SHAPE_BAR_BEATS = 4;
+    // An EMPTY one-bar wheel (no nodes) — the default for a fresh Shape lane, so
+    // nothing plays until the user adds nodes (Nodes stepper) or the bar's steps
+    // populate from elsewhere.
+    function _shapeEmptyShape() { const s = _shapeDefault(); s.nodes = []; s.nodeCount = 0; return s; }
+    // Migrate a lane to the per-bar array model and return it. Legacy single
+    // lane.shape (or a master/Bloom edit target) is wrapped into a 1-element list.
+    function _shapeLaneShapes(lane) {
+      if (!lane) return [];
+      if (!Array.isArray(lane.shapes)) {
+        lane.shapes = (lane.shape && typeof lane.shape === 'object') ? [lane.shape] : [];
+        lane.shape = null;
+      }
+      if (!lane.shapes.length) lane.shapes.push(_shapeEmptyShape());   // empty by default
+      if (!Number.isFinite(lane.shapeBar) || lane.shapeBar < 0 || lane.shapeBar >= lane.shapes.length) lane.shapeBar = 0;
+      return lane.shapes;
+    }
+    function _shapeBarCount() { const l = _shapeLane(); return (l && !_shapeEditTarget) ? _shapeLaneShapes(l).length : 1; }
+    function _shapeCurrentBar() { const l = _shapeLane(); return (l && !_shapeEditTarget) ? (l.shapeBar | 0) : 0; }
+    function _shapeSelectBar(i) {
+      const l = _shapeLane(); if (!l || _shapeEditTarget) return;
+      const shapes = _shapeLaneShapes(l);
+      l.shapeBar = Math.max(0, Math.min(shapes.length - 1, i | 0));
+    }
+    // The bar whose wheel is currently playing (set by the playhead during
+    // playback so the strip highlights it / the wheel can follow); -1 when idle.
+    let _shapePlayingBar = -1;
+    function _shapeAfterBarChange() {
+      try { _shapeRenderBars(); } catch (e) {}
+      try { _shapeBuildToolbar(); } catch (e) {}
+      try { _shapeResize(); _shapeDraw(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    }
+    function _shapeAddBar() {
+      const l = _shapeLane(); if (!l || _shapeEditTarget) return;
+      const shapes = _shapeLaneShapes(l);
+      shapes.push(_shapeDefault());
+      l.shapeBar = shapes.length - 1;
+      _shapeWheelDirty = true;
+      try { _shapeFlushNow(); } catch (e) {}   // the new bar's notes append to the lane
+      _shapeAfterBarChange();
+    }
+    function _shapeRemoveBar(i) {
+      const l = _shapeLane(); if (!l || _shapeEditTarget) return;
+      const shapes = _shapeLaneShapes(l);
+      if (shapes.length <= 1) return;
+      shapes.splice(i, 1);
+      if (l.shapeBar >= shapes.length) l.shapeBar = shapes.length - 1;
+      _shapeWheelDirty = true;
+      try { _shapeFlushNow(); } catch (e) {}
+      _shapeAfterBarChange();
+    }
+    // Render the per-bar chip strip. Hidden while editing a master/Bloom copy
+    // (those are single-shape). One chip per bar + an "+ Bar" button.
+    function _shapeRenderBars() {
+      const strip = document.getElementById('shape-bars'); if (!strip) return;
+      const l = _shapeLane();
+      if (!l || _shapeEditTarget) { strip.innerHTML = ''; strip.hidden = true; return; }
+      strip.hidden = false;
+      const shapes = _shapeLaneShapes(l);
+      strip.innerHTML = '';
+      shapes.forEach((sh, i) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'shape-bar-chip' + (i === l.shapeBar ? ' sel' : '') + (i === _shapePlayingBar ? ' playing' : '');
+        chip.textContent = String(i + 1);
+        chip.title = 'Bar ' + (i + 1) + (shapes.length > 1 ? ' — click to edit' : '');
+        chip.addEventListener('click', () => { _shapeSelectBar(i); _shapeAfterBarChange(); });
+        // The remove-✕ only shows while Node Edit (✎) is active — so a normal
+        // tap just selects the bar and can't accidentally delete it.
+        if (shapes.length > 1 && _shapeEditMode) {
+          const del = document.createElement('span');
+          del.className = 'shape-bar-del'; del.textContent = '✕'; del.title = 'Remove bar ' + (i + 1);
+          del.addEventListener('click', (e) => { e.stopPropagation(); _shapeRemoveBar(i); });
+          chip.appendChild(del);
+        }
+        strip.appendChild(chip);
+      });
+      const add = document.createElement('button');
+      add.type = 'button'; add.className = 'shape-bar-add'; add.textContent = '+ Bar'; add.title = 'Add a bar (wheel) to this lane';
+      add.addEventListener('click', () => _shapeAddBar());
+      strip.appendChild(add);
+    }
+    // Playback auto-follow: while the transport plays an active Shape lane, sweep
+    // the wheel's playhead and advance the displayed bar each bar boundary so the
+    // shape visibly "updates with each bar". Self-terminates when playback stops
+    // or the lane leaves Shape mode.
+    let _shapeFollowRaf = 0;
+    function _shapeFollowEnsure() { if (!_shapeFollowRaf) _shapeFollowRaf = requestAnimationFrame(_shapeFollowTick); }
+    function _shapeFollowTick() {
+      _shapeFollowRaf = 0;
+      const playing = (typeof sequenceTimer !== 'undefined') && sequenceTimer !== null;
+      const lane = (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
+      if (!playing || !lane || !lane.shapeMode || _shapeEditTarget || (typeof Tone === 'undefined') || typeof _playBaseTime === 'undefined') {
+        if (_shapePlayingBar !== -1) { _shapePlayingBar = -1; try { _shapeRenderBars(); } catch (e) {} try { _shapeDraw(0); } catch (e) {} }
+        return;   // stop the loop
+      }
+      const bpm = (typeof tempoInput !== 'undefined' && tempoInput) ? (parseInt(tempoInput.value, 10) || 120) : 120;
+      const beatSec = 60 / bpm;
+      const beat = beatSec > 0 ? ((Tone.now() - _playBaseTime) / beatSec) : 0;
+      const barCount = Math.max(1, _shapeLaneShapes(lane).length);
+      const bar = ((Math.floor(beat / _SHAPE_BAR_BEATS) % barCount) + barCount) % barCount;
+      const phase = (((beat % _SHAPE_BAR_BEATS) / _SHAPE_BAR_BEATS) % 1 + 1) % 1;
+      if (bar !== _shapePlayingBar) {
+        _shapePlayingBar = bar;
+        lane.shapeBar = bar;                 // the editor view follows the playing bar
+        try { _shapeRenderBars(); } catch (e) {}   // re-highlight the strip
+      }
+      try { _shapeDraw(phase); } catch (e) {}      // sweep the playhead for this bar
+      _shapeFollowRaf = requestAnimationFrame(_shapeFollowTick);
+    }
+    // Ensure the active lane has a normalized shape config for the CURRENT bar;
+    // returns it (or null). Master/Bloom edit targets keep their single .shape.
     function _shapeCfg() {
       const lane = _shapeLane();
       if (!lane) return null;
-      if (!lane.shape || typeof lane.shape !== 'object') lane.shape = _shapeDefault();
-      return _shapeNormalize(lane.shape);
+      if (_shapeEditTarget) {
+        if (!lane.shape || typeof lane.shape !== 'object') lane.shape = _shapeDefault();
+        return _shapeNormalize(lane.shape);
+      }
+      const shapes = _shapeLaneShapes(lane);
+      return _shapeNormalize(shapes[lane.shapeBar]);
     }
 
     // ====================================================================
@@ -221,19 +345,23 @@
       // steps would collapse loopBeats to ~1 (total falls back to 1), cramming
       // the whole wheel into a single beat — far too fast. Keep the current
       // (default 4-beat) wheel and just adopt the fingerprint.
-      if (!steps.length) { lane._shapeStepsFp = fp; _shapeWheelDirty = false; return; }
-      // First encounter on a lane that already has a HAND-BUILT wheel: adopt the
+      if (!steps.length) { _shapeLaneShapes(lane); lane._shapeStepsFp = fp; _shapeWheelDirty = false; return; }
+      // First encounter on a lane that already has HAND-BUILT wheel(s): adopt the
       // current state without rebuilding, so existing shapes aren't clobbered.
       if (lane._shapeStepsFp == null) {
-        const cur = lane.shape ? _shapeNormalize(lane.shape) : null;
-        if (cur && _shapeIsCustomized(cur)) { lane._shapeStepsFp = fp; _shapeWheelDirty = false; return; }
-      } else if (lane._shapeStepsFp === fp && lane.shape) {
-        return;                                       // steps unchanged → keep the wheel exactly
+        const cur = _shapeLaneShapes(lane);
+        if (cur.some(s => _shapeIsCustomized(_shapeNormalize(s)))) { lane._shapeStepsFp = fp; _shapeWheelDirty = false; return; }
+      } else if (lane._shapeStepsFp === fp && Array.isArray(lane.shapes) && lane.shapes.length) {
+        return;                                       // steps unchanged → keep the wheels exactly
       }
-      const view = _shapeViewOf(lane.shape);
-      const derived = _shapeSeqToShape(steps);
-      _shapeApplyView(derived, view);
-      lane.shape = derived;
+      // Split the lane into ONE wheel per bar (no cramming of N bars into one
+      // rotation). Carry the first existing wheel's view-settings onto each.
+      const view = (Array.isArray(lane.shapes) && lane.shapes[0]) ? _shapeViewOf(lane.shapes[0]) : null;
+      const derived = _shapeSeqToShapes(steps);
+      if (view) derived.forEach(s => _shapeApplyView(s, view));
+      lane.shapes = derived;
+      lane.shape = null;
+      if (!Number.isFinite(lane.shapeBar) || lane.shapeBar >= derived.length) lane.shapeBar = 0;
       lane._shapeStepsFp = fp;
       _shapeWheelDirty = false;
     }
@@ -249,8 +377,12 @@
       clearTimeout(_shapeFlushTimer); _shapeFlushTimer = null;
       if (_shapeEditTarget || _shapeRecording || !_shapeWheelDirty) return;
       const lane = (typeof lanes !== 'undefined' && typeof activeLaneIdx !== 'undefined') ? lanes[activeLaneIdx] : null;
-      if (!lane || !lane.shapeMode || !lane.shape) return;
-      const out = _shapeCompileSteps(_shapeNormalize(lane.shape));
+      if (!lane || !lane.shapeMode) return;
+      // Fold EVERY per-bar wheel back into the lane's steps, in bar order, so the
+      // canonical step list reflects all bars (not just the one being edited).
+      const shapes = _shapeLaneShapes(lane);
+      let out = [];
+      shapes.forEach(sh => { out = out.concat(_shapeCompileSteps(_shapeNormalize(sh))); });
       const fp = _stepsFingerprint(out);
       _shapeWheelDirty = false;
       if (fp === lane._shapeStepsFp) return;          // nothing actually changed
@@ -1114,9 +1246,9 @@
     function _sendShapeToLane(laneIdx) {
       const li = Number.isFinite(laneIdx) ? laneIdx : (typeof activeLaneIdx !== 'undefined' ? activeLaneIdx : 0);
       const lane = (typeof lanes !== 'undefined') ? lanes[li] : null;
-      if (!lane || !lane.shape) return;
-      const cfg = _shapeNormalize(lane.shape);
-      const out = _shapeCompileSteps(cfg);
+      if (!lane) return;
+      let out = [];
+      _shapeLaneShapes(lane).forEach(sh => { out = out.concat(_shapeCompileSteps(_shapeNormalize(sh))); });
       if (!out.length) { try { alert('This shape has no unmuted nodes to send to the lane.'); } catch (e) {} return; }
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Send shape to lane');
       lane.steps = out;
@@ -1151,6 +1283,7 @@
     // lose real work)? Used to gate the confirm — undo doesn't capture shapes.
     function _shapeIsCustomized(cfg) {
       if (!cfg) return false;
+      if (!cfg.nodes || !cfg.nodes.length) return false;   // an EMPTY wheel is blank, not hand-built
       if (cfg.nodeCount !== 4 || (cfg.loopBeats || 4) !== 4 || cfg.progression || cfg.soundParams) return true;
       return (cfg.nodes || []).some(n => n && (
         n.muted || n.chord || n.chordOff || Number.isFinite(n.sustainFrac) ||
@@ -1164,13 +1297,16 @@
       // clears the recorded output. Confirms first when there's real work to
       // lose, since the undo history doesn't capture per-lane shapes.
       const lane = _shapeLane();
-      const cfg = (lane && lane.shape) ? _shapeNormalize(lane.shape) : null;
+      const cfg = _shapeCfg();
       const hasSteps = !!(lane && Array.isArray(lane.steps) && lane.steps.length);
-      if ((hasSteps || _shapeIsCustomized(cfg)) && typeof confirm === 'function') {
-        if (!confirm('Reset this wheel to default and clear the lane\'s recorded steps?')) return;
+      const anyCustom = !!(lane && _shapeLaneShapes(lane).some(s => _shapeIsCustomized(_shapeNormalize(s))));
+      if ((hasSteps || anyCustom) && typeof confirm === 'function') {
+        if (!confirm('Reset this lane\'s wheels to a single default bar and clear its recorded steps?')) return;
       }
       if (lane) {
-        lane.shape = _shapeDefault();
+        lane.shapes = [_shapeDefault()];
+        lane.shape = null;
+        lane.shapeBar = 0;
         lane._shapeStepsFp = null;     // force the steps to re-sync from the fresh wheel
       }
       _shapeMarkEdit();
@@ -1188,11 +1324,17 @@
     // node carries its own sustain (the step's length as a fraction of the bar),
     // drawn as a ring arc. The step's voice params ride along so the shape
     // sounds like the sequence.
-    function _shapeSeqToShape(steps) {
+    function _shapeSeqToShape(steps, fixedTotalBeats) {
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       const arr = (steps || []).filter(s => s && !s._wrapEditing);
       const slotBeats = (s) => Math.max(0.0001, (Number.isFinite(s.subdivision) ? s.subdivision : 1) * (Number.isFinite(s.duration) ? s.duration : 1));
-      const total = arr.reduce((a, s) => a + slotBeats(s), 0) || 1;
+      // fixedTotalBeats (per-bar split): position nodes relative to the FULL bar
+      // length (e.g. 4), so a half-full bar fills only the first half of the
+      // wheel and loopBeats stays one bar — instead of stretching the content to
+      // fill the whole revolution.
+      const total = (Number.isFinite(fixedTotalBeats) && fixedTotalBeats > 0)
+        ? fixedTotalBeats
+        : (arr.reduce((a, s) => a + slotBeats(s), 0) || 1);
       const freqToMidi = (f) => Math.round(69 + 12 * Math.log2((f > 0 ? f : A) / A));
       const isRest = (s) => (s.freq == null && !Array.isArray(s.chord) && !(s.isSub && Array.isArray(s.subSteps)));
       // Base note = first sounding pitch (single / chord-low / sub-first), else 60.
@@ -1276,18 +1418,40 @@
       if (nodes.length) { shape.nodes = nodes; shape.nodeCount = nodes.length; }
       return shape;
     }
+    // Split a lane's steps into ONE wheel per bar (each loopBeats = 4 = one bar /
+    // rotation). A step is assigned to the bar where it STARTS; the last bar may
+    // be partial. Fixes the "N bars crammed into one rotation" bug.
+    function _shapeSeqToShapes(steps) {
+      const arr = (steps || []).filter(s => s && !s._wrapEditing);
+      if (!arr.length) return [_shapeDefault()];
+      const slotBeats = (s) => Math.max(0.0001, (Number.isFinite(s.subdivision) ? s.subdivision : 1) * (Number.isFinite(s.duration) ? s.duration : 1));
+      const bars = [];
+      let cur = [], cum = 0;
+      for (const s of arr) {
+        cur.push(s);
+        cum += slotBeats(s);
+        if (cum >= _SHAPE_BAR_BEATS - 1e-6) { bars.push(cur); cur = []; cum = 0; }
+      }
+      if (cur.length) bars.push(cur);
+      if (!bars.length) return [_shapeDefault()];
+      // Position each bar's nodes against the full 4-beat bar so partial bars
+      // don't stretch to fill the wheel, and every wheel is exactly one bar long.
+      return bars.map(barSteps => _shapeSeqToShape(barSteps, _SHAPE_BAR_BEATS));
+    }
     // Lane menu "Send to Shape": convert the lane's sequence into its shape and
     // switch the lane into Shape mode.
     function _sendLaneToShape(laneIdx) {
       const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
       if (!lane || !Array.isArray(lane.steps) || !lane.steps.length) return;
-      const shape = _shapeSeqToShape(lane.steps);
-      if (!shape || !shape.nodes || !shape.nodes.length) {
+      const shapes = _shapeSeqToShapes(lane.steps);   // one wheel per bar
+      if (!shapes.length || !shapes.some(s => s.nodes && s.nodes.length)) {
         try { alert('That lane has no playable notes to send to Shape.'); } catch (e) {}
         return;
       }
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Shape');
-      lane.shape = shape;
+      lane.shapes = shapes;
+      lane.shape = null;
+      lane.shapeBar = 0;
       // Shape is mutually exclusive with the other lane modes.
       lane.fluidGridMode = false; lane.gameMode = false; lane.progMode = false;
       lane.ambientMode = false; lane.textMode = false; lane.seqMode = false;
@@ -1354,7 +1518,7 @@
         // params panel it toggles (which wraps full-width just below the row).
         '<button type="button" class="shape-btn" id="shape-params-btn" title="Show / hide the wheel settings">⚙ Wheel ▾</button>' +
         '<div class="shape-params" id="shape-params" hidden>' +
-          stepper('Nodes', 'shape-nodes', 1, 32, 1, '') +
+          stepper('Nodes', 'shape-nodes', 0, 32, 1, '') +
           '<span class="shape-ctrl"><label>Timing</label><select id="shape-timing">' +
             '<option value="equal">Equal</option><option value="free">Free</option><option value="snap">Snap</option>' +
           '</select></span>' +
@@ -1392,7 +1556,7 @@
       const persist = () => { _shapeMarkEdit(); try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {} };
       nodesEl.addEventListener('change', () => {
         const c = _shapeCfg(); if (!c) return;
-        const n = Math.max(1, Math.min(32, parseInt(nodesEl.value, 10) || 4));
+        const n = Math.max(0, Math.min(32, parseInt(nodesEl.value, 10) || 0));
         // Changing the node count rebuilds the wheel from scratch, which drops
         // per-node wrap payloads (Set cycles / Run groups). Warn + let the user
         // back out when any exist; revert the stepper if they cancel.
@@ -1464,7 +1628,7 @@
         if (_shapeIsPitched()) _shapeFlattenPitch(); else _shapeSprayScale();
       });
       const editEl = bar.querySelector('#shape-edit-btn');
-      if (editEl) editEl.addEventListener('click', () => { _shapeEditMode = !_shapeEditMode; _shapeReflectEditBtn(); });
+      if (editEl) editEl.addEventListener('click', () => { _shapeEditMode = !_shapeEditMode; _shapeReflectEditBtn(); try { _shapeRenderBars(); } catch (e) {} });
       _shapeReflectEditBtn();
       const sendEl = bar.querySelector('#shape-send-btn');
       if (sendEl) sendEl.addEventListener('click', () => {
@@ -1504,6 +1668,8 @@
         if (stale && stale !== paramsPanel) stale.remove();
         inner.appendChild(paramsPanel);
       }
+      try { _shapeRenderBars(); } catch (e) {}   // keep the per-bar chip strip in sync
+      try { _shapeFollowEnsure(); } catch (e) {} // follow the playing bar if already playing
     }
 
     // ---- Lifecycle ---------------------------------------------------------
@@ -1621,6 +1787,36 @@
         if (lane && !_shapeEditTarget) _shapeMaybeDeriveFromSteps(lane);
         _shapeBuildToolbar(); _shapeResize(); _shapeDraw();
       }
+    }
+    // Re-derive the active Shape lane's per-bar wheels from its steps when the
+    // steps changed UNDER us (any lane/step edit — Fold, Reverse, Shuffle, delete,
+    // modulate, … — mutates lane.steps and re-renders). Guarded so it's a no-op
+    // when nothing changed and never clobbers a pending wheel edit.
+    function _shapeRefreshFromSteps() {
+      if (!_shapeInited || _shapeEditTarget || _shapeRecording || _shapeWheelDirty) return;
+      if (!document.body.classList.contains('shape-mode')) return;
+      const lane = _shapeLane();
+      if (!lane || !lane.shapeMode) return;
+      const before = lane._shapeStepsFp;
+      _shapeMaybeDeriveFromSteps(lane);
+      if (lane._shapeStepsFp !== before) {   // steps changed externally → refresh the wheel + UI
+        try { _shapeBuildToolbar(); } catch (e) {}
+        try { _shapeRenderBars(); } catch (e) {}
+        try { _shapeResize(); _shapeDraw(); } catch (e) {}
+      }
+    }
+    // Funnel: EVERY lane/step edit ends in renderSequence, so wrap it once to keep
+    // the shape in sync no matter which edit fired (the "deep dive" answer — one
+    // chokepoint covers them all). try/catch keeps a shape error from ever
+    // breaking renderSequence itself.
+    if (typeof renderSequence === 'function' && !renderSequence._shapeWrapped) {
+      const _origRenderSequence = renderSequence;
+      renderSequence = function () {
+        const r = _origRenderSequence.apply(this, arguments);
+        try { _shapeRefreshFromSteps(); } catch (e) {}
+        return r;
+      };
+      renderSequence._shapeWrapped = true;
     }
 
     // ========================================================================

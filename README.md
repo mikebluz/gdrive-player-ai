@@ -64,18 +64,23 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
    laneSumBus (Gain = 1/√N, N = sounding lanes) ─► masterBus    ← every sequenced
      so N uncorrelated lanes sum to ≈ one lane's level            lane sums here
      (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
-   masterBus (Gain 0.6) ─► masterCompressor ─► [master FX chain:         (returns sum
-     (−4.4 dB headroom      (gentle glue:       distortion → filter →     back in here)
+   masterBus (Gain 0.5) ─► masterCompressor ─► [master FX chain:         (returns sum
+     (−6 dB headroom        (gentle glue:       distortion → filter →     back in here)
       trim so overlapping    −3 dB / 2:1 /      phaser → vibrato → chorus
       voices don't slam      180 ms)            → tremolo → delay →
       the clip ceiling)                         pingpong → reverb →
                                                 autopan] ─► masterVolume
                                                      │
                                                      ▼
-                        masterLimiter (−1 dB) ─► masterClipper ─► 🔊 speakers
-                                                 (soft-knee true-peak
-                                                  ceiling: identity below
-                                                  0.9, hard 0.97 ceiling)
+                  lookahead limiter (AudioWorklet, ceiling 0.84, 3 ms lookahead)
+                        │   ducks BEFORE each peak (incl. the same-pitch
+                        │   step-to-step overlap a feedforward limiter misses)
+                        ▼
+                        masterClipper ─► 🔊 speakers
+                        (final safety only — identity below 0.85; the limiter
+                         already holds the signal under it. The old Tone
+                         masterLimiter(−3) stays as fallback if the worklet
+                         can't load.)
 ```
 
 **Notes:**
@@ -93,16 +98,19 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   sequenced step's onset, so lane/Game/Prog playback came out quieter and audibly "gated"
   vs. dry grid taps — measured gain reduction on a dense stream fell from ~−2.8 dB (4.6 dB
   of pumping) to ~−0.5 dB (<1 dB) with the split.
-- **`masterBus` carries a −4.4 dB headroom trim (Gain 0.6).** All entry buses and FX
-  returns sum here, so a single voice already peaks near full scale — with no room for
-  overlap. Once several voices stack (chords, and especially now that sequenced steps
-  sustain for their whole step + a release tail that overlaps following steps) the sum
-  used to slam the clip ceiling and waveshape into audible distortion (~18% THD on a 4×
-  overlap). The trim gives that headroom: a single note sits ~0.58, moderate polyphony
-  stays under the clip knee, only genuinely dense peaks reach the ceiling (THD back to
-  ~0%). It's static (not a compressor) so it adds no pumping. Loudness lost to the trim is
-  the deliberate cost of clean dense polyphony without a look-ahead limiter; the
-  user-facing Master Volume scales on top.
+- **`masterBus` carries a −6 dB headroom trim (Gain 0.5).** All entry buses and FX returns
+  sum here, so a single voice already peaks near full scale — with no room for overlap.
+  Once voices stack (chords, and especially that sequenced steps sustain for their whole
+  step + a release tail that overlaps following steps) the sum slams the clip ceiling and
+  waveshapes into audible distortion. The earlier 0.6 (−4.4 dB) trim wasn't enough: a
+  single voice at ~0.58 means even a **2× coherent overlap** — one step's release tail plus
+  the next step's attack at the *same pitch* — reaches ~1.0 pre-clip (measured), which the
+  no-lookahead limiter can't catch and the clipper soft-saturates, audible as distortion
+  "between steps" on a pure sine. 0.5 puts that 2× overlap at ~0.855 ≈ the clip knee
+  (clipper ≈ identity → clean). It's static (not a compressor) so it adds no pumping;
+  the ~1.6 dB of extra loudness lost is the cost of clean overlaps without a look-ahead
+  limiter (which would catch the overlap transient and let this trim go back up — a
+  planned follow-up). The user-facing Master Volume scales on top.
 - **`laneSumBus` scales headroom with the lane count (anti-runaway summing).** Every
   sequenced lane's output sums into `laneSumBus` before `masterBus`; its gain is set to
   `1/√N` for `N` *sounding* lanes (solo wins, else non-muted — see `_soundingLaneCount`),

@@ -1329,6 +1329,13 @@
       };
       const at = idx + 1;
       lanes.splice(at, 0, copy);
+      // The splice shifted every lane at index >= `at` down by one. If the
+      // currently-active lane was among them, its integer activeLaneIdx is now
+      // stale — and activateLane() below writes the live `sequence` + voice back
+      // to lanes[activeLaneIdx] FIRST, which would dump the active lane's steps /
+      // tone into the wrong lane (the classic "lane took on another lane's
+      // steps/tone" bug when cloning a lane ABOVE the active one). Re-point it.
+      if (activeLaneIdx >= at) activeLaneIdx++;
       if (typeof gridRows !== 'undefined') gridRows = lanes.length;
       const rowsEl = document.getElementById('grid-rows-input');
       if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));

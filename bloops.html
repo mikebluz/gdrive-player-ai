@@ -454,6 +454,10 @@
            lane enters Shape mode. -->
       <div id="shape-pad" hidden>
         <div class="shape-inner" id="shape-inner">
+          <!-- Per-bar wheel selector: one chip per bar (the lane is a list of
+               one-bar wheels). Click a chip to edit that bar; the playing bar
+               highlights during playback. Populated by _shapeRenderBars (21). -->
+          <div class="shape-bars" id="shape-bars"></div>
           <!-- Action buttons (a vertical column) sit beside the canvas; the
                collapsible "⚙ Wheel" params panel is relocated by JS to sit
                full-width below this row. -->

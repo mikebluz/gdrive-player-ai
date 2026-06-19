@@ -679,6 +679,33 @@
       return step;
     }
 
+    // Commit a Keep-mode wrap. If a step is selected, the wrap chord REPLACES
+    // that step in its slot (keeping its duration/subdivision) and clears the
+    // selection — so "select step → Keep → Wrap → click note" swaps the selected
+    // note for the chord. With no selection it appends, as before.
+    function _wrapKeepCommit(transposed) {
+      const sel = (typeof selectedStepRefs !== 'undefined' && Array.isArray(selectedStepRefs))
+        ? selectedStepRefs.filter(s => sequence.indexOf(s) >= 0) : [];
+      if (sel.length > 0) {
+        const primary = sel[sel.length - 1];
+        const idx = sequence.indexOf(primary);
+        if (idx >= 0) {
+          snapshotForUndo('Replace with wrap');
+          if (primary.duration != null) transposed.duration = primary.duration;
+          if (primary.subdivision != null) transposed.subdivision = primary.subdivision;
+          sequence.splice(idx, 1, transposed);
+          try { selectedStepRefs = []; } catch (e) {}
+          try { if (typeof syncStepEditorFromSelection === 'function') syncStepEditorFromSelection(); } catch (e) {}
+          try { renderSequence(); } catch (e) {}
+          try { _cellTapAdded = true; } catch (e) {}   // covered — keep polyFinalizeSession out
+          try { const sb = document.getElementById('save-btn'); if (sb) sb.disabled = sequence.length === 0; } catch (e) {}
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+          return;
+        }
+      }
+      addToSequence(transposed);
+      if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
+    }
     // Click handler used while a wrapTemplate is set. Plays a transposed
     // copy of the saved Wrap form at the clicked cell's pitch (its first
     // note becomes the clicked note). With keepMode on, also appends
@@ -727,13 +754,7 @@
       // overwrites it.
       _wrapTransposeDisplayStep = transposed;
       updateChordDisplay();
-      if (keepMode) {
-        // Route through addToSequence so the Save button enables, the
-        // workspace persists, and any active insertion cursor is honored
-        // — mirrors every other Keep-mode append path.
-        addToSequence(transposed);
-        if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
-      }
+      if (keepMode) _wrapKeepCommit(transposed);   // replaces the selected step, else appends
       return true;
     }
 
@@ -906,13 +927,7 @@
 
       _wrapTransposeDisplayStep = transposed;
       updateChordDisplay();
-      if (keepMode) {
-        // Route through addToSequence so the Save button enables, the
-        // workspace persists, and any active insertion cursor is honored
-        // — mirrors every other Keep-mode append path.
-        addToSequence(transposed);
-        if (typeof maybePromptStepDiv === 'function') maybePromptStepDiv(transposed);
-      }
+      if (keepMode) _wrapKeepCommit(transposed);   // replaces the selected step, else appends
 
       // Queue mode: append this wrap to the running playback cursor (one-shot)
       // instead of sustaining it under the press — so rapid presses sound one
@@ -1954,6 +1969,8 @@
       document.getElementById('play-btn').textContent = '⏹';
       // Set master headroom for how many lanes are about to sum (anti-runaway).
       try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {}
+      // Start the Shape per-bar playhead follow (no-op unless a Shape lane is active).
+      try { if (typeof _shapeFollowEnsure === 'function') _shapeFollowEnsure(); } catch (e) {}
       // MIDI output: Start + clock so external gear follows the transport.
       try { if (typeof midiTransportStart === 'function') midiTransportStart(); } catch (e) {}
       // Build the streams array FIRST so any synchronous setup work

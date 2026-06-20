@@ -4606,6 +4606,15 @@
       set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
+      // Master Warmth (global FX) reflection — master Bloom only; these IDs
+      // don't exist on lane Bloom, so the guarded set()/hint() no-op there.
+      if (typeof globalFx !== 'undefined' && globalFx) {
+        set('ambient-warmth', globalFx.warmth); hint('ambient-warmth-v', (globalFx.warmth | 0) + '%');
+        set('ambient-warmth-drive', globalFx.warmthDrive); hint('ambient-warmth-drive-v', (globalFx.warmthDrive | 0) + '%');
+        set('ambient-warmth-cut', globalFx.warmthCut); hint('ambient-warmth-cut-v', (globalFx.warmthCut | 0) + ' Hz');
+        const wOn = document.getElementById(tr('ambient-warmth-on'));
+        if (wOn) { const on = globalFx.warmthOn !== false; wOn.classList.toggle('active', on); wOn.textContent = on ? 'On' : 'Off'; }
+      }
       const chk = (id, v) => { const el = document.getElementById(tr(id)); if (el) el.classList.toggle('on', !!v); };
       // Show only "present" built-in layer cards (Bloom starts with just Bed;
       // the rest are added via the Add-layer menu). Also grey the Add button
@@ -4743,6 +4752,19 @@
         '</div>' +
         tm('Prog rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
         tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +
+        // Master Warmth (global FX) — same controls as the FX panel's Warmth
+        // section, surfaced here above Reverb. GLOBAL: this is the master-chain
+        // warmth that affects ALL output (every lane + grid), not just Bloom —
+        // Bloom passes through it on masterBus. Master Bloom only (not lanes).
+        (E.isLane ? '' :
+          '<div class="ambient-warmth">' +
+            '<div class="ambient-warmth-head"><span class="ambient-mod-sub">Warmth</span>' +
+              '<button type="button" class="ambient-seg" id="ambient-warmth-on" title="Master warmth bypass — tilt EQ + presence dip + soft saturation. Global: affects all output, not only Bloom.">On</button>' +
+              '<span class="ambient-hint">global · all output</span></div>' +
+            '<div class="ambient-ctrl"><label for="ambient-warmth">Warmth</label><input type="range" id="ambient-warmth" min="0" max="100" step="1" value="30" /><span class="ambient-hint" id="ambient-warmth-v"></span></div>' +
+            '<div class="ambient-ctrl"><label for="ambient-warmth-drive">Drive</label><input type="range" id="ambient-warmth-drive" min="0" max="100" step="1" value="12" /><span class="ambient-hint" id="ambient-warmth-drive-v"></span></div>' +
+            '<div class="ambient-ctrl"><label for="ambient-warmth-cut">High cut</label><input type="range" id="ambient-warmth-cut" min="2000" max="20000" step="500" value="16000" /><span class="ambient-hint" id="ambient-warmth-cut-v"></span></div>' +
+          '</div>') +
         // Dedicated reverb (fed by each layer's "Reverb send").
         '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
           sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
@@ -4976,6 +4998,34 @@
           persist();
         });
       });
+      // Master Warmth (global FX). Writes globalFx and drives the master-chain
+      // warmth stage — same target as the FX panel's Warmth section, so this is
+      // a second view onto one global setting (affects all output, not only
+      // Bloom). Master Bloom only; G() returns null on lane Bloom.
+      { const wireWarmth = (stem, key, unit) => {
+          const el = G(stem); if (!el) return;
+          const vEl = G(stem + '-v');
+          el.addEventListener('input', () => {
+            const v = parseInt(el.value, 10) || 0;
+            if (typeof globalFx !== 'undefined' && globalFx) globalFx[key] = v;
+            if (vEl) vEl.textContent = v + unit;
+            try { applyGlobalFx(); } catch (e) {}
+            try { persistGlobalFx(); } catch (e) {}
+          });
+        };
+        wireWarmth('ambient-warmth', 'warmth', '%');
+        wireWarmth('ambient-warmth-drive', 'warmthDrive', '%');
+        wireWarmth('ambient-warmth-cut', 'warmthCut', ' Hz');
+        const wOn = G('ambient-warmth-on');
+        if (wOn) wOn.addEventListener('click', () => {
+          if (typeof globalFx === 'undefined' || !globalFx) return;
+          globalFx.warmthOn = !(globalFx.warmthOn !== false);
+          const on = globalFx.warmthOn !== false;
+          wOn.classList.toggle('active', on); wOn.textContent = on ? 'On' : 'Off';
+          try { applyGlobalFx(); } catch (e) {}
+          try { persistGlobalFx(); } catch (e) {}
+        });
+      }
       bind('ambient-bed-density', 'bed', 'density');
       bind('ambient-bed-register', 'bed', 'register');
       bind('ambient-bed-spread', 'bed', 'spread');

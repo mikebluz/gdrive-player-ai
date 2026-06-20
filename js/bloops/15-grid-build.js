@@ -336,22 +336,17 @@
       // Tone-banner-half/fx-banner are kept in DOM as hidden anchors for
       // initToneMenu / initFxMenu — no longer user-visible.
       if (scaleHalf) {
-        // Static label — root / scale / tone live inside the Sounds
-        // dropdown itself, so the banner button just shows "Sounds".
-        // The chevron is rendered by .banner-half::after, which flips
-        // direction automatically via the .open class toggled by
-        // initSoundsMenu. Hover title preserves the previous detail
-        // readout for discoverability without burning row width.
-        scaleHalf.textContent = 'Sounds';
+        // The Sounds banner button now shows the CURRENT TONE name (or
+        // "Custom" when cells differ), falling back to "Sounds" when no
+        // tone resolves. Root / scale / octaves still live inside the
+        // dropdown. The chevron is rendered by .banner-half::after, which
+        // flips via the .open class toggled by initSoundsMenu. Hover title
+        // preserves the full detail readout. `.is-custom` mirrors the old
+        // orange "Custom" highlight onto the button.
+        scaleHalf.textContent = tone || 'Sounds';
+        scaleHalf.classList.toggle('is-custom', tone === 'Custom');
         const tonePart = tone ? ` · ${tone}` : '';
         scaleHalf.title = `Sounds — ${root} ${prettyScaleName(currentScale)}${tonePart}`;
-      }
-      // Current-tone readout shown to the left of the "Tone…" selector:
-      // the uniform tone name, or "Custom" when cells use different tones.
-      const toneCur = document.getElementById('sounds-tone-current');
-      if (toneCur) {
-        toneCur.textContent = tone || '';
-        toneCur.classList.toggle('is-custom', tone === 'Custom');
       }
       refreshAllCellToneLabels();
       refreshAllCellNameLabels();

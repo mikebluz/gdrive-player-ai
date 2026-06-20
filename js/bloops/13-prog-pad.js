@@ -1096,22 +1096,81 @@
     // Each tab sets the active lane's mode flags directly, then syncs.
     (function initModeTabs() {
       const sel = document.getElementById('mode-select');
-      if (sel) {
-        sel.addEventListener('change', () => {
-          const lane = lanes[activeLaneIdx];
-          if (!lane) return;
-          const m = sel.value;
-          lane.fluidGridMode = (m === 'graph');
-          lane.gameMode      = (m === 'game');
-          lane.progMode      = (m === 'prog');
-          lane.ambientMode   = (m === 'bloom');
-          lane.textMode      = (m === 'text');
-          lane.seqMode       = (m === 'seq');
-          lane.shapeMode     = (m === 'shape');
-          _syncFluidGridToActiveLane();
-          if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (!sel) return;
+      const banner = document.getElementById('mode-banner');
+      const panel  = document.getElementById('mode-panel');
+      const TRIGGER_ID = 'mode-banner';
+      const labelFor = (m) => {
+        const b = panel ? panel.querySelector('.mode-btn[data-mode="' + m + '"]') : null;
+        return b ? b.textContent : (m ? m.charAt(0).toUpperCase() + m.slice(1) : 'Grid');
+      };
+      // Paint the trigger label + active menu item from the (hidden) select.
+      // Exposed globally so _syncFluidGridToActiveLane can repaint after it
+      // sets sel.value directly on a lane switch.
+      const paint = () => {
+        const m = sel.value;
+        if (banner) banner.textContent = labelFor(m);
+        if (panel) panel.querySelectorAll('.mode-btn').forEach(b =>
+          b.classList.toggle('active', b.dataset.mode === m));
+      };
+      window._syncModeBtns = paint;
+      const apply = (m) => {
+        const lane = lanes[activeLaneIdx];
+        if (!lane) return;
+        lane.fluidGridMode = (m === 'graph');
+        lane.gameMode      = (m === 'game');
+        lane.progMode      = (m === 'prog');
+        lane.ambientMode   = (m === 'bloom');
+        lane.textMode      = (m === 'text');
+        lane.seqMode       = (m === 'seq');
+        lane.shapeMode     = (m === 'shape');
+        _syncFluidGridToActiveLane();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      // The select stays the source of truth; a programmatic change still works.
+      sel.addEventListener('change', () => { apply(sel.value); paint(); });
+
+      // Popover — mirrors initGridSettingsToggle so the mode menu and the
+      // Sounds menu are mutually exclusive (shared 'menubar-panel-open' event)
+      // and pin/flip/close-on-outside-or-Escape behave identically.
+      if (banner && panel) {
+        const setOpen = (open) => {
+          panel.classList.toggle('open', open);
+          banner.classList.toggle('open', open);
+          banner.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (open && typeof pinPanelToButton === 'function') pinPanelToButton(banner, panel);
+        };
+        window.addEventListener('resize', () => {
+          if (panel.classList.contains('open') && typeof pinPanelToButton === 'function') pinPanelToButton(banner, panel);
+        });
+        banner.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const willOpen = !panel.classList.contains('open');
+          if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: TRIGGER_ID } }));
+          setOpen(willOpen);
+        });
+        document.addEventListener('menubar-panel-open', (e) => {
+          if (e.detail?.id !== TRIGGER_ID && panel.classList.contains('open')) setOpen(false);
+        });
+        document.addEventListener('click', (e) => {
+          if (!panel.classList.contains('open')) return;
+          if (panel.contains(e.target) || banner.contains(e.target)) return;
+          setOpen(false);
+        });
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
+        });
+        panel.querySelectorAll('.mode-btn').forEach(b => {
+          b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const m = b.dataset.mode;
+            setOpen(false);
+            if (sel.value !== m) { sel.value = m; apply(m); }
+            paint();
+          });
         });
       }
+      paint();
     })();
     // Octave-nudge buttons (grid rail) — bump baseOctave by ±1 within the
     // Octaves dropdown's 1–7 range, then rebuild + persist exactly like a

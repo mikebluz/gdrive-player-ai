@@ -884,18 +884,25 @@
             sends: l.sends ? { ...l.sends } : null,
           })) : null,
         },
-        grid: {
-          rootIdx,
-          baseOctave,
-          octaveCount,
-          masterFreqA,
-          currentScale,
-          palette: [...palette],
-          chipPalette: [...chipPalette],
-          restColor,
-          cellSounds: [...cellSounds],
-          cellParams: cellParams.map(p => ({ ...p })),
-        },
+        grid: (() => {
+          // While a step-select grid preview is loaded, tone + key globals hold
+          // the step's transient values. Persist the REAL pre-preview tone/key
+          // from the snapshot (06's _captureVoiceGlobals applies the same guard
+          // for lane voices) so a save never captures the preview.
+          const _pv = (typeof _stepPreviewSnap !== 'undefined' && _stepPreviewSnap) ? _stepPreviewSnap : null;
+          return {
+            rootIdx: _pv ? _pv.rootIdx : rootIdx,
+            baseOctave,
+            octaveCount,
+            masterFreqA,
+            currentScale: _pv ? _pv.scale : currentScale,
+            palette: [...palette],
+            chipPalette: [...chipPalette],
+            restColor,
+            cellSounds: _pv ? [..._pv.cellSounds] : [...cellSounds],
+            cellParams: _pv ? _pv.cellParams.map(p => ({ ...p })) : cellParams.map(p => ({ ...p })),
+          };
+        })(),
         savedSequences: savedSequences.map(s => JSON.parse(JSON.stringify(s))),
         tracks: tracks.map(t => ({
           id: t.id,

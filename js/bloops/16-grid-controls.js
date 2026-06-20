@@ -747,17 +747,14 @@
         e.stopPropagation();
         openSubPanel(fxPanel, 'fx-banner');
       });
-      // Current-tone readout (left of the Sounds button) is a shortcut to
-      // edit the active grid tone in the sound designer.
-      const toneCurrent = document.getElementById('sounds-tone-current');
-      if (toneCurrent) {
-        const editActive = (e) => {
+      // ✎ Edit (left of the Tone… row inside the Sounds panel) is a shortcut
+      // to edit the active grid tone in the sound designer. Replaces the old
+      // standalone sound-name button that sat in the banner row.
+      const toneEditBtn = document.getElementById('sounds-edit-tone');
+      if (toneEditBtn) {
+        toneEditBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           if (typeof _sdEditActiveGridTone === 'function') _sdEditActiveGridTone();
-        };
-        toneCurrent.addEventListener('click', editActive);
-        toneCurrent.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editActive(e); }
         });
       }
     })();

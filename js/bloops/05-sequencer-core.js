@@ -319,7 +319,10 @@
             + (lane.collapsed ? ' collapsed' : '')
             // Drifting OR locked → keep the orange styling so the user
             // sees the lane has a drift offset. Reset clears both.
-            + (lane.driftMs > 0 || lane.driftLocked ? ' drifting' : '');
+            + (lane.driftMs > 0 || lane.driftLocked ? ' drifting' : '')
+            // Steps don't all share one Tone → flag so mixed-tone lanes read
+            // differently from uniform-tone ones (pitch differences ignored).
+            + (_laneToneMixed(lane) ? ' lane-tone-mixed' : '');
 
           const ctrls = document.createElement('div');
           ctrls.className = 'lane-controls';
@@ -1347,7 +1350,128 @@
       }
       fn(s);
     }
+    // ---- Step-select grid preview -------------------------------------
+    // When a step is selected, load THAT step's grid-specific info (tone +
+    // key context) into the live grid so the cell row / Sounds button reflect
+    // the step you're editing. The pre-select grid voice is snapshotted and
+    // restored verbatim on full deselect. With a multi-selection the FIRST
+    // selected step's info stays loaded (selectedStepRefs[0]). The snapshot is
+    // the source of truth for persistence — _captureVoiceGlobals() (06) and
+    // buildProjectSnapshot() (11) read it, not the transient preview, so the
+    // loaded tone never leaks into a save or onto another lane.
+    let _stepPreviewSnap = null;   // grid voice captured before the preview
+    let _previewStepRef  = null;   // the step currently previewed
+    // Resolve a representative tone (+ key context) for a step. Drills
+    // sub-sequences to their first leaf and reads chord voice 0.
+    function _stepPreviewSource(step) {
+      if (!step) return null;
+      let s = step, guard = 0;
+      while (s && s.isSub && Array.isArray(s.subSteps) && guard++ < 8) s = _firstStepLeaf(s);
+      if (!s) return null;
+      let sound, params;
+      if (Array.isArray(s.chord) && s.chord.length) {
+        const v = s.chord[0] || {};
+        params = (v.params && typeof v.params === 'object') ? v.params : null;
+        sound  = v.sound || (params && params.type);
+      } else {
+        params = (s.params && typeof s.params === 'object') ? s.params : null;
+        sound  = s.sound || (params && params.type);
+      }
+      const kc = (step.keyContext && typeof step.keyContext === 'object') ? step.keyContext
+               : ((s.keyContext && typeof s.keyContext === 'object') ? s.keyContext : null);
+      if (!sound && !params && !kc) return null;
+      return { sound: sound || 'sine', params, keyContext: kc };
+    }
+    function _applyStepGridPreview(step) {
+      if (typeof _captureVoiceGlobals !== 'function' || typeof _applyVoiceToGlobals !== 'function') return;
+      const src = _stepPreviewSource(step);
+      if (!src) return;
+      if (!_stepPreviewSnap) _stepPreviewSnap = _captureVoiceGlobals();
+      const snap = _stepPreviewSnap;
+      const params = (src.params && typeof src.params === 'object') ? src.params : { type: src.sound };
+      const kc = src.keyContext;
+      // Tone + key come from the step; octave / palette / A4 stay as they were
+      // (preview scope is tone + key only).
+      _applyVoiceToGlobals({
+        cellSounds: snap.cellSounds.map(() => src.sound),
+        cellParams: snap.cellParams.map(() => ({ ...params })),
+        scale:   (kc && typeof kc.scale === 'string' && typeof SCALES !== 'undefined' && SCALES[kc.scale]) ? kc.scale : snap.scale,
+        rootIdx: (kc && Number.isFinite(kc.root)) ? kc.root : snap.rootIdx,
+        palette: snap.palette, chipPalette: snap.chipPalette,
+        baseOctave: snap.baseOctave, octaveCount: snap.octaveCount,
+        masterFreqA: snap.masterFreqA, restColor: snap.restColor,
+      });
+    }
+    function _clearStepGridPreview() {
+      if (!_stepPreviewSnap) { _previewStepRef = null; return; }
+      const snap = _stepPreviewSnap;
+      _stepPreviewSnap = null; _previewStepRef = null;  // clear first so guards read real state
+      if (typeof _applyVoiceToGlobals === 'function') _applyVoiceToGlobals(snap);
+    }
+    function _reconcileStepGridPreview() {
+      const first = (selectedStepRefs && selectedStepRefs.length) ? selectedStepRefs[0] : null;
+      try {
+        if (first) {
+          if (first !== _previewStepRef) { _previewStepRef = first; _applyStepGridPreview(first); }
+        } else {
+          _clearStepGridPreview();
+        }
+      } catch (e) {}
+    }
+    // First playable step in a step list (skips rests; chord / sub count).
+    function _firstPlayableStep(steps) {
+      if (!Array.isArray(steps)) return null;
+      for (const s of steps) {
+        if (s && (s.freq != null || Array.isArray(s.chord) || (s.isSub && Array.isArray(s.subSteps) && s.subSteps.length))) return s;
+      }
+      return null;
+    }
+    // Commit a lane's FIRST step's tone + key into the live grid (so the grid
+    // reflects the lane's content on switch). Unlike the step-select preview
+    // this is NOT snapshotted — it becomes the grid's working state. Octave /
+    // palette / A4 are kept from the lane's just-applied voice. No-op when the
+    // lane has no playable first step.
+    function _applyFirstStepToGrid(lane) {
+      if (typeof _captureVoiceGlobals !== 'function' || typeof _applyVoiceToGlobals !== 'function') return;
+      const first = _firstPlayableStep(lane && lane.steps);
+      if (!first) return;
+      const src = (typeof _stepPreviewSource === 'function') ? _stepPreviewSource(first) : null;
+      if (!src) return;
+      const cur = _captureVoiceGlobals();
+      const params = (src.params && typeof src.params === 'object') ? src.params : { type: src.sound };
+      const kc = src.keyContext;
+      _applyVoiceToGlobals({
+        cellSounds: cur.cellSounds.map(() => src.sound),
+        cellParams: cur.cellParams.map(() => ({ ...params })),
+        scale:   (kc && typeof kc.scale === 'string' && typeof SCALES !== 'undefined' && SCALES[kc.scale]) ? kc.scale : cur.scale,
+        rootIdx: (kc && Number.isFinite(kc.root)) ? kc.root : cur.rootIdx,
+        palette: cur.palette, chipPalette: cur.chipPalette,
+        baseOctave: cur.baseOctave, octaveCount: cur.octaveCount,
+        masterFreqA: cur.masterFreqA, restColor: cur.restColor,
+      });
+    }
+    // Collect the set of distinct TONES (params.type / sound) used across a
+    // lane's steps — chord voices and sub-sequence leaves included, rests and
+    // pitch ignored. Used to flag lanes whose steps don't all share one tone.
+    function _collectStepTones(step, set) {
+      if (!step) return;
+      if (step.isSub && Array.isArray(step.subSteps)) { step.subSteps.forEach(c => _collectStepTones(c, set)); return; }
+      if (Array.isArray(step.chord)) {
+        step.chord.forEach(v => { const t = (v && v.params && v.params.type) || (v && v.sound); if (t) set.add(t); });
+        return;
+      }
+      if (step.freq == null) return; // rest
+      const t = (step.params && step.params.type) || step.sound;
+      if (t) set.add(t);
+    }
+    function _laneToneMixed(lane) {
+      const set = new Set();
+      const steps = (lane && Array.isArray(lane.steps)) ? lane.steps : [];
+      steps.forEach(s => _collectStepTones(s, set));
+      return set.size > 1;
+    }
     function syncStepEditorFromSelection() {
+      _reconcileStepGridPreview();
       const step = lastSelectedStep();
       const noteLengthSel = document.getElementById('note-length');
       const subSel = document.getElementById('subdivision-select');

@@ -196,6 +196,7 @@
            further down so the open semantics stay co-located with the
            existing initToneMenu / initFxMenu code. -->
       <div class="grid-state-row sounds-submenus">
+        <button type="button" id="sounds-edit-tone" class="sounds-sub-btn sounds-edit-tone" aria-label="Edit current tone" title="Edit the current grid tone in the sound designer (shows the active tone; “Custom” when cells differ)">✎ Edit</button>
         <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
         <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
       </div>
@@ -353,31 +354,40 @@
              #fluid-grid-toggle lives on as a hidden anchor so the legacy
              cycle/label code keeps resolving. -->
         <div class="mode-tabs" id="mode-tabs" aria-label="Lane mode">
-          <select class="mode-select" id="mode-select" title="Lane mode" aria-label="Lane mode">
+          <!-- Hidden source-of-truth select: kept so initModeTabs and
+               _syncFluidGridToActiveLane keep resolving #mode-select. The
+               #mode-banner popover trigger below drives it (sets .value +
+               repaints). Restore Bloom / TEXT by re-adding their <option>
+               + <button>. -->
+          <select class="mode-select" id="mode-select" title="Lane mode" aria-label="Lane mode" hidden aria-hidden="true" tabindex="-1">
             <option value="grid">Grid</option>
             <option value="graph">Graph</option>
             <option value="game">Game</option>
             <option value="prog">Prog</option>
-            <!-- Lane Bloom (per-lane generative) mode on ice — master Bloom
-                 (Mix ▸ Bloom) is untouched. #ambient-pad and 17-ambient.js
-                 stay wired; restore by re-adding this option:
-                 <option value="bloom">Bloom</option> -->
-            <!-- TEXT (speech) mode on ice — voice quality not usable. The
-                 #text-pad and 18-text.js stay wired; restore by re-adding this
-                 option: <option value="text">TEXT</option> -->
             <option value="seq">Seq</option>
             <option value="shape">Shape</option>
           </select>
+          <!-- Mode picker — a popover menu like the Sounds menu. The trigger
+               button's label is the current mode; clicking opens #mode-panel
+               with one button per mode. -->
+          <button type="button" id="mode-banner" class="banner-mode" aria-haspopup="menu" aria-expanded="false" title="Lane mode">Grid</button>
+          <div class="grid-settings-panel mode-panel" id="mode-panel" role="menu" aria-label="Lane mode">
+            <button type="button" class="mode-btn" data-mode="grid" role="menuitemradio" title="Grid — note grid sequencer">Grid</button>
+            <button type="button" class="mode-btn" data-mode="graph" role="menuitemradio" title="Graph — XY pad">Graph</button>
+            <button type="button" class="mode-btn" data-mode="game" role="menuitemradio" title="Game — live play">Game</button>
+            <button type="button" class="mode-btn" data-mode="prog" role="menuitemradio" title="Prog — chord progression builder">Prog</button>
+            <button type="button" class="mode-btn" data-mode="seq" role="menuitemradio" title="Seq — saved-sequence clip lane">Seq</button>
+            <button type="button" class="mode-btn" data-mode="shape" role="menuitemradio" title="Shape — radial wheel sequencer">Shape</button>
+          </div>
         </div>
         <button type="button" id="fluid-grid-toggle" hidden aria-hidden="true" tabindex="-1" style="display:none"></button>
         <!-- Note-shift + octave-nudge buttons moved to the vertical rail to
              the RIGHT of the grid (.grid-rail, below). -->
-        <!-- Current grid tone, shown just left of the Sounds menu button:
-             the uniform tone name, or "Custom" when cells use different
-             tones. Updated by updateScaleBanner(). -->
-        <span id="sounds-tone-current" class="sounds-tone-current" role="button" tabindex="0" title="Current grid tone — click to edit it in the sound designer (shows “Custom” when cells use different tones)"></span>
         <!-- Sounds menu — anchored at the RIGHT edge (where the master-vol
-             speaker used to live) at 25% of the row width. -->
+             speaker used to live) at 25% of the row width. The button label
+             now shows the current grid tone name (or "Custom" when cells
+             differ); the ✎ Edit shortcut moved into the Sounds panel, left of
+             the Tone… row. Updated by updateScaleBanner(). -->
         <button type="button" id="scale-banner-half" class="banner-half banner-sounds" title="Sounds — root, scale, octaves, A4, tone, and FX"></button>
         <!-- Tone and FX banner buttons live on as hidden anchors so their
              existing IDs (used by initToneMenu / initFxMenu) keep resolving;

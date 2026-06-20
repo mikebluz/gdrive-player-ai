@@ -900,7 +900,7 @@
     // suitable for storing on a lane. Deep-clones the cell arrays so
     // future grid mutations don't bleed across lanes.
     function _captureVoiceGlobals() {
-      return {
+      const v = {
         cellSounds: Array.isArray(cellSounds) ? [...cellSounds] : [],
         cellParams: Array.isArray(cellParams) ? cellParams.map(p => ({ ...p })) : [],
         scale:      currentScale,
@@ -912,6 +912,17 @@
         masterFreqA,
         restColor,
       };
+      // While a step-select grid preview is loaded, the live globals hold the
+      // step's transient tone/key. Capture the REAL pre-preview tone + key
+      // instead so the preview never bleeds into a lane voice or a saved
+      // project. (_stepPreviewSnap lives in 05, loaded before this file.)
+      if (typeof _stepPreviewSnap !== 'undefined' && _stepPreviewSnap) {
+        v.cellSounds = [..._stepPreviewSnap.cellSounds];
+        v.cellParams = _stepPreviewSnap.cellParams.map(p => ({ ...p }));
+        v.scale      = _stepPreviewSnap.scale;
+        v.rootIdx    = _stepPreviewSnap.rootIdx;
+      }
+      return v;
     }
     // Load a previously-captured voice into the globals. Triggers a
     // grid rebuild + UI selector sync so the visible cell row matches
@@ -1728,6 +1739,7 @@
                     : wantGame ? 'game' : wantFluid ? 'graph' : 'grid';
         const sel = document.getElementById('mode-select');
         if (sel && sel.value !== _mode) sel.value = _mode;
+        try { if (typeof window._syncModeBtns === 'function') window._syncModeBtns(); } catch (e) {}
       }
       if (wasAmbient !== wantAmbient) {
         try { if (typeof _onAmbientModeChanged === 'function') _onAmbientModeChanged(wantAmbient); } catch (e) {}
@@ -1835,6 +1847,14 @@
       // Selection is tied to the previous lane's chip refs; clear so
       // selection state doesn't carry across lanes.
       selectedStepRefs = [];
+      // The new lane's voice was just applied above; drop any step-select grid
+      // preview state tied to the lane we left (no restore — the captured voice
+      // at the top already recorded the real tone via the guard, and the new
+      // lane's voice now owns the grid).
+      if (typeof _stepPreviewSnap !== 'undefined') { _stepPreviewSnap = null; _previewStepRef = null; }
+      // Then make the grid reflect the lane's FIRST step's tone + key (keeps
+      // octave/palette from the voice). No-op when the lane has no steps yet.
+      try { if (typeof _applyFirstStepToGrid === 'function') _applyFirstStepToGrid(lanes[activeLaneIdx]); } catch (e) {}
       insertionPoint = null;
       renderSequence();
       syncStepEditorFromSelection();

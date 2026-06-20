@@ -3875,14 +3875,9 @@
         actions.push('hr');
       }
       actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
-      // Sound editor scoped to the selected steps (change-only). If the
-      // long-pressed chip isn't in the selection, edit just it.
-      (function () {
-        const inSel = (typeof selectedStepRefs !== 'undefined') && selectedStepRefs.indexOf(sequence[stepIndex]) >= 0;
-        const targets = (inSel && selectedStepRefs.length) ? selectedStepRefs.slice() : [sequence[stepIndex]];
-        const n = targets.length;
-        actions.push({ label: '♪ Sound editor' + (n > 1 ? ' (' + n + ' steps)…' : '…'), fn: () => showSoundEditor(stepIndex, { steps: targets }) });
-      })();
+      // Sound editing is now folded into "Edit step…" (grouped tone picker +
+      // sample import/slice live there), so the separate "♪ Sound editor"
+      // entry is gone — one editor per step.
       actions.push({ label: '⇕ Fold',        fn: () => foldStep(stepIndex) });
       actions.push({ label: '⇄ Nudge…',      fn: () => showNudgeDialog(stepIndex) });
       actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
@@ -4324,19 +4319,110 @@
       renderOctaveRow();
       renderPitchRow();
 
-      // Wave type
+      // Wave type — grouped, sample-capable tone picker (merged in from the
+      // old Sound editor so "Edit step…" is the single editor). One <details>
+      // per tone family, collapsed by default; the active tone's family
+      // auto-opens. User samples carry a × to delete; Import / ✂ Edit sit
+      // below. Falls back to the flat SOUNDS list if the helpers are absent.
       const waveRow = modal.querySelector('#se-wave-row');
-      SOUNDS.forEach(s => {
+      const _isUserSample = (val) => {
+        if (typeof val !== 'string' || !val.startsWith('sample:')) return false;
+        const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(val.slice(7)) : null;
+        return !!(info && info.imported);
+      };
+      let _renderToneActions = () => {};
+      const _setTone = (val) => { p.type = val; _touched.add('type'); };
+      const _addToneButton = (opt) => {
         const btn = document.createElement('button');
-        btn.className = 'sm-wave' + (s === p.type ? ' active' : '');
-        btn.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+        btn.className = 'sm-wave' + (opt.value === p.type ? ' active' : '');
+        btn.textContent = opt.label;
         btn.addEventListener('click', () => {
-          p.type = s; _touched.add('type');
+          _setTone(opt.value);
           waveRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
+          _renderToneActions();
         });
-        waveRow.appendChild(btn);
-      });
+        return btn;
+      };
+      const renderTonePicker = () => {
+        waveRow.innerHTML = '';
+        const opts = (typeof getAllSoundOptions === 'function')
+          ? getAllSoundOptions()
+          : SOUNDS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));
+        const famOf = (v) => (typeof toneFamilyFor === 'function') ? toneFamilyFor(v) : 'other';
+        const byFam = new Map();
+        opts.forEach(o => { const f = famOf(o.value); if (!byFam.has(f)) byFam.set(f, []); byFam.get(f).push(o); });
+        const order = (typeof TONE_FAMILY_ORDER !== 'undefined') ? TONE_FAMILY_ORDER.slice() : [];
+        byFam.forEach((_, f) => { if (order.indexOf(f) < 0) order.push(f); });
+        order.forEach(fam => {
+          const items = byFam.get(fam);
+          if (!items || !items.length) return;
+          const det = document.createElement('details');
+          det.className = 'sm-tone-group';
+          const sum = document.createElement('summary');
+          const famLabel = (typeof TONE_FAMILY_LABELS !== 'undefined' && TONE_FAMILY_LABELS[fam]) ? TONE_FAMILY_LABELS[fam] : fam;
+          sum.textContent = famLabel + ' (' + items.length + ')';
+          det.appendChild(sum);
+          const grid = document.createElement('div');
+          grid.className = 'sm-tone-grid';
+          let hasActive = false;
+          items.forEach(o => {
+            if (o.value === p.type) hasActive = true;
+            const btn = _addToneButton(o);
+            if (_isUserSample(o.value)) {
+              const wrap = document.createElement('span');
+              wrap.className = 'sm-wave-wrap';
+              wrap.appendChild(btn);
+              const x = document.createElement('button');
+              x.type = 'button';
+              x.className = 'sm-wave-del';
+              x.textContent = '×';
+              x.title = 'Delete sample “' + o.label + '”';
+              x.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
+                try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
+                if (p.type === o.value) _setTone('sine');
+                renderTonePicker();
+              });
+              wrap.appendChild(x);
+              grid.appendChild(wrap);
+            } else {
+              grid.appendChild(btn);
+            }
+          });
+          if (hasActive) det.open = true;
+          det.appendChild(grid);
+          waveRow.appendChild(det);
+        });
+      };
+      // Import / ✂ Edit row — below the picker, reflects the current tone.
+      const toneActions = document.createElement('div');
+      toneActions.className = 'sm-tone-actions';
+      waveRow.parentElement.insertBefore(toneActions, waveRow.nextSibling);
+      _renderToneActions = () => {
+        toneActions.innerHTML = '';
+        const importBtn = document.createElement('button');
+        importBtn.className = 'sm-wave';
+        importBtn.textContent = '+ Import…';
+        importBtn.title = 'Upload an audio file to use as a tone (saved across reloads)';
+        importBtn.addEventListener('click', () => {
+          if (typeof triggerImportSample === 'function') triggerImportSample((id) => { _setTone('sample:' + id); renderTonePicker(); _renderToneActions(); });
+        });
+        toneActions.appendChild(importBtn);
+        if (typeof isSliceableSample === 'function' && isSliceableSample(p.type)) {
+          const editBtn = document.createElement('button');
+          editBtn.className = 'sm-wave';
+          editBtn.textContent = '✂ Edit…';
+          editBtn.title = 'Trim / reverse this sample and save it as a new sample';
+          editBtn.addEventListener('click', () => {
+            if (typeof showSampleEditor === 'function') showSampleEditor(p.type.slice(7), (newId) => { _setTone('sample:' + newId); renderTonePicker(); _renderToneActions(); });
+          });
+          toneActions.appendChild(editBtn);
+        }
+      };
+      renderTonePicker();
+      _renderToneActions();
 
       // Sliders. Pan uses an L/C/R formatter instead of a unit suffix.
       const seSliders = [

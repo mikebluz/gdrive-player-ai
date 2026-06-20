@@ -1136,6 +1136,21 @@
       color: #ed8936;
       font-weight: 700;
     }
+    /* Mixed-tone lane — its steps don't all share a single Tone (pitch
+       differences ignored). A violet edge accent + ♪* marker distinguishes it
+       from uniform-tone lanes (which stay unmarked). */
+    .lane-row.lane-tone-mixed {
+      box-shadow: inset 3px 0 0 0 rgba(159, 122, 234, 0.65);
+    }
+    .lane-row.lane-tone-mixed.active {
+      box-shadow: inset 3px 0 0 0 #9f7aea, 0 0 12px rgba(159, 122, 234, 0.28);
+    }
+    .lane-row.lane-tone-mixed .lane-status::after {
+      content: ' ♪*';
+      color: #b794f4;
+      font-weight: 700;
+      font-size: 0.85em;
+    }
 
     /* Row that hosts Clear + Riff between the sequence chip display and
        the step controls. Each button takes half the row. */
@@ -1682,6 +1697,49 @@
       cursor: pointer;
     }
     @media (hover: hover) { .mode-select:hover { border-color: #9f7aea; } }
+    /* Lane mode picker — a popover menu like the Sounds menu. The trigger pill
+       shows the current mode (purple accent + chevron); the hidden #mode-select
+       stays the source of truth. */
+    .banner-mode {
+      flex: 0 0 auto;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 12px;
+      background: #14142a;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      color: #d6bcfa;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.4px;
+      cursor: pointer; user-select: none; white-space: nowrap;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+    }
+    .banner-mode::after { content: '▾'; font-size: 0.7rem; color: #9f7aea; }
+    .banner-mode.open::after { content: '▴'; }
+    @media (hover: hover) { .banner-mode:hover { border-color: #9f7aea; color: #ede0ff; } }
+    .banner-mode.open { border-color: #9f7aea; background: #1a1a30; color: #ede0ff; }
+    /* Mode popover — narrow; one button per mode, stacked. Reuses the
+       .grid-settings-panel popover shell (hidden / .open / pinned). */
+    .mode-panel { min-width: 150px; width: max-content; gap: 6px; }
+    .mode-btn {
+      padding: 7px 12px;
+      background: #14142a;
+      border: 1px solid #2d2d3f;
+      border-radius: 8px;
+      color: #b6a6d8;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem; font-weight: 700; letter-spacing: 0.3px;
+      text-align: left; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+    @media (hover: hover) {
+      .mode-btn:hover { border-color: #9f7aea; color: #d6bcfa; }
+    }
+    .mode-btn.active {
+      background: linear-gradient(180deg, rgba(159,122,234,0.22) 0%, rgba(159,122,234,0.10) 100%);
+      border-color: #9f7aea; color: #e9d8fd;
+      box-shadow: 0 0 10px rgba(159,122,234,0.20);
+    }
     /* Grid + right-side control rail. The wrapper takes the vertical space
        the bare grid used to (flex: 1 in #lane-expander's column); inside, the
        grid grows horizontally and the rail sits flush on the right, stretched
@@ -1749,9 +1807,25 @@
     /* Sounds menu — pinned to the right edge at 25% of the banner width
        (where the master-vol speaker used to be). */
     .banner-row #scale-banner-half.banner-sounds {
-      flex: 0 0 25%;
+      /* Sizes to fit the current tone-name label (flex-basis auto = content
+         width). Won't grow past its text; .mode-tabs (flex 1 1 auto) eats the
+         slack so the button stays pinned to the right. Can shrink + ellipsis
+         only when the row is tight, capped at 60% so a very long sample name
+         never dominates the row (no horizontal scroll). */
+      flex: 0 1 auto;
+      max-width: 60%;
       border-right: none;
       border-left: 1px solid #1a1a2e;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* Mirror the old orange "Custom" highlight onto the Sounds button when
+       cells use different tones. */
+    .banner-half.banner-sounds.is-custom { color: #f6ad55; }
+    @media (hover: hover) {
+      .banner-half.banner-sounds.is-custom:hover { color: #fbd38d; }
     }
     #fluid-grid-toggle {
       flex: 0 0 auto;
@@ -2584,10 +2658,13 @@
        must not also push — keep them snug on the right. */
     .ambient-seq-del + .ambient-collapse { margin-left: 6px; }
     /* Dedicated reverb controls (Size / Damp) — small framed section. */
-    .ambient-reverb {
+    .ambient-reverb,
+    .ambient-warmth {
       border: 1px solid #20203a; border-radius: 8px; padding: 8px 12px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
     }
+    .ambient-warmth-head { display: flex; align-items: center; gap: 10px; }
+    .ambient-warmth-head .ambient-seg { padding: 2px 10px; font-size: 0.66rem; }
     .ambient-seq-layers { display: flex; flex-direction: column; gap: 12px; }
     .ambient-seq-layers:empty { display: none; }
     /* Master Bloom block in the Mix view (now its own sub-tab pane). Centered on
@@ -3550,29 +3627,6 @@
       border-bottom: 1px solid #1a1a2e;
     }
     .banner-row--fx { border-bottom: 1px solid #1a1a2e; }
-    /* Current grid tone readout, sitting just left of the Sounds menu button.
-       Auto-width + ellipsis so it never forces the row to overflow (the mode
-       picker to its left shrinks first). Amber when the grid is "Custom". */
-    .sounds-tone-current {
-      flex: 0 1 auto; min-width: 0; max-width: 40%;
-      display: flex; align-items: center; justify-content: flex-end;
-      gap: 5px; padding: 0 10px;
-      border-left: 1px solid #1a1a2e;
-      color: #8585ad;
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.78rem; font-weight: 700; letter-spacing: 0.4px;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      cursor: pointer; transition: color 0.15s ease;
-    }
-    /* Pencil affordance — signals the readout is clickable to edit the tone.
-       A pseudo-element so it doesn't disturb the JS-set textContent. */
-    .sounds-tone-current::after {
-      content: '✎'; flex: 0 0 auto; font-size: 0.72rem; opacity: 0.7;
-    }
-    .sounds-tone-current:empty { display: none; }
-    .sounds-tone-current:hover, .sounds-tone-current:focus-visible { color: #b9b9e0; outline: none; }
-    .sounds-tone-current.is-custom { color: #f6ad55; }
-    .sounds-tone-current.is-custom:hover, .sounds-tone-current.is-custom:focus-visible { color: #fbd38d; }
     /* Radial Tone toggle — small icon-pill that sits to the left of the
        Scale banner. When on, the body gets .radial-tone and cells get a
        subtle radial-gradient overlay so the user can see the bend zones. */

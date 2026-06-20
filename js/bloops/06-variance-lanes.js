@@ -1729,7 +1729,7 @@
                         : wantSeq ? 'Seq'
                         : wantText ? 'TEXT'
                         : wantAmbient ? 'Bloom'
-                        : wantProg ? 'Prog'
+                        : wantProg ? 'Key'
                         : wantGame ? 'Game'
                         : wantFluid ? 'Graph' : 'Grid';
       }

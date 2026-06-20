@@ -2993,6 +2993,17 @@
     }
     .prog-block:hover { background: rgba(159, 122, 234, 0.3); border-color: #d6bcfa; }
     .prog-block:active { transform: scale(0.96); }
+    /* Run mode — chord plays as an arpeggio; a ▸ marker hints the order. */
+    .prog-block.prog-run::after {
+      content: '▸'; position: absolute; right: 6px; top: 50%;
+      transform: translateY(-50%); opacity: 0.6; font-size: 0.8em;
+    }
+    /* Cycle — the current chord in the off→right→left walk. */
+    .prog-block.prog-cycle-current {
+      background: rgba(72, 187, 120, 0.28);
+      border-color: #48bb78; color: #c6f6d5;
+      box-shadow: 0 0 8px rgba(72, 187, 120, 0.45);
+    }
     /* Non-diatonic chord — at least one of its notes is outside the
        block's own key (root + scale). Warm amber palette to read as
        "borrowed / chromatic" rather than alarmist. */
@@ -5352,7 +5363,6 @@
        lane sequence, and Wrap collects XY taps into a chord (see the chordMode
        branch in bindXyPadHandlers). Other non-grid modes still hide it. */
     body.game-mode   .grid-wrap-row,
-    body.prog-mode   .grid-wrap-row,
     body.ambient-mode .grid-wrap-row,
     body.text-mode   .grid-wrap-row,
     body.seq-mode    .grid-wrap-row,
@@ -5360,11 +5370,19 @@
     /* Graph (fluid-grid) keeps the wrap bank too: recalling a chip arms it as
        wrapTemplate, which an XY press then performs (see _xyTriggerWrap). */
     body.game-mode   #wrap-bank,
-    body.prog-mode   #wrap-bank,
     body.ambient-mode #wrap-bank,
     body.text-mode   #wrap-bank,
     body.seq-mode    #wrap-bank,
     body.shape-mode  #wrap-bank { display: none !important; }
+    /* Key (Prog) mode keeps the wrap toolbar + bank, but treats the chord pad
+       as the wrap bank: hide the Wrap (chord-collect) button, keep Gen + Edit,
+       and the "Wraps ▾" label opens a Key-specific menu. */
+    body.prog-mode   .grid-wrap-row { display: flex; }
+    body.prog-mode   #wrap-bank { display: flex; }
+    body.prog-mode   .grid-wrap-row .wrap-segment > #chord-btn { display: none; }
+    body.prog-mode   .grid-wrap-row .wrap-segment > #wrap-edit-btn { display: inline-flex; }
+    body.prog-mode   #wrap-bank-select,
+    body.prog-mode   #wrap-bank-del { display: none; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active
@@ -7030,6 +7048,59 @@
       color: #718096;
       font-style: italic;
     }
+    /* "＋ Create Prog…" entry under the Prog section. */
+    .wrap-bank-create-prog {
+      color: #9f7aea;
+      font-weight: 600;
+    }
+    .wrap-bank-create-prog:disabled { opacity: 0.4; cursor: default; }
+    /* Create Prog dialog. */
+    .create-prog-modal { width: min(420px, 94vw); }
+    .create-prog-namerow { display: flex; gap: 8px; margin-bottom: 10px; }
+    .create-prog-input {
+      flex: 1 1 auto; min-width: 0;
+      padding: 7px 10px;
+      background: #0a0a14; border: 1px solid #2d2d3f; border-radius: 8px;
+      color: #e2e8f0; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem;
+    }
+    .create-prog-dice {
+      flex: 0 0 auto; padding: 0 12px;
+      background: #14142a; border: 1px solid #2d2d3f; border-radius: 8px;
+      color: #d6bcfa; font-size: 1rem; cursor: pointer;
+    }
+    @media (hover: hover) { .create-prog-dice:hover { border-color: #9f7aea; } }
+    .create-prog-hint {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.74rem;
+      color: #a0aec0; margin-bottom: 6px;
+    }
+    .create-prog-std { margin-bottom: 10px; cursor: pointer; }
+    .create-prog-list {
+      display: flex; flex-direction: column; gap: 4px;
+      max-height: 46vh; overflow-y: auto; margin-bottom: 10px;
+    }
+    /* Dimmed when a Standard progression is chosen (it wins over wraps). */
+    .create-prog-disabled { opacity: 0.4; pointer-events: none; }
+    .create-prog-empty-wraps {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.74rem;
+      color: #718096; font-style: italic; padding: 4px 2px;
+    }
+    .create-prog-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 10px;
+      background: #14142a; border: 1px solid #2d2d3f; border-radius: 8px;
+      cursor: pointer;
+    }
+    .create-prog-row:hover { border-color: #9f7aea; }
+    .create-prog-cb { flex: 0 0 auto; accent-color: #9f7aea; }
+    .create-prog-name {
+      flex: 0 0 auto; font-family: 'Segoe UI', sans-serif; font-weight: 700;
+      font-size: 0.82rem; color: #d6bcfa; min-width: 28px;
+    }
+    .create-prog-label {
+      flex: 1 1 auto; min-width: 0; text-align: right;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; color: #a0aec0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
 
     /* Empty-User-bank hint in the chip row. */
     .wrap-bank-empty {
@@ -7095,6 +7166,23 @@
       font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; color: #a0aec0;
     }
     .euc-num-ctl { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; }
+    /* Hits ↔ Wraps toggle (the Hits-row label is now a button). */
+    .euc-mode-toggle {
+      flex: 0 0 60px; min-width: 0; height: 32px; padding: 0 6px;
+      background: #14142a; border: 1px solid #2d2d3f; border-radius: 8px;
+      color: #a0aec0; font-family: 'Segoe UI', sans-serif; font-size: 0.76rem;
+      font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .euc-mode-toggle:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    .euc-mode-toggle.wraps-on {
+      color: #e9d8fd; border-color: #9f7aea;
+      background: linear-gradient(180deg, rgba(159,122,234,0.22) 0%, rgba(159,122,234,0.10) 100%);
+    }
+    /* Wrap-sequence dropdown that replaces the Hits number in Wraps mode. */
+    select.euc-num-input.euc-wrapseq {
+      -moz-appearance: auto; appearance: auto; text-align: left;
+      font-size: 0.92rem; padding: 0 8px;
+    }
     .euc-step-btn {
       flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px;
       border: 1px solid rgba(159, 122, 234, 0.5); background: rgba(159, 122, 234, 0.12);
@@ -8970,7 +9058,9 @@
 
     /* ===================== Sound Design view ("✦ Design…") ============== */
     .sd-overlay {
-      position: fixed; inset: 0; z-index: 600;
+      /* Full-screen modal — sit above every menu panel (tone / Sounds / FX are
+         z-index 9000) so the sound editor visually replaces them. */
+      position: fixed; inset: 0; z-index: 10400;
       display: none; align-items: center; justify-content: center;
       background: rgba(4, 4, 12, 0.78);
       -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
@@ -9112,6 +9202,12 @@
     .sd-reset:hover { border-color: #fc8181; color: #feb2b2; }
     .sd-rate-wrap { display: flex; flex-direction: column; align-items: center; gap: 1px; }
     .sd-rate-cap { font-size: 0.6rem; color: #8a8aa8; text-transform: uppercase; letter-spacing: 0.6px; }
+    .sd-oct {
+      background: #1a1a2e; color: #e2e8f0; border: 1px solid #2d2d3f;
+      border-radius: 6px; padding: 3px 6px; font-family: inherit; font-size: 0.82rem;
+      font-weight: 700; cursor: pointer;
+    }
+    .sd-oct:focus { outline: none; border-color: #4299e1; }
     #sd-rate-host { display: flex; }
     .sd-preview.sd-preview-on { color: #fff; background: rgba(79,209,197,0.22); border-color: #4fd1c5; }
 

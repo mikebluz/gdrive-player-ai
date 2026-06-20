@@ -497,11 +497,16 @@
     }
 
     function _sdOpenDesign(editValue) {
-      // Close the Tone menu so the Design overlay isn't stacked over it
-      // (covers the Edit action path, which stops panel-delegation).
+      // Close any open menu panel so the Design overlay replaces it rather than
+      // stacking over it (the Tone menu, but also the Sounds / FX panels that
+      // may be open behind it, and their banner triggers).
       try {
-        const tp = document.getElementById('tone-panel'); if (tp) tp.classList.remove('open');
-        const tb = document.getElementById('tone-banner-half'); if (tb) tb.classList.remove('open');
+        ['tone-panel', 'grid-settings-panel', 'fx-panel'].forEach(id => {
+          const el = document.getElementById(id); if (el) el.classList.remove('open');
+        });
+        ['tone-banner-half', 'scale-banner-half', 'fx-banner'].forEach(id => {
+          const el = document.getElementById(id); if (el) el.classList.remove('open');
+        });
       } catch (e) {}
       const ov = _sdEnsureOverlay();
       const existing = editValue ? _resolveUserPatch(editValue) : null;
@@ -602,6 +607,10 @@
         '<button type="button" class="sd-mini sd-surprise" id="sd-surprise" title="Randomize every parameter">🎲 Surprise me</button>' +
         '<button type="button" class="sd-mini sd-reset" id="sd-reset" title="Reset every setting (envelope, filter, LFOs, matrix…) to this seed\'s defaults">↺ Reset</button>' +
         '<div class="sd-rate-wrap"><span class="sd-rate-cap">Rate</span><span id="sd-rate-host"></span></div>' +
+        '<div class="sd-rate-wrap"><span class="sd-rate-cap">Oct</span>' +
+          '<select class="sd-oct" id="sd-oct" title="Octave of the preview notes">' +
+            [-3, -2, -1, 0, 1, 2, 3].map(o => '<option value="' + o + '"' + (o === _sdPreviewOctave ? ' selected' : '') + '>' + (o > 0 ? '+' + o : o) + '</option>').join('') +
+          '</select></div>' +
         '<button type="button" class="sd-mini sd-preview" id="sd-preview">▶ Preview</button>' +
         '<button type="button" class="sd-save" id="sd-save">Save</button>';
       body.appendChild(top);
@@ -619,6 +628,8 @@
       top.querySelector('#sd-surprise').addEventListener('click', _sdSurprise);
       top.querySelector('#sd-reset').addEventListener('click', _sdResetParams);
       top.querySelector('#sd-preview').addEventListener('click', _sdCyclePreview);
+      { const oct = top.querySelector('#sd-oct');
+        if (oct) oct.addEventListener('change', () => { _sdPreviewOctave = parseInt(oct.value, 10) || 0; }); }
       top.querySelector('#sd-save').addEventListener('click', _sdSaveFromEditor);
       _sdReflectPreviewBtn();
 
@@ -803,6 +814,7 @@
     let _sdPreviewMode = 0;            // 0 idle · 1 note · 2 scales · 3 chords
     let _sdPreviewTimer = null;
     let _sdPreviewRate = 2.5;          // notes per second
+    let _sdPreviewOctave = 0;          // octave shift for preview notes (×12 semis)
     let _sdSeq = null, _sdSeqIdx = 0;  // current random scale walk
     const _SD_PREVIEW_LABELS = ['▶ Preview', '● Note', '● Scales', '● Chords'];
 
@@ -826,17 +838,18 @@
       if (!_sdState || !document.getElementById('sd-overlay') || !document.getElementById('sd-overlay').classList.contains('open')) { _sdStopPreview(); return; }
       const dur = Math.max(120, (1000 / _sdPreviewRate) * 0.9);
       const base = _sdPatchPlayParams(_sdState);
+      const off = (_sdPreviewOctave | 0) * 12;   // octave shift for preview notes
       if (_sdPreviewMode === 1) {
-        _sdPlayPreviewNote(60, base, dur);
+        _sdPlayPreviewNote(60 + off, base, dur);
       } else if (_sdPreviewMode === 2) {
         if (!_sdSeq || _sdSeqIdx >= _sdSeq.length) {
-          const iv = _sdRandScaleIv(); const root = 48 + _sdRandInt(0, 12);
+          const iv = _sdRandScaleIv(); const root = 48 + off + _sdRandInt(0, 12);
           _sdSeq = iv.map(s => root + s).concat([root + 12]); _sdSeqIdx = 0;
         }
         _sdPlayPreviewNote(_sdSeq[_sdSeqIdx++], base, dur);
       } else if (_sdPreviewMode === 3) {
         const forms = (typeof _AMB_CHORD_FORMS !== 'undefined') ? _AMB_CHORD_FORMS : [['maj', 'Major', [0, 4, 7]]];
-        const f = _sdPick(forms); const root = 48 + _sdRandInt(0, 12);
+        const f = _sdPick(forms); const root = 48 + off + _sdRandInt(0, 12);
         (f[2] || [0, 4, 7]).forEach(s => _sdPlayPreviewNote(root + s, base, dur));
       }
     }

@@ -385,7 +385,7 @@
     ];
     // Build the lane from the editable step list. Each step carries hit/
     // noteIdxs/eu; subdivision = eu × 0.5 so step lengths match their divs.
-    function _buildEuclidSteps(steps, gridNotes) {
+    function _buildEuclidSteps(steps, gridNotes, wrapSteps) {
       const noteFor = (idx) => gridNotes[idx] || gridNotes[0] || { freq: 261.63, label: 'C4', cellIndex: 0 };
       const voice = (nt) => ({ freq: nt.freq, label: nt.label, cellIndex: Number.isFinite(nt.cellIndex) ? nt.cellIndex : null, ..._euclidToneFor(nt) });
       // Stack a CHORDS structure on a root note: each semitone in the
@@ -406,6 +406,16 @@
       return steps.map(s => {
         const sub = Math.max(0.0001, (s.eu || 1) * 0.5);
         if (!s.hit) return { freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub };
+        // Wraps mode: this circle plays a wrap from the selected wrap sequence
+        // (cloned so the generated step is independent of the bank).
+        if (Array.isArray(wrapSteps) && wrapSteps.length && Number.isFinite(s.wrapIdx)) {
+          const wr = wrapSteps[((s.wrapIdx % wrapSteps.length) + wrapSteps.length) % wrapSteps.length];
+          if (wr && wr.step) {
+            const ws = (typeof cloneStep === 'function') ? cloneStep(wr.step) : JSON.parse(JSON.stringify(wr.step));
+            ws.duration = 1; ws.subdivision = sub;
+            return ws;
+          }
+        }
         // Chord mode: the selected note is the chord root; the chosen
         // CHORDS shape is stacked on it.
         if (s.noteMode === 'chord' && s.chordKey) {
@@ -428,7 +438,31 @@
       // applyMode: how Generate commits — replace / append / prepend the
       // active lane's steps. Seeds from the old keepMode behavior (append
       // when Keep is on, else replace) so existing muscle memory holds.
-      const state = { ...DEFAULTS, sel: -1, steps: [], applyMode: keepMode ? 'append' : 'replace' };
+      const state = { ...DEFAULTS, sel: -1, steps: [], applyMode: keepMode ? 'append' : 'replace',
+        // Content mode: 'hits' (notes/chords, the default) or 'wraps' (each
+        // circle plays a wrap from a selected wrap sequence, looping).
+        contentMode: 'hits', wrapSeqKey: null, wrapSteps: [] };
+      const _eucWrapOptions = () => (typeof _wrapSequenceOptions === 'function') ? _wrapSequenceOptions() : [];
+      // Resolve the selected wrap sequence → state.wrapSteps, and size the node
+      // count (Hits) to its length (bumping Steps/Length if needed).
+      const applyWrapSeq = () => {
+        const opt = _eucWrapOptions().find(o => o.key === state.wrapSeqKey);
+        state.wrapSteps = (opt && Array.isArray(opt.items)) ? opt.items.slice() : [];
+        const wc = state.wrapSteps.length;
+        if (wc > 0) {
+          if (state.n < wc) state.n = Math.min(32, wc);
+          if (state.length < state.n) state.length = state.n;
+          state.k = Math.min(state.n, wc);
+        }
+      };
+      // After seeding, assign each circle (hit) the next wrap in the sequence,
+      // looping. Per-circle overrides (set in the editor) are lost on reseed,
+      // matching how note selections reset.
+      const assignWraps = () => {
+        if (state.contentMode !== 'wraps' || !state.wrapSteps.length) return;
+        let h = 0;
+        state.steps.forEach(s => { if (s.hit) { s.wrapIdx = h % state.wrapSteps.length; h++; } });
+      };
 
       // Seed the step list from the Euclidean spread. `Steps` (n) is the
       // resolution of the rhythm cycle E(K,N,rot); `Length` is how many
@@ -447,6 +481,7 @@
           state.steps.push({ hit: !!pat[i % state.n], noteIdxs: [0], eu: 1 });
         }
         state.sel = -1;
+        assignWraps();
       };
       // Change step i's div while preserving total length: shrinking spawns a
       // rest of the freed time right after; growing consumes (shrinks/removes)
@@ -488,7 +523,18 @@
       modal.innerHTML =
         '<div class="sm-title">Generate Sequence</div>' +
         '<div class="euc-nums">' +
-          _numRow('Hits',   'euc-k', 1, 16, 5) +
+          // Hits row: the label is a toggle (Hits ↔ Wraps). In Wraps mode the
+          // numeric entry is swapped for a wrap-sequence dropdown; −/+ still
+          // adjust the node (circle) count.
+          '<div class="euc-num euc-hits-row" id="euc-hits-row">' +
+            '<button type="button" class="euc-num-label euc-mode-toggle" id="euc-mode-toggle" title="Toggle Hits (dot count) ↔ Wraps (a wrap sequence)">Hits</button>' +
+            '<div class="euc-num-ctl">' +
+              '<button type="button" class="euc-step-btn" data-target="euc-k" data-d="-1">−</button>' +
+              '<input type="number" class="euc-num-input" id="euc-k" min="1" max="16" value="5" />' +
+              '<select class="euc-num-input euc-wrapseq" id="euc-wrapseq" style="display:none;"></select>' +
+              '<button type="button" class="euc-step-btn" data-target="euc-k" data-d="1">+</button>' +
+            '</div>' +
+          '</div>' +
           _numRow('Steps',  'euc-n', 2, 32, 8) +
           _numRow('Rotate', 'euc-r', 0, 31, 0) +
           _numRow('Length', 'euc-l', 1, 32, 8) +
@@ -548,13 +594,17 @@
         if (i < 0 || i >= state.steps.length) { editEl.innerHTML = ''; return; }
         const s = state.steps[i];
         const isHit = !!s.hit;
-        const chordMode = isHit && s.noteMode === 'chord';
+        const wrapsMode = isHit && state.contentMode === 'wraps' && state.wrapSteps.length > 0;
+        const chordMode = isHit && !wrapsMode && s.noteMode === 'chord';
         let html = '<div class="euc-step-head">' +
             '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
             '<button type="button" class="euc-convert" id="euc-convert">' + (isHit ? 'Make Dot ·' : 'Make Circle ●') + '</button>' +
           '</div>' +
           '<div class="sm-section-label" style="margin-top:0;">Step div</div><select class="euc-sel" id="euc-div"></select>';
-        if (isHit) {
+        if (isHit && wrapsMode) {
+          // Per-circle wrap override — pick which wrap from the sequence plays here.
+          html += '<div class="sm-section-label">Wrap</div><select class="euc-sel" id="euc-wrappick"></select>';
+        } else if (isHit) {
           html += '<div class="sm-section-label">Notes</div>' +
             '<div class="sm-waves" id="euc-notemode">' +
               '<button type="button" class="sm-wave' + (!chordMode ? ' active' : '') + '" data-mode="notes">Notes</button>' +
@@ -569,7 +619,8 @@
           }
         }
         html += '<div class="euc-allrow"><button type="button" class="euc-all" id="euc-all-div">Apply div to all ' + (isHit ? '●' : '·') + '</button>' +
-          (isHit ? '<button type="button" class="euc-all" id="euc-all-notes">Apply notes to all ●</button>' : '') + '</div>';
+          (isHit && wrapsMode ? '<button type="button" class="euc-all" id="euc-all-wrap">Apply wrap to all ●</button>'
+            : (isHit ? '<button type="button" class="euc-all" id="euc-all-notes">Apply notes to all ●</button>' : '')) + '</div>';
         editEl.innerHTML = html;
 
         // Convert this step between Dot (rest) and Circle (hit).
@@ -580,9 +631,36 @@
             s.hit = true;
             if (!Array.isArray(s.noteIdxs) || !s.noteIdxs.length) s.noteIdxs = [0];
             if (!s.noteMode) s.noteMode = 'notes';
+            // Newly-made circle gets the next wrap in the sequence when in
+            // Wraps mode (so it isn't blank).
+            if (state.contentMode === 'wraps' && state.wrapSteps.length && !Number.isFinite(s.wrapIdx)) {
+              const hits = state.steps.filter(t => t.hit).length;
+              s.wrapIdx = (hits - 1 + state.wrapSteps.length) % state.wrapSteps.length;
+            }
           }
           renderStrip(); renderEditor();
         });
+
+        // Per-circle wrap picker (Wraps mode).
+        if (isHit && wrapsMode) {
+          const wsel = editEl.querySelector('#euc-wrappick');
+          const curIdx = Number.isFinite(s.wrapIdx) ? ((s.wrapIdx % state.wrapSteps.length) + state.wrapSteps.length) % state.wrapSteps.length : 0;
+          state.wrapSteps.forEach((it, wi) => {
+            const opt = document.createElement('option');
+            opt.value = String(wi);
+            opt.textContent = (it.name || ('#' + (wi + 1))) + ' · ' + (typeof wrapBankChipLabel === 'function' ? wrapBankChipLabel(it.step) : '');
+            if (wi === curIdx) opt.selected = true;
+            wsel.appendChild(opt);
+          });
+          wsel.addEventListener('change', () => { s.wrapIdx = parseInt(wsel.value, 10) || 0; renderStrip(); });
+          const allWrap = editEl.querySelector('#euc-all-wrap');
+          if (allWrap) allWrap.addEventListener('click', () => {
+            // Re-distribute starting from THIS circle's wrap, looping.
+            let h = 0; const start = s.wrapIdx | 0;
+            state.steps.forEach(t => { if (t.hit) { t.wrapIdx = (start + h) % state.wrapSteps.length; h++; } });
+            renderStrip(); renderEditor();
+          });
+        }
 
         const divSel = editEl.querySelector('#euc-div');
         let _divMatched = false;
@@ -607,7 +685,7 @@
           setStepDiv(i, eu); renderStrip(); renderEditor();
         });
 
-        if (isHit) {
+        if (isHit && !wrapsMode) {
           // Notes ↔ Chord mode toggle. Switching to Chord collapses any
           // multi-note selection down to a single root.
           editEl.querySelector('#euc-notemode').addEventListener('click', (e) => {
@@ -702,6 +780,44 @@
           onTop();
         });
       });
+      // ---- Hits ↔ Wraps mode ----
+      const modeToggle = modal.querySelector('#euc-mode-toggle');
+      const wrapSeqSel = modal.querySelector('#euc-wrapseq');
+      const refreshModeUI = () => {
+        const wraps = state.contentMode === 'wraps';
+        modeToggle.textContent = wraps ? 'Wraps' : 'Hits';
+        modeToggle.classList.toggle('wraps-on', wraps);
+        kEl.style.display = wraps ? 'none' : '';
+        wrapSeqSel.style.display = wraps ? '' : 'none';
+        if (wraps) {
+          wrapSeqSel.innerHTML = '';
+          _eucWrapOptions().forEach(o => {
+            const op = document.createElement('option');
+            op.value = o.key;
+            op.textContent = o.label;
+            if (o.key === state.wrapSeqKey) op.selected = true;
+            wrapSeqSel.appendChild(op);
+          });
+        }
+      };
+      modeToggle.addEventListener('click', () => {
+        if (state.contentMode === 'hits') {
+          const opts = _eucWrapOptions();
+          if (!opts.length) { if (typeof showToast === 'function') showToast('No wrap sequences yet — save some wraps first'); return; }
+          state.contentMode = 'wraps';
+          if (!state.wrapSeqKey || !opts.find(o => o.key === state.wrapSeqKey)) state.wrapSeqKey = opts[0].key;
+          applyWrapSeq();
+        } else {
+          state.contentMode = 'hits';
+        }
+        refreshModeUI(); seed(); refreshTopVals(); renderStrip(); renderEditor();
+      });
+      wrapSeqSel.addEventListener('change', () => {
+        state.wrapSeqKey = wrapSeqSel.value;
+        applyWrapSeq();
+        refreshModeUI(); seed(); refreshTopVals(); renderStrip(); renderEditor();
+      });
+
       // Surprise me — random-but-valid values for all four controls.
       modal.querySelector('#euc-surprise').addEventListener('click', () => {
         const ri = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
@@ -724,7 +840,7 @@
       });
       refreshApply();
 
-      seed(); refreshTopVals(); renderStrip(); renderEditor();
+      seed(); refreshTopVals(); renderStrip(); renderEditor(); refreshModeUI();
 
       // ---- Looping preview ----
       // Preview is a toggle: first press starts an audition that loops the
@@ -756,7 +872,7 @@
         if (previewBtn) { previewBtn.classList.remove('active'); previewBtn.textContent = 'Preview'; }
       };
       const _eucPreviewTick = () => {
-        const steps = _buildEuclidSteps(state.steps, gridNotes);
+        const steps = _buildEuclidSteps(state.steps, gridNotes, state.wrapSteps);
         if (!steps.length || typeof playSubStepsAtTime !== 'function') { stopEucPreview(); return; }
         const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
         // First cycle fires at `now` (interactive press — no cushion); later
@@ -791,7 +907,7 @@
       modal.querySelector('#euc-random').addEventListener('click', () => { close(); if (typeof showRandomDialog === 'function') showRandomDialog(); });
       modal.querySelector('#euc-seed').addEventListener('click', () => { close(); if (typeof showSeedDialog === 'function') showSeedDialog(); });
       modal.querySelector('#euc-go').addEventListener('click', () => {
-        const generated = _buildEuclidSteps(state.steps, gridNotes);
+        const generated = _buildEuclidSteps(state.steps, gridNotes, state.wrapSteps);
         snapshotForUndo('Euclid');
         try { stopSequence(); } catch (e) {}
         if (state.applyMode === 'append')       sequence = sequence.concat(generated);
@@ -3027,5 +3143,12 @@
       };
       render();
     }
-    document.getElementById('wrap-edit-btn')?.addEventListener('click', showWrapEditMenu);
+    document.getElementById('wrap-edit-btn')?.addEventListener('click', (e) => {
+      // Key mode: the ✎ Edit button edits the current chord on the pad.
+      if (document.body.classList.contains('prog-mode') && typeof _progEditChord === 'function') {
+        _progEditChord(e.currentTarget);
+        return;
+      }
+      showWrapEditMenu(e);
+    });
 

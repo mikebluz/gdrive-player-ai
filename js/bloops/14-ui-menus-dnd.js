@@ -597,6 +597,19 @@
         refreshGridStateDropdown('');
       }
 
+      // Key-mode (Prog pad) chord blocks — restore the live progression and
+      // re-render the pad / re-sync it to the bank.
+      if (typeof progBlocks !== 'undefined' && Array.isArray(snap.progBlocks)) {
+        progBlocks.length = 0;
+        snap.progBlocks.forEach(b => { if (b && typeof b === 'object') progBlocks.push(JSON.parse(JSON.stringify(b))); });
+        if (typeof _progBankId !== 'undefined') { _progBankId = null; _progBankSig = ''; }
+        try { if (typeof _progRunMode !== 'undefined') _progRunMode = !!snap.progRunMode; } catch (e) {}
+        // Re-establish the live bank entry (so Wraps ▸ Key mirrors it) even if
+        // the Prog pad DOM isn't built yet — then render if it is.
+        try { if (typeof _progSyncToBank === 'function') _progSyncToBank(); } catch (e) {}
+        try { if (typeof _progRenderBlocks === 'function') _progRenderBlocks(); } catch (e) {}
+      }
+
       // Ensembles — rebuild the registry before Bloom/grid restore so any
       // 'ensemble:<id>' voice references resolve.
       try {

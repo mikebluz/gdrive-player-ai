@@ -687,6 +687,14 @@
       try { return JSON.parse(localStorage.getItem('wraps-saved') || '[]'); }
       catch { return []; }
     })();
+    // User-defined "Prog" banks: named, ordered subsequences of User-bank
+    // wraps saved as their own recallable bank. Each: { id, name, items:[{name,
+    // step}] }. Persisted to localStorage (like savedWraps); surfaced in the
+    // Wraps menu's "Prog" section and selected as wrapBank 'userprog:<id>'.
+    let wrapProgs = (() => {
+      try { return JSON.parse(localStorage.getItem('wraps-progs') || '[]'); }
+      catch { return []; }
+    })();
     // ID of the bank entry currently mirrored by wrapTemplate, so the
     // matching chip stays highlighted. Cleared whenever wrapTemplate
     // changes to something not minted by this bank.

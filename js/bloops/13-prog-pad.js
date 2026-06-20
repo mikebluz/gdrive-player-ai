@@ -108,6 +108,21 @@
       }
       return out;
     }
+    // Standard progressions available for a given scale (filtered like the Auto
+    // popover: aeolian→minor, fall back to none if the scale has no family),
+    // resolved to chords at `root`. Each: { name, chords:[{root,intervals}] }.
+    // Exposed for the Wraps "Create Prog" dialog (filtered by the Grid Scale).
+    window._progStandardsForScale = function (scaleName, root) {
+      const sc = (scaleName === 'aeolian') ? 'minor' : scaleName;
+      const fam = PROGRESSIONS[sc] ? sc : null;
+      if (!fam) return [];
+      const r = Number.isFinite(root) ? root : ((typeof rootIdx === 'number') ? rootIdx : 0);
+      return PROGRESSIONS[fam].map(t => {
+        const blocks = _progAutoFillProgression(r, fam, t);
+        const chords = (typeof _ambProgChordsFromBlocks === 'function') ? _ambProgChordsFromBlocks(blocks) : [];
+        return { name: t.name, chords };
+      }).filter(p => p.chords.length);
+    };
 
     // Per-lane state lives here as a single shared list for now; can be
     // moved into lane state alongside fluidGridMode/gameMode if needed.
@@ -131,9 +146,32 @@
     }
     // Upsert the live progression into the Prog bank. Empty pad releases the
     // tracked id (the built progression stays banked); deletion is explicit.
+    // Remove a banked Key entry from the shared library + every consumer
+    // (Wraps ▸ Key, Bloom, Shape), falling the wrap bank back to User if it was
+    // pointing at it. Used by the empty-pad sync and the Remove button so the
+    // Key list stays in step with what's actually in Key mode.
+    function _progDeleteBankEntry(id) {
+      if (id == null) return;
+      if (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs)) {
+        const i = masterAmbient.publishedProgs.findIndex(p => (p.id | 0) === (id | 0));
+        if (i >= 0) masterAmbient.publishedProgs.splice(i, 1);
+      }
+      try {
+        if (typeof wrapBank === 'string' && wrapBank === 'prog:' + (id | 0) && typeof setWrapBank === 'function') setWrapBank('user');
+      } catch (e) {}
+      try { if (typeof renderWrapBank === 'function') renderWrapBank(); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     function _progSyncToBank() {
       if (typeof masterAmbient === 'undefined') return;
-      if (!progBlocks.length) { _progBankId = null; _progBankSig = ''; return; }
+      // Empty pad → the current progression no longer exists in Key mode, so
+      // drop its banked entry to keep the Key list in step. (✚ New releases
+      // _progBankId BEFORE clearing, so the just-banked entry survives.)
+      if (!progBlocks.length) {
+        if (_progBankId != null) _progDeleteBankEntry(_progBankId);
+        _progBankId = null; _progBankSig = '';
+        return;
+      }
       const sig = _progBlocksSig();
       if (sig === _progBankSig && _progBankId != null) return;
       if (typeof _ambProgChordsFromBlocks !== 'function') return;
@@ -159,6 +197,122 @@
     window._progOnBankEntryDeleted = function (id) {
       if (_progBankId === (id | 0)) { _progBankId = null; _progBankSig = ''; }
     };
+    // The bank id of the progression currently live on the Key-mode pad (null
+    // when the pad is empty). The Wraps ▸ Key list mirrors this — it shows only
+    // the live progression, so it's empty whenever Key mode is empty.
+    window._progCurrentBankId = function () { return _progBankId; };
+
+    // ---- Key-mode "wrap" controls (the chord pad treated as a wrap bank) ----
+    // Run mode plays each chord as an arpeggio (a "run") instead of a stack;
+    // Cycle steps a "current" chord on each play (off → right → left).
+    let _progRunMode = false;
+    let _progCycleMode = false, _progCycleDir = 1, _progCycleIdx = 0;
+    // Run = all chords → runs (arpeggios); Stack = all → stacks (chords).
+    function _progSetRunMode(on) {
+      _progRunMode = !!on;
+      _progRenderBlocks();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast(_progRunMode ? 'Chords → runs (arpeggios)' : 'Runs → stacks (chords)');
+    }
+    // Fisher-Yates shuffle of the chord blocks.
+    function _progShuffleBlocks() {
+      if (progBlocks.length < 2) return;
+      for (let i = progBlocks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = progBlocks[i]; progBlocks[i] = progBlocks[j]; progBlocks[j] = t;
+      }
+      _progCycleIdx = 0;
+      _progRenderBlocks();
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _progCycleAdvance() {
+      if (!progBlocks.length) return;
+      _progCycleIdx = ((_progCycleIdx + _progCycleDir) % progBlocks.length + progBlocks.length) % progBlocks.length;
+    }
+    // Exposed for the shared wrap toolbar (02-wraps.js): the "Wraps ▾" label
+    // opens this Key menu, and the ✎ Edit button edits the current chord.
+    window._progWrapsMenu = function (x, y) { _progOpenWrapsMenu(x, y); };
+    window._progEditChord = function (anchor) {
+      if (!progBlocks.length) { if (typeof showToast === 'function') showToast('No chords to edit — add one with +'); return; }
+      const idx = _progCycleMode ? _progCycleIdx : (progBlocks.length - 1);
+      _progOpenAddPopover(anchor || document.getElementById('wrap-edit-btn') || document.body, idx);
+    };
+    // Cycle state machine: off → right → left → off (mirrors the wrap bank).
+    function _progAdvanceCycleState() {
+      if (!progBlocks.length) { _progCycleMode = false; return; }
+      if (!_progCycleMode) { _progCycleMode = true; _progCycleDir = 1; _progCycleIdx = 0; }
+      else if (_progCycleDir > 0) { _progCycleDir = -1; }
+      else { _progCycleMode = false; }
+      _progRenderBlocks();
+    }
+    // The "Wraps ▾" menu in Key mode — acts on the chord pad as the wrap bank.
+    function _progOpenWrapsMenu(x, y) {
+      if (typeof showCtxMenu !== 'function') return;
+      const n = progBlocks.length;
+      const cycleLabel = !_progCycleMode ? 'Cycle: Off' : (_progCycleDir > 0 ? 'Cycle: Right →' : 'Cycle: Left ←');
+      const actions = [
+        { label: cycleLabel, fn: () => _progAdvanceCycleState() },
+        'hr',
+        { label: 'Run (all → runs)', disabled: !n || _progRunMode, fn: () => _progSetRunMode(true) },
+        { label: 'Stack (all → chords)', disabled: !n || !_progRunMode, fn: () => _progSetRunMode(false) },
+        'hr',
+        { label: 'Reorder…', disabled: n < 2, fn: () => _progOpenReorder() },
+        { label: 'Shuffle', disabled: n < 2, fn: () => _progShuffleBlocks() },
+      ];
+      showCtxMenu(x, y, actions);
+    }
+    // Reorder the chord blocks (drag / ▲▼), mirroring the wrap-bank reorder.
+    function _progOpenReorder() {
+      if (progBlocks.length < 2) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay wrap-reorder-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal wrap-reorder-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      const move = (i, dir) => {
+        const j = i + dir;
+        if (j < 0 || j >= progBlocks.length) return;
+        const t = progBlocks[i]; progBlocks[i] = progBlocks[j]; progBlocks[j] = t;
+        _progRenderBlocks();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        render();
+      };
+      const render = () => {
+        modal.innerHTML =
+          '<div class="sm-title">Reorder chords</div>' +
+          '<div class="wrap-reorder-hint">Use ▲ ▼ to move.</div>' +
+          '<div class="wrap-reorder-list" id="prog-reorder-list"></div>' +
+          '<div class="sm-footer"><button type="button" class="sm-apply" id="prog-reorder-done">Done</button></div>';
+        const list = modal.querySelector('#prog-reorder-list');
+        progBlocks.forEach((b, i) => {
+          const row = document.createElement('div');
+          row.className = 'wrap-reorder-row';
+          row.innerHTML =
+            `<span class="wrap-reorder-name">${i + 1}</span>` +
+            `<span class="wrap-reorder-label">${_progBlockLabel(b)}</span>` +
+            `<span class="wrap-reorder-btns">` +
+              `<button type="button" class="wrap-reorder-up"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button>` +
+              `<button type="button" class="wrap-reorder-dn"${i === progBlocks.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button>` +
+            `</span>`;
+          row.querySelector('.wrap-reorder-up').addEventListener('click', () => move(i, -1));
+          row.querySelector('.wrap-reorder-dn').addEventListener('click', () => move(i, +1));
+          list.appendChild(row);
+        });
+        modal.querySelector('#prog-reorder-done').addEventListener('click', () => overlay.remove());
+      };
+      render();
+    }
+    // Remove the current progression entirely: drop its banked Key entry (so it
+    // disappears from Wraps ▸ Key / Bloom / Shape) and clear the pad.
+    function _progRemoveCurrent() {
+      _progDeleteBankEntry(_progBankId);
+      _progBankId = null; _progBankSig = '';
+      progBlocks.length = 0;
+      _progRenderBlocks();
+      if (typeof showToast === 'function') showToast('Progression removed');
+    }
     let _progInited = false;
     let _progPadEl = null, _progBlocksEl = null;
     // Defaults the popover pre-fills when nothing is queued yet; subsequent
@@ -301,10 +455,23 @@
         const blockEl = document.createElement('button');
         blockEl.type = 'button';
         const diatonic = _progIsDiatonic(b);
-        blockEl.className = 'prog-block' + (diatonic ? '' : ' non-diatonic');
+        blockEl.className = 'prog-block' + (diatonic ? '' : ' non-diatonic')
+          + (_progRunMode ? ' prog-run' : '')
+          + ((_progCycleMode && i === _progCycleIdx) ? ' prog-cycle-current' : '');
         blockEl.textContent = _progBlockLabel(b);
-        blockEl.title = (diatonic ? 'Play ' : 'Play (non-diatonic) ') + _progBlockLabel(b);
-        blockEl.addEventListener('click', () => _progPlayBlock(b));
+        blockEl.title = (diatonic ? 'Play ' : 'Play (non-diatonic) ') + _progBlockLabel(b)
+          + (_progRunMode ? ' (run)' : '');
+        const _myIdx = i;
+        blockEl.addEventListener('click', () => {
+          if (_progCycleMode && progBlocks.length) {
+            // Cycle: play the CURRENT chord, then advance the pointer.
+            _progPlayBlock(progBlocks[_progCycleIdx] || progBlocks[0]);
+            _progCycleAdvance();
+            _progRenderBlocks();
+          } else {
+            _progPlayBlock(progBlocks[_myIdx] || b);
+          }
+        });
         const rm = document.createElement('button');
         rm.type = 'button';
         rm.className = 'prog-block-remove';
@@ -343,28 +510,9 @@
       });
       _progBlocksEl.appendChild(autoBtn);
       _progBlocksEl.appendChild(addBtn);
-      // The current progression auto-syncs to the shared Prog bank (it appears
-      // live under Wraps ▸ Prog and Bloom Notes — no manual publish). "✚ New"
-      // banks the current one and starts a fresh progression so you accumulate
-      // several; the previous stays in the bank.
-      if (progBlocks.length) {
-        const newBtn = document.createElement('button');
-        newBtn.type = 'button';
-        newBtn.className = 'prog-auto-btn';
-        newBtn.textContent = '✚ New';
-        newBtn.title = 'Bank the current progression and start a new one (it stays in Wraps ▸ Prog and Bloom Notes)';
-        newBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          _progSyncToBank();                 // make sure the current one is banked
-          _progBankId = null; _progBankSig = ''; // release → next build is a new entry
-          progBlocks.length = 0;
-          _progRenderBlocks();
-          if (typeof persistWorkspace === 'function') persistWorkspace();
-          if (typeof showToast === 'function') showToast('Progression banked — started a new one');
-        });
-        _progBlocksEl.appendChild(newBtn);
-      }
-      // Keep the shared Prog bank in step with whatever's on the pad now.
+      // The current progression auto-syncs to the shared bank as a SINGLE live
+      // entry (no accumulation): the Wraps ▸ Key list mirrors the pad, so it
+      // shows just this progression and is empty when the pad is empty.
       _progSyncToBank();
     }
     function _progPlayBlock(block) {
@@ -390,22 +538,31 @@
           params: { ...baseParams },
         };
       });
-      for (const v of voices) {
-        try { playNote(v.freq, v.params); } catch (e) {}
+      if (_progRunMode) {
+        // Run: arpeggiate the chord (stagger voices low → high).
+        const bpm = (typeof tempoInput !== 'undefined' && tempoInput) ? (parseInt(tempoInput.value, 10) || 120) : 120;
+        const gap = Math.min(0.16, (60 / bpm) * 0.25);
+        const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+        voices.forEach((v, i) => { try { playNote(v.freq, v.params, undefined, now + i * gap); } catch (e) {} });
+      } else {
+        for (const v of voices) {
+          try { playNote(v.freq, v.params); } catch (e) {}
+        }
       }
       if (typeof keepMode !== 'undefined' && keepMode && typeof addToSequence === 'function') {
         try {
-          const chordStep = {
-            chord: voices,
-            label: voices.map(v => v.label).join('·'),
-            duration: 1,
-            subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
-          };
-          addToSequence(chordStep);
+          const sub = (typeof stepSubdivision === 'number') ? stepSubdivision : 1;
+          // Run → a subsequence step (notes play in order); Stack → a chord.
+          const step = _progRunMode
+            ? { isSub: true,
+                subSteps: voices.map(v => ({ freq: v.freq, label: v.label, cellIndex: 0, sound: v.sound, params: { ...v.params }, duration: 1, subdivision: sub })),
+                label: voices.map(v => v.label).join('▸'), duration: 1, subdivision: sub }
+            : { chord: voices, label: voices.map(v => v.label).join('·'), duration: 1, subdivision: sub };
+          addToSequence(step);
           // Same Step-div prompt the Grid + Wrap Keep paths show after
           // a chord/note lands — keeps Prog presses consistent.
           if (typeof maybePromptStepDiv === 'function') {
-            try { maybePromptStepDiv(chordStep); } catch (_) {}
+            try { maybePromptStepDiv(step); } catch (_) {}
           }
         } catch (e) {}
       }
@@ -530,6 +687,15 @@
 
       const actions = document.createElement('div');
       actions.className = 'prog-popover-actions';
+      // Remove — deletes the whole current progression (clears the pad +
+      // removes it from the Key bank). Sits to the left of Cancel; disabled
+      // when the pad is already empty.
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'prog-popover-delete';
+      removeBtn.textContent = 'Remove';
+      removeBtn.title = 'Delete the current progression (clears the pad and removes it from the Key bank)';
+      if (!progBlocks.length) removeBtn.disabled = true;
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'prog-popover-cancel';
@@ -538,9 +704,11 @@
       saveBtn.type = 'button';
       saveBtn.className = 'prog-popover-save';
       saveBtn.textContent = 'Clone';
+      actions.appendChild(removeBtn);
       actions.appendChild(cancelBtn);
       actions.appendChild(saveBtn);
       pop.appendChild(actions);
+      removeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); _progRemoveCurrent(); });
       // Disable Clone while the destination key still matches the
       // source — same-key clones aren't allowed. The button re-enables
       // as soon as the user changes either field away from the source.
@@ -861,16 +1029,17 @@
       });
       keyRootSel.focus();
     }
-    function _progOpenAddPopover(anchorBtn) {
+    function _progOpenAddPopover(anchorBtn, editIdx) {
       // Close any existing popover first.
       const existing = document.querySelector('.prog-popover');
       if (existing) existing.remove();
 
-      // Seed the form with the previous block's values when one exists.
-      // For the very first chord, key root/scale default to the
-      // workspace key+scale; chord type starts UNCHOSEN so chord-root
-      // stays disabled until the user picks a quality.
-      const prev = progBlocks.length > 0 ? progBlocks[progBlocks.length - 1] : null;
+      // Edit mode: editIdx points at a block to REPLACE (Save overwrites it);
+      // otherwise this appends a new chord. Seed from the edited block, else
+      // the previous block (or last form for the very first chord).
+      const _editing = Number.isFinite(editIdx) && progBlocks[editIdx];
+      const prev = _editing ? progBlocks[editIdx]
+        : (progBlocks.length > 0 ? progBlocks[progBlocks.length - 1] : null);
       const hasSeed = !!prev;
       const seed = prev || _progLastForm;
       let curKeyRoot = (typeof seed.keyRoot === 'number') ? seed.keyRoot : 0;
@@ -1080,7 +1249,8 @@
           chordRoot: curChordRoot,
           chordQuality: curChordQuality,
         };
-        progBlocks.push(block);
+        if (_editing) progBlocks[editIdx] = block;   // Edit → replace in place
+        else progBlocks.push(block);
         Object.assign(_progLastForm, block);
         close();
         _progRenderBlocks();

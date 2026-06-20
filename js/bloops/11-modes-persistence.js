@@ -923,6 +923,11 @@
           ? JSON.parse(JSON.stringify(masterShapes)) : [],
         activeMasterShapeId: (typeof activeMasterShapeId !== 'undefined') ? activeMasterShapeId : null,
         savedGridStates: JSON.parse(JSON.stringify(savedGridStates || [])),
+        // Key-mode (Prog pad) chord blocks — the live progression, so it
+        // survives reload and saves with the project.
+        progBlocks: (typeof progBlocks !== 'undefined' && Array.isArray(progBlocks))
+          ? JSON.parse(JSON.stringify(progBlocks)) : [],
+        progRunMode: (typeof _progRunMode !== 'undefined') ? !!_progRunMode : false,
         // Ensembles — user-built multi-tone voices (referenced as 'ensemble:<id>').
         ensembles: (typeof ensembles !== 'undefined' && ensembles)
           ? Array.from(ensembles.values()).map(d => JSON.parse(JSON.stringify(d))) : [],

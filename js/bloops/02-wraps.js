@@ -244,6 +244,44 @@
       try { localStorage.setItem('wraps-saved', JSON.stringify(savedWraps)); }
       catch (e) {}
     }
+    function persistWrapProgs() {
+      try { localStorage.setItem('wraps-progs', JSON.stringify(wrapProgs)); }
+      catch (e) {}
+    }
+    function _wrapUserProgList() {
+      return Array.isArray(wrapProgs) ? wrapProgs : [];
+    }
+    // Every selectable "wrap sequence" for the Generate dialog's Wraps mode:
+    // the User bank, each Key progression, and each user Prog bank. Each entry
+    // is { key, label, items:[{name, step}] } — items are ordered wrap STEPS to
+    // distribute across a generated sequence.
+    function _wrapSequenceOptions() {
+      const out = [];
+      if (Array.isArray(savedWraps) && savedWraps.length) {
+        out.push({ key: 'user', label: 'User (' + savedWraps.length + ')',
+          items: savedWraps.map(w => ({ name: w.name, step: w.step })) });
+      }
+      // (Key progressions are no longer mirrored into the wrap sequences — use
+      // Create Prog with a Standard progression or User wraps instead.)
+      _wrapUserProgList().forEach(p => {
+        if (!p || !Array.isArray(p.items) || !p.items.length) return;
+        const items = p.items.map(it => ({ name: it.name, step: it.step })).filter(it => it.step);
+        if (items.length) out.push({ key: 'userprog:' + (p.id | 0), label: 'Prog · ' + (p.name || ('Prog ' + (p.id | 0))), items });
+      });
+      return out;
+    }
+    // Autosuggest an adjective-noun name (e.g. "Velvet Comet") for a new Prog.
+    const _WRAP_ADJ = ['Velvet', 'Crimson', 'Lunar', 'Golden', 'Hidden', 'Electric', 'Quiet', 'Wild',
+      'Frosted', 'Amber', 'Drifting', 'Neon', 'Silken', 'Distant', 'Cosmic', 'Hollow',
+      'Brave', 'Dusty', 'Misty', 'Royal', 'Restless', 'Mellow', 'Faded', 'Glassy'];
+    const _WRAP_NOUN = ['Comet', 'River', 'Ember', 'Garden', 'Echo', 'Harbor', 'Meadow', 'Falcon',
+      'Lantern', 'Canyon', 'Tide', 'Forest', 'Sparrow', 'Glacier', 'Orchid', 'Voyage',
+      'Drift', 'Signal', 'Meridian', 'Willow', 'Aurora', 'Cascade', 'Pulse', 'Horizon'];
+    function _randAdjNoun() {
+      const a = _WRAP_ADJ[Math.floor(Math.random() * _WRAP_ADJ.length)];
+      const n = _WRAP_NOUN[Math.floor(Math.random() * _WRAP_NOUN.length)];
+      return a + ' ' + n;
+    }
 
     // Next unused single-letter name in A, B, C, … AA, AB, …
     // Mirrors seqName but skips any name already in the bank so deletes
@@ -349,8 +387,16 @@
     // Bloom + Shape Prog pickers read from. Each entry is { id, name, chords:[
     // {root, intervals}] }.
     function _wrapProgList() {
-      return (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs))
+      const all = (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs))
         ? masterAmbient.publishedProgs : [];
+      // The Key wrap list mirrors the LIVE Key-mode pad: show only the
+      // progression currently on the pad (tracked by Key mode), so the list is
+      // empty whenever Key mode is empty. (Bloom/Shape still read the full
+      // publishedProgs library directly.)
+      let liveId = null;
+      try { if (typeof _progCurrentBankId === 'function') liveId = _progCurrentBankId(); } catch (e) {}
+      if (liveId == null) return [];
+      return all.filter(p => (p.id | 0) === (liveId | 0));
     }
     // (Prog deletion from the Wraps menu was removed — the ✕ was easy to
     // mis-tap when selecting. Manage the Prog bank from Prog mode instead.)
@@ -393,6 +439,27 @@
       }
       return (rootName + (qual ? ' ' + qual : '')).trim() || rootName || '?';
     }
+    // Quality-ONLY name for a progression chord (key/root stripped) — the
+    // structural quality matched against CHORDS, title-cased: maj→Maj,
+    // min→Min, maj9→Maj9. So Cmaj/Gmaj/Amin/Emaj9 reads as Maj/Maj/Min/Maj9.
+    function _wrapProgChordQuality(chord) {
+      const iv = Array.from(new Set((chord.intervals || []).map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b).join(',');
+      if (typeof CHORDS !== 'undefined' && iv) {
+        for (const q of Object.keys(CHORDS)) {
+          const def = CHORDS[q]; if (!def || !Array.isArray(def.semis)) continue;
+          const s = Array.from(new Set(def.semis.map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b).join(',');
+          if (s === iv) return q.charAt(0).toUpperCase() + q.slice(1);
+        }
+      }
+      return '?';
+    }
+    // The structural (key-stripped) name for a whole progression: its chord
+    // qualities joined, e.g. "Maj/Maj/Min/Maj9".
+    function _wrapProgStructLabel(prog) {
+      const chords = (prog && Array.isArray(prog.chords)) ? prog.chords : [];
+      if (!chords.length) return prog && prog.name ? prog.name : 'Prog';
+      return chords.map(_wrapProgChordQuality).join('/');
+    }
     function _wrapBankList() {
       // Progression bank: wrapBank === 'prog:<id>'. Each chord in the published
       // progression becomes a read-only chip (armed via recallGeneratedWrap,
@@ -406,10 +473,27 @@
           prog.chords.forEach((c, i) => {
             const step = _wrapChordStepFromProgChord(c);
             if (!step) return;
-            const nm = _wrapProgChordName(c);
+            // Key-stripped: chips show only the structural quality (Maj/Min/…),
+            // not the rooted chord name.
+            const nm = _wrapProgChordQuality(c);
             chips.push({ key: 'prog:' + pid + ':' + i, name: nm, label: (i + 1) + '. ' + nm, step });
           });
           if (chips.length) return { kind: 'prog', readOnly: true, chips };
+        }
+      }
+      // User Prog bank: wrapBank === 'userprog:<id>'. A named subsequence of
+      // User wraps saved as its own read-only, cyclable bank.
+      if (typeof wrapBank === 'string' && wrapBank.indexOf('userprog:') === 0) {
+        const uid = parseInt(wrapBank.slice(9), 10);
+        const up = _wrapUserProgList().find(p => (p.id | 0) === uid);
+        if (up && Array.isArray(up.items) && up.items.length) {
+          const chips = [];
+          up.items.forEach((it, i) => {
+            if (!it || !it.step) return;
+            chips.push({ key: 'userprog:' + uid + ':' + i, name: it.name || ('#' + (i + 1)),
+              label: (i + 1) + '. ' + wrapBankChipLabel(it.step), step: it.step });
+          });
+          if (chips.length) return { kind: 'userprog', readOnly: true, chips };
         }
       }
       if (wrapBank === 'user') {
@@ -447,10 +531,15 @@
 
     // Short bank name for the "Wraps" label.
     function _wrapBankLabel() {
+      if (typeof wrapBank === 'string' && wrapBank.indexOf('userprog:') === 0) {
+        const uid = parseInt(wrapBank.slice(9), 10);
+        const up = _wrapUserProgList().find(p => (p.id | 0) === uid);
+        if (up) return up.name || ('Prog ' + uid);
+      }
       if (typeof wrapBank === 'string' && wrapBank.indexOf('prog:') === 0) {
         const pid = parseInt(wrapBank.slice(5), 10);
         const prog = _wrapProgList().find(p => (p.id | 0) === pid);
-        if (prog) return prog.name || ('Prog ' + pid);
+        if (prog) return _wrapProgStructLabel(prog);
       }
       return 'User';
     }
@@ -468,6 +557,22 @@
       }
       renderWrapBank();
       updateWrapCycleLabel();
+    }
+
+    // Select a sequential read-only bank (a Key progression or a user Prog)
+    // from the Wraps menu: switch to it, arm its first chip, and turn on Cycle
+    // so consecutive grid presses walk through it. Shared by both sections.
+    function _wrapSelectSequentialBank(id, name) {
+      setWrapBank(id);
+      try {
+        if (typeof setWrapCycleMode === 'function') setWrapCycleMode(true);
+        else {
+          const chips = _wrapBankList().chips;
+          if (chips[0] && typeof recallGeneratedWrap === 'function') recallGeneratedWrap(chips[0]);
+        }
+      } catch (err) {}
+      closeWrapsMenu();
+      if (typeof showToast === 'function') showToast('Loaded “' + name + '” — cycling its wraps');
     }
 
     // Recall a generated (read-only) chip: arm it as the live wrapTemplate
@@ -796,6 +901,105 @@
       render();
     }
 
+    // "Create Prog…" — build a named, recallable Prog bank from EITHER a
+    // Standard progression (filtered by the Grid Scale) OR an ordered
+    // subsequence of the User wrap bank. Name autosuggests an adjective-noun.
+    function openCreateProgDialog() {
+      // Standard progressions for the current GRID scale (aeolian→minor, etc.).
+      const gScale = (typeof currentScale === 'string') ? currentScale : 'major';
+      const gRoot = (typeof rootIdx === 'number') ? rootIdx : 0;
+      const standards = (typeof _progStandardsForScale === 'function') ? _progStandardsForScale(gScale, gRoot) : [];
+      if (!savedWraps.length && !standards.length) {
+        if (typeof showToast === 'function') showToast('Save some wraps, or pick a scale with standard progressions');
+        return;
+      }
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay create-prog-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal create-prog-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const scaleLabel = (typeof prettyScaleName === 'function') ? prettyScaleName(gScale) : gScale;
+      const stdOptions = '<option value="">— None (pick wraps below) —</option>' +
+        standards.map((s, i) => `<option value="${i}">${(s.name || ('Prog ' + (i + 1))).replace(/[<>&"]/g, '')}</option>`).join('');
+      const rows = savedWraps.map((w, i) =>
+        `<label class="create-prog-row">` +
+          `<input type="checkbox" class="create-prog-cb" data-idx="${i}" />` +
+          `<span class="create-prog-name">${w.name}</span>` +
+          `<span class="create-prog-label">${wrapBankChipLabel(w.step)}</span>` +
+        `</label>`).join('');
+      modal.innerHTML =
+        `<div class="sm-title">Create Prog</div>` +
+        `<div class="create-prog-namerow">` +
+          `<input type="text" id="create-prog-name-input" class="create-prog-input" placeholder="Prog name" />` +
+          `<button type="button" id="create-prog-shuffle" class="create-prog-dice" title="Suggest another name">🎲</button>` +
+        `</div>` +
+        `<div class="create-prog-hint">Standard progression (${scaleLabel}):</div>` +
+        `<select id="create-prog-std" class="create-prog-input create-prog-std">${stdOptions}</select>` +
+        `<div class="create-prog-hint" id="create-prog-wraps-hint">…or pick wraps to include (in bank order):</div>` +
+        `<div class="create-prog-list" id="create-prog-list">${rows || '<div class="create-prog-empty-wraps">No User wraps yet</div>'}</div>` +
+        `<div class="sm-footer">` +
+          `<button type="button" class="sm-preview" id="create-prog-cancel">Cancel</button>` +
+          `<button type="button" class="sm-apply" id="create-prog-save">Save Prog</button>` +
+        `</div>`;
+
+      const nameInput = modal.querySelector('#create-prog-name-input');
+      nameInput.value = _randAdjNoun();
+      const stdSel = modal.querySelector('#create-prog-std');
+      const listEl = modal.querySelector('#create-prog-list');
+      const wrapsHint = modal.querySelector('#create-prog-wraps-hint');
+      // Selecting a Standard dims the User-wrap picker (Standard wins); name
+      // prefills to the Standard's name.
+      const refreshSource = () => {
+        const usingStd = !!stdSel.value;
+        listEl.classList.toggle('create-prog-disabled', usingStd);
+        wrapsHint.classList.toggle('create-prog-disabled', usingStd);
+        listEl.querySelectorAll('.create-prog-cb').forEach(cb => { cb.disabled = usingStd; });
+      };
+      stdSel.addEventListener('change', () => {
+        if (stdSel.value) {
+          const s = standards[parseInt(stdSel.value, 10)];
+          if (s) nameInput.value = s.name;
+        }
+        refreshSource();
+      });
+      refreshSource();
+      modal.querySelector('#create-prog-shuffle').addEventListener('click', () => { nameInput.value = _randAdjNoun(); nameInput.focus(); });
+      modal.querySelector('#create-prog-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('#create-prog-save').addEventListener('click', () => {
+        let items;
+        if (stdSel.value) {
+          // Standard progression → one item per chord (key-stripped quality
+          // names; chord steps rooted at the grid scale).
+          const s = standards[parseInt(stdSel.value, 10)];
+          items = (s && Array.isArray(s.chords) ? s.chords : [])
+            .map(c => ({ name: _wrapProgChordQuality(c), step: _wrapChordStepFromProgChord(c) }))
+            .filter(it => it.step);
+          if (!items.length) { if (typeof showToast === 'function') showToast('That progression produced no chords'); return; }
+        } else {
+          const picked = Array.from(modal.querySelectorAll('.create-prog-cb:checked'))
+            .map(cb => savedWraps[parseInt(cb.dataset.idx, 10)])
+            .filter(Boolean);
+          if (!picked.length) { if (typeof showToast === 'function') showToast('Pick a Standard progression or at least one wrap'); return; }
+          // Snapshot the chosen wraps (deep copy) so the Prog is stable even if
+          // the User bank is later edited / cleared.
+          items = picked.map(w => ({ name: w.name, step: cloneStep(w.step) }));
+        }
+        const name = (nameInput.value || '').trim() || _randAdjNoun();
+        const id = (Array.isArray(wrapProgs) ? wrapProgs : (wrapProgs = []))
+          .reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        wrapProgs.push({ id, name, items });
+        persistWrapProgs();
+        overlay.remove();
+        // Load the new Prog immediately (arm + cycle).
+        _wrapSelectSequentialBank('userprog:' + id, name);
+        if (typeof showToast === 'function') showToast('Created Prog “' + name + '” (' + items.length + ' wraps)');
+      });
+      setTimeout(() => { try { nameInput.focus(); nameInput.select(); } catch (e) {} }, 0);
+    }
+
     // Wipe the whole wrap bank after a confirm, tearing down any armed wrap
     // and cycle state so nothing dangles.
     function clearWrapBank() {
@@ -947,50 +1151,49 @@
       addBankBtn('user', 'User' + (savedWraps.length ? ` (${savedWraps.length})` : ''));
       menu.appendChild(picker);
 
-      // ---- Prog: the published-progression library (the "Prog bank"). Each
-      // entry loads that progression's chords as a read-only, cyclable wrap
-      // bank (one chip per chord). Hidden when no progressions are published.
-      const progList = _wrapProgList();
-      const progHead = document.createElement('div');
-      progHead.className = 'wrap-bank-menu-head';
-      progHead.textContent = 'Prog';
-      menu.appendChild(progHead);
-      if (!progList.length) {
-        const empty = document.createElement('div');
-        empty.className = 'wrap-bank-prog-empty';
-        empty.textContent = 'No progressions published';
-        menu.appendChild(empty);
-      } else {
-        const progWrap = document.createElement('div');
-        progWrap.className = 'wrap-bank-picker wrap-bank-prog';
-        progList.forEach(p => {
-          const id = 'prog:' + (p.id | 0);
+      // (The "Key" mirror section was removed — standard progressions are now
+      // offered inside the Create Prog dialog instead.)
+
+      // ---- Prog: user-defined banks — named, ordered subsequences of the User
+      // wrap bank. "＋ Create Prog…" picks a subset of User wraps and saves it
+      // as its own recallable, cyclable bank.
+      const userProgs = _wrapUserProgList();
+      const upHead = document.createElement('div');
+      upHead.className = 'wrap-bank-menu-head';
+      upHead.textContent = 'Prog';
+      menu.appendChild(upHead);
+      if (userProgs.length) {
+        const upWrap = document.createElement('div');
+        upWrap.className = 'wrap-bank-picker wrap-bank-prog';
+        userProgs.forEach(p => {
+          const id = 'userprog:' + (p.id | 0);
+          const nm = p.name || ('Prog ' + (p.id | 0));
           const b = document.createElement('button');
           b.type = 'button';
           b.className = 'wrap-bank-pick' + (wrapBank === id ? ' active' : '');
-          b.textContent = p.name || ('Prog ' + (p.id | 0));
-          b.title = (Array.isArray(p.chords) ? p.chords.length : 0) + ' chords';
+          b.textContent = nm;
+          b.title = (Array.isArray(p.items) ? p.items.length : 0) + ' wraps';
           b.addEventListener('pointerdown', (e) => e.stopPropagation());
-          b.addEventListener('click', (e) => {
-            e.stopPropagation();
-            setWrapBank(id);
-            // A progression is sequential, so don't just swap the bank silently
-            // (which read as "nothing happened"): arm its first chord and turn
-            // on Cycle so consecutive grid presses walk the progression.
-            try {
-              if (typeof setWrapCycleMode === 'function') setWrapCycleMode(true);
-              else {
-                const chips = _wrapBankList().chips;
-                if (chips[0] && typeof recallGeneratedWrap === 'function') recallGeneratedWrap(chips[0]);
-              }
-            } catch (err) {}
-            closeWrapsMenu();
-            if (typeof showToast === 'function') showToast('Loaded “' + (p.name || ('Prog ' + (p.id | 0))) + '” — cycling its chords as you wrap');
-          });
-          progWrap.appendChild(b);
+          b.addEventListener('click', (e) => { e.stopPropagation(); _wrapSelectSequentialBank(id, nm); });
+          upWrap.appendChild(b);
         });
-        menu.appendChild(progWrap);
+        menu.appendChild(upWrap);
       }
+      const createBtn = document.createElement('button');
+      createBtn.type = 'button';
+      createBtn.className = 'wrap-bank-create-prog';
+      createBtn.textContent = '＋ Create Prog…';
+      // Enabled when there are User wraps OR standard progressions for the
+      // current grid scale (the dialog offers both sources).
+      {
+        const gScale = (typeof currentScale === 'string') ? currentScale : 'major';
+        const gRoot = (typeof rootIdx === 'number') ? rootIdx : 0;
+        const stdN = (typeof _progStandardsForScale === 'function') ? _progStandardsForScale(gScale, gRoot).length : 0;
+        if (!savedWraps.length && !stdN) { createBtn.disabled = true; createBtn.title = 'Save some wraps, or pick a scale with standard progressions'; }
+      }
+      createBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      createBtn.addEventListener('click', (e) => { e.stopPropagation(); closeWrapsMenu(); openCreateProgDialog(); });
+      menu.appendChild(createBtn);
 
       const sepHr = document.createElement('hr');
       menu.appendChild(sepHr);
@@ -1100,9 +1303,19 @@
     (function bindWrapsMenuLabel() {
       const label = document.getElementById('wrap-bank-label');
       if (!label) return;
-      label.addEventListener('click', (e) => { e.stopPropagation(); openWrapsMenu(label); });
+      // In Key mode the chord pad is the wrap bank — open the Key wraps menu
+      // (Cycle / Run / Stack / Reorder / Shuffle) instead of the Grid one.
+      const openMenu = () => {
+        if (document.body.classList.contains('prog-mode') && typeof _progWrapsMenu === 'function') {
+          const r = label.getBoundingClientRect();
+          _progWrapsMenu(r.left, r.bottom + 4);
+        } else {
+          openWrapsMenu(label);
+        }
+      };
+      label.addEventListener('click', (e) => { e.stopPropagation(); openMenu(); });
       label.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWrapsMenu(label); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMenu(); }
       });
       updateWrapCycleLabel();   // sets the initial "Wraps ▾" caret
     })();

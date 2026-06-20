@@ -639,6 +639,35 @@
         try { URL.revokeObjectURL(url); } catch (e) {}
       }).catch(() => { /* worklet unavailable — keep the Tone-limiter fallback */ });
     })();
+    // Recorder worklet — taps the master output and posts raw PCM (batched) to
+    // the main thread, so Bloom capture encodes WAV/MP3 directly and never relies
+    // on decodeAudioData (which fails on some browsers' MediaRecorder output).
+    // _bloopsRecorderReady flips true once the module is registered; capture
+    // falls back to MediaRecorder until then / where worklets are unavailable.
+    let _bloopsRecorderReady = false;
+    (function installRecorderWorklet() {
+      const rawCtx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+      if (!rawCtx || !rawCtx.audioWorklet || typeof rawCtx.audioWorklet.addModule !== 'function') return;
+      const code = `
+        class BloopsRecorder extends AudioWorkletProcessor {
+          constructor(){ super(); this.on=true; this.B=4096; this.l=new Float32Array(this.B); this.r=new Float32Array(this.B); this.f=0;
+            this.port.onmessage=(e)=>{ if(e.data&&e.data.stop){ this.flush(); this.on=false; } }; }
+          flush(){ if(this.f>0){ this.port.postMessage({ l:this.l.slice(0,this.f), r:this.r.slice(0,this.f) }); this.f=0; } }
+          process(inputs){
+            const inp=inputs[0];
+            if(this.on&&inp&&inp.length){
+              const a=inp[0], b=inp[1]||inp[0], n=a.length;
+              for(let i=0;i<n;i++){ this.l[this.f]=a[i]; this.r[this.f]=b[i]; this.f++;
+                if(this.f>=this.B){ this.port.postMessage({ l:this.l.slice(0), r:this.r.slice(0) }); this.f=0; } }
+            }
+            return true;
+          }
+        }
+        registerProcessor('bloops-recorder', BloopsRecorder);`;
+      let url;
+      try { url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' })); } catch (e) { return; }
+      rawCtx.audioWorklet.addModule(url).then(() => { _bloopsRecorderReady = true; try { URL.revokeObjectURL(url); } catch (e) {} }).catch(() => {});
+    })();
     // Global FX chain — sits post-compressor / pre-limiter so the dynamics
     // settle before reverb/delay tails layer on. wet=0 / distortion=0 are
     // effective pass-throughs; the FX panel UI updates these in place.

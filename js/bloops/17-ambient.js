@@ -2913,28 +2913,53 @@
     }
     // Begin live recording the master output (fan-out tap, no seed restart).
     function _ambCaptureStart(E) {
-      if (typeof MediaRecorder === 'undefined') { alert('This browser cannot record audio output.'); return; }
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('No audio context'); return; }
       // Tap the FINAL master node (post lookahead-limiter + soft-clip) so the
-      // capture matches what's actually heard. masterLimiter is now a fallback
-      // node whose output the lookahead-limiter install disconnects, so tapping
-      // it would record the pre-clip signal (or, if its routing changes, none).
+      // capture matches what's actually heard.
       const tap = _ambMasterTapNode();
       if (!tap) { alert('Master output unavailable.'); return; }
       E.windingDown = false;
       try { if (!E.timer) _ambStartGenerator(E); } catch (e) {}    // make sure something is generating
-      let dest, analyser, rec;
+      // Silence detector — drives Finalize in both capture modes.
+      let analyser = null;
+      try { analyser = ac.createAnalyser(); analyser.fftSize = 1024; tap.connect(analyser); } catch (e) { analyser = null; }
+      // PREFERRED: AudioWorklet recorder → raw PCM → WAV/MP3 (no decodeAudioData,
+      // so it can't hit "Unable to decode audio data" / "decoding failure").
+      if (typeof _bloopsRecorderReady !== 'undefined' && _bloopsRecorderReady
+          && Tone.context && typeof Tone.context.createAudioWorkletNode === 'function') {
+        let recNode = null, sink = null;
+        try {
+          recNode = Tone.context.createAudioWorkletNode('bloops-recorder', {
+            numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+            channelCount: 2, channelCountMode: 'explicit',
+          });
+          sink = ac.createGain(); sink.gain.value = 0;   // node must reach destination to run; keep it silent
+        } catch (e) { recNode = null; }
+        if (recNode) {
+          const r = { mode: 'worklet', recNode, sink, analyser, tap, sr: ac.sampleRate || 48000, L: [], R: [], frames: 0, silentMs: 0, pollTimer: null, finalizing: false };
+          recNode.port.onmessage = (ev) => { const d = ev.data; if (!d || !d.l) return; r.L.push(d.l); r.R.push(d.r); r.frames += d.l.length; };
+          try { Tone.connect(tap, recNode); Tone.connect(recNode, sink); sink.connect(ac.destination); }
+          catch (e) { try { if (analyser) tap.disconnect(analyser); } catch (_) {} alert('Capture failed.'); return; }
+          E.capRec = r;
+          _ambRefreshCaptureBtn(E);
+          if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
+          return;
+        }
+      }
+      // FALLBACK: MediaRecorder (decoded to WAV/MP3 on finish; raw-saved if the
+      // decode fails) — used where the recorder worklet isn't available/ready.
+      if (typeof MediaRecorder === 'undefined') { try { if (analyser) tap.disconnect(analyser); } catch (_) {} alert('This browser cannot record audio output.'); return; }
+      let dest, rec;
       try {
         dest = ac.createMediaStreamDestination(); tap.connect(dest);
-        analyser = ac.createAnalyser(); analyser.fftSize = 1024; tap.connect(analyser);
         const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
         const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
         rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
       } catch (e) { try { tap.disconnect(dest); } catch (_) {} alert('Capture failed: ' + ((e && e.message) || e)); return; }
       const chunks = [];
       rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-      rec.onstop = () => _ambCaptureFinish(E, chunks, rec);
-      E.capRec = { rec, dest, analyser, tap, chunks, silentMs: 0, pollTimer: null, finalizing: false };
+      rec.onstop = () => _ambCaptureFinish(E);
+      E.capRec = { mode: 'mr', rec, dest, analyser, tap, chunks, silentMs: 0, pollTimer: null, finalizing: false };
       try { rec.start(); } catch (e) { try { tap.disconnect(dest); } catch (_) {} E.capRec = null; alert('Capture failed.'); return; }
       _ambRefreshCaptureBtn(E);
       if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
@@ -2948,47 +2973,60 @@
       E.windingDown = true;
       _ambRefreshCaptureBtn(E);
       if (typeof showToast === 'function') showToast('Finalizing — winding down, ending on silence…');
-      const buf = new Float32Array(r.analyser.fftSize);
+      const buf = r.analyser ? new Float32Array(r.analyser.fftSize) : null;
       const SILENCE = 0.0025, NEED_SILENT_MS = 450, MAX_TAIL_MS = 30000;
       const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
       r.pollTimer = setInterval(() => {
         let rms = 0;
-        try { r.analyser.getFloatTimeDomainData(buf); let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; rms = Math.sqrt(s / buf.length); } catch (e) {}
+        if (r.analyser && buf) { try { r.analyser.getFloatTimeDomainData(buf); let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; rms = Math.sqrt(s / buf.length); } catch (e) {} }
         r.silentMs = (rms < SILENCE) ? (r.silentMs + 100) : 0;
         const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - t0;
         if (r.silentMs >= NEED_SILENT_MS || elapsed >= MAX_TAIL_MS) {
           clearInterval(r.pollTimer); r.pollTimer = null;
-          try { r.rec.stop(); } catch (e) {}
+          if (r.mode === 'mr') { try { r.rec.stop(); } catch (e) {} }  // onstop → _ambCaptureFinish
+          else { _ambCaptureFinish(E); }
         }
       }, 100);
     }
-    // Recorder stopped: tear down the tap, stop the (now-silent) generator,
-    // then ask for name/format and save the take to the capture bank.
-    async function _ambCaptureFinish(E, chunks, rec) {
+    // Capture ended: tear down the tap, stop the (now-silent) generator, then ask
+    // for name/format and save the take. Worklet mode stitches the PCM straight
+    // into a buffer (always WAV/MP3-able); MediaRecorder mode decodes the blob
+    // and falls back to saving it raw if decoding fails.
+    async function _ambCaptureFinish(E) {
       const r = E.capRec;
       if (r && r.pollTimer) { clearInterval(r.pollTimer); r.pollTimer = null; }
-      try { if (r) r.tap.disconnect(r.dest); } catch (e) {}
-      try { if (r) r.tap.disconnect(r.analyser); } catch (e) {}
+      try { if (r && r.analyser) r.tap.disconnect(r.analyser); } catch (e) {}
+      if (r && r.mode === 'worklet') {
+        try { if (r.recNode && r.recNode.port) r.recNode.port.postMessage({ stop: true }); } catch (e) {}
+        try { Tone.disconnect(r.tap, r.recNode); } catch (e) {}
+        try { r.recNode.disconnect(); } catch (e) {}
+        try { r.sink.disconnect(); } catch (e) {}
+      } else if (r && r.mode === 'mr') {
+        try { r.tap.disconnect(r.dest); } catch (e) {}
+      }
       try { _ambStopGenerator(E); } catch (e) {}
       E.windingDown = false;
       E.capRec = null;
       _ambRefreshCaptureBtn(E);
       try { _ambRefreshPlayBtn(E); } catch (e) {}
-      if (!chunks || !chunks.length) return;
       try {
-        // The complete recorded container (webm/opus, ogg, or mp4 depending on
-        // browser). Always keep this — if decoding it to a buffer for WAV/MP3
-        // conversion fails (some browsers' decodeAudioData chokes on their own
-        // MediaRecorder output, esp. Safari/mp4), we still save this raw take
-        // rather than losing the capture.
-        const rawBlob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-        let audioBuf = null;
-        try {
-          const ac = Tone.getContext().rawContext;
-          audioBuf = await ac.decodeAudioData(await rawBlob.arrayBuffer());
-          if (!audioBuf || !(audioBuf.duration > 0)) audioBuf = null;
-        } catch (decErr) {
-          console.warn('Bloom capture: decode failed, saving the raw recording instead.', decErr);
+        const ac = Tone.getContext().rawContext;
+        let audioBuf = null, rawBlob = null;
+        if (r && r.mode === 'worklet') {
+          if (!r.frames) return;
+          audioBuf = ac.createBuffer(2, r.frames, r.sr || ac.sampleRate);
+          const o0 = audioBuf.getChannelData(0), o1 = audioBuf.getChannelData(1);
+          let pos = 0;
+          for (let i = 0; i < r.L.length; i++) { o0.set(r.L[i], pos); o1.set(r.R[i], pos); pos += r.L[i].length; }
+          r.L = null; r.R = null;
+        } else {
+          const chunks = r ? r.chunks : null;
+          if (!chunks || !chunks.length) return;
+          rawBlob = new Blob(chunks, { type: (r.rec && r.rec.mimeType) || 'audio/webm' });
+          try {
+            audioBuf = await ac.decodeAudioData(await rawBlob.arrayBuffer());
+            if (!audioBuf || !(audioBuf.duration > 0)) audioBuf = null;
+          } catch (decErr) { console.warn('Bloom capture: decode failed, saving the raw recording instead.', decErr); }
         }
         if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
         const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
@@ -2997,15 +3035,13 @@
         const { filename, fmt, folder } = choice;
         let blob, ext, mime, durSec;
         if (audioBuf) {
-          // Decoded OK — honor the chosen WAV/MP3 format.
           ext = fmt === 'mp3' ? 'mp3' : 'wav';
           mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
           blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(audioBuf) : audioBufferToWav(audioBuf);
           durSec = audioBuf.duration;
         } else {
-          // Fallback — save the raw recorded container as-is so the take isn't lost.
           blob = rawBlob;
-          mime = rawBlob.type || 'audio/webm';
+          mime = (rawBlob && rawBlob.type) || 'audio/webm';
           ext = mime.indexOf('mp4') >= 0 ? 'm4a' : mime.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
           durSec = 0;
         }

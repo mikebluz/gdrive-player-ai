@@ -2203,11 +2203,19 @@
     // one long recorder) so a bounded tail can actually be decoded; native
     // MediaRecorder fan-out off masterLimiter adds no main-thread audio work.
     const _AL = { on: false, rec: null, dest: null, segs: [], segMs: 4000, keepMs: 36000, busy: false };
-    function _alSupported() { return (typeof MediaRecorder !== 'undefined') && (typeof masterLimiter !== 'undefined' && !!masterLimiter); }
+    // The node to fan recordings off — the FINAL master node (post lookahead-
+    // limiter + soft-clip) so a recording matches what's heard. Falls back to
+    // the (now output-orphaned) Tone limiter only if the clipper is absent.
+    function _ambMasterTapNode() {
+      if (typeof masterClipper !== 'undefined' && masterClipper) return masterClipper;
+      if (typeof masterLimiter !== 'undefined' && masterLimiter) return masterLimiter;
+      return null;
+    }
+    function _alSupported() { return (typeof MediaRecorder !== 'undefined') && !!_ambMasterTapNode(); }
     function _alStart() {
       if (_AL.on || !_alSupported()) return false;
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return false; }
-      try { _AL.dest = ac.createMediaStreamDestination(); masterLimiter.connect(_AL.dest); } catch (e) { return false; }
+      try { _AL.dest = ac.createMediaStreamDestination(); _AL.tap = _ambMasterTapNode(); _AL.tap.connect(_AL.dest); } catch (e) { return false; }
       _AL.on = true; _AL.segs = [];
       _alNextSeg();
       return true;
@@ -2236,8 +2244,8 @@
     function _alStop() {
       _AL.on = false;
       try { _AL.rec && _AL.rec.stop(); } catch (e) {}
-      try { if (_AL.dest) masterLimiter.disconnect(_AL.dest); } catch (e) {}
-      _AL.dest = null; _AL.segs = [];
+      try { if (_AL.dest && _AL.tap) _AL.tap.disconnect(_AL.dest); } catch (e) {}
+      _AL.dest = null; _AL.tap = null; _AL.segs = [];
     }
     // Decode a list of recorded segments and stitch the LAST `seconds` of PCM
     // into one AudioBuffer (≤2ch). Shared by always-listen grab + layer freeze.
@@ -2834,7 +2842,7 @@
         let ac;
         try { ac = Tone.getContext().rawContext; } catch (e) { return reject(new Error('No audio context')); }
         if (typeof MediaRecorder === 'undefined') return reject(new Error('This browser cannot record audio output.'));
-        const tap = (typeof masterLimiter !== 'undefined' && masterLimiter) ? masterLimiter : null;
+        const tap = _ambMasterTapNode();
         if (!tap) return reject(new Error('Master output unavailable.'));
         let dest, rec;
         try {
@@ -2907,7 +2915,11 @@
     function _ambCaptureStart(E) {
       if (typeof MediaRecorder === 'undefined') { alert('This browser cannot record audio output.'); return; }
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { alert('No audio context'); return; }
-      const tap = (typeof masterLimiter !== 'undefined' && masterLimiter) ? masterLimiter : null;
+      // Tap the FINAL master node (post lookahead-limiter + soft-clip) so the
+      // capture matches what's actually heard. masterLimiter is now a fallback
+      // node whose output the lookahead-limiter install disconnects, so tapping
+      // it would record the pre-clip signal (or, if its routing changes, none).
+      const tap = _ambMasterTapNode();
       if (!tap) { alert('Master output unavailable.'); return; }
       E.windingDown = false;
       try { if (!E.timer) _ambStartGenerator(E); } catch (e) {}    // make sure something is generating
@@ -2964,21 +2976,47 @@
       try { _ambRefreshPlayBtn(E); } catch (e) {}
       if (!chunks || !chunks.length) return;
       try {
-        const ac = Tone.getContext().rawContext;
-        const arr = await new Blob(chunks, { type: rec.mimeType || 'audio/webm' }).arrayBuffer();
-        const audioBuf = await ac.decodeAudioData(arr);
+        // The complete recorded container (webm/opus, ogg, or mp4 depending on
+        // browser). Always keep this — if decoding it to a buffer for WAV/MP3
+        // conversion fails (some browsers' decodeAudioData chokes on their own
+        // MediaRecorder output, esp. Safari/mp4), we still save this raw take
+        // rather than losing the capture.
+        const rawBlob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        let audioBuf = null;
+        try {
+          const ac = Tone.getContext().rawContext;
+          audioBuf = await ac.decodeAudioData(await rawBlob.arrayBuffer());
+          if (!audioBuf || !(audioBuf.duration > 0)) audioBuf = null;
+        } catch (decErr) {
+          console.warn('Bloom capture: decode failed, saving the raw recording instead.', decErr);
+        }
         if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
         const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
         const choice = await showExportOptionsDialog({ title: 'Save capture', defaultName: 'bloom-' + stamp, defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Save' });
         if (!choice) return;
         const { filename, fmt, folder } = choice;
-        const ext = fmt === 'mp3' ? 'mp3' : 'wav';
-        const mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
-        const blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(audioBuf) : audioBufferToWav(audioBuf);
+        let blob, ext, mime, durSec;
+        if (audioBuf) {
+          // Decoded OK — honor the chosen WAV/MP3 format.
+          ext = fmt === 'mp3' ? 'mp3' : 'wav';
+          mime = fmt === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+          blob = (fmt === 'mp3' && typeof audioBufferToMp3 === 'function') ? await audioBufferToMp3(audioBuf) : audioBufferToWav(audioBuf);
+          durSec = audioBuf.duration;
+        } else {
+          // Fallback — save the raw recorded container as-is so the take isn't lost.
+          blob = rawBlob;
+          mime = rawBlob.type || 'audio/webm';
+          ext = mime.indexOf('mp4') >= 0 ? 'm4a' : mime.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+          durSec = 0;
+        }
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
-        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false });
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false });
         _ambRenderCaptureBank();
-        if (typeof showToast === 'function') showToast('Captured “' + filename + '” — upload it from the bank below.');
+        if (typeof showToast === 'function') {
+          showToast(audioBuf
+            ? ('Captured “' + filename + '” — upload it from the bank below.')
+            : ('Captured “' + filename + '” (raw ' + ext + ' — couldn’t convert) — upload it from the bank below.'));
+        }
       } catch (e) {
         console.error('Bloom capture failed', e);
         alert('Bloom capture failed: ' + ((e && e.message) || e));
@@ -4458,20 +4496,6 @@
       if (!unit || !Array.isArray(unit.events)) return 0;
       return unit.events.reduce((s, e) => s + Math.max(0, e.durMs | 0), 0);
     }
-    // The single grid voice a unit was built from, if uniform: every captured
-    // note `sound` is the same non-empty type → return it; mixed (or none) →
-    // '' so the Seq layer follows each note's own voice. Used to set a sent
-    // lane's Seq layer Tone to that lane's grid tone.
-    function _seqUnitTone(unit) {
-      if (!unit || !Array.isArray(unit.events)) return '';
-      const set = new Set();
-      for (const e of unit.events) {
-        const sounds = (e && Array.isArray(e.sounds)) ? e.sounds : [];
-        for (const s of sounds) { if (s) set.add(s); }
-        if (set.size > 1) return ''; // mixed → follow per-note voices
-      }
-      return (set.size === 1) ? Array.from(set)[0] : '';
-    }
     // Size a seq layer's Interval (and Length) to its phrase so the loop fires
     // exactly when the previous pass ends — no silence gaps, no overlap-cut.
     // Interleaved units use the longest so none gets truncated.
@@ -4493,12 +4517,11 @@
         if (typeof nameHint === 'string' && nameHint) seq.name = nameHint;
         seq.units = [unit];
         seq.scale = (unit.scale && typeof SCALES !== 'undefined' && SCALES[unit.scale]) ? unit.scale : '';
-        // Lock the Seq layer's Tone to the SOURCE lane's grid voice when that
-        // lane used a single, uniform tone — so a sent lane plays in its own
-        // voice instead of following the live grid. Mixed-voice sources stay on
-        // '' (follow each note's captured voice) to preserve their variety.
-        const _srcTone = _seqUnitTone(unit);
-        if (_srcTone) seq.tone = _srcTone;
+        // Leave Tone on '' (Grid voice = follow each note's CAPTURED voice) so
+        // the layer plays every step in the tone of the step that's playing —
+        // a single-tone lane sounds in that one voice, a multi-tone lane plays
+        // each step in its own. The user can still pick an explicit Tone to
+        // override all steps uniformly.
         // Play the sent sequence FAITHFULLY by default — the generative walk
         // (pitch/rhythm vary) would otherwise drop ~6% of notes and nudge
         // pitches on non-verbatim cycles, so you'd hear a thinned/altered take

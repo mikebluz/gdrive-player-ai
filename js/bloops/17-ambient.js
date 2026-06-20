@@ -1119,6 +1119,114 @@
       });
     }
 
+    // ================= BASS engine ==================================
+    // A Bass layer plays a euclidean rhythmic phrase locked to the global BPM.
+    // The SEED phrase is `bars` bars long; with no variation it repeats
+    // identically and returns to its start every `bars` bars. Stochastic
+    // Rhythm var / Pitch var perturb each repetition. The phrase is realized
+    // per cycle from a deterministic per-cycle RNG (seeded by layer id + cycle
+    // + project seed) so the SAME cycle always renders identically no matter
+    // how many lookahead ticks observe it — only the cycle index advancing
+    // changes the variation. Config is re-read at each cycle boundary, so edits
+    // made mid-playback land on the NEXT phrase iteration (like other layers).
+    function _ambBassParams(lenMs, pan, tone) {
+      const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
+      const baseVol = Number.isFinite(base.volume) ? base.volume : 100;
+      const type = _ambLayerType(tone);
+      return {
+        ...base,
+        type,
+        attack: Math.max(6, Math.round(lenMs * 0.04)),
+        decay: 160, sustain: 60,
+        release: Math.max(120, Math.round(lenMs * 0.7)),
+        volume: Math.max(2, Math.round(baseVol * 0.34)),
+        pan: pan | 0,
+      };
+    }
+    // Small deterministic PRNG (mulberry32-ish) seeded per cycle so a cycle's
+    // variation is stable across ticks.
+    function _ambSeededRand(seed) {
+      let s = seed >>> 0;
+      return () => {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function _ambEmitBass(E, inst, key, now, horizon, lead, space, cfg) {
+      if (!E.bassPhase) E.bassPhase = {};
+      if (typeof euclideanPattern !== 'function') return;
+      const bpm = _ambBpm();
+      const barSec = (60 / bpm) * 4;                 // 4/4
+      const bars   = Math.max(1, Math.min(8, inst.bars | 0) || 1);
+      const phraseSec = bars * barSec;
+      if (!(phraseSec > 0.05)) return;
+      const steps  = Math.max(2, Math.min(16, inst.steps | 0) || 8);
+      const pulses = Math.max(1, Math.min(steps, inst.pulses | 0) || 1);
+      const rotate = Math.max(0, inst.rotate | 0);
+      const slotSec = barSec / steps;
+      const lenMs  = Math.max(40, inst.lengthMs | 0);
+      const rVar   = Math.max(0, Math.min(100, inst.rhythmVar | 0));
+      const pVar   = Math.max(0, Math.min(100, inst.pitchVar | 0));
+      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const reg    = Math.max(1, Math.min(4, inst.register | 0) || 2);
+      const src    = _ambNotesOf(inst);
+      const N      = Math.max(1, _ambScaleIntervals(src).length);
+      const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const pat    = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
+
+      let st = E.bassPhase[key];
+      if (!st) st = E.bassPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / phraseSec));
+      const cTo   = Math.floor((tTo - st.startAt) / phraseSec);
+      let cap = 0;
+      for (let c = cFrom; c <= cTo && cap < 256; c++) {
+        // 'when' conditional applies per phrase cycle (cycle = iteration index).
+        if (!_ambCondFires(inst.when, c)) continue;
+        const cStart = st.startAt + c * phraseSec;
+        // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
+        const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
+        for (let bar = 0; bar < bars; bar++) {
+          for (let slot = 0; slot < steps; slot++) {
+            let hit = pat[slot] === 1;
+            if (rVar > 0) {
+              if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }       // drop a seed hit
+              else      { if (rnd() * 100 < rVar * 0.22) hit = true; }        // add a ghost hit
+            }
+            if (!hit) continue;
+            if (restP > 0 && rnd() * 100 < restP) continue;
+            const at = cStart + (bar * steps + slot) * slotSec;
+            if (at < tFrom || at >= tTo) continue;
+            // Pitch: seed = root; Pitch var occasionally moves to fifth / third /
+            // octave / fourth for a walking-bass feel.
+            let deg = 0, octShift = 0;
+            if (pVar > 0 && rnd() * 100 < pVar) {
+              const r = rnd();
+              if (r < 0.45)       deg = Math.min(N - 1, 4);                 // fifth
+              else if (r < 0.72)  deg = Math.min(N - 1, 2);                 // third
+              else if (r < 0.88) { deg = 0; octShift = 1; }                 // octave up
+              else                deg = Math.min(N - 1, 3);                 // fourth
+            }
+            const f = _ambDegreeFreq(deg, reg + octShift, src);
+            if (f == null) continue;
+            const bp = _ambBassParams(lenMs, _ambLayerPan(inst), inst.tone);
+            bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
+            if (dmod) bp._detuneMod = dmod;
+            try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+            cap++;
+            if (cap >= 256) break;
+          }
+          if (cap >= 256) break;
+        }
+      }
+      st.lastAt = tTo;
+    }
+
     // ================= SHAPE engine =================================
     // A Shape layer holds N radial-sequencer wheels. Each wheel loops
     // continuously, phase-anchored to a downbeat (E.shapePhase[key#i].startAt)
@@ -2024,6 +2132,7 @@
       E.texPattern = null; E.texStep = 0; E.texMutateAt = 0;
       E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
       E.arpState = {};     // per Arp layer: { entry, note, pos } series/sweep cursor
+      E.bassPhase = {};    // per Bass layer: { startAt, lastAt } phrase-cycle clock
     }
     function _ambTick(E) {
       _E = E;
@@ -2179,6 +2288,17 @@
             if (_ambFreezeGate(E, key, now, horizon)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitShape(E, ex, key, now, horizon, lead, space, cfg); }
+            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
+          // Bass layers realize a multi-bar euclidean phrase over the lookahead
+          // window (their own path, like Shape) so the seed phrase + per-cycle
+          // variation stay locked to the BPM and re-read config at cycle edges.
+          if (ex.type === 'bass') {
+            if (ex.present === false || !ex.on || _muted(ex) || E.windingDown) continue;
+            if (_ambFreezeGate(E, key, now, horizon)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitBass(E, ex, key, now, horizon, lead, space, cfg); }
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
@@ -3778,6 +3898,22 @@
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Bass: a euclidean rhythmic phrase locked to the global BPM. The seed
+      // phrase is `bars` bars long and repeats (returns to its start) every
+      // `bars` bars; Rhythm var / Pitch var add stochastic variation per
+      // repetition. Pulses/Steps/Rotate shape the euclidean rhythm (per bar);
+      // Register sets the low octave. Edits land on the next phrase iteration.
+      bass: { label: 'Bass', ctrls: [['tone'], ['notes'],
+        ['sl', 'register', 'Register', 1, 4, 'octave'],
+        ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'],
+        ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'],
+        ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'],
+        ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'],
+        ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'],
+        ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'],
+        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
@@ -3795,6 +3931,15 @@
         tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1 }], sel: 0,
         dir: 'up', randomness: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
         lengthMs: 220, restProb: 0, accent: 0,
+      });
+      // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls
+      // back via _ambLayerType if absent), a 2-bar seed phrase, and a sparse
+      // 5-in-8 euclidean pulse — a simple groove out of the box. Variation
+      // sliders start at 0 so the seed repeats verbatim until dialed up.
+      if (type === 'bass') return Object.assign(base, {
+        tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
+        bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260,
+        rhythmVar: 0, pitchVar: 0, restProb: 0, accent: 0,
       });
       return base;
     }
@@ -5156,6 +5301,8 @@
         actions.push({ label: 'Shape', fn: () => _ambAddExtra(E, 'shape') });
         // Arp: arpeggiates through a built series of scales/chords (extras-only).
         actions.push({ label: 'Arp', fn: () => _ambAddExtra(E, 'arp') });
+        // Bass: low euclidean phrase locked to BPM (extras-only).
+        actions.push({ label: 'Bass', fn: () => _ambAddExtra(E, 'bass') });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

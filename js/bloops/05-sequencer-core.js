@@ -209,6 +209,10 @@
       if (polyMode && activeLaneIdx >= 0 && activeLaneIdx < lanes.length) {
         lanes[activeLaneIdx].steps = sequence;
       }
+      // Keep the saved-actions bar in sync on every render so it reliably
+      // hides when no saved sequence is selected (activeSeqIndex === null),
+      // even on the deselect paths that don't re-render the saved-bank list.
+      try { if (typeof refreshSavedActionsBar === 'function') refreshSavedActionsBar(); } catch (e) {}
       // The chip-highlight caches hold direct DOM refs that this
       // re-render is about to replace. Clear them so the next
       // setActiveChipForLane / setActiveSequenceChip looks up fresh

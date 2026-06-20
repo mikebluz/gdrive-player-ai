@@ -701,7 +701,7 @@
     //                 live key/scale (its chords become the chips). Read-only.
     // Generated banks are recall-only; building a wrap always lands in (and
     // switches the view to) 'user'.
-    let wrapBank = 'standard';
+    let wrapBank = 'user';   // 'user' or 'prog:<id>' (the Chords palette was removed)
     // Render-key of the active chip while a generated bank is showing —
     // generated chips have no savedWraps id, so this mirrors
     // activeWrapBankId's "keep the armed chip lit" role for them.

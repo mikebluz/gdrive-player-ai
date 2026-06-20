@@ -345,7 +345,73 @@
     // The chip descriptors for the active bank. User chips carry `userId`
     // (a savedWraps id → editable); Standard chips carry only a render
     // `key`. `readOnly` gates the delete-× / publish affordances.
+    // Published progressions (the "Prog bank") — the shared library the master
+    // Bloom + Shape Prog pickers read from. Each entry is { id, name, chords:[
+    // {root, intervals}] }.
+    function _wrapProgList() {
+      return (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs))
+        ? masterAmbient.publishedProgs : [];
+    }
+    // (Prog deletion from the Wraps menu was removed — the ✕ was easy to
+    // mis-tap when selecting. Manage the Prog bank from Prog mode instead.)
+    // Build a chord wrap step from one progression chord { root, intervals }.
+    // Mirrors _wrapChordStepFromBlock but voices the stored interval set
+    // directly (progression chords are equal-tempered pitch-class sets).
+    function _wrapChordStepFromProgChord(chord) {
+      if (!chord || !Array.isArray(chord.intervals) || !chord.intervals.length) return null;
+      const baseFreq = (typeof notes !== 'undefined' && Array.isArray(notes) && notes[0]) ? notes[0].freq : 261.63;
+      const rIdx = (typeof rootIdx === 'number') ? rootIdx : 0;
+      const chordRootPC = (((chord.root | 0) % 12) + 12) % 12;
+      const rootOffset = (((chordRootPC - rIdx) % 12) + 12) % 12;
+      const rootFreq = baseFreq * Math.pow(2, rootOffset / 12);
+      const voices = chord.intervals.map(semi => {
+        const freq = rootFreq * Math.pow(2, semi / 12);
+        const noteIdx = (((rIdx + rootOffset + semi) % 12) + 12) % 12;
+        const label = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[noteIdx] || '') : '';
+        return { freq, label, cellIndex: 0 };
+      });
+      if (!voices.length) return null;
+      return {
+        chord: voices,
+        label: voices.map(v => v.label).join('·'),
+        duration: 1,
+        subdivision: (typeof stepSubdivision === 'number') ? stepSubdivision : 1,
+      };
+    }
+    // Human chord name for a progression chord (root + best-effort quality
+    // matched against CHORDS by mod-12 interval set; falls back to the root).
+    function _wrapProgChordName(chord) {
+      const rootName = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[(chord.root | 0) % 12] || '') : '';
+      const iv = Array.from(new Set((chord.intervals || []).map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b).join(',');
+      let qual = '';
+      if (typeof CHORDS !== 'undefined' && iv) {
+        for (const q of Object.keys(CHORDS)) {
+          const def = CHORDS[q]; if (!def || !Array.isArray(def.semis)) continue;
+          const s = Array.from(new Set(def.semis.map(x => ((x % 12) + 12) % 12))).sort((a, b) => a - b).join(',');
+          if (s === iv) { qual = def.label || q; break; }
+        }
+      }
+      return (rootName + (qual ? ' ' + qual : '')).trim() || rootName || '?';
+    }
     function _wrapBankList() {
+      // Progression bank: wrapBank === 'prog:<id>'. Each chord in the published
+      // progression becomes a read-only chip (armed via recallGeneratedWrap,
+      // cycled like the Chords palette). Falls through to Chords if the prog is
+      // gone (deleted while selected).
+      if (typeof wrapBank === 'string' && wrapBank.indexOf('prog:') === 0) {
+        const pid = parseInt(wrapBank.slice(5), 10);
+        const prog = _wrapProgList().find(p => (p.id | 0) === pid);
+        if (prog && Array.isArray(prog.chords) && prog.chords.length) {
+          const chips = [];
+          prog.chords.forEach((c, i) => {
+            const step = _wrapChordStepFromProgChord(c);
+            if (!step) return;
+            const nm = _wrapProgChordName(c);
+            chips.push({ key: 'prog:' + pid + ':' + i, name: nm, label: (i + 1) + '. ' + nm, step });
+          });
+          if (chips.length) return { kind: 'prog', readOnly: true, chips };
+        }
+      }
       if (wrapBank === 'user') {
         return {
           kind: 'user', readOnly: false,
@@ -381,7 +447,12 @@
 
     // Short bank name for the "Wraps" label.
     function _wrapBankLabel() {
-      return (wrapBank === 'user') ? 'User' : 'Chords';
+      if (typeof wrapBank === 'string' && wrapBank.indexOf('prog:') === 0) {
+        const pid = parseInt(wrapBank.slice(5), 10);
+        const prog = _wrapProgList().find(p => (p.id | 0) === pid);
+        if (prog) return prog.name || ('Prog ' + pid);
+      }
+      return 'User';
     }
 
     // Switch the visible bank. Generated banks are read-only palettes; the
@@ -424,7 +495,7 @@
       wrapTemplate = null;
       activeWrapBankId = null;
       wrapGenActiveKey = null;
-      wrapBank = 'standard';
+      wrapBank = 'user';
       pendingChord = [];
       chordMode = false;
       wrapCycleMode = false;
@@ -576,6 +647,10 @@
       const label = document.getElementById('wrap-bank-label');
       if (!label) return;
       label.classList.toggle('cycling', wrapCycleMode);
+      // Direction-specific classes so Cycle-Right and Cycle-Left highlight in
+      // different colors.
+      label.classList.toggle('cycle-right', wrapCycleMode && wrapCycleDir > 0);
+      label.classList.toggle('cycle-left',  wrapCycleMode && wrapCycleDir < 0);
       label.setAttribute('aria-expanded', _wrapsMenuEl ? 'true' : 'false');
       const arrow = wrapCycleMode ? (wrapCycleDir > 0 ? ' →' : ' ←') : '';
       // Stack the active bank name UNDER the "Wraps" title (two lines) so a
@@ -868,20 +943,69 @@
         picker.appendChild(b);
         return b;
       };
-      addBankBtn('standard', 'Chords');
+      // (The generated "Chords" palette bank was removed — User + Prog only.)
       addBankBtn('user', 'User' + (savedWraps.length ? ` (${savedWraps.length})` : ''));
       menu.appendChild(picker);
+
+      // ---- Prog: the published-progression library (the "Prog bank"). Each
+      // entry loads that progression's chords as a read-only, cyclable wrap
+      // bank (one chip per chord). Hidden when no progressions are published.
+      const progList = _wrapProgList();
+      const progHead = document.createElement('div');
+      progHead.className = 'wrap-bank-menu-head';
+      progHead.textContent = 'Prog';
+      menu.appendChild(progHead);
+      if (!progList.length) {
+        const empty = document.createElement('div');
+        empty.className = 'wrap-bank-prog-empty';
+        empty.textContent = 'No progressions published';
+        menu.appendChild(empty);
+      } else {
+        const progWrap = document.createElement('div');
+        progWrap.className = 'wrap-bank-picker wrap-bank-prog';
+        progList.forEach(p => {
+          const id = 'prog:' + (p.id | 0);
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'wrap-bank-pick' + (wrapBank === id ? ' active' : '');
+          b.textContent = p.name || ('Prog ' + (p.id | 0));
+          b.title = (Array.isArray(p.chords) ? p.chords.length : 0) + ' chords';
+          b.addEventListener('pointerdown', (e) => e.stopPropagation());
+          b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setWrapBank(id);
+            // A progression is sequential, so don't just swap the bank silently
+            // (which read as "nothing happened"): arm its first chord and turn
+            // on Cycle so consecutive grid presses walk the progression.
+            try {
+              if (typeof setWrapCycleMode === 'function') setWrapCycleMode(true);
+              else {
+                const chips = _wrapBankList().chips;
+                if (chips[0] && typeof recallGeneratedWrap === 'function') recallGeneratedWrap(chips[0]);
+              }
+            } catch (err) {}
+            closeWrapsMenu();
+            if (typeof showToast === 'function') showToast('Loaded “' + (p.name || ('Prog ' + (p.id | 0))) + '” — cycling its chords as you wrap');
+          });
+          progWrap.appendChild(b);
+        });
+        menu.appendChild(progWrap);
+      }
 
       const sepHr = document.createElement('hr');
       menu.appendChild(sepHr);
 
       const cycleBtn = document.createElement('button');
       cycleBtn.type = 'button';
+      cycleBtn.className = 'wrap-cycle-btn';
       const paintCycle = () => {
         cycleBtn.textContent = !wrapCycleMode
           ? 'Cycle: Off'
           : (wrapCycleDir > 0 ? 'Cycle: Right →' : 'Cycle: Left ←');
         cycleBtn.classList.toggle('active', wrapCycleMode);
+        // Distinct highlight per direction (matches the Wraps label).
+        cycleBtn.classList.toggle('cycle-right', wrapCycleMode && wrapCycleDir > 0);
+        cycleBtn.classList.toggle('cycle-left',  wrapCycleMode && wrapCycleDir < 0);
       };
       paintCycle();
       cycleBtn.addEventListener('pointerdown', (e) => e.stopPropagation());

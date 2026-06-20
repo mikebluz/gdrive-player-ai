@@ -1676,7 +1676,8 @@
        The active tab reads as a filled purple pill. */
     .mode-tabs {
       display: flex;
-      flex: 1 1 auto;
+      flex: 0 0 50%;        /* left half of the banner row (mode button) */
+      box-sizing: border-box;
       min-width: 0;
       align-items: center;
       gap: 8px;
@@ -1702,8 +1703,8 @@
        sizes to its current-mode label, and drops the dropdown chevron. Opens
        the #mode-panel popover. Compound selector beats plain .banner-half. */
     .banner-half.banner-mode {
-      flex: 0 1 auto;
-      max-width: 60%;
+      flex: 1 1 auto;       /* fill the left half (.mode-tabs) */
+      max-width: none;
       min-width: 0;
       white-space: nowrap;
       overflow: hidden;
@@ -1734,6 +1735,24 @@
       border-color: #9f7aea; color: #e9d8fd;
       box-shadow: 0 0 10px rgba(159,122,234,0.20);
     }
+    /* ⚙ Settings button — pinned at the top of the mode menu, teal-accented so
+       it reads as a different kind of action than the (purple) mode options.
+       A divider gap separates it from the mode list below. */
+    .mode-btn.mode-settings-btn {
+      color: #4fd1c5;
+      border-color: rgba(79, 209, 197, 0.40);
+      background: linear-gradient(180deg, rgba(45, 212, 191, 0.10) 0%, rgba(45, 212, 191, 0.04) 100%);
+      margin-bottom: 8px;
+      /* Teal bottom border too — matches the rest of the button's accent
+         instead of the dim divider grey it carried before. */
+      border-bottom-color: rgba(79, 209, 197, 0.40);
+    }
+    @media (hover: hover) {
+      .mode-btn.mode-settings-btn:hover { border-color: #4fd1c5; color: #d6f5f1; }
+    }
+    /* Mode settings popover — the moved Sounds controls. Inherits the
+       .grid-settings-panel shell; keep it from getting too narrow. */
+    .mode-settings-panel { min-width: 240px; }
     /* Grid + right-side control rail. The wrapper takes the vertical space
        the bare grid used to (flex: 1 in #lane-expander's column); inside, the
        grid grows horizontally and the rail sits flush on the right, stretched
@@ -1801,13 +1820,11 @@
     /* Sounds menu — pinned to the right edge at 25% of the banner width
        (where the master-vol speaker used to be). */
     .banner-row #scale-banner-half.banner-sounds {
-      /* Sizes to fit the current tone-name label (flex-basis auto = content
-         width). Won't grow past its text; .mode-tabs (flex 1 1 auto) eats the
-         slack so the button stays pinned to the right. Can shrink + ellipsis
-         only when the row is tight, capped at 60% so a very long sample name
-         never dominates the row (no horizontal scroll). */
-      flex: 0 1 auto;
-      max-width: 60%;
+      /* Right half of the banner row — mirrors the mode button on the left for
+         a 50 / 50 split. Long tone names ellipsize rather than overflow. */
+      flex: 0 0 50%;
+      box-sizing: border-box;
+      max-width: none;
       border-right: none;
       border-left: 1px solid #1a1a2e;
       min-width: 0;
@@ -5415,6 +5432,18 @@
       border-color: #c026d3;
       box-shadow: 0 0 8px rgba(192, 38, 211, 0.45);
     }
+    /* Direction-specific cycle highlight: Right → green (forward), Left ← amber
+       (backward). Override the generic magenta cycling color. */
+    .wrap-bank-label.cycling.cycle-right {
+      background: rgba(72, 187, 120, 0.35);
+      border-color: #48bb78;
+      box-shadow: 0 0 8px rgba(72, 187, 120, 0.50);
+    }
+    .wrap-bank-label.cycling.cycle-left {
+      background: rgba(237, 137, 54, 0.35);
+      border-color: #ed8936;
+      box-shadow: 0 0 8px rgba(237, 137, 54, 0.50);
+    }
     /* Wrap selector is a native dropdown (mobile-friendly; reflects the
        armed wrap during recall AND cycle). Fills the row beside the label. */
     .wrap-bank-select {
@@ -6095,36 +6124,40 @@
       border-bottom: 1px solid #1a1a2e;
     }
     .saved-actions-bar[hidden] { display: none; }
-    .saved-actions-label {
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 0.74rem;
-      font-weight: 700;
-      color: #b3d4ff;
-      max-width: 40%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      margin-right: 6px;
-    }
-    .saved-actions-btn {
-      flex: 0 0 auto;
-      padding: 5px 10px;
+    /* Single menu trigger labelled with the sequence name — opens the saved-
+       sequence action menu. Replaces the old row of separate action buttons. */
+    .saved-actions-menu-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex: 1 1 100%;
+      width: 100%;
+      box-sizing: border-box;
+      min-width: 0;
+      padding: 5px 12px;
       background: transparent;
       border: 1px solid #2d2d3f;
       border-radius: 14px;
-      color: #cbd5e0;
+      color: #b3d4ff;
       font-family: 'Segoe UI', sans-serif;
-      font-size: 0.72rem;
-      font-weight: 600;
+      font-size: 0.78rem;
+      font-weight: 700;
       cursor: pointer;
       transition: border-color 0.12s ease, color 0.12s ease;
     }
-    @media (hover: hover) {
-      .saved-actions-btn:hover { border-color: #4299e1; color: #fff; }
+    .saved-actions-menu-name {
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+      text-align: left;
     }
-    .saved-actions-btn.danger { color: #fc8181; }
+    .saved-actions-menu-caret { flex: 0 0 auto; color: #4299e1; font-size: 0.7rem; }
     @media (hover: hover) {
-      .saved-actions-btn.danger:hover { border-color: #e53e3e; color: #fff; }
+      .saved-actions-menu-btn:hover { border-color: #4299e1; color: #fff; }
+      .saved-actions-menu-btn:hover .saved-actions-menu-caret { color: #fff; }
     }
 
     .saved-grid {
@@ -6945,6 +6978,18 @@
       box-shadow: inset 3px 0 0 #c026d3;
     }
     .wrap-bank-menu button.active:hover { background: rgba(192, 38, 211, 0.45); }
+    /* Cycle button — direction-specific highlight (matches the Wraps label):
+       Right → green, Left ← amber. */
+    .wrap-bank-menu button.wrap-cycle-btn.cycle-right {
+      background: rgba(72, 187, 120, 0.32);
+      box-shadow: inset 3px 0 0 #48bb78;
+    }
+    .wrap-bank-menu button.wrap-cycle-btn.cycle-right:hover { background: rgba(72, 187, 120, 0.45); }
+    .wrap-bank-menu button.wrap-cycle-btn.cycle-left {
+      background: rgba(237, 137, 54, 0.32);
+      box-shadow: inset 3px 0 0 #ed8936;
+    }
+    .wrap-bank-menu button.wrap-cycle-btn.cycle-left:hover { background: rgba(237, 137, 54, 0.45); }
 
     /* Wraps menu — bank picker (Standard / User / one per progression). */
     .wrap-bank-menu-head {
@@ -6976,6 +7021,14 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    /* "No progressions published" hint under the Prog head. */
+    .wrap-bank-prog-empty {
+      padding: 3px 16px 6px;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.72rem;
+      color: #718096;
+      font-style: italic;
     }
 
     /* Empty-User-bank hint in the chip row. */

@@ -1598,12 +1598,16 @@
       const fx      = document.getElementById('fx-panel');
       const project = document.getElementById('project-panel');
       const mvol    = document.getElementById('master-vol-panel');
+      const modeP   = document.getElementById('mode-panel');
+      const modeSet = document.getElementById('mode-settings-panel');
       if (colors  && colors.parentNode  !== document.body) document.body.appendChild(colors);
       if (grid    && grid.parentNode    !== document.body) document.body.appendChild(grid);
       if (tone    && tone.parentNode    !== document.body) document.body.appendChild(tone);
       if (fx      && fx.parentNode      !== document.body) document.body.appendChild(fx);
       if (project && project.parentNode !== document.body) document.body.appendChild(project);
       if (mvol    && mvol.parentNode    !== document.body) document.body.appendChild(mvol);
+      if (modeP   && modeP.parentNode   !== document.body) document.body.appendChild(modeP);
+      if (modeSet && modeSet.parentNode !== document.body) document.body.appendChild(modeSet);
     })();
 
     // Master-volume popover — opens from the 🔊 button on the right

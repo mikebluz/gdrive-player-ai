@@ -146,10 +146,50 @@
       <div hidden>
         <select id="root-select"></select>
       </div>
-      <!-- Tuning row — Scale always visible; Octaves + A4 only matter
-           when the cell grid is in use. body.fluid-grid hides the
-           .grid-only labels so the XY pad doesn't carry unrelated
-           controls. -->
+      <!-- Tuning row, the radial/utility toggles, and the XY-pad settings
+           moved into the ⚙ Mode settings popover (opened from the top of the
+           mode menu). They live in #mode-settings-panel below — which also
+           carries the .grid-settings-panel class so the per-mode gating
+           (body.<mode> .grid-settings-panel .grid-only / .game-only) and the
+           shared control styling keep working unchanged. -->
+      <!-- Nested entry points for the Tone and FX panels. Clicking either
+           closes the Sounds panel and opens the corresponding sub-panel
+           anchored to the Sounds banner button. Wired in initSoundsSubmenus
+           further down so the open semantics stay co-located with the
+           existing initToneMenu / initFxMenu code. -->
+      <div class="grid-state-row sounds-submenus">
+        <button type="button" id="sounds-edit-tone" class="sounds-sub-btn sounds-edit-tone" aria-label="Edit current tone" title="Edit the current grid tone in the sound designer (shows the active tone; “Custom” when cells differ)">✎ Edit</button>
+        <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
+        <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
+      </div>
+      <!-- (Radial/utility toggles + XY-pad settings moved to #mode-settings-panel.) -->
+      <!-- Saved grid states + Reset live above the Surprise-me dice
+           so the bottom of the panel reads: state → reset → dice. -->
+      <div class="grid-state-row" title="Save and recall the whole grid state — root, scale, octaves, palette, and per-cell sounds.">
+        <label for="grid-state-select">Saved states</label>
+        <select id="grid-state-select">
+          <option value="">— Load a saved state —</option>
+        </select>
+        <div class="grid-state-actions">
+          <button type="button" id="grid-state-save-btn">Save current</button>
+          <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
+        </div>
+      </div>
+      <div class="grid-state-row sounds-bottom-row">
+        <div class="grid-state-actions">
+          <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
+        </div>
+        <button type="button" id="sounds-surprise" class="sounds-dice-btn" title="Surprise me — randomize root, scale, and per-cell tones for a quick creative shuffle" aria-label="Surprise me">🎲</button>
+      </div>
+    </div>
+    <!-- ⚙ Mode settings popover — opened from the button at the top of the
+         mode menu. Carries the .grid-settings-panel class so the per-mode
+         gating (body.<mode> .grid-settings-panel .grid-only / .game-only) and
+         shared control styling apply unchanged. Holds the controls that used
+         to sit above/below the Edit/Tone/FX row in the Sounds panel; contents
+         differ per mode via the existing grid-only / game-only / xy-settings
+         gating. -->
+    <div class="grid-settings-panel mode-settings-panel" id="mode-settings-panel">
       <div class="grid-control sounds-tuning-row">
         <label class="grid-only" title="Base octave × number of octaves. e.g. 4×1 = a single octave starting at C4. 7×7 covers the full keyboard from the lowest octave up.">Octaves
           <select id="octave-range-select"></select>
@@ -184,25 +224,9 @@
         </label>
         <label class="grid-only" title="Master tuning: frequency of A4 (Hz)">A4
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
-          <!-- Slider element removed in favor of just the numeric
-               input. Kept as a hidden range so any existing JS that
-               reads / writes #master-freq-slider keeps resolving. -->
           <input type="range" id="master-freq-slider" min="400" max="480" value="440" step="1" hidden />
         </label>
       </div>
-      <!-- Nested entry points for the Tone and FX panels. Clicking either
-           closes the Sounds panel and opens the corresponding sub-panel
-           anchored to the Sounds banner button. Wired in initSoundsSubmenus
-           further down so the open semantics stay co-located with the
-           existing initToneMenu / initFxMenu code. -->
-      <div class="grid-state-row sounds-submenus">
-        <button type="button" id="sounds-edit-tone" class="sounds-sub-btn sounds-edit-tone" aria-label="Edit current tone" title="Edit the current grid tone in the sound designer (shows the active tone; “Custom” when cells differ)">✎ Edit</button>
-        <button type="button" id="sounds-open-tone" class="sounds-sub-btn" title="Pick a tone applied to all notes">Tone…</button>
-        <button type="button" id="sounds-open-fx" class="sounds-sub-btn" title="Adjust global reverb / delay / distortion / etc.">FX…</button>
-      </div>
-      <!-- Radial Pitch Bend + Note Edit toggles — Grid-mode only.
-           Both options are meaningless inside the XY pad, so the row
-           hides when body.fluid-grid is set. -->
       <div class="grid-state-row sounds-utilities grid-only">
         <button type="button" id="radial-tone-btn" class="sounds-sub-btn radial-tone-btn" title="Radial Tone — when on, the press position inside each cell bends the pitch up to ±½ semitone (top/left = down, bottom/right = up). Drag to bend live; with Keep on, the bend is saved with the step.">⌖ Pitch bend</button>
         <button type="button" id="edit-mode-btn" class="sounds-sub-btn" aria-label="Edit" title="Toggle the per-cell sound-editor carrots (▾) on the note grid">✎ Note edit</button>
@@ -211,8 +235,6 @@
         <button type="button" id="key-edit-btn" class="sounds-sub-btn" aria-label="Pick a key" title="Pick a root + scale for Key mode" hidden>✎ Pick key</button>
         <button type="button" id="wrap-triad-btn" class="sounds-sub-btn" aria-pressed="false" aria-label="Smart triad on wrap" title="Smart Triad — when on AND Key mode is on, the first press while Wrap is open auto-builds a diatonic triad rooted on the pressed pitch. Subsequent presses still add single notes. Off by default; tap to toggle.">△ Triad</button>
       </div>
-      <!-- XY pad axis settings — only meaningful in Graph mode. Hidden
-           in Grid mode by .xy-settings's default display: none. -->
       <div class="grid-state-row xy-settings" id="xy-settings">
         <div class="xy-settings-label">XY pad</div>
         <div class="xy-settings-row">
@@ -237,24 +259,6 @@
           <label>min <input type="number" id="xy-y-min" value="0" /></label>
           <label>max <input type="number" id="xy-y-max" value="100" /></label>
         </div>
-      </div>
-      <!-- Saved grid states + Reset live above the Surprise-me dice
-           so the bottom of the panel reads: state → reset → dice. -->
-      <div class="grid-state-row" title="Save and recall the whole grid state — root, scale, octaves, palette, and per-cell sounds.">
-        <label for="grid-state-select">Saved states</label>
-        <select id="grid-state-select">
-          <option value="">— Load a saved state —</option>
-        </select>
-        <div class="grid-state-actions">
-          <button type="button" id="grid-state-save-btn">Save current</button>
-          <button type="button" id="grid-state-delete-btn" disabled>Delete</button>
-        </div>
-      </div>
-      <div class="grid-state-row sounds-bottom-row">
-        <div class="grid-state-actions">
-          <button type="button" id="grid-reset-btn" title="Reset grid settings to defaults (root, octave, scale, A4, sounds) and shuffle palette colors">Reset</button>
-        </div>
-        <button type="button" id="sounds-surprise" class="sounds-dice-btn" title="Surprise me — randomize root, scale, and per-cell tones for a quick creative shuffle" aria-label="Surprise me">🎲</button>
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
@@ -372,6 +376,7 @@
                with one button per mode. -->
           <button type="button" id="mode-banner" class="banner-half banner-mode" aria-haspopup="menu" aria-expanded="false" title="Lane mode">Grid</button>
           <div class="grid-settings-panel mode-panel" id="mode-panel" role="menu" aria-label="Lane mode">
+            <button type="button" class="mode-btn mode-settings-btn" id="mode-settings-btn" aria-haspopup="menu" title="Mode settings — scale, octaves, chords, key, pitch-bend, and per-mode options">⚙ Settings</button>
             <button type="button" class="mode-btn" data-mode="grid" role="menuitemradio" title="Grid — note grid sequencer">Grid</button>
             <button type="button" class="mode-btn" data-mode="graph" role="menuitemradio" title="Graph — XY pad">Graph</button>
             <button type="button" class="mode-btn" data-mode="game" role="menuitemradio" title="Game — live play">Game</button>

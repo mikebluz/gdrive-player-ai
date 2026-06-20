@@ -1162,69 +1162,31 @@
       bar.hidden = false;
       bar.innerHTML = '';
 
-      const label = document.createElement('span');
-      label.className = 'saved-actions-label';
-      label.textContent = saved.name;
-      label.title = saved.name;
-      bar.appendChild(label);
-
-      const makeBtn = (text, title, fn, opts) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'saved-actions-btn' + (opts && opts.danger ? ' danger' : '');
-        btn.textContent = text;
-        if (title) btn.title = title;
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          try { fn(e); } catch (err) {}
-        });
-        bar.appendChild(btn);
-        return btn;
-      };
-
-      makeBtn('Rename…', 'Rename this sequence', () => showRenameDialog(seqIndex));
-      makeBtn('⧉ Duplicate', 'Duplicate this sequence', () => {
-        const copy = _cloneSavedSequence(savedSequences[seqIndex]);
-        if (!copy) return;
-        savedSequences.splice(seqIndex + 1, 0, copy);
-        persistSaved();
-        renderSavedSequences();
-      });
-      // Send this sequence to the master Bloom (Mix), in one of 3 modes —
-      // opens the same submenu as the long-press menu, anchored to the button.
-      makeBtn('🌸 Send to Bloom…', 'Send this sequence to the master Bloom', (e) => {
-        const r = e.currentTarget.getBoundingClientRect();
+      // Single menu trigger — labelled with the sequence name. Opens the saved-
+      // sequence action menu (Rename / Duplicate / Copy ×N to track / Send to
+      // Bloom ▸ / Delete) — the same actions that used to be separate buttons
+      // here, now collapsed into one menu (savedBlockActions).
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'saved-actions-menu-btn';
+      btn.title = saved.name + ' — sequence actions';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'saved-actions-menu-name';
+      nameEl.textContent = saved.name;
+      btn.appendChild(nameEl);
+      const caret = document.createElement('span');
+      caret.className = 'saved-actions-menu-caret';
+      caret.textContent = '▾';
+      btn.appendChild(caret);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const r = btn.getBoundingClientRect();
         const x = r.left, y = r.bottom + 4;
-        setTimeout(() => {
-          const seqs = (typeof _ambListMasterSeqs === 'function') ? _ambListMasterSeqs() : [];
-          const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new') }];
-          sub.push('hr');
-          if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id) }));
-          else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
-          sub.push('hr');
-          if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'interleave', s.id) }));
-          else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
-          const _sid = (typeof _ambSampleIdOfSaved === 'function') ? _ambSampleIdOfSaved(saved) : null;
-          if (_sid) { sub.push('hr'); sub.push({ label: '◫ As Sample layer', fn: () => _ambSendSampleToMaster(_sid, { chop: Math.max(1, (saved.steps || []).length) }) }); }
-          if (typeof showCtxMenu === 'function') showCtxMenu(x, y, sub);
-        }, 0);
+        if (typeof showCtxMenu === 'function' && typeof savedBlockActions === 'function') {
+          showCtxMenu(x, y, savedBlockActions(seqIndex, x, y));
+        }
       });
-      makeBtn('Delete', 'Remove this sequence from the bank', () => {
-        const removed = savedSequences[seqIndex];
-        savedSequences.splice(seqIndex, 1);
-        if (activeSeqIndex === seqIndex) {
-          activeSeqIndex = null;
-          sequence = [];
-          renderSequence();
-        } else if (activeSeqIndex !== null && seqIndex < activeSeqIndex) {
-          activeSeqIndex--;
-        }
-        if (removed && removed.name) {
-          replaceMatchingTrackItemsWithSilent(new Set([removed.name]));
-        }
-        persistSaved();
-        renderSavedSequences();
-      }, { danger: true });
+      bar.appendChild(btn);
     }
 
     function savedBlockActions(seqIndex, x, y) {

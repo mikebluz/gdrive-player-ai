@@ -112,6 +112,53 @@
     // Per-lane state lives here as a single shared list for now; can be
     // moved into lane state alongside fluidGridMode/gameMode if needed.
     let progBlocks = []; // [{ keyRoot, keyScale, chordRoot, chordQuality }]
+    // Auto-sync the live progression into the shared "Prog bank"
+    // (masterAmbient.publishedProgs) — the same library the Wraps ▸ Prog list,
+    // Bloom Notes, and Shape read. _progBankId tracks the entry currently
+    // mirroring progBlocks (updated in place as you edit); released on empty /
+    // "✚ New" so the next build accumulates a fresh entry. _progBankSig skips
+    // redundant writes.
+    let _progBankId = null;
+    let _progBankSig = '';
+    // Compact auto-name from the chord roots (chips show full chord names).
+    function _progAutoName() {
+      const parts = progBlocks.map(b => (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[(b.chordRoot | 0) % 12] || '') : '').filter(Boolean);
+      const nm = parts.slice(0, 8).join('–') + (parts.length > 8 ? '…' : '');
+      return nm || 'Prog';
+    }
+    function _progBlocksSig() {
+      return progBlocks.map(b => (b.chordRoot | 0) + ':' + b.chordQuality).join('>');
+    }
+    // Upsert the live progression into the Prog bank. Empty pad releases the
+    // tracked id (the built progression stays banked); deletion is explicit.
+    function _progSyncToBank() {
+      if (typeof masterAmbient === 'undefined') return;
+      if (!progBlocks.length) { _progBankId = null; _progBankSig = ''; return; }
+      const sig = _progBlocksSig();
+      if (sig === _progBankSig && _progBankId != null) return;
+      if (typeof _ambProgChordsFromBlocks !== 'function') return;
+      const chords = _ambProgChordsFromBlocks(progBlocks);
+      if (!chords.length) return;
+      masterAmbient = masterAmbient || (typeof _defaultAmbientConfig === 'function' ? _defaultAmbientConfig() : { publishedProgs: [] });
+      if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
+      const name = _progAutoName();
+      let entry = (_progBankId != null) ? masterAmbient.publishedProgs.find(p => (p.id | 0) === _progBankId) : null;
+      if (entry) { entry.chords = chords; entry.name = name; }
+      else {
+        const id = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        masterAmbient.publishedProgs.push({ id, name, chords });
+        _progBankId = id;
+      }
+      _progBankSig = sig;
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      // Live-refresh the Wraps bank (chips + label) in case its menu/bank is up.
+      try { if (typeof renderWrapBank === 'function') renderWrapBank(); } catch (e) {}
+    }
+    // Called by the Wraps ▸ Prog ✕ delete so Prog mode stops mirroring an entry
+    // that no longer exists (else the next edit would resurrect it).
+    window._progOnBankEntryDeleted = function (id) {
+      if (_progBankId === (id | 0)) { _progBankId = null; _progBankSig = ''; }
+    };
     let _progInited = false;
     let _progPadEl = null, _progBlocksEl = null;
     // Defaults the popover pre-fills when nothing is queued yet; subsequent
@@ -296,21 +343,29 @@
       });
       _progBlocksEl.appendChild(autoBtn);
       _progBlocksEl.appendChild(addBtn);
-      // Publish the current progression to the master Bloom's Notes menu so
-      // Bloom layers can use it as a (time-advancing) pitch source.
+      // The current progression auto-syncs to the shared Prog bank (it appears
+      // live under Wraps ▸ Prog and Bloom Notes — no manual publish). "✚ New"
+      // banks the current one and starts a fresh progression so you accumulate
+      // several; the previous stays in the bank.
       if (progBlocks.length) {
-        const pubBtn = document.createElement('button');
-        pubBtn.type = 'button';
-        pubBtn.className = 'prog-auto-btn';
-        pubBtn.textContent = '🌸 → Bloom';
-        pubBtn.title = 'Publish this progression to Bloom (selectable under a layer’s Notes ▸ Progression)';
-        pubBtn.addEventListener('click', (e) => {
+        const newBtn = document.createElement('button');
+        newBtn.type = 'button';
+        newBtn.className = 'prog-auto-btn';
+        newBtn.textContent = '✚ New';
+        newBtn.title = 'Bank the current progression and start a new one (it stays in Wraps ▸ Prog and Bloom Notes)';
+        newBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          const entry = (typeof _ambPublishProg === 'function') ? _ambPublishProg(null, progBlocks) : null;
-          if (typeof showToast === 'function') showToast(entry ? ('Published “' + entry.name + '” to Bloom Notes') : 'Could not publish');
+          _progSyncToBank();                 // make sure the current one is banked
+          _progBankId = null; _progBankSig = ''; // release → next build is a new entry
+          progBlocks.length = 0;
+          _progRenderBlocks();
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          if (typeof showToast === 'function') showToast('Progression banked — started a new one');
         });
-        _progBlocksEl.appendChild(pubBtn);
+        _progBlocksEl.appendChild(newBtn);
       }
+      // Keep the shared Prog bank in step with whatever's on the pad now.
+      _progSyncToBank();
     }
     function _progPlayBlock(block) {
       if (!block || typeof playNote !== 'function') return;
@@ -1160,7 +1215,9 @@
         document.addEventListener('keydown', (e) => {
           if (e.key === 'Escape' && panel.classList.contains('open')) setOpen(false);
         });
-        panel.querySelectorAll('.mode-btn').forEach(b => {
+        // Only real mode entries (with data-mode) switch the mode — the ⚙
+        // Settings button (no data-mode) is wired separately below.
+        panel.querySelectorAll('.mode-btn[data-mode]').forEach(b => {
           b.addEventListener('click', (e) => {
             e.stopPropagation();
             const m = b.dataset.mode;
@@ -1169,6 +1226,42 @@
             paint();
           });
         });
+
+        // ⚙ Mode settings — a button at the top of the mode menu that opens a
+        // SEPARATE popover (#mode-settings-panel) holding the per-mode controls
+        // (scale / octaves / chords / key / pitch-bend / XY). Anchored to the
+        // mode banner; mutually exclusive with the mode + Sounds menus via the
+        // shared 'menubar-panel-open' event.
+        const settingsBtn   = document.getElementById('mode-settings-btn');
+        const settingsPanel = document.getElementById('mode-settings-panel');
+        if (settingsBtn && settingsPanel) {
+          const SETTINGS_ID = 'mode-settings';
+          const setSettingsOpen = (open) => {
+            settingsPanel.classList.toggle('open', open);
+            if (open && typeof pinPanelToButton === 'function') pinPanelToButton(banner, settingsPanel);
+          };
+          window.addEventListener('resize', () => {
+            if (settingsPanel.classList.contains('open') && typeof pinPanelToButton === 'function') pinPanelToButton(banner, settingsPanel);
+          });
+          settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setOpen(false); // close the mode list
+            const willOpen = !settingsPanel.classList.contains('open');
+            if (willOpen) document.dispatchEvent(new CustomEvent('menubar-panel-open', { detail: { id: SETTINGS_ID } }));
+            setSettingsOpen(willOpen);
+          });
+          document.addEventListener('menubar-panel-open', (e) => {
+            if (e.detail?.id !== SETTINGS_ID && settingsPanel.classList.contains('open')) setSettingsOpen(false);
+          });
+          document.addEventListener('click', (e) => {
+            if (!settingsPanel.classList.contains('open')) return;
+            if (settingsPanel.contains(e.target) || settingsBtn.contains(e.target) || banner.contains(e.target)) return;
+            setSettingsOpen(false);
+          });
+          document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && settingsPanel.classList.contains('open')) setSettingsOpen(false);
+          });
+        }
       }
       paint();
     })();

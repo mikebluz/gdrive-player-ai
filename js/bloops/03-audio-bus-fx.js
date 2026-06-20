@@ -737,6 +737,38 @@
     // clean. Master Volume scales on top.
     const masterBus = new Tone.Gain(0.6).connect(masterCompressor);
 
+    // ---- Master Warmth stage --------------------------------------------------
+    // Tone-shaping inserted between masterBus and the glue compressor to round
+    // off shrill highs and add body, globally (one place, not per-mode). Chain:
+    //   low-shelf lift → presence dip (~3 kHz) → high-shelf cut → soft saturation
+    //   (oversampled, even-harmonic warmth) → high-cut LPF (fizz).
+    // A single "Warmth" macro scales the EQ moves; Drive + High-cut are separate.
+    // All driven by globalFx (warmth/warmthDrive/warmthCut/warmthOn) via
+    // applyMasterWarmth(); neutral when off (gains 0, identity curve, cut wide).
+    function _warmthCurve(drv) {
+      const n = 2048, curve = new Float32Array(n);
+      const k = 1 + Math.max(0, Math.min(1, drv)) * 4;   // drive factor 1..5
+      const norm = Math.tanh(k) || 1;
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        curve[i] = (drv <= 0) ? x : Math.tanh(k * x) / norm;  // soft tanh sat, peak-normalized
+      }
+      return curve;
+    }
+    const masterWarmthLow  = new Tone.Filter({ type: 'lowshelf',  frequency: 160,  gain: 0 });
+    const masterWarmthPres = new Tone.Filter({ type: 'peaking',   frequency: 3000, Q: 1, gain: 0 });
+    const masterWarmthHigh = new Tone.Filter({ type: 'highshelf', frequency: 7000, gain: 0 });
+    const masterWarmthDrive = new Tone.WaveShaper(_warmthCurve(0), 2048);
+    try { masterWarmthDrive.oversample = '4x'; } catch (e) {}   // avoid aliased (shrill) harmonics
+    const masterWarmthCut  = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.5 });
+    masterWarmthLow.connect(masterWarmthPres);
+    masterWarmthPres.connect(masterWarmthHigh);
+    masterWarmthHigh.connect(masterWarmthDrive);
+    masterWarmthDrive.connect(masterWarmthCut);
+    masterWarmthCut.connect(masterCompressor);
+    masterBus.disconnect();                 // was masterBus → masterCompressor
+    masterBus.connect(masterWarmthLow);     // now masterBus → warmth → masterCompressor
+
     // ---- Master-bus oscilloscope ----
     // Single Tone.Analyser tapped on masterBus (post all sources, pre
     // compressor / FX / volume / limiter). Draws a thin waveform in the
@@ -893,11 +925,18 @@
       autoPanFreq:        1,
       autoPanDepth:       100,
       autoPanOn:          true,
+      // Master Warmth stage — on by default at a tasteful amount so sounds are
+      // rounder out of the box. warmth = macro (tilt EQ + presence dip),
+      // warmthDrive = soft saturation, warmthCut = high-cut LPF (Hz).
+      warmth:             30,
+      warmthDrive:        12,
+      warmthCut:          16000,
+      warmthOn:           true,
       // Configurable FX chain order — array of effect IDs (see FX_NAMES).
       // Drives both the master chain and per-note chains in playNote.
       fxOrder:            FX_NAMES.slice(),
     };
-    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn'];
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn'];
     const globalFx = (() => {
       try {
         const raw = JSON.parse(localStorage.getItem('sounds-global-fx') || '{}');
@@ -977,7 +1016,27 @@
       try {
         if (Array.isArray(lanes)) lanes.forEach(applyLaneSends);
       } catch (e) {}
+      try { applyMasterWarmth(); } catch (e) {}
     }
+    // Apply the Master Warmth settings (globalFx.warmth/warmthDrive/warmthCut/
+    // warmthOn) to the warmth node chain. The single Warmth macro scales the
+    // tilt EQ + presence dip; Drive sets the saturation; High-cut the LPF.
+    // Neutral (transparent) when warmthOn is false.
+    function applyMasterWarmth() {
+      try {
+        const on  = globalFx.warmthOn !== false;
+        const w   = on ? Math.max(0, Math.min(100, globalFx.warmth      || 0)) / 100 : 0;
+        const drv = on ? Math.max(0, Math.min(100, globalFx.warmthDrive || 0)) / 100 : 0;
+        const cut = on ? Math.max(2000, Math.min(20000, globalFx.warmthCut || 16000)) : 20000;
+        masterWarmthLow.gain.value  = w * 2.5;   // low-shelf lift @160 Hz (body)
+        masterWarmthPres.gain.value = -(w * 3);  // presence dip @3 kHz (harshness)
+        masterWarmthHigh.gain.value = -(w * 4);  // high-shelf cut @7 kHz (air)
+        masterWarmthCut.frequency.value = cut;   // high cut (fizz)
+        masterWarmthDrive.curve = _warmthCurve(drv);
+      } catch (e) {}
+    }
+    // Apply the persisted/default warmth now so sounds come up rounded on boot.
+    try { applyMasterWarmth(); } catch (e) {}
     function persistGlobalFx() {
       localStorage.setItem('sounds-global-fx', JSON.stringify(globalFx));
       if (typeof persistWorkspace === 'function') persistWorkspace();

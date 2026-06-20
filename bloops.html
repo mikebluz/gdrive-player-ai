@@ -257,64 +257,73 @@
       </div>
     </div>
     <div class="fx-panel" id="fx-panel">
-      <div class="fx-group-label fx-group-head"><span>Reverb</span><button type="button" class="fx-bypass" id="fx-rev-on" title="Bypass reverb">ON</button></div>
-      <div class="fx-control">
-        <div class="fx-control-row">Mix <span class="fx-val" id="fx-rev-v">0%</span></div>
-        <input type="range" id="fx-rev" min="0" max="100" value="0" />
+      <!-- ── PER-LANE section ─────────────────────────────────────────────
+           These are the per-lane SEND amounts (lane.sends[name]) + bypass:
+           how much of THIS lane feeds each shared effect. They refresh when
+           you switch lanes. The ON buttons are per-lane bypass. -->
+      <div class="fx-section-head" id="fx-section-perlane">
+        <span>Per-lane sends</span>
+        <span class="fx-section-sub">this lane only</span>
       </div>
-      <div class="fx-control">
-        <div class="fx-control-row">Size <span class="fx-val" id="fx-rev-size-v">70%</span></div>
-        <input type="range" id="fx-rev-size" min="0" max="100" value="70" />
-      </div>
-      <div class="fx-control">
-        <div class="fx-control-row">Tone <span class="fx-val" id="fx-rev-tone-v">50%</span></div>
-        <input type="range" id="fx-rev-tone" min="0" max="100" value="50" />
-      </div>
-      <div class="fx-group-label fx-group-head"><span>Delay</span><button type="button" class="fx-bypass" id="fx-dly-on" title="Bypass delay">ON</button></div>
-      <div class="fx-control">
-        <div class="fx-control-row">Mix <span class="fx-val" id="fx-dly-v">0%</span></div>
-        <input type="range" id="fx-dly" min="0" max="100" value="0" />
-      </div>
-      <div class="fx-control">
-        <div class="fx-control-row">Time <span class="fx-val" id="fx-dly-time-v">250 ms</span></div>
-        <input type="range" id="fx-dly-time" min="20" max="1000" step="10" value="250" />
-      </div>
-      <div class="fx-control">
-        <div class="fx-control-row">Feedback <span class="fx-val" id="fx-dly-fb-v">40%</span></div>
-        <input type="range" id="fx-dly-fb" min="0" max="95" value="40" />
-      </div>
-      <div class="fx-group-label fx-group-head"><span>Distortion</span><button type="button" class="fx-bypass" id="fx-dst-on" title="Bypass distortion">ON</button></div>
-      <div class="fx-control">
-        <div class="fx-control-row">Amount <span class="fx-val" id="fx-dst-v">0%</span></div>
-        <input type="range" id="fx-dst" min="0" max="100" value="0" />
-      </div>
-      <div class="fx-group-label fx-group-head"><span>Chorus</span><button type="button" class="fx-bypass" id="fx-cho-on" title="Bypass chorus">ON</button></div>
+      <div class="fx-group-label fx-group-head"><span>Reverb</span><button type="button" class="fx-bypass" id="fx-rev-on" title="Bypass reverb (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-rev-v">0%</span></div><input type="range" id="fx-rev" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Delay</span><button type="button" class="fx-bypass" id="fx-dly-on" title="Bypass delay (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-dly-v">0%</span></div><input type="range" id="fx-dly" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Distortion</span><button type="button" class="fx-bypass" id="fx-dst-on" title="Bypass distortion (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Amount <span class="fx-val" id="fx-dst-v">0%</span></div><input type="range" id="fx-dst" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Chorus</span><button type="button" class="fx-bypass" id="fx-cho-on" title="Bypass chorus (this lane)">ON</button></div>
       <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-cho-v">0%</span></div><input type="range" id="fx-cho" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Vibrato</span><button type="button" class="fx-bypass" id="fx-vib-on" title="Bypass vibrato (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-vib-v">0%</span></div><input type="range" id="fx-vib" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Tremolo</span><button type="button" class="fx-bypass" id="fx-trm-on" title="Bypass tremolo (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-trm-v">0%</span></div><input type="range" id="fx-trm" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Phaser</span><button type="button" class="fx-bypass" id="fx-phs-on" title="Bypass phaser (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-phs-v">0%</span></div><input type="range" id="fx-phs" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Auto Filter</span><button type="button" class="fx-bypass" id="fx-af-on" title="Bypass auto filter (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-af-v">0%</span></div><input type="range" id="fx-af" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Ping-Pong Delay</span><button type="button" class="fx-bypass" id="fx-pp-on" title="Bypass ping-pong (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-pp-v">0%</span></div><input type="range" id="fx-pp" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Auto Pan</span><button type="button" class="fx-bypass" id="fx-apan-on" title="Bypass auto pan (this lane)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-apan-v">0%</span></div><input type="range" id="fx-apan" min="0" max="100" value="0" /></div>
+
+      <!-- ── GLOBAL section ───────────────────────────────────────────────
+           Master warmth + the shared effect voicing (one instance of each
+           effect serves every lane) + effect order. Identical for all lanes
+           and saved once per project in globalFx. -->
+      <div class="fx-section-head" id="fx-section-global">
+        <span>Global</span>
+        <span class="fx-section-sub">shared by all lanes</span>
+      </div>
+      <div class="fx-group-label fx-group-head"><span>Warmth</span><button type="button" class="fx-bypass" id="fx-warmth-on" title="Bypass warmth (master tilt EQ + saturation)">ON</button></div>
+      <div class="fx-control"><div class="fx-control-row">Warmth <span class="fx-val" id="fx-warmth-v">30%</span></div><input type="range" id="fx-warmth" min="0" max="100" value="30" title="Rounds off shrill highs and adds body (tilt EQ + presence dip)" /></div>
+      <div class="fx-control"><div class="fx-control-row">Drive <span class="fx-val" id="fx-warmth-drive-v">12%</span></div><input type="range" id="fx-warmth-drive" min="0" max="100" value="12" title="Soft saturation — even-harmonic warmth and glue" /></div>
+      <div class="fx-control"><div class="fx-control-row">High cut <span class="fx-val" id="fx-warmth-cut-v">16000 Hz</span></div><input type="range" id="fx-warmth-cut" min="2000" max="20000" step="500" value="16000" title="Low-pass to shave digital fizz" /></div>
+      <div class="fx-group-label fx-group-head"><span>Reverb</span></div>
+      <div class="fx-control"><div class="fx-control-row">Size <span class="fx-val" id="fx-rev-size-v">70%</span></div><input type="range" id="fx-rev-size" min="0" max="100" value="70" /></div>
+      <div class="fx-control"><div class="fx-control-row">Tone <span class="fx-val" id="fx-rev-tone-v">50%</span></div><input type="range" id="fx-rev-tone" min="0" max="100" value="50" /></div>
+      <div class="fx-group-label fx-group-head"><span>Delay</span></div>
+      <div class="fx-control"><div class="fx-control-row">Time <span class="fx-val" id="fx-dly-time-v">250 ms</span></div><input type="range" id="fx-dly-time" min="20" max="1000" step="10" value="250" /></div>
+      <div class="fx-control"><div class="fx-control-row">Feedback <span class="fx-val" id="fx-dly-fb-v">40%</span></div><input type="range" id="fx-dly-fb" min="0" max="95" value="40" /></div>
+      <div class="fx-group-label fx-group-head"><span>Chorus</span></div>
       <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-cho-freq-v">4 Hz</span></div><input type="range" id="fx-cho-freq" min="0.1" max="10" step="0.1" value="4" /></div>
       <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-cho-depth-v">70%</span></div><input type="range" id="fx-cho-depth" min="0" max="100" value="70" /></div>
-      <div class="fx-group-label fx-group-head"><span>Vibrato</span><button type="button" class="fx-bypass" id="fx-vib-on" title="Bypass vibrato">ON</button></div>
-      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-vib-v">0%</span></div><input type="range" id="fx-vib" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Vibrato</span></div>
       <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-vib-freq-v">5 Hz</span></div><input type="range" id="fx-vib-freq" min="0.1" max="20" step="0.1" value="5" /></div>
       <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-vib-depth-v">30%</span></div><input type="range" id="fx-vib-depth" min="0" max="100" value="30" /></div>
-      <div class="fx-group-label fx-group-head"><span>Tremolo</span><button type="button" class="fx-bypass" id="fx-trm-on" title="Bypass tremolo">ON</button></div>
-      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-trm-v">0%</span></div><input type="range" id="fx-trm" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Tremolo</span></div>
       <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-trm-freq-v">5 Hz</span></div><input type="range" id="fx-trm-freq" min="0.1" max="20" step="0.1" value="5" /></div>
       <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-trm-depth-v">70%</span></div><input type="range" id="fx-trm-depth" min="0" max="100" value="70" /></div>
-      <div class="fx-group-label fx-group-head"><span>Phaser</span><button type="button" class="fx-bypass" id="fx-phs-on" title="Bypass phaser">ON</button></div>
-      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-phs-v">0%</span></div><input type="range" id="fx-phs" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Phaser</span></div>
       <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-phs-freq-v">0.5 Hz</span></div><input type="range" id="fx-phs-freq" min="0.05" max="10" step="0.05" value="0.5" /></div>
       <div class="fx-control"><div class="fx-control-row">Octaves <span class="fx-val" id="fx-phs-oct-v">3</span></div><input type="range" id="fx-phs-oct" min="1" max="7" step="1" value="3" /></div>
-      <div class="fx-group-label fx-group-head"><span>Auto Filter</span><button type="button" class="fx-bypass" id="fx-af-on" title="Bypass auto filter">ON</button></div>
-      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-af-v">0%</span></div><input type="range" id="fx-af" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Auto Filter</span></div>
       <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-af-freq-v">1 Hz</span></div><input type="range" id="fx-af-freq" min="0.1" max="10" step="0.1" value="1" /></div>
       <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-af-depth-v">100%</span></div><input type="range" id="fx-af-depth" min="0" max="100" value="100" /></div>
       <div class="fx-control"><div class="fx-control-row">Base <span class="fx-val" id="fx-af-base-v">200 Hz</span></div><input type="range" id="fx-af-base" min="50" max="2000" step="10" value="200" /></div>
-      <div class="fx-group-label fx-group-head"><span>Ping-Pong Delay</span><button type="button" class="fx-bypass" id="fx-pp-on" title="Bypass ping-pong">ON</button></div>
-      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-pp-v">0%</span></div><input type="range" id="fx-pp" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Ping-Pong Delay</span></div>
       <div class="fx-control"><div class="fx-control-row">Time <span class="fx-val" id="fx-pp-time-v">250 ms</span></div><input type="range" id="fx-pp-time" min="20" max="1000" step="10" value="250" /></div>
       <div class="fx-control"><div class="fx-control-row">Feedback <span class="fx-val" id="fx-pp-fb-v">30%</span></div><input type="range" id="fx-pp-fb" min="0" max="95" value="30" /></div>
-      <div class="fx-group-label fx-group-head"><span>Auto Pan</span><button type="button" class="fx-bypass" id="fx-apan-on" title="Bypass auto pan">ON</button></div>
-      <div class="fx-control"><div class="fx-control-row">Mix <span class="fx-val" id="fx-apan-v">0%</span></div><input type="range" id="fx-apan" min="0" max="100" value="0" /></div>
+      <div class="fx-group-label fx-group-head"><span>Auto Pan</span></div>
       <div class="fx-control"><div class="fx-control-row">Rate <span class="fx-val" id="fx-apan-freq-v">1 Hz</span></div><input type="range" id="fx-apan-freq" min="0.1" max="10" step="0.1" value="1" /></div>
       <div class="fx-control"><div class="fx-control-row">Depth <span class="fx-val" id="fx-apan-depth-v">100%</span></div><input type="range" id="fx-apan-depth" min="0" max="100" value="100" /></div>
       <div class="fx-group-label fx-group-head"><span>Effect Order</span><span class="fx-order-hint">signal flow ↓</span></div>

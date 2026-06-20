@@ -48,28 +48,48 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
  Live GAME hits       │  no laneIdx ─► globalSendTap (Gain = 1)
  Live PROG press      ┘                    │
                                            ├──────────────────────────► masterBus   (DRY signal)
-                                           └─► global send gains ───┐
-                                               (levels = globalFx[ ])│
-                                                                     ▼
- Sequenced step      ┐                                        ┌──────────────┐
- RECORDED step       │  laneIdx ─► lane bus:                  │  FX RETURN    │
- Prog playback       ┘     Volume(lane.vol) ─► Panner         │  buses        │──┐
-                                    │                         │ reverb/delay/ │  │
-                                    ├───────────────────────► │ chorus / …    │  │ (wet)
-                                    │    (DRY+FX) ─► laneSumBus └───────────┘  │
-                                    └─► lane send gains ──────────►   ▲         │
-                                        (levels = lane.sends[ ])      └─────────┘
-                                                                          │
-                                                                          ▼
+                                           └─► global send gains ───────┐
+                                               (levels = globalFx[ ])   │
+                                                                        │
+ Sequenced step      ┐                                                  │
+ RECORDED step       │  laneIdx ─► lane bus:                            │
+ Prog playback       ┘     Volume(lane.vol) ─► Panner                   │
+ Per-lane BLOOM ─► layer        │                                       │
+   mod chain ────────────────┐  ├─► laneSumBus ─► masterBus   (DRY)     │
+   (vca/vcf, per-layer        │  │                                      │
+    delay/dist, Bloom         └──┤                                      │
+    Freeverb) ───────────────────┤                                     ▼
+                                  └─► lane send gains ───►  ┌────────────────────────┐
+                                      (levels = lane.sends[ ])│  SHARED FX (parallel) │
+                                                            │  one instance each,     │
+                                                            │  wet = 1; mix set by    │
+                                                            │  the send gains above:  │
+                                                            │  reverb · delay ·       │
+                                                            │  distortion · chorus ·  │
+                                                            │  vibrato · tremolo ·    │
+                                                            │  phaser · autoFilter ·  │
+                                                            │  pingPong · autoPan     │
+                                                            └───────────┬────────────┘
+                                                              returns ──┘ ─► masterBus
+
    laneSumBus (Gain = 1/√N, N = sounding lanes) ─► masterBus    ← every sequenced
      so N uncorrelated lanes sum to ≈ one lane's level            lane sums here
      (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
-   masterBus (Gain 0.5) ─► masterCompressor ─► [master FX chain:         (returns sum
-     (−6 dB headroom        (gentle glue:       distortion → filter →     back in here)
-      trim so overlapping    −3 dB / 2:1 /      phaser → vibrato → chorus
-      voices don't slam      180 ms)            → tremolo → delay →
-      the clip ceiling)                         pingpong → reverb →
-                                                autopan] ─► masterVolume
+
+   Mix BLOOM (master generative engine) ─► its layer mod chains (+ Bloom Freeverb)
+     ─► masterBus  DIRECTLY — bypasses every grid FX send above.
+
+   MASTER CHAIN (series — contains NO FX; the 10 effects are parallel returns):
+   masterBus (Gain 0.5) ─► [Master Warmth stage] ─► masterCompressor ─► masterVolume
+     (−6 dB headroom          low-shelf +@160 →     (gentle glue:
+      trim so overlapping     presence −@3k →        −3 dB / 2:1 /
+      voices don't slam       high-shelf −@7k →      180 ms)
+      the clip ceiling)       soft-sat (4x OS) →
+                              high-cut LPF
+                              (tilt EQ + saturation,
+                               rounds shrill highs;
+                               globalFx.warmth/Drive/
+                               Cut/On; neutral when off)
                                                      │
                                                      ▼
                   lookahead limiter (AudioWorklet, ceiling 0.84, 3 ms lookahead)
@@ -88,8 +108,29 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
 - **Two entry buses, one master chain.** `globalSendTap` (no `laneIdx`: grid taps, live
   Game, live Prog) and the per-lane bus from `getLaneBus(laneIdx)` (anything sequenced:
   recorded steps, Prog playback) both feed `masterBus`, which is the only path to the
-  speakers (via `masterCompressor` → master FX chain → `masterVolume` → `masterLimiter`
-  → `masterClipper`).
+  speakers: a short series chain `masterBus → Master Warmth stage → masterCompressor →
+  masterVolume → masterLimiter → masterClipper`. The 10 effects are **not** in this series
+  chain — each is a parallel send/return (see next note).
+- **The 10 effects are parallel send/return, not an in-series chain.** There is exactly one
+  shared instance of each effect (one reverb, one delay, …). Two sets of send gains feed
+  them: per-lane (`lane.sends[name]`, from each lane bus — and from Mix-key sliders in the
+  FX panel's *Per-lane* section) and global (`globalFx[name]`, from `globalSendTap` for live
+  presses). Each send accumulates into `fxSendBus[name]`, which drives the effect at `wet=1`
+  (the send level *is* the mix), and the effect returns to `masterBus`. The FX panel's
+  *Global* section holds the shared *voicing* (size/time/rate/depth/etc.) plus the Warmth
+  stage. `globalFx.fxOrder` no longer affects audio (the order list is cosmetic now that FX
+  are parallel, not serial). Mix Bloom (`_masterEng`) routes straight to `masterBus`, so it
+  bypasses all of these sends; per-lane Bloom (`_laneEng`) rides the active lane's bus and
+  inherits that lane's sends.
+- **Master Warmth stage rounds the overall tone.** Sitting between `masterBus` and
+  `masterCompressor` (an isolated spot upstream of the FX returns' sum point and the limiter
+  rewiring), it applies a single `globalFx.warmth` macro as a tilt EQ — low-shelf lift
+  (~+2.5 dB @160 Hz body), presence dip (~−3 dB @3 kHz harshness), high-shelf cut
+  (~−4 dB @7 kHz air) — plus an oversampled (4×) tanh soft-saturation (`warmthDrive`,
+  even-harmonic glue) and a high-cut LPF (`warmthCut`, shaves digital fizz). On by default
+  at a tasteful amount (warmth 30, drive 12, cut 16 kHz) so sounds come up rounded instead
+  of shrill; `warmthOn:false` makes it transparent (gains 0, identity curve, cut wide).
+  All four are persisted in `globalFx` and applied via `applyMasterWarmth()`.
 - **Peak safety vs. glue are split on purpose.** The true-peak ceiling is the final
   `masterClipper` — a soft-knee waveshaper that is *identity* below 0.9 and rolls smoothly
   to a hard 0.97 ceiling. Because it is instantaneous waveshaping (no time-varying gain) it

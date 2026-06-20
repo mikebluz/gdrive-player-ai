@@ -1658,6 +1658,9 @@
       // Reflect persisted values into the inputs and update the live audio.
       // Each entry is [inputId, valueLabelId, globalFx key, unit suffix].
       const sliders = [
+        ['fx-warmth',      'fx-warmth-v',      'warmth',             '%'],
+        ['fx-warmth-drive','fx-warmth-drive-v','warmthDrive',        '%'],
+        ['fx-warmth-cut',  'fx-warmth-cut-v',  'warmthCut',          ' Hz'],
         ['fx-rev',         'fx-rev-v',         'reverb',             '%'],
         ['fx-rev-size',    'fx-rev-size-v',    'reverbSize',         '%'],
         ['fx-rev-tone',    'fx-rev-tone-v',    'reverbTone',         '%'],
@@ -1821,6 +1824,26 @@
         });
       });
       refreshFxBypassUI();
+
+      // Master Warmth ON/OFF — not a lane send; it's a global master-chain
+      // stage. Toggle flips globalFx.warmthOn, which applyMasterWarmth()
+      // reads to either apply the tilt-EQ/saturation or go neutral.
+      (function initWarmthToggle() {
+        const tgl = panel.querySelector('#fx-warmth-on');
+        if (!tgl) return;
+        const paint = () => {
+          const on = globalFx.warmthOn !== false;
+          tgl.classList.toggle('off', !on);
+          tgl.textContent = on ? 'ON' : 'OFF';
+        };
+        paint();
+        tgl.addEventListener('click', () => {
+          globalFx.warmthOn = !(globalFx.warmthOn !== false);
+          paint();
+          try { applyGlobalFx(); } catch (e) {}
+          try { persistGlobalFx(); } catch (e) {}
+        });
+      })();
 
       // Effect-order list — renders globalFx.fxOrder as a stack of rows
       // with ↑ / ↓ buttons. A move re-runs rebuildMasterChain so the

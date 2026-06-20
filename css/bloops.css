@@ -738,6 +738,30 @@
       margin: 4px 0 -2px;
     }
     .fx-group-label:first-child { margin-top: 0; }
+    /* Top-level section divider: PER-LANE sends vs GLOBAL voicing. Bolder
+       than a group label so the two halves of the panel read distinctly. */
+    .fx-section-head {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin: 14px 0 6px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #2d2d3f;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: #9f7aea;
+    }
+    .fx-section-head:first-child { margin-top: 0; }
+    .fx-section-head .fx-section-sub {
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: none;
+      color: #6b7280;
+    }
     /* Each FX section header now hosts a small ON/OFF toggle pinned to the
        right — per-effect bypass without nuking the configured mix value. */
     .fx-group-label.fx-group-head {

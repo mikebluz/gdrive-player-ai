@@ -3604,6 +3604,7 @@
       const seqs = Array.isArray(cfg.seqs) ? cfg.seqs : [];
       wrap.innerHTML = _ambNamespaceHtml(E, seqs.map((s, i) => _ambSeqLayerHtml(s, i)).join(''));
       seqs.forEach((s) => _ambWireSeqLayer(E, s));
+      try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
     }
     function _ambDeleteSeqLayer(E, id) {
       _E = E;
@@ -3680,6 +3681,7 @@
       const arr = Array.isArray(cfg.samples) ? cfg.samples : [];
       wrap.innerHTML = _ambNamespaceHtml(E, arr.map((s, i) => _ambSampleLayerHtml(s, i)).join(''));
       arr.forEach((s) => _ambWireSampleLayer(E, s));
+      try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
     }
     function _ambDeleteSampleLayer(E, id) {
       _E = E;
@@ -4157,6 +4159,7 @@
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => _ambInstCardHtml(inst)).join(''));
       cfg.extras.forEach(inst => _ambWireInst(E, inst));
+      try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
     }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
@@ -4638,8 +4641,7 @@
       // Seq + Sample layers are dynamic lists — (re)render for this engine.
       _ambRenderSeqLayers(E);
       _ambRenderSampleLayers(E);
-      _ambRenderExtras(E);
-      _ambRenderMixer(E);   // one fader per layer, after the layer set is known
+      _ambRenderExtras(E);   // each of the three renders the mixer in sync
       _ambRenderRamps(E);
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render

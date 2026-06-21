@@ -32,15 +32,34 @@
     function _progWrapActive() {
       return typeof wrapBank === 'string' && wrapBank.indexOf('prog:') === 0;
     }
+    // The full published-progression library (Key-mode pad publishes one here;
+    // Create Prog ▸ Standard publishes more). Walk banks resolve against this,
+    // not the live-Key-only _wrapProgList(), so any published prog is playable.
+    function _wrapAllProgs() {
+      return (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs))
+        ? masterAmbient.publishedProgs : [];
+    }
     function _progWrapChords() {
       if (!_progWrapActive()) return [];
       const pid = parseInt(wrapBank.slice(5), 10);
-      const prog = (typeof _wrapProgList === 'function' ? _wrapProgList() : []).find(p => (p.id | 0) === pid);
+      const prog = _wrapAllProgs().find(p => (p.id | 0) === pid);
       return (prog && Array.isArray(prog.chords)) ? prog.chords : [];
     }
     function _progWrapAdvance() {
       const n = _progWrapChords().length;
       if (n > 0) _progWrapCursor = (_progWrapCursor + 1) % n;
+      _progWrapHighlight();
+    }
+    // Light up the chord chip the walk cursor now points at (so the chip strip
+    // tracks the progression as you press, like the User-bank cycle does).
+    function _progWrapHighlight() {
+      if (!_progWrapActive()) return;
+      const n = _progWrapChords().length;
+      if (!n) return;
+      const pid = parseInt(wrapBank.slice(5), 10);
+      wrapGenActiveKey = 'prog:' + pid + ':' + (_progWrapCursor % n);
+      activeWrapBankId = null;
+      if (typeof renderWrapBank === 'function') renderWrapBank();
     }
     // Build the play options for a Prog-wrap grid press on cellIdx: the current
     // cursor chord, re-rooted so the pressed note acts as the progression's key
@@ -298,6 +317,28 @@
     function _wrapUserProgList() {
       return Array.isArray(wrapProgs) ? wrapProgs : [];
     }
+    // Delete a user Prog (a saved User-wrap subsequence) from the library.
+    function _wrapDeleteUserProg(id) {
+      if (!Array.isArray(wrapProgs)) return;
+      const i = wrapProgs.findIndex(p => (p.id | 0) === (id | 0));
+      if (i < 0) return;
+      wrapProgs.splice(i, 1);
+      try { persistWrapProgs(); } catch (e) {}
+      if (typeof wrapBank === 'string' && wrapBank === 'userprog:' + (id | 0)) setWrapBank('user');
+      if (typeof renderWrapBank === 'function') renderWrapBank();
+    }
+    // Delete a published Key/Standard progression (a walk-able 'prog:' bank).
+    function _wrapDeleteKeyProg(id) {
+      try { if (typeof _progOnBankEntryDeleted === 'function') _progOnBankEntryDeleted(id); } catch (e) {}
+      if (typeof _progDeleteBankEntry === 'function') { _progDeleteBankEntry(id); return; }
+      // Fallback if the Key-mode helper isn't present.
+      const all = _wrapAllProgs();
+      const i = all.findIndex(p => (p.id | 0) === (id | 0));
+      if (i >= 0) all.splice(i, 1);
+      if (typeof wrapBank === 'string' && wrapBank === 'prog:' + (id | 0)) setWrapBank('user');
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      if (typeof renderWrapBank === 'function') renderWrapBank();
+    }
     // Every selectable "wrap sequence" for the Generate dialog's Wraps mode:
     // the User bank, each Key progression, and each user Prog bank. Each entry
     // is { key, label, items:[{name, step}] } — items are ordered wrap STEPS to
@@ -514,7 +555,7 @@
       // gone (deleted while selected).
       if (typeof wrapBank === 'string' && wrapBank.indexOf('prog:') === 0) {
         const pid = parseInt(wrapBank.slice(5), 10);
-        const prog = _wrapProgList().find(p => (p.id | 0) === pid);
+        const prog = _wrapAllProgs().find(p => (p.id | 0) === pid);
         if (prog && Array.isArray(prog.chords) && prog.chords.length) {
           const chips = [];
           prog.chords.forEach((c, i) => {
@@ -601,6 +642,10 @@
       _wrapCycleRepeat = 0;
       _progWrapCursor = 0;           // restart any Prog-wrap walk at the first chord
       _progWrapPendingAdvance = false;
+      // Prog bank → highlight the first chord chip (the walk's starting point).
+      if (typeof wrapBank === 'string' && wrapBank.indexOf('prog:') === 0) {
+        wrapGenActiveKey = wrapBank + ':0'; activeWrapBankId = null;
+      }
       if (wrapCycleMode) {
         const chips = _wrapCycleChips();
         if (chips.length === 0) { wrapCycleMode = false; _wrapCyclePendingAdvance = false; }
@@ -819,12 +864,10 @@
       label.classList.toggle('cycle-left',  wrapCycleMode && wrapCycleDir < 0);
       label.setAttribute('aria-expanded', _wrapsMenuEl ? 'true' : 'false');
       const arrow = wrapCycleMode ? (wrapCycleDir > 0 ? ' →' : ' ←') : '';
-      // Stack the active bank name UNDER the "Wraps" title (two lines) so a
-      // long progression name reads cleanly without widening the pinned-left
-      // label and squeezing the side-scrolling chip strip.
+      // Just "Wraps ▾" — the active bank name is no longer shown inline (open
+      // the menu to see / switch banks), keeping the pinned-left label compact.
       label.innerHTML =
-        '<span class="wrap-bank-label-title">Wraps</span>' +
-        '<span class="wrap-bank-label-bank">' + _wrapBankLabel() + arrow + ' ▾</span>';
+        '<span class="wrap-bank-label-title">Wraps' + arrow + ' ▾</span>';
     }
 
     function setWrapCycleMode(on) {
@@ -1032,14 +1075,26 @@
       modal.querySelector('#create-prog-save').addEventListener('click', () => {
         let items;
         if (stdSel.value) {
-          // Standard progression → one item per chord (key-stripped quality
-          // names; chord steps rooted at the grid scale).
+          // Standard progression → publish a WALK-able Prog (a 'prog:' bank):
+          // its chords keep their per-degree roots, so a grid press sets the key
+          // root and the progression walks (I-IV-vi-V → C,F,Am,G in C). (A flat
+          // userprog of chords would instead re-root every chord on the pressed
+          // note, losing the degrees.)
           const s = standards[parseInt(stdSel.value, 10)];
-          items = (s && Array.isArray(s.chords) ? s.chords : [])
-            .map(c => ({ name: _wrapProgChordQuality(c), step: _wrapChordStepFromProgChord(c) }))
-            .filter(it => it.step);
-          if (!items.length) { if (typeof showToast === 'function') showToast('That progression produced no chords'); return; }
-        } else {
+          const chords = (s && Array.isArray(s.chords)) ? s.chords.filter(c => c && Array.isArray(c.intervals) && c.intervals.length) : [];
+          if (!chords.length) { if (typeof showToast === 'function') showToast('That progression produced no chords'); return; }
+          const nm = (nameInput.value || '').trim() || (s && s.name) || _randAdjNoun();
+          masterAmbient = masterAmbient || (typeof _defaultAmbientConfig === 'function' ? _defaultAmbientConfig() : { publishedProgs: [] });
+          if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
+          const pid = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+          masterAmbient.publishedProgs.push({ id: pid, name: nm, chords: chords.map(c => ({ root: ((c.root | 0) % 12 + 12) % 12, intervals: c.intervals.slice() })) });
+          if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+          overlay.remove();
+          setWrapBank('prog:' + pid);
+          if (typeof showToast === 'function') showToast('Created Prog “' + nm + '” (' + chords.length + ' chords) — press the grid to walk it');
+          return;
+        }
+        {
           const picked = Array.from(modal.querySelectorAll('.create-prog-cb:checked'))
             .map(cb => savedWraps[parseInt(cb.dataset.idx, 10)])
             .filter(Boolean);
@@ -1219,24 +1274,57 @@
       // wrap bank. "＋ Create Prog…" picks a subset of User wraps and saves it
       // as its own recallable, cyclable bank.
       const userProgs = _wrapUserProgList();
+      // The live Key-mode progression(s): selecting one is a "Prog wrap" — a
+      // grid press sets the KEY ROOT and the chords play as numerals re-rooted
+      // there, walking the progression one chord per press (see _progWrapActive
+      // / _progWrapPressOpts). This is what makes a key-relative progression
+      // playable from the grid.
+      const keyProgs = _wrapAllProgs();
       const upHead = document.createElement('div');
       upHead.className = 'wrap-bank-menu-head';
       upHead.textContent = 'Prog';
       menu.appendChild(upHead);
-      if (userProgs.length) {
+      if (keyProgs.length || userProgs.length) {
         const upWrap = document.createElement('div');
         upWrap.className = 'wrap-bank-picker wrap-bank-prog';
-        userProgs.forEach(p => {
-          const id = 'userprog:' + (p.id | 0);
-          const nm = p.name || ('Prog ' + (p.id | 0));
+        // One row per Prog: a recall button + a ✕ that deletes the Prog from
+        // the library. (✕ lives in the menu, not on the chip strip, so it's a
+        // deliberate action — not the old easy-to-mis-tap chip ✕.)
+        const mkProgRow = (id, nm, title, onPick, onDelete) => {
+          const row = document.createElement('div');
+          row.className = 'wrap-bank-prog-row';
           const b = document.createElement('button');
           b.type = 'button';
           b.className = 'wrap-bank-pick' + (wrapBank === id ? ' active' : '');
-          b.textContent = nm;
-          b.title = (Array.isArray(p.items) ? p.items.length : 0) + ' wraps';
+          b.textContent = nm; b.title = title;
           b.addEventListener('pointerdown', (e) => e.stopPropagation());
-          b.addEventListener('click', (e) => { e.stopPropagation(); _wrapSelectSequentialBank(id, nm); });
-          upWrap.appendChild(b);
+          b.addEventListener('click', (e) => { e.stopPropagation(); onPick(); });
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'wrap-bank-prog-del';
+          x.textContent = '✕';
+          x.title = 'Delete this Prog';
+          x.setAttribute('aria-label', 'Delete Prog ' + nm);
+          x.addEventListener('pointerdown', (e) => e.stopPropagation());
+          x.addEventListener('click', (e) => { e.stopPropagation(); onDelete(); row.remove(); });
+          row.appendChild(b); row.appendChild(x);
+          return row;
+        };
+        keyProgs.forEach(p => {
+          const id = 'prog:' + (p.id | 0);
+          const nm = p.name || ('Prog ' + (p.id | 0));
+          upWrap.appendChild(mkProgRow(id, nm,
+            (Array.isArray(p.chords) ? p.chords.length : 0) + ' chords · grid press sets the key root',
+            () => { setWrapBank(id); closeWrapsMenu(); },
+            () => { _wrapDeleteKeyProg(p.id | 0); }));
+        });
+        userProgs.forEach(p => {
+          const id = 'userprog:' + (p.id | 0);
+          const nm = p.name || ('Prog ' + (p.id | 0));
+          upWrap.appendChild(mkProgRow(id, nm,
+            (Array.isArray(p.items) ? p.items.length : 0) + ' wraps',
+            () => { _wrapSelectSequentialBank(id, nm); },
+            () => { _wrapDeleteUserProg(p.id | 0); }));
         });
         menu.appendChild(upWrap);
       }

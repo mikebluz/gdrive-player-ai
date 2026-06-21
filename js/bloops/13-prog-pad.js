@@ -411,7 +411,10 @@
     function _progBlockLabel(block) {
       const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[block.chordRoot]) || '';
       const q = (CHORDS && CHORDS[block.chordQuality] && CHORDS[block.chordQuality].label) || block.chordQuality;
-      return (root + ' ' + q).trim();
+      // Inversion suffix (¹/²/³…) so the pad shows non-root voicings at a glance.
+      const inv = block.inversion | 0;
+      const sup = inv > 0 ? (['','¹','²','³','⁴','⁵','⁶'][inv] || ('^' + inv)) : '';
+      return (root + ' ' + q).trim() + sup;
     }
     function _progRenderBlocks() {
       if (!_progBlocksEl) return;
@@ -528,7 +531,14 @@
       const rootOffset = (((block.chordRoot - rootIdx) % 12) + 12) % 12;
       const rootFreq = baseFreq * Math.pow(2, rootOffset / 12);
       const baseParams = (Array.isArray(cellParams) && cellParams[0]) ? cellParams[0] : {};
-      const voices = chordType.semis.map(semi => {
+      // Inversion: raise the lowest `inv` chord tones an octave, then re-sort so
+      // the inverted bass note (the next tone up) becomes the lowest voice.
+      // inv 0 = root position; 1 = 1st inversion (3rd in bass); etc.
+      const _semisBase = chordType.semis;
+      const _n = _semisBase.length;
+      const _inv = _n > 0 ? (((block.inversion | 0) % _n) + _n) % _n : 0;
+      const _semis = _semisBase.map((s, i) => (i < _inv ? s + 12 : s)).sort((a, b) => a - b);
+      const voices = _semis.map(semi => {
         const freq = rootFreq * Math.pow(2, semi / 12);
         const noteIdx = (((rootIdx + rootOffset + semi) % 12) + 12) % 12;
         const label = (typeof CHROMATIC !== 'undefined') ? (CHROMATIC[noteIdx] || '') : '';
@@ -635,6 +645,7 @@
           keyScale: newKeyScale,
           chordRoot: (((src.chordRoot + dRoot) % 12) + 12) % 12,
           chordQuality: src.chordQuality,
+          inversion: src.inversion | 0,
         });
       }
       progBlocks.splice(range.endIdx, 0, ...clones);
@@ -689,14 +700,13 @@
 
       const actions = document.createElement('div');
       actions.className = 'prog-popover-actions';
-      // Remove — deletes the whole current progression (clears the pad +
-      // removes it from the Key bank). Sits to the left of Cancel; disabled
-      // when the pad is already empty.
+      // Remove — deletes ONLY this key group (the same-key run starting at
+      // startIdx), not the whole pad. Sits to the left of Cancel.
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'prog-popover-delete';
       removeBtn.textContent = 'Remove';
-      removeBtn.title = 'Delete the current progression (clears the pad and removes it from the Key bank)';
+      removeBtn.title = 'Delete this key group (leaves the rest of the progression intact)';
       if (!progBlocks.length) removeBtn.disabled = true;
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
@@ -710,7 +720,7 @@
       actions.appendChild(cancelBtn);
       actions.appendChild(saveBtn);
       pop.appendChild(actions);
-      removeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); _progRemoveCurrent(); });
+      removeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); _progDeleteGroup(startIdx); });
       // Disable Clone while the destination key still matches the
       // source — same-key clones aren't allowed. The button re-enables
       // as soon as the user changes either field away from the source.
@@ -1048,6 +1058,7 @@
       let curKeyScale = seed.keyScale || 'major';
       let curChordRoot = (typeof seed.chordRoot === 'number') ? seed.chordRoot : curKeyRoot;
       let curChordQuality = hasSeed ? (seed.chordQuality || '') : '';
+      let curInversion = (_editing && Number.isFinite(seed.inversion)) ? (seed.inversion | 0) : 0;
 
       const pop = document.createElement('div');
       pop.className = 'prog-popover';
@@ -1062,6 +1073,7 @@
       const keyScaleSel = document.createElement('select');
       const chordQualSel = document.createElement('select');
       const chordRootSel = document.createElement('select');
+      const inversionSel = document.createElement('select');
 
       // Build actions row up-front so updateSaveBtn (called inside
       // refreshChordRoot below) doesn't reference a TDZ saveBtn.
@@ -1090,8 +1102,28 @@
           keyScale: curKeyScale,
           chordRoot: curChordRoot,
           chordQuality: curChordQuality,
+          inversion: curInversion,
         });
       });
+      // Rebuild the Inversion options to match the current chord's tone count
+      // (a triad → Root/1st/2nd; a 7th chord → +3rd, etc.). Clamps the current
+      // pick if the chord shrank.
+      const _ORD = ['Root', '1st', '2nd', '3rd', '4th', '5th', '6th'];
+      function refreshInversion() {
+        const def = (CHORDS && CHORDS[curChordQuality]);
+        const n = (def && Array.isArray(def.semis)) ? def.semis.length : 0;
+        inversionSel.innerHTML = '';
+        inversionSel.disabled = n < 2;
+        const max = Math.max(0, n - 1);
+        if (curInversion > max) curInversion = 0;
+        for (let i = 0; i <= max; i++) {
+          const opt = document.createElement('option');
+          opt.value = String(i);
+          opt.textContent = (_ORD[i] || (i + 'th')) + (i === 0 ? '' : ' inv');
+          inversionSel.appendChild(opt);
+        }
+        inversionSel.value = String(curInversion);
+      }
       function updateSaveBtn() {
         const blocked = !curChordQuality
           || !Number.isFinite(curChordRoot)
@@ -1178,6 +1210,7 @@
           chordRootSel.value = opts[0].value;
           curChordRoot = parseInt(opts[0].value, 10);
         }
+        refreshInversion();
         updateSaveBtn();
       };
 
@@ -1185,6 +1218,7 @@
       pop.appendChild(mkLabel('Key scale ', keyScaleSel));
       pop.appendChild(mkLabel('Chord type ', chordQualSel));
       pop.appendChild(mkLabel('Chord root ', chordRootSel));
+      pop.appendChild(mkLabel('Inversion ', inversionSel));
       pop.appendChild(actions);
 
       // Live updates.
@@ -1203,6 +1237,9 @@
       chordRootSel.addEventListener('change', () => {
         curChordRoot = parseInt(chordRootSel.value, 10) || 0;
         updateSaveBtn();
+      });
+      inversionSel.addEventListener('change', () => {
+        curInversion = parseInt(inversionSel.value, 10) || 0;
       });
 
       refreshChordRoot();
@@ -1250,6 +1287,7 @@
           keyScale: curKeyScale,
           chordRoot: curChordRoot,
           chordQuality: curChordQuality,
+          inversion: curInversion | 0,
         };
         if (_editing) progBlocks[editIdx] = block;   // Edit → replace in place
         else progBlocks.push(block);

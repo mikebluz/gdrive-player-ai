@@ -1049,6 +1049,7 @@
     // ---- Long-press context menu for saved blocks ----
 
     let ctxMenu = null;
+    let _ctxMenuXY = { x: 0, y: 0 };   // last open position, so a submenu can re-anchor
     let longPressTimer = null;
 
     function dismissCtxMenu() {
@@ -1116,6 +1117,29 @@
       const mw = 160, mh = ctxMenu.offsetHeight || 180;
       ctxMenu.style.left = Math.min(x, vw - mw - 8) + 'px';
       ctxMenu.style.top  = Math.min(y, vh - mh - 8) + 'px';
+      _ctxMenuXY = { x, y };
+    }
+    // Tone of a step (first leaf / first chord voice). '' when none.
+    function _stepToneOf(st) {
+      if (!st) return '';
+      if (st.isSub && Array.isArray(st.subSteps)) return _stepToneOf(st.subSteps[0]);
+      if (Array.isArray(st.chord) && st.chord[0]) return (st.chord[0].params && st.chord[0].params.type) || st.chord[0].sound || '';
+      return (st.params && st.params.type) || st.sound || '';
+    }
+    // Set the voice/tone on every given step (chord voices + sub leaves too).
+    function _applyToneToSteps(idxs, tone) {
+      if (!Array.isArray(idxs) || !idxs.length || !tone) return;
+      if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Set tone'); } catch (e) {} }
+      const writeTone = (st) => {
+        if (!st) return;
+        if (st.isSub && Array.isArray(st.subSteps)) { st.subSteps.forEach(writeTone); return; }
+        if (!st.params) st.params = {};
+        st.params.type = tone; st.sound = tone;
+        if (Array.isArray(st.chord)) st.chord.forEach(v => { if (!v) return; if (!v.params) v.params = {}; v.params.type = tone; v.sound = tone; });
+      };
+      idxs.forEach(i => writeTone(sequence[i]));
+      if (typeof renderSequence === 'function') renderSequence();
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
     }
 
     function showRenameDialog(seqIndex) {
@@ -3832,6 +3856,25 @@
         if (step && (step.chord || step.freq !== null)) {
           actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
         }
+      }
+      // Tone submenu — set the voice for every selected step in one tap (no need
+      // to open the full editor). Works for plain notes, chords (all voices) and
+      // sub-sequences (all leaves).
+      if (stepHasNotes(step)) {
+        actions.push({ label: 'Tone ▸', fn: () => setTimeout(() => {
+          const opts = (typeof getAllSoundOptions === 'function') ? getAllSoundOptions() : [];
+          if (!opts.length) return;
+          const sel = (typeof selectedStepIndices === 'function') ? selectedStepIndices() : [];
+          const targets = (sel.length >= 2 && sel.includes(stepIndex)) ? sel.slice() : [stepIndex];
+          const cur = _stepToneOf(sequence[stepIndex]);
+          const subActions = opts.map(o => ({
+            label: (o.value === cur ? '✓ ' : '') + o.label,
+            fn: () => _applyToneToSteps(targets, o.value),
+          }));
+          showCtxMenu(_ctxMenuXY.x, _ctxMenuXY.y, subActions, { multiCount: targets.length });
+        }, 0) });
+      }
+      if (!(step && step.isSub)) {
         if (step && Array.isArray(step.chord) && step.chord.length > 1) {
           actions.push({ label: 'Arpeggiate', fn: () => arpeggiateStep(stepIndex) });
           actions.push({ label: 'Split',      fn: () => splitChord(stepIndex) });

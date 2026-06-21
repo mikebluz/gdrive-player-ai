@@ -1695,6 +1695,9 @@
       align-items: center;
       min-width: 0;
       padding: 4px 10px;
+      /* Grid|Scale seam — match the Scale|Sounds seam (Sounds' border-left).
+         The mode button carries no border-right, so this single line mirrors it. */
+      border-left: 1px solid #1a1a2e;
     }
     .banner-row .banner-scale select {
       width: 100%;
@@ -5426,21 +5429,10 @@
     body.text-mode   #wrap-bank,
     body.seq-mode    #wrap-bank,
     body.shape-mode  #wrap-bank { display: none !important; }
-    /* Key (Prog) mode keeps the wrap toolbar + bank, but treats the chord pad
-       as the wrap bank: hide the Wrap (chord-collect) button, keep Gen + Edit,
-       and the "Wraps ▾" label opens a Key-specific menu. */
-    body.prog-mode   .grid-wrap-row { display: flex; }
-    body.prog-mode   #wrap-bank { display: flex; }
-    body.prog-mode   .grid-wrap-row .wrap-segment > #chord-btn { display: none; }
-    /* With Wrap hidden, Edit takes Wrap's 1fr middle so it matches the Keep
-       button's size (not the cramped 25% pill), and the ✎ glyph is centered. */
-    body.prog-mode   .grid-wrap-row .wrap-segment > #wrap-edit-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 1 1 auto;
-    }
-    body.prog-mode   #wrap-bank-chips { display: none; }
+    /* Key (Prog) mode has no wrap toolbar/bank: the chord pad IS the workspace,
+       so hide the Gen / Wrap / ✎ Edit row AND the Wraps menu + bank entirely. */
+    body.prog-mode   .grid-wrap-row { display: none; }
+    body.prog-mode   #wrap-bank { display: none; }
 
     /* Wrap bank — horizontal chip strip directly under the Wrap button.
        Each chip recalls a previously-committed wrap as the active
@@ -5527,11 +5519,15 @@
        wraps to additional rows rather than scrolling horizontally. */
     .wrap-bank-chips {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;            /* single row */
       align-items: center;
       gap: 6px;
       flex: 1 1 auto;
       min-width: 0;
+      overflow-x: auto;             /* …that side-scrolls when chips overflow */
+      overflow-y: hidden;
+      scrollbar-width: thin;
+      -webkit-overflow-scrolling: touch;
     }
     .wrap-bank-empty {
       color: #6b7280;
@@ -6977,7 +6973,11 @@
          menu paints over modals / FX panels / settings dropdowns
          no matter what's open behind it. */
       z-index: 10001;
-      overflow: hidden;
+      /* Long menus (e.g. the Tone submenu = full sound palette) scroll instead
+         of running off-screen with their tail clipped. */
+      max-height: 80vh;
+      overflow-y: auto;
+      overflow-x: hidden;
       min-width: 140px;
     }
 
@@ -7072,6 +7072,34 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    /* Prog row: recall button (fills the row) + a ✕ delete pinned to the far
+       right so the Prog name stays readable. The recall button's width must be
+       `auto` (not the inherited .ctx-menu button width:100%, which would push
+       the ✕ off the row / crowd the name). */
+    .wrap-bank-prog-row {
+      display: flex;
+      align-items: stretch;
+      width: 100%;
+    }
+    .wrap-bank-prog-row .wrap-bank-pick {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: auto;
+      text-align: left;
+    }
+    .wrap-bank-prog-row .wrap-bank-prog-del {
+      flex: 0 0 auto;
+      width: auto;          /* beat .ctx-menu button width:100% (needs 2 classes) */
+      padding: 0 12px;
+      background: none;
+      border: none;
+      color: #6b7280;
+      font-size: 0.8rem;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 0.12s ease;
+    }
+    .wrap-bank-prog-row .wrap-bank-prog-del:hover { color: #f6a6c1; }
     /* "No progressions published" hint under the Prog head. */
     .wrap-bank-prog-empty {
       padding: 3px 16px 6px;

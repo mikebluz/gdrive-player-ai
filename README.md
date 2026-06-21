@@ -56,9 +56,9 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
  Prog playback       ┘     Volume(lane.vol) ─► Panner                   │
  Per-lane BLOOM ─► layer        │                                       │
    mod chain ────────────────┐  ├─► laneSumBus ─► masterBus   (DRY)     │
-   (vca/vcf, per-layer        │  │                                      │
-    delay/dist, Bloom         └──┤                                      │
-    Freeverb) ───────────────────┤                                     ▼
+   (vcf → vca → GATE,         │  │                                      │
+    per-layer delay/dist,     └──┤                                      │
+    Bloom Freeverb) ─────────────┤                                     ▼
                                   └─► lane send gains ───►  ┌────────────────────────┐
                                       (levels = lane.sends[ ])│  SHARED FX (parallel) │
                                                             │  one instance each,     │
@@ -124,6 +124,19 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   are parallel, not serial). Mix Bloom (`_masterEng`) routes straight to `masterBus`, so it
   bypasses all of these sends; per-lane Bloom (`_laneEng`) rides the active lane's bus and
   inherits that lane's sends.
+- **Each Bloom layer chain ends in a dedicated DRY output GATE.** The per-layer mod chain is
+  `voices → vcf → vca → gate → [dist] → [delay] → bus`, with the layer's reverb send tapped
+  off the **vca (pre-gate)**. The `gate` is a plain `Gain(1)` that never has an LFO connected
+  (unlike `vca`, whose gain carries the VCA tremolo when its mod depth > 0). That lets Queue
+  mode ramp the gate to 0 at an exact iteration boundary to silence the dry voices the
+  look-ahead scheduler already committed past it — a clean, click-free STOP that a
+  feed-forward "stop scheduling" flip can't achieve.
+- **Queue STOP and reverb tails (`cfg.tails`).** Because the reverb send is pre-gate, the dry
+  and wet can be cut independently on a queued STOP. With **tails off** (default) the send is
+  ramped to 0 with the gate, so dry and wet both stop on the boundary (tight cut). With
+  **tails on** only the dry gate closes; the reverb send keeps feeding past the boundary
+  (until the layer flips off and its chain tears down), so the shared Freeverb develops and
+  rings out a fuller tail. The toggle lives next to Queue in the Bloom Configure menu.
 - **Master Warmth stage rounds the overall tone.** Sitting between `masterBus` and
   `masterCompressor` (an isolated spot upstream of the FX returns' sum point and the limiter
   rewiring), it applies a single `globalFx.warmth` macro as a tilt EQ — low-shelf lift

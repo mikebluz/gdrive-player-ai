@@ -269,6 +269,7 @@
       }
       if (cfg.timing !== 'free' && cfg.timing !== 'sync') cfg.timing = d.timing;
       if (typeof cfg.queueMode !== 'boolean') cfg.queueMode = false;
+      if (typeof cfg.tails !== 'boolean') cfg.tails = false; // Queue STOP: let reverb keep feeding past the boundary (fuller tail) vs cut the wet with the gate
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
       if (typeof cfg.keyOn !== 'boolean') cfg.keyOn = d.keyOn;
@@ -1999,13 +2000,21 @@
       if (typeof Tone === 'undefined') return;
       try {
         const out = _E.busNode();
-        const vca = new Tone.Gain(1).connect(out);
+        // Dedicated DRY output GATE (no LFO ever connected) so Queue-mode STOP
+        // can ramp it to 0 at an exact boundary, silencing the dry voices already
+        // committed to the look-ahead. The reverb send taps the VCA (PRE-gate) so
+        // the wet can be controlled separately: a "tails on" STOP cuts only the
+        // dry gate and leaves the reverb feeding for a fuller tail; "tails off"
+        // ramps the send down with the gate. vca → gate is permanent; FX
+        // (dist/delay) re-route the gate's out.
+        const gate = new Tone.Gain(1).connect(out);
+        const vca = new Tone.Gain(1).connect(gate);
         const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 }).connect(vca);
         const revSend = new Tone.Gain(0);
         vca.connect(revSend);
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, vca, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, vca, gate, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
@@ -2022,7 +2031,8 @@
       try {
         if (wantDelay !== !!e.delay || wantDist !== !!e.dist) {
           const out = _E.busNode();
-          try { e.vca.disconnect(); } catch (x) {}
+          const g = e.gate || e.vca;            // route the FX tail off the gate (post-vca)
+          try { g.disconnect(); } catch (x) {}
           if (!wantDelay && e.delay) { try { e.delay.dispose(); } catch (x) {} e.delay = null; }
           if (!wantDist && e.dist) { try { e.dist.dispose(); } catch (x) {} e.dist = null; }
           let tail = out;
@@ -2036,8 +2046,9 @@
             try { e.dist.disconnect(); } catch (x) {}
             e.dist.connect(tail); tail = e.dist;
           }
-          e.vca.connect(tail);
-          e.vca.connect(e.revSend); // re-tap the parallel reverb send
+          g.connect(tail);
+          // (reverb send taps the VCA, pre-gate — see _ambBuildMod — so it is
+          // not re-routed here.)
         }
         if (e.dist) {
           e.dist.distortion = Math.max(0, Math.min(1, (dst.amount | 0) / 100));
@@ -2062,6 +2073,7 @@
       ['vca', 'vco', 'vcf'].forEach(tg => { if (e.src && e.src[tg]) _ambDisposeSrc(e.src[tg]); });
       try { e.vcf && e.vcf.dispose(); } catch (x) {}
       try { e.vca && e.vca.dispose(); } catch (x) {}
+      try { e.gate && e.gate.dispose(); } catch (x) {}
       try { e.dist && e.dist.dispose(); } catch (x) {}
       try { e.delay && e.delay.dispose(); } catch (x) {}
       try { e.revSend && e.revSend.dispose(); } catch (x) {}
@@ -2140,6 +2152,56 @@
       const A = (E._t0 != null) ? E._t0 : now;          // off layer → engine grid
       return A + Math.ceil((now + eps - A) / P) * P;
     }
+    // The next AUDIBLE boundary — the end of the iteration currently sounding,
+    // i.e. the smallest point on the layer's grid that is strictly after `now`.
+    // (Unlike _ambLayerNextBoundary, this ignores the look-ahead: the engine has
+    // already committed events out to the horizon, but the output gate silences
+    // anything past this point so a STOP cuts exactly here.) The grid phase comes
+    // from the live clock (grid/seq/samp — C[key] sits ON the grid) or the phase
+    // anchor (bass/shape).
+    function _ambLayerAudibleBoundary(E, key, L, cfg, now) {
+      const type = String(key).split(':')[0];
+      const P = _ambLayerPeriodSec(E, key, L, cfg);
+      if (!(P > 0)) return now + 0.1;
+      const eps = 0.02;
+      let A = null;
+      if (type === 'bass') { const st = E.bassPhase && E.bassPhase[key]; if (st && st.startAt != null) A = st.startAt; }
+      else if (type === 'shape') {
+        const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
+        const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
+        if (st && st.startAt != null) A = st.startAt;
+      } else { const c = E.clocks && E.clocks[key]; if (c != null) A = c; }
+      if (A == null) A = (E._t0 != null) ? E._t0 : now;
+      return A + Math.ceil((now + eps - A) / P) * P;
+    }
+    // Schedule the layer's output gate (the dedicated post-VCA Gain) to `val`
+    // over `dur` seconds ending at/around `at`. Used by Queue STOP (→0 at the
+    // boundary, click-free) and cancel (→1). No-op if the chain isn't built.
+    function _ambGateRamp(E, key, val, at, dur) {
+      const e = E.mod && E.mod[key];
+      if (!e || !e.gate || !e.gate.gain) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const t = Math.max(now, at || now);
+      try {
+        e.gate.gain.cancelScheduledValues(now);
+        e.gate.gain.setValueAtTime(val === 0 ? 1 : (e.gate.gain.value || 0), t);
+        e.gate.gain.linearRampToValueAtTime(val, t + Math.max(0.005, dur || 0.03));
+      } catch (x) {}
+    }
+    // Schedule the layer's reverb send to `val` (0..1) over `dur` ending at `at`.
+    // Queue STOP with tails OFF ramps it to 0 with the gate (cut the wet feed);
+    // cancel restores it to the layer's configured send level. No-op if unbuilt.
+    function _ambRevSendRamp(E, key, val, at, dur) {
+      const e = E.mod && E.mod[key];
+      if (!e || !e.revSend || !e.revSend.gain) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const t = Math.max(now, at || now);
+      try {
+        e.revSend.gain.cancelScheduledValues(now);
+        e.revSend.gain.setValueAtTime(e.revSend.gain.value || 0, t);
+        e.revSend.gain.linearRampToValueAtTime(Math.max(0, val), t + Math.max(0.005, dur || 0.03));
+      } catch (x) {}
+    }
     // Toggle a layer's on/off. Normally immediate; in Queue mode (cfg.queueMode)
     // while the engine is playing, the change is DEFERRED to that layer's OWN
     // next iteration boundary (see _ambLayerNextBoundary) — each pending entry
@@ -2163,11 +2225,24 @@
       if (!E._queuePending) E._queuePending = {};
       const pend = E._queuePending[key];
       const desired = !(pend ? pend.desired : L.on);
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       if (desired === L.on) {            // toggled back to the live state → cancel
         delete E._queuePending[key];
         if (onB) onB.classList.remove('queued');
-      } else {
-        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        if (L.on) { _ambGateRamp(E, key, 1, now, 0.02); _ambRevSendRamp(E, key, Math.max(0, Math.min(1, (L.revSend | 0) / 100)), now, 0.02); } // undo a pending STOP fade
+      } else if (desired === false) {    // queued STOP → cut at the next AUDIBLE boundary
+        let at;
+        try { at = _ambLayerAudibleBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
+        // Ramp the DRY gate to 0 exactly at the boundary so any voices the
+        // look-ahead already committed past it are silenced (click-free fade).
+        _ambGateRamp(E, key, 0, at, 0.03);
+        // Tails OFF: cut the reverb send with the gate so the wet stops too.
+        // Tails ON: leave the send feeding past the boundary so the reverb keeps
+        // developing a fuller tail (until the layer flips off and tears down).
+        if (!(cfg && cfg.tails)) _ambRevSendRamp(E, key, 0, at, 0.03);
+        E._queuePending[key] = { L, onB, desired, at };
+        if (onB) onB.classList.add('queued');
+      } else {                           // queued START → first note on the next boundary
         let at;
         try { at = _ambLayerNextBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
         E._queuePending[key] = { L, onB, desired, at };
@@ -4963,6 +5038,8 @@
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
       { const qOn = document.getElementById(tr('ambient-queue-on'));
         if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
+      { const qT = document.getElementById(tr('ambient-queue-tails'));
+        if (qT) qT.classList.toggle('active', !!cfg.tails); }
       { const kOn = document.getElementById(tr('ambient-key-on'));
         if (kOn) kOn.classList.toggle('active', !!cfg.keyOn);
         set('ambient-key-root', cfg.keyRoot);
@@ -5116,6 +5193,7 @@
         '<div class="ambient-row ambient-queue">' +
           '<span class="ambient-hint">Queue</span>' +
           '<button type="button" class="ambient-seg" id="ambient-queue-on" title="Queue mode — a layer on/off toggle applies on that layer&#39;s next iteration boundary (its own loop/phrase end) instead of immediately">Off</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-queue-tails" title="Tails — when a queued STOP cuts a layer, let its reverb keep feeding past the boundary so the wet tail rings out (off = cut the reverb send with the gate)">Tails</button>' +
           '<span class="ambient-hint" id="ambient-queue-hint">toggles snap to each layer&#39;s loop</span>' +
         '</div>' +
         // Instance Key — when on, every layer roots its scales/wraps/chords at
@@ -5495,6 +5573,12 @@
           // Turning Queue off applies any pending toggles now so nothing dangles.
           if (!cfg.queueMode && E._queuePending && Object.keys(E._queuePending).length) { try { _ambApplyQueued(E); } catch (e) {} }
           _ambSyncControls(E); persist();
+        });
+      }
+      { const qT = G('ambient-queue-tails');
+        if (qT) qT.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.tails = !cfg.tails; _ambSyncControls(E); persist();
         });
       }
 

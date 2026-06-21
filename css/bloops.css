@@ -790,6 +790,9 @@
       border-color: #2d2d3f;
     }
     .fx-bypass.off:hover { border-color: #4a4a6a; color: #6b7280; }
+    /* Reverb-engine selector: amber when on the classic Freeverb (vs default convolution green). */
+    .fx-bypass.alt { color: #d69e2e; border-color: #b7791f; }
+    .fx-bypass.alt:hover { border-color: #d69e2e; }
     .fx-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
     .fx-order-hint {
       color: #4a4a6a; font-size: 0.7rem; font-weight: 500;

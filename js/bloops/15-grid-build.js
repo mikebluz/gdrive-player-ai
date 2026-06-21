@@ -1742,6 +1742,8 @@
           }
         });
       });
+      // Reverb engine selector (Convolution / Freeverb) in the Global section.
+      try { if (typeof _wireReverbTypeToggle === 'function') _wireReverbTypeToggle(panel); } catch (e) {}
       // Bypass toggles: per-lane for FX mix keys (zero the lane send),
       // shared for params (no-op for sends architecture). All 10 toggles
       // are mix-keyed, so they're all per-lane in practice.

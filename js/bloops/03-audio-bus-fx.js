@@ -319,7 +319,7 @@
         const pn = tryMake(() => new Tone.Panner(0));
         const rv = tryMake(() => new Tone.Freeverb({ roomSize: 0.5, dampening: 3000, wet: 0.001 }));
         const dl = tryMake(() => new Tone.FeedbackDelay({ delayTime: 0.1, feedback: 0.001, wet: 0.001 }));
-        const ds = tryMake(() => new Tone.Distortion({ distortion: 0.001, wet: 0.001 }));
+        const ds = tryMake(() => new Tone.Distortion({ distortion: 0.001, wet: 0.001, oversample: '4x' }));
         const sx = tryMake(() => new Tone.Synth({ envelope: tinyEnv, volume: muted }));
         if (pn && rv && dl && ds && sx) {
           try {
@@ -684,6 +684,46 @@
     const masterReverb = new Tone.Freeverb({
       roomSize: 0.7, dampening: 3000, wet: 0,
     }).connect(masterAutoPan);
+    // ---- Convolution reverb (default; Freeverb kept as a selectable option) ----
+    // A Tone.Convolver fed an algorithmically-generated stereo impulse response:
+    // an exponentially-decaying, tone-filtered noise burst (independent L/R for
+    // width). This sounds far smoother and lusher than Freeverb's comb/all-pass
+    // network — the single biggest "pro" upgrade for ambient/Bloom tails. No
+    // asset files: the IR is built at runtime from Reverb Size (→ decay seconds)
+    // and Tone (→ IR damping). As a pure-wet send/return node it needs no
+    // dry/wet mix (the per-lane send gain sets the amount).
+    //   size%  → 0.30 .. 8.0 s decay   tone% → IR low-pass 0.8 .. 13 kHz
+    function _reverbDecaySec(sizePct) { return 0.3 + Math.max(0, Math.min(100, sizePct)) / 100 * 7.7; }
+    function _reverbToneNorm(tonePct) { return Math.max(0, Math.min(100, tonePct)) / 100; }
+    function _makeReverbIR(decaySec, toneNorm) {
+      const ac = Tone.getContext().rawContext;
+      const sr = ac.sampleRate || 44100;
+      const len = Math.max(1, Math.floor(Math.max(0.15, decaySec) * sr));
+      const buf = ac.createBuffer(2, len, sr);
+      const tau = Math.max(0.05, decaySec) / 6.9;            // -60 dB at decaySec
+      const cut = 800 + Math.max(0, Math.min(1, toneNorm)) * 12200;  // IR damping LP, Hz
+      const a = Math.exp(-2 * Math.PI * cut / sr);           // one-pole LP coef
+      let peak = 0;
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        let lp = 0;
+        for (let i = 0; i < len; i++) {
+          const t = i / sr;
+          const n = Math.random() * 2 - 1;
+          lp = (1 - a) * n + a * lp;                         // lowpass the noise (tone)
+          const env = Math.exp(-t / tau);
+          const build = Math.min(1, t / 0.008);              // tiny onset build to avoid a click
+          const v = lp * env * build;
+          d[i] = v;
+          const av = v < 0 ? -v : v;
+          if (av > peak) peak = av;
+        }
+      }
+      if (peak > 0) { const g = 0.9 / peak; for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] *= g; } }
+      return buf;
+    }
+    const masterConvolver = new Tone.Convolver({ normalize: true });
+    try { masterConvolver.buffer = _makeReverbIR(_reverbDecaySec(70), _reverbToneNorm(50)); } catch (e) {}
     const masterPingPong = new Tone.PingPongDelay({
       delayTime: 0.25, feedback: 0.3, wet: 0,
     }).connect(masterReverb);
@@ -709,7 +749,7 @@
     }).connect(masterPhaser);
     try { masterAutoFilter.start(); } catch (e) {}
     const masterDistortion = new Tone.Distortion({
-      distortion: 0, wet: 1,
+      distortion: 0, wet: 1, oversample: '4x',   // anti-alias the drive (no shrill harmonics)
     }).connect(masterAutoFilter);
     // Gentle glue compressor — sits between masterBus and the FX chain. It
     // only catches broad level swings; true-peak protection is the soft-knee
@@ -766,8 +806,16 @@
     masterWarmthHigh.connect(masterWarmthDrive);
     masterWarmthDrive.connect(masterWarmthCut);
     masterWarmthCut.connect(masterCompressor);
+    // ---- DC blocker + sub-rumble high-pass ----
+    // Asymmetric / waveshaped voices leave a DC offset (wastes headroom, can
+    // thump) and sub-30 Hz energy from low oscillators + reverb muddies the low
+    // end and steals loudness. A gentle 2-pole high-pass at ~28 Hz blocks both
+    // for a tighter, cleaner bottom without touching the audible range. Sits at
+    // the very front of the master chain so everything benefits.
+    const masterDCBlock = new Tone.Filter({ type: 'highpass', frequency: 28, Q: 0.707 });
     masterBus.disconnect();                 // was masterBus → masterCompressor
-    masterBus.connect(masterWarmthLow);     // now masterBus → warmth → masterCompressor
+    masterBus.connect(masterDCBlock);       // now masterBus → DC/HPF → warmth → masterCompressor
+    masterDCBlock.connect(masterWarmthLow);
 
     // ---- Master-bus oscilloscope ----
     // Single Tone.Analyser tapped on masterBus (post all sources, pre
@@ -877,6 +925,55 @@
       } catch (e) {}
     }
 
+    // ---- Reverb type (convolution vs Freeverb) ----------------------------
+    // The active reverb node in the parallel FX send/return is swappable:
+    // _masterFxNodes.reverb points at either masterConvolver (default) or
+    // masterReverb (Freeverb), and rebuildMasterChain rewires the send bus to
+    // whichever is current. Regenerating the convolution IR rebuilds an
+    // AudioBuffer, so it's debounced off the Size/Tone sliders.
+    let _irTimer = null, _irKey = '';
+    function _scheduleMasterIR() {
+      const decay = _reverbDecaySec(globalFx ? globalFx.reverbSize : 70);
+      const tone  = _reverbToneNorm(globalFx ? globalFx.reverbTone : 50);
+      const key = decay.toFixed(2) + '/' + tone.toFixed(2);
+      if (key === _irKey) return;       // no change → skip the rebuild
+      _irKey = key;
+      if (_irTimer) clearTimeout(_irTimer);
+      _irTimer = setTimeout(() => {
+        try { masterConvolver.buffer = _makeReverbIR(decay, tone); } catch (e) {}
+      }, 120);
+    }
+    function setMasterReverbType(type) {
+      const t = (type === 'freeverb') ? 'freeverb' : 'convolution';
+      if (globalFx) globalFx.reverbType = t;
+      _masterFxNodes.reverb = (t === 'freeverb') ? masterReverb : masterConvolver;
+      try { rebuildMasterChain(); } catch (e) {}
+      try { applyGlobalFx(); } catch (e) {}   // reapply params (regenerates IR if convolution)
+    }
+    // Reflect + (once) wire the FX-panel reverb-type toggle. Idempotent so the
+    // several panel binders can all call it without double-binding.
+    function _wireReverbTypeToggle(panel) {
+      if (!panel || typeof panel.querySelector !== 'function') return;
+      const btn = panel.querySelector('#fx-rev-type');
+      if (!btn) return;
+      const reflect = () => {
+        const fv = (globalFx && globalFx.reverbType === 'freeverb');
+        btn.textContent = fv ? 'Freeverb' : 'Convolution';
+        btn.classList.toggle('alt', fv);
+      };
+      reflect();
+      if (!btn.dataset.bound) {
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          setMasterReverbType((globalFx && globalFx.reverbType === 'freeverb') ? 'convolution' : 'freeverb');
+          reflect();
+          try { persistGlobalFx(); } catch (e) {}
+          // Bloom engines rebuild their own reverb lazily to match (see 17).
+          try { if (typeof _ambOnReverbTypeChanged === 'function') _ambOnReverbTypeChanged(); } catch (e) {}
+        });
+      }
+    }
+
     // Pre-compile the audio graph at script load so the first user note
     // doesn't pay the AudioWorklet/synth-instantiation cost. The first
     // gesture (which actually resumes the AudioContext) just has to
@@ -890,6 +987,7 @@
       reverbSize:         70,
       reverbTone:         50,
       reverbOn:           true,
+      reverbType:         'convolution', // 'convolution' (lush, default) | 'freeverb' (classic comb)
       delay:              0,
       delayTime:          250,
       delayFeedback:      40,
@@ -971,8 +1069,12 @@
       // all lanes, since one project usually wants a consistent reverb
       // character even if each lane has its own send level.
       try {
-        masterReverb.roomSize.value      = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
-        masterReverb.dampening.value     = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
+        if (globalFx.reverbType === 'freeverb') {
+          masterReverb.roomSize.value  = Math.max(0, Math.min(0.99, globalFx.reverbSize / 100));
+          masterReverb.dampening.value = 500 + Math.max(0, Math.min(100, globalFx.reverbTone)) * 95;
+        } else {
+          _scheduleMasterIR();   // convolution: regenerate IR from size/tone (debounced)
+        }
         masterDelay.delayTime.value      = Math.max(0.001, (globalFx.delayTime || 0) / 1000);
         masterDelay.feedback.value       = Math.max(0, Math.min(0.95, globalFx.delayFeedback / 100));
         // Distortion amount — kept at a moderate fixed value so the per-
@@ -1088,6 +1190,9 @@
       });
     }
 
+    // Point the parallel FX reverb at the configured engine (convolution by
+    // default) before the chain is wired so the right node is in the return.
+    _masterFxNodes.reverb = (globalFx.reverbType === 'freeverb') ? masterReverb : masterConvolver;
     applyGlobalFx();
     rebuildMasterChain();
     // Wire the global send gains AFTER rebuildMasterChain has populated

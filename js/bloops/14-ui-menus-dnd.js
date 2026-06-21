@@ -699,6 +699,7 @@
           if (input) input.value = String(globalFx[key]);
           if (label) label.textContent = globalFx[key] + unit;
         });
+        try { if (typeof _wireReverbTypeToggle === 'function') _wireReverbTypeToggle(document.getElementById('fx-panel')); } catch (e) {}
       }
 
       // Final renders.

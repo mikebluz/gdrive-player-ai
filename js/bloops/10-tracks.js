@@ -3543,7 +3543,7 @@
         });
         offNodes.distortion = new Tone.Distortion({
           distortion: globalFx.distortionOn === false ? 0 : Math.max(0, Math.min(1, globalFx.distortion / 100)),
-          wet: 1,
+          wet: 1, oversample: '4x',
         });
         offNodes.chorus = new Tone.Chorus({
           frequency: Math.max(0.01, globalFx.chorusFreq),

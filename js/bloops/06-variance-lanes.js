@@ -1083,7 +1083,7 @@
         switch (name) {
           case 'reverb':     return new Tone.Freeverb({ roomSize: 0.7, dampening: 3000, wet: 0 });
           case 'delay':      return new Tone.FeedbackDelay({ delayTime: 0.25, feedback: 0.4, wet: 0 });
-          case 'distortion': return new Tone.Distortion({ distortion: 0.4, wet: 0 });
+          case 'distortion': return new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: '4x' });
           case 'chorus':     { const n = new Tone.Chorus({ frequency: 4, delayTime: 3.5, depth: 0.7, feedback: 0.1, wet: 0 }); try { n.start(); } catch (e) {} return n; }
           case 'vibrato':    return new Tone.Vibrato({ frequency: 5, depth: 0.3, wet: 0 });
           case 'tremolo':    { const n = new Tone.Tremolo({ frequency: 5, depth: 0.7, wet: 0 }); try { n.start(); } catch (e) {} return n; }

@@ -2032,7 +2032,7 @@
       if (anyFxActive) {
         const _fxBuildersSus = {
           distortion: () => distortion > 0 ? new Tone.Distortion({
-            distortion: Math.max(0, Math.min(1, distortion / 100)), wet: 1,
+            distortion: Math.max(0, Math.min(1, distortion / 100)), wet: 1, oversample: '4x',
           }) : null,
           autoFilter: () => autoFilter > 0 ? new Tone.AutoFilter({
             frequency:     Math.max(0.01, autoFilterFreq),
@@ -2811,7 +2811,7 @@
       const _fxBuilders = {
         distortion: () => distortion > 0 ? new Tone.Distortion({
           distortion: Math.max(0, Math.min(1, distortion / 100)),
-          wet: 1,
+          wet: 1, oversample: '4x',
         }) : null,
         autoFilter: () => autoFilter > 0 ? new Tone.AutoFilter({
           frequency:     Math.max(0.01, autoFilterFreq),

@@ -64,8 +64,11 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
                                                             │  one instance each,     │
                                                             │  wet = 1; mix set by    │
                                                             │  the send gains above:  │
-                                                            │  reverb · delay ·       │
-                                                            │  distortion · chorus ·  │
+                                                            │  reverb (convolution    │
+                                                            │   default · Freeverb    │
+                                                            │   optional) · delay ·   │
+                                                            │  distortion (4× OS) ·   │
+                                                            │  chorus ·               │
                                                             │  vibrato · tremolo ·    │
                                                             │  phaser · autoFilter ·  │
                                                             │  pingPong · autoPan     │
@@ -82,7 +85,7 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
      (which gets the laneSumBus headroom trim).
 
    MASTER CHAIN (series — contains NO FX; the 10 effects are parallel returns):
-   masterBus (Gain 0.5) ─► [Master Warmth stage] ─► masterCompressor ─► masterVolume
+   masterBus (Gain 0.6) ─► [DC block / sub HPF ~28 Hz] ─► [Master Warmth stage] ─► masterCompressor ─► masterVolume
      (−6 dB headroom          low-shelf +@160 →     (gentle glue:
       trim so overlapping     presence −@3k →        −3 dB / 2:1 /
       voices don't slam       high-shelf −@7k →      180 ms)
@@ -137,7 +140,23 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   **tails on** only the dry gate closes; the reverb send keeps feeding past the boundary
   (until the layer flips off and its chain tears down), so the shared Freeverb develops and
   rings out a fuller tail. The toggle lives next to Queue in the Bloom Configure menu.
-- **Master Warmth stage rounds the overall tone.** Sitting between `masterBus` and
+- **Reverb engine is selectable (`globalFx.reverbType`).** Default **convolution**
+  (`masterConvolver`, a `Tone.Convolver`) fed a runtime-generated stereo impulse response —
+  exponentially-decaying, tone-filtered noise (independent L/R for width), built by
+  `_makeReverbIR(decay, tone)` from Reverb Size (→ 0.3–8 s decay) and Tone (→ IR damping). It
+  sounds far lusher than the classic **Freeverb** (`masterReverb`), which is kept as an option
+  via the "Convolution / Freeverb" toggle in the FX panel's Reverb header. `setMasterReverbType()`
+  repoints `_masterFxNodes.reverb` and rebuilds the parallel send; IR regeneration off the
+  Size/Tone sliders is debounced (rebuilding an `AudioBuffer`). Bloom's per-engine reverbs
+  follow the same global type (`_ambEnsureReverb` / `_ambOnReverbTypeChanged`).
+- **DC blocker + sub high-pass at the front of the master chain.** A 2-pole high-pass
+  (`masterDCBlock`, ~28 Hz, Q 0.707) sits `masterBus → masterDCBlock → Warmth → …`. It strips
+  the DC offset that asymmetric/waveshaped voices leave (wasted headroom, thumps) and sub-30 Hz
+  rumble (mud, stolen loudness) for a tighter, cleaner bottom without touching the audible range.
+- **All `Tone.Distortion` nodes run `oversample: '4x'`.** The FX-send, per-voice, per-lane,
+  track-render, and Bloom-layer distortions are oversampled like the master warmth/clipper, so
+  driving them adds harmonics without the harsh aliased "digital fizz".
+- **Master Warmth stage rounds the overall tone.** Sitting between the DC block and
   `masterCompressor` (an isolated spot upstream of the FX returns' sum point and the limiter
   rewiring), it applies a single `globalFx.warmth` macro as a tilt EQ — low-shelf lift
   (~+2.5 dB @160 Hz body), presence dip (~−3 dB @3 kHz harshness), high-shelf cut

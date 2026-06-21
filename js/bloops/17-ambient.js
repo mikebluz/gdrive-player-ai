@@ -1970,24 +1970,73 @@
     }
     // Dedicated per-engine reverb (a send/return). Each layer's reverb-send gain
     // feeds it; its fully-wet output returns to the engine's bus.
+    // Whether Bloom reverbs should use the lush convolution engine (default) or
+    // classic Freeverb — follows the global FX reverb type so one toggle covers
+    // master + Bloom.
+    function _ambUseConvReverb() {
+      return !(typeof globalFx !== 'undefined' && globalFx && globalFx.reverbType === 'freeverb')
+        && typeof Tone !== 'undefined' && typeof Tone.Convolver === 'function'
+        && typeof _makeReverbIR === 'function';
+    }
     function _ambEnsureReverb() {
       if (_E.reverb) return _E.reverb;
       if (typeof Tone === 'undefined') return null;
-      try { _E.reverb = new Tone.Freeverb({ roomSize: 0.8, dampening: 2500, wet: 1 }).connect(_E.busNode()); }
-      catch (e) { _E.reverb = null; }
+      const conv = _ambUseConvReverb();
+      try {
+        if (conv) {
+          _E.reverb = new Tone.Convolver({ normalize: true });
+          _E.reverb.connect(_E.busNode());
+          _E._revConv = true; _E._revIRKey = '';
+          // Set the initial IR synchronously so there's no startup silence.
+          const cfg = _E.getCfg(), rv = (cfg && cfg.reverb) ? cfg.reverb : { size: 80, damp: 50 };
+          const decay = _reverbDecaySec(rv.size | 0), tone = _reverbToneNorm(rv.damp | 0);
+          try { _E.reverb.buffer = _makeReverbIR(decay, tone); _E._revIRKey = decay.toFixed(2) + '/' + tone.toFixed(2); } catch (e) {}
+        } else {
+          _E.reverb = new Tone.Freeverb({ roomSize: 0.8, dampening: 2500, wet: 1 }).connect(_E.busNode());
+          _E._revConv = false;
+        }
+      } catch (e) { _E.reverb = null; }
       _ambApplyReverb();
       return _E.reverb;
     }
     // Push the instance's reverb Size/Damp config onto its live reverb node.
+    // Freeverb → roomSize/dampening; convolution → regenerate the IR (debounced,
+    // engine-scoped capture so the shared _E pointer can't cross engines).
     function _ambApplyReverb() {
-      if (!_E.reverb) return;
-      const cfg = _E.getCfg(); if (!cfg || !cfg.reverb) return;
+      const E = _E;
+      if (!E.reverb) return;
+      const cfg = E.getCfg(); if (!cfg || !cfg.reverb) return;
       try {
-        const size = Math.max(0, Math.min(1, (cfg.reverb.size | 0) / 100));
-        const damp = 500 + Math.max(0, Math.min(100, cfg.reverb.damp | 0)) / 100 * 5500; // Hz
-        if (_E.reverb.roomSize) _E.reverb.roomSize.value = size;
-        if (_E.reverb.dampening) _E.reverb.dampening.value = damp;
+        if (E._revConv) {
+          const decay = (typeof _reverbDecaySec === 'function') ? _reverbDecaySec(cfg.reverb.size | 0) : 2;
+          const tone  = (typeof _reverbToneNorm === 'function') ? _reverbToneNorm(cfg.reverb.damp | 0) : 0.5;
+          const key = decay.toFixed(2) + '/' + tone.toFixed(2);
+          if (key !== E._revIRKey) {
+            E._revIRKey = key;
+            if (E._revIRTimer) clearTimeout(E._revIRTimer);
+            E._revIRTimer = setTimeout(() => { try { if (E.reverb && E._revConv) E.reverb.buffer = _makeReverbIR(decay, tone); } catch (e) {} }, 120);
+          }
+        } else {
+          const size = Math.max(0, Math.min(1, (cfg.reverb.size | 0) / 100));
+          const damp = 500 + Math.max(0, Math.min(100, cfg.reverb.damp | 0)) / 100 * 5500; // Hz
+          if (E.reverb.roomSize) E.reverb.roomSize.value = size;
+          if (E.reverb.dampening) E.reverb.dampening.value = damp;
+        }
       } catch (e) {}
+    }
+    // Reverb type changed globally → rebuild each engine's reverb (and the layer
+    // mod chains that send to it) so the swap is heard. Playing engines rebuild
+    // immediately; idle ones rebuild lazily on next play.
+    function _ambOnReverbTypeChanged() {
+      const prevE = _E;
+      [_laneEng, _masterEng].forEach(E => {
+        if (!E) return;
+        _E = E;
+        const wasPlaying = !!E.timer;
+        try { _ambTeardownMods(); } catch (e) {}        // disposes mods + reverb
+        if (wasPlaying) { try { _ambSyncMods(); } catch (e) {} } // rebuild → new reverb type
+      });
+      _E = prevE;
     }
     // Per-layer chain base (built for any ON layer): voices → VCF → VCA → bus,
     // plus a parallel reverb send tapped off the VCA. The Distortion and Delay
@@ -2042,7 +2091,7 @@
             e.delay.connect(tail); tail = e.delay;
           }
           if (wantDist) {
-            if (!e.dist) e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0 });
+            if (!e.dist) e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: '4x' });
             try { e.dist.disconnect(); } catch (x) {}
             e.dist.connect(tail); tail = e.dist;
           }

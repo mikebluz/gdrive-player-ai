@@ -1233,6 +1233,10 @@
         if (input) input.value = String(globalFx[key]);
         if (label) label.textContent = globalFx[key] + unit;
       });
+      // Reverb engine: make the live node + Bloom reverbs match the (reset) type.
+      try { if (typeof setMasterReverbType === 'function') setMasterReverbType(globalFx.reverbType); } catch (e) {}
+      try { if (typeof _ambOnReverbTypeChanged === 'function') _ambOnReverbTypeChanged(); } catch (e) {}
+      try { if (typeof _wireReverbTypeToggle === 'function') _wireReverbTypeToggle(document.getElementById('fx-panel')); } catch (e) {}
 
       currentProjectName = null;
       refreshProjectNameLabel();

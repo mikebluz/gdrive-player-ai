@@ -129,9 +129,23 @@
       hostId: 'ambient-inner', idPrefix: 'ambient', vizId: 'ambient-viz',
       playId: 'ambient-play-btn', seedId: 'ambient-seed-val', isLane: true,
     });
+    // Mix-Bloom master trim. Mix Bloom routes its (often many, simultaneous)
+    // layer voices straight to masterBus, while lane playback goes through the
+    // laneSumBus headroom trim — so the dense Bloom mix reads much louder. A
+    // single gain between all Bloom layers and masterBus evens them out
+    // (−6 dB), kept lazy so masterBus/Tone exist when it's first built.
+    let _bloomMasterGain = null;
+    const _BLOOM_MASTER_TRIM = 0.5;
+    function _ambMasterBloomBus() {
+      if (_bloomMasterGain) return _bloomMasterGain;
+      if (typeof masterBus === 'undefined' || !masterBus || typeof Tone === 'undefined') return (typeof masterBus !== 'undefined' && masterBus) ? masterBus : Tone.getDestination();
+      try { _bloomMasterGain = new Tone.Gain(_BLOOM_MASTER_TRIM).connect(masterBus); }
+      catch (e) { return masterBus; }
+      return _bloomMasterGain;
+    }
     const _masterEng = _makeAmbientEngine({
       getCfg:  function () { masterAmbient = masterAmbient || _defaultAmbientConfig(); return _normalizeAmbientCfg(masterAmbient); },
-      busNode: function () { return (typeof masterBus !== 'undefined' && masterBus) ? masterBus : Tone.getDestination(); },
+      busNode: function () { return _ambMasterBloomBus(); },
       laneIdx: function () { return null; },
       guard:   function () { return true; },
       hostId: 'mix-bloom-host', idPrefix: 'mix-bloom', vizId: 'mix-bloom-viz',

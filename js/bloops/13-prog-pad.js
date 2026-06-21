@@ -113,9 +113,11 @@
     // resolved to chords at `root`. Each: { name, chords:[{root,intervals}] }.
     // Exposed for the Wraps "Create Prog" dialog (filtered by the Grid Scale).
     window._progStandardsForScale = function (scaleName, root) {
-      const sc = (scaleName === 'aeolian') ? 'minor' : scaleName;
-      const fam = PROGRESSIONS[sc] ? sc : null;
-      if (!fam) return [];
+      const sc = (scaleName === 'aeolian') ? 'minor' : (scaleName === 'ionian' ? 'major' : scaleName);
+      // Fall back to major for scales with no progression family (e.g.
+      // chromatic / pentatonics) — matches the Key-mode Auto popover, which
+      // also defaults to major so the list is never empty.
+      const fam = PROGRESSIONS[sc] ? sc : 'major';
       const r = Number.isFinite(root) ? root : ((typeof rootIdx === 'number') ? rootIdx : 0);
       return PROGRESSIONS[fam].map(t => {
         const blocks = _progAutoFillProgression(r, fam, t);

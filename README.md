@@ -77,7 +77,9 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
      (anti-runaway headroom; live taps bypass via globalSendTap)  before masterBus
 
    Mix BLOOM (master generative engine) ─► its layer mod chains (+ Bloom Freeverb)
-     ─► masterBus  DIRECTLY — bypasses every grid FX send above.
+     ─► bloomMasterGain (−6 dB trim) ─► masterBus  — bypasses the grid FX sends
+     above; the trim evens its dense, many-voice mix against lane playback
+     (which gets the laneSumBus headroom trim).
 
    MASTER CHAIN (series — contains NO FX; the 10 effects are parallel returns):
    masterBus (Gain 0.5) ─► [Master Warmth stage] ─► masterCompressor ─► masterVolume

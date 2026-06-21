@@ -38,6 +38,17 @@
     const _ensembleRR = {};        // id -> next member index (round-robin cursor; runtime only)
     function isEnsembleType(type) { return typeof type === 'string' && type.startsWith('ensemble:'); }
     function getEnsemble(id) { return ensembles.get(String(id)) || null; }
+    // Equal-power makeup for per-voice panning. Tone.Panner (StereoPannerNode)
+    // is equal-power: a CENTERED pan is −3 dB/channel and any pan decorrelates
+    // a mono voice — so engaging pan/spread (e.g. Bloom's stereo Spread) drops
+    // the perceived level vs the no-panner (full, correlated) baseline. This
+    // returns a makeup factor (1 → √2) that lifts the dominant channel back to
+    // unity, so panning is level-preserving. panNorm in [-1, 1].
+    function _panMakeup(panNorm) {
+      const a = (Math.max(-1, Math.min(1, panNorm)) + 1) * (Math.PI / 4); // 0..π/2
+      const m = Math.max(Math.cos(a), Math.sin(a));                       // 0.707..1
+      return m > 0 ? Math.min(Math.SQRT2, 1 / m) : 1;
+    }
     // Expand an ensemble note into its member triggers. Each member flows
     // through playNote so it picks up the normal voice/FX/capture plumbing.
     function _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {
@@ -214,7 +225,7 @@
       // Baked-in fine tune (cents) from sample capture — pulls the buffer into
       // tune relative to its mapped root so the keyboard tracks chromatically.
       if (info && Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
-      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, detuneScale = null, _padLoop = false;
+      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, panMakeupNode = null, detuneScale = null, _padLoop = false;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
         // Per-note pan: place the voice in the stereo field (e.g. Bloom's
@@ -224,7 +235,11 @@
         const panNorm = (opts && Number.isFinite(opts.pan)) ? Math.max(-1, Math.min(1, opts.pan / 100)) : 0;
         let outTail = dest;
         if (Math.abs(panNorm) > 0.001) {
-          panNode = new Tone.Panner(panNorm).connect(dest);
+          // Makeup gain so panning doesn't drop level (equal-power compensation).
+          const mk = _panMakeup(panNorm);
+          let pdest = dest;
+          if (mk > 1.001) { panMakeupNode = new Tone.Gain(mk).connect(dest); pdest = panMakeupNode; }
+          panNode = new Tone.Panner(panNorm).connect(pdest);
           outTail = panNode;
         }
         outGain = new Tone.Gain(boost * _sampleNormGain(info, sampleMidi, audioBuf)).connect(outTail);
@@ -283,6 +298,7 @@
         try { outGain && outGain.dispose(); } catch (_) {}
         try { filter && filter.dispose(); } catch (_) {}
         try { panNode && panNode.dispose(); } catch (_) {}
+        try { panMakeupNode && panMakeupNode.dispose(); } catch (_) {}
         try { detuneScale && detuneScale.dispose(); } catch (_) {}
         return null;
       }
@@ -2003,7 +2019,11 @@
         || vibrato > 0 || chorus > 0 || tremolo > 0 || delay > 0
         || pingPong > 0 || reverb > 0 || autoPan > 0);
       if (Math.abs(panNorm) > 0.001) {
-        const pn = new Tone.Panner(panNorm).connect(chainHead);
+        // Makeup gain so panning doesn't drop level (equal-power compensation).
+        const mk = _panMakeup(panNorm);
+        let tail = chainHead;
+        if (mk > 1.001) { const g = new Tone.Gain(mk).connect(tail); sustainEffectNodes.unshift(g); tail = g; }
+        const pn = new Tone.Panner(panNorm).connect(tail);
         sustainEffectNodes.unshift(pn);
         chainHead = pn;
       }
@@ -2774,7 +2794,11 @@
       // when pan is zero so we don't pay for an idle panner per voice.
       const panNorm = Math.max(-1, Math.min(1, (pan || 0) / 100));
       if (Math.abs(panNorm) > 0.001) {
-        const pn = new Tone.Panner(panNorm).connect(chainHead);
+        // Makeup gain so panning doesn't drop level (equal-power compensation).
+        const mk = _panMakeup(panNorm);
+        let tail = chainHead;
+        if (mk > 1.001) { const g = new Tone.Gain(mk).connect(tail); effectNodes.unshift(g); tail = g; }
+        const pn = new Tone.Panner(panNorm).connect(tail);
         effectNodes.unshift(pn);
         chainHead = pn;
       }

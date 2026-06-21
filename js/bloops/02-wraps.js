@@ -61,11 +61,14 @@
       activeWrapBankId = null;
       if (typeof renderWrapBank === 'function') renderWrapBank();
     }
-    // Build the play options for a Prog-wrap grid press on cellIdx: the current
-    // cursor chord, re-rooted so the pressed note acts as the progression's key
-    // root. Returns { wrapStep, targetFreq } for startSustainedWrapOnCell (which
-    // chromatically transposes wrapStep's root onto targetFreq, preserving the
-    // chord quality), or null when there's nothing to play.
+    // Build the play options for a Prog-wrap grid press on cellIdx (tonic mode:
+    // the pressed note is the progression's I). The cursor chord's root is placed
+    // the same number of MAJOR scale-degrees above the pressed note as it sits
+    // above the progression's I, but mapped onto the CURRENT scale — so the walk
+    // stays in key (a diatonic degree-walk) instead of transposing out of it.
+    // keyContext = {chord root, major} lets resolveStepPerOffset adapt the triad
+    // to the current scale while keeping chromatic chord tones (♭7, borrowed
+    // 3rds) as accidentals. Returns { wrapStep, targetFreq } or null.
     function _progWrapPressOpts(cellIdx) {
       const chords = _progWrapChords();
       if (!chords.length) return null;
@@ -75,10 +78,30 @@
       if (!cur || !Array.isArray(cur.intervals) || !cur.intervals.length) return null;
       const refRoot = (((chords[0].root | 0) % 12) + 12) % 12;   // progression's I = reference
       const curRoot = (((cur.root | 0) % 12) + 12) % 12;
-      const offset  = (((curRoot - refRoot) % 12) + 12) % 12;    // degree offset in semitones
+      const semiOffset = (((curRoot - refRoot) % 12) + 12) % 12; // chord root above I (semitones)
       const step = (typeof _wrapChordStepFromProgChord === 'function') ? _wrapChordStepFromProgChord(cur) : null;
       if (!step || !Array.isArray(step.chord) || !step.chord[0] || !(step.chord[0].freq > 0)) return null;
-      const targetFreq = note.freq * Math.pow(2, offset / 12);   // pressed note (key root) + degree
+      // Birth key = the PROGRESSION's tonic in major (not the chord's own root):
+      // a tone is "diatonic" (adapts to the current scale) iff it belongs to the
+      // prog's home key; otherwise it's a deliberate chromatic / borrowed tone
+      // (a secondary-dominant 3rd, a ♭7) and resolveStepPerOffset keeps it as an
+      // accidental. Classifying against each chord's own root would mark every
+      // chord "diatonic in its own key" and snap secondary dominants flat.
+      step.keyContext = { root: refRoot, scale: 'major' };
+      const MAJ = (typeof SCALES !== 'undefined' && Array.isArray(SCALES.major)) ? SCALES.major : [0, 2, 4, 5, 7, 9, 11];
+      const degIdx = MAJ.indexOf(semiOffset);
+      const ivNow = (typeof SCALES !== 'undefined' && currentScale && SCALES[currentScale]) ? SCALES[currentScale] : null;
+      const diatonicNow = !!(ivNow && ivNow.length < 12);   // a real (<12) scale is active
+      let targetFreq;
+      if (diatonicNow && degIdx >= 0 && typeof shiftFreqByScaleDegree === 'function') {
+        targetFreq = shiftFreqByScaleDegree(note.freq, degIdx);  // diatonic landing in current scale
+      } else {
+        // Chromatic scale (no degree lattice) or a borrowed root (not a major
+        // scale-degree): land at the exact semitone offset. resolveStepPerOffset
+        // then either transposes literally (chromatic) or applies the tonicize
+        // policy (borrowed root in a diatonic scale).
+        targetFreq = note.freq * Math.pow(2, semiOffset / 12);
+      }
       return { wrapStep: step, targetFreq };
     }
 

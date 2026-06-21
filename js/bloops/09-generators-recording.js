@@ -3100,6 +3100,10 @@
             <button type="button" class="we-btn we-toggle${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? ' active' : ''}" id="we-queue" aria-pressed="${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'true' : 'false'}">${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'On' : 'Off'}</button>
           </div>
           <div class="we-row">
+            <span class="we-label" title="How a borrowed chord (root outside the current scale) is voiced. Snap: bent into the current key. Local: kept as its own literal chord (brings its own key / tonicization).">Borrowed</span>
+            <button type="button" class="we-btn we-toggle${(typeof _wrapTonicizePolicy !== 'undefined' && _wrapTonicizePolicy === 'local') ? ' active' : ''}" id="we-tonicize" aria-pressed="${(typeof _wrapTonicizePolicy !== 'undefined' && _wrapTonicizePolicy === 'local') ? 'true' : 'false'}">${(typeof _wrapTonicizePolicy !== 'undefined' && _wrapTonicizePolicy === 'local') ? 'Local' : 'Snap'}</button>
+          </div>
+          <div class="we-row">
             <span class="we-label" title="Cycle mode: how many presses this wrap repeats before the cycle steps to the next wrap. Saved per wrap.">Cycle ×</span>
             <div class="we-row-btns">
               <button type="button" class="we-btn" id="we-cyc-dn"${(!_weActiveSavedWrap() || _weCycReps() <= 1) ? ' disabled' : ''}>−</button>
@@ -3153,6 +3157,12 @@
         modal.querySelector('#we-rep-up')?.addEventListener('click', () => _editSetVariance(v => { v.itersPerVariant = Math.min(64, (Number.isFinite(v.itersPerVariant) ? v.itersPerVariant : 1) + 1); }));
         modal.querySelector('#we-queue')?.addEventListener('click', () => {
           if (typeof setWrapQueueMode === 'function') setWrapQueueMode(!(typeof wrapQueueMode !== 'undefined' && wrapQueueMode));
+          render();
+        });
+        modal.querySelector('#we-tonicize')?.addEventListener('click', () => {
+          if (typeof setWrapTonicizePolicy === 'function') {
+            setWrapTonicizePolicy((typeof _wrapTonicizePolicy !== 'undefined' && _wrapTonicizePolicy === 'local') ? 'snap' : 'local');
+          }
           render();
         });
         modal.querySelector('#we-cyc-dn')?.addEventListener('click', () => _weSetCycReps(_weCycReps() - 1));

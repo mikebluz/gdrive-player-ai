@@ -5208,6 +5208,16 @@
       font-size: 1.05rem;
     }
 
+    /* Accidental signal — pitch classes in the played wrap/prog chord that fall
+       outside the current scale (see updateKeepLabel). Amber so a chromatic
+       chord tone or borrowed chord reads as a deliberate departure, not an error. */
+    .wrap-accidental {
+      color: #f4b740;
+      font-size: 0.82em;
+      letter-spacing: 0.2px;
+      opacity: 0.92;
+    }
+
     /* Keep + Wrap + Rest as a single full-width pill. Three equal grid
        columns (1fr 1fr 1fr) guarantee the buttons stay the same size
        regardless of label length. Outer corners rounded; the two inner

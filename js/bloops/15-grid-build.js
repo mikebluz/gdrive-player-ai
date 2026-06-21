@@ -892,6 +892,15 @@
           // and (with Keep on) appended a transposed copy. Bail so
           // we don't also tack on a single-note step here.
           if (wrapTemplate) return;
+          // Prog walks — both progression systems already played the chord
+          // and (with Keep on) committed it on pointerdown: the Prog-wrap bank
+          // via startSustainedWrapOnCell → _wrapKeepCommit, and the Chords
+          // currentProgression via _gridChordPlayAt → addToSequence. Either way,
+          // bail so this click doesn't ALSO append a single-note step (the
+          // double-add bug). currentProgression always routes the whole press
+          // through _gridChordPlayAt, so a click there should never append.
+          if (typeof _progWrapActive === 'function' && _progWrapActive()) return;
+          if (typeof currentProgression !== 'undefined' && currentProgression.length > 0) return;
           const params = { ...cellParams[i] };
           // Audio already played via pointerdown/pointerup sustain. The
           // click handler only runs the workspace-mutation work.

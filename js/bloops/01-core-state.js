@@ -657,8 +657,33 @@
       const name = (freqs && freqs.length > 0)
         ? chordNameFromFreqs(freqs, forcedRootPc)
         : '';
+      // Accidental signal — surface the pitch classes that fall OUTSIDE the
+      // current scale (a wrap/prog stepping out of key), so a chromatic chord
+      // tone or borrowed chord is visible, not silent. _freqIsAccidental lives
+      // in 08-grid-modes (shared global scope at call time); guard load order.
+      const accNames = [];
+      if (name && freqs && freqs.length && typeof _freqIsAccidental === 'function') {
+        const seen = new Set();
+        for (const f of freqs) {
+          if (!_freqIsAccidental(f)) continue;
+          const m = _freqToMidi(f);
+          if (m == null) continue;
+          const pc = ((Math.round(m) % 12) + 12) % 12;
+          if (seen.has(pc)) continue;
+          seen.add(pc);
+          accNames.push((typeof _pcName === 'function') ? _pcName(pc) : String(pc));
+        }
+      }
       if (name) {
-        span.textContent = decorate(name, freqs);
+        span.textContent = '';
+        span.appendChild(document.createTextNode(decorate(name, freqs)));
+        if (accNames.length) {
+          const acc = document.createElement('span');
+          acc.className = 'wrap-accidental';
+          acc.title = 'Outside the current scale';
+          acc.textContent = ' ' + accNames.join(' ');
+          span.appendChild(acc);
+        }
         btn.classList.add('show-chord');
       } else {
         span.textContent = 'KEEP';

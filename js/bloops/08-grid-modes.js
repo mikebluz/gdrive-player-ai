@@ -568,6 +568,176 @@
       return walk(step);
     }
 
+    // Borrowed-chord tonicization policy for resolveStepPerOffset, used when a
+    // chord's ROOT lands off the current scale (a chromatic outer offset):
+    //   'snap'  (a, default) — force everything onto the current scale (the
+    //           borrowed chord is bent into key; no out-of-scale root).
+    //   'local' (b)          — keep the chord's literal birth quality at its
+    //           exact off-lattice root (the borrowed chord brings its own key).
+    // Toggled from the Wraps menu so the two can be compared in practice.
+    let _wrapTonicizePolicy = 'snap';
+    try { const _p = localStorage.getItem('bloops-wrap-tonicize'); if (_p === 'local' || _p === 'snap') _wrapTonicizePolicy = _p; } catch (e) {}
+    function setWrapTonicizePolicy(p) {
+      _wrapTonicizePolicy = (p === 'local') ? 'local' : 'snap';
+      try { localStorage.setItem('bloops-wrap-tonicize', _wrapTonicizePolicy); } catch (e) {}
+    }
+
+    // The key a wrap was authored in — used to classify each voice as diatonic
+    // (adapts to the current scale) or chromatic (kept as an accidental). Prefer
+    // the stored keyContext; otherwise assume MAJOR rooted on the wrap's own root
+    // pitch class (the standard Roman-numeral basis the progs were authored in).
+    function _wrapStepBirthKey(step, rootFreq) {
+      const kc = step && step.keyContext;
+      if (kc && SCALES[kc.scale]) {
+        return { root: (((kc.root | 0) % 12) + 12) % 12, scale: kc.scale };
+      }
+      let rootPc = 0;
+      if (Number.isFinite(rootFreq) && rootFreq > 0) {
+        const A = masterFreqA || 440;
+        const midi = Math.round(12 * Math.log2(rootFreq / A) + 69);
+        rootPc = (((midi) % 12) + 12) % 12;
+      }
+      return { root: rootPc, scale: 'major' };
+    }
+
+    // ---- Per-offset wrap resolver (Scale × Prog) ------------------------------
+    // Generalizes transposeStepToScaleDegrees. Rather than moving EVERY voice
+    // diatonically (which snaps chromatic notes into the scale and mangles
+    // dominant 7ths / borrowed tones), each voice is classified against the
+    // wrap's BIRTH key (_wrapStepBirthKey) and resolved per-offset:
+    //   • diatonic voice (in the birth scale)  → scale-degree-shifted into the
+    //     CURRENT scale, so the quality adapts to the key (I→i in a minor scale,
+    //     IV→iv°, …). Same math as transposeStepToScaleDegrees.
+    //   • chromatic voice (outside the birth scale — a 7th's ♭7, a secondary-
+    //     dominant 3rd) → its exact semitone offset above the transposed root is
+    //     preserved, so it stays an accidental (.off-scale, see the chip render).
+    // For an all-diatonic wrap this is byte-identical to
+    // transposeStepToScaleDegrees (the regression anchor). When the chord ROOT
+    // itself is chromatic in the current scale (a borrowed chord), opts.tonicize
+    // ('snap' | 'local') / _wrapTonicizePolicy picks the policy described above.
+    // Each resolved leaf is tagged `_offMode` ('deg' | 'semi') for the signal UI.
+    function resolveStepPerOffset(step, baseFreq, targetFreq, opts) {
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      const exactSemi = semitonesBetweenHz(baseFreq, targetFreq);
+      // Chromatic / 12-tone current scale: degree-space == semitone-space, so a
+      // literal transpose already preserves every interval — nothing to adapt.
+      if (!intervals || intervals.length >= 12) return transposeStepRec(step, exactSemi);
+      const N = intervals.length;
+      const A = masterFreqA || 440;
+      const freqToAbsDegree = (freq) => {
+        const midi = Math.round(12 * Math.log2(freq / A) + 69);
+        const pc = (((midi - rootIdx) % 12) + 12) % 12;
+        let bestI = 0, bestD = 99;
+        for (let i = 0; i < N; i++) {
+          const up   = ((intervals[i] - pc) % 12 + 12) % 12;
+          const down = ((pc - intervals[i]) % 12 + 12) % 12;
+          const d = Math.min(up, down);
+          if (d < bestD) { bestD = d; bestI = i; }
+        }
+        return Math.floor((midi - rootIdx) / 12) * N + bestI;
+      };
+      const absDegreeToMidi = (absDeg) => {
+        const oct = Math.floor(absDeg / N);
+        const i = ((absDeg % N) + N) % N;
+        return rootIdx + oct * 12 + intervals[i];
+      };
+      const degreeDelta = freqToAbsDegree(targetFreq) - freqToAbsDegree(baseFreq);
+      // Where the chord ROOT lands (baseFreq → here), snapped onto the lattice.
+      const rootMidi = absDegreeToMidi(freqToAbsDegree(targetFreq));
+      const rootFreq = A * Math.pow(2, (rootMidi - 69) / 12);
+      // Borrowed chord? (requested landing is not a scale tone.)
+      const tgtMidi = Math.round(12 * Math.log2(targetFreq / A) + 69);
+      const tgtPc = (((tgtMidi - rootIdx) % 12) + 12) % 12;
+      const rootIsChromatic = !intervals.includes(tgtPc);
+      const tonicize = (opts && opts.tonicize) || _wrapTonicizePolicy;
+      // (b) local key: reproduce the literal chord quality at the exact
+      // (off-lattice) root — a plain block transpose of the whole chord.
+      if (rootIsChromatic && tonicize === 'local') return transposeStepRec(step, exactSemi);
+
+      const birth = _wrapStepBirthKey(step, baseFreq);
+      const birthIv = SCALES[birth.scale] || SCALES['major'];
+      const mapNote = (n) => {
+        if (!n || !Number.isFinite(n.freq)) return { ...n };
+        const midi0 = Math.round(12 * Math.log2(n.freq / A) + 69);
+        const pcBirth = (((midi0 - birth.root) % 12) + 12) % 12;
+        const diatonic = birthIv.includes(pcBirth);
+        let freq, offMode;
+        if (diatonic) {
+          // adapt to the current scale via scale-degree shift
+          const midi = absDegreeToMidi(freqToAbsDegree(n.freq) + degreeDelta);
+          freq = A * Math.pow(2, (midi - 69) / 12);
+          offMode = 'deg';
+        } else {
+          // preserve the exact chromatic interval above the transposed root
+          const sOff = semitonesBetweenHz(baseFreq, n.freq);
+          freq = rootFreq * Math.pow(2, sOff / 12);
+          offMode = 'semi';
+        }
+        let label = n.label;
+        try { label = Tone.Frequency(freq).toNote(); } catch (e) {}
+        return { ...n, freq, label, _offMode: offMode };
+      };
+      const walk = (s) => {
+        if (!s) return s;
+        if (s.isSub && Array.isArray(s.subSteps)) {
+          return { ...s, subSteps: s.subSteps.map(walk) };
+        }
+        if (Array.isArray(s.chord)) {
+          const chord = s.chord.map(mapNote);
+          return { ...s, chord, label: chord.map(n => n.label).join('·') };
+        }
+        if (s.variance && Array.isArray(s.variance.notes)) {
+          const vnotes = s.variance.notes.map(mapNote);
+          const top = vnotes[0] || {};
+          return { ...s, freq: (Number.isFinite(s.freq) && Number.isFinite(top.freq)) ? top.freq : s.freq, label: top.label || s.label, variance: { ...s.variance, notes: vnotes } };
+        }
+        if (Number.isFinite(s.freq)) {
+          const m = mapNote(s);
+          return { ...s, freq: m.freq, label: m.label, _offMode: m._offMode };
+        }
+        return { ...s };
+      };
+      return walk(step);
+    }
+
+    // Shift a single freq by `degreeDelta` scale degrees under the current
+    // scale + root, returning the new freq (chromatic scale → semitone shift).
+    // Scalar companion to transposeStepByScaleDegree; used by the Prog walk to
+    // place each chord's root a fixed number of degrees above the pressed tonic.
+    function shiftFreqByScaleDegree(freq, degreeDelta) {
+      if (!Number.isFinite(freq) || freq <= 0) return freq;
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      const A = masterFreqA || 440;
+      if (!intervals || intervals.length >= 12) return freq * Math.pow(2, degreeDelta / 12);
+      if (!degreeDelta) return freq;
+      const N = intervals.length;
+      const midi = Math.round(12 * Math.log2(freq / A) + 69);
+      const pc = (((midi - rootIdx) % 12) + 12) % 12;
+      let bestI = 0, bestD = 99;
+      for (let i = 0; i < N; i++) {
+        const up   = ((intervals[i] - pc) % 12 + 12) % 12;
+        const down = ((pc - intervals[i]) % 12 + 12) % 12;
+        const d = Math.min(up, down);
+        if (d < bestD) { bestD = d; bestI = i; }
+      }
+      const absDeg = Math.floor((midi - rootIdx) / 12) * N + bestI + degreeDelta;
+      const oct = Math.floor(absDeg / N);
+      const i = ((absDeg % N) + N) % N;
+      const outMidi = rootIdx + oct * 12 + intervals[i];
+      return A * Math.pow(2, (outMidi - 69) / 12);
+    }
+
+    // True when a freq's pitch class is NOT in the current scale (an accidental).
+    // Chromatic / 12-tone scales have no out-of-scale tones, so always false.
+    function _freqIsAccidental(freq) {
+      const intervals = (currentScale && SCALES[currentScale]) || SCALES['chromatic'];
+      if (!intervals || intervals.length >= 12 || !Number.isFinite(freq) || freq <= 0) return false;
+      const A = masterFreqA || 440;
+      const midi = Math.round(12 * Math.log2(freq / A) + 69);
+      const pc = (((midi - rootIdx) % 12) + 12) % 12;
+      return !intervals.includes(pc);
+    }
+
     // Shift one step (recursively, returning a fresh copy) by a fixed number
     // of SCALE degrees under the current scale + root. On chromatic / 12-tone
     // scales a degree equals a semitone, so this is a plain chromatic
@@ -758,10 +928,10 @@
       };
       const baseFreq = visit(wrapTemplate);
       if (baseFreq == null) return false;
-      // Diatonic transpose: shift every voice by the same number of
-      // scale degrees the root moved so the chord keeps its shape in
-      // key. Chromatic scale → exact semitone transpose.
-      const transposed = transposeStepToScaleDegrees(wrapTemplate, baseFreq, note.freq);
+      // Per-offset resolve: diatonic voices shift by scale degrees (keeping
+      // the chord's in-key shape); chromatic voices keep their exact interval
+      // as accidentals. Chromatic scale → exact semitone transpose.
+      const transposed = resolveStepPerOffset(wrapTemplate, baseFreq, note.freq);
       // Adopt the pressed cell's current tone (the master grid tone) for
       // every voice — wraps don't store their own timbre.
       const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;
@@ -951,14 +1121,14 @@
       };
       const baseFreq = visit(tmpl);
       if (baseFreq == null) return null;
-      // Prog-wrap: chromatic transpose onto opts.targetFreq (pressed note + the
-      // chord's degree offset) so the chord QUALITY is preserved exactly — a
-      // numeral re-rooted to the pressed key, not snapped to the grid scale.
-      // Normal wraps: diatonic transpose (see playWrapTemplateOnCell) so the
-      // chord keeps its in-key shape instead of snapping voices independently.
+      // Prog-wrap: opts.targetFreq carries the diatonic landing for the
+      // cursor chord's root (see _progWrapPressOpts); resolveStepPerOffset then
+      // adapts diatonic voices to the current scale and keeps chromatic chord
+      // tones as accidentals. Normal wraps resolve onto the pressed cell. Both
+      // go through the same per-offset path so Scale and Prog stay consistent.
       const transposed = (opts && opts.targetFreq != null)
-        ? transposeStepRec(tmpl, semitonesBetweenHz(baseFreq, opts.targetFreq))
-        : transposeStepToScaleDegrees(tmpl, baseFreq, note.freq);
+        ? resolveStepPerOffset(tmpl, baseFreq, opts.targetFreq, { tonicize: opts.tonicize })
+        : resolveStepPerOffset(tmpl, baseFreq, note.freq);
       // Adopt the pressed cell's current tone (the master grid tone) for
       // every voice — wraps don't store their own timbre.
       const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;

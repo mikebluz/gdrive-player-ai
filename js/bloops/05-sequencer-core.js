@@ -1184,7 +1184,13 @@
       persistTracks();
       renderTracks();
     }
+    // When a batched action (e.g. a step-edit transform fanned out across the
+    // whole selection) wants ONE undo entry for the whole batch, it snapshots
+    // once and sets this flag so the per-step functions' own snapshotForUndo
+    // calls collapse to no-ops. Always reset in a finally by the batcher.
+    let _suppressUndoSnapshot = false;
     function snapshotForUndo(label) {
+      if (_suppressUndoSnapshot) return;
       undoStack.push(captureSnapshot(label));
       while (undoStack.length > UNDO_LIMIT) undoStack.shift();
       redoStack.length = 0;

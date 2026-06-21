@@ -4312,9 +4312,9 @@
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
-      // Shape layers open expanded so the wheel preview is visible immediately;
-      // the other layer types start collapsed (just their header).
-      const _collapsed = (type === 'shape') ? '' : ' collapsed';
+      // Every layer (Shape included) starts collapsed — just its header — so a
+      // fresh Bloom panel stays compact and you expand only what you're tuning.
+      const _collapsed = ' collapsed';
       let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(sch.label, p + '-on', p + '-del', fkey);
       sch.ctrls.forEach(c => {
         const k = c[0];
@@ -5297,9 +5297,9 @@
         // Mixer — one vertical fader per layer for balancing overall levels in
         // one place. Collapsible; the strip is (re)rendered by _ambRenderMixer
         // whenever the layer set changes.
-        '<div class="ambient-mixer" id="ambient-mixer">' +
+        '<div class="ambient-mixer collapsed" id="ambient-mixer">' +
           '<div class="ambient-mixer-head">' +
-            '<button type="button" class="ambient-mixer-toggle" id="ambient-mixer-toggle" title="Collapse / expand the mixer">▾</button>' +
+            '<button type="button" class="ambient-mixer-toggle" id="ambient-mixer-toggle" title="Collapse / expand the mixer">▸</button>' +
             '<span class="ambient-mod-sub">Mixer</span>' +
           '</div>' +
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
@@ -5368,12 +5368,15 @@
           modUi('beat') +
           fxUi('beat') +
         '</div>' +
+        // Extra generative instances render here (below the built-in Bed/Motif/
+        // Texture/Beat block above). The Add button follows so it always sits at
+        // the BOTTOM of the generative-layer list, not stranded in the middle.
+        '<div class="ambient-seq-layers" id="ambient-extra-layers"></div>' +
         // Add-layer button — Bloom starts with just Bed; this adds the other
         // built-in layer types (Motif / Texture / Beat) on demand.
         '<div class="ambient-add-layer-row">' +
           '<button type="button" class="ambient-regen ambient-add-layer" id="ambient-add-layer" title="Add a generative layer">+ Add generative layer</button>' +
         '</div>' +
-        '<div class="ambient-seq-layers" id="ambient-extra-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
         '<div class="ambient-seq-layers" id="ambient-sample-layers"></div>' +
         // Parameter ramps — LFO automation of a layer param (A→B, period, wave).

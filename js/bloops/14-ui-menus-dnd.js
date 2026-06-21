@@ -3837,6 +3837,50 @@
       return false;
     }
 
+    // The step(s) a context-menu action should target: the full selection when
+    // 2+ steps are selected AND the opened step is one of them, otherwise just
+    // the opened step. Mirrors the Tone submenu's target logic so every
+    // transform honors a multi-selection consistently.
+    function _stepCtxTargets(stepIndex) {
+      const sel = (typeof selectedStepIndices === 'function') ? selectedStepIndices() : [];
+      if (sel.length >= 2 && sel.includes(stepIndex)) return sel.slice();
+      return [stepIndex];
+    }
+    // Run a per-step transform across every target step as ONE undoable action.
+    // Targets are resolved to object references up front so length-changing
+    // transforms (Split / Duplicate / Fold) can re-resolve each step's CURRENT
+    // index right before mutating — processed high→low so earlier splices never
+    // shift a not-yet-processed target. `fn(index)` is an existing per-step
+    // function; its own snapshotForUndo is suppressed so the batch is one entry.
+    function _runStepCtxAction(stepIndex, label, fn) {
+      const targets = _stepCtxTargets(stepIndex);
+      const refs = targets.map(i => sequence[i]).filter(Boolean);
+      if (refs.length === 0) return;
+      snapshotForUndo(label);
+      const prevSuppress = _suppressUndoSnapshot;
+      _suppressUndoSnapshot = true;
+      try {
+        const ordered = refs
+          .map(r => ({ r, i: sequence.indexOf(r) }))
+          .filter(o => o.i >= 0)
+          .sort((a, b) => b.i - a.i);   // descending: safe under splices
+        for (const o of ordered) {
+          const cur = sequence.indexOf(o.r);
+          if (cur >= 0) fn(cur);
+        }
+      } finally {
+        _suppressUndoSnapshot = prevSuppress;
+      }
+      // Drop any selection refs the transform replaced/removed (arpeggiate,
+      // split, chordify, fold swap in fresh objects); in-place transforms
+      // (modulate, reverse/shuffle sub) keep theirs, so the selection survives.
+      if (Array.isArray(selectedStepRefs)) {
+        selectedStepRefs = selectedStepRefs.filter(r => sequence.indexOf(r) >= 0);
+      }
+      try { if (typeof syncStepEditorFromSelection === 'function') syncStepEditorFromSelection(); } catch (e) {}
+      try { renderSequence(); } catch (e) {}
+    }
+
     // Build the context-menu action list for the step at `stepIndex`
     // in the active workspace `sequence`. Extracted so preview chips
     // in non-active Poly lanes can show the same menu after switching
@@ -3846,10 +3890,10 @@
       const actions = [];
       if (step && step.isSub) {
         actions.push({ label: 'Edit subsequence…', fn: () => enterSubEditMode(stepIndex) });
-        actions.push({ label: 'Combine to chord', fn: () => chordifyStep(stepIndex) });
+        actions.push({ label: 'Combine to chord', fn: () => _runStepCtxAction(stepIndex, 'Combine to chord', (i) => chordifyStep(i)) });
         if (Array.isArray(step.subSteps) && step.subSteps.length > 1) {
-          actions.push({ label: 'Reverse', fn: () => reverseSubseq(stepIndex) });
-          actions.push({ label: 'Shuffle', fn: () => shuffleSubseq(stepIndex) });
+          actions.push({ label: 'Reverse', fn: () => _runStepCtxAction(stepIndex, 'Reverse subsequence', (i) => reverseSubseq(i)) });
+          actions.push({ label: 'Shuffle', fn: () => _runStepCtxAction(stepIndex, 'Shuffle subsequence', (i) => shuffleSubseq(i)) });
         }
         actions.push('hr');
       } else {
@@ -3876,14 +3920,14 @@
       }
       if (!(step && step.isSub)) {
         if (step && Array.isArray(step.chord) && step.chord.length > 1) {
-          actions.push({ label: 'Arpeggiate', fn: () => arpeggiateStep(stepIndex) });
-          actions.push({ label: 'Split',      fn: () => splitChord(stepIndex) });
+          actions.push({ label: 'Arpeggiate', fn: () => _runStepCtxAction(stepIndex, 'Arpeggiate', (i) => arpeggiateStep(i)) });
+          actions.push({ label: 'Split',      fn: () => _runStepCtxAction(stepIndex, 'Split', (i) => splitChord(i)) });
         }
         if (actions.length > 0) actions.push('hr');
       }
       if (stepHasNotes(step)) {
-        actions.push({ label: 'Modulate ↑½', fn: () => { snapshotForUndo('Modulate ↑½'); modulateStepRec(step, 1);  renderSequence(); } });
-        actions.push({ label: 'Modulate ↓½', fn: () => { snapshotForUndo('Modulate ↓½'); modulateStepRec(step, -1); renderSequence(); } });
+        actions.push({ label: 'Modulate ↑½', fn: () => _runStepCtxAction(stepIndex, 'Modulate ↑½', (i) => modulateStepRec(sequence[i], 1)) });
+        actions.push({ label: 'Modulate ↓½', fn: () => _runStepCtxAction(stepIndex, 'Modulate ↓½', (i) => modulateStepRec(sequence[i], -1)) });
         actions.push({ label: 'Transpose…', fn: () => showTransposeDialog(stepIndex) });
         actions.push({ label: step.variance ? 'Edit variance…' : 'Variance…', fn: () => showVarianceDialog(stepIndex) });
         // Pitch ramp — quick access to the existing step.bend
@@ -3893,11 +3937,11 @@
         actions.push({ label: hasBend ? 'Edit pitch ramp…' : 'Pitch ramp…', fn: () => showPitchRampDialog(stepIndex) });
         actions.push('hr');
       }
-      actions.push({ label: '⧉ Duplicate',   fn: () => duplicateStep(stepIndex) });
+      actions.push({ label: '⧉ Duplicate',   fn: () => _runStepCtxAction(stepIndex, 'Duplicate step', (i) => duplicateStep(i)) });
       // Sound editing is now folded into "Edit step…" (grouped tone picker +
       // sample import/slice live there), so the separate "♪ Sound editor"
       // entry is gone — one editor per step.
-      actions.push({ label: '⇕ Fold',        fn: () => foldStep(stepIndex) });
+      actions.push({ label: '⇕ Fold',        fn: () => _runStepCtxAction(stepIndex, 'Fold step', (i) => foldStep(i)) });
       actions.push({ label: '⇄ Nudge…',      fn: () => showNudgeDialog(stepIndex) });
       actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
       actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });

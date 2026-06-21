@@ -38,17 +38,15 @@
     const _ensembleRR = {};        // id -> next member index (round-robin cursor; runtime only)
     function isEnsembleType(type) { return typeof type === 'string' && type.startsWith('ensemble:'); }
     function getEnsemble(id) { return ensembles.get(String(id)) || null; }
-    // Equal-power makeup for per-voice panning. Tone.Panner (StereoPannerNode)
-    // is equal-power: a CENTERED pan is −3 dB/channel and any pan decorrelates
-    // a mono voice — so engaging pan/spread (e.g. Bloom's stereo Spread) drops
-    // the perceived level vs the no-panner (full, correlated) baseline. This
-    // returns a makeup factor (1 → √2) that lifts the dominant channel back to
-    // unity, so panning is level-preserving. panNorm in [-1, 1].
-    function _panMakeup(panNorm) {
-      const a = (Math.max(-1, Math.min(1, panNorm)) + 1) * (Math.PI / 4); // 0..π/2
-      const m = Math.max(Math.cos(a), Math.sin(a));                       // 0.707..1
-      return m > 0 ? Math.min(Math.SQRT2, 1 / m) : 1;
-    }
+    // Power-preserving makeup for per-voice panning. The non-panned path sends
+    // a mono voice to BOTH channels (acoustic power ∝ 2), but Tone.Panner
+    // (equal-power) puts power ∝ 1 at EVERY pan angle (−3 dB) — center: 0.707
+    // both; hard: 1.0 one side. So toggling pan/spread on (e.g. Bloom's Spread)
+    // drops the level vs the no-panner baseline by a flat 3 dB regardless of
+    // angle. A constant ×√2 makeup restores power parity at every pan position
+    // so the level is the same with or without spread. (panNorm kept for the
+    // call signature.)
+    function _panMakeup(panNorm) { return Math.SQRT2; }
     // Expand an ensemble note into its member triggers. Each member flows
     // through playNote so it picks up the normal voice/FX/capture plumbing.
     function _playEnsemble(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {

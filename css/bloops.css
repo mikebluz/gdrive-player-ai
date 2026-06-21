@@ -2644,6 +2644,17 @@
     /* On = clear purple fill + bright text, unmistakable vs off/hover. */
     .ambient-toggle.on { border-color: #9f7aea; color: #ede9fe; background: rgba(159,122,234,0.30); }
     .ambient-toggle.on:hover { border-color: #b794f4; background: rgba(159,122,234,0.40); }
+    /* Queue mode — a toggle whose on/off change is pending the next iteration
+       boundary. Amber, pulsing, so it reads as "armed, not yet applied". */
+    .ambient-toggle.queued {
+      border-color: #ed8936; color: #fbd38d;
+      background: rgba(237, 137, 54, 0.22);
+      animation: ambient-queued-pulse 1s ease-in-out infinite;
+    }
+    @keyframes ambient-queued-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(237, 137, 54, 0.0); }
+      50%      { box-shadow: 0 0 8px 1px rgba(237, 137, 54, 0.55); }
+    }
     /* Dim a layer's sliders when the layer is off (still adjustable). */
     .ambient-layer:has(> .ambient-layer-head > .ambient-toggle:not(.on)) .ambient-ctrl { opacity: 0.5; }
     /* Per-layer expand/collapse caret (sits at the right of the layer head). */

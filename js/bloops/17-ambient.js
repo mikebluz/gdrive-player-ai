@@ -268,6 +268,7 @@
         ['density','register','spread','evolveRate'].forEach(k => delete cfg[k]);
       }
       if (cfg.timing !== 'free' && cfg.timing !== 'sync') cfg.timing = d.timing;
+      if (typeof cfg.queueMode !== 'boolean') cfg.queueMode = false;
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
       if (typeof cfg.keyOn !== 'boolean') cfg.keyOn = d.keyOn;
@@ -1556,6 +1557,14 @@
         populateGroupedToneSelect(sel, opts, _ambGridVoiceOption());
         sel.value = cur;
         if (sel.value !== cur) sel.value = ''; // chosen voice no longer exists → Grid voice
+        // Seq layers show the FIRST step's tone (not a blank Grid-voice default)
+        // when the layer Tone isn't explicitly overridden.
+        const m = sel.id.match(/seq-(\d+)-tone$/);
+        if (m) {
+          const c = E.getCfg();
+          const sq = (c && Array.isArray(c.seqs)) ? c.seqs.find(x => (x.id | 0) === parseInt(m[1], 10)) : null;
+          if (sq) { const t = _ambSeqStepTone(sq, 0); if (t) sel.value = t; }
+        }
       });
     }
     function _ambRefreshAllToneSelects() {
@@ -1706,6 +1715,25 @@
     // events at their own pace — windowed across ticks in auto mode so a long
     // phrase doesn't dump its entire node creation in a single tick (the burst
     // that glitched/cut out long seq layers ~4/5 through each phrase).
+    // Tone shown for a Seq layer's step `idx` (the value its Tone dropdown
+    // should display): an explicit layer Tone overrides; otherwise the step's
+    // own captured voice (unit event sounds), falling back to the unit voice.
+    function _ambSeqStepTone(seq, idx) {
+      if (seq && seq.tone && seq.tone !== '') return seq.tone;
+      const u = (seq && Array.isArray(seq.units) && seq.units[0]) ? seq.units[0] : null;
+      const evs = (u && Array.isArray(u.events)) ? u.events : [];
+      const ev = evs[idx | 0] || evs[0];
+      if (ev && Array.isArray(ev.sounds) && ev.sounds[0]) return ev.sounds[0];
+      if (u && u.voice && u.voice.type) return u.voice.type;
+      return 'sine';
+    }
+    // Live-reflect a Seq layer's Tone dropdown to the tone now playing (cheap:
+    // once per loop, only when the value actually changes / the panel is up).
+    function _ambSeqReflectTone(E, seqId, tone) {
+      if (!tone) return;
+      const sel = document.getElementById(_ambTrId(E, 'ambient-seq-' + seqId + '-tone'));
+      if (sel && sel.value !== tone) { try { sel.value = tone; } catch (e) {} }
+    }
     function _ambRealizeSeqPhrase(at, seq, space, st) {
       if (!Array.isArray(seq.units) || !seq.units.length) return null;
       let unit;
@@ -2059,6 +2087,110 @@
       };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run); else run();
     }
+    // The repeat period (seconds) of a layer's UNIT — one full iteration of
+    // whatever loops: a Seq phrase, a Sample slice-grid step, a Bass phrase
+    // cycle (bars), a Shape revolution, or a generative layer's event interval.
+    // Used by Queue mode to land an on/off change on the layer's own boundary.
+    function _ambLayerPeriodSec(E, key, L, cfg) {
+      const type = String(key).split(':')[0];
+      if (type === 'seq') {
+        if (L.intervalMode === 'manual') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
+        const st = E.seqState && E.seqState[L.id];
+        const ms = (st && st._lastUnitMs > 0) ? st._lastUnitMs
+                 : (Array.isArray(L.units) && L.units[0] ? _unitTotalMs(L.units[0]) : (L.intervalMs | 0));
+        return Math.max(0.1, (ms || 0) / 1000);
+      }
+      if (type === 'samp') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
+      if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
+      if (type === 'shape') {
+        if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
+          const i = Math.max(0, Math.min(L.shapes.length - 1, L.sel | 0));
+          const r = _shapeBarSec(L.shapes[i] || L.shapes[0]);
+          if (r > 0.02) return r;
+        }
+        return (60 / _ambBpm()) * 4;
+      }
+      return Math.max(0.05, _ambEffIntervalSec(L)); // bed/motif/texture/beat/arp
+    }
+    // Absolute time (Tone seconds) of the NEXT iteration boundary for layer
+    // `key`. For a PLAYING layer the engine already tracks the next iteration
+    // start (its clock / phase anchor) — that IS the boundary, so the current
+    // iteration finishes and the next one is the cut point. For an OFF layer
+    // (a queued START) there is no live phase, so we align to the engine's grid
+    // anchor (E._t0) by the layer's period, so it enters on its own beat grid.
+    function _ambLayerNextBoundary(E, key, L, cfg, now) {
+      const type = String(key).split(':')[0];
+      const P = _ambLayerPeriodSec(E, key, L, cfg);
+      if (!(P > 0)) return now + 0.1;
+      const eps = 0.03;
+      if (L.on) {
+        if (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
+            type === 'texture' || type === 'beat' || type === 'arp') {
+          const c = E.clocks && E.clocks[key];
+          if (c != null && c > now + eps) return c;     // next phrase / slice / step start
+        } else if (type === 'bass') {
+          const st = E.bassPhase && E.bassPhase[key];
+          if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
+        } else if (type === 'shape') {
+          const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
+          const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
+          if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
+        }
+      }
+      const A = (E._t0 != null) ? E._t0 : now;          // off layer → engine grid
+      return A + Math.ceil((now + eps - A) / P) * P;
+    }
+    // Toggle a layer's on/off. Normally immediate; in Queue mode (cfg.queueMode)
+    // while the engine is playing, the change is DEFERRED to that layer's OWN
+    // next iteration boundary (see _ambLayerNextBoundary) — each pending entry
+    // carries its own target time `at`, and the tick's _qGate (in _ambTick)
+    // schedules up to / from that exact boundary so the layer stops after its
+    // current iteration completes, or starts cleanly on its next one. The button
+    // shows a "queued" state until it lands; clicking again before the boundary
+    // cancels the queued change.
+    function _ambToggleLayer(E, key, L, onB, persist) {
+      if (!L) return;
+      const cfg = E.getCfg();
+      const queueing = !!(cfg && cfg.queueMode) && !!E.timer;
+      if (!queueing) {
+        L.on = !L.on;
+        if (onB) { onB.classList.toggle('on', !!L.on); onB.classList.remove('queued'); }
+        if (E._queuePending) delete E._queuePending[key];
+        if (E.timer) _ambSyncOneLayerMod(E, key, L);
+        if (typeof persist === 'function') persist();
+        return;
+      }
+      if (!E._queuePending) E._queuePending = {};
+      const pend = E._queuePending[key];
+      const desired = !(pend ? pend.desired : L.on);
+      if (desired === L.on) {            // toggled back to the live state → cancel
+        delete E._queuePending[key];
+        if (onB) onB.classList.remove('queued');
+      } else {
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        let at;
+        try { at = _ambLayerNextBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
+        E._queuePending[key] = { L, onB, desired, at };
+        if (onB) onB.classList.add('queued');
+      }
+      if (typeof persist === 'function') persist();
+    }
+    // Flush every queued toggle IMMEDIATELY (ignoring boundaries). Called when
+    // Queue mode is switched off so nothing dangles. (Boundary-timed application
+    // happens per-layer inside _ambTick via _qGate.)
+    function _ambApplyQueued(E) {
+      const q = E._queuePending;
+      if (!q) return;
+      Object.keys(q).forEach(key => {
+        const it = q[key]; if (!it || !it.L) return;
+        it.L.on = !!it.desired;
+        if (it.onB) { it.onB.classList.toggle('on', !!it.desired); it.onB.classList.remove('queued'); }
+        try { _ambSyncOneLayerMod(E, key, it.L); } catch (e) {}
+      });
+      E._queuePending = {};
+      E._queueAt = null;
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+    }
     function _ambSyncMods() {
       const cfg = _E.getCfg();
       if (!cfg) return;
@@ -2147,6 +2279,8 @@
       E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
       E.arpState = {};     // per Arp layer: { entry, note, pos } series/sweep cursor
       E.bassPhase = {};    // per Bass layer: { startAt, lastAt } phrase-cycle clock
+      E._queuePending = null; E._queueAt = null;   // Queue-mode pending toggles
+      E._t0 = null;        // engine grid anchor (set on first tick) for queued-START alignment
     }
     function _ambTick(E) {
       _E = E;
@@ -2158,24 +2292,66 @@
       E._cfg = cfg;
       if (!cfg) return;
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+      if (E._t0 == null) E._t0 = now;   // engine grid anchor (queued-START alignment)
       // Progression clock: a shared per-engine step that advances every
       // progRateMs, so all "Progression" note-source layers move through their
       // chords together (a single harmonic pulse).
       { const pr = Math.max(250, (cfg.progRateMs | 0) || 4000); E.progStep = Math.floor((now * 1000) / pr); }
       // (Ramps run on their own finer clock — see _ambStartGenerator.)
-      const horizon = now + 1.2, lead = now + 0.1;
+      // Schedule lead-time: how far ahead of "now" the first events land. A
+      // larger lead gives freshly-created voice nodes time to connect + the
+      // audio graph time to settle before they sound, so dense stacks (several
+      // lane/Seq layers) don't pop / cut in and out. Bloom is generative (not
+      // touch-triggered), so the extra ~0.2 s latency is inaudible. Horizon
+      // grows with it to keep a comfortable buffer across ticks.
+      const horizon = now + 1.4, lead = now + 0.3;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
       // Solo: if ANY on layer is soloed, only soloed layers sound.
       const anySolo = _ambComputeAnySolo(cfg);
       const _muted = (lc) => anySolo && !(lc && lc.solo);
       try { _ambScheduleStochastic(now); } catch (e) {} // feed the stochastic LFOs
-      const runLayer = (key, lc, guardMax, minSec, emit) => {
-        if (!lc || lc.present === false || !lc.on || _ambFreezeFrozen(E, key)) return;
+      // ---- Queue mode per-layer gate ------------------------------------
+      // A queued on/off change lands on THAT layer's own iteration boundary
+      // (the time stored on the pending entry's `at`). For a STOP we keep the
+      // layer scheduling but CLAMP its horizon to `at`, so the current
+      // iteration plays out and nothing past the boundary is ever scheduled;
+      // when now crosses `at` the layer flips off cleanly. For a START we hold
+      // the (off) layer silent until its boundary enters the lookahead, then
+      // anchor its clock/phase exactly to `at` and flip on, so the first event
+      // sounds on the boundary. _qGate returns {run, hz}; `anchor(at)` seeds the
+      // layer's clock when a START arms. Boolean changes are persisted once per
+      // tick via _qChanged.
+      let _qChanged = false;
+      const _qFinalize = (key, it, val) => {
+        it.L.on = val;
+        if (it.onB) { it.onB.classList.toggle('on', val); it.onB.classList.remove('queued'); }
+        try { _ambSyncOneLayerMod(E, key, it.L); } catch (e) {}
+        delete E._queuePending[key];
+        _qChanged = true;
+      };
+      const _qGate = (key, on, anchor) => {
+        const it = E._queuePending && E._queuePending[key];
+        if (!it) return { run: on, hz: horizon };
+        if (it.desired === false) {                 // queued STOP
+          if (now >= it.at) { _qFinalize(key, it, false); return { run: false, hz: horizon }; }
+          return { run: true, hz: Math.min(horizon, it.at) }; // schedule only up to the boundary
+        }
+        // queued START
+        if (horizon >= it.at) {                      // boundary now within lookahead → arm it
+          try { if (typeof anchor === 'function') anchor(it.at); } catch (e) {}
+          _qFinalize(key, it, true);
+          return { run: true, hz: horizon };
+        }
+        return { run: false, hz: horizon };          // still silent until the boundary nears
+      };
+      const runLayer = (key, lc, guardMax, minSec, emit, hz) => {
+        if (!lc || lc.present === false || _ambFreezeFrozen(E, key)) return;
         if (E.windingDown) return; // Capture finalize: no new iterations (current ones, already scheduled, play out)
+        const HZ = hz || horizon;
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(lc, cfg);
         let g = 0;
-        while (C[key] < horizon && g++ < guardMax) {
+        while (C[key] < HZ && g++ < guardMax) {
           if (_ambCondFires(lc.when, I[key] | 0)) emit(C[key]);
           I[key] = (I[key] | 0) + 1;
           C[key] += _ambStepSecFor(lc, minSec, cfg);
@@ -2184,10 +2360,13 @@
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
       // generate normally while teeing each note into the capture sink.
       const stepLayer = (key, lc, guardMax, minSec, emit) => {
+        if (!lc) return;
         if (_muted(lc)) return; // silenced by another layer's solo
-        if (_ambFreezeGate(E, key, now, horizon)) return;
+        const g = _qGate(key, !!lc.on, (t) => { C[key] = t; });
+        if (!g.run) return;
+        if (_ambFreezeGate(E, key, now, g.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
-        try { runLayer(key, lc, guardMax, minSec, emit); }
+        try { runLayer(key, lc, guardMax, minSec, emit, g.hz); }
         finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
@@ -2203,12 +2382,17 @@
       // phrases can overlap) still emits a whole phrase per fire.
       if (Array.isArray(cfg.seqs)) {
         for (const seq of cfg.seqs) {
-          if (!seq || !seq.on || !Array.isArray(seq.units) || !seq.units.length) continue;
+          if (!seq || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
           const stSeq = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
           if (_muted(seq)) continue;
           if (E.windingDown) continue; // Capture finalize: let the current unit finish, start no more
-          if (_ambFreezeGate(E, key, now, horizon)) { stSeq.plan = null; continue; }
+          // Queue mode: STOP clamps HZ to the phrase boundary; START anchors the
+          // next phrase to it and flips on.
+          const gate = _qGate(key, !!seq.on, (t) => { C[key] = t; stSeq.plan = null; });
+          if (!gate.run) { stSeq.plan = null; continue; }
+          const HZ = gate.hz;
+          if (_ambFreezeGate(E, key, now, HZ)) { stSeq.plan = null; continue; }
           window._ambCaptureSink = _ambCapSink(E, key);
           // C[key] tracks the NEXT phrase's start (always in the future); the
           // in-flight phrase streams separately via stSeq.plan, so C[key] never
@@ -2221,7 +2405,7 @@
             for (; plan.cur < plan.events.length; plan.cur++) {
               const ev = plan.events[plan.cur];
               const evAt = plan.baseAt + ev.offMs / 1000;
-              if (evAt >= horizon) return false;
+              if (evAt >= HZ) return false;
               _ambEmitSeqEvent(plan.ctx, ev, evAt, stSeq);
             }
             return true;
@@ -2230,7 +2414,7 @@
           if (stSeq.plan && _streamPlan(stSeq.plan)) stSeq.plan = null;
           // (B) Start new phrases whose start falls within the horizon.
           let g = 0;
-          while (C[key] < horizon && g++ < 64) {
+          while (C[key] < HZ && g++ < 64) {
             if (!manual && stSeq.plan) break; // auto: one phrase streams at a time
             const fires = _ambCondFires(seq.when, I[key] | 0);
             stSeq.iter = I[key] | 0;
@@ -2243,6 +2427,11 @@
             }
             const plan = _ambRealizeSeqPhrase(C[key], seq, space, stSeq);
             if (!plan) { C[key] += Math.max(0.1, (seq.intervalMs | 0) / 1000); continue; }
+            // Reflect the tone now playing onto the layer's Tone dropdown.
+            try {
+              const ev0 = plan.events && plan.events[0];
+              _ambSeqReflectTone(E, seq.id, (ev0 && ev0.sounds && ev0.sounds[0]) || (plan.ctx && plan.ctx.type));
+            } catch (e) {}
             if (manual) {
               // Whole phrase now; next starts after the (snapped) Interval knob.
               for (let i = 0; i < plan.events.length; i++) {
@@ -2268,15 +2457,18 @@
       // Sample layers (dynamic list). Each fire schedules up to `chop` slices.
       if (Array.isArray(cfg.samples)) {
         for (const L of cfg.samples) {
-          if (!L || !L.on || !L.sampleId) continue;
+          if (!L || !L.sampleId) continue;
           const key = 'samp:' + L.id;
           if (_muted(L)) continue;
           if (E.windingDown) continue; // Capture finalize: start no more slices
-          if (_ambFreezeGate(E, key, now, horizon)) continue;
+          const gate = _qGate(key, !!L.on, (t) => { C[key] = t; });
+          if (!gate.run) continue;
+          const HZ = gate.hz;
+          if (_ambFreezeGate(E, key, now, HZ)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
           if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
           let g = 0;
-          while (C[key] < horizon && g++ < 4) {
+          while (C[key] < HZ && g++ < 4) {
             if (_ambCondFires(L.when, I[key] | 0)) {
               const st = E.seqState[key] || (E.seqState[key] = { pick: 0, iter: 0 });
               st.iter = I[key] | 0;
@@ -2298,10 +2490,12 @@
           // the interval grid stepLayer uses), so they get their own path —
           // still honoring solo / freeze / wind-down / roll-capture.
           if (ex.type === 'shape') {
-            if (ex.present === false || !ex.on || _muted(ex) || E.windingDown) continue;
-            if (_ambFreezeGate(E, key, now, horizon)) continue;
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.shapePhase) E.shapePhase = {}; (ex.shapes || []).forEach((_, i) => { E.shapePhase[key + '#' + i] = { startAt: t, lastAt: null }; }); });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitShape(E, ex, key, now, horizon, lead, space, cfg); }
+            try { _ambEmitShape(E, ex, key, now, gate.hz, lead, space, cfg); }
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
@@ -2309,10 +2503,12 @@
           // window (their own path, like Shape) so the seed phrase + per-cycle
           // variation stay locked to the BPM and re-read config at cycle edges.
           if (ex.type === 'bass') {
-            if (ex.present === false || !ex.on || _muted(ex) || E.windingDown) continue;
-            if (_ambFreezeGate(E, key, now, horizon)) continue;
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.bassPhase) E.bassPhase = {}; E.bassPhase[key] = { startAt: t, lastAt: null }; });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitBass(E, ex, key, now, horizon, lead, space, cfg); }
+            try { _ambEmitBass(E, ex, key, now, gate.hz, lead, space, cfg); }
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
@@ -2327,6 +2523,8 @@
           });
         }
       }
+      // Queue mode: a layer toggle landed on its boundary this tick → persist.
+      if (_qChanged && typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
     // has at least one ramp. Reads the tick-cached cfg (no re-normalize).
@@ -3650,7 +3848,13 @@
       const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = parseInt(e.value, 10) || 0; persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };
-      const toneSel = el('tone'); if (toneSel) populateGroupedToneSelect(toneSel, _ambToneOptions(), _ambGridVoiceOption());
+      const toneSel = el('tone');
+      if (toneSel) {
+        populateGroupedToneSelect(toneSel, _ambToneOptions(), _ambGridVoiceOption());
+        // Show the tone of the sequence's FIRST step (per-step voice), not a
+        // blank default — updated live to the playing step during playback.
+        try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
+      }
       bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
       const lockBtn = el('enslock');
       if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
@@ -3678,14 +3882,18 @@
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.on = !sq.on; onB.classList.toggle('on', sq.on); if (E.timer) _ambSyncOneLayerMod(E, 'seq:' + id, sq); persist(); }); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; _ambToggleLayer(E, 'seq:' + id, sq, onB, persist); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSeqLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
       if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
       // Initial values not carried by `selected`/value attrs.
       const setVal = (suf, v) => { const e = el(suf); if (e && v != null) e.value = String(v); };
-      setVal('tone', s.tone); setVal('scale', s.scale);
+      // NOTE: do NOT setVal('tone', s.tone) here — a Seq layer's own `tone` is
+      // usually '' (tone is per-step), and that empty set would clobber the
+      // first-step tone already applied above (line ~3750). Leave the tone
+      // select alone; it reflects the playing step via _ambSeqReflectTone.
+      setVal('scale', s.scale);
       const iv = el('interval-v'); if (iv) iv.textContent = _ambFmtMs(s.intervalMs);
       const lv = el('length-v'); if (lv) lv.textContent = _ambFmtMs(s.lengthMs);
       ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
@@ -3831,7 +4039,7 @@
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); if (E.timer) _ambSyncOneLayerMod(E, 'samp:' + id, L); persist(); }); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; _ambToggleLayer(E, 'samp:' + id, L, onB, persist); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSampleLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
@@ -4029,7 +4237,7 @@
       const setVal = (suf, val) => { const e = el(suf); if (e && val != null) e.value = String(val); };
       // Wire on/off, delete, and collapse FIRST so a later control-wiring error
       // (e.g. the tone picker) can never leave the layer untoggleable.
-      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { _E = E; const L = get(); if (!L) return; L.on = !L.on; onB.classList.toggle('on', L.on); if (E.timer) _ambSyncOneLayerMod(E, type + ':' + id, L); persist(); }); }
+      const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { _E = E; const L = get(); if (!L) return; _ambToggleLayer(E, type + ':' + id, L, onB, persist); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteExtra(E, type, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
@@ -4753,6 +4961,8 @@
       const set = (id, v) => { const el = document.getElementById(tr(id)); if (el && v != null) el.value = String(v); };
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
+      { const qOn = document.getElementById(tr('ambient-queue-on'));
+        if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
       { const kOn = document.getElementById(tr('ambient-key-on'));
         if (kOn) kOn.classList.toggle('active', !!cfg.keyOn);
         set('ambient-key-root', cfg.keyRoot);
@@ -4900,6 +5110,13 @@
           '<span class="ambient-hint">Timing</span>' +
           '<button type="button" class="ambient-seg" id="ambient-timing-free">Free</button>' +
           '<button type="button" class="ambient-seg" id="ambient-timing-sync">Sync</button>' +
+        '</div>' +
+        // Queue mode — when on, a layer on/off click is deferred to that
+        // layer's OWN next iteration boundary instead of applying immediately.
+        '<div class="ambient-row ambient-queue">' +
+          '<span class="ambient-hint">Queue</span>' +
+          '<button type="button" class="ambient-seg" id="ambient-queue-on" title="Queue mode — a layer on/off toggle applies on that layer&#39;s next iteration boundary (its own loop/phrase end) instead of immediately">Off</button>' +
+          '<span class="ambient-hint" id="ambient-queue-hint">toggles snap to each layer&#39;s loop</span>' +
         '</div>' +
         // Instance Key — when on, every layer roots its scales/wraps/chords at
         // the chosen root and snaps chord/wrap tones to that key's scale.
@@ -5254,10 +5471,7 @@
         if (!el) return;
         el.addEventListener('click', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
-          cfg[layer].on = !cfg[layer].on;
-          el.classList.toggle('on', cfg[layer].on);
-          if (E.timer) _ambSyncOneLayerMod(E, layer, cfg[layer]);
-          persist();
+          _ambToggleLayer(E, layer, cfg[layer], el, persist);
         });
       };
       toggle('ambient-bed-on', 'bed');
@@ -5273,6 +5487,16 @@
           persist();
         });
       });
+
+      { const qOn = G('ambient-queue-on');
+        if (qOn) qOn.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.queueMode = !cfg.queueMode;
+          // Turning Queue off applies any pending toggles now so nothing dangles.
+          if (!cfg.queueMode && E._queuePending && Object.keys(E._queuePending).length) { try { _ambApplyQueued(E); } catch (e) {} }
+          _ambSyncControls(E); persist();
+        });
+      }
 
       { const kOn = G('ambient-key-on');
         if (kOn) kOn.addEventListener('click', () => {

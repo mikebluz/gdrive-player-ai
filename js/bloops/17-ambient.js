@@ -2292,9 +2292,13 @@
         E._queuePending[key] = { L, onB, desired, at };
         if (onB) onB.classList.add('queued');
       } else {                           // queued START → first note on the next boundary
-        let at;
+        let at, period = 0;
         try { at = _ambLayerNextBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
-        E._queuePending[key] = { L, onB, desired, at };
+        try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+        // Stash the period so the arming tick can step the start forward onto
+        // the grid if the boundary slid too close to give the first voice its
+        // scheduler-lead headroom (see _qGate).
+        E._queuePending[key] = { L, onB, desired, at, period };
         if (onB) onB.classList.add('queued');
       }
       if (typeof persist === 'function') persist();
@@ -2450,7 +2454,15 @@
       const _qFinalize = (key, it, val) => {
         it.L.on = val;
         if (it.onB) { it.onB.classList.toggle('on', val); it.onB.classList.remove('queued'); }
-        try { _ambSyncOneLayerMod(E, key, it.L); } catch (e) {}
+        // Build (START) / tear down (STOP) the layer's mod chain. START builds
+        // SYNCHRONOUSLY (not via _ambSyncOneLayerMod's rAF) so the very first
+        // emit this same tick resolves the layer's destination — otherwise the
+        // first iteration routed to the default bus (wrong level / no FX) until
+        // the rAF landed.
+        try {
+          if (val) { _ambBuildMod(key, { [key]: it.L }); _ambApplyLayerFx(key, it.L); _ambApplyReverb(); }
+          else { _ambSyncOneLayerMod(E, key, it.L); }
+        } catch (e) {}
         delete E._queuePending[key];
         _qChanged = true;
       };
@@ -2463,7 +2475,15 @@
         }
         // queued START
         if (horizon >= it.at) {                      // boundary now within lookahead → arm it
-          try { if (typeof anchor === 'function') anchor(it.at); } catch (e) {}
+          // The stored boundary can slide too close to `now` (ticks are coarse),
+          // which would schedule the first event with no graph-settle headroom —
+          // the layer popped or didn't start. Step the start forward by whole
+          // periods (staying on its grid) until it has at least `lead` ahead.
+          let startAt = it.at;
+          const P = it.period || 0;
+          if (P > 0) { let g = 0; while (startAt < lead && g++ < 4096) startAt += P; }
+          else if (startAt < lead) startAt = lead;
+          try { if (typeof anchor === 'function') anchor(startAt); } catch (e) {}
           _qFinalize(key, it, true);
           return { run: true, hz: horizon };
         }

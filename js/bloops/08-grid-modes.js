@@ -398,6 +398,27 @@
           params: s.params ? { ...s.params } : undefined,
         };
       }
+      // SET wrap: notes live in a variance pool (the step also mirrors notes[0]
+      // at the top level). Transpose the whole pool AND the mirrored top note
+      // by the same factor so a grid-note press shifts the set like any wrap.
+      if (s.variance && Array.isArray(s.variance.notes)) {
+        const tn = s.variance.notes.map(n => {
+          if (n.freq == null) return { ...n };
+          const f = n.freq * factor;
+          let label = n.label;
+          try { label = Tone.Frequency(f).toNote(); } catch (e) {}
+          return { ...n, freq: f, label, cellIndex: null, params: n.params ? { ...n.params } : undefined };
+        });
+        const top = tn[0] || {};
+        return {
+          ...s,
+          freq: (s.freq != null && top.freq != null) ? top.freq : s.freq,
+          label: top.label || s.label,
+          cellIndex: null,
+          params: s.params ? { ...s.params } : undefined,
+          variance: { ...s.variance, notes: tn },
+        };
+      }
       if (s.freq != null) {
         const f = s.freq * factor;
         let label = s.label;
@@ -533,6 +554,11 @@
           const chord = s.chord.map(mapNote);
           return { ...s, chord, label: chord.map(n => n.label).join('·') };
         }
+        if (s.variance && Array.isArray(s.variance.notes)) {
+          const notes = s.variance.notes.map(mapNote);
+          const top = notes[0] || {};
+          return { ...s, freq: (Number.isFinite(s.freq) && Number.isFinite(top.freq)) ? top.freq : s.freq, label: top.label || s.label, variance: { ...s.variance, notes } };
+        }
         if (Number.isFinite(s.freq)) {
           const m = mapNote(s);
           return { ...s, freq: m.freq, label: m.label };
@@ -594,6 +620,11 @@
         if (Array.isArray(s.chord)) {
           const chord = s.chord.map(mapNote);
           return { ...s, chord, label: chord.map(n => n.label).join('·') };
+        }
+        if (s.variance && Array.isArray(s.variance.notes)) {
+          const notes = s.variance.notes.map(mapNote);
+          const top = notes[0] || {};
+          return { ...s, freq: (Number.isFinite(s.freq) && Number.isFinite(top.freq)) ? top.freq : s.freq, label: top.label || s.label, cellIndex: null, variance: { ...s.variance, notes } };
         }
         if (Number.isFinite(s.freq)) {
           const m = mapNote(s);
@@ -896,7 +927,10 @@
       });
     }
     function startSustainedWrapOnCell(cellIdx, opts = {}) {
-      if (!wrapTemplate) return null;
+      // Prog-wrap walk passes its own re-rooted chord via opts.wrapStep (see
+      // _progWrapPressOpts); otherwise the globally-armed wrapTemplate is used.
+      const tmpl = (opts && opts.wrapStep) || wrapTemplate;
+      if (!tmpl) return null;
       const note = notes[cellIdx];
       if (!note) return null;
       // Radial Tone bend (cents) — applied uniformly to every voice in
@@ -915,11 +949,16 @@
         if (s.freq != null) return s.freq;
         return null;
       };
-      const baseFreq = visit(wrapTemplate);
+      const baseFreq = visit(tmpl);
       if (baseFreq == null) return null;
-      // Diatonic transpose (see playWrapTemplateOnCell) — keeps the
-      // chord's in-key shape instead of snapping voices independently.
-      const transposed = transposeStepToScaleDegrees(wrapTemplate, baseFreq, note.freq);
+      // Prog-wrap: chromatic transpose onto opts.targetFreq (pressed note + the
+      // chord's degree offset) so the chord QUALITY is preserved exactly — a
+      // numeral re-rooted to the pressed key, not snapped to the grid scale.
+      // Normal wraps: diatonic transpose (see playWrapTemplateOnCell) so the
+      // chord keeps its in-key shape instead of snapping voices independently.
+      const transposed = (opts && opts.targetFreq != null)
+        ? transposeStepRec(tmpl, semitonesBetweenHz(baseFreq, opts.targetFreq))
+        : transposeStepToScaleDegrees(tmpl, baseFreq, note.freq);
       // Adopt the pressed cell's current tone (the master grid tone) for
       // every voice — wraps don't store their own timbre.
       const masterTone = (typeof cellParams !== 'undefined' && cellParams[cellIdx]) ? cellParams[cellIdx] : null;

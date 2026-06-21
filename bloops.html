@@ -194,33 +194,8 @@
         <label class="grid-only" title="Base octave × number of octaves. e.g. 4×1 = a single octave starting at C4. 7×7 covers the full keyboard from the lowest octave up.">Octaves
           <select id="octave-range-select"></select>
         </label>
-        <label title="Highlight a scale — non-scale notes are blacked out">Scale
-          <select id="scale-select"></select>
-        </label>
         <label class="game-only" title="Game mode — pick the key (root note). Mirrors the hidden root-select; ± buttons still nudge from here too.">Key
           <select id="game-key-select"></select>
-        </label>
-        <label title="Chord list. Grid mode: each cell press plays the current chord rooted on the pressed note; advance after the Hits count. Game mode: polygon mutates between chords on each shape-edge bounce. Empty = single notes / scale-driven polygon.">Chords
-          <select id="progression-root" class="game-only" title="Root note for the next added chord (Game mode only — Grid mode uses the pressed cell as root)"></select>
-          <select id="progression-add" title="Pick a chord quality to append">
-            <option value="">+ Add</option>
-          </select>
-          <span class="progression-chips" id="progression-chips"></span>
-          <button type="button" id="progression-clear" class="progression-clear" title="Clear chords">Clear</button>
-        </label>
-        <label title="How many cell presses / shape-edge bounces play the current chord before mutating to the next. Only active with two or more chords.">Hits
-          <select id="hits-per-chord">
-            <option value="1" selected>1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
-            <option value="6">6</option>
-            <option value="7">7</option>
-            <option value="8">8</option>
-            <option value="9">9</option>
-            <option value="10">10</option>
-          </select>
         </label>
         <label class="grid-only" title="Master tuning: frequency of A4 (Hz)">A4
           <input type="number" id="master-freq-input" min="400" max="480" value="440" />
@@ -386,6 +361,13 @@
           </div>
         </div>
         <button type="button" id="fluid-grid-toggle" hidden aria-hidden="true" tabindex="-1" style="display:none"></button>
+        <!-- Scale dropdown — the MIDDLE third of the banner row (moved out of
+             the ⚙ Mode settings popover). Banner is now mode | scale | Sounds,
+             each 1/3. The #scale-select ID is unchanged so every JS handler
+             (populateGroupedScaleSelect, value reads/writes) keeps resolving. -->
+        <div class="banner-scale" id="scale-banner-mid">
+          <select id="scale-select" title="Scale — highlight a scale; non-scale notes are blacked out"></select>
+        </div>
         <!-- Note-shift + octave-nudge buttons moved to the vertical rail to
              the RIGHT of the grid (.grid-rail, below). -->
         <!-- Sounds menu — anchored at the RIGHT edge (where the master-vol
@@ -409,8 +391,7 @@
            machine) binds without any rewires. -->
       <div class="wrap-bank" id="wrap-bank" hidden>
         <span class="wrap-bank-label" id="wrap-bank-label" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false" title="Wraps menu: Bank picker, Cycle (off → right → left → off), Shuffle, Clear">Wraps ▾</span>
-        <select class="wrap-bank-select" id="wrap-bank-select" title="Recall a wrap from the active bank"></select>
-        <button type="button" class="wrap-bank-del" id="wrap-bank-del" title="Delete the selected wrap" aria-label="Delete the selected wrap" hidden>×</button>
+        <div class="wrap-bank-chips" id="wrap-bank-chips" role="listbox" aria-label="Wraps in the active bank"></div>
       </div>
       <div class="grid-wrap-row" id="grid-wrap-row">
         <div class="wrap-segment">

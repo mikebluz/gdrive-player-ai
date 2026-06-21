@@ -5160,7 +5160,9 @@
     // one-shot (their voices are scheduled sequentially and don't have a
     // single sustain to hold).
     function polyStartWrapCell(cellIdx, pointerId, opts = {}) {
-      if (!notes[cellIdx] || !wrapTemplate) return;
+      // opts.wrapStep is the Prog-wrap walk's re-rooted chord (no global
+      // wrapTemplate needed in that case).
+      if (!notes[cellIdx] || (!wrapTemplate && !(opts && opts.wrapStep))) return;
       _polyStartSustain(cellIdx, pointerId,
         () => startSustainedWrapOnCell(cellIdx, opts),
         null
@@ -5304,6 +5306,12 @@
         if (_wrapCyclePendingAdvance) {
           _wrapCyclePendingAdvance = false;
           advanceWrapCycle();
+        }
+        // Prog-wrap walk: step to the next chord in the progression for the
+        // next press (the pressed note re-roots it as the key).
+        if (typeof _progWrapPendingAdvance !== 'undefined' && _progWrapPendingAdvance) {
+          _progWrapPendingAdvance = false;
+          try { _progWrapAdvance(); } catch (e) {}
         }
       }
     }

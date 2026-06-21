@@ -3033,6 +3033,22 @@
       const INT_KEY = 'bloops-wrap-edit-intervals';
       let showIntervals = false;
       try { showIntervals = localStorage.getItem(INT_KEY) === '1'; } catch (e) {}
+      // Cycle-repeats: the active User wrap's per-wrap dwell count (presses
+      // before the cycle steps on). Only editable on a saved User wrap.
+      const _weActiveSavedWrap = () => {
+        if (typeof activeWrapBankId === 'undefined' || activeWrapBankId == null) return null;
+        if (typeof savedWraps === 'undefined' || !Array.isArray(savedWraps)) return null;
+        return savedWraps.find(w => w.id === activeWrapBankId) || null;
+      };
+      const _weCycReps = () => { const e = _weActiveSavedWrap(); return (e && e.repeats > 0) ? (e.repeats | 0) : 1; };
+      const _weSetCycReps = (n) => {
+        const e = _weActiveSavedWrap(); if (!e) return;
+        e.repeats = Math.max(1, Math.min(16, n | 0));
+        try { if (typeof persistSavedWraps === 'function') persistSavedWraps(); } catch (x) {}
+        try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (x) {}
+        try { if (typeof renderWrapBank === 'function') renderWrapBank(); } catch (x) {}
+        render();
+      };
       const render = () => {
         const ref = _activeWrapNoteList();
         const count = ref ? ref.notes.filter(_wrapNoteHasFreq).length : 0;
@@ -3084,6 +3100,14 @@
             <button type="button" class="we-btn we-toggle${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? ' active' : ''}" id="we-queue" aria-pressed="${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'true' : 'false'}">${(typeof wrapQueueMode !== 'undefined' && wrapQueueMode) ? 'On' : 'Off'}</button>
           </div>
           <div class="we-row">
+            <span class="we-label" title="Cycle mode: how many presses this wrap repeats before the cycle steps to the next wrap. Saved per wrap.">Cycle ×</span>
+            <div class="we-row-btns">
+              <button type="button" class="we-btn" id="we-cyc-dn"${(!_weActiveSavedWrap() || _weCycReps() <= 1) ? ' disabled' : ''}>−</button>
+              <span class="we-summary" id="we-cyc-val" style="min-width:2.2em;text-align:center">×${_weCycReps()}</span>
+              <button type="button" class="we-btn" id="we-cyc-up"${(!_weActiveSavedWrap() || _weCycReps() >= 16) ? ' disabled' : ''}>+</button>
+            </div>
+          </div>
+          <div class="we-row">
             <span class="we-label">Edit</span>
             <button type="button" class="we-btn" id="we-open-editor"${wrapTemplate ? '' : ' disabled'} title="${wrapTemplate ? 'Open the full step editor on this wrap' : 'Commit the wrap (Close) before editing fields'}">Open editor…</button>
           </div>
@@ -3131,6 +3155,8 @@
           if (typeof setWrapQueueMode === 'function') setWrapQueueMode(!(typeof wrapQueueMode !== 'undefined' && wrapQueueMode));
           render();
         });
+        modal.querySelector('#we-cyc-dn')?.addEventListener('click', () => _weSetCycReps(_weCycReps() - 1));
+        modal.querySelector('#we-cyc-up')?.addEventListener('click', () => _weSetCycReps(_weCycReps() + 1));
         modal.querySelector('#we-open-editor')?.addEventListener('click', () => {
           // Close this menu first — the step editor stacks its own
           // overlay and we don't want both modals open at once.

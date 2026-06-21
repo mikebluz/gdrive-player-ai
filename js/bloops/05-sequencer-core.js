@@ -2111,6 +2111,15 @@
         step.subSteps.forEach(s => _rebaseStepNotes(s, deltaSemi, newKc));
         return;
       }
+      // SET wrap: rebase the whole variance pool (and the mirrored top note) so
+      // a key change shifts the set like every other wrap shape.
+      if (step.variance && Array.isArray(step.variance.notes)) {
+        step.variance.notes.forEach(n => _rebaseNoteInPlace(n, deltaSemi, newKc));
+        if (step.freq != null) _rebaseNoteInPlace(step, deltaSemi, newKc);
+        const first = step.variance.notes[0];
+        if (first && first.label) step.label = first.label;
+        return;
+      }
       if (step.freq != null) {
         _rebaseNoteInPlace(step, deltaSemi, newKc);
       }

@@ -734,6 +734,37 @@
             updateChordDisplay();
             return;
           }
+          // Prog-wrap walk — when a Prog bank is the active wrap bank, a cell
+          // press doesn't transpose one armed chord: it WALKS the progression.
+          // Chord numerals are key-relative, so the pressed note is the key
+          // root and the current cursor chord plays at root + its degree
+          // offset; the cursor advances one chord per press. (See
+          // _progWrapPressOpts / _progWrapAdvance.)
+          if (typeof _progWrapActive === 'function' && _progWrapActive()) {
+            const _pw = _progWrapPressOpts(i);
+            if (_pw) {
+              cell.classList.add('flash');
+              setTimeout(() => cell.classList.remove('flash'), 80);
+              _polySession.pointerStartedOnCell.set(e.pointerId, true);
+              const _wrapOpts = Object.assign({}, _pw);
+              if (radialTone) {
+                const rect = cell.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  const xFrac = (e.clientX - rect.left) / rect.width;
+                  const yFrac = (e.clientY - rect.top)  / rect.height;
+                  const cents = radialBendCents(xFrac, yFrac);
+                  _radialBendInit(i, cents);
+                  _wrapOpts.detune = cents;
+                  setCellFreqDisplayCents(i, cents);
+                }
+              } else {
+                _radialBend.delete(i);
+              }
+              polyStartWrapCell(i, e.pointerId, _wrapOpts);
+              _progWrapPendingAdvance = true;
+              return;
+            }
+          }
           // Wrap template — once Wrap has been used to build a chord
           // or sub, cell clicks audition that form transposed so the
           // pressed note becomes its first note. Overrides whichever

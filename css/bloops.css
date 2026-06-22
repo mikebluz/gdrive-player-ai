@@ -2443,8 +2443,21 @@
       padding: 6px 20px; gap: 10px;
       background: linear-gradient(to top, #000 0%, #000 45%, rgba(0, 0, 0, 0.75) 75%, rgba(0, 0, 0, 0) 100%);
     }
-    /* Play sits bottom-right, like Make's transport cluster. */
+    /* Play sits bottom-right, like Make's transport cluster; Capture to its left. */
     .ambient-footer-transport { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex: 1 1 100%; }
+    /* Capture: a round transport button mirroring Play, 80% the size (≈83px),
+       amber by default (distinct from Play's cyan), red while recording. */
+    .ambient-footer-capture {
+      flex: 0 0 auto; align-self: center;
+      width: 83px; height: 83px; min-width: 83px; min-height: 83px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: pointer; font-size: 1.9rem; padding: 0; transition: all 0.15s ease;
+      background: rgba(0, 0, 0, 0.5); color: #f4b740; border: 2px solid #f4b740;
+      box-shadow: 0 0 12px rgba(244, 183, 64, 0.45);
+    }
+    .ambient-footer-capture:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(244, 183, 64, 0.7); }
+    .ambient-footer-capture.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); }
+    .ambient-footer-capture:disabled { opacity: 0.7; cursor: default; }
     /* Reserve space so the fixed (tall) bar never covers the last panel content. */
     .ambient-inner { padding-bottom: 128px; }
     /* Play / Stop — matches the Make footer transport play button exactly
@@ -2568,6 +2581,22 @@
       border-radius: 6px; padding: 2px 9px; font-size: 0.8rem; cursor: pointer; }
     .amb-sec-row button:disabled { opacity: 0.35; cursor: default; }
     .amb-sec-del { margin-left: auto; color: #e06c75 !important; }
+
+    /* Ramp multi-target picker */
+    .amb-ramptgt-modal { min-width: min(92vw, 360px); }
+    .amb-ramptgt-list { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow-y: auto; margin: 8px 0; }
+    .amb-ramptgt-group {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.4px; color: #8a8aa8; margin: 8px 2px 2px;
+    }
+    .amb-ramptgt-item {
+      display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      padding: 6px 8px; border: 1px solid transparent; border-radius: 6px;
+      background: none; color: #c7b3f0; font-size: 0.82rem; cursor: pointer;
+    }
+    .amb-ramptgt-item:hover { background: rgba(159,122,234,0.08); }
+    .amb-ramptgt-item.on { background: rgba(159,122,234,0.16); border-color: #9f7aea; color: #f5d0fe; }
+    .amb-ramptgt-check { width: 1em; color: #9f7aea; }
     .ambient-layer {
       border: 1px solid #20203a; border-radius: 8px; padding: 10px 12px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);
@@ -2882,8 +2911,11 @@
       position: fixed; inset: 0; z-index: 700;
       display: flex; align-items: center; justify-content: center;
       box-sizing: border-box; padding: 12px;
-      background: rgba(4, 4, 12, 0.82);
-      -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+      /* Opaque-ish dim instead of a full-screen backdrop-filter blur: the blur
+         forced the browser to re-blur every (often animating, layer-heavy) thing
+         behind it each frame, which made the editor very choppy. A solid dim is
+         free to composite. */
+      background: rgba(4, 4, 12, 0.94);
     }
     .ambient-shape-edithost[hidden] { display: none; }
     .ambient-shape-editbox {
@@ -2995,9 +3027,10 @@
     .ambient-arp-add:hover { border-color: #9f7aea; color: #f5d0fe; }
     .ambient-arp-list { display: flex; flex-direction: column; gap: 5px; }
     .ambient-arp-row {
-      display: flex; align-items: center; gap: 6px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
       padding: 4px 5px; border-radius: 7px; border: 1px solid transparent;
     }
+    .ambient-arp-dir { flex: 0 0 auto; width: auto; padding: 3px 6px; font-size: 0.72rem; }
     .ambient-arp-row.sel { background: rgba(159, 122, 234, 0.10); border-color: rgba(159, 122, 234, 0.4); }
     .ambient-arp-idx { flex: 0 0 auto; width: 18px; color: #6a6a88; font: 700 0.74rem 'Segoe UI', sans-serif; text-align: right; }
     .ambient-arp-notes { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

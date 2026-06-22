@@ -399,15 +399,20 @@
         }
         if (x.type === 'arp') {
           if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
+          const _DIRS = ['up', 'down', 'updown', 'downup', 'random'];
+          const _layerDir = (_DIRS.indexOf(x.dir) >= 0) ? x.dir : 'up';
           x.steps = x.steps.map(s => {
             const st = (s && typeof s === 'object') ? s : {};
             if (!st.notes || typeof st.notes !== 'object' || typeof st.notes.type !== 'string') st.notes = { type: 'scale', scale: '' };
             _ambNormalizeNotes(st);
             st.passes = Math.max(1, Math.min(16, (st.passes | 0) || 1));
+            // Direction is per ENTRY now — migrate the old layer-wide dir onto
+            // any entry that lacks one.
+            if (_DIRS.indexOf(st.dir) < 0) st.dir = _layerDir;
             return st;
           });
           x.sel = Math.max(0, Math.min(x.sel | 0, x.steps.length - 1));
-          if (['up', 'down', 'updown', 'downup', 'random'].indexOf(x.dir) < 0) x.dir = 'up';
+          x.dir = _layerDir;   // kept only as the default direction for newly-added entries
           x.randomness = Math.max(0, Math.min(100, x.randomness | 0));
           x.octaves = Math.max(1, Math.min(4, (x.octaves | 0) || 2));
           x.register = Math.max(1, Math.min(8, (x.register | 0) || 4));
@@ -419,7 +424,7 @@
       let maxRid = 0;
       cfg.ramps.forEach(r => { if (r && Number.isFinite(r.id) && r.id > maxRid) maxRid = r.id; });
       cfg.ramps.forEach(r => { if (r && !Number.isFinite(r.id)) r.id = ++maxRid; });
-      cfg.ramps = cfg.ramps.filter(r => r && typeof r === 'object').map(r => _normalizeRamp(r, r.id));
+      cfg.ramps = cfg.ramps.filter(r => r && typeof r === 'object').map(r => _normalizeRamp(r, r.id, cfg));
       return cfg;
     }
     function _laneAmbientCfg() {
@@ -1381,6 +1386,69 @@
       st.lastAt = tTo;
     }
 
+    // ================= PEDAL engine =================================
+    // A dead-simple pedal-point loop: `density` evenly-spaced hits per bar of the
+    // ROOT note (degree 0 of the current key/grid), over `bars` bars, BPM-locked
+    // and phase-anchored like Bass/Run. Default 1 bar × 4 quarter-note roots.
+    // Follows the key (incl. keyMaster sections) via the per-note time stamp.
+    function _ambEmitPedal(E, inst, key, now, horizon, lead, space, cfg) {
+      if (!E.runPhase) E.runPhase = {};
+      const bpm = _ambBpm();
+      const barSec = (60 / bpm) * 4;                 // 4/4
+      const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 1);
+      const phraseSec = bars * barSec;
+      if (!(phraseSec > 0.05)) return;
+      const perBar = Math.max(1, Math.min(16, inst.density | 0) || 4);
+      const totalSlots = bars * perBar;
+      const slotSec = barSec / perBar;
+      const lenMs  = Math.max(40, inst.lengthMs | 0);
+      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const reg    = Math.max(1, Math.min(7, inst.register | 0) || 4);
+      const src    = _ambNotesOf(inst);
+      const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      // Match a default Shape node exactly: the grid voice at FULL volume 100
+      // (applyLevel'd), not the ~0.3×-attenuated Bass/Motif params — so a default
+      // Pedal and a default Shape sound the same.
+      const vtype  = _ambLayerType(inst.tone);
+      const pan    = _ambLayerPan(inst);
+      // ADSR is exposed at the layer level (Attack/Decay/Sustain/Release sliders);
+      // defaults match a default Shape node's fitted bare-voice envelope.
+      const atk = Math.max(0, Math.min(2000, Number.isFinite(inst.attack) ? inst.attack : 5));
+      const dec = Math.max(0, Math.min(2000, Number.isFinite(inst.decay) ? inst.decay : 40));
+      const sus = Math.max(0, Math.min(100, Number.isFinite(inst.sustain) ? inst.sustain : 75));
+      const rel = Math.max(0, Math.min(4000, Number.isFinite(inst.release) ? inst.release : 200));
+
+      let st = E.runPhase[key];
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / phraseSec));
+      const cTo   = Math.floor((tTo - st.startAt) / phraseSec);
+      let cap = 0;
+      for (let c = cFrom; c <= cTo && cap < 512; c++) {
+        if (!_ambCondFires(inst.when, c)) continue;
+        const cStart = st.startAt + c * phraseSec;
+        const rRnd = (restP > 0) ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
+        for (let i = 0; i < totalSlots; i++) {
+          if (rRnd && rRnd() * 100 < restP) continue;
+          const at = cStart + i * slotSec;
+          if (at < tFrom || at >= tTo) continue;
+          _ambKeyTime = at;
+          const f = _ambDegreeFreq(0, reg, src);   // root of the current key/grid
+          if (f == null) continue;
+          const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
+            volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan };
+          if (dmod) bp._detuneMod = dmod;
+          try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+          cap++;
+          if (cap >= 512) break;
+        }
+      }
+      st.lastAt = tTo;
+    }
+
     // ================= SHAPE engine =================================
     // A Shape layer holds N radial-sequencer wheels. Each wheel loops
     // continuously, phase-anchored to a downbeat (E.shapePhase[key#i].startAt)
@@ -1606,18 +1674,17 @@
       const octs = Math.max(1, Math.min(4, (arp.octaves | 0) || 2));
       const base = Math.max(1, Math.min(8, (arp.register | 0) || 4));
       const len = N * octs;
-      const dir = arp.dir || 'up';
-      // Index for this note.
+      // Direction is per series ENTRY now. Randomness (layer-wide) is how much
+      // ANY direction deviates from its ordered pattern: with probability rnd a
+      // note jumps to a random pool degree; otherwise it follows Up/Down/etc.
+      // 'random' direction is the fully-shuffled extreme (every note random).
+      const dir = (entry && entry.dir) || arp.dir || 'up';
+      const rnd = Math.max(0, Math.min(100, arp.randomness | 0)) / 100;
       let idx;
-      if (dir === 'random') {
-        const rnd = Math.max(0, Math.min(100, arp.randomness | 0)) / 100;
-        if (len <= 1) idx = 0;
-        else if (_ambRand() < rnd) idx = Math.floor(_ambRand() * len);      // fully random
-        else { idx = st.pos + (_ambRand() < 0.5 ? -1 : 1); if (idx < 0) idx = 1; if (idx >= len) idx = len - 2; idx = Math.max(0, Math.min(len - 1, idx)); } // small ordered step
-        st.pos = idx;
-      } else {
-        idx = _ambArpIndexFor(dir, st.note, len);
-      }
+      if (len <= 1) idx = 0;
+      else if (dir === 'random') idx = Math.floor(_ambRand() * len);
+      else if (rnd > 0 && _ambRand() < rnd) idx = Math.floor(_ambRand() * len);
+      else idx = _ambArpIndexFor(dir, st.note, len);
       // Advance the pass / entry cursor for NEXT time.
       const passLen = _ambArpPassLen(dir, len);
       st.note += 1;
@@ -2385,6 +2452,7 @@
       if (type === 'samp') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
       if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4; }
+      if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'shape') {
         if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
           const i = Math.max(0, Math.min(L.shapes.length - 1, L.sel | 0));
@@ -2411,7 +2479,7 @@
             type === 'texture' || type === 'beat' || type === 'arp') {
           const c = E.clocks && E.clocks[key];
           if (c != null && c > now + eps) return c;     // next phrase / slice / step start
-        } else if (type === 'bass' || type === 'run') {
+        } else if (type === 'bass' || type === 'run' || type === 'pedal') {
           const pm = (type === 'bass') ? E.bassPhase : E.runPhase;
           const st = pm && pm[key];
           if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
@@ -2437,7 +2505,7 @@
       if (!(P > 0)) return now + 0.1;
       const eps = 0.02;
       let A = null;
-      if (type === 'bass' || type === 'run') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
+      if (type === 'bass' || type === 'run' || type === 'pedal') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
       else if (type === 'shape') {
         const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
         const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
@@ -2630,6 +2698,9 @@
       E.shapePhase = {};   // per Shape-layer wheel: { startAt, lastAt } phase clocks
       E.arpState = {};     // per Arp layer: { entry, note, pos } series/sweep cursor
       E.bassPhase = {};    // per Bass layer: { startAt, lastAt } phrase-cycle clock
+      E.runPhase = {};     // per Run / Pedal layer: { startAt, lastAt } loop clock — MUST reset
+                           // on stop/start too, or Run/Pedal keep a stale anchor and desync
+                           // from Shape (which does reset) on the next play.
       E._queuePending = null; E._queueAt = null;   // Queue-mode pending toggles
       E._t0 = null;        // engine grid anchor (set on first tick) for queued-START alignment
     }
@@ -2894,6 +2965,17 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitRun(E, ex, key, now, gate.hz, lead, space, cfg); }
+            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
+          // Pedal layers: a simple root-note loop. Windowed/phase-anchored too.
+          if (ex.type === 'pedal') {
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitPedal(E, ex, key, now, gate.hz, lead, space, cfg); }
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
@@ -3622,19 +3704,53 @@
         || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length))
         || (Array.isArray(cfg.samples) && cfg.samples.some(s => s.on && s.sampleId));
       if (!anyOn) { alert('Turn on at least one Bloom layer before capturing.'); return; }
-      // Live capture: start recording the master output now; the button becomes
-      // "Finalize", which winds Bloom down (each layer stops starting new
-      // iterations once its current one completes) and ends the recording when
-      // the output has decayed to silence — a clean tail with no fade-cut.
+      // Length popover: a fixed duration (auto-finalize after it elapses) or Live
+      // (record until the user presses Finalize). Either way Finalize winds Bloom
+      // down and ends on silence for a clean tail.
+      const btn = _ambGet(E, 'ambient-export-btn');
+      const opts = [
+        { label: '● Live — until Finalize', fn: () => _ambCaptureBegin(E, 0) },
+        'hr',
+        { label: '15 sec', fn: () => _ambCaptureBegin(E, 15000) },
+        { label: '30 sec', fn: () => _ambCaptureBegin(E, 30000) },
+        { label: '1 min',  fn: () => _ambCaptureBegin(E, 60000) },
+        { label: '2 min',  fn: () => _ambCaptureBegin(E, 120000) },
+        { label: '4 min',  fn: () => _ambCaptureBegin(E, 240000) },
+        'hr',
+        { label: '⌨ Custom seconds…', fn: () => {
+          let s = null; try { s = prompt('Capture length in seconds:', '60'); } catch (e) {}
+          if (s == null) return;
+          const n = parseInt(s, 10);
+          if (!Number.isFinite(n) || n <= 0) { alert('Enter a positive number of seconds.'); return; }
+          _ambCaptureBegin(E, n * 1000);
+        } },
+      ];
+      if (typeof showCtxMenu === 'function' && btn) {
+        const r = btn.getBoundingClientRect();
+        showCtxMenu(r.left, r.top, opts);   // footer sits low — menu opens upward (clamped on-screen)
+      } else {
+        _ambCaptureBegin(E, 0);
+      }
+    }
+    // Start a capture; lenMs > 0 schedules an automatic Finalize after that long
+    // (simulating the user's press), lenMs = 0 records live until they Finalize.
+    function _ambCaptureBegin(E, lenMs) {
       _ambCaptureStart(E);
+      if (!E.capRec) return;   // start failed (alerted already)
+      if (lenMs > 0) {
+        if (E._capAutoTimer) { try { clearTimeout(E._capAutoTimer); } catch (e) {} }
+        E._capAutoTimer = setTimeout(() => { E._capAutoTimer = null; try { _ambCaptureFinalize(E); } catch (e) {} }, lenMs);
+        if (typeof showToast === 'function') showToast('Capturing — auto-finalize in ' + Math.round(lenMs / 1000) + 's (or press Finalize to end early).');
+      }
     }
     // Reflect the capture state onto the Capture/Finalize button.
     function _ambRefreshCaptureBtn(E) {
       const btn = _ambGet(E, 'ambient-export-btn');
       if (!btn) return;
-      if (E.capRec && E.windingDown) { btn.textContent = '⏳ Finalizing…'; btn.disabled = true; btn.classList.add('recording'); }
-      else if (E.capRec) { btn.textContent = '■ Finalize'; btn.disabled = false; btn.classList.add('recording'); }
-      else { btn.textContent = '⤓ Capture'; btn.disabled = false; btn.classList.remove('recording'); }
+      // Icon-only (it's a round transport button now); the title carries the words.
+      if (E.capRec && E.windingDown) { btn.textContent = '⏳'; btn.title = 'Finalizing — ending on silence'; btn.disabled = true; btn.classList.add('recording'); }
+      else if (E.capRec) { btn.textContent = '■'; btn.title = 'Finalize capture'; btn.disabled = false; btn.classList.add('recording'); }
+      else { btn.textContent = '⤓'; btn.title = 'Capture — pick a length or record live'; btn.disabled = false; btn.classList.remove('recording'); }
     }
     // Begin live recording the master output (fan-out tap, no seed restart).
     function _ambCaptureStart(E) {
@@ -3694,6 +3810,7 @@
     // out fully), with a safety ceiling so it can't hang on an endless tail.
     function _ambCaptureFinalize(E) {
       const r = E.capRec; if (!r || r.finalizing) return;
+      if (E._capAutoTimer) { try { clearTimeout(E._capAutoTimer); } catch (e) {} E._capAutoTimer = null; }
       r.finalizing = true;
       E.windingDown = true;
       _ambRefreshCaptureBtn(E);
@@ -3718,8 +3835,34 @@
     // A friendly default name for a captured take: "Adjective Noun" (e.g.
     // "Velvet Canyon"), so the Save/Upload dialog prepopulates something
     // memorable instead of a timestamp. New random pick per capture.
-    const _AMB_NAME_ADJ = ['Velvet', 'Wobbly', 'Cosmic', 'Hazy', 'Golden', 'Crystal', 'Drifting', 'Electric', 'Midnight', 'Lush', 'Frosted', 'Molten', 'Quiet', 'Restless', 'Sunken', 'Faded', 'Neon', 'Wild', 'Gentle', 'Distant', 'Amber', 'Silver', 'Crooked', 'Liquid', 'Dusty', 'Hollow', 'Radiant', 'Mellow', 'Twisted', 'Floating', 'Burnt', 'Glassy', 'Secret', 'Tidal', 'Wandering', 'Bright', 'Murky', 'Static', 'Lunar', 'Woolen'];
-    const _AMB_NAME_NOUN = ['Canyon', 'Pelican', 'Comet', 'Meadow', 'Lantern', 'Harbor', 'Cascade', 'Circuit', 'Glacier', 'Ember', 'Marsh', 'Mirage', 'Orchard', 'Reef', 'Tundra', 'Drone', 'Echo', 'Grove', 'Halo', 'Loom', 'Nebula', 'Pulse', 'Ravine', 'Signal', 'Thicket', 'Vortex', 'Willow', 'Anvil', 'Beacon', 'Current', 'Delta', 'Fathom', 'Gully', 'Lagoon', 'Monsoon', 'Prairie', 'Quarry', 'Spire', 'Vale', 'Hollow'];
+    const _AMB_NAME_ADJ = [
+      'Velvet', 'Wobbly', 'Cosmic', 'Hazy', 'Golden', 'Crystal', 'Drifting', 'Electric', 'Midnight', 'Lush',
+      'Frosted', 'Molten', 'Quiet', 'Restless', 'Sunken', 'Faded', 'Neon', 'Wild', 'Gentle', 'Distant',
+      'Amber', 'Silver', 'Crooked', 'Liquid', 'Dusty', 'Hollow', 'Radiant', 'Mellow', 'Twisted', 'Floating',
+      'Burnt', 'Glassy', 'Secret', 'Tidal', 'Wandering', 'Bright', 'Murky', 'Static', 'Lunar', 'Woolen',
+      'Smoky', 'Shimmering', 'Frozen', 'Warm', 'Cold', 'Dim', 'Vivid', 'Pale', 'Dark', 'Bleak',
+      'Sleepy', 'Drowsy', 'Brisk', 'Tender', 'Brittle', 'Supple', 'Glowing', 'Fractured', 'Weathered', 'Rusted',
+      'Polished', 'Marbled', 'Ashen', 'Smoldering', 'Ghostly', 'Spectral', 'Phantom', 'Eerie', 'Mystic', 'Arcane',
+      'Sacred', 'Sublime', 'Serene', 'Tranquil', 'Placid', 'Whispering', 'Humming', 'Crackling', 'Rippling', 'Swirling',
+      'Tumbling', 'Soaring', 'Gliding', 'Creeping', 'Hidden', 'Buried', 'Drenched', 'Misty', 'Foggy', 'Stormy',
+      'Thunderous', 'Windswept', 'Sunlit', 'Moonlit', 'Starlit', 'Gilded', 'Burnished', 'Tarnished', 'Verdant', 'Crimson',
+      'Indigo', 'Violet', 'Scarlet', 'Azure', 'Teal', 'Dappled', 'Speckled', 'Striped', 'Velour', 'Satin',
+      'Woven', 'Tangled', 'Knotted', 'Hushed', 'Soft', 'Sharp', 'Heavy', 'Weightless', 'Looming', 'Shifting',
+    ];
+    const _AMB_NAME_NOUN = [
+      'Canyon', 'Pelican', 'Comet', 'Meadow', 'Lantern', 'Harbor', 'Cascade', 'Circuit', 'Glacier', 'Ember',
+      'Marsh', 'Mirage', 'Orchard', 'Reef', 'Tundra', 'Drone', 'Echo', 'Grove', 'Halo', 'Loom',
+      'Nebula', 'Pulse', 'Ravine', 'Signal', 'Thicket', 'Vortex', 'Willow', 'Anvil', 'Beacon', 'Current',
+      'Delta', 'Fathom', 'Gully', 'Lagoon', 'Monsoon', 'Prairie', 'Quarry', 'Spire', 'Vale', 'Basin',
+      'Fjord', 'Dune', 'Mesa', 'Bluff', 'Ridge', 'Summit', 'Valley', 'Gorge', 'Crater', 'Cavern',
+      'Grotto', 'Cove', 'Inlet', 'Estuary', 'Bayou', 'Wetland', 'Heath', 'Moor', 'Fen', 'Glade',
+      'Copse', 'Forest', 'Timber', 'Birch', 'Cedar', 'Maple', 'Aspen', 'Fern', 'Moss', 'Lichen',
+      'Bramble', 'Nettle', 'Clover', 'Thistle', 'Reed', 'Rush', 'Sedge', 'Cattail', 'Pollen', 'Nectar',
+      'Hive', 'Swarm', 'Flock', 'Heron', 'Falcon', 'Sparrow', 'Raven', 'Magpie', 'Finch', 'Plover',
+      'Curlew', 'Otter', 'Marten', 'Lynx', 'Badger', 'Stoat', 'Vole', 'Newt', 'Toad', 'Minnow',
+      'Carp', 'Perch', 'Trout', 'Eel', 'Squid', 'Anemone', 'Kelp', 'Plankton', 'Tide', 'Wake',
+      'Eddy', 'Surge', 'Swell', 'Breaker', 'Spray', 'Foam', 'Brine', 'Trench', 'Abyss', 'Shoal',
+    ];
     function _ambRandomTrackName() {
       const a = _AMB_NAME_ADJ[Math.floor(Math.random() * _AMB_NAME_ADJ.length)];
       const n = _AMB_NAME_NOUN[Math.floor(Math.random() * _AMB_NAME_NOUN.length)];
@@ -4630,8 +4773,8 @@
       // is held for N "passes" (one Direction sweep = one pass) before advancing
       // to the next. Direction + Randomness shape the note order. Pitch material
       // is the series (no single 'notes' source); the layer owns voice/timing.
-      arp: { label: 'Arp', ctrls: [['tone'], ['arpseries'], ['arpdir'],
-        ['sl', 'randomness', 'Randomness', 0, 100, 'ordered → chaos'],
+      arp: { label: 'Arp', ctrls: [['tone'], ['arpseries'],
+        ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'],
         ['rate'], ['tm', 'intervalMs', 'Rate', 40, 2000, 10],
         ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['tm', 'lengthMs', 'Length', 40, 2000, 10],
@@ -4669,6 +4812,19 @@
         ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Pedal: a simple pedal-point loop of the key/grid root. Bars = loop
+      // length, Density = root hits per bar (default 1 bar × 4 = quarter notes).
+      pedal: { label: 'Pedal', ctrls: [['tone'],
+        ['sl', 'register', 'Register', 1, 7, 'octave'],
+        ['sl', 'bars', 'Bars', 1, 16, 'loop length'],
+        ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['sl', 'attack', 'Attack', 0, 2000, 'ms'],
+        ['sl', 'decay', 'Decay', 0, 2000, 'ms'],
+        ['sl', 'sustain', 'Sustain', 0, 100, '%'],
+        ['sl', 'release', 'Release', 0, 4000, 'ms'],
+        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
@@ -4683,7 +4839,7 @@
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
       if (type === 'arp') return Object.assign(base, {
-        tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1 }], sel: 0,
+        tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1, dir: 'up' }], sel: 0,
         dir: 'up', randomness: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
         lengthMs: 220, restProb: 0, accent: 0,
       });
@@ -4702,6 +4858,13 @@
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
         bars: 2, density: 8, lengthMs: 220, vary: 0, restProb: 10, accent: 20,
+      });
+      // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
+      // 4 (C4) + full volume matches a default Shape node so they sound the same.
+      if (type === 'pedal') return Object.assign(base, {
+        tone: '', notes: { type: 'scale', scale: '' }, register: 4,
+        bars: 1, density: 4, lengthMs: 400, restProb: 0, accent: 0,
+        attack: 5, decay: 40, sustain: 75, release: 200,
       });
       return base;
     }
@@ -4763,6 +4926,7 @@
           '<div class="ambient-shape-btns">' +
             '<button type="button" class="ambient-shape-add" id="' + p + '-shape-add" title="Add a new wheel">+ Shape</button>' +
             '<button type="button" class="ambient-shape-editbtn" id="' + p + '-shape-edit" title="Edit the selected wheel in the Shape editor">✎ Edit</button>' +
+            '<button type="button" class="ambient-shape-editbtn ambient-shape-toarp" id="' + p + '-shape-toarp" title="Convert this Shape layer into an Arp layer (keeps tone / level / FX)">→ Arp</button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -4825,7 +4989,7 @@
           if (!Array.isArray(L.steps)) L.steps = [];
           const src = L.steps[L.sel | 0];
           const notes = (src && src.notes) ? JSON.parse(JSON.stringify(src.notes)) : { type: 'scale', scale: '' };
-          L.steps.push({ notes, passes: (src && src.passes) || 1 });
+          L.steps.push({ notes, passes: (src && src.passes) || 1, dir: (src && src.dir) || L.dir || 'up' });
           L.sel = L.steps.length - 1;
           _ambRenderArpList(E, get, p);
           _ambResetArp(E, L.type + ':' + L.id);
@@ -4859,6 +5023,13 @@
             _ambResetArp(E, key);
           });
         });
+        // Per-entry Direction — each series row sweeps in its own order.
+        const ds = document.createElement('select'); ds.className = 'ambient-select ambient-arp-dir';
+        [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Dn'], ['downup', 'Dn-Up'], ['random', 'Rand']].forEach(d => {
+          const o = document.createElement('option'); o.value = d[0]; o.textContent = d[1]; ds.appendChild(o);
+        });
+        ds.value = st.dir || 'up';
+        ds.addEventListener('change', () => { st.dir = ds.value || 'up'; _ambResetArp(E, key); if (typeof persistWorkspace === 'function') persistWorkspace(); });
         // Passes stepper (1..16 sweeps before advancing to the next entry).
         const pw = document.createElement('span'); pw.className = 'ambient-arp-passes';
         const dec = document.createElement('button'); dec.type = 'button'; dec.className = 'ambient-arp-pbtn'; dec.textContent = '−'; dec.title = 'Fewer passes';
@@ -4878,7 +5049,7 @@
           _ambResetArp(E, key);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
-        row.appendChild(idx); row.appendChild(nb); row.appendChild(pw); row.appendChild(del);
+        row.appendChild(idx); row.appendChild(nb); row.appendChild(ds); row.appendChild(pw); row.appendChild(del);
         list.appendChild(row);
       });
     }
@@ -4918,6 +5089,10 @@
     // if some engine is playing (moving playheads). Called on render, on shape
     // edits, and on play/stop.
     function _ambShapeAnimEnsure() {
+      // While the full Shape editor is open it covers the layer cards, so there's
+      // no point redrawing their in-card wheels — skip them (cuts per-frame work
+      // and compositing behind the overlay). Resumed on editor close.
+      if (_ambShapeEditRef) return;
       let anyPlaying = false;
       _ambShapeCanvases.forEach(cv => {
         if (!cv.isConnected) { _ambShapeCanvases.delete(cv); return; }
@@ -4955,6 +5130,7 @@
     // the IntersectionObserver / _ambShapeAnimEnsure) — no idle GPU churn.
     function _ambShapeAnimTick() {
       _ambShapeRaf = 0;
+      if (_ambShapeEditRef) return;   // editor open & covering the cards — stop redrawing them
       let anyPlaying = false;
       _ambShapeCanvases.forEach(cv => {
         if (!cv.isConnected) { _ambShapeCanvases.delete(cv); return; }
@@ -5016,6 +5192,11 @@
       if (addB) addB.addEventListener('click', () => _ambShapeAdd(E, get() || inst, p));
       const edB = _ambGet(E, p + 'shape-edit');
       if (edB) edB.addEventListener('click', () => _ambShapeEditOpen(E, get() || inst));
+      const arpB = _ambGet(E, p + 'shape-toarp');
+      if (arpB) arpB.addEventListener('click', () => {
+        const ok = (typeof confirm !== 'function') || confirm('Convert this Shape layer to an Arp layer? Its wheels are replaced by an Arp series (tone, level, pan, mod & FX are kept).');
+        if (ok) _ambConvertShapeToArp(E, get() || inst);
+      });
       // Expandable overlaid list — toggle its open state.
       const tg = _ambGet(E, p + 'list-toggle');
       const wrap = _ambGet(E, p + 'listwrap');
@@ -5029,6 +5210,33 @@
       _ambRenderShapeList(E, inst, p);
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Convert a Shape layer in place into an Arp layer (same slot/id). The wheels
+    // are dropped (Shape and Arp have no shared pitch model), but the shared sonic
+    // attributes carry over so the layer keeps its place in the mix.
+    function _ambConvertShapeToArp(E, inst) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras) || !inst) return;
+      const idx = cfg.extras.findIndex(x => x && x.id === inst.id && x.type === inst.type);
+      if (idx < 0) return;
+      const old = cfg.extras[idx];
+      const oldKey = old.type + ':' + old.id;
+      // Close the wheel editor if it's open on this layer (frees #shape-pad).
+      try { if (_ambShapeEditRef && _ambShapeEditRef.id === old.id && _ambShapeEditRef.type === old.type) _ambShapeEditClose(); } catch (e) {}
+      // New Arp in the same slot, carrying the shared attributes that exist.
+      const arp = _ambDefaultLayer('arp', old.id);
+      ['on', 'present', 'level', 'accent', 'panMode', 'space', 'when', 'drift', 'tone'].forEach(k => { if (old[k] !== undefined) arp[k] = old[k]; });
+      try { if (old.mod) arp.mod = JSON.parse(JSON.stringify(old.mod)); } catch (e) {}
+      try { if (old.delay) arp.delay = JSON.parse(JSON.stringify(old.delay)); } catch (e) {}
+      try { if (old.dist) arp.dist = JSON.parse(JSON.stringify(old.dist)); } catch (e) {}
+      cfg.extras[idx] = arp;
+      // Tear down the old shape's mod chain + phase state (keyed by 'shape:id').
+      try { if (E.mod && E.mod[oldKey]) _ambTeardownMod(oldKey); } catch (e) {}
+      if (E.shapePhase) { const pre = oldKey + '#'; Object.keys(E.shapePhase).forEach(kk => { if (kk.indexOf(pre) === 0) delete E.shapePhase[kk]; }); }
+      _ambRenderExtras(E);
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Converted Shape → Arp.');
     }
     function _ambShapeRemove(E, inst, i, p) {
       if (!inst || !Array.isArray(inst.shapes) || i < 0 || i >= inst.shapes.length) return;
@@ -5095,6 +5303,7 @@
         if (L) _ambRenderShapeList(ref.engine, L, 'ambient-' + ref.type + '-' + ref.id + '-');
       } catch (e) {}
       try { if (ref.engine && ref.engine.timer) _ambSyncMods(); } catch (e) {}
+      try { _ambShapeAnimEnsure(); } catch (e) {}   // resume in-card wheel previews
     }
     function _ambRenderExtras(E) {
       const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;
@@ -5146,13 +5355,36 @@
       beat:    [['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
       seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
       samp:    [['chop','Chop',1,16],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',80,16000],['drift','Drift',0,99],['level','Level',0,100]],
+      bass:    [['register','Register',1,4],['bars','Bars',1,8],['pulses','Pulses',1,16],['steps','Steps',2,16],['rotate','Rotate',0,15],['lengthMs','Length (ms)',60,2000],['rhythmVar','Rhythm var',0,100],['pitchVar','Pitch var',0,100],['proximity','Proximity',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      pedal:   [['register','Register',1,7],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      arp:     [['randomness','Randomness',0,100],['intervalMs','Rate (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      shape:   [['level','Level',0,100]],
     };
-    function _normalizeRamp(r, id) {
+    function _normalizeRamp(r, id, cfg) {
       if (!Number.isFinite(r.id)) r.id = id;
       if (typeof r.on !== 'boolean') r.on = true;
-      if (typeof r.target !== 'string') r.target = 'bed.level';
+      // Targets: migrate the legacy single `target` (with absolute A/B) to a
+      // targets[] array; A/B are now PERCENT of each target's range, so one ramp
+      // can drive several params with different ranges at once.
+      if (!Array.isArray(r.targets)) {
+        const t0 = (typeof r.target === 'string' && r.target.indexOf('.') > 0) ? r.target : 'bed.level';
+        r.targets = [t0];
+        if (cfg && Number.isFinite(r.a) && Number.isFinite(r.b)) {
+          const res = _ambRampResolve(cfg, t0);
+          if (res && res.max > res.min) {
+            r.a = Math.round((r.a - res.min) / (res.max - res.min) * 100);
+            r.b = Math.round((r.b - res.min) / (res.max - res.min) * 100);
+          }
+        }
+      }
+      r.targets = r.targets.filter(t => typeof t === 'string' && t.indexOf('.') > 0);
+      if (!r.targets.length) r.targets = ['bed.level'];
+      delete r.target;
       if (!Number.isFinite(r.a)) r.a = 0;
       if (!Number.isFinite(r.b)) r.b = 100;
+      r.a = Math.max(0, Math.min(100, Math.round(r.a)));
+      r.b = Math.max(0, Math.min(100, Math.round(r.b)));
       if (!Number.isFinite(r.periodMs)) r.periodMs = 4000;
       r.periodMs = Math.max(50, r.periodMs | 0);
       if (['sine','triangle','saw','square','seq'].indexOf(r.wave) < 0) r.wave = 'sine';
@@ -5179,6 +5411,16 @@
       } else if (head.indexOf('samp:') === 0) {
         const sid = parseInt(head.slice(5), 10);
         obj = (cfg.samples || []).find(s => s.id === sid); cat = 'samp';
+      } else {
+        // Extra-instance layer: head = '<type>:<id>' (bass/run/pedal/arp/shape, or
+        // additional bed/motif/texture/beat). cat = the type.
+        const ci = head.indexOf(':');
+        if (ci > 0) {
+          const t = head.slice(0, ci), eid = parseInt(head.slice(ci + 1), 10);
+          if (typeof _AMB_LAYER_SCHEMA !== 'undefined' && _AMB_LAYER_SCHEMA[t]) {
+            obj = (cfg.extras || []).find(x => x && x.type === t && x.id === eid); cat = t;
+          }
+        }
       }
       if (!obj) return null;
       const spec = (_AMB_RAMP_PARAMS[cat] || []).find(p => p[0] === key);
@@ -5189,9 +5431,19 @@
     function _ambRampTargetGroups(cfg) {
       const g = [];
       const add = (label, head, cat) => g.push({ label, items: (_AMB_RAMP_PARAMS[cat] || []).map(p => ({ value: head + '.' + p[0], label: p[1] })) });
-      add('Bed', 'bed', 'bed'); add('Motif', 'motif', 'motif'); add('Texture', 'texture', 'texture'); add('Beat', 'beat', 'beat');
+      // Built-in layers only when present.
+      [['Bed', 'bed'], ['Motif', 'motif'], ['Texture', 'texture'], ['Beat', 'beat']].forEach(([lab, t]) => {
+        if (cfg[t] && cfg[t].present !== false) add(lab, t, t);
+      });
       (cfg.seqs || []).forEach((s, i) => add('Seq' + (i + 1), 'seq:' + s.id, 'seq'));
       (cfg.samples || []).forEach((s, i) => add('Sample' + (i + 1), 'samp:' + s.id, 'samp'));
+      // Extra-instance layers (bass / run / pedal / arp / shape / extra bed…).
+      const _tc = {};
+      (cfg.extras || []).forEach((x) => {
+        if (!x || !_AMB_LAYER_SCHEMA[x.type] || !_AMB_RAMP_PARAMS[x.type]) return;
+        _tc[x.type] = (_tc[x.type] | 0) + 1;
+        add((_AMB_LAYER_SCHEMA[x.type].label || x.type) + ' ' + _tc[x.type], x.type + ':' + x.id, x.type);
+      });
       return g;
     }
     // ---- Sequence-as-waveform translation -----------------------------
@@ -5272,9 +5524,7 @@
     function _ambApplyRamps(cfg, nowSec) {
       if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) return;
       for (const r of cfg.ramps) {
-        if (!r || !r.on) continue;
-        const res = _ambRampResolve(cfg, r.target);
-        if (!res) continue;
+        if (!r || !r.on || !Array.isArray(r.targets) || !r.targets.length) continue;
         const period = Math.max(50, r.periodMs | 0);
         const phase = ((nowSec * 1000) % period) / period;
         let f;
@@ -5284,12 +5534,17 @@
         } else {
           f = _ambRampFactor(r.wave, phase);
         }
-        let v = r.a + f * (r.b - r.a);
-        v = Math.max(res.min, Math.min(res.max, v));
-        res.obj[res.key] = Math.round(v);
-        // Stash the live sweep position (0..1) + value for the row's visual cue.
-        r._f = f;
-        r._v = Math.round(v);
+        r._f = f;   // live sweep position (0..1) for the row's visual cue
+        // A/B are percentages; map to each target's own range so a single ramp
+        // can drive several params (with different ranges) together.
+        const pct = (r.a + f * (r.b - r.a)) / 100;
+        for (const t of r.targets) {
+          const res = _ambRampResolve(cfg, t);
+          if (!res) continue;
+          let v = res.min + pct * (res.max - res.min);
+          v = Math.max(res.min, Math.min(res.max, v));
+          res.obj[res.key] = Math.round(v);
+        }
       }
     }
     // Paint the live ramp cue: a position bar that tracks the sweep and a live
@@ -5311,9 +5566,10 @@
         const f = Number.isFinite(r._f) ? Math.max(0, Math.min(1, r._f)) : 0;
         fill.style.width = (f * 100) + '%';
         const rg = _ambGet(E, p + 'range');
-        if (rg && Number.isFinite(r._v)) {
-          const res = _ambRampResolve(cfg, r.target);
-          if (res) rg.textContent = res.min + '–' + res.max + ' (now ' + r._v + ')';
+        if (rg) {
+          const n = Array.isArray(r.targets) ? r.targets.length : 0;
+          const pctNow = Math.round(r.a + f * (r.b - r.a));
+          rg.textContent = n + ' target' + (n === 1 ? '' : 's') + ' · ' + pctNow + '%';
         }
       }
     }
@@ -5331,11 +5587,6 @@
     }
     function _ambRampRowHtml(r, cfg) {
       const id = r.id, p = 'ambient-ramp-' + id + '-';
-      const groups = _ambRampTargetGroups(cfg);
-      const tgtOpts = groups.map(grp =>
-        '<optgroup label="' + grp.label + '">' +
-        grp.items.map(it => '<option value="' + it.value + '"' + (it.value === r.target ? ' selected' : '') + '>' + it.label + '</option>').join('') +
-        '</optgroup>').join('');
       const waveOpts = [['sine','Sine'],['triangle','Triangle'],['saw','Saw'],['square','Square']]
         .map(w => '<option value="' + w[0] + '"' + (r.wave === w[0] ? ' selected' : '') + '>' + w[1] + '</option>').join('');
       // Saved sequences as selectable waveforms (value 'seq:<idx>').
@@ -5351,7 +5602,7 @@
       return '<div class="ambient-ramp-row" data-ramp-id="' + id + '">' +
         '<div class="ambient-ramp-head">' +
           '<button type="button" class="ambient-toggle ambient-ramp-on" id="' + p + 'on">Ramp</button>' +
-          '<select id="' + p + 'target" class="ambient-select ambient-ramp-target">' + tgtOpts + '</select>' +
+          '<button type="button" class="ambient-select ambient-ramp-target" id="' + p + 'targets" title="Choose one or more layer parameters to drive">' + _ambRampTargetsLabel(r, cfg) + '</button>' +
           '<button type="button" class="ambient-seq-del" id="' + p + 'del" title="Delete ramp" aria-label="Delete ramp">✕</button>' +
         '</div>' +
         // Live sweep cue — the fill bar tracks the ramp's current position while
@@ -5359,24 +5610,76 @@
         '<div class="ambient-ramp-viz"><span class="ambient-ramp-fill" id="' + p + 'fill"></span></div>' +
         '<div class="ambient-ramp-params">' +
           '<span class="ambient-hint ambient-ramp-range" id="' + p + 'range"></span>' +
-          '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" value="' + r.a + '"></label>' +
-          '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" value="' + r.b + '"></label>' +
+          '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" min="0" max="100" value="' + r.a + '"><span class="ambient-hint">%</span></label>' +
+          '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" min="0" max="100" value="' + r.b + '"><span class="ambient-hint">%</span></label>' +
           '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="50" step="50" value="' + r.periodMs + '"><span class="ambient-hint">ms</span></label>' +
           '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
         '</div>' +
         seqRowHtml +
       '</div>';
     }
+    // A/B are now PERCENT (0–100) of each target's range; the readout shows the
+    // target count + the A→B span.
     function _ambRampSyncABRange(E, id) {
       const cfg = E.getCfg(); if (!cfg) return;
       const r = (cfg.ramps || []).find(x => x.id === id); if (!r) return;
-      const res = _ambRampResolve(cfg, r.target); if (!res) return;
       const p = 'ambient-ramp-' + id + '-';
-      ['a', 'b'].forEach(k => { const e = _ambGet(E, p + k); if (e) { e.min = res.min; e.max = res.max; } });
-      // Show the param's valid range + its current value so the user knows
-      // what A/B to dial in.
+      ['a', 'b'].forEach(k => { const e = _ambGet(E, p + k); if (e) { e.min = 0; e.max = 100; } });
+      const n = Array.isArray(r.targets) ? r.targets.length : 0;
       const rg = _ambGet(E, p + 'range');
-      if (rg) rg.textContent = res.min + '–' + res.max + ' (now ' + Math.round(res.obj[res.key]) + ')';
+      if (rg) rg.textContent = n + ' target' + (n === 1 ? '' : 's') + ' · ' + (r.a | 0) + '%→' + (r.b | 0) + '%';
+    }
+    // Friendly name for a single target value ('bed.level' → 'Bed Level').
+    function _ambRampTargetName(cfg, value) {
+      const groups = _ambRampTargetGroups(cfg);
+      for (const g of groups) for (const it of g.items) if (it.value === value) return g.label + ' · ' + it.label;
+      return value;
+    }
+    function _ambRampTargetsLabel(r, cfg) {
+      const ts = Array.isArray(r.targets) ? r.targets : [];
+      if (!ts.length) return '+ Targets…';
+      if (ts.length === 1) return _ambRampTargetName(cfg, ts[0]);
+      return ts.length + ' targets ▾';
+    }
+    // Multi-target picker: grouped, checkable list of every layer parameter; tap
+    // toggles membership in this ramp's targets[]. One ramp can drive many.
+    function _ambShowRampTargetsMenu(E, id, anchorBtn) {
+      const getR = () => { const c = E.getCfg(); return (c && Array.isArray(c.ramps)) ? c.ramps.find(x => x.id === id) : null; };
+      if (!getR()) return;
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-ramptgt-modal';
+      overlay.appendChild(modal);
+      const close = () => { try { overlay.remove(); } catch (e) {} try { _ambRenderRamps(E); } catch (e) {} };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      const render = () => {
+        const r = getR(); if (!r) { close(); return; }
+        const cfg = E.getCfg();
+        const sel = new Set(Array.isArray(r.targets) ? r.targets : []);
+        const groups = _ambRampTargetGroups(cfg);
+        let h = '<div class="keep-sdiv-title">Ramp targets</div><div class="amb-ramptgt-list">';
+        groups.forEach(g => {
+          h += '<div class="amb-ramptgt-group">' + esc(g.label) + '</div>';
+          g.items.forEach(it => {
+            h += '<button type="button" class="amb-ramptgt-item' + (sel.has(it.value) ? ' on' : '') + '" data-val="' + esc(it.value) + '">' +
+              '<span class="amb-ramptgt-check">' + (sel.has(it.value) ? '✓' : '') + '</span>' + esc(it.label) + '</button>';
+          });
+        });
+        if (!groups.length) h += '<div class="ambient-cap-empty">No layers yet — add a layer first.</div>';
+        h += '</div><div class="sm-footer"><button type="button" class="sm-apply amb-ramptgt-ok">Done</button></div>';
+        modal.innerHTML = h;
+        modal.querySelectorAll('.amb-ramptgt-item').forEach(b => b.addEventListener('click', () => {
+          const r2 = getR(); if (!r2) return;
+          if (!Array.isArray(r2.targets)) r2.targets = [];
+          const v = b.dataset.val, i = r2.targets.indexOf(v);
+          if (i >= 0) r2.targets.splice(i, 1); else r2.targets.push(v);
+          persist(); render();
+        }));
+        const ok = modal.querySelector('.amb-ramptgt-ok'); if (ok) ok.addEventListener('click', close);
+      };
+      render();
+      document.body.appendChild(overlay);
     }
     function _ambWireRamp(E, r) {
       const id = r.id, p = 'ambient-ramp-' + id + '-';
@@ -5385,25 +5688,10 @@
       const el = (suf) => _ambGet(E, p + suf);
       const onB = el('on');
       if (onB) { onB.classList.toggle('on', !!r.on); onB.addEventListener('click', () => { _E = E; const R = getR(); if (!R) return; R.on = !R.on; onB.classList.toggle('on', R.on); persist(); }); }
-      const tgt = el('target');
-      if (tgt) tgt.addEventListener('change', () => {
-        _E = E; const R = getR(); if (!R) return;
-        R.target = tgt.value;
-        // Reseed A/B to the new param's current value so switching targets
-        // doesn't carry over an out-of-range / silencing value.
-        const c = E.getCfg(); const res = _ambRampResolve(c, R.target);
-        if (res) {
-          const cur = Math.round(res.obj[res.key]);
-          R.a = cur; R.b = cur;
-          const ae = el('a'), be = el('b');
-          if (ae) ae.value = String(cur);
-          if (be) be.value = String(cur);
-        }
-        _ambRampSyncABRange(E, id);
-        persist();
-      });
-      const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.a = parseFloat(a.value) || 0; persist(); });
-      const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.b = parseFloat(b.value) || 0; persist(); });
+      const tgtBtn = el('targets');
+      if (tgtBtn) tgtBtn.addEventListener('click', () => { _E = E; _ambShowRampTargetsMenu(E, id, tgtBtn); });
+      const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.a = Math.max(0, Math.min(100, parseInt(a.value, 10) || 0)); persist(); });
+      const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.b = Math.max(0, Math.min(100, parseInt(b.value, 10) || 0)); persist(); });
       const per = el('period'); if (per) per.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.periodMs = Math.max(50, parseInt(per.value, 10) || 1000); persist(); });
       const wv = el('wave'); if (wv) wv.addEventListener('change', () => {
         _E = E; const R = getR(); if (!R) return;
@@ -5439,11 +5727,11 @@
       const newId = cfg.ramps.reduce((m, r) => Math.max(m, r.id | 0), 0) + 1;
       const target = 'bed.level';
       const res = _ambRampResolve(cfg, target);
-      // Default A and B to the param's CURRENT value so adding a ramp doesn't
-      // immediately move (or, for Level, silence) the parameter — the user
-      // then sets distinct A/B to define the sweep.
-      const cur = res ? Math.round(res.obj[res.key]) : 0;
-      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, target, a: cur, b: cur, periodMs: 4000, wave: 'sine' }, newId));
+      // Default A and B to the target's CURRENT value (as a %) so adding a ramp
+      // doesn't immediately move (or silence) the parameter — the user then sets
+      // a distinct A/B span and adds more targets.
+      const curPct = (res && res.max > res.min) ? Math.round((res.obj[res.key] - res.min) / (res.max - res.min) * 100) : 50;
+      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [target], a: curPct, b: curPct, periodMs: 4000, wave: 'sine' }, newId, cfg));
       _ambRenderRamps(E);
       if (E.timer) { E._cfg = cfg; _ambStartRampClock(E); } // spin up the ramp clock if playing
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -5691,7 +5979,6 @@
           '<button type="button" id="ambient-regen-btn" class="ambient-regen" title="New random seed">✨ Regenerate</button>' +
           '<button type="button" id="ambient-reset-btn" class="ambient-regen" title="Reset this Bloom to defaults (one Bed, default settings)">↺ Reset</button>' +
           (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
-          '<button type="button" id="ambient-export-btn" class="ambient-regen" title="Record a fixed length of Bloom into the capture bank below (upload to Drive from there)">⤓ Capture</button>' +
           '<span class="ambient-seed" id="ambient-seed-val">#1</span>' +
         '</div>' +
         (E.isLane ? '' :
@@ -5842,6 +6129,7 @@
         // like the Make footer transport. Lives inside the (namespaced) panel so
         // it only shows while this Bloom panel is the active view.
         '<div class="ambient-footer-bar"><div class="ambient-footer-transport">' +
+          '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
@@ -6149,6 +6437,8 @@
         actions.push({ label: 'Bass', fn: () => _ambAddExtra(E, 'bass') });
         // Run: a fixed random note run that loops every N bars (extras-only).
         actions.push({ label: 'Run', fn: () => _ambAddExtra(E, 'run') });
+        // Pedal: a simple root-note pedal-point loop (extras-only).
+        actions.push({ label: 'Pedal', fn: () => _ambAddExtra(E, 'pedal') });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

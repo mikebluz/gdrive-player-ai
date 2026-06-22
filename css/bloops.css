@@ -2550,6 +2550,24 @@
     }
     .ambient-seg:hover { border-color: #9f7aea; color: #d6bcfa; }
     .ambient-seg.active { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+    .ambient-seg.on { border-color: #9f7aea; color: #d6bcfa; background: rgba(159,122,234,0.18); }
+
+    /* Seq Sections popover (edit a Seq layer's sections: reps / order / key) */
+    .amb-sections-modal { min-width: min(92vw, 360px); }
+    .amb-sec-modes { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+    .amb-sec-km.on { border-color: #f4b740; color: #f4d089; background: rgba(244,183,64,0.16); }
+    .amb-sec-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; }
+    .amb-sec-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+      padding: 6px 8px; border: 1px solid #20203a; border-radius: 8px; background: rgba(159,122,234,0.05); }
+    .amb-sec-name { flex: 1 1 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; color: #d6bcfa; }
+    .amb-sec-key { flex: 1 1 auto; font-size: 0.7rem; color: #8a8aa8; }
+    .amb-sec-reps { display: inline-flex; align-items: center; gap: 4px; }
+    .amb-sec-reps b { min-width: 2.2em; text-align: center; color: #c7b3f0; font-size: 0.78rem; }
+    .amb-sec-move { display: inline-flex; gap: 2px; }
+    .amb-sec-row button { background: #14142a; border: 1px solid #2d2d3f; color: #c7b3f0;
+      border-radius: 6px; padding: 2px 9px; font-size: 0.8rem; cursor: pointer; }
+    .amb-sec-row button:disabled { opacity: 0.35; cursor: default; }
+    .amb-sec-del { margin-left: auto; color: #e06c75 !important; }
     .ambient-layer {
       border: 1px solid #20203a; border-radius: 8px; padding: 10px 12px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(255,255,255,0.012);

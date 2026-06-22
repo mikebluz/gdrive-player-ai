@@ -1252,11 +1252,10 @@
         const seqs = (typeof _ambListMasterSeqs === 'function') ? _ambListMasterSeqs() : [];
         const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new') }];
         sub.push('hr');
+        // Append adds this sequence as a new SECTION on an existing Seq layer
+        // (edit reps / order / Random / Key-master in the layer's Sections popover).
         if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id) }));
         else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
-        sub.push('hr');
-        if (seqs.length) seqs.forEach(s => sub.push({ label: '⇄ Interleave → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'interleave', s.id) }));
-        else sub.push({ label: 'Interleave → (no Seqs yet)', disabled: true, fn: () => {} });
         // If this sequence's voice is a single-buffer sample, also offer the
         // raw Sample layer (chopped/whole) on the master Bloom.
         const _sid = (typeof _ambSampleIdOfSaved === 'function') ? _ambSampleIdOfSaved(saved) : null;

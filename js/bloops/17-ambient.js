@@ -190,10 +190,12 @@
     }
     // A Seq layer: replays one or more saved-sequence "units", improvising
     // variations and periodically returning to verbatim. `units[]` each =
-    // { events:[{freqs:number[],durMs,vel}], scale, rootIdx, baseOctave, bpm }.
-    // `unitMode`: 'single' (iterate units[0]) | 'interleave' (stochastic pick
-    // among units each cycle). `id` is a stable monotonic int; display name is
-    // positional (Seq1, Seq2…).
+    // { events:[{freqs:number[],durMs,vel}], scale, rootIdx, baseOctave, bpm,
+    //   name, reps } — a "section". `unitMode`: 'single' (one unit) | 'sequence'
+    // (play sections in order, each ×reps, then loop) | 'random' (bag of Σreps
+    // picks, drawn without replacement, refilled when empty). `keyMaster` (≤1 per
+    // Bloom) makes this Seq drive the GLOBAL key — grid + generative layers
+    // follow each section's key. `id` stable monotonic int; name positional.
     function _defaultSeqLayer(id) {
       // intervalMode 'auto' (default) → one iteration == the played unit's own
       // natural length, so the loop closes exactly on the sequence (and breathes
@@ -202,7 +204,7 @@
                panMode: 'spread', space: 0,
                level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
-               unitMode: 'single', units: [], ..._ambDefaultFx() };
+               unitMode: 'single', units: [], keyMaster: false, ..._ambDefaultFx() };
     }
     function _ambValidUnit(u) {
       return !!(u && typeof u === 'object' && Array.isArray(u.events) && u.events.length > 0);
@@ -225,9 +227,18 @@
       if (s.varyMode !== 'pitch' && s.varyMode !== 'rhythm' && s.varyMode !== 'pad') s.varyMode = 'pitch';
       if (s.intervalMode !== 'auto' && s.intervalMode !== 'manual') s.intervalMode = 'auto';
       if (s.returnMode !== 'everyN' && s.returnMode !== 'chance') s.returnMode = 'everyN';
-      if (s.unitMode !== 'single' && s.unitMode !== 'interleave') s.unitMode = 'single';
+      // unitMode: migrate legacy 'interleave' → 'random'; everything else but
+      // 'random' is the ordered 'sequence'. ('single' stays meaningful for 1 unit.)
+      if (s.unitMode === 'interleave') s.unitMode = 'random';
+      if (s.unitMode !== 'single' && s.unitMode !== 'sequence' && s.unitMode !== 'random') s.unitMode = 'single';
+      if (typeof s.keyMaster !== 'boolean') s.keyMaster = false;
       if (!Array.isArray(s.units)) s.units = [];
       s.units = s.units.filter(_ambValidUnit);
+      // Per-section fields: iterations before switching + a display name.
+      s.units.forEach((u, i) => {
+        u.reps = Math.max(1, Math.min(64, (u.reps | 0) || 1));
+        if (typeof u.name !== 'string' || !u.name) u.name = 'Section ' + (i + 1);
+      });
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
       _ambNormalizeNotes(s);
@@ -360,6 +371,8 @@
       cfg.seqs.forEach(s => { if (s && Number.isFinite(s.id) && s.id > maxId) maxId = s.id; });
       cfg.seqs.forEach(s => { if (s && !Number.isFinite(s.id)) s.id = ++maxId; });
       cfg.seqs = cfg.seqs.filter(s => s && typeof s === 'object').map(s => _normalizeSeqLayer(s, s.id));
+      // At most ONE Seq layer may be the key master — keep the first, clear the rest.
+      { let seenKM = false; cfg.seqs.forEach(s => { if (s.keyMaster) { if (seenKM) s.keyMaster = false; else seenKM = true; } }); }
       // Sample layers (parallel dynamic list).
       if (!Array.isArray(cfg.samples)) cfg.samples = [];
       let maxSid = 0;
@@ -431,8 +444,42 @@
     // ---- Pitch material ------------------------------------------------
     // Each layer may carry its own `scale`; '' (or unknown) follows the
     // workspace currentScale. The root stays the workspace root.
+    // ---- Time-indexed key (keyMaster Seq sections) ---------------------------
+    // A keyMaster Seq pushes {at, root, scale} at each section boundary; the
+    // generative layers resolve the key effective at EACH note's own play time
+    // (via _ambKeyTime, stamped per note), so they flip exactly on the boundary
+    // with NO rescheduling/cancellation. _ambKeyAt returns null when no schedule
+    // is active, so everything falls back to the normal cfg/global key.
+    let _ambKeyTime = null;
+    function _ambKeyAt(E, t) {
+      const sched = E && E._keySched;
+      if (!Array.isArray(sched) || !sched.length || !Number.isFinite(t)) return null;
+      let best = null;
+      for (let i = 0; i < sched.length; i++) { const e = sched[i]; if (e.at <= t && (!best || e.at >= best.at)) best = e; }
+      return best; // {at, root, scale} or null when t precedes the first boundary
+    }
+    function _ambKeySchedPush(E, at, root, scale) {
+      if (!E || !Number.isFinite(at)) return;
+      if (!Array.isArray(E._keySched)) E._keySched = [];
+      const last = E._keySched[E._keySched.length - 1];
+      if (last && last.root === root && last.scale === scale) return;   // no key change
+      E._keySched.push({ at, root, scale, applied: false });
+      const cut = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) - 4;
+      while (E._keySched.length > 3 && E._keySched[0].at < cut) E._keySched.shift();
+    }
     function _ambResolveScale(scale) {
       if (typeof scale === 'string' && scale && typeof SCALES !== 'undefined' && SCALES[scale]) return scale;
+      // Time-indexed (keyMaster section) key takes precedence for the note now
+      // being computed, so generative layers re-color exactly on the boundary.
+      if (_ambKeyTime != null) {
+        const ks = _ambKeyAt(_E, _ambKeyTime);
+        if (ks && ks.scale && typeof SCALES !== 'undefined' && SCALES[ks.scale]) return ks.scale;
+      }
+      // When the Bloom's own Key mode is on, generative layers follow the Key
+      // SCALE (not just its root) — so a separate Bloom key actually re-colors
+      // them major↔minor↔etc.
+      const kc = _ambKeyCfg();
+      if (kc && kc.keyOn && typeof kc.keyScale === 'string' && typeof SCALES !== 'undefined' && SCALES[kc.keyScale]) return kc.keyScale;
       return (typeof currentScale === 'string') ? currentScale : 'chromatic';
     }
     // ---- Note source ("Notes" menu) ------------------------------------
@@ -611,7 +658,9 @@
         if (keyOn) r = ((r + _ambProgKeyOffset(n, keyRoot)) % 12 + 12) % 12;
         return r;
       }
-      // Scales root to the key tonic.
+      // Scales root to the key tonic. Time-indexed (keyMaster section) key first,
+      // so a scale re-roots exactly on the boundary for the note now computed.
+      if (_ambKeyTime != null) { const ks = _ambKeyAt(_E, _ambKeyTime); if (ks) return (((ks.root | 0) % 12) + 12) % 12; }
       if (keyOn) return keyRoot;
       return (typeof rootIdx === 'number') ? rootIdx : 0;
     }
@@ -1110,6 +1159,7 @@
     }
     function _ambEmitBed(at, bed, space, key) {
       key = key || 'bed';
+      _ambKeyTime = at;   // resolve this note's key by its play-time (keyMaster sections)
       const voicing = _ambPickVoicing(bed);
       if (!voicing.length) return;
       const durMs = Math.max(80, bed.lengthMs | 0);
@@ -1235,6 +1285,7 @@
               if (walkDeg > span) walkDeg = span - (walkDeg - span);
               walkDeg = Math.max(0, Math.min(span, walkDeg));
             }
+            _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
             const bp = _ambBassParams(lenMs, _ambLayerPan(inst), inst.tone);
@@ -1315,6 +1366,7 @@
           if (rest) continue;
           const at = cStart + i * slotSec;
           if (at < tFrom || at >= tTo) continue;
+          _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
           let f = _ambDegreeFreq(deg % N, reg + Math.floor(deg / N), src);
           if (f == null) continue;
           f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
@@ -1439,6 +1491,7 @@
     }
     function _ambEmitMotif(at, motif, space, key) {
       key = key || 'motif';
+      _ambKeyTime = at;
       if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return;
       const lenMs = Math.max(60, motif.lengthMs | 0);
       // Twist: 0 = a single note per fire (steady cadence). As it rises, the
@@ -1494,6 +1547,7 @@
     }
     function _ambEmitTexture(at, texture, space, key) {
       key = key || 'texture';
+      _ambKeyTime = at;
       if (!_E.texPattern) _ambTexBuildPattern(texture);
       const center = Math.max(1, Math.min(8, texture.register | 0));
       const slot = _E.texPattern[_E.texStep % _E.texPattern.length];
@@ -1540,6 +1594,7 @@
     // entry (looping the series). Cursor state lives on _E.arpState[key].
     function _ambEmitArp(at, arp, space, key) {
       key = key || ('arp:' + (arp.id | 0));
+      _ambKeyTime = at;
       const steps = (Array.isArray(arp.steps) && arp.steps.length) ? arp.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
       const S = _E.arpState || (_E.arpState = {});
       let st = S[key];
@@ -1749,7 +1804,8 @@
       // be active (critical for the lane-agnostic master Bloom).
       let voice = null;
       try { if (Array.isArray(saved.cellParams) && saved.cellParams[0]) voice = JSON.parse(JSON.stringify(saved.cellParams[0])); } catch (e) {}
-      return { events, voice, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm };
+      return { events, voice, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm,
+               name: (typeof saved.name === 'string' && saved.name) ? saved.name : '', reps: 1 };
     }
     // Nudge an absolute freq to a nearby scale degree (seeded random walk).
     // Probability of moving = depth; magnitude 1..(1+2·depth) degrees.
@@ -1770,7 +1826,18 @@
       const deg = ((lin % N) + N) % N;
       const oct = Math.max(1, Math.min(8, Math.floor(lin / N)));
       const out = _ambDegreeFreq(deg, oct, scale);
-      return (out > 0) ? out : freq;
+      if (!(out > 0)) return freq;
+      // Blue notes: the nudge stays strictly in-key until depth crosses 3/4,
+      // above which chromatic (out-of-scale) inflections ramp in (0 at 0.75 →
+      // ~0.5 chance at 1.0) — a bluesy bend a semitone off the scale tone.
+      if (depth >= 0.75) {
+        const blueChance = ((depth - 0.75) / 0.25) * 0.5;
+        if (_ambRand() < blueChance) {
+          const blue = out * Math.pow(2, ((_ambRand() < 0.5) ? -1 : 1) / 12);
+          if (blue > 0) return blue;
+        }
+      }
+      return out;
     }
     // SAMPLE layer: play a single-buffer sample raw. chop=1 retriggers the whole
     // sample; chop=N plays N step-sized slices across the Interval, forward or
@@ -1827,14 +1894,76 @@
       const sel = document.getElementById(_ambTrId(E, 'ambient-seq-' + seqId + '-tone'));
       if (sel && sel.value !== tone) { try { sel.value = tone; } catch (e) {} }
     }
+    // Pick which section (unit) plays THIS phrase, advancing the per-layer
+    // section state on `st`. Two modes:
+    //  • 'sequence' (ordered) — play each unit `reps` times, then the next, loop.
+    //  • 'random' (bag) — a pool of Σreps picks (each unit repeated `reps`×),
+    //    drawn WITHOUT replacement; when the bag empties it refills (a fresh full
+    //    schedule). Legacy 'interleave'/'single' map to random/sequence.
+    function _ambSeqPickUnitIdx(seq, st) {
+      const n = seq.units.length;
+      if (n <= 1) return 0;
+      const repsOf = (i) => Math.max(1, (seq.units[i] && (seq.units[i].reps | 0)) || 1);
+      const mode = (seq.unitMode === 'random' || seq.unitMode === 'interleave') ? 'random' : 'sequence';
+      if (mode === 'random') {
+        if (!Array.isArray(st.bag) || !st.bag.length) {
+          st.bag = [];
+          for (let i = 0; i < n; i++) { const r = repsOf(i); for (let k = 0; k < r; k++) st.bag.push(i); }
+        }
+        const j = Math.floor(_ambRand() * st.bag.length);
+        const idx = st.bag[j]; st.bag.splice(j, 1);
+        return ((idx % n) + n) % n;
+      }
+      // ordered: hold the current unit for its reps, then advance.
+      if (!Number.isFinite(st.secIdx)) { st.secIdx = 0; st.secRep = 0; }
+      const idx = ((st.secIdx % n) + n) % n;
+      st.secRep = (st.secRep | 0) + 1;
+      if (st.secRep >= repsOf(idx)) { st.secRep = 0; st.secIdx = (idx + 1) % n; }
+      return idx;
+    }
+    // keyMaster: when a Seq flagged keyMaster commits a section starting at time
+    // `at`, PUBLISH that section's key onto the time-indexed schedule (instead of
+    // flipping the global key now, ~1.4 s early). Generative layers then resolve
+    // the key per note-time, flipping exactly on the boundary; the grid follows
+    // via a deferred apply once wall-clock reaches `at` (see _ambApplyDueKey).
+    // Master Bloom only.
+    function _ambSeqDriveKey(E, unit, at) {
+      if (!unit || !E || E.isLane) return;
+      const scaleName = (unit.scale && typeof SCALES !== 'undefined' && SCALES[unit.scale]) ? unit.scale : 'chromatic';
+      const root = (((unit.rootIdx | 0) % 12) + 12) % 12;
+      _ambKeySchedPush(E, at, root, scaleName);
+    }
+    // Apply any key-schedule boundary whose time has arrived to the GLOBAL key
+    // (grid + Bloom cfg). Called each tick. Generative layers don't need this —
+    // they resolve per note-time — but the grid is single global state, so it
+    // flips here, on the boundary, rather than early.
+    function _ambApplyDueKey(E, now) {
+      const sched = E && E._keySched;
+      if (!Array.isArray(sched) || !sched.length) return;
+      let due = null;
+      for (let i = 0; i < sched.length; i++) { const e = sched[i]; if (!e.applied && e.at <= now && (!due || e.at >= due.at)) due = e; }
+      if (!due) return;
+      sched.forEach(e => { if (e.at <= now) e.applied = true; });
+      try { if (typeof _applyKeyContext === 'function') _applyKeyContext({ root: due.root, scale: due.scale }); } catch (e) {}
+      const cfg = E._cfg || (E.getCfg && E.getCfg());
+      if (cfg) { cfg.keyRoot = due.root; cfg.keyScale = due.scale; }
+    }
     function _ambRealizeSeqPhrase(at, seq, space, st) {
+      _ambKeyTime = null;   // Seq variance uses the normal cfg/global key, not a stale generative note-time
       if (!Array.isArray(seq.units) || !seq.units.length) return null;
       let unit;
-      if (seq.unitMode === 'interleave' && seq.units.length > 1) {
-        st.pick = Math.floor(_ambRand() * seq.units.length);
+      if (seq.units.length > 1) {
+        st.pick = _ambSeqPickUnitIdx(seq, st);
         unit = seq.units[st.pick];
+        // Publish the section's key at its start time (boundary) on change only.
+        if (seq.keyMaster && st._keyUnit !== st.pick) {
+          st._keyUnit = st.pick;
+          try { _ambSeqDriveKey(_E, unit, at); } catch (e) {}
+        }
       } else {
+        st.pick = 0;
         unit = seq.units[0];
+        if (seq.keyMaster && st._keyUnit !== 0) { st._keyUnit = 0; try { _ambSeqDriveKey(_E, unit, at); } catch (e) {} }
       }
       if (!_ambValidUnit(unit)) return null;
       // Record THIS pass's unit length so the scheduler advances the loop by
@@ -2515,6 +2644,12 @@
       if (!cfg) return;
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
       if (E._t0 == null) E._t0 = now;   // engine grid anchor (queued-START alignment)
+      // keyMaster: drop the key schedule when no keyMaster Seq is active (so the
+      // global/cfg key takes back over), then apply any boundary that's now due.
+      {
+        const _km = !E.isLane && Array.isArray(cfg.seqs) && cfg.seqs.some(s => s && s.keyMaster && s.on && s.present !== false && Array.isArray(s.units) && s.units.length);
+        if (!_km) { E._keySched = null; } else { _ambApplyDueKey(E, now); }
+      }
       // Progression clock: a shared per-engine step that advances every
       // progRateMs, so all "Progression" note-source layers move through their
       // chords together (a single harmonic pulse).
@@ -2775,6 +2910,7 @@
       }
       // Queue mode: a layer toggle landed on its boundary this tick → persist.
       if (_qChanged && typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      _ambKeyTime = null;   // clear the per-note key-time stamp after the tick
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
     // has at least one ramp. Reads the tick-cached cfg (no re-normalize).
@@ -3152,6 +3288,7 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
@@ -4031,6 +4168,92 @@
     }
 
     // ---- Dynamic Seq layers (Seq1, Seq2…) ------------------------------
+    // Label for the Seq card's Sections button: count · order/random · key flag.
+    function _ambSeqSectionsBtnLabel(s) {
+      const n = (s && Array.isArray(s.units)) ? s.units.length : 0;
+      const mode = (s && s.unitMode === 'random') ? 'Random' : 'Order';
+      return n + ' section' + (n === 1 ? '' : 's') + (n > 1 ? ' · ' + mode : '') + ((s && s.keyMaster) ? ' · 🔑' : '');
+    }
+    // Sections popover — edit a Seq layer's sections (units): per-section
+    // iteration count (reps), reorder, delete, Order⇄Random play mode, and the
+    // Key-master flag (this Seq drives the global Key; only one Seq may hold it).
+    function _ambShowSeqSectionsMenu(E, seqId, anchorBtn) {
+      const getSq = () => { const c = E.getCfg(); return (c && Array.isArray(c.seqs)) ? c.seqs.find(x => x.id === seqId) : null; };
+      if (!getSq()) return;
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      // Editing sections invalidates the live section cursor / random bag.
+      const resetState = () => { const st = E.seqState && E.seqState[seqId]; if (st) { st.secIdx = 0; st.secRep = 0; st.bag = null; st._keyUnit = null; } };
+      const KEYN = (typeof CHROMATIC !== 'undefined' && Array.isArray(CHROMATIC)) ? CHROMATIC : ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      const keyLabel = (u) => {
+        const r = (((u.rootIdx | 0) % 12) + 12) % 12;
+        const sc = (u.scale && typeof prettyScaleName === 'function') ? prettyScaleName(u.scale) : (u.scale || 'chromatic');
+        return (KEYN[r] || '') + ' ' + sc;
+      };
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&]/g, '');
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-sections-modal';
+      overlay.appendChild(modal);
+      const close = () => { try { overlay.remove(); } catch (e) {} try { _ambRenderSeqLayers(E); } catch (e) {} };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      const render = () => {
+        const sq = getSq(); if (!sq) { close(); return; }
+        const units = sq.units || [];
+        let h = '<div class="keep-sdiv-title">Sections</div>';
+        h += '<div class="amb-sec-modes">' +
+          '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode !== 'random' ? ' on' : '') + '" data-mode="sequence" title="Play sections in order, each for its iteration count.">Order</button>' +
+          '<button type="button" class="ambient-seg amb-sec-mode' + (sq.unitMode === 'random' ? ' on' : '') + '" data-mode="random" title="Random bag: a pool of all iterations, drawn without repeats, refilled when empty.">Random</button>' +
+          '<button type="button" class="ambient-seg amb-sec-km' + (sq.keyMaster ? ' on' : '') + '" data-km="1" title="This Seq drives the global Key — the grid and every generative layer follow each section\'s key.">🔑 Key master</button>' +
+        '</div>';
+        h += '<div class="amb-sec-list">';
+        units.forEach((u, i) => {
+          h += '<div class="amb-sec-row" data-i="' + i + '">' +
+            '<span class="amb-sec-name">' + (i + 1) + '. ' + esc(u.name || ('Section ' + (i + 1))) + '</span>' +
+            '<span class="amb-sec-key">' + esc(keyLabel(u)) + '</span>' +
+            '<span class="amb-sec-reps"><button type="button" data-rep="-1">−</button><b>' + ((u.reps | 0) || 1) + '×</b><button type="button" data-rep="1">+</button></span>' +
+            '<span class="amb-sec-move"><button type="button" data-mv="-1"' + (i === 0 ? ' disabled' : '') + '>▲</button><button type="button" data-mv="1"' + (i === units.length - 1 ? ' disabled' : '') + '>▼</button></span>' +
+            '<button type="button" class="amb-sec-del" data-del="1" title="Remove section">✕</button>' +
+          '</div>';
+        });
+        if (!units.length) h += '<div class="ambient-cap-empty">No sections — send a saved sequence here with “Append → Seq”.</div>';
+        h += '</div>';
+        h += '<div class="sm-footer"><button type="button" class="sm-apply amb-sec-ok">Done</button></div>';
+        modal.innerHTML = h;
+        modal.querySelectorAll('.amb-sec-mode').forEach(b => b.addEventListener('click', () => { const sq2 = getSq(); if (!sq2) return; sq2.unitMode = b.dataset.mode; resetState(); persist(); render(); }));
+        const km = modal.querySelector('.amb-sec-km');
+        if (km) km.addEventListener('click', () => {
+          const cfg = E.getCfg(); const sq2 = getSq(); if (!cfg || !sq2) return;
+          const on = !sq2.keyMaster;
+          (cfg.seqs || []).forEach(x => { x.keyMaster = false; });
+          sq2.keyMaster = on; resetState(); persist(); render();
+        });
+        modal.querySelectorAll('.amb-sec-row').forEach(row => {
+          const i = parseInt(row.dataset.i, 10);
+          row.querySelectorAll('[data-rep]').forEach(b => b.addEventListener('click', () => {
+            const sq2 = getSq(); if (!sq2 || !sq2.units[i]) return;
+            sq2.units[i].reps = Math.max(1, Math.min(64, (((sq2.units[i].reps | 0) || 1) + parseInt(b.dataset.rep, 10))));
+            resetState(); persist(); render();
+          }));
+          row.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', () => {
+            const sq2 = getSq(); if (!sq2) return; const j = i + parseInt(b.dataset.mv, 10);
+            if (j < 0 || j >= sq2.units.length) return;
+            const t = sq2.units[i]; sq2.units[i] = sq2.units[j]; sq2.units[j] = t;
+            resetState(); persist(); render();
+          }));
+          const del = row.querySelector('.amb-sec-del');
+          if (del) del.addEventListener('click', () => {
+            const sq2 = getSq(); if (!sq2) return;
+            sq2.units.splice(i, 1);
+            if (sq2.units.length <= 1) sq2.unitMode = 'single';
+            try { _ambFitSeqInterval(sq2); } catch (e) {}
+            resetState(); persist(); render();
+            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          });
+        });
+        const ok = modal.querySelector('.amb-sec-ok'); if (ok) ok.addEventListener('click', close);
+      };
+      render();
+      document.body.appendChild(overlay);
+    }
     function _ambSeqLayerHtml(s, i) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
@@ -4055,7 +4278,9 @@
         _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
         _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
         '<div class="ambient-ctrl"><label for="' + p + 'when">When</label><select id="' + p + 'when" class="ambient-select">' + opts([['always', 'Always'], ['1st', '1st'], ['1:2', '1:2'], ['2:2', '2:2'], ['1:3', '1:3'], ['1:4', '1:4']], s.when) + '</select><span class="ambient-hint">cond</span></div>' +
-        '<div class="ambient-ctrl"><label for="' + p + 'unitmode">Units</label><select id="' + p + 'unitmode" class="ambient-select">' + opts([['single', 'Single'], ['interleave', 'Interleave']], s.unitMode) + '</select><span class="ambient-hint">' + s.units.length + ' unit' + (s.units.length === 1 ? '' : 's') + '</span></div>' +
+        '<div class="ambient-ctrl"><label>Sections</label>' +
+          '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
+          '<span class="ambient-hint">edit ▸</span></div>' +
         '<div class="ambient-ctrl"><label for="' + p + 'return">Return</label><select id="' + p + 'return" class="ambient-select">' + opts([['everyN', 'Every N'], ['chance', 'Chance %']], s.returnMode) + '</select><span class="ambient-hint">to original</span></div>' +
         _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
         _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') +
@@ -4145,7 +4370,9 @@
         // blank default — updated live to the playing step during playback.
         try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
       }
-      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('unitmode', 'unitMode');
+      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode');
+      const secBtn = el('sections');
+      if (secBtn) secBtn.addEventListener('click', () => { _E = E; _ambShowSeqSectionsMenu(E, id, secBtn); });
       const lockBtn = el('enslock');
       if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
       _ambSeqEnsLockVis(E, id);
@@ -5252,7 +5479,8 @@
     }
 
     // Apply a distilled sequence "unit" to an engine's Seq layers.
-    // mode: 'new' (new SeqN) | 'append' (grow first unit) | 'interleave' (add a unit).
+    // mode: 'new' (new SeqN) | 'append' (add a SECTION/unit, ordered) | 'interleave'
+    // (add a section + default the layer to Random order).
     // Total wall-time of a unit's phrase (sum of every event's durMs) — the
     // length one full pass of the sequence takes.
     function _unitTotalMs(unit) {
@@ -5274,6 +5502,8 @@
       if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
       let eff = mode;
       if ((mode === 'append' || mode === 'interleave') && !cfg.seqs.length) eff = 'new';
+      if (typeof nameHint === 'string' && nameHint) unit.name = nameHint;
+      if (!Number.isFinite(unit.reps)) unit.reps = 1;
       if (eff === 'new') {
         const id = cfg.seqs.reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
         const seq = _defaultSeqLayer(id);
@@ -5294,12 +5524,13 @@
         cfg.seqs.push(seq);
       } else {
         const seq = cfg.seqs.find(s => s.id === targetSeqId) || cfg.seqs[cfg.seqs.length - 1];
-        if (eff === 'append') {
-          if (!seq.units.length) seq.units = [unit];
-          else seq.units[0] = { ...seq.units[0], events: seq.units[0].events.concat(unit.events) };
-        } else {
-          seq.units.push(unit);
-          if (seq.units.length > 1) seq.unitMode = 'interleave';
+        // Append / Interleave both ADD a new SECTION (unit) to the target layer —
+        // its sections play in turn (see the Sections popover for reps / order /
+        // Random). Interleave additionally defaults the layer to Random order.
+        seq.units.push(unit);
+        if (seq.units.length > 1) {
+          if (eff === 'interleave') seq.unitMode = 'random';
+          else if (seq.unitMode === 'single') seq.unitMode = 'sequence';
         }
         seq.on = true;
         _ambFitSeqInterval(seq);

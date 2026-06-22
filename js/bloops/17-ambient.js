@@ -1185,6 +1185,8 @@
       const lenMs  = Math.max(40, inst.lengthMs | 0);
       const rVar   = Math.max(0, Math.min(100, inst.rhythmVar | 0));
       const pVar   = Math.max(0, Math.min(100, inst.pitchVar | 0));
+      const proximity = Math.max(0, Math.min(100, inst.proximity | 0));
+      const maxStep = 1 + Math.round((proximity / 100) * 7);   // 1 (adjacent) … 8 (wide leaps)
       const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
       const reg    = Math.max(1, Math.min(4, inst.register | 0) || 2);
       const src    = _ambNotesOf(inst);
@@ -1207,6 +1209,7 @@
         const cStart = st.startAt + c * phraseSec;
         // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
         const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
+        let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
         for (let bar = 0; bar < bars; bar++) {
           for (let slot = 0; slot < steps; slot++) {
             let hit = pat[slot] === 1;
@@ -1218,17 +1221,21 @@
             if (restP > 0 && rnd() * 100 < restP) continue;
             const at = cStart + (bar * steps + slot) * slotSec;
             if (at < tFrom || at >= tTo) continue;
-            // Pitch: seed = root; Pitch var occasionally moves to fifth / third /
-            // octave / fourth for a walking-bass feel.
-            let deg = 0, octShift = 0;
+            // Pitch: a proximity-constrained walk anchored to the root. Each
+            // cycle starts on the root; when Pitch var fires the walk steps by a
+            // random magnitude in [1, maxStep] scale degrees (Proximity caps the
+            // leap — 0 = strictly adjacent), otherwise it holds the current note.
+            // Reflected within a 2-octave bass range so it stays low.
             if (pVar > 0 && rnd() * 100 < pVar) {
-              const r = rnd();
-              if (r < 0.45)       deg = Math.min(N - 1, 4);                 // fifth
-              else if (r < 0.72)  deg = Math.min(N - 1, 2);                 // third
-              else if (r < 0.88) { deg = 0; octShift = 1; }                 // octave up
-              else                deg = Math.min(N - 1, 3);                 // fourth
+              const mag = 1 + Math.floor(rnd() * maxStep);
+              const dir = rnd() < 0.5 ? -1 : 1;
+              walkDeg += dir * mag;
+              const span = 2 * N;
+              if (walkDeg < 0) walkDeg = -walkDeg;                  // reflect at root
+              if (walkDeg > span) walkDeg = span - (walkDeg - span);
+              walkDeg = Math.max(0, Math.min(span, walkDeg));
             }
-            const f = _ambDegreeFreq(deg, reg + octShift, src);
+            const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
             const bp = _ambBassParams(lenMs, _ambLayerPan(inst), inst.tone);
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
@@ -4409,6 +4416,7 @@
         ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'],
         ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'],
+        ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Run: a fixed RANDOM note run, `bars` bars long, that loops in time.
@@ -4450,7 +4458,7 @@
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
         bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260,
-        rhythmVar: 0, pitchVar: 0, restProb: 0, accent: 0,
+        rhythmVar: 0, pitchVar: 0, proximity: 40, restProb: 0, accent: 0,
       });
       // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
       // 2 octaves by default; Vary starts at 0 so it repeats verbatim until

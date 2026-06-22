@@ -2462,6 +2462,12 @@
     .ambient-ctrl { display: grid; grid-template-columns: 84px 1fr auto; align-items: center; gap: 10px; }
     .ambient-ctrl label { font-family: 'Segoe UI', sans-serif; font-size: 0.8rem; color: #a0aec0; }
     .ambient-ctrl input[type="range"] { width: 100%; min-width: 0; accent-color: #9f7aea; }
+    /* Live numeric readout for a slider (third grid column). Fixed min-width +
+       right align so values don't shift the slider as digits change. */
+    .ambient-sl-v {
+      min-width: 2.4em; text-align: right; font-variant-numeric: tabular-nums;
+      color: #c7b3f0;
+    }
     /* Per-layer Stereo control: label | Spread/Pan toggle | fader | value. */
     .ambient-ctrl.ambient-spread { grid-template-columns: 84px auto 1fr auto; }
     .ambient-spread-seg { display: inline-flex; gap: 4px; }
@@ -2613,6 +2619,31 @@
     .ambient-ramp-row {
       border: 1px solid #20203a; border-radius: 8px; padding: 8px 10px;
       display: flex; flex-direction: column; gap: 8px; background: rgba(159,122,234,0.05);
+    }
+    /* Live sweep cue — a thin bar that tracks the ramp position while playing.
+       Collapsed to 0 height until the row goes .ramp-active (engine running +
+       ramp on); the fill width is driven by _ambRampViz. The Ramp toggle also
+       gets a soft pulse so an active ramp is unmistakable. */
+    .ambient-ramp-viz {
+      height: 0; overflow: hidden; border-radius: 999px;
+      background: rgba(159,122,234,0.14); transition: height 0.15s ease;
+    }
+    .ambient-ramp-row.ramp-active .ambient-ramp-viz { height: 4px; }
+    .ambient-ramp-fill {
+      display: block; height: 100%; width: 0;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #9f7aea, #f4b740);
+      box-shadow: 0 0 6px rgba(159,122,234,0.6);
+    }
+    .ambient-ramp-row.ramp-active {
+      border-color: #9f7aea; background: rgba(159,122,234,0.10);
+    }
+    .ambient-ramp-row.ramp-active .ambient-ramp-on {
+      animation: ramp-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes ramp-pulse {
+      0%, 100% { box-shadow: 0 0 0 rgba(159,122,234,0); }
+      50%      { box-shadow: 0 0 8px rgba(159,122,234,0.7); }
     }
     .ambient-ramp-head { display: flex; align-items: center; gap: 8px; }
     .ambient-ramp-head .ambient-ramp-target { flex: 1 1 auto; min-width: 0; }

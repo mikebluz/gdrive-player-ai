@@ -79,7 +79,7 @@
         // 'A:B') that gates which of the layer's generated events actually fire —
         // e.g. '1:2' = every other event, for sparser/polymetric interplay.
         bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        motif:   { on: false, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        motif:   { on: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
@@ -1243,6 +1243,85 @@
       st.lastAt = tTo;
     }
 
+    // ================= RUN engine ===================================
+    // A "Run" is a fixed RANDOM note run, `bars` bars long, that REPEATS as a
+    // loop locked to the global BPM. `density` sets notes per bar; the base run
+    // is drawn once from a seed (inst.id + project seed) so every repeat is
+    // identical — until `vary` is dialed up, which re-rolls that percentage of
+    // slots' pitch (and rest) per cycle, so the loop slowly mutates. Pitches are
+    // random scale degrees across `range` octaves above `register`, always in
+    // the current Scale. Mirrors _ambEmitBass's windowed, phase-anchored
+    // scheduling so it stays sample-accurate and re-reads config at cycle edges.
+    function _ambEmitRun(E, inst, key, now, horizon, lead, space, cfg) {
+      if (!E.runPhase) E.runPhase = {};
+      const bpm = _ambBpm();
+      const barSec = (60 / bpm) * 4;                 // 4/4
+      const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 2);
+      const phraseSec = bars * barSec;
+      if (!(phraseSec > 0.05)) return;
+      const perBar = Math.max(1, Math.min(16, inst.density | 0) || 8);
+      const totalSlots = bars * perBar;
+      const slotSec = barSec / perBar;
+      const lenMs  = Math.max(40, inst.lengthMs | 0);
+      const vary   = Math.max(0, Math.min(100, inst.vary | 0));
+      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const reg    = Math.max(2, Math.min(7, inst.register | 0) || 5);
+      const range  = Math.max(1, Math.min(4, inst.range | 0) || 2);
+      const transpose = Math.max(-24, Math.min(24, inst.transpose | 0));  // half steps, ±2 oct
+      const tFactor = Math.pow(2, transpose / 12);
+      const src    = _ambNotesOf(inst);
+      const N      = Math.max(1, _ambScaleIntervals(src).length);
+      const span   = Math.max(1, N * range);
+      const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+
+      // Fixed base run — seeded by layer id + project seed, so it repeats
+      // verbatim across cycles. One random degree (+ maybe rest) per slot.
+      const baseSeed = (((inst.id | 0) * 2654435761) ^ ((cfg && cfg.seed | 0) * 40503) ^ 0x5bd1e995) >>> 0;
+      const baseRnd = _ambSeededRand(baseSeed);
+      const baseDeg = new Array(totalSlots);
+      const baseRest = new Array(totalSlots);
+      for (let i = 0; i < totalSlots; i++) {
+        baseDeg[i] = Math.floor(baseRnd() * span);
+        baseRest[i] = (restP > 0 && baseRnd() * 100 < restP);
+      }
+
+      let st = E.runPhase[key];
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / phraseSec));
+      const cTo   = Math.floor((tTo - st.startAt) / phraseSec);
+      let cap = 0;
+      for (let c = cFrom; c <= cTo && cap < 512; c++) {
+        if (!_ambCondFires(inst.when, c)) continue;
+        const cStart = st.startAt + c * phraseSec;
+        // Per-cycle RNG drives Vary — stable within a cycle, evolves per cycle.
+        const vRnd = _ambSeededRand((baseSeed ^ ((c + 1) * 2246822519)) >>> 0);
+        for (let i = 0; i < totalSlots; i++) {
+          let deg = baseDeg[i], rest = baseRest[i];
+          if (vary > 0 && vRnd() * 100 < vary) {
+            deg = Math.floor(vRnd() * span);
+            rest = (restP > 0 && vRnd() * 100 < restP);
+          }
+          if (rest) continue;
+          const at = cStart + i * slotSec;
+          if (at < tFrom || at >= tTo) continue;
+          let f = _ambDegreeFreq(deg % N, reg + Math.floor(deg / N), src);
+          if (f == null) continue;
+          f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
+          const bp = _ambMotifParams(lenMs, _ambLayerPan(inst), inst.tone);
+          bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
+          if (dmod) bp._detuneMod = dmod;
+          try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+          cap++;
+          if (cap >= 512) break;
+        }
+      }
+      st.lastAt = tTo;
+    }
+
     // ================= SHAPE engine =================================
     // A Shape layer holds N radial-sequencer wheels. Each wheel loops
     // continuously, phase-anchored to a downbeat (E.shapePhase[key#i].startAt)
@@ -1328,8 +1407,12 @@
       const range = Math.max(1, Math.min(4, motif.range | 0));
       const lo = (center - range) * N, hi = (center + range) * N;
       if (_E.motifDeg == null) _E.motifDeg = center * N;
-      const leap = _ambRand() < 0.18;
-      const mag = leap ? 3 + Math.floor(_ambRand() * 3) : 1 + Math.floor(_ambRand() * 2);
+      // Proximity caps how far consecutive notes may leap (in scale degrees).
+      // 0 → every step is EXACTLY ±1 (strictly adjacent); higher widens the
+      // allowed gap up to ~an octave, picking a random magnitude in [1, maxStep].
+      const proximity = Math.max(0, Math.min(100, (motif.proximity != null ? motif.proximity : 35) | 0));
+      const maxStep = 1 + Math.round((proximity / 100) * 7);   // 1 (adjacent) … 8
+      const mag = 1 + Math.floor(_ambRand() * maxStep);         // 1 … maxStep
       const dir = _ambRand() < 0.5 ? -1 : 1;
       let next = _E.motifDeg + dir * mag;
       if (next < lo) next = lo + (lo - next);
@@ -1337,7 +1420,9 @@
       next = Math.max(lo, Math.min(hi, next));
       const degInOct = ((next % N) + N) % N;
       const chordSet = [0, 2, 4].filter(d => d < N);
-      if (!chordSet.includes(degInOct) && _ambRand() < 0.45) {
+      // Chord-tone magnet — skipped at proximity 0 so strict adjacency holds
+      // (snapping to a chord tone could otherwise jump more than one degree).
+      if (proximity > 0 && !chordSet.includes(degInOct) && _ambRand() < 0.45) {
         let best = degInOct, bd = 99;
         chordSet.forEach(c => { const dd = Math.min((c - degInOct + N) % N, (degInOct - c + N) % N); if (dd < bd) { bd = dd; best = c; } });
         next += (best - degInOct);
@@ -2163,6 +2248,7 @@
       }
       if (type === 'samp') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
       if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
+      if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'shape') {
         if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
           const i = Math.max(0, Math.min(L.shapes.length - 1, L.sel | 0));
@@ -2189,8 +2275,9 @@
             type === 'texture' || type === 'beat' || type === 'arp') {
           const c = E.clocks && E.clocks[key];
           if (c != null && c > now + eps) return c;     // next phrase / slice / step start
-        } else if (type === 'bass') {
-          const st = E.bassPhase && E.bassPhase[key];
+        } else if (type === 'bass' || type === 'run') {
+          const pm = (type === 'bass') ? E.bassPhase : E.runPhase;
+          const st = pm && pm[key];
           if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
         } else if (type === 'shape') {
           const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
@@ -2214,7 +2301,7 @@
       if (!(P > 0)) return now + 0.1;
       const eps = 0.02;
       let A = null;
-      if (type === 'bass') { const st = E.bassPhase && E.bassPhase[key]; if (st && st.startAt != null) A = st.startAt; }
+      if (type === 'bass' || type === 'run') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
       else if (type === 'shape') {
         const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
         const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
@@ -2656,6 +2743,18 @@
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
+          // Run layers: a fixed random note-run that loops every `bars` bars,
+          // mutated by Vary. Windowed/phase-anchored like Bass.
+          if (ex.type === 'run') {
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitRun(E, ex, key, now, gate.hz, lead, space, cfg); }
+            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
           const gm = ex.type === 'bed' ? 8 : (ex.type === 'arp' ? 24 : 16);
           const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
           stepLayer(key, ex, gm, ms, (at) => {
@@ -3011,11 +3110,16 @@
           if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) { _ambStopRampClock(E); return; }
           const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
           _ambApplyRamps(cfg, t);
+          // Update the visual cue at ~20 Hz (every other 25 ms tick) — smooth
+          // enough to read, half the DOM writes.
+          E._rampVizTick = (E._rampVizTick | 0) + 1;
+          if ((E._rampVizTick & 1) === 0) _ambRampViz(E);
         } catch (e) {}
       }, 25);
     }
     function _ambStopRampClock(E) {
       if (E && E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      try { _ambRampVizClear(E); } catch (e) {}
     }
     function _ambStartGenerator(E) {
       _E = E;
@@ -3041,6 +3145,7 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      try { _ambRampVizClear(E); } catch (e) {}
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
       const cfg = E.getCfg();
@@ -3715,10 +3820,35 @@
     // ---- Shared control builders (module scope: used by _ambientInit AND the
     // dynamic Seq renderer). They emit 'ambient-' id stems; both callers
     // translate the stem to the engine's idPrefix after building.
+    // Slider control. The third grid column shows the LIVE numeric value (like
+    // _ambTm) instead of a static hint; the descriptive hint becomes the row's
+    // tooltip so it's still discoverable. The value readout (id + '-v') is
+    // updated live on drag by a delegated listener and on programmatic sync by
+    // _ambSyncSliderReadouts.
     const _ambSl = (label, id, min, max, val, hint) =>
-      '<div class="ambient-ctrl"><label for="' + id + '">' + label + '</label>' +
-      '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
-      (hint ? '<span class="ambient-hint">' + hint + '</span>' : '') + '</div>';
+      '<div class="ambient-ctrl"' + (hint ? ' title="' + String(hint).replace(/"/g, '&quot;') + '"' : '') + '>' +
+      '<label for="' + id + '">' + label + '</label>' +
+      '<input type="range" class="ambient-sl" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
+      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + ((val != null && val !== '') ? val : '') + '</span></div>';
+    // One delegated listener mirrors every Bloom slider's value into its readout
+    // as it's dragged — across all panels (master + lanes), no matter which
+    // per-control handler also fires. Capture phase so a stopPropagation can't
+    // suppress it.
+    try {
+      document.addEventListener('input', (e) => {
+        const t = e.target;
+        if (!t || t.tagName !== 'INPUT' || t.type !== 'range' || !t.id || !t.classList || !t.classList.contains('ambient-sl')) return;
+        const v = document.getElementById(t.id + '-v');
+        if (v) v.textContent = t.value;
+      }, true);
+    } catch (e) {}
+    // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire
+    // 'input') into the readouts. Sweeps every Bloom slider in `root`.
+    function _ambSyncSliderReadouts(root) {
+      const r = root || document;
+      let list; try { list = r.querySelectorAll('input.ambient-sl'); } catch (e) { return; }
+      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value; });
+    }
     const _ambTm = (label, id, min, max, step, val) =>
       '<div class="ambient-ctrl"><label for="' + id + '">' + label + '</label>' +
       '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '" />' +
@@ -4230,6 +4360,7 @@
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       motif: { label: 'Motif', ctrls: [['tone'], ['notes'],
         ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
+        ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20],
         ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'],
@@ -4280,11 +4411,25 @@
         ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Run: a fixed RANDOM note run, `bars` bars long, that loops in time.
+      // Density = notes/bar; Vary re-rolls that % of slots per repeat so the
+      // loop mutates (0 = repeats verbatim). Pitches are random scale degrees
+      // across `range` octaves from `register`, always in the current Scale.
+      run: { label: 'Run', ctrls: [['tone'], ['notes'],
+        ['sl', 'register', 'Register', 2, 7, 'base octave'],
+        ['sl', 'range', 'Range', 1, 4, 'octave span'],
+        ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
+        ['sl', 'bars', 'Bars', 1, 16, 'loop length'],
+        ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'],
+        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0 });
-      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
+      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40 });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25 });
       // Shape layer: one wheel to start; the user adds more via the card browser.
@@ -4306,6 +4451,13 @@
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
         bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260,
         rhythmVar: 0, pitchVar: 0, restProb: 0, accent: 0,
+      });
+      // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
+      // 2 octaves by default; Vary starts at 0 so it repeats verbatim until
+      // dialed up. A light rest % keeps the run from being wall-to-wall.
+      if (type === 'run') return Object.assign(base, {
+        tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
+        bars: 2, density: 8, lengthMs: 220, vary: 0, restProb: 10, accent: 20,
       });
       return base;
     }
@@ -4707,6 +4859,7 @@
       wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => _ambInstCardHtml(inst)).join(''));
       cfg.extras.forEach(inst => _ambWireInst(E, inst));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
+      try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
     }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
@@ -4890,6 +5043,46 @@
         let v = r.a + f * (r.b - r.a);
         v = Math.max(res.min, Math.min(res.max, v));
         res.obj[res.key] = Math.round(v);
+        // Stash the live sweep position (0..1) + value for the row's visual cue.
+        r._f = f;
+        r._v = Math.round(v);
+      }
+    }
+    // Paint the live ramp cue: a position bar that tracks the sweep and a live
+    // "(now X)" readout, so an active ramp visibly moves while playing. Cheap —
+    // a couple of style writes per ramp; called throttled off the ramp clock.
+    function _ambRampViz(E) {
+      const cfg = E && E._cfg;
+      if (!cfg || !Array.isArray(cfg.ramps)) return;
+      const playing = !!cfg.playing;
+      for (const r of cfg.ramps) {
+        if (!r) continue;
+        const p = 'ambient-ramp-' + r.id + '-';
+        const fill = _ambGet(E, p + 'fill');
+        if (!fill) continue;
+        const row = fill.closest('.ambient-ramp-row');
+        const active = playing && !!r.on;
+        if (row) row.classList.toggle('ramp-active', active);
+        if (!active) continue;
+        const f = Number.isFinite(r._f) ? Math.max(0, Math.min(1, r._f)) : 0;
+        fill.style.width = (f * 100) + '%';
+        const rg = _ambGet(E, p + 'range');
+        if (rg && Number.isFinite(r._v)) {
+          const res = _ambRampResolve(cfg, r.target);
+          if (res) rg.textContent = res.min + '–' + res.max + ' (now ' + r._v + ')';
+        }
+      }
+    }
+    // Drop the active cue (engine stopped): clear the moving bars and restore
+    // each row's static range readout.
+    function _ambRampVizClear(E) {
+      const cfg = E && (E._cfg || (E.getCfg && E.getCfg()));
+      if (!cfg || !Array.isArray(cfg.ramps)) return;
+      for (const r of cfg.ramps) {
+        if (!r) continue;
+        const fill = _ambGet(E, 'ambient-ramp-' + r.id + '-fill');
+        if (fill) { const row = fill.closest('.ambient-ramp-row'); if (row) row.classList.remove('ramp-active'); }
+        try { _ambRampSyncABRange(E, r.id); } catch (e) {}
       }
     }
     function _ambRampRowHtml(r, cfg) {
@@ -4917,6 +5110,9 @@
           '<select id="' + p + 'target" class="ambient-select ambient-ramp-target">' + tgtOpts + '</select>' +
           '<button type="button" class="ambient-seq-del" id="' + p + 'del" title="Delete ramp" aria-label="Delete ramp">✕</button>' +
         '</div>' +
+        // Live sweep cue — the fill bar tracks the ramp's current position while
+        // playing (driven by _ambRampViz); hidden until the row is .ramp-active.
+        '<div class="ambient-ramp-viz"><span class="ambient-ramp-fill" id="' + p + 'fill"></span></div>' +
         '<div class="ambient-ramp-params">' +
           '<span class="ambient-hint ambient-ramp-range" id="' + p + 'range"></span>' +
           '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" value="' + r.a + '"></label>' +
@@ -5163,6 +5359,7 @@
       { const _nb = document.getElementById(tr('ambient-motif-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.motif)); }
       set('ambient-motif-register', cfg.motif.register);
       set('ambient-motif-range', cfg.motif.range);
+      set('ambient-motif-proximity', cfg.motif.proximity);
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
       set('ambient-motif-drift', cfg.motif.drift);
@@ -5220,6 +5417,9 @@
       if (seedEl) seedEl.textContent = '#' + (cfg.seed >>> 0);
       _ambRefreshPlayBtn(E);
       try { _ambRefreshCaptureBtn(E); } catch (e) {}
+      // Mirror every slider's just-synced value into its numeric readout
+      // (programmatic setVal above doesn't fire 'input').
+      try { _ambSyncSliderReadouts(document); } catch (e) {}
     }
     function _ambientInit(E) {
       if (E.inited) { _ambSyncControls(E); _ambStartViz(E); return; }
@@ -5327,6 +5527,7 @@
           _ambNotesButtonHtml('ambient-motif') +
           sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
           sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
+          sl('Proximity', 'ambient-motif-proximity', 0, 100, 35, 'adjacent → leaps') +
           tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
           tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
           sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
@@ -5564,6 +5765,7 @@
       bind('ambient-bed-level', 'bed', 'level');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
+      bind('ambient-motif-proximity', 'motif', 'proximity');
       bindTime('ambient-motif-interval', 'motif', 'intervalMs');
       bindTime('ambient-motif-length', 'motif', 'lengthMs');
       bind('ambient-motif-drift', 'motif', 'drift');
@@ -5697,6 +5899,8 @@
         actions.push({ label: 'Arp', fn: () => _ambAddExtra(E, 'arp') });
         // Bass: low euclidean phrase locked to BPM (extras-only).
         actions.push({ label: 'Bass', fn: () => _ambAddExtra(E, 'bass') });
+        // Run: a fixed random note run that loops every N bars (extras-only).
+        actions.push({ label: 'Run', fn: () => _ambAddExtra(E, 'run') });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

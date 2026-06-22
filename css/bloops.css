@@ -2933,7 +2933,13 @@
       display: inline-flex; align-items: baseline; gap: 6px;
       padding: 3px 9px; border: 1px solid #2d2d3f; border-radius: 13px;
       background: rgba(10,10,20,0.5); font-family: 'Segoe UI', sans-serif;
+      cursor: pointer; user-select: none; transition: opacity 0.12s ease, background 0.12s ease;
     }
+    @media (hover: hover) { .sm-chip:hover { background: rgba(40,40,60,0.6); } }
+    /* Solo: clicked chips brighten; when any are soloed the rest dim to show
+       they're muted. */
+    .sm-chip.solo { background: rgba(246,224,94,0.14); border-color: var(--chip-color, #f6e05e); }
+    .shape-master-chips.has-solo .sm-chip:not(.solo) { opacity: 0.4; }
     .sm-chip-name {
       flex: 0 0 auto; max-width: 9ch;
       font-size: 0.68rem; font-weight: 700; letter-spacing: 0.4px;
@@ -9262,7 +9268,7 @@
        all module-scoped JS, so swapping views never resets data. */
     #mix-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; }
     body.view-mix > #mix-view { display: block; }
-    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(script) {
+    body.view-mix > *:not(.home-bar-row):not(.top-bar):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }

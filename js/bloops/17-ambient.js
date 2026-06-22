@@ -163,7 +163,10 @@
     }
     function _shapeBloomSynthCfg() {
       const live = _shapeBloomLayers();
-      const sig = live.map(c => c.id + ':' + c.bloomLayer.type).join('|');
+      // Solo: when ANY shape is soloed, only soloed layers get `on` (the engine
+      // gates the rest). Solo state is in the sig so a toggle rebuilds the config.
+      const anySolo = (Array.isArray(masterShapes) ? masterShapes : []).some(c => c && c.solo);
+      const sig = live.map(c => c.id + ':' + c.bloomLayer.type + ':' + (c.solo ? 1 : 0)).join('|') + '#' + (anySolo ? 1 : 0);
       if (_shapeBloomCfgCache && sig === _shapeBloomCfgSig) {
         // Refresh the entry→render-key map (cheap) and reuse the built config.
         return _shapeBloomCfgCache;
@@ -175,7 +178,7 @@
       live.forEach(c => {
         const bl = c.bloomLayer;
         const lc = JSON.parse(JSON.stringify(bl.cfg));
-        lc.on = true; lc.present = true; lc.solo = false;
+        lc.on = anySolo ? !!c.solo : true; lc.present = true; lc.solo = false;
         if (bl.type === 'seq') { lc.id = sid++; base.seqs.push(lc); c._renderKey = 'seq:' + lc.id; }
         else { lc.type = bl.type; lc.id = xid++; base.extras.push(lc); c._renderKey = bl.type + ':' + lc.id; }
       });
@@ -5740,7 +5743,19 @@
       pedal:   [['register','Register',1,7],['degree','Note',1,12],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       arp:     [['randomness','Randomness',0,100],['intervalMs','Rate (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       shape:   [['level','Level',0,100]],
+      // Global (not per-layer): writes the shared tempo, so a BPM ramp retempos
+      // grid + Bloom + Shapes together. Range is a musical 40–300.
+      global:  [['bpm','BPM',40,300]],
     };
+    // Live-write the global tempo from a ramp (cheap: just the inputs + the
+    // top-bar readout — no digit rebuild / persist at 40 Hz; engines read
+    // tempoInput.value live).
+    function _ambRampSetBpm(v) {
+      v = Math.max(20, Math.min(999, v | 0));
+      try { if (typeof tempoInput !== 'undefined' && tempoInput) tempoInput.value = String(v); } catch (e) {}
+      try { if (typeof tempoSlider !== 'undefined' && tempoSlider) tempoSlider.value = String(v); } catch (e) {}
+      const xb = document.getElementById('xport-bpm'); if (xb) xb.textContent = String(v);
+    }
     function _normalizeRamp(r, id, cfg) {
       if (!Number.isFinite(r.id)) r.id = id;
       if (typeof r.on !== 'boolean') r.on = true;
@@ -5783,6 +5798,12 @@
       if (dot < 0) return null;
       const head = target.slice(0, dot), key = target.slice(dot + 1);
       let obj = null, cat = head;
+      if (head === 'global') {
+        const spec = (_AMB_RAMP_PARAMS.global || []).find(p => p[0] === key);
+        if (!spec) return null;
+        if (key === 'bpm') return { global: true, key: key, min: spec[2], max: spec[3], set: _ambRampSetBpm };
+        return null;
+      }
       if (head === 'bed' || head === 'motif' || head === 'texture' || head === 'beat') {
         obj = cfg[head];
       } else if (head.indexOf('seq:') === 0) {
@@ -5824,6 +5845,8 @@
         _tc[x.type] = (_tc[x.type] | 0) + 1;
         add((_AMB_LAYER_SCHEMA[x.type].label || x.type) + ' ' + _tc[x.type], x.type + ':' + x.id, x.type);
       });
+      // Global params (BPM) — always available.
+      if (_AMB_RAMP_PARAMS.global) g.push({ label: 'Global', items: _AMB_RAMP_PARAMS.global.map(p => ({ value: 'global.' + p[0], label: p[1] })) });
       return g;
     }
     // ---- Sequence-as-waveform translation -----------------------------
@@ -5923,7 +5946,8 @@
           if (!res) continue;
           let v = res.min + pct * (res.max - res.min);
           v = Math.max(res.min, Math.min(res.max, v));
-          res.obj[res.key] = Math.round(v);
+          if (typeof res.set === 'function') res.set(Math.round(v));   // global targets (e.g. BPM)
+          else if (res.obj) res.obj[res.key] = Math.round(v);
         }
       }
     }

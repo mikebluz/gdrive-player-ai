@@ -1983,12 +1983,16 @@
       // The browser list (version rows) + chip row are their own DOM, refreshed cheaply.
       _shapeMasterBrowser();
       _shapeMasterRenderChips();
-      const list = Array.isArray(masterShapes) ? masterShapes : [];
-      if (!list.length) {
+      const allList = Array.isArray(masterShapes) ? masterShapes : [];
+      if (!allList.length) {
         ctx.fillStyle = 'rgba(120,120,150,0.7)'; ctx.font = '14px Segoe UI, sans-serif'; ctx.textAlign = 'center';
         ctx.fillText('No master shapes yet — “⬡ Shape It” in master Bloom or “◎ Send” in a Shape lane.', cx, cy);
         _shapeMaster.rings = []; return;
       }
+      // Solo: when any shape is soloed, only the soloed ones are drawn (and the
+      // rest are muted); otherwise show them all.
+      const anySolo = allList.some(c => c && c.solo);
+      const list = anySolo ? allList.filter(c => c.solo) : allList;
       const phases = (phaseArg && typeof phaseArg === 'object') ? phaseArg : (_shapeMaster.running ? _shapeMaster.phases : null);
       const n = list.length;
       // Concentric spacing: keep the innermost ring readable (≥35% of Rout).
@@ -2007,7 +2011,11 @@
           // each rotation to reflect the layer's generative variance.
           const winSec = (typeof _ambLayerLoopSec === 'function') ? _ambLayerLoopSec(c.bloomLayer.cfg, c.bloomLayer.type) : 4;
           const ev = (typeof _shapeBloomEng !== 'undefined' && _shapeBloomEng.cap && c._renderKey) ? _shapeBloomEng.cap[c._renderKey] : null;
-          const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          // AUDIBLE time, not the scheduling clock: nodes sit at their scheduled
+          // `at`, but Tone.now() = currentTime + lookAhead and the speakers add
+          // outputLatency, so driving the arm off currentTime − outputLatency makes
+          // it pass each node exactly when that note is HEARD.
+          const now = _shapeAudibleNow();
           if (_shapeMaster.running && Array.isArray(ev) && ev.length) {
             if (!c._cyc || c._cyc.win !== winSec) {
               // Anchor the cycle grid to the first onset, then silently fast-forward
@@ -2046,8 +2054,34 @@
         if (rotated) _shapeMasterFlashChip(c.id);   // chip flash on rotation complete
         _shapeMasterUpdateChip(c, cfg, ph);          // live "now playing" readout
       });
+      // Hidden (muted) shapes: blank their chip note so it doesn't show a stale
+      // pitch from before it was soloed out.
+      if (anySolo) allList.forEach(c => {
+        if (c.solo) return;
+        const el = _shapeMaster.chipEls && _shapeMaster.chipEls[c.id];
+        if (el && el._last !== '·') { el._last = '·'; el.textContent = '·'; el.classList.remove('on'); }
+      });
       _shapeMaster.rings = rings;
       ctx.fillStyle = 'rgba(203,213,224,0.8)'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
+    }
+    // The audio context's currently-AUDIBLE time. Scheduled note times (`at`) are
+    // in the context clock, so the playhead must be driven off context.currentTime
+    // — NOT Tone.now() (= currentTime + lookAhead, ahead of sound). We subtract a
+    // SMALL latency: the reliable baseLatency, plus a fraction of the often-
+    // over-reported outputLatency (capped), so fast layers like Texture don't get
+    // pulled behind the sound. _SHAPE_SYNC_TRIM nudges it if a residual remains.
+    const _SHAPE_SYNC_TRIM = 0;   // extra seconds to subtract (− = arm earlier)
+    function _shapeAudibleNow() {
+      try {
+        const ac = (typeof Tone !== 'undefined' && Tone.getContext) ? Tone.getContext().rawContext : null;
+        if (ac && typeof ac.currentTime === 'number') {
+          const base = Number.isFinite(ac.baseLatency) ? ac.baseLatency : 0;
+          const out = (Number.isFinite(ac.outputLatency) && ac.outputLatency > 0) ? ac.outputLatency : 0;
+          const lat = Math.min(0.05, base + out * 0.5);   // conservative, capped at 50ms
+          return ac.currentTime - lat - _SHAPE_SYNC_TRIM;
+        }
+      } catch (e) {}
+      return (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
     }
     // Lightweight (no _shapeNormalize) draw cfg for ONE cycle of a Bloom shape:
     // the captured events whose onset falls in [t0, t0+winSec), placed by their
@@ -2125,14 +2159,35 @@
         chip.className = 'sm-chip';
         chip.style.borderColor = _shapeRgba(color, 0.5);
         chip.style.setProperty('--chip-color', color);
+        chip.title = 'Click to solo / unsolo this shape';
         const nm = document.createElement('span'); nm.className = 'sm-chip-name';
         nm.textContent = _shapeMasterLegendName(c); nm.style.color = color;
         const nt = document.createElement('span'); nt.className = 'sm-chip-note'; nt.textContent = '·';
         chip.appendChild(nm); chip.appendChild(nt);
+        chip.addEventListener('click', () => _shapeMasterToggleSolo(c.id));
         host.appendChild(chip);
         _shapeMaster.chipEls[c.id] = nt;
         _shapeMaster.chipBox[c.id] = chip;
       });
+      _shapeMasterApplySolo();   // reflect any existing solo state on the new chips
+    }
+    // Solo: click a chip to hear only it (and any others soloed). Toggling rebuilds
+    // the render config (engine gates non-soloed layers) and the fixed-shape tick
+    // skips non-soloed wheels; chips dim except the soloed ones.
+    function _shapeMasterToggleSolo(id) {
+      const c = _masterShapeById(id); if (!c) return;
+      c.solo = !c.solo;
+      _shapeMasterApplySolo();
+      try { if (typeof _shapeBloomInvalidate === 'function') _shapeBloomInvalidate(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    }
+    function _shapeMasterApplySolo() {
+      const host = document.getElementById('shape-master-chips');
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      const anySolo = list.some(c => c && c.solo);
+      if (host) host.classList.toggle('has-solo', anySolo);
+      const box = _shapeMaster.chipBox || {};
+      list.forEach(c => { const el = box[c.id]; if (el) el.classList.toggle('solo', !!c.solo); });
     }
     // One-shot flash on a chip when its shape completes a rotation (restart the
     // CSS animation by retriggering the class).
@@ -2147,7 +2202,7 @@
     function _shapeBloomCurrentNote(key) {
       const ev = (typeof _shapeBloomEng !== 'undefined' && _shapeBloomEng.cap && key) ? _shapeBloomEng.cap[key] : null;
       if (!Array.isArray(ev) || !ev.length) return '';
-      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const now = _shapeAudibleNow();   // match the audible playhead, not the schedule clock
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       const midis = [];
       for (let i = ev.length - 1; i >= 0 && (ev.length - i) <= 96; i--) {
@@ -2322,9 +2377,11 @@
       // Every shape plays at once, each on its OWN loop length (barSec) but a
       // shared clock origin (t0), so they overlay like a multi-wheel ensemble.
       const live = new Set();
+      const anySolo = list.some(c => c && c.solo);
       list.forEach(c => {
         live.add(c.id);
         if (c.bloomLayer) return;   // played live by the render engine, not node-triggered
+        if (anySolo && !c.solo) return;   // solo: silence non-soloed fixed shapes
         const cfg = _shapeNormalize(c.shape);
         const barSec = _shapeBarSec(cfg);
         const phase = (((now - _shapeMaster.t0) % barSec) / barSec + 1) % 1;
@@ -2341,7 +2398,17 @@
       });
       // Forget phases of shapes that were deleted mid-play.
       Object.keys(phases).forEach(k => { if (!live.has(k | 0) && !live.has(k)) delete phases[k]; });
-      _shapeMasterDraw(phases);
+      // Throttle the heavy canvas redraw to ~30 fps. Repainting many overlaid
+      // wheels (+ GPU re-upload) every animation frame competes with audio
+      // scheduling on the main thread and glitches playback with several layers;
+      // 30 fps keeps the playhead smooth while halving that cost. Note-triggering
+      // above still runs every frame for tight timing.
+      const tMs = now * 1000;
+      const drawEvery = list.length > 4 ? 50 : 33;   // ~20 fps for many layers, ~30 fps otherwise
+      if (!_shapeMaster._drawAt || tMs - _shapeMaster._drawAt >= drawEvery) {
+        _shapeMaster._drawAt = tMs;
+        _shapeMasterDraw(phases);
+      }
       _shapeMaster.raf = requestAnimationFrame(_shapeMasterTick);
     }
     function _shapeMasterStart() {

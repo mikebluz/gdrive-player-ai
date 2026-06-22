@@ -1403,8 +1403,10 @@
       const slotSec = barSec / perBar;
       const lenMs  = Math.max(40, inst.lengthMs | 0);
       const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const vary   = Math.max(0, Math.min(100, inst.vary | 0));   // % of hits that roam off the root
       const reg    = Math.max(1, Math.min(7, inst.register | 0) || 4);
       const src    = _ambNotesOf(inst);
+      const N      = Math.max(1, _ambScaleIntervals(src).length);
       const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       // Match a default Shape node exactly: the grid voice at FULL volume 100
       // (applyLevel'd), not the ~0.3×-attenuated Bass/Motif params — so a default
@@ -1430,13 +1432,19 @@
       for (let c = cFrom; c <= cTo && cap < 512; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
         const cStart = st.startAt + c * phraseSec;
-        const rRnd = (restP > 0) ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
+        // One per-cycle RNG drives both Rests and Vary (stable within a cycle,
+        // evolves per cycle — so the pedal stays mostly on the root and roams the
+        // same way each pass until the cycle turns over).
+        const cRnd = (restP > 0 || vary > 0) ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
         for (let i = 0; i < totalSlots; i++) {
-          if (rRnd && rRnd() * 100 < restP) continue;
+          if (cRnd && restP > 0 && cRnd() * 100 < restP) continue;
+          // Base degree (the "Note" control, 1 = key root) unless Vary roams it.
+          let deg = Math.min(N - 1, Math.max(0, ((inst.degree | 0) || 1) - 1));
+          if (cRnd && vary > 0 && cRnd() * 100 < vary) deg = Math.floor(cRnd() * N);
           const at = cStart + i * slotSec;
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;
-          const f = _ambDegreeFreq(0, reg, src);   // root of the current key/grid
+          const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
           if (f == null) continue;
           const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
             volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan };
@@ -4121,11 +4129,70 @@
     // tooltip so it's still discoverable. The value readout (id + '-v') is
     // updated live on drag by a delegated listener and on programmatic sync by
     // _ambSyncSliderReadouts.
-    const _ambSl = (label, id, min, max, val, hint) =>
-      '<div class="ambient-ctrl"' + (hint ? ' title="' + String(hint).replace(/"/g, '&quot;') + '"' : '') + '>' +
-      '<label for="' + id + '">' + label + '</label>' +
+    // Plain-language explanation per parameter (keyed by lowercased label), shown
+    // as a hover/long-press tooltip on each control's label so the user knows what
+    // every knob does. Falls back to the control's short hint when unmapped.
+    const _AMB_PARAM_DESC = {
+      register: 'Octave the layer plays in — higher is brighter.',
+      note: 'Which scale degree the pedal sits on (1 = the key root, 2 = the 2nd, …).',
+      range: 'How many octaves the notes span.',
+      transpose: 'Shift the whole layer by half-steps (±2 octaves), chromatically.',
+      bars: 'Length of the loop in bars before it repeats.',
+      density: 'Notes per bar.',
+      length: 'How long each note sustains.',
+      interval: 'Time between events.',
+      rate: 'How fast it cycles.',
+      drift: 'Phase offset — nudges the layer off the downbeat for polymetric interplay.',
+      vary: 'How much it deviates from its base pattern (0 = repeats exactly).',
+      rests: 'Chance that each hit is silent.',
+      accent: 'Dynamic variation — flat to punchy.',
+      level: 'Layer volume.',
+      attack: 'Fade-in time of each note.',
+      decay: 'Time to fall from the peak to the sustain level.',
+      sustain: 'Held level after the decay, while the note is on.',
+      release: 'Fade-out time after each note ends.',
+      motion: 'Detune / drift movement applied to the voicing.',
+      strum: 'Spread a chord from a block into an arpeggio.',
+      fidelity: 'Strum order — strictly in order to random.',
+      fill: 'Sparse to busy.',
+      mutate: 'How fast the texture pattern evolves.',
+      twist: 'Steady cadence to rhythmic bursts.',
+      pulses: 'Euclidean hits per bar.',
+      steps: 'Euclidean steps per bar (the grid the pulses spread across).',
+      rotate: 'Rotate the euclidean pattern.',
+      'rhythm var': 'Stochastic rhythm variation each repeat.',
+      'pitch var': 'How often the bass leaves the root note.',
+      proximity: 'Step size between notes — 0 forces adjacent steps, higher allows leaps.',
+      octaves: 'Octave span of the arpeggio.',
+      randomness: 'How far the arp deviates from its direction (Random = fully shuffled).',
+      'every n': 'Return to the original sequence every N cycles.',
+      'chance %': 'Chance of playing the original verbatim each cycle.',
+      amount: 'Variation intensity.',
+      chop: 'Slice the sample into N pieces across the interval.',
+      gate: 'Note length as a percentage of the slot.',
+      spread: 'Stereo width — fans the voices across the field.',
+      depth: 'Modulation depth.',
+      send: 'Amount sent to the reverb.',
+      mix: 'Dry → wet balance.',
+      feedback: 'How much the delay echoes repeat.',
+      drive: 'Distortion amount.',
+      tone: 'The voice / instrument this layer plays.',
+      notes: 'The scale, chord, wrap or progression this layer draws pitches from.',
+      when: 'Conditional — which cycles this layer plays on.',
+      kit: 'The drum kit this Beat layer triggers.',
+    };
+    function _ambParamDesc(label, hint) {
+      const k = String(label || '').toLowerCase().trim();
+      return _AMB_PARAM_DESC[k] || hint || '';
+    }
+    const _ambSl = (label, id, min, max, val, hint) => {
+      const desc = _ambParamDesc(label, hint);
+      const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';
+      return '<div class="ambient-ctrl"' + dt + '>' +
+      '<label for="' + id + '"' + dt + '>' + label + '</label>' +
       '<input type="range" class="ambient-sl" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
       '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + ((val != null && val !== '') ? val : '') + '</span></div>';
+    };
     // One delegated listener mirrors every Bloom slider's value into its readout
     // as it's dragged — across all panels (master + lanes), no matter which
     // per-control handler also fires. Capture phase so a stopPropagation can't
@@ -4145,10 +4212,13 @@
       let list; try { list = r.querySelectorAll('input.ambient-sl'); } catch (e) { return; }
       list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value; });
     }
-    const _ambTm = (label, id, min, max, step, val) =>
-      '<div class="ambient-ctrl"><label for="' + id + '">' + label + '</label>' +
+    const _ambTm = (label, id, min, max, step, val) => {
+      const desc = _ambParamDesc(label, '');
+      const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';
+      return '<div class="ambient-ctrl"' + dt + '><label for="' + id + '"' + dt + '>' + label + '</label>' +
       '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '" />' +
       '<span class="ambient-hint" id="' + id + '-v"></span></div>';
+    };
     // Saved sequences as a "Sequence" optgroup for shape/wave dropdowns.
     function _ambSeqWaveOptgroup() {
       const list = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
@@ -4816,6 +4886,7 @@
       // length, Density = root hits per bar (default 1 bar × 4 = quarter notes).
       pedal: { label: 'Pedal', ctrls: [['tone'],
         ['sl', 'register', 'Register', 1, 7, 'octave'],
+        ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
         ['sl', 'bars', 'Bars', 1, 16, 'loop length'],
         ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
@@ -4823,6 +4894,7 @@
         ['sl', 'decay', 'Decay', 0, 2000, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'],
         ['sl', 'release', 'Release', 0, 4000, 'ms'],
+        ['sl', 'vary', 'Vary', 0, 100, 'root → roam'],
         ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
@@ -4863,7 +4935,7 @@
       // 4 (C4) + full volume matches a default Shape node so they sound the same.
       if (type === 'pedal') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 4,
-        bars: 1, density: 4, lengthMs: 400, restProb: 0, accent: 0,
+        bars: 1, density: 4, lengthMs: 400, restProb: 0, accent: 0, vary: 0, degree: 1,
         attack: 5, decay: 40, sustain: 75, release: 200,
       });
       return base;
@@ -5357,7 +5429,7 @@
       samp:    [['chop','Chop',1,16],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',80,16000],['drift','Drift',0,99],['level','Level',0,100]],
       bass:    [['register','Register',1,4],['bars','Bars',1,8],['pulses','Pulses',1,16],['steps','Steps',2,16],['rotate','Rotate',0,15],['lengthMs','Length (ms)',60,2000],['rhythmVar','Rhythm var',0,100],['pitchVar','Pitch var',0,100],['proximity','Proximity',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
-      pedal:   [['register','Register',1,7],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      pedal:   [['register','Register',1,7],['degree','Note',1,12],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       arp:     [['randomness','Randomness',0,100],['intervalMs','Rate (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       shape:   [['level','Level',0,100]],
     };

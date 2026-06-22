@@ -150,6 +150,10 @@
       display: flex;
       flex-direction: row;
       align-items: center;
+      /* Centre the whole group: signed out → just [Sign in]; signed in →
+         [Sign out] [Project ▾] [name]. Order is set via `order` below so
+         Sign-out sits to the LEFT of Project regardless of DOM order. */
+      justify-content: center;
       gap: 10px;
       padding: 8px 16px;
       background: #050510;
@@ -163,13 +167,17 @@
       min-height: 48px;
       line-height: 1;
     }
+    .project-bottom-bar .signin-toggle  { order: 1; margin-left: 0; }   /* Sign in / out — leftmost */
     .project-bottom-bar #project-menu-btn {
+      order: 2;                          /* Project ▾ — right of Sign out */
       flex: 0 0 auto;
       align-self: center;
     }
     .project-bottom-bar .project-name-label {
-      flex: 1 1 auto;
+      order: 3;                          /* active project name — trails the group */
+      flex: 0 1 auto;
       min-width: 0;
+      max-width: 40vw;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -178,6 +186,10 @@
       font-family: 'Segoe UI', sans-serif;
       font-size: 0.78rem;
     }
+    /* Project button (and any project name) only make sense once signed in —
+       Save/Load/New need Drive. body.no-google = signed out. */
+    body.no-google .project-bottom-bar #project-menu-btn,
+    body.no-google .project-bottom-bar .project-name-label { display: none; }
 
     /* Master volume + Note Edit pill — moved into the Sounds panel.
        Lays them out on a single row that mirrors the .sounds-submenus
@@ -2349,6 +2361,9 @@
     }
     .shape-btn:hover { border-color: #4fd1c5; color: #b2f5ea; }
     .shape-btn.active { border-color: #f56565; color: #feb2b2; background: rgba(245,101,101,0.16); }
+    /* Destructive action (Clear all shapes) — red accent so it reads apart. */
+    .shape-btn.shape-btn-danger { border-color: #4a2330; color: #d98a96; }
+    .shape-btn.shape-btn-danger:hover { border-color: #e25563; color: #ff8a95; background: rgba(226,85,99,0.12); }
     .seq-inner { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
     .seq-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .seq-toolbar-spacer { flex: 1 1 auto; }
@@ -2458,6 +2473,18 @@
     .ambient-footer-capture:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(244, 183, 64, 0.7); }
     .ambient-footer-capture.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); }
     .ambient-footer-capture:disabled { opacity: 0.7; cursor: default; }
+    /* Shape It: a smaller round button to the LEFT of Capture, purple to match
+       the Shapes accent. Sends every Bloom layer to master Shapes. */
+    .ambient-footer-shapeit {
+      flex: 0 0 auto; align-self: center;
+      width: 70px; height: 70px; min-width: 70px; min-height: 70px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; cursor: pointer; font-size: 1.7rem; padding: 0; transition: all 0.15s ease;
+      background: rgba(0, 0, 0, 0.5); color: #b794f4; border: 2px solid #9f7aea;
+      box-shadow: 0 0 12px rgba(159, 122, 234, 0.45);
+    }
+    .ambient-footer-shapeit:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(159, 122, 234, 0.75); }
+    .ambient-footer-shapeit:disabled { opacity: 0.7; cursor: default; }
     /* Reserve space so the fixed (tall) bar never covers the last panel content. */
     .ambient-inner { padding-bottom: 128px; }
     /* Play / Stop — matches the Make footer transport play button exactly
@@ -2741,6 +2768,18 @@
     }
     @media (hover: hover) { .ambient-solo-btn:hover { border-color: #9f7aea; color: #e9d8fd; } }
     .ambient-solo-btn.soloed { color: #1a202c; background: #f6e05e; border-color: #f6e05e; }
+    /* Per-layer Rename ✎ button — sits just right of the name, before the
+       auto-margin pushes Solo/Freeze/✕ to the far right. */
+    .ambient-rename-btn {
+      margin-left: 6px; flex: 0 0 auto;
+      width: 24px; height: 24px; padding: 0;
+      border: 1px solid #2d2d3f; border-radius: 7px;
+      background: transparent; color: #6b6b8a; cursor: pointer;
+      font-size: 0.74rem; line-height: 1; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-rename-btn:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    /* The toggle's label text lives in a span so rename can swap it live. */
+    .ambient-layer-name { pointer-events: none; }
     /* Per-layer Freeze button (in the layer head). */
     .ambient-freeze-btn {
       margin-left: 6px; flex: 0 0 auto;
@@ -2831,6 +2870,26 @@
     /* When a delete button is present it claims the auto-margin, so the caret
        must not also push — keep them snug on the right. */
     .ambient-seq-del + .ambient-collapse { margin-left: 6px; }
+    /* ---- Unified layer-head action buttons ------------------------------
+       Rename ✎ / Solo S / Freeze ❄ / delete ✕ / collapse ⌄ are all the SAME
+       square (≈20% larger than the old 26px close/collapse) so they line up
+       across every layer. A SINGLE auto-margin on Solo pushes the right-hand
+       cluster (S ❄ ✕ ⌄) together against the right edge; Rename stays next to
+       the name. Scoped to .ambient-layer-head so ramp-row ✕ buttons keep their
+       own size. */
+    .ambient-layer-head .ambient-rename-btn,
+    .ambient-layer-head .ambient-solo-btn,
+    .ambient-layer-head .ambient-freeze-btn,
+    .ambient-layer-head .ambient-seq-del,
+    .ambient-layer-head .ambient-collapse {
+      width: 31px; height: 31px; padding: 0; margin-left: 6px;
+      border-radius: 8px; flex: 0 0 auto;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 0.85rem; line-height: 1;
+    }
+    /* Solo is the first of the right-hand cluster — it carries the lone auto
+       margin so S ❄ ✕ ⌄ group and right-align identically on every layer. */
+    .ambient-layer-head .ambient-solo-btn { margin-left: auto; }
     /* Dedicated reverb controls (Size / Damp) — small framed section. */
     .ambient-reverb,
     .ambient-warmth {
@@ -2867,6 +2926,34 @@
     /* Master Shape — concentric wheels overview. */
     .shape-master-inner { display: flex; flex-direction: column; gap: 10px; padding: 8px; }
     .shape-master-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* Live per-layer "now playing" chips above the canvas. Wrap (no h-scroll). */
+    .shape-master-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .shape-master-chips:empty { display: none; }
+    .sm-chip {
+      display: inline-flex; align-items: baseline; gap: 6px;
+      padding: 3px 9px; border: 1px solid #2d2d3f; border-radius: 13px;
+      background: rgba(10,10,20,0.5); font-family: 'Segoe UI', sans-serif;
+    }
+    .sm-chip-name {
+      flex: 0 0 auto; max-width: 9ch;
+      font-size: 0.68rem; font-weight: 700; letter-spacing: 0.4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Fixed-width note slot, sized for a 3-note chord readout (e.g. "C#4 E4 G4"),
+       so chips never resize as the note text changes length. */
+    .sm-chip-note {
+      flex: 0 0 auto; width: 8.5ch; text-align: center;
+      font-size: 0.74rem; font-weight: 700; color: #4a4a6a;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; transition: color 0.08s ease;
+    }
+    .sm-chip-note.on { color: #edf2f7; }
+    /* Rotation-complete flash: a brief glow in the shape's own colour. */
+    .sm-chip.flash { animation: sm-chip-flash 0.34s ease-out; }
+    @keyframes sm-chip-flash {
+      0%   { box-shadow: 0 0 12px 2px var(--chip-color, #4fd1c5); border-color: var(--chip-color, #4fd1c5); background: rgba(255,255,255,0.06); }
+      100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); }
+    }
     /* Recording state for the master-shape ⤓ Capture button. */
     #shape-master-capture.recording { background: #c53030; border-color: #f56565; color: #fff; }
     .shape-master-stage { position: relative; display: flex; align-items: center; justify-content: center; height: min(60vh, 560px); }
@@ -7984,7 +8071,10 @@
     .sm-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,0.72);
-      z-index: 1100;
+      /* Sit above every menu panel (Project / Tone / Sounds / FX are z-index
+         9000) — like .sd-overlay (10400) — so confirm/picker dialogs (e.g. Load
+         project) are never covered by a dropdown that's still open behind them. */
+      z-index: 10300;
       display: flex; align-items: center; justify-content: center;
     }
 

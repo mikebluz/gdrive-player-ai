@@ -151,6 +151,47 @@
       hostId: 'mix-bloom-host', idPrefix: 'mix-bloom', vizId: 'mix-bloom-viz',
       playId: 'mix-bloom-play-btn', seedId: 'mix-bloom-seed-val', isLane: false,
     });
+    // ---- Shape-Bloom render engine -------------------------------------
+    // A hidden Bloom engine that PLAYS the Bloom-sourced master Shapes live: each
+    // such shape carries its source layer's full config (entry.bloomLayer), which
+    // we assemble into a synthetic Bloom config here. Driven by the Shapes
+    // transport (21-shape.js) so a "shape" evolves cycle-to-cycle and sounds
+    // exactly like the layer (same generators, voice, and Bloom-bus routing).
+    let _shapeBloomCfgCache = null, _shapeBloomCfgSig = '';
+    function _shapeBloomLayers() {
+      return (Array.isArray(masterShapes) ? masterShapes : []).filter(c => c && c.bloomLayer && c.bloomLayer.type && c.bloomLayer.cfg);
+    }
+    function _shapeBloomSynthCfg() {
+      const live = _shapeBloomLayers();
+      const sig = live.map(c => c.id + ':' + c.bloomLayer.type).join('|');
+      if (_shapeBloomCfgCache && sig === _shapeBloomCfgSig) {
+        // Refresh the entry→render-key map (cheap) and reuse the built config.
+        return _shapeBloomCfgCache;
+      }
+      const base = _defaultAmbientConfig();
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (base[k]) { base[k].present = false; base[k].on = false; } });
+      base.extras = []; base.seqs = []; base.samples = [];
+      let xid = 1, sid = 1;
+      live.forEach(c => {
+        const bl = c.bloomLayer;
+        const lc = JSON.parse(JSON.stringify(bl.cfg));
+        lc.on = true; lc.present = true; lc.solo = false;
+        if (bl.type === 'seq') { lc.id = sid++; base.seqs.push(lc); c._renderKey = 'seq:' + lc.id; }
+        else { lc.type = bl.type; lc.id = xid++; base.extras.push(lc); c._renderKey = bl.type + ':' + lc.id; }
+      });
+      _shapeBloomCfgCache = _normalizeAmbientCfg(base);
+      _shapeBloomCfgSig = sig;
+      return _shapeBloomCfgCache;
+    }
+    function _shapeBloomInvalidate() { _shapeBloomCfgCache = null; _shapeBloomCfgSig = ' '; }
+    const _shapeBloomEng = _makeAmbientEngine({
+      getCfg:  function () { return _shapeBloomSynthCfg(); },
+      busNode: function () { return _ambMasterBloomBus(); },
+      laneIdx: function () { return null; },
+      guard:   function () { return true; },
+      hostId: 'shape-bloom-host', idPrefix: 'shape-bloom', vizId: 'shape-bloom-viz',
+      playId: 'shape-bloom-play', seedId: 'shape-bloom-seed', isLane: false,
+    });
     _E = _laneEng;
 
     // Normalize a {vca,vco,vcf} mod object in place (migrate old flat schema).
@@ -3132,6 +3173,37 @@
     }
     function _ambFreezeFrozen(E, key) { return !!(E && E.freeze && E.freeze[key] && E.freeze[key].frozen); }
     // Resolve a freeze key ('bed' | 'bed:5' | 'seq:3' | 'samp:2') → its layer cfg.
+    // Rename a layer (any type) via its header ✎ button. The user-set name lives
+    // in layer.label; clearing it reverts to the type default. Updates the head
+    // span live and re-renders the mixer so its channel label tracks.
+    function _ambRenameLayer(E, btn) {
+      const key = btn && btn.dataset && btn.dataset.rkey; if (!key) return;
+      const layer = _ambLayerByKey(E, key); if (!layer) return;
+      const head = btn.closest('.ambient-layer-head');
+      const span = head ? head.querySelector('.ambient-layer-name') : null;
+      const cur = (typeof layer.label === 'string' && layer.label.trim())
+        ? layer.label.trim() : (span ? span.textContent.trim() : '');
+      const next = (typeof prompt === 'function') ? prompt('Layer name (leave blank to reset):', cur) : null;
+      if (next === null) return;                       // cancelled
+      const name = String(next).trim();
+      if (name) layer.label = name; else delete layer.label;
+      if (span) span.textContent = name || cur;        // empty → keep showing default
+      // If reset, recompute the default label for the span text.
+      if (!name && span) {
+        const ci = key.indexOf(':');
+        let fb = span.textContent;
+        if (ci < 0) fb = key.charAt(0).toUpperCase() + key.slice(1);   // primary: type name
+        else {
+          const t = key.slice(0, ci), cfg = E.getCfg() || {};
+          if (t === 'seq') { const i = (cfg.seqs || []).findIndex(s => s === layer); fb = 'Seq' + (i + 1); }
+          else if (t === 'samp') { const i = (cfg.samples || []).findIndex(s => s === layer); fb = 'Sample' + (i + 1); }
+          else { const sch = _AMB_LAYER_SCHEMA[t]; fb = (sch && sch.label) ? sch.label : t; }
+        }
+        span.textContent = fb;
+      }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { _ambRenderMixer(E); } catch (e) {}
+    }
     function _ambLayerByKey(E, key) {
       const cfg = E._cfg || E.getCfg(); if (!cfg) return null;
       const ci = key.indexOf(':');
@@ -3393,7 +3465,7 @@
       // otherwise stopping one engine would cut the other engine's ringing
       // voices. The stopped engine's long releases ring out meanwhile.
       try {
-        if (!_laneEng.timer && !_masterEng.timer && typeof silenceActiveVoices === 'function') silenceActiveVoices();
+        if (!_laneEng.timer && !_masterEng.timer && !_shapeBloomEng.timer && typeof silenceActiveVoices === 'function') silenceActiveVoices();
       } catch (e) {}
       try { _ambTeardownMods(); } catch (e) {}
     }
@@ -4313,8 +4385,21 @@
       '<div class="ambient-ctrl"><label for="' + stem + '">Rate</label><select id="' + stem + '" class="ambient-select">' +
       _AMB_RATE_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
       '</select><span class="ambient-hint">vs global BPM</span></div>';
+    // A layer's display label: the user-set name if present, else the type
+    // fallback ('Bed', 'Seq1', …). Stored in layer.label so it never collides
+    // with seq.name (seed name) or sample.name (source name).
+    function _ambLayerLabel(layer, fallback) {
+      return (layer && typeof layer.label === 'string' && layer.label.trim()) ? layer.label.trim() : fallback;
+    }
+    // Confirm before removing a layer (delete is destructive + not undoable).
+    function _ambConfirmDeleteLayer(name) {
+      if (typeof confirm !== 'function') return true;
+      return confirm('Delete layer “' + (name || 'this layer') + '”? This can’t be undone.');
+    }
+    const _ambEscText = (s) => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
     const _ambHead = (label, onId, delId, freezeKey) =>
-      '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '">' + label + '</button>' +
+      '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
+      (freezeKey ? '<button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename layer" aria-label="Rename layer">✎</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
@@ -4475,7 +4560,7 @@
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
-        _ambHead('Seq' + (i + 1), p + 'on', p + 'del', 'seq:' + id) +
+        _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id) +
         '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
         // Ensemble lock — only shown (un-hidden in wiring) when this seq's voice
         // is an ensemble. Locked = members fire together; Unlocked = members
@@ -4645,23 +4730,24 @@
       if (!cfg) return out;
       [['bed', 'Bed'], ['motif', 'Motif'], ['texture', 'Texture'], ['beat', 'Beat']].forEach(([k, name]) => {
         const L = cfg[k];
-        if (L && L.present !== false) out.push({ key: k, name, layer: L });
+        if (L && L.present !== false) out.push({ key: k, name: _ambLayerLabel(L, name), layer: L });
       });
       (Array.isArray(cfg.extras) ? cfg.extras : []).forEach((ex) => {
         if (!ex) return;
         const sch = (typeof _AMB_LAYER_SCHEMA !== 'undefined') ? _AMB_LAYER_SCHEMA[ex.type] : null;
-        out.push({ key: ex.type + ':' + ex.id, name: (sch && sch.label) ? sch.label : (ex.type || 'Layer'), layer: ex });
+        out.push({ key: ex.type + ':' + ex.id, name: _ambLayerLabel(ex, (sch && sch.label) ? sch.label : (ex.type || 'Layer')), layer: ex });
       });
       // Seq / Sample channel names mirror the layer CARD headers exactly
       // (_ambSeqLayerHtml uses 'Seq'+(i+1), _ambSampleLayerHtml 'Sample'+(i+1))
-      // so the mixer reads the same as the layer it controls.
+      // so the mixer reads the same as the layer it controls — honouring any
+      // user-set label.
       (Array.isArray(cfg.seqs) ? cfg.seqs : []).forEach((s, i) => {
         if (!s) return;
-        out.push({ key: 'seq:' + s.id, name: 'Seq' + (i + 1), layer: s });
+        out.push({ key: 'seq:' + s.id, name: _ambLayerLabel(s, 'Seq' + (i + 1)), layer: s });
       });
       (Array.isArray(cfg.samples) ? cfg.samples : []).forEach((s, i) => {
         if (!s) return;
-        out.push({ key: 'samp:' + s.id, name: 'Sample' + (i + 1), layer: s });
+        out.push({ key: 'samp:' + s.id, name: _ambLayerLabel(s, 'Sample' + (i + 1)), layer: s });
       });
       return out;
     }
@@ -4723,6 +4809,7 @@
       const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.seqs)) return;
       const idx = cfg.seqs.findIndex(s => s.id === id);
       if (idx < 0) return;
+      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.seqs[idx], 'Seq' + (idx + 1)))) return;
       cfg.seqs.splice(idx, 1);
       try { if (E.mod['seq:' + id]) _ambTeardownMod('seq:' + id); } catch (e) {}
       if (E.seqState) delete E.seqState[id];
@@ -4735,7 +4822,7 @@
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       const nm = String(s.name || s.sampleId || 'sample').replace(/[<>&"]/g, '');
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
-        _ambHead('Sample' + (i + 1), p + 'on', p + 'del', 'samp:' + id) +
+        _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id) +
         '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
         _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
         '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' +
@@ -4800,6 +4887,7 @@
       const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.samples)) return;
       const idx = cfg.samples.findIndex(s => s.id === id);
       if (idx < 0) return;
+      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.samples[idx], 'Sample' + (idx + 1)))) return;
       cfg.samples.splice(idx, 1);
       try { if (E.mod['samp:' + id]) _ambTeardownMod('samp:' + id); } catch (e) {}
       if (E.seqState) delete E.seqState['samp:' + id];
@@ -4931,7 +5019,7 @@
       // Every layer (Shape included) starts collapsed — just its header — so a
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
-      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(sch.label, p + '-on', p + '-del', fkey);
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey);
       // Controls render into collapsible group sections (['grp', name] markers
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.
@@ -5329,6 +5417,205 @@
       if (typeof persistWorkspace === 'function') persistWorkspace();
       if (typeof showToast === 'function') showToast('Converted Shape → Arp.');
     }
+    // ---- Shape It: every Bloom layer → a master Shapes wheel ---------------
+    // Convert a Seq layer's first unit (events {freqs,durMs,…}) into the step
+    // shape _shapeSeqToShape expects ({freq|chord, duration, subdivision}).
+    function _ambSeqUnitToSteps(unit) {
+      const evs = (unit && Array.isArray(unit.events)) ? unit.events : [];
+      const bpm = (typeof Tone !== 'undefined' && Tone.Transport && Tone.Transport.bpm) ? (Tone.Transport.bpm.value || 120) : 120;
+      const spb = 60 / (bpm || 120);   // seconds per beat
+      return evs.map(ev => {
+        const beats = Math.max(0.05, (Math.max(20, ev.durMs | 0) / 1000) / spb);
+        const fs = Array.isArray(ev.freqs) ? ev.freqs.filter(f => f != null) : [];
+        const step = { duration: beats, subdivision: 1 };
+        if (!fs.length) return step;                                  // rest (keeps timing)
+        if (fs.length === 1) { step.freq = fs[0]; return step; }
+        step.chord = fs.map(f => ({ freq: f }));                      // chord event
+        return step;
+      });
+    }
+    // Build a master-Shapes wheel from one Bloom layer. Shape layers donate their
+    // selected wheel verbatim; Seq layers distill their first unit; the algorithmic
+    // layers (bed/motif/texture/beat/arp/bass/run/pedal) become an evenly-spaced
+    // wheel whose node count / loop length / register / voice mirror the layer —
+    // a faithful starting point the user can then edit.
+    // Snapshot a layer's voice characteristics into a shape soundParams object so
+    // each overlaid shape SOUNDS like the layer it came from: instrument (tone),
+    // level → volume, pan, and any explicit ADSR (Pedal). Generative FX/LFOs live
+    // on the per-layer routing chain and can't ride a static wheel, so they're not
+    // carried — the audible voice is.
+    function _ambLayerSoundParams(L) {
+      const sp = { type: _ambLayerType(L.tone) };
+      if (Number.isFinite(L.level)) sp.volume = Math.max(2, Math.min(100, L.level | 0));
+      if (L.panMode === 'pan' && Number.isFinite(L.space)) sp.pan = Math.max(-100, Math.min(100, L.space | 0));
+      if (Number.isFinite(L.attack))  sp.attack  = L.attack;
+      if (Number.isFinite(L.decay))   sp.decay   = L.decay;
+      if (Number.isFinite(L.sustain)) sp.sustain = L.sustain;
+      if (Number.isFinite(L.release)) sp.release = L.release;
+      return sp;
+    }
+    // How long ONE loop of a layer is, in seconds — the window we bake into a
+    // wheel. Bar-based layers use their bar count; Seq uses its unit length;
+    // free-running layers (bed/motif/texture/beat/arp) use a few bars so several
+    // events land in the loop.
+    function _ambLayerLoopSec(L, type) {
+      const bpm = (typeof Tone !== 'undefined' && Tone.Transport && Tone.Transport.bpm) ? (Tone.Transport.bpm.value || 120) : 120;
+      const barSec = (60 / bpm) * 4;
+      if (L && Number.isFinite(L.bars) && L.bars > 0) return Math.max(0.5, L.bars * barSec);
+      if (type === 'seq') {
+        const u = (L && Array.isArray(L.units) && L.units[0]) ? L.units[0] : null;
+        const ms = (u && typeof _unitTotalMs === 'function') ? _unitTotalMs(u) : 0;
+        if (ms > 0) return ms / 1000;
+      }
+      return barSec * 4;
+    }
+    // FAITHFUL conversion: bake a layer's REAL emitted notes (rolling-captured as
+    // {at, freq, dur(ms), params} while the Bloom plays) into a wheel. Each note
+    // becomes a node carrying its exact pitch offset, hold length, and full voice
+    // params (envelope/volume/pan), so the wheel sounds like the layer note-for-
+    // note. Simultaneous notes (a pad chord) become stacked nodes at one angle.
+    function _ambCapToShape(events, windowSec) {
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const freqToMidi = (f) => Math.round(69 + 12 * Math.log2((f > 0 ? f : A) / A));
+      const arr = (events || []).filter(e => e && typeof e.freq === 'number' && typeof e.at === 'number');
+      if (!arr.length || !(windowSec > 0)) return null;
+      // Most recent windowSec, ending just after the last captured onset so the
+      // loop boundary lands on real notes (not mid-silence).
+      const tEnd = arr[arr.length - 1].at + 1e-6;
+      const t0 = tEnd - windowSec;
+      const win = arr.filter(e => e.at >= t0 - 1e-6 && e.at < tEnd);
+      if (!win.length) return null;
+      const baseMidi = freqToMidi(Math.min.apply(null, win.map(e => e.freq)));
+      const bpm = (typeof Tone !== 'undefined' && Tone.Transport && Tone.Transport.bpm) ? (Tone.Transport.bpm.value || 120) : 120;
+      const nodes = win.map(e => {
+        const af = (((e.at - t0) / windowSec) % 1 + 1) % 1;
+        const durSec = Math.max(0.02, (e.dur || 0) / 1000);
+        const sus = Math.max(0.005, Math.min(0.999, durSec / windowSec));
+        const ov = { noteOffset: freqToMidi(e.freq) - baseMidi };
+        if (e.params && e.params.type) ov.params = Object.assign({}, e.params);
+        return { angleFrac: af, muted: false, sustainFrac: sus, override: ov };
+      }).sort((a, b) => a.angleFrac - b.angleFrac);
+      const sh = (typeof _shapeDefault === 'function') ? _shapeDefault() : null;
+      if (!sh) return null;
+      sh.timingMode = 'free';                         // notes sit at captured angles
+      sh.loopBeats = Math.max(0.25, windowSec * (bpm / 60));
+      sh.baseNote = baseMidi;
+      const fp = win.find(e => e.params && e.params.type);
+      if (fp) sh.tone = fp.params.type;               // shape-level fallback voice
+      sh.nodes = nodes; sh.nodeCount = nodes.length;
+      return sh;
+    }
+    function _ambLayerToShape(E, L, type, key) {
+      if (!L) return null;
+      // Shape layer → its authored wheel verbatim (already a perfect shape).
+      if (type === 'shape') {
+        const ws = Array.isArray(L.shapes) ? L.shapes : [];
+        if (ws.length) {
+          const w = ws[Math.max(0, Math.min(L.sel | 0, ws.length - 1))];
+          if (w) return (typeof _shapeNormalize === 'function') ? _shapeNormalize(JSON.parse(JSON.stringify(w))) : JSON.parse(JSON.stringify(w));
+        }
+      }
+      // Faithful path: bake the layer's real captured output if it has played.
+      try {
+        const ev = E && E.cap && key && E.cap[key];
+        if (Array.isArray(ev) && ev.length) {
+          const sh = _ambCapToShape(ev, _ambLayerLoopSec(L, type));
+          if (sh && sh.nodeCount) return sh;
+        }
+      } catch (e) {}
+      if (type === 'seq') {
+        const units = Array.isArray(L.units) ? L.units : [];
+        const u = units[0];
+        const steps = u ? _ambSeqUnitToSteps(u) : [];
+        if (steps.length && typeof _shapeSeqToShape === 'function') {
+          const sh = _shapeSeqToShape(steps);
+          if (typeof L.tone === 'string' && L.tone) sh.tone = L.tone;
+          sh.soundParams = _ambLayerSoundParams(L);
+          return sh;
+        }
+      }
+      const sh = (typeof _shapeDefault === 'function') ? _shapeDefault() : null;
+      if (!sh) return null;
+      if (typeof L.tone === 'string' && L.tone) sh.tone = L.tone;
+      // Node count ← the layer's rhythmic density (density / pulses / steps).
+      let n = 4;
+      if (Number.isFinite(L.density)) n = L.density;
+      else if (Number.isFinite(L.pulses)) n = L.pulses;
+      else if (Number.isFinite(L.steps)) n = L.steps;
+      n = Math.max(1, Math.min(16, n | 0));
+      sh.nodeCount = n;
+      sh.nodes = (typeof _shapeEqualNodes === 'function') ? _shapeEqualNodes(n) : sh.nodes;
+      // Loop length ← bars (1 bar = 4 beats) for bar-based layers.
+      if (Number.isFinite(L.bars) && L.bars > 0) sh.loopBeats = Math.max(1, Math.min(16, L.bars | 0)) * 4;
+      // Base pitch ← register (octave) + degree offset (Pedal).
+      if (Number.isFinite(L.register)) {
+        const deg = Number.isFinite(L.degree) ? (L.degree - 1) : 0;
+        sh.baseNote = Math.max(0, Math.min(120, (L.register + 1) * 12 + deg));
+      }
+      sh.soundParams = _ambLayerSoundParams(L);
+      return sh;
+    }
+    // Shape It: each layer becomes a master Shape carrying its full config
+    // (entry.bloomLayer), so the Shapes transport plays it LIVE / evolving via
+    // _shapeBloomEng — the master Bloom is NOT started or sounded. The baked
+    // wheel is only a stopped-state preview: built from the live rolling buffer
+    // when the Bloom happens to be playing, else a synthesized stand-in.
+    function _ambShapeItAll(E) {
+      const cfg = E.getCfg();
+      if (!cfg || typeof _masterAddCopy !== 'function') return;
+      _ambShapeItFromCapture(E);
+    }
+    function _ambShapeItFromCapture(E) {
+      const cfg = E.getCfg();
+      if (!cfg || typeof _masterAddCopy !== 'function') return;
+      // Reflect the CURRENT Bloom: drop any shapes a previous Shape It made so a
+      // re-run replaces them (rather than overlaying stale duplicates on top).
+      if (Array.isArray(masterShapes)) {
+        const before = masterShapes.length;
+        masterShapes = masterShapes.filter(c => !(c && c.source === 'bloom'));
+        if (masterShapes.length !== before && activeMasterShapeId != null && !masterShapes.some(c => c.id === activeMasterShapeId)) activeMasterShapeId = null;
+      }
+      let count = 0;
+      const add = (L, type, name, key) => {
+        if (!L) return;
+        try {
+          const sh = _ambLayerToShape(E, L, type, key);   // baked preview / stopped-state visual
+          if (!sh) return;
+          // bloomLayer carries the layer's full config so the Shapes transport can
+          // play it LIVE (evolving, identical voice) via _shapeBloomEng.
+          const bloomLayer = { type: type, cfg: JSON.parse(JSON.stringify(L)) };
+          _masterAddCopy(sh, { name: name, source: 'bloom', sourceId: 'bloom:' + type + ':' + (L.id != null ? L.id : type), makeActive: false, bloomLayer: bloomLayer });
+          count++;
+        } catch (e) { console.warn('Shape It layer failed', type, e); }
+      };
+      // Primaries (only those present in this Bloom). Capture key = the layer name.
+      [['bed', 'Bed'], ['motif', 'Motif'], ['texture', 'Texture'], ['beat', 'Beat']].forEach(([t, nm]) => {
+        const L = cfg[t]; if (L && L.present !== false) add(L, t, _ambLayerLabel(L, nm), t);
+      });
+      // Seq layers (capture key 'seq:id').
+      (Array.isArray(cfg.seqs) ? cfg.seqs : []).forEach((s, i) => add(s, 'seq', _ambLayerLabel(s, 'Seq' + (i + 1)), 'seq:' + s.id));
+      // Generative extras (capture key 'type:id').
+      (Array.isArray(cfg.extras) ? cfg.extras : []).forEach(ex => {
+        const sch = _AMB_LAYER_SCHEMA[ex.type];
+        add(ex, ex.type, _ambLayerLabel(ex, (sch && sch.label) || ex.type), ex.type + ':' + ex.id);
+      });
+      // Select the first shaped layer so the overview has a clear "active" ring
+      // and tapping straight into the editor has a sensible default.
+      if (count && Array.isArray(masterShapes)) {
+        const first = masterShapes.find(c => c && c.source === 'bloom');
+        if (first) activeMasterShapeId = first.id;
+      }
+      _shapeBloomInvalidate();   // rebuild the live render config from the new set
+      // If the Shapes transport is already running, (re)start the render engine so
+      // the new layers play immediately.
+      try { if (typeof _shapeMaster !== 'undefined' && _shapeMaster.running) { _ambStopGenerator(_shapeBloomEng); if (_shapeBloomLayers().length) _ambStartGenerator(_shapeBloomEng); } } catch (e) {}
+      // Reflect into the Shapes UI + give feedback.
+      try { if (typeof _shapeMasterBrowser === 'function') _shapeMasterBrowser(); } catch (e) {}
+      try { if (_shapeMaster && _shapeMaster.inited && typeof _shapeMasterDraw === 'function') _shapeMasterDraw(0); } catch (e) {}
+      if (typeof showToast === 'function') {
+        showToast(count ? ('Shaped ' + count + ' layer' + (count === 1 ? '' : 's') + ' → master Shapes') : 'No layers to shape');
+      }
+    }
     function _ambShapeRemove(E, inst, i, p) {
       if (!inst || !Array.isArray(inst.shapes) || i < 0 || i >= inst.shapes.length) return;
       if (_ambShapeEditRef && _ambShapeEditRef.id === inst.id && _ambShapeEditRef.type === inst.type && _ambShapeEditRef.sel === i) _ambShapeEditClose();
@@ -5418,6 +5705,8 @@
       _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras)) return;
       const idx = cfg.extras.findIndex(x => x.id === id && x.type === type);
       if (idx < 0) return;
+      const sch = _AMB_LAYER_SCHEMA[type];
+      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.extras[idx], (sch && sch.label) || type))) return;
       const key = type + ':' + id;
       // If this layer's wheel is open in the shared Shape editor, close it first
       // so #shape-pad returns home and _shapeEditTarget doesn't dangle.
@@ -5851,6 +6140,7 @@
     function _ambRemoveLayer(E, layer) {
       _E = E;
       const cfg = E.getCfg(); if (!cfg || !cfg[layer]) return;
+      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg[layer], layer.charAt(0).toUpperCase() + layer.slice(1)))) return;
       cfg[layer].present = false;
       _ambSyncControls(E);                                   // hides the card
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }  // tears down its chain
@@ -6056,6 +6346,9 @@
       // _ambNamespaceHtml rewrites the stems to E.idPrefix below.
       const sl = _ambSl, tm = _ambTm, head = _ambHead, shapeSel = _ambShapeSel,
             condCtrl = _ambCondCtrl, modTarget = _ambModTarget, modUi = _ambModUi, fxUi = _ambFxUi;
+      // Primary-layer headers read any user-set label from the loaded config.
+      const _cfg0 = E.getCfg() || {};
+      const _plabel = (k, fb) => _ambLayerLabel(_cfg0[k], fb);
       const _keyNames = (typeof CHROMATIC !== 'undefined' && Array.isArray(CHROMATIC) && CHROMATIC.length === 12)
         ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
       const keyOpts = _keyNames.map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('');
@@ -6130,7 +6423,7 @@
           '</div>' +
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Bed', 'ambient-bed-on', 'ambient-bed-del', 'bed') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-bed') +
           sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
@@ -6148,7 +6441,7 @@
           modUi('bed') +
           fxUi('bed') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Motif', 'ambient-motif-on', 'ambient-motif-del', 'motif') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif') +
           '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-motif') +
           sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
@@ -6166,7 +6459,7 @@
           modUi('motif') +
           fxUi('motif') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Texture', 'ambient-texture-on', 'ambient-texture-del', 'texture') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture') +
           '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambNotesButtonHtml('ambient-texture') +
           sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
@@ -6181,7 +6474,7 @@
           modUi('texture') +
           fxUi('texture') +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head('Beat', 'ambient-beat-on', 'ambient-beat-del', 'beat') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat') +
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
           _ambRateSel('ambient-beat-rate') +
@@ -6220,6 +6513,9 @@
         // like the Make footer transport. Lives inside the (namespaced) panel so
         // it only shows while this Bloom panel is the active view.
         '<div class="ambient-footer-bar"><div class="ambient-footer-transport">' +
+          // Shape It (master only) — turn every Bloom layer into its own master
+          // Shapes wheel. Sits to the left of Capture.
+          (!E.isLane ? '<button type="button" id="ambient-shapeit-btn" class="ambient-footer-shapeit" title="Shape It — send every layer to master Shapes as its own wheel">⬡</button>' : '') +
           '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
@@ -6247,6 +6543,8 @@
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
       host.addEventListener('click', (e) => {
+        const rb = e.target && e.target.closest && e.target.closest('.ambient-rename-btn');
+        if (rb) { e.stopPropagation(); try { _ambRenameLayer(E, rb); } catch (err) { console.warn('Rename failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
@@ -6571,6 +6869,10 @@
       }
       const exportBtn = G('ambient-export-btn');
       if (exportBtn) exportBtn.addEventListener('click', () => { _ambCaptureToBank(E); });
+      if (!E.isLane) {
+        const shapeitBtn = G('ambient-shapeit-btn');
+        if (shapeitBtn) shapeitBtn.addEventListener('click', () => { try { _ambShapeItAll(E); } catch (e) { console.warn('Shape It failed', e); } });
+      }
 
       E.inited = true;
       _ambSyncControls(E);

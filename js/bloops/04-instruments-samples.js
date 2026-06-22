@@ -2446,6 +2446,10 @@
       // capture sink (set around a recording layer's emit in the Bloom tick).
       if (typeof window !== 'undefined' && window._ambCaptureSink) {
         try { window._ambCaptureSink(freq, params, durationMs, startTime); } catch (e) {}
+        // Silent render (e.g. Shape It capturing a stopped Bloom): the note has
+        // been captured — do NOT actually sound it. Scoped to captured (Bloom)
+        // notes only, so live grid presses during the render still play.
+        if (window._ambSilentCapture) return;
       }
       // Cold-start guard: if the AudioContext hasn't actually resumed yet
       // (very first gesture race — the gesture's resume() is async, the

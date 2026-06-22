@@ -1174,10 +1174,21 @@
       activeLaneIdx = 0;
       if (typeof ensureLanesInitialized === 'function') ensureLanesInitialized();
 
+      // Master Bloom (Mix) — stop playback and wipe its config (layers, ramps,
+      // Shape layers, published progs/wraps, settings) back to default. Setting
+      // masterAmbient=null makes the next getCfg() rebuild a fresh default;
+      // _ambSyncControls re-renders the panel if it's already been built. Mirrors
+      // the project-load path (14-ui-menus-dnd.js).
+      try { if (typeof _masterEng !== 'undefined' && typeof _ambStopGenerator === 'function') _ambStopGenerator(_masterEng); } catch (e) {}
+      if (typeof masterAmbient !== 'undefined') masterAmbient = null;
+      try { if (typeof _masterEng !== 'undefined' && _masterEng.inited && typeof _ambSyncControls === 'function') _ambSyncControls(_masterEng); } catch (e) {}
+
       // Master Shapes (Mix) collection.
       if (typeof masterShapes !== 'undefined') masterShapes = [];
       if (typeof activeMasterShapeId !== 'undefined') activeMasterShapeId = null;
+      try { if (typeof _shapeMasterStop === 'function') _shapeMasterStop(); } catch (e) {}
       try { if (typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
+      try { if (typeof _shapeMasterBrowser === 'function') _shapeMasterBrowser(); } catch (e) {}
 
       // Saved sequences bank.
       savedSequences = [];
@@ -1327,9 +1338,11 @@
         await newProject(saveBtn);
       });
       saveBtn?.addEventListener('click', async () => {
+        setOpen(false);
         await saveProjectToDrive(saveBtn);
       });
       loadBtn?.addEventListener('click', async () => {
+        setOpen(false);
         await loadProjectFromDrive(loadBtn);
       });
       // Import MIDI: open file picker, then run importMidiFile().

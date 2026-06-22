@@ -863,6 +863,10 @@
     <div class="mix-pane" id="mix-pane-shapes">
       <div class="shape-master-inner" id="shape-master-inner">
         <div class="shape-master-bar" id="shape-master-bar"></div>
+        <!-- Live per-layer "now playing" chips: one chip per shape, showing the
+             note(s) it's currently sounding (chord = all notes). Built/updated by
+             _shapeMasterRenderChips + the draw loop. -->
+        <div class="shape-master-chips" id="shape-master-chips"></div>
         <div class="shape-master-stage" id="shape-master-stage">
           <canvas id="shape-master-canvas" class="shape-canvas"></canvas>
         </div>

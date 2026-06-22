@@ -1826,7 +1826,7 @@
     // lane in Make.
     // ========================================================================
     const SHAPE_COLORS = ['#4fd1c5', '#9f7aea', '#f6ad55', '#f56565', '#63b3ed', '#68d391', '#ed64a6', '#ecc94b'];
-    let _shapeMaster = { canvas: null, ctx: null, inited: false, raf: 0, running: false, t0: 0, lastPhase: 0, rings: [], legendKey: null };
+    let _shapeMaster = { canvas: null, ctx: null, inited: false, raf: 0, running: false, t0: 0, lastPhase: 0, phases: {}, rings: [], legendKey: null };
     let _shapeMasterExpanded = new Set();   // which browser groups are expanded (collapsed by default)
     function _shapeRgba(hex, a) {
       const h = hex.replace('#', '');
@@ -1870,7 +1870,11 @@
       const id = _shapeMasterIdSeq++;
       const n = masterShapes.filter(c => c && c.groupId === groupId).length + 1;
       let createdAt = null; try { createdAt = Date.now(); } catch (e) {}
-      masterShapes.push({ id, name: base + ' v' + n, base, source, groupId, createdAt, shape });
+      const entry = { id, name: base + ' v' + n, base, source, groupId, createdAt, shape };
+      // Bloom-sourced shapes carry their source layer's config so the Shapes
+      // transport can play them LIVE / evolving via the render engine.
+      if (opts.bloomLayer && opts.bloomLayer.type && opts.bloomLayer.cfg) entry.bloomLayer = opts.bloomLayer;
+      masterShapes.push(entry);
       if (opts.makeActive !== false) {        // auto-reflections (saves) don't steal selection
         activeMasterShapeId = id;
         _shapeMasterExpanded.add(groupId);    // reveal the family the new copy landed in
@@ -1915,6 +1919,7 @@
           ? masterShapes[Math.min(i, masterShapes.length - 1)].id : null;
       }
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { if (typeof _shapeBloomInvalidate === 'function') _shapeBloomInvalidate(); } catch (e) {}
       try { _shapeMasterStop(); } catch (e) {}
       _shapeMaster.legendKey = null;
       _shapeMasterDraw(0);
@@ -1963,30 +1968,215 @@
         else { ctx.fillStyle = color; ctx.fill(); }
       });
     }
-    function _shapeMasterDraw(phase) {
+    // Draw EVERY master shape overlaid as a stack of concentric rings (newest /
+    // largest outward), each with its own colour + sweeping playhead, so the whole
+    // collection "appears at the same time". The active wheel is emphasised.
+    // `phaseArg` is the per-id phase map from _shapeMasterTick (or a number / 0
+    // when called statically e.g. on stop).
+    function _shapeMasterDraw(phaseArg) {
       const ctx = _shapeMaster.ctx, cv = _shapeMaster.canvas; if (!ctx || !cv) return;
       const dpr = window.devicePixelRatio || 1;
       const W = cv.width / dpr, H = cv.height / dpr;
       ctx.clearRect(0, 0, W, H);
       const cx = W / 2, cy = H / 2;
-      const R = Math.min(W, H) / 2 - 30;
-      // The browser list (version rows) is its own DOM, refreshed cheaply.
+      const Rout = Math.min(W, H) / 2 - 30;
+      // The browser list (version rows) + chip row are their own DOM, refreshed cheaply.
       _shapeMasterBrowser();
-      const cfg = _masterActiveCfg();
-      if (!cfg) {
+      _shapeMasterRenderChips();
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      if (!list.length) {
         ctx.fillStyle = 'rgba(120,120,150,0.7)'; ctx.font = '14px Segoe UI, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('No master shapes yet — press “◎ Send” in a Shape lane.', cx, cy);
+        ctx.fillText('No master shapes yet — “⬡ Shape It” in master Bloom or “◎ Send” in a Shape lane.', cx, cy);
         _shapeMaster.rings = []; return;
       }
-      const color = _masterColorOf(_masterActive());
-      _shapeMaster.rings = [{ id: activeMasterShapeId, cfg, color, radius: R }];
-      // Single sweeping playhead for the active wheel.
-      const ph = (typeof phase === 'number') ? phase : (_shapeMaster.running ? _shapeMaster.lastPhase : 0);
-      const pa = 2 * Math.PI * (((ph % 1) + 1) % 1);
-      ctx.strokeStyle = 'rgba(79,209,197,0.5)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.sin(pa), cy - R * Math.cos(pa)); ctx.stroke();
-      _shapeDrawWheelAt(ctx, cx, cy, R, cfg, color);
+      const phases = (phaseArg && typeof phaseArg === 'object') ? phaseArg : (_shapeMaster.running ? _shapeMaster.phases : null);
+      const n = list.length;
+      // Concentric spacing: keep the innermost ring readable (≥35% of Rout).
+      const ringStep = (n > 1) ? Math.min(Rout * 0.16, (Rout * 0.65) / (n - 1)) : 0;
+      const rings = [];
+      const nowMs = performance.now();
+      list.forEach((c, i) => {
+        let cfg = null, ph = 0, rotated = false;
+        const color = _masterColorOf(c);
+        const R = Rout - i * ringStep;
+        if (c.bloomLayer) {
+          // Tone-time cycle: nodes AND playhead are derived from the same audio
+          // clock and the same cycle anchor (c._cyc.t0), so the arm coincides
+          // EXACTLY with each node's sound. One rotation = one layer cycle (winSec);
+          // its nodes are the note/chord events scheduled within that span, rebuilt
+          // each rotation to reflect the layer's generative variance.
+          const winSec = (typeof _ambLayerLoopSec === 'function') ? _ambLayerLoopSec(c.bloomLayer.cfg, c.bloomLayer.type) : 4;
+          const ev = (typeof _shapeBloomEng !== 'undefined' && _shapeBloomEng.cap && c._renderKey) ? _shapeBloomEng.cap[c._renderKey] : null;
+          const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          if (_shapeMaster.running && Array.isArray(ev) && ev.length) {
+            if (!c._cyc || c._cyc.win !== winSec) {
+              // Anchor the cycle grid to the first onset, then silently fast-forward
+              // to the cycle the playhead is currently in (no flash on catch-up).
+              c._cyc = { t0: ev[0].at, win: winSec };
+              while (now >= c._cyc.t0 + winSec) c._cyc.t0 += winSec;
+            }
+            while (now >= c._cyc.t0 + winSec) { c._cyc.t0 += winSec; rotated = true; }   // genuine rotation(s)
+            ph = Math.max(0, Math.min(0.999999, (now - c._cyc.t0) / winSec));
+            if (rotated || c._liveCfg === undefined || (nowMs - (c._liveCfgAt || 0)) > 120) {
+              const built = _shapeBloomCycleWheel(ev, c._cyc.t0, winSec);
+              if (built && built.nodeCount) c._liveCfg = built;
+              else if (c._liveCfg === undefined) c._liveCfg = null;
+              c._liveCfgAt = nowMs;
+            }
+            cfg = c._liveCfg || _shapeNormalize(c.shape);
+          } else {
+            cfg = _shapeNormalize(c.shape); c._cyc = null;   // stopped / warming up → static baked preview
+          }
+        } else {
+          cfg = _shapeNormalize(c.shape);
+          ph = phases ? (phases[c.id] || 0) : 0;
+          if (_shapeMaster.running) {
+            const lastPh = (c._lastLegPh != null) ? c._lastLegPh : ph;
+            if (ph + 1e-6 < lastPh) rotated = true;   // playhead wrapped → rotation done
+            c._lastLegPh = ph;
+          } else c._lastLegPh = ph;
+        }
+        if (!cfg) cfg = _shapeNormalize(c.shape);
+        rings.push({ id: c.id, cfg, color, radius: R });
+        const active = c.id === activeMasterShapeId;
+        const pa = 2 * Math.PI * (((ph % 1) + 1) % 1);
+        ctx.strokeStyle = _shapeRgba(color, active ? 0.6 : 0.28); ctx.lineWidth = active ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.sin(pa), cy - R * Math.cos(pa)); ctx.stroke();
+        _shapeDrawWheelAt(ctx, cx, cy, R, cfg, color);
+        if (rotated) _shapeMasterFlashChip(c.id);   // chip flash on rotation complete
+        _shapeMasterUpdateChip(c, cfg, ph);          // live "now playing" readout
+      });
+      _shapeMaster.rings = rings;
       ctx.fillStyle = 'rgba(203,213,224,0.8)'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 2 * Math.PI); ctx.fill();
+    }
+    // Lightweight (no _shapeNormalize) draw cfg for ONE cycle of a Bloom shape:
+    // the captured events whose onset falls in [t0, t0+winSec), placed by their
+    // real time so node angle == playhead position when they sound.
+    function _shapeBloomCycleWheel(ev, t0, winSec) {
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const f2m = (f) => Math.round(69 + 12 * Math.log2((f > 0 ? f : A) / A));
+      const win = [];
+      for (let i = 0; i < ev.length; i++) {
+        const e = ev[i];
+        if (e && typeof e.freq === 'number' && typeof e.at === 'number' && e.at >= t0 - 1e-6 && e.at < t0 + winSec - 1e-6) win.push(e);
+      }
+      if (!win.length) return null;
+      let lo = Infinity; for (let i = 0; i < win.length; i++) if (win[i].freq < lo) lo = win[i].freq;
+      const baseMidi = f2m(lo);
+      const nodes = win.map(e => {
+        const af = (((e.at - t0) / winSec) % 1 + 1) % 1;
+        const sus = Math.max(0.005, Math.min(0.999, Math.max(0.02, (e.dur || 0) / 1000) / winSec));
+        const ov = { noteOffset: f2m(e.freq) - baseMidi };
+        if (e.params && e.params.type) ov.params = e.params;
+        return { angleFrac: af, muted: false, sustainFrac: sus, override: ov };
+      }).sort((a, b) => a.angleFrac - b.angleFrac);
+      return { baseNote: baseMidi, nodes: nodes, nodeCount: nodes.length, timingMode: 'free', loopBeats: 4, rotationDeg: 0, gatePct: 80 };
+    }
+    function _shapeMasterLegendName(c) {
+      return String((c && (c.name || c.base)) || 'Shape').replace(/\s+v\d+$/, '');
+    }
+    // The note name(s) a wheel is sounding at playhead phase `ph` (0..1): any node
+    // whose [angle, angle+sustain] window contains the playhead. Stacked nodes at
+    // one angle (or a chord node) yield multiple names → a chord readout. '' when
+    // nothing is currently held.
+    function _shapeCurrentNoteLabel(cfg, ph) {
+      if (!cfg || !Array.isArray(cfg.nodes) || !cfg.nodes.length) return '';
+      const rotFrac = (cfg.rotationDeg || 0) / 360;
+      const baseM = Number.isFinite(cfg.baseNote) ? Math.round(cfg.baseNote) : 60;
+      const basePc = ((baseM % 12) + 12) % 12;
+      const gate = Math.max(0.02, Math.min(0.6, ((cfg.gatePct || 80) / 100) * 0.25));
+      // Clockwise index per node (for progression-mapped chords).
+      const order = cfg.nodes.map(nd => ({ nd, a: (((nd.angleFrac + rotFrac) % 1) + 1) % 1 })).sort((x, y) => x.a - y.a);
+      const idxOf = new Map(); order.forEach((o, i) => idxOf.set(o.nd, i));
+      const midis = [];
+      cfg.nodes.forEach(nd => {
+        if (nd.muted) return;
+        const a = (((nd.angleFrac + rotFrac) % 1) + 1) % 1;
+        const sus = (Number.isFinite(nd.sustainFrac) && nd.sustainFrac > 0) ? nd.sustainFrac : gate;
+        const since = (((ph - a) % 1) + 1) % 1;
+        if (since > sus) return;                 // playhead has left this note
+        const off = _shapeNodeOffset(nd);
+        const chord = _shapeNodeChord(cfg, nd, idxOf.get(nd));
+        if (chord && Array.isArray(chord.intervals) && chord.intervals.length) {
+          const rootM = (baseM - basePc) + ((((chord.root | 0) % 12) + 12) % 12);
+          chord.intervals.forEach(iv => midis.push(rootM + iv + off));
+        } else {
+          midis.push(baseM + off);
+        }
+      });
+      if (!midis.length) return '';
+      const uniq = Array.from(new Set(midis.map(m => Math.round(m)))).sort((x, y) => x - y);
+      return uniq.map(_shapeNoteName).join(' ');
+    }
+    // Build the per-layer chip row (cached by the shape set; note text is updated
+    // live by the draw loop). Each chip: coloured layer name + current note(s).
+    function _shapeMasterRenderChips() {
+      const host = document.getElementById('shape-master-chips'); if (!host) return;
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      const sig = list.map(c => c.id + '~' + (c.name || '')).join('|');
+      if (sig === _shapeMaster.chipSig && host.childElementCount === list.length) return;
+      _shapeMaster.chipSig = sig;
+      _shapeMaster.chipEls = {};
+      _shapeMaster.chipBox = {};
+      host.innerHTML = '';
+      list.forEach(c => {
+        const color = _masterColorOf(c);
+        const chip = document.createElement('span');
+        chip.className = 'sm-chip';
+        chip.style.borderColor = _shapeRgba(color, 0.5);
+        chip.style.setProperty('--chip-color', color);
+        const nm = document.createElement('span'); nm.className = 'sm-chip-name';
+        nm.textContent = _shapeMasterLegendName(c); nm.style.color = color;
+        const nt = document.createElement('span'); nt.className = 'sm-chip-note'; nt.textContent = '·';
+        chip.appendChild(nm); chip.appendChild(nt);
+        host.appendChild(chip);
+        _shapeMaster.chipEls[c.id] = nt;
+        _shapeMaster.chipBox[c.id] = chip;
+      });
+    }
+    // One-shot flash on a chip when its shape completes a rotation (restart the
+    // CSS animation by retriggering the class).
+    function _shapeMasterFlashChip(id) {
+      const el = _shapeMaster.chipBox && _shapeMaster.chipBox[id];
+      if (!el) return;
+      el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+    }
+    // The note(s) a Bloom-sourced shape is ACTUALLY sounding right now — read from
+    // the render engine's capture (events bracketing Tone.now()). More accurate
+    // than the wheel phase, whose window floats relative to the draw playhead.
+    function _shapeBloomCurrentNote(key) {
+      const ev = (typeof _shapeBloomEng !== 'undefined' && _shapeBloomEng.cap && key) ? _shapeBloomEng.cap[key] : null;
+      if (!Array.isArray(ev) || !ev.length) return '';
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const midis = [];
+      for (let i = ev.length - 1; i >= 0 && (ev.length - i) <= 96; i--) {
+        const e = ev[i];
+        if (!e || typeof e.at !== 'number' || typeof e.freq !== 'number') continue;
+        const end = e.at + Math.max(0.02, (e.dur || 0) / 1000);
+        if (e.at <= now + 1e-3 && now < end) midis.push(Math.round(69 + 12 * Math.log2((e.freq > 0 ? e.freq : A) / A)));
+      }
+      if (!midis.length) return '';
+      return Array.from(new Set(midis)).sort((x, y) => x - y).map(_shapeNoteName).join(' ');
+    }
+    // Update one chip's note text (called per shape from the draw loop). Note
+    // detection is throttled (~12×/s) to keep the 60fps redraw cheap with many
+    // shapes; the text only writes on change so it ticks over exactly when a note
+    // starts / ends.
+    function _shapeMasterUpdateChip(c, cfg, ph) {
+      const els = _shapeMaster.chipEls; if (!els || !c) return;
+      const el = els[c.id]; if (!el) return;
+      const nowMs = performance.now();
+      if (el._at && nowMs - el._at < 80) return;
+      el._at = nowMs;
+      let lbl = '';
+      if (_shapeMaster.running) {
+        lbl = (c.bloomLayer && c._renderKey) ? _shapeBloomCurrentNote(c._renderKey) : _shapeCurrentNoteLabel(cfg, ph);
+      }
+      const show = lbl || '·';
+      if (el._last === show) return;
+      el._last = show; el.textContent = show;
+      el.classList.toggle('on', !!lbl);
     }
     const _SHAPE_SRC_LABEL = { lane: 'lane', 'saved-seq': 'saved', capture: 'capture', manual: 'manual' };
     function _shapeGroupKey(c) { return c.groupId || ((c.source || 'manual') + ':' + (c.base || c.name || ('id' + c.id))); }
@@ -2125,35 +2315,55 @@
     }
     function _shapeMasterTick() {
       if (!_shapeMaster.running) return;
-      const cfg = _masterActiveCfg();
-      if (!cfg) { _shapeMasterStop(); return; }
-      const barSec = _shapeBarSec(cfg);
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      if (!list.length) { _shapeMasterStop(); return; }
       const now = performance.now() / 1000;
-      const phase = (((now - _shapeMaster.t0) % barSec) / barSec + 1) % 1;
-      const last = _shapeMaster.lastPhase, wrapped = phase < last;
-      const { eff, sortedAngles: sorted, idxOf } = _shapeSortedEff(cfg);
-      eff.forEach(e => {
-        if (e.nd.muted) return;
-        const a = e.a;
-        const crossed = wrapped ? (a > last || a <= phase) : (a > last && a <= phase);
-        if (crossed) _shapeTriggerNode(cfg, e.nd, a, sorted, idxOf.get(e.nd));
+      const phases = _shapeMaster.phases || (_shapeMaster.phases = {});
+      // Every shape plays at once, each on its OWN loop length (barSec) but a
+      // shared clock origin (t0), so they overlay like a multi-wheel ensemble.
+      const live = new Set();
+      list.forEach(c => {
+        live.add(c.id);
+        if (c.bloomLayer) return;   // played live by the render engine, not node-triggered
+        const cfg = _shapeNormalize(c.shape);
+        const barSec = _shapeBarSec(cfg);
+        const phase = (((now - _shapeMaster.t0) % barSec) / barSec + 1) % 1;
+        const last = (phases[c.id] != null) ? phases[c.id] : -1e-9;
+        const wrapped = phase < last;
+        const { eff, sortedAngles: sorted, idxOf } = _shapeSortedEff(cfg);
+        eff.forEach(e => {
+          if (e.nd.muted) return;
+          const a = e.a;
+          const crossed = wrapped ? (a > last || a <= phase) : (a > last && a <= phase);
+          if (crossed) _shapeTriggerNode(cfg, e.nd, a, sorted, idxOf.get(e.nd));
+        });
+        phases[c.id] = phase;
       });
-      _shapeMaster.lastPhase = phase;
-      _shapeMasterDraw(phase);
+      // Forget phases of shapes that were deleted mid-play.
+      Object.keys(phases).forEach(k => { if (!live.has(k | 0) && !live.has(k)) delete phases[k]; });
+      _shapeMasterDraw(phases);
       _shapeMaster.raf = requestAnimationFrame(_shapeMasterTick);
     }
     function _shapeMasterStart() {
       if (_shapeMaster.running) return;
-      if (!_masterActiveCfg()) return;        // nothing to play
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      if (!list.length) return;               // nothing to play
       try { _shapeSpinStop(); } catch (e) {}   // never run the editor + master loops together
-      _shapeMaster.running = true; _shapeMaster.t0 = performance.now() / 1000; _shapeMaster.lastPhase = -1e-9;
+      _shapeMaster.running = true; _shapeMaster.t0 = performance.now() / 1000; _shapeMaster.phases = {};
+      // Bloom-sourced shapes play LIVE through the render engine (evolving); fixed
+      // shapes (lane / saved-seq / manual) are triggered by the rAF tick below.
+      try { if (typeof _shapeBloomEng !== 'undefined' && typeof _shapeBloomLayers === 'function' && _shapeBloomLayers().length) _ambStartGenerator(_shapeBloomEng); } catch (e) {}
       _shapeMaster.raf = requestAnimationFrame(_shapeMasterTick); _shapeMasterReflectBtn();
     }
     function _shapeMasterStop() {
       const was = _shapeMaster.running;
       try { _shapeSpinStop(); } catch (e) {}   // Stop halts any shape audition
+      try { if (typeof _shapeBloomEng !== 'undefined') _ambStopGenerator(_shapeBloomEng); } catch (e) {}
       _shapeMaster.running = false;
       if (_shapeMaster.raf) { cancelAnimationFrame(_shapeMaster.raf); _shapeMaster.raf = 0; }
+      // Re-anchor each shape's cycle on the next Play (drop live wheels so the
+      // stopped overview shows the complete baked preview).
+      (Array.isArray(masterShapes) ? masterShapes : []).forEach(c => { if (c) { c._cyc = null; c._liveCfg = undefined; } });
       if (was) { try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {} }  // cut ringing notes only when actually stopping
       _shapeMasterReflectBtn();
       if (_shapeMaster.inited) _shapeMasterDraw(0);
@@ -2162,8 +2372,39 @@
       const b = document.getElementById('shape-master-play');
       if (b) { b.textContent = _shapeMaster.running ? '■ Stop' : '▶ Play'; b.classList.toggle('active', _shapeMaster.running); }
     }
-    // Tap the active wheel → open it in the full editor.
+    // Remove every master shape (after confirm). Closes the editor, stops
+    // playback, and refreshes the overview.
+    function _shapeMasterClearAll() {
+      const list = Array.isArray(masterShapes) ? masterShapes : [];
+      if (!list.length) { if (typeof showToast === 'function') showToast('No shapes to clear'); return; }
+      if (typeof confirm === 'function' && !confirm('Clear all ' + list.length + ' master Shape' + (list.length === 1 ? '' : 's') + '? This can’t be undone.')) return;
+      try { if (_shapeMasterEditId != null) _shapeMasterEditClose(); } catch (e) {}
+      try { _shapeMasterStop(); } catch (e) {}
+      masterShapes = [];
+      activeMasterShapeId = null;
+      _shapeMaster.phases = {};
+      _shapeMaster.legendKey = null;
+      try { if (typeof _shapeBloomInvalidate === 'function') _shapeBloomInvalidate(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+      try { _shapeMasterBrowser(); } catch (e) {}
+      try { if (_shapeMaster.inited) _shapeMasterDraw(0); } catch (e) {}
+      if (typeof showToast === 'function') showToast('Cleared all master Shapes');
+    }
+    // Tap a wheel → open it in the full editor. With shapes overlaid as
+    // concentric rings, pick the ring whose radius is nearest the tap so any
+    // overlaid wheel is reachable; fall back to the active one.
     function _shapeMasterClick(e) {
+      const cv = _shapeMaster.canvas, rings = _shapeMaster.rings;
+      if (cv && Array.isArray(rings) && rings.length) {
+        const r = cv.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const cx = (cv.width / dpr) / 2, cy = (cv.height / dpr) / 2;
+        const dx = (e.clientX - r.left) - cx, dy = (e.clientY - r.top) - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        let best = null, bestD = Infinity;
+        rings.forEach(rg => { const d = Math.abs(dist - rg.radius); if (d < bestD) { bestD = d; best = rg; } });
+        if (best && best.id != null) { _shapeMasterEditOpen(best.id); return; }
+      }
       if (activeMasterShapeId != null) _shapeMasterEditOpen(activeMasterShapeId);
     }
     // ----- edit a copy with the full lane editor (reparented #shape-pad) ------
@@ -2182,6 +2423,22 @@
     }
     function _shapeMasterEditOpen(id) {
       const copy = _masterShapeById(id); if (!copy) return;
+      // A Bloom-sourced shape plays a LIVE generator, not its baked wheel — so
+      // editing it means freezing the current cycle into a concrete, static wheel
+      // (it stops evolving and becomes hand-editable). Snapshot the live cycle if
+      // we have one, then drop the bloomLayer link.
+      if (copy.bloomLayer) {
+        try {
+          const ev = (typeof _shapeBloomEng !== 'undefined' && _shapeBloomEng.cap && copy._renderKey) ? _shapeBloomEng.cap[copy._renderKey] : null;
+          if (Array.isArray(ev) && ev.length && typeof _ambCapToShape === 'function' && typeof _ambLayerLoopSec === 'function') {
+            const built = _ambCapToShape(ev, _ambLayerLoopSec(copy.bloomLayer.cfg, copy.bloomLayer.type));
+            if (built && built.nodeCount) copy.shape = built;
+          }
+        } catch (e) {}
+        delete copy.bloomLayer;
+        try { if (typeof _shapeBloomInvalidate === 'function') _shapeBloomInvalidate(); } catch (e) {}
+        if (typeof showToast === 'function') showToast('Froze “' + (copy.name || 'shape') + '” to a static wheel for editing');
+      }
       // Single #shape-pad — if a Bloom Shape layer has it open, hand it back first.
       try { if (typeof _ambShapeEditRef !== 'undefined' && _ambShapeEditRef && typeof _ambShapeEditClose === 'function') _ambShapeEditClose(); } catch (e) {}
       if (!copy.shape || typeof copy.shape !== 'object') copy.shape = _shapeDefault();
@@ -2239,6 +2496,7 @@
           bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-play">▶ Play</button>' +
             '<button type="button" class="shape-btn" id="shape-master-edit">✎ Edit</button>' +
             '<button type="button" class="shape-btn" id="shape-master-capture" title="Record the active shape\'s audio to a take you can upload to Drive">⤓ Capture</button>' +
+            '<button type="button" class="shape-btn shape-btn-danger" id="shape-master-clear" title="Remove every master shape">🗑 Clear</button>' +
             '<span style="color:#8a8aa8;font-size:0.72rem">Each “◎ Send” saves a copy here. Click a version to select it, ✎ to edit, ✕ to delete.</span>';
           const pb = bar.querySelector('#shape-master-play');
           if (pb) pb.addEventListener('click', () => { if (_shapeMaster.running) _shapeMasterStop(); else _shapeMasterStart(); });
@@ -2246,6 +2504,8 @@
           if (eb) eb.addEventListener('click', () => { if (activeMasterShapeId != null) _shapeMasterEditOpen(activeMasterShapeId); });
           const cb = bar.querySelector('#shape-master-capture');
           if (cb) cb.addEventListener('click', () => { try { _shapeMasterCaptureToggle(); } catch (e) { console.warn('shape capture failed', e); } });
+          const clb = bar.querySelector('#shape-master-clear');
+          if (clb) clb.addEventListener('click', () => { try { _shapeMasterClearAll(); } catch (e) { console.warn('shape clear failed', e); } });
         }
         _shapeMaster.canvas.addEventListener('click', _shapeMasterClick);
         const _redrawIfShapes = () => {

@@ -3578,6 +3578,16 @@
     }
     // Capture ended: tear down the tap, stop the (now-silent) generator, then ask
     // for name/format and save the take. Worklet mode stitches the PCM straight
+    // A friendly default name for a captured take: "Adjective Noun" (e.g.
+    // "Velvet Canyon"), so the Save/Upload dialog prepopulates something
+    // memorable instead of a timestamp. New random pick per capture.
+    const _AMB_NAME_ADJ = ['Velvet', 'Wobbly', 'Cosmic', 'Hazy', 'Golden', 'Crystal', 'Drifting', 'Electric', 'Midnight', 'Lush', 'Frosted', 'Molten', 'Quiet', 'Restless', 'Sunken', 'Faded', 'Neon', 'Wild', 'Gentle', 'Distant', 'Amber', 'Silver', 'Crooked', 'Liquid', 'Dusty', 'Hollow', 'Radiant', 'Mellow', 'Twisted', 'Floating', 'Burnt', 'Glassy', 'Secret', 'Tidal', 'Wandering', 'Bright', 'Murky', 'Static', 'Lunar', 'Woolen'];
+    const _AMB_NAME_NOUN = ['Canyon', 'Pelican', 'Comet', 'Meadow', 'Lantern', 'Harbor', 'Cascade', 'Circuit', 'Glacier', 'Ember', 'Marsh', 'Mirage', 'Orchard', 'Reef', 'Tundra', 'Drone', 'Echo', 'Grove', 'Halo', 'Loom', 'Nebula', 'Pulse', 'Ravine', 'Signal', 'Thicket', 'Vortex', 'Willow', 'Anvil', 'Beacon', 'Current', 'Delta', 'Fathom', 'Gully', 'Lagoon', 'Monsoon', 'Prairie', 'Quarry', 'Spire', 'Vale', 'Hollow'];
+    function _ambRandomTrackName() {
+      const a = _AMB_NAME_ADJ[Math.floor(Math.random() * _AMB_NAME_ADJ.length)];
+      const n = _AMB_NAME_NOUN[Math.floor(Math.random() * _AMB_NAME_NOUN.length)];
+      return a + ' ' + n;
+    }
     // into a buffer (always WAV/MP3-able); MediaRecorder mode decodes the blob
     // and falls back to saving it raw if decoding fails.
     async function _ambCaptureFinish(E) {
@@ -3617,8 +3627,7 @@
           } catch (decErr) { console.warn('Bloom capture: decode failed, saving the raw recording instead.', decErr); }
         }
         if (typeof showExportOptionsDialog !== 'function') { alert('Capture is unavailable.'); return; }
-        const stamp = (() => { try { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) { return 'take'; } })();
-        const choice = await showExportOptionsDialog({ title: 'Save capture', defaultName: 'bloom-' + stamp, defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Save' });
+        const choice = await showExportOptionsDialog({ title: 'Save capture', defaultName: _ambRandomTrackName(), defaultFolder: 'bloops/exports', includeFolder: true, applyLabel: 'Save' });
         if (!choice) return;
         const { filename, fmt, folder } = choice;
         let blob, ext, mime, durSec;

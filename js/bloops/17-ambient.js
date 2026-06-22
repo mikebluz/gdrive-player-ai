@@ -4185,6 +4185,10 @@
       const k = String(label || '').toLowerCase().trim();
       return _AMB_PARAM_DESC[k] || hint || '';
     }
+    // Quote-safe description for a title="" attribute.
+    function _ambTitleAttr(label, hint) {
+      return String(_ambParamDesc(label, hint)).replace(/"/g, '&quot;');
+    }
     const _ambSl = (label, id, min, max, val, hint) => {
       const desc = _ambParamDesc(label, hint);
       const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';
@@ -4807,97 +4811,78 @@
     // a full layer of a built-in type, reusing the same emit functions (routed
     // by a 'type:id' mod key) and one data-driven card builder/wirer. (This card
     // system is what the later cleanup will use for the primaries too.)
+    // Layer params are grouped into collapsible sections (Voice / Pitch / Rhythm /
+    // Variation / Mix) via ['grp', name] markers — see _ambInstCardHtml. Voice +
+    // Mix open by default; fold state is remembered per layer (inst.groupsOpen).
     const _AMB_LAYER_SCHEMA = {
-      bed: { label: 'Bed', ctrls: [['tone'], ['notes'],
-        ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
-        ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['tm', 'lengthMs', 'Length', 300, 16000, 100],
-        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      motif: { label: 'Motif', ctrls: [['tone'], ['notes'],
-        ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
-        ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20],
-        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'],
-        ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      texture: { label: 'Texture', ctrls: [['tone'], ['notes'],
-        ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'],
-        ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
-        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      beat: { label: 'Beat', ctrls: [['kit'], ['rate'],
-        ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10],
-        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['sl', 'restProb', 'Rests', 0, 100, '%'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      // Shape: a generative layer holding N radial-sequencer wheels (the Shape
-      // mode engine, js/bloops/21-shape.js). Pitch/voice/prog/gate live PER SHAPE
-      // inside the wheel editor; the layer only owns Level / Spread / Mod / FX.
-      // No notes/tone/cond/interval here — the wheels drive their own timing.
-      shape: { label: 'Shape', ctrls: [['shapes'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['cond'], ['spread'], ['mod'], ['fx']] },
-      // Arp: arpeggiates through a user-built SERIES of scales/chords. Each entry
-      // is held for N "passes" (one Direction sweep = one pass) before advancing
-      // to the next. Direction + Randomness shape the note order. Pitch material
-      // is the series (no single 'notes' source); the layer owns voice/timing.
-      arp: { label: 'Arp', ctrls: [['tone'], ['arpseries'],
-        ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'],
-        ['rate'], ['tm', 'intervalMs', 'Rate', 40, 2000, 10],
-        ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
-        ['tm', 'lengthMs', 'Length', 40, 2000, 10],
-        ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      // Bass: a euclidean rhythmic phrase locked to the global BPM. The seed
-      // phrase is `bars` bars long and repeats (returns to its start) every
-      // `bars` bars; Rhythm var / Pitch var add stochastic variation per
-      // repetition. Pulses/Steps/Rotate shape the euclidean rhythm (per bar);
-      // Register sets the low octave. Edits land on the next phrase iteration.
-      bass: { label: 'Bass', ctrls: [['tone'], ['notes'],
-        ['sl', 'register', 'Register', 1, 4, 'octave'],
-        ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'],
-        ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'],
-        ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'],
-        ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'],
-        ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
-        ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'],
-        ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'],
-        ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      // Run: a fixed RANDOM note run, `bars` bars long, that loops in time.
-      // Density = notes/bar; Vary re-rolls that % of slots per repeat so the
-      // loop mutates (0 = repeats verbatim). Pitches are random scale degrees
-      // across `range` octaves from `register`, always in the current Scale.
-      run: { label: 'Run', ctrls: [['tone'], ['notes'],
-        ['sl', 'register', 'Register', 2, 7, 'base octave'],
-        ['sl', 'range', 'Range', 1, 4, 'octave span'],
-        ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
-        ['sl', 'bars', 'Bars', 1, 16, 'loop length'],
-        ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
-        ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
-        ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'],
-        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      // Pedal: a simple pedal-point loop of the key/grid root. Bars = loop
-      // length, Density = root hits per bar (default 1 bar × 4 = quarter notes).
-      pedal: { label: 'Pedal', ctrls: [['tone'],
-        ['sl', 'register', 'Register', 1, 7, 'octave'],
-        ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
-        ['sl', 'bars', 'Bars', 1, 16, 'loop length'],
-        ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
-        ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
-        ['sl', 'attack', 'Attack', 0, 2000, 'ms'],
-        ['sl', 'decay', 'Decay', 0, 2000, 'ms'],
-        ['sl', 'sustain', 'Sustain', 0, 100, '%'],
-        ['sl', 'release', 'Release', 0, 4000, 'ms'],
-        ['sl', 'vary', 'Vary', 0, 100, 'root → roam'],
-        ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      bed: { label: 'Bed', ctrls: [
+        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Rhythm'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      motif: { label: 'Motif', ctrls: [
+        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Rhythm'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      texture: { label: 'Texture', ctrls: [
+        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
+        ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      beat: { label: 'Beat', ctrls: [
+        ['grp', 'Voice'], ['kit'],
+        ['grp', 'Rhythm'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).
+      // Pitch/voice/prog/gate live PER SHAPE inside the wheel editor.
+      shape: { label: 'Shape', ctrls: [
+        ['grp', 'Voice'], ['shapes'],
+        ['grp', 'Rhythm'], ['cond'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
+      // Direction); Randomness deviates from it. Pitch material is the series.
+      arp: { label: 'Arp', ctrls: [
+        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Pitch'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
+        ['grp', 'Rhythm'], ['rate'], ['tm', 'intervalMs', 'Rate', 40, 2000, 10], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
+      // long; Rhythm/Pitch var add per-repeat variation.
+      bass: { label: 'Bass', ctrls: [
+        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Rhythm'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Run: a fixed RANDOM note run, `bars` bars long, looping; Vary re-rolls.
+      run: { label: 'Run', ctrls: [
+        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
+        ['grp', 'Rhythm'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
+      pedal: { label: 'Pedal', ctrls: [
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
+        ['grp', 'Pitch'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
+        ['grp', 'Rhythm'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
+    // Default-open groups; the rest start collapsed. Remembered per layer in
+    // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.
+    const _AMB_GROUP_DEFAULT_OPEN = { Voice: true, Mix: true };
+    function _ambGroupOpen(inst, name) {
+      const go = inst && inst.groupsOpen;
+      if (go && typeof go === 'object' && typeof go[name] === 'boolean') return go[name];
+      return !!_AMB_GROUP_DEFAULT_OPEN[name];
+    }
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0 });
@@ -4947,22 +4932,43 @@
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
       let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(sch.label, p + '-on', p + '-del', fkey);
-      sch.ctrls.forEach(c => {
+      // Controls render into collapsible group sections (['grp', name] markers
+      // in the schema open each one). If a schema has no markers, controls fall
+      // into an implicit ungrouped bucket that's always shown.
+      let grpOpen = false;        // is a group <div> currently open?
+      const ctrlHtml = (c) => {
         const k = c[0];
-        if (k === 'tone') html += '<div class="ambient-ctrl"><label for="' + p + '-tone">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
-        else if (k === 'kit') html += '<div class="ambient-ctrl"><label for="' + p + '-kit">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
-        else if (k === 'rate') html += _ambRateSel(p + '-rate');
-        else if (k === 'notes') html += _ambNotesButtonHtml(p);
-        else if (k === 'sl') html += _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
-        else if (k === 'tm') html += _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
-        else if (k === 'cond') html += _ambCondCtrl(lk);
-        else if (k === 'spread') html += _ambSpreadCtrl(p, inst);
-        else if (k === 'mod') html += _ambModUi(lk);
-        else if (k === 'fx') html += _ambFxUi(lk);
-        else if (k === 'shapes') html += _ambShapeBrowserHtml(p, inst);
-        else if (k === 'arpseries') html += _ambArpSeriesHtml(p, inst);
-        else if (k === 'arpdir') html += _ambArpDirHtml(p, inst);
+        if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
+        if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
+        if (k === 'rate') return _ambRateSel(p + '-rate');
+        if (k === 'notes') return _ambNotesButtonHtml(p);
+        if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
+        if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
+        if (k === 'cond') return _ambCondCtrl(lk);
+        if (k === 'spread') return _ambSpreadCtrl(p, inst);
+        if (k === 'mod') return _ambModUi(lk);
+        if (k === 'fx') return _ambFxUi(lk);
+        if (k === 'shapes') return _ambShapeBrowserHtml(p, inst);
+        if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
+        if (k === 'arpdir') return _ambArpDirHtml(p, inst);
+        return '';
+      };
+      sch.ctrls.forEach(c => {
+        if (c[0] === 'grp') {
+          if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
+          const name = c[1], open = _ambGroupOpen(inst, name);
+          html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
+            '<button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name +
+            '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
+            '<div class="ambient-grp-body">';
+          grpOpen = true;
+        } else {
+          html += ctrlHtml(c);
+        }
       });
+      if (grpOpen) html += '</div></div>';
+      // Per-layer Reset — restores every group to its default fold state.
+      html += '<div class="ambient-grp-resetwrap"><button type="button" class="ambient-grp-reset" id="' + p + '-grp-reset" title="Reset section folds to defaults">↺ Reset sections</button></div>';
       return html + '</div>';
     }
     // Arp Direction picker.
@@ -5018,6 +5024,19 @@
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
       if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
+      // Collapsible parameter groups: header click folds/unfolds + remembers state.
+      if (layerDiv) layerDiv.querySelectorAll('.ambient-grp-head').forEach(h => {
+        h.addEventListener('click', () => {
+          const name = h.getAttribute('data-grp'); if (!name) return;
+          const grp = h.closest('.ambient-grp'); if (!grp) return;
+          const nowOpen = !grp.classList.contains('open');
+          grp.classList.toggle('open', nowOpen);
+          const L = get(); if (L) { if (!L.groupsOpen || typeof L.groupsOpen !== 'object') L.groupsOpen = {}; L.groupsOpen[name] = nowOpen; persist(); }
+        });
+      });
+      // Reset sections → forget remembered folds, re-render to default state.
+      const rstB = el('grp-reset');
+      if (rstB) rstB.addEventListener('click', () => { const L = get(); if (L) { delete L.groupsOpen; persist(); } _ambRenderExtras(E); });
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {

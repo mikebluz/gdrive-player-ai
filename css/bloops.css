@@ -2790,6 +2790,36 @@
     .ambient-layer.collapsed .ambient-collapse::before { transform: rotate(-90deg); }
     /* Collapsed: hide everything in the layer except its head row. */
     .ambient-layer.collapsed > *:not(.ambient-layer-head) { display: none; }
+    /* ---- Collapsible parameter groups (Voice / Pitch / Rhythm / …) ------- */
+    .ambient-grp { margin: 6px 0 0; border-top: 1px solid #1c1c2e; }
+    .ambient-grp:first-of-type { border-top: none; margin-top: 2px; }
+    .ambient-grp-head {
+      display: flex; align-items: center; gap: 6px; width: 100%;
+      background: transparent; border: none; cursor: pointer;
+      padding: 6px 2px; text-align: left;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase; color: #7a7a9c;
+      transition: color 0.12s ease;
+    }
+    .ambient-grp-head:hover { color: #c5b3ec; }
+    .ambient-grp-caret {
+      margin-left: auto; flex: 0 0 auto;
+      font-size: 0.7rem; color: inherit; line-height: 1;
+      transition: transform 0.12s ease;
+    }
+    .ambient-grp-caret::before { content: '▾'; display: inline-block; transform: rotate(-90deg); transition: transform 0.12s ease; }
+    .ambient-grp.open .ambient-grp-caret::before { transform: rotate(0deg); }
+    .ambient-grp-body { display: none; flex-direction: column; gap: 10px; padding: 2px 0 8px; }
+    .ambient-grp.open > .ambient-grp-body { display: flex; }
+    /* Per-layer Reset-sections button. */
+    .ambient-grp-resetwrap { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .ambient-grp-reset {
+      background: transparent; border: 1px solid #2d2d3f; border-radius: 7px;
+      color: #6b6b8a; cursor: pointer; padding: 4px 10px;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.7rem;
+      transition: all 0.15s ease;
+    }
+    .ambient-grp-reset:hover { border-color: #9f7aea; color: #d6bcfa; }
     /* Per-Seq "X" delete button (sits between the toggle and the caret). */
     .ambient-seq-del {
       margin-left: auto; flex: 0 0 auto; width: 26px; height: 26px;

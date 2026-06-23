@@ -5796,46 +5796,75 @@
       render();
       document.body.appendChild(overlay);
     }
+    // Collapsible parameter group (matches every other layer). Open state per
+    // layer in s.groupsOpen via _ambGroupOpen; default collapsed.
+    function _ambLayerGrpOpen(s, name) { return '<div class="ambient-grp' + (_ambGroupOpen(s, name) ? ' open' : '') + '" data-grp="' + name + '"><button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name + '<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">'; }
+    function _ambLayerGrpEnd() { return '</div></div>'; }
+    // Wire a dynamic-list layer's collapse button (folds its groups too) + its
+    // group-head toggles (persisted in <layer>.groupsOpen). Used by Seq + Sample.
+    function _ambWireLayerGroups(layerDiv, cB, getLayer, persist) {
+      if (!layerDiv) return;
+      const setGrp = (g, open, nm) => {
+        g.classList.toggle('open', open);
+        const L = getLayer(); if (L && nm) { if (!L.groupsOpen || typeof L.groupsOpen !== 'object') L.groupsOpen = {}; L.groupsOpen[nm] = open; }
+      };
+      if (cB) cB.addEventListener('click', () => {
+        const collapsed = layerDiv.classList.toggle('collapsed');
+        if (collapsed) { layerDiv.querySelectorAll('.ambient-grp.open').forEach(g => setGrp(g, false, g.getAttribute('data-grp'))); persist(); }
+      });
+      layerDiv.querySelectorAll('.ambient-grp-head').forEach(h => {
+        h.addEventListener('click', () => {
+          const g = h.closest('.ambient-grp'); if (!g) return;
+          setGrp(g, !g.classList.contains('open'), h.getAttribute('data-grp')); persist();
+        });
+      });
+    }
     function _ambSeqLayerHtml(s, i) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
+      const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id) +
-        '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-        _ambSl('Attack', p + 'attack', 0, 4000, s.attack, 'ms') +
-        _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
-        _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
-        _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
-        _ambSl('Fine', p + 'fine', -100, 100, s.fine, 'cents') +
-        // Ensemble lock — only shown (un-hidden in wiring) when this seq's voice
-        // is an ensemble. Locked = members fire together; Unlocked = members
-        // spread across notes as independent generative voices.
-        '<div class="ambient-ctrl ambient-ens-lock-row" id="' + p + 'enslock-row" hidden><label for="' + p + 'enslock">Ensemble</label>' +
-          '<button type="button" id="' + p + 'enslock" class="ambient-seg ambient-ens-lock"></button><span class="ambient-hint">lock / spread</span></div>' +
-        // No Notes source here — a Seq plays the pitches captured in its own
-        // sequence; the note set is fixed by the sequence, not a scale/chord pick.
-        '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
-        _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
-        // Loop length: Auto (one pass == the played sequence's own length) vs
-        // Manual (the Interval knob below). Auto greys out / ignores Interval.
-        '<div class="ambient-ctrl"><label for="' + p + 'intervalmode">Loop</label>' +
-          '<button type="button" id="' + p + 'intervalmode" class="ambient-seg ambient-interval-mode"></button>' +
-          '<span class="ambient-hint">= seq length / manual</span></div>' +
-        _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
-        _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
-        _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-        _ambWhenCtrl(p) +
-        '<div class="ambient-ctrl"><label>Sections</label>' +
-          '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
-          '<span class="ambient-hint">edit ▸</span></div>' +
-        '<div class="ambient-ctrl"><label for="' + p + 'return">Return</label><select id="' + p + 'return" class="ambient-select">' + opts([['everyN', 'Every N'], ['chance', 'Chance %']], s.returnMode) + '</select><span class="ambient-hint">to original</span></div>' +
-        _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
-        _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') +
-        _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
-        _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
-        _ambSpreadCtrl('ambient-seq-' + id, s) +
-        _ambModUi('seq-' + id) +
-        _ambFxUi('seq-' + id) +
+        grp('Voice') +
+          '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          _ambSl('Attack', p + 'attack', 0, 4000, s.attack, 'ms') +
+          _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
+          _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
+          _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
+          _ambSl('Fine', p + 'fine', -100, 100, s.fine, 'cents') +
+          // Ensemble lock — only shown (un-hidden in wiring) when this seq's voice
+          // is an ensemble. Locked = members fire together; Unlocked = members
+          // spread across notes as independent generative voices.
+          '<div class="ambient-ctrl ambient-ens-lock-row" id="' + p + 'enslock-row" hidden><label for="' + p + 'enslock">Ensemble</label>' +
+            '<button type="button" id="' + p + 'enslock" class="ambient-seg ambient-ens-lock"></button><span class="ambient-hint">lock / spread</span></div>' + gpe() +
+        // No Notes source — a Seq plays the pitches captured in its own sequence.
+        grp('Variation') +
+          '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
+          _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') + gpe() +
+        grp('Unit') +
+          // Loop length: Auto (one pass == the played sequence's own length) vs
+          // Manual (the Interval knob below). Auto greys out / ignores Interval.
+          '<div class="ambient-ctrl"><label for="' + p + 'intervalmode">Loop</label>' +
+            '<button type="button" id="' + p + 'intervalmode" class="ambient-seg ambient-interval-mode"></button>' +
+            '<span class="ambient-hint">= seq length / manual</span></div>' +
+          _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
+          _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) + gpe() +
+        grp('Rhythm') +
+          _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
+          _ambWhenCtrl(p) +
+          '<div class="ambient-ctrl"><label>Sections</label>' +
+            '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
+            '<span class="ambient-hint">edit ▸</span></div>' + gpe() +
+        grp('Return') +
+          '<div class="ambient-ctrl"><label for="' + p + 'return">Return</label><select id="' + p + 'return" class="ambient-select">' + opts([['everyN', 'Every N'], ['chance', 'Chance %']], s.returnMode) + '</select><span class="ambient-hint">to original</span></div>' +
+          _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
+          _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') + gpe() +
+        grp('Mix') +
+          _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+          _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
+          _ambSpreadCtrl('ambient-seq-' + id, s) +
+          _ambModUi('seq-' + id) +
+          _ambFxUi('seq-' + id) + gpe() +
       '</div>';
     }
     // A seq "involves an ensemble" when its layer Tone is an ensemble OR any of
@@ -5951,7 +5980,7 @@
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSeqLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
-      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
+      _ambWireLayerGroups(layerDiv, cB, getSq, persist);
       // Initial values not carried by `selected`/value attrs.
       const setVal = (suf, v) => { const e = el(suf); if (e && v != null) e.value = String(v); };
       // NOTE: do NOT setVal('tone', s.tone) here — a Seq layer's own `tone` is
@@ -6067,24 +6096,30 @@
       const id = s.id, p = 'ambient-samp-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       const nm = String(s.name || s.sampleId || 'sample').replace(/[<>&"]/g, '');
+      const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id) +
-        '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
-        _ambSl('Attack', p + 'attack', 0, 2000, s.attack, 'ms') +
-        _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
-        _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
-        _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
-        _ambSl('Fine', p + 'fine', -100, 100, s.fine, 'cents') +
-        _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
-        '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' +
-        _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
-        _ambTm('Length', p + 'length', 80, 16000, 20, s.lengthMs) +
-        _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-        _ambWhenCtrl(p) +
-        _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
-        _ambSpreadCtrl('ambient-samp-' + id, s) +
-        _ambModUi('samp-' + id) +
-        _ambFxUi('samp-' + id) +
+        grp('Voice') +
+          '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
+          _ambSl('Attack', p + 'attack', 0, 2000, s.attack, 'ms') +
+          _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
+          _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
+          _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
+          _ambSl('Fine', p + 'fine', -100, 100, s.fine, 'cents') + gpe() +
+        grp('Slices') +
+          _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
+          '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' + gpe() +
+        grp('Unit') +
+          _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
+          _ambTm('Length', p + 'length', 80, 16000, 20, s.lengthMs) + gpe() +
+        grp('Rhythm') +
+          _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
+          _ambWhenCtrl(p) + gpe() +
+        grp('Mix') +
+          _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+          _ambSpreadCtrl('ambient-samp-' + id, s) +
+          _ambModUi('samp-' + id) +
+          _ambFxUi('samp-' + id) + gpe() +
       '</div>';
     }
     function _ambWireSampleLayer(E, s) {
@@ -6116,7 +6151,7 @@
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSampleLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
-      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
+      _ambWireLayerGroups(layerDiv, cB, getL, persist);
       const setVal = (suf, v) => { const e = el(suf); if (e && v != null) e.value = String(v); };
       const iv = el('interval-v'); if (iv) iv.textContent = _ambFmtMs(s.intervalMs);
       const lv = el('length-v'); if (lv) lv.textContent = _ambFmtMs(s.lengthMs);

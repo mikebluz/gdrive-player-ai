@@ -2718,14 +2718,16 @@
       const lo = 0.02, hi = 8; // Hz (free): ~50 s cycle -> 8 Hz
       return lo * Math.pow(hi / lo, r);
     }
-    // Modulation ranges are now OFFSETS added on top of a NEUTRAL base value
-    // (VCA gain 1, VCF cutoff 20000) — so removing the source leaves the param
-    // open/full and a Depth of 0 can never close the filter or mute the layer.
-    // Depth = how far the LFO dips the param DOWN from neutral.
+    // Modulation ranges. VCA is an OFFSET on a neutral base (gain 1): gain's param
+    // accepts negatives so the LFO dips DOWN from 1. VCF is ABSOLUTE Hz on a base
+    // of 0 (set in _ambMakeSrc): a frequency-typed param CANNOT go negative, so a
+    // negative offset there collapsed the cutoff to ~0 Hz and muted the layer —
+    // the LFO must carry the whole positive cutoff value instead. The resulting
+    // sweep range [floor, 20000] is identical either way.
     function _ambTargetRange(target, depth) {
       const d = Math.max(0, Math.min(100, depth | 0)) / 100;
       if (target === 'vca') return [-d, 0];                              // gain dips 1 → (1−d)
-      if (target === 'vcf') { const floor = 20000 * Math.pow(200 / 20000, d); return [floor - 20000, 0]; } // cutoff dips 20000 → floor (log-even)
+      if (target === 'vcf') { const floor = 20000 * Math.pow(200 / 20000, d); return [floor, 20000]; } // cutoff sweeps floor..20000 (absolute Hz, log-even)
       return [-d * 100, d * 100]; // vco: ± cents (already centred on 0)
     }
     // (routing moved to _E.busNode())
@@ -2764,7 +2766,7 @@
         }
         src.node = node;
         if (target === 'vca') { e.vca.gain.value = 1; node.connect(e.vca.gain); }            // base = full; LFO offset dips it
-        else if (target === 'vcf') { e.vcf.frequency.value = 20000; node.connect(e.vcf.frequency); }  // base = open; LFO offset dips it
+        else if (target === 'vcf') { e.vcf.frequency.value = 0; node.connect(e.vcf.frequency); }  // base 0; LFO carries the ABSOLUTE positive cutoff (freq can't go negative)
         // vco: connected to voices at emit via _ambLayerDetuneMod.
       } catch (x) { try { node && node.dispose(); } catch (y) {} return null; }
       return src;

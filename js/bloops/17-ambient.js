@@ -1202,9 +1202,9 @@
     function _ambCondFires(cond, iter) {
       if (cond == null || cond === 'always') return true;
       if (cond === '1st') return iter === 0;
-      // STEP GRID: a 16-char binary string (the toggle grid) — each char is one
-      // cycle in a 16-step pattern (1 = play, 0 = skip), repeating every 16.
-      if (/^[01]{16}$/.test(String(cond))) return String(cond).charAt(((iter % 16) + 16) % 16) === '1';
+      // STEP GRID: a binary string (the toggle grid) of ANY length N — each char
+      // is one cycle in an N-step pattern (1 = play, 0 = skip), repeating every N.
+      if (/^[01]+$/.test(String(cond))) { const p = String(cond), w = p.length; return p.charAt(((iter % w) + w) % w) === '1'; }
       // Legacy numeric BITMASK: the decimal value's binary (MSB-first, min 4 bits
       // wide), repeating every bit. e.g. 2 → "0010" plays the 3rd of every 4.
       // Kept so older saves still play; the UI now writes step-grid strings.
@@ -1230,37 +1230,56 @@
       const b = n.toString(2);
       return b.length >= 4 ? b : b.padStart(4, '0');
     }
-    // Any stored When (legacy 'always'/'1st'/'A:B'/decimal OR a 16-char grid
-    // string) → 16 booleans for the toggle grid, by simply asking _ambCondFires
-    // what fires on cycles 0..15. So every legacy form maps onto the grid and the
-    // grid round-trips exactly.
+    // Grid length 1..32. A binary-string When carries its OWN length; any legacy
+    // form ('always'/'1st'/'A:B'/decimal) maps onto a default 16-step grid.
+    const _AMB_WHEN_MAX = 32;
+    function _ambWhenLen(when) {
+      const s = String(when);
+      return /^[01]+$/.test(s) ? Math.max(1, Math.min(_AMB_WHEN_MAX, s.length)) : 16;
+    }
+    // Any stored When → N booleans for the toggle grid (N = its pattern length),
+    // by asking _ambCondFires what fires on cycles 0..N-1. Every legacy form maps
+    // onto the grid and a grid string round-trips exactly.
     function _ambWhenGridCells(when) {
+      const n = _ambWhenLen(when);
       const out = [];
-      for (let i = 0; i < 16; i++) out.push(_ambCondFires(when, i));
+      for (let i = 0; i < n; i++) out.push(_ambCondFires(when, i));
       return out;
     }
-    // 16 booleans → the stored When string (the grid's binary).
+    // booleans → the stored When string (the grid's binary).
     function _ambGridToWhen(cells) {
-      let s = ''; for (let i = 0; i < 16; i++) s += cells[i] ? '1' : '0';
-      return s;
+      let s = ''; for (let i = 0; i < cells.length; i++) s += cells[i] ? '1' : '0';
+      return s || '1';
     }
-    // Collapsed-summary text for a 16-cell pattern: "Always" (all on), "Never"
-    // (all off), else the binary string (the live pattern).
+    // Collapsed-summary text: "Always" (all on), "Never" (all off), else the
+    // binary string (the live pattern).
     function _ambWhenSummary(cells) {
-      let on = 0; for (let i = 0; i < 16; i++) if (cells[i]) on++;
-      if (on === 16) return 'Always';
+      let on = 0; for (let i = 0; i < cells.length; i++) if (cells[i]) on++;
+      if (on === cells.length) return 'Always';
       if (on === 0) return 'Never';
       return _ambGridToWhen(cells);
+    }
+    // HTML for `len` When cells (rebuilt by _ambPaintWhenGrid when the length changes).
+    function _ambWhenCellsHtml(len) {
+      let c = '';
+      for (let i = 0; i < len; i++) c += '<button type="button" class="ambient-when-cell" data-step="' + i + '" aria-label="step ' + (i + 1) + '"></button>';
+      return c;
     }
     // Paint a When grid's cells (id `<stem>when`) + its collapsed summary from a
     // stored value.
     function _ambPaintWhenGrid(grid, when) {
       if (!grid) return;
       const cells = _ambWhenGridCells(when);
+      // Rebuild the cell DOM if the pattern length changed (variable length).
+      if (grid.querySelectorAll('.ambient-when-cell').length !== cells.length) {
+        grid.innerHTML = _ambWhenCellsHtml(cells.length);
+      }
       grid.querySelectorAll('.ambient-when-cell').forEach((el, i) => el.classList.toggle('on', !!cells[i]));
       const wrap = grid.closest('.ambient-when-wrap');
-      const sum = wrap && wrap.querySelector('.ambient-when-summary');
-      if (sum) sum.textContent = _ambWhenSummary(cells);
+      if (wrap) {
+        const sum = wrap.querySelector('.ambient-when-summary'); if (sum) sum.textContent = _ambWhenSummary(cells);
+        const lv = wrap.querySelector('.ambient-when-lenval'); if (lv) lv.textContent = String(cells.length);
+      }
     }
     // Wire the collapse/expand toggle (the grid is collapsed by default; the
     // summary button reveals it). Bound once per control.
@@ -1274,25 +1293,47 @@
         tog.setAttribute('aria-expanded', exp ? 'true' : 'false');
       });
     }
-    // Wire a When toggle grid (id `<stem>when`): seed from the layer's value, wire
-    // collapse/expand, then toggle the clicked step and store the 16-char pattern.
-    // Shared by every layer type (primaries use their own inline cell handler).
-    function _ambBindWhen(E, stem, get, persist) {
-      const grid = _ambGet(E, stem + 'when'); if (!grid) return;
+    // Wire a When toggle grid + its length stepper: seed from the layer's value,
+    // wire collapse/expand, toggle a clicked step, and grow/shrink the pattern
+    // (1..32 steps) via the − / + buttons. `getLayer` returns the object whose
+    // `.when` holds the pattern. Shared by every layer type.
+    function _ambWireWhenGrid(E, grid, getLayer, persist) {
+      if (!grid) return;
       _ambWireWhenToggle(grid);
-      const L0 = get(); _ambPaintWhenGrid(grid, L0 ? L0.when : 'always');
+      const L0 = getLayer(); _ambPaintWhenGrid(grid, L0 ? L0.when : 'always');
+      const wrap = grid.closest('.ambient-when-wrap');
+      // Length stepper (buttons live in the wrap, OUTSIDE the grid element).
+      if (wrap && !wrap._ambLenBound) {
+        wrap._ambLenBound = true;
+        wrap.addEventListener('click', (e) => {
+          const lb = e.target && e.target.closest ? e.target.closest('.ambient-when-lenbtn') : null;
+          if (!lb || !wrap.contains(lb)) return;
+          _E = E; const L = getLayer(); if (!L) return;
+          const d = parseInt(lb.getAttribute('data-d'), 10) || 0;
+          const cells = _ambWhenGridCells(L.when);
+          const nlen = Math.max(1, Math.min(_AMB_WHEN_MAX, cells.length + d));
+          if (nlen === cells.length) return;
+          const resized = []; for (let i = 0; i < nlen; i++) resized.push(i < cells.length ? cells[i] : true);  // grow → new steps ON
+          L.when = _ambGridToWhen(resized);
+          _ambPaintWhenGrid(grid, L.when);
+          persist();
+        });
+      }
       if (grid._ambBound) return; grid._ambBound = true;
       grid.addEventListener('click', (e) => {
         const cell = e.target && e.target.closest ? e.target.closest('.ambient-when-cell') : null;
         if (!cell || !grid.contains(cell)) return;
-        _E = E; const L = get(); if (!L) return;
+        _E = E; const L = getLayer(); if (!L) return;
         const cells = _ambWhenGridCells(L.when);
-        const idx = Math.max(0, Math.min(15, parseInt(cell.getAttribute('data-step'), 10) || 0));
+        const idx = Math.max(0, Math.min(cells.length - 1, parseInt(cell.getAttribute('data-step'), 10) || 0));
         cells[idx] = !cells[idx];
         L.when = _ambGridToWhen(cells);
         _ambPaintWhenGrid(grid, L.when);
         persist();
       });
+    }
+    function _ambBindWhen(E, stem, get, persist) {
+      _ambWireWhenGrid(E, _ambGet(E, stem + 'when'), get, persist);
     }
 
     // ================= BED engine ===================================
@@ -5461,16 +5502,20 @@
     // to Always (all 16 lit).
     const _ambWhenCtrl = (stem) => {
       const dt = ' title="' + _ambTitleAttr('When', 'cond') + '"';
-      let cells = '';
-      for (let i = 0; i < 16; i++) cells += '<button type="button" class="ambient-when-cell" data-step="' + i + '" aria-label="step ' + (i + 1) + '"></button>';
       return '<div class="ambient-ctrl ambient-when-ctrl"' + dt + '>' +
         '<label' + dt + '>When</label>' +
         '<div class="ambient-when-wrap">' +
-          '<button type="button" class="ambient-when-toggle" aria-expanded="false" title="Show / hide the 16-step play pattern">' +
+          '<button type="button" class="ambient-when-toggle" aria-expanded="false" title="Show / hide the play pattern">' +
             '<span class="ambient-when-summary">Always</span>' +
             '<span class="ambient-when-caret" aria-hidden="true"></span>' +
           '</button>' +
-          '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + cells + '</div>' +
+          '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + _ambWhenCellsHtml(16) + '</div>' +
+          '<div class="ambient-when-len" aria-label="Pattern length">' +
+            '<button type="button" class="ambient-when-lenbtn" data-d="-1" aria-label="fewer steps" title="Fewer steps">−</button>' +
+            '<span class="ambient-when-lenval">16</span>' +
+            '<button type="button" class="ambient-when-lenbtn" data-d="1" aria-label="more steps" title="More steps">+</button>' +
+            '<span class="ambient-when-lenlbl">steps</span>' +
+          '</div>' +
         '</div></div>';
     };
     const _ambCondCtrl = (layer) => _ambWhenCtrl('ambient-' + layer + '-');
@@ -8462,22 +8507,7 @@
         fxBind('dist-mix', (lc, v) => { lc.dist.mix = v; });
       });
       const bindCond = (layer) => {
-        const grid = G('ambient-' + layer + '-when');
-        if (!grid) return;
-        _ambWireWhenToggle(grid);
-        if (grid._ambBound) return;
-        grid._ambBound = true;
-        grid.addEventListener('click', (e) => {
-          const cell = e.target && e.target.closest ? e.target.closest('.ambient-when-cell') : null;
-          if (!cell || !grid.contains(cell)) return;
-          _E = E; const cfg = cfg0(); if (!cfg) return;
-          const cells = _ambWhenGridCells(cfg[layer].when);
-          const idx = Math.max(0, Math.min(15, parseInt(cell.getAttribute('data-step'), 10) || 0));
-          cells[idx] = !cells[idx];
-          cfg[layer].when = _ambGridToWhen(cells);
-          _ambPaintWhenGrid(grid, cfg[layer].when);
-          persist();
-        });
+        _ambWireWhenGrid(E, G('ambient-' + layer + '-when'), () => { const c = cfg0(); return c ? c[layer] : null; }, persist);
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(bindCond);
       ['bed', 'motif', 'texture', 'beat'].forEach(layer =>

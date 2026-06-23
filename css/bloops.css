@@ -2559,17 +2559,29 @@
     .ambient-when-caret::before { content: '▸'; font-size: 0.8em; color: #9f7aea; }
     .ambient-when-wrap.expanded .ambient-when-caret::before { content: '▾'; }
     .ambient-when-grid {
-      display: none; grid-template-columns: repeat(8, 1fr); gap: 4px;
+      display: none; flex-wrap: wrap; gap: 4px;
       width: 100%; min-width: 0;
     }
-    .ambient-when-wrap.expanded .ambient-when-grid { display: grid; }
+    .ambient-when-wrap.expanded .ambient-when-grid { display: flex; }
     .ambient-when-cell {
+      flex: 0 0 calc((100% - 28px) / 8);   /* 8 per row (7 × 4px gaps), wraps for longer patterns */
       height: 18px; padding: 0; min-width: 0;
       border: 1px solid #2d2d3f; border-radius: 3px; background: #0a0a14;
       cursor: pointer; transition: background 0.08s ease, border-color 0.08s ease;
     }
     .ambient-when-cell.on { background: #9f7aea; border-color: #b794f4; }
     @media (hover: hover) { .ambient-when-cell:hover { border-color: #9f7aea; } }
+    /* When pattern-length stepper (− N + steps), shown with the expanded grid. */
+    .ambient-when-len { display: none; align-items: center; gap: 6px; }
+    .ambient-when-wrap.expanded .ambient-when-len { display: flex; }
+    .ambient-when-lenbtn {
+      width: 20px; height: 18px; padding: 0; line-height: 1;
+      border: 1px solid #2d2d3f; border-radius: 3px; background: #0a0a14;
+      color: #c9c9e0; cursor: pointer;
+    }
+    @media (hover: hover) { .ambient-when-lenbtn:hover { border-color: #9f7aea; } }
+    .ambient-when-lenval { min-width: 1.6em; text-align: center; font: 600 0.72rem 'Segoe UI', sans-serif; color: #c9c9e0; }
+    .ambient-when-lenlbl { font-size: 0.68rem; color: #8a8aa8; }
     /* "Notes" source button — looks like the selects, reads left, truncates. */
     .ambient-notes-btn {
       text-align: left; cursor: pointer; overflow: hidden;

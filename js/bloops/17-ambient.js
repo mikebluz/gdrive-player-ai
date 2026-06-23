@@ -4966,8 +4966,11 @@
       // you HEAR instead of running ~lookAhead+latency ahead of it. Matches the
       // Shape playheads (_shapeAudibleNow); the engine clocks/anchors are in the
       // same scheduled coordinate space, so this aligns every branch.
-      const now = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
-        : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+      // +~1 screen frame: the bar value is correct for the audible clock, but the
+      // browser paints it a frame after this rAF callback, so it lands slightly
+      // behind the sound. Nudge the read-point forward by one frame to compensate.
+      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
+        : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
       bars.forEach(el => {
         const key = el.dataset.phkey; if (!key) return;
         let prog = 0, active = false, frozen = false;

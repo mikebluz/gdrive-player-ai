@@ -284,13 +284,11 @@
           const _lp = _getSeamlessLoop(id + '#' + sampleMidi, audioBuf, info);
           if (_lp) _loopBuf = _lp;
         }
-        // Set loop in the CONSTRUCTOR (pre-start): the wrapper's loop setter only
-        // does the fade-cancelling cancelStop() once the source has started, so
-        // here it just stamps the native node — safe. _applyVoiceLoop re-asserts
-        // it on the native node after start as a belt-and-suspenders.
-        source = new Tone.ToneBufferSource(_loopBuf
-          ? { url: _loopBuf.buffer, playbackRate, loop: true, loopStart: _loopBuf.loopStart, loopEnd: _loopBuf.loopEnd }
-          : { url: audioBuf, playbackRate }).connect(head);
+        // The seamless loop BUFFER is swapped in here, but looping is enabled on
+        // the NATIVE node after start (_applyVoiceLoop) — NOT via Tone's loop
+        // setter / constructor option, which cancels the source's fade-in ramp and
+        // leaves the voice silent (the bug that made Motif/Texture drop out).
+        source = new Tone.ToneBufferSource({ url: (_loopBuf ? _loopBuf.buffer : audioBuf), playbackRate }).connect(head);
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch

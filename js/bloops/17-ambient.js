@@ -6349,10 +6349,12 @@
           const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
           const entry = L2.steps[ei]; if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
           if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
-          entry.stepMutes[ci][s] = !entry.stepMutes[ci][s];
-          _ambResetArp(E, L2.type + ':' + L2.id);
+          // Toggle the mute in place. The engine reads stepMutes live per note, so
+          // do NOT reset the arp (that would restart the loop + fire a fresh note);
+          // just flip this cell so playback keeps running through.
+          const m = entry.stepMutes[ci][s] = !entry.stepMutes[ci][s];
+          btn.classList.toggle('muted', m); btn.classList.toggle('on', !m);
           persist();
-          render();
         }));
         const ok = modal.querySelector('.amb-ce-ok'); if (ok) ok.addEventListener('click', () => { close(); try { _ambRenderArpList(E, getL, 'ambient-' + L.type + '-' + L.id + '-'); } catch (e) {} });
       };

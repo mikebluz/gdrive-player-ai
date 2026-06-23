@@ -5287,14 +5287,15 @@
           } else if (on && type === 'texture') {
             // Texture's UNIT is its 16-slot pattern, so the bar fills over the
             // PATTERN (16 steps), flashing once per pattern — not once per step.
+            // Anchored to step 0's time; stays empty until the first step lands
+            // (the lead) so it doesn't start "near the end" right after Play.
             const cfg2 = E._cfg || E.getCfg();
             const next = E.clocks && E.clocks[key];
             const idx = E.iters && E.iters[key];
             const step = Math.max(0.02, _ambStepSecFor(layer, 0.02, cfg2) * _ambLayerScale(E, key, layer, cfg2));
             if (typeof next === 'number' && Number.isFinite(idx) && step > 0) {
-              const stepPos = idx - (next - now) / step;     // continuous step index at `now`
-              prog = (((stepPos % 16) + 16) % 16) / 16;       // position within the 16-step pattern
-              active = true;
+              const stepPos = idx - (next - now) / step;   // continuous step index at `now`
+              if (stepPos >= 0) { prog = (stepPos % 16) / 16; active = true; }   // <0 = before the first step → empty
             }
           } else if (on) {
             const next = E.clocks && E.clocks[key];

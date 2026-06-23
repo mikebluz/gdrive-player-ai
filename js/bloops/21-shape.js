@@ -2077,7 +2077,7 @@
         if (ac && typeof ac.currentTime === 'number') {
           const base = Number.isFinite(ac.baseLatency) ? ac.baseLatency : 0;
           const out = (Number.isFinite(ac.outputLatency) && ac.outputLatency > 0) ? ac.outputLatency : 0;
-          const lat = Math.min(0.05, base + out * 0.5);   // conservative, capped at 50ms
+          const lat = Math.min(0.30, base + out);   // full output latency, capped at 300ms (covers Bluetooth)
           return ac.currentTime - lat - _SHAPE_SYNC_TRIM;
         }
       } catch (e) {}

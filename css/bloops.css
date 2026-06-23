@@ -2525,6 +2525,12 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
+    /* Layer label pulses at each audible loop boundary (added by _ambUpdatePlayheads). */
+    .ambient-layer-name.amb-loopflash { animation: ambLoopFlash 0.45s ease-out; }
+    @keyframes ambLoopFlash {
+      0%   { text-shadow: 0 0 10px rgba(183,148,244,1), 0 0 4px rgba(255,255,255,0.85); filter: brightness(1.85); }
+      100% { text-shadow: 0 0 0 rgba(183,148,244,0); filter: brightness(1); }
+    }
     /* Unit-Sync: a Free/Sync toggle, then (when Sync) "Lock to" reference × ratio. */
     .ambient-usync-seg { display: inline-flex; gap: 6px; }
     .ambient-usync-lock { gap: 8px; }

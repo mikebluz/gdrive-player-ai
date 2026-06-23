@@ -5021,6 +5021,16 @@
         el.style.setProperty('--ph', active ? prog.toFixed(3) : '0');
         el.classList.toggle('active', active);
         el.classList.toggle('frozen', frozen);
+        // Flash the layer label exactly when the AUDIBLE loop boundary crosses —
+        // the bar's progress wraps high→low (prog drops sharply). Driven off the
+        // same audible clock as the bar, so the pulse lands with the sound.
+        const lp = el._lastProg;
+        el._lastProg = active ? prog : -1;
+        if (active && typeof lp === 'number' && lp >= 0 && prog < lp - 0.4) {
+          const head = el.closest('.ambient-layer-head');
+          const nm = head && head.querySelector('.ambient-layer-name');
+          if (nm) { nm.classList.remove('amb-loopflash'); void nm.offsetWidth; nm.classList.add('amb-loopflash'); }
+        }
       });
     }
     function _ambVizKick(E) { if (E.viz && !E.viz.raf) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E)); }

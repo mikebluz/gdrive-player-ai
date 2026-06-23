@@ -1501,6 +1501,75 @@
       st.lastAt = tTo;
     }
 
+    // ================= DRONE engine ================================
+    // Holds a note (or the whole chord, if the Notes source is a chord/wrap/prog)
+    // and RE-STRIKES every `hold` units. Time vary jitters the strike time;
+    // Pitch vary drifts the octave (and the scale degree for a single-note drone).
+    // Phase-anchored to a downbeat like Pedal/Run; follows the key per note.
+    function _ambEmitDrone(E, inst, key, now, horizon, lead, space, cfg) {
+      if (!E.runPhase) E.runPhase = {};
+      const unitSec = Math.max(0.05, _ambEffIntervalSec(inst));
+      const hold = Math.max(1, Math.min(64, inst.hold | 0) || 1);
+      const cycleSec = hold * unitSec;
+      if (!(cycleSec > 0.05)) return;
+      const reg = Math.max(1, Math.min(7, inst.register | 0) || 3);
+      const src = _ambNotesOf(inst);
+      const n = _ambAsNotes(src);
+      const chordLike = (n.type === 'chord' || n.type === 'wrap' || n.type === 'prog');
+      const N = Math.max(1, _ambScaleIntervals(src).length);
+      // Chosen root for a single-note (scale) drone — a SCALE DEGREE, so it always
+      // stays in the current key/scale (1 = key root). Chord sources keep their own
+      // root (set in the Notes picker).
+      const rootDeg = Math.min(N - 1, Math.max(0, (((inst.degree | 0) || 1) - 1)));
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const vtype = _ambLayerType(inst.tone);
+      const pan = _ambLayerPan(inst);
+      const atk = Math.max(0, Math.min(8000, Number.isFinite(inst.attack) ? inst.attack : 200));
+      const rel = Math.max(0, Math.min(12000, Number.isFinite(inst.release) ? inst.release : 1500));
+      const timeVary = Math.max(0, Math.min(100, inst.timeVary | 0));
+      const pitchVary = Math.max(0, Math.min(100, inst.pitchVary | 0));
+      // Hold the note across (almost) the whole span so it's continuous; a hair
+      // short so a long release doesn't pile onto the next strike.
+      const lenMs = Math.max(60, Math.round(cycleSec * 1000 * 0.98));
+
+      let st = E.runPhase[key];
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / cycleSec));
+      const cTo   = Math.floor((tTo - st.startAt) / cycleSec);
+      let cap = 0;
+      for (let c = cFrom; c <= cTo && cap < 64; c++) {
+        if (!_ambCondFires(inst.when, c)) continue;
+        const cRnd = (timeVary > 0 || pitchVary > 0)
+          ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
+        let tOff = 0;
+        if (cRnd && timeVary > 0) tOff = (cRnd() * 2 - 1) * (timeVary / 100) * unitSec * 0.5;
+        const at = st.startAt + c * cycleSec + tOff;
+        if (at < tFrom || at >= tTo) continue;
+        let regShift = 0, degBase = rootDeg;
+        if (cRnd && pitchVary > 0 && cRnd() * 100 < pitchVary) {
+          regShift = (cRnd() < 0.5 ? -1 : 1);
+          if (!chordLike) degBase = Math.floor(cRnd() * N);   // single-note drone roams off the root degree
+        }
+        _ambKeyTime = at;
+        const degs = chordLike ? Array.from({ length: N }, (_, i) => i) : [degBase];
+        const bp = { type: vtype, attack: atk, decay: 0, sustain: 100, release: rel,
+          volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan };
+        if (dmod) bp._detuneMod = dmod;
+        degs.forEach((d, vi) => {
+          const f = _ambDegreeFreq(d, reg + regShift, src);
+          if (f == null) return;
+          const vp = Object.assign({}, bp);
+          try { playNote(f, vp, lenMs, at + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+        });
+        cap++;
+      }
+      st.lastAt = tTo;
+    }
+
     // ================= SHAPE engine =================================
     // A Shape layer holds N radial-sequencer wheels. Each wheel loops
     // continuously, phase-anchored to a downbeat (E.shapePhase[key#i].startAt)
@@ -2505,6 +2574,7 @@
       if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
+      if (type === 'drone') { const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1)); return hold * Math.max(0.05, _ambEffIntervalSec(L)); }
       if (type === 'shape') {
         if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
           const i = Math.max(0, Math.min(L.shapes.length - 1, L.sel | 0));
@@ -2531,7 +2601,7 @@
             type === 'texture' || type === 'beat' || type === 'arp') {
           const c = E.clocks && E.clocks[key];
           if (c != null && c > now + eps) return c;     // next phrase / slice / step start
-        } else if (type === 'bass' || type === 'run' || type === 'pedal') {
+        } else if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone') {
           const pm = (type === 'bass') ? E.bassPhase : E.runPhase;
           const st = pm && pm[key];
           if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
@@ -2557,7 +2627,7 @@
       if (!(P > 0)) return now + 0.1;
       const eps = 0.02;
       let A = null;
-      if (type === 'bass' || type === 'run' || type === 'pedal') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
+      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
       else if (type === 'shape') {
         const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
         const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
@@ -3031,6 +3101,18 @@
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
+          // Drone layers: hold a note/chord, re-struck every `hold` units.
+          // Windowed/phase-anchored like Pedal.
+          if (ex.type === 'drone') {
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitDrone(E, ex, key, now, gate.hz, lead, space, cfg); }
+            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
           const gm = ex.type === 'bed' ? 8 : (ex.type === 'arp' ? 24 : 16);
           const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
           stepLayer(key, ex, gm, ms, (at) => {
@@ -3417,7 +3499,10 @@
           const cfg = E._cfg;
           if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) { _ambStopRampClock(E); return; }
           const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
-          _ambApplyRamps(cfg, t);
+          // Phase is measured from PLAY START (E._t0, reset on every play) — not the
+          // absolute audio clock — so each ramp begins at A on play and the wave
+          // freezes (clock stops) on Stop, rather than continuing mid-cycle.
+          _ambApplyRamps(cfg, t - ((E._t0 != null) ? E._t0 : t));
           // Update the visual cue at ~20 Hz (every other 25 ms tick) — smooth
           // enough to read, half the DOM writes.
           E._rampVizTick = (E._rampVizTick | 0) + 1;
@@ -3437,6 +3522,7 @@
       if (E.timer) return;
       _ambResetClocks(E);
       _ambSeed(cfg.seed);
+      try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
       _ambTick(E);
       E.timer = setInterval(() => _ambTick(E), 150);
@@ -4219,6 +4305,10 @@
       rate: 'How fast it cycles.',
       drift: 'Phase offset — nudges the layer off the downbeat for polymetric interplay.',
       vary: 'How much it deviates from its base pattern (0 = repeats exactly).',
+      hold: 'How many units the note is held before it is struck again.',
+      unit: 'Length of one hold unit — re-strike happens every Hold × Unit.',
+      'time vary': 'Randomly nudges each re-strike earlier/later (0 = dead steady).',
+      'pitch vary': 'Chance each re-strike drifts an octave (and, for a single note, to another scale degree).',
       rests: 'Chance that each hit is silent.',
       accent: 'Dynamic variation — flat to punchy.',
       level: 'Layer volume.',
@@ -4965,6 +5055,14 @@
         ['grp', 'Rhythm'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+      // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
+      // vary are independent. A chord Notes source holds the whole chord.
+      drone: { label: 'Drone', ctrls: [
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = key root)'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Rhythm'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
     // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.
@@ -5013,6 +5111,13 @@
         tone: '', notes: { type: 'scale', scale: '' }, register: 4,
         bars: 1, density: 4, lengthMs: 400, restProb: 0, accent: 0, vary: 0, degree: 1,
         attack: 5, decay: 40, sustain: 75, release: 200,
+      });
+      // Drone: holds the key root every 4 units (4×2s = 8s) with a soft 200ms
+      // attack + 1.5s release. Pick a chord Notes source to hold a whole chord.
+      if (type === 'drone') return Object.assign(base, {
+        tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1,
+        intervalMs: 2000, hold: 4, attack: 200, release: 1500,
+        timeVary: 0, pitchVary: 0, accent: 0,
       });
       return base;
     }
@@ -5741,6 +5846,7 @@
       bass:    [['register','Register',1,4],['bars','Bars',1,8],['pulses','Pulses',1,16],['steps','Steps',2,16],['rotate','Rotate',0,15],['lengthMs','Length (ms)',60,2000],['rhythmVar','Rhythm var',0,100],['pitchVar','Pitch var',0,100],['proximity','Proximity',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       pedal:   [['register','Register',1,7],['degree','Note',1,12],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      drone:   [['degree','Note',1,12],['register','Register',1,6],['intervalMs','Unit (ms)',200,8000],['hold','Hold',1,16],['attack','Attack',0,8000],['release','Release',0,12000],['timeVary','Time vary',0,100],['pitchVary','Pitch vary',0,100],['level','Level',0,100]],
       arp:     [['randomness','Randomness',0,100],['intervalMs','Rate (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       shape:   [['level','Level',0,100]],
       // Global (not per-layer): writes the shared tempo, so a BPM ramp retempos
@@ -5768,8 +5874,8 @@
         if (cfg && Number.isFinite(r.a) && Number.isFinite(r.b)) {
           const res = _ambRampResolve(cfg, t0);
           if (res && res.max > res.min) {
-            r.a = Math.round((r.a - res.min) / (res.max - res.min) * 100);
-            r.b = Math.round((r.b - res.min) / (res.max - res.min) * 100);
+            r.a = (r.a - res.min) / (res.max - res.min) * 100;
+            r.b = (r.b - res.min) / (res.max - res.min) * 100;
           }
         }
       }
@@ -5778,8 +5884,11 @@
       delete r.target;
       if (!Number.isFinite(r.a)) r.a = 0;
       if (!Number.isFinite(r.b)) r.b = 100;
-      r.a = Math.max(0, Math.min(100, Math.round(r.a)));
-      r.b = Math.max(0, Math.min(100, Math.round(r.b)));
+      // Keep 2-decimal precision (not integer): over a wide range like BPM (40–300)
+      // 1% ≈ 2.6 BPM, so integer % can't represent a specific BPM. Finer % lets a
+      // single-target ramp's real value (BPM, ms…) round-trip exactly.
+      r.a = Math.max(0, Math.min(100, Math.round(r.a * 100) / 100));
+      r.b = Math.max(0, Math.min(100, Math.round(r.b * 100) / 100));
       if (!Number.isFinite(r.periodMs)) r.periodMs = 4000;
       r.periodMs = Math.max(50, r.periodMs | 0);
       if (['sine','triangle','saw','square','seq'].indexOf(r.wave) < 0) r.wave = 'sine';
@@ -5924,12 +6033,14 @@
       }
     }
     // Called each tick: write every active ramp's current value into cfg.
-    function _ambApplyRamps(cfg, nowSec) {
+    // `elapsedSec` is the time since PLAY START, so phase 0 (= A) lands on play.
+    function _ambApplyRamps(cfg, elapsedSec) {
       if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) return;
+      const eMs = Math.max(0, elapsedSec) * 1000;
       for (const r of cfg.ramps) {
         if (!r || !r.on || !Array.isArray(r.targets) || !r.targets.length) continue;
         const period = Math.max(50, r.periodMs | 0);
-        const phase = ((nowSec * 1000) % period) / period;
+        const phase = (eMs % period) / period;
         let f;
         if (r.wave === 'seq') {
           const c = _seqRefCurve(r);
@@ -5971,9 +6082,10 @@
         fill.style.width = (f * 100) + '%';
         const rg = _ambGet(E, p + 'range');
         if (rg) {
-          const n = Array.isArray(r.targets) ? r.targets.length : 0;
-          const pctNow = Math.round(r.a + f * (r.b - r.a));
-          rg.textContent = n + ' target' + (n === 1 ? '' : 's') + ' · ' + pctNow + '%';
+          const pctNow = r.a + f * (r.b - r.a);
+          const u = _ambRampSingleUnit(r, cfg);
+          if (u) rg.textContent = u.name + ' · now ' + _ampPctToReal(pctNow, u) + (u.unit ? ' ' + u.unit : '');
+          else { const n = Array.isArray(r.targets) ? r.targets.length : 0; rg.textContent = n + ' target' + (n === 1 ? '' : 's') + ' · ' + Math.round(pctNow) + '%'; }
         }
       }
     }
@@ -6014,24 +6126,57 @@
         '<div class="ambient-ramp-viz"><span class="ambient-ramp-fill" id="' + p + 'fill"></span></div>' +
         '<div class="ambient-ramp-params">' +
           '<span class="ambient-hint ambient-ramp-range" id="' + p + 'range"></span>' +
-          '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" min="0" max="100" value="' + r.a + '"><span class="ambient-hint">%</span></label>' +
-          '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" min="0" max="100" value="' + r.b + '"><span class="ambient-hint">%</span></label>' +
+          '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" min="0" max="100" value="' + r.a + '"><span class="ambient-hint" id="' + p + 'a-u">%</span></label>' +
+          '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" min="0" max="100" value="' + r.b + '"><span class="ambient-hint" id="' + p + 'b-u">%</span></label>' +
           '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="50" step="50" value="' + r.periodMs + '"><span class="ambient-hint">ms</span></label>' +
           '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
         '</div>' +
         seqRowHtml +
       '</div>';
     }
-    // A/B are now PERCENT (0–100) of each target's range; the readout shows the
-    // target count + the A→B span.
+    // A/B are stored as PERCENT (0–100) of each target's range so one ramp can
+    // drive several params. But with a SINGLE target we show/enter the real unit
+    // (BPM, ms, Level…) instead of a percent — far more intuitive. This returns
+    // { min, max, name, unit } for the single-target case, else null.
+    function _ambRampSingleUnit(r, cfg) {
+      const ts = (r && Array.isArray(r.targets)) ? r.targets : [];
+      if (ts.length !== 1) return null;
+      const res = _ambRampResolve(cfg, ts[0]);
+      if (!res || !(res.max > res.min)) return null;
+      const name = _ambRampTargetName(cfg, ts[0]);
+      const unit = /\.bpm$/i.test(ts[0]) ? 'BPM' : (/\(ms\)|ms$/i.test(name) ? 'ms' : '');
+      return { min: res.min, max: res.max, name: name, unit: unit };
+    }
+    const _ampPctToReal = (pct, u) => Math.round(u.min + (Math.max(0, Math.min(100, pct)) / 100) * (u.max - u.min));
+    const _ampRealToPct = (real, u) => Math.round(((Math.max(u.min, Math.min(u.max, real)) - u.min) / (u.max - u.min)) * 10000) / 100;
+    // Refresh just the A→B range readout (used live while typing).
+    function _ambRampReadout(E, id) {
+      const cfg = E.getCfg(); if (!cfg) return;
+      const r = (cfg.ramps || []).find(x => x.id === id); if (!r) return;
+      const rg = _ambGet(E, 'ambient-ramp-' + id + '-range'); if (!rg) return;
+      const u = _ambRampSingleUnit(r, cfg);
+      if (u) rg.textContent = u.name + ' · ' + _ampPctToReal(r.a, u) + '→' + _ampPctToReal(r.b, u) + (u.unit ? ' ' + u.unit : '');
+      else { const n = Array.isArray(r.targets) ? r.targets.length : 0; rg.textContent = n + ' target' + (n === 1 ? '' : 's') + ' · ' + Math.round(r.a) + '%→' + Math.round(r.b) + '%'; }
+    }
     function _ambRampSyncABRange(E, id) {
       const cfg = E.getCfg(); if (!cfg) return;
       const r = (cfg.ramps || []).find(x => x.id === id); if (!r) return;
       const p = 'ambient-ramp-' + id + '-';
-      ['a', 'b'].forEach(k => { const e = _ambGet(E, p + k); if (e) { e.min = 0; e.max = 100; } });
-      const n = Array.isArray(r.targets) ? r.targets.length : 0;
-      const rg = _ambGet(E, p + 'range');
-      if (rg) rg.textContent = n + ' target' + (n === 1 ? '' : 's') + ' · ' + (r.a | 0) + '%→' + (r.b | 0) + '%';
+      const u = _ambRampSingleUnit(r, cfg);
+      const aEl = _ambGet(E, p + 'a'), bEl = _ambGet(E, p + 'b');
+      const aU = _ambGet(E, p + 'a-u'), bU = _ambGet(E, p + 'b-u');
+      if (u) {
+        if (aEl) { aEl.min = u.min; aEl.max = u.max; aEl.value = String(_ampPctToReal(r.a, u)); }
+        if (bEl) { bEl.min = u.min; bEl.max = u.max; bEl.value = String(_ampPctToReal(r.b, u)); }
+        if (aU) aU.textContent = u.unit || '';
+        if (bU) bU.textContent = u.unit || '';
+      } else {
+        if (aEl) { aEl.min = 0; aEl.max = 100; aEl.value = String(Math.round(r.a)); }
+        if (bEl) { bEl.min = 0; bEl.max = 100; bEl.value = String(Math.round(r.b)); }
+        if (aU) aU.textContent = '%';
+        if (bU) bU.textContent = '%';
+      }
+      _ambRampReadout(E, id);
     }
     // Friendly name for a single target value ('bed.level' → 'Bed Level').
     function _ambRampTargetName(cfg, value) {
@@ -6094,8 +6239,11 @@
       if (onB) { onB.classList.toggle('on', !!r.on); onB.addEventListener('click', () => { _E = E; const R = getR(); if (!R) return; R.on = !R.on; onB.classList.toggle('on', R.on); persist(); }); }
       const tgtBtn = el('targets');
       if (tgtBtn) tgtBtn.addEventListener('click', () => { _E = E; _ambShowRampTargetsMenu(E, id, tgtBtn); });
-      const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.a = Math.max(0, Math.min(100, parseInt(a.value, 10) || 0)); persist(); });
-      const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.b = Math.max(0, Math.min(100, parseInt(b.value, 10) || 0)); persist(); });
+      // A/B accept the target's REAL unit (BPM, ms…) when there's a single target,
+      // converting to the stored percent; otherwise a plain 0–100 percent.
+      const _readAB = (inp) => { const R = getR(); if (!R) return null; const u = _ambRampSingleUnit(R, E.getCfg()); const raw = parseFloat(inp.value); return u ? _ampRealToPct(Number.isFinite(raw) ? raw : u.min, u) : Math.max(0, Math.min(100, Number.isFinite(raw) ? raw : 0)); };
+      const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; const v = _readAB(a); if (v == null) return; R.a = v; persist(); _ambRampReadout(E, id); });
+      const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; const v = _readAB(b); if (v == null) return; R.b = v; persist(); _ambRampReadout(E, id); });
       const per = el('period'); if (per) per.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.periodMs = Math.max(50, parseInt(per.value, 10) || 1000); persist(); });
       const wv = el('wave'); if (wv) wv.addEventListener('change', () => {
         _E = E; const R = getR(); if (!R) return;
@@ -6852,6 +7000,8 @@
         actions.push({ label: 'Run', fn: () => _ambAddExtra(E, 'run') });
         // Pedal: a simple root-note pedal-point loop (extras-only).
         actions.push({ label: 'Pedal', fn: () => _ambAddExtra(E, 'pedal') });
+        // Drone: holds a note/chord, re-struck every N units (extras-only).
+        actions.push({ label: 'Drone', fn: () => _ambAddExtra(E, 'drone') });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

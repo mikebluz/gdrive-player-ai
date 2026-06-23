@@ -2780,6 +2780,15 @@
     @media (hover: hover) { .ambient-rename-btn:hover { border-color: #9f7aea; color: #d6bcfa; } }
     /* The toggle's label text lives in a span so rename can swap it live. */
     .ambient-layer-name { pointer-events: none; }
+    /* Live unit-length readout (right of the rename button). Takes the middle
+       space; ellipsizes so it never forces the header to overflow. */
+    .ambient-layer-unit {
+      flex: 1 1 auto; min-width: 0; margin-left: 8px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6f6f92;
+      pointer-events: none;
+    }
+    .ambient-layer-unit:empty { display: none; }
     /* Per-layer Freeze button (in the layer head). */
     .ambient-freeze-btn {
       margin-left: 6px; flex: 0 0 auto;
@@ -3142,12 +3151,31 @@
     .ambient-arp-series { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
     .ambient-arp-serieshead { display: flex; align-items: center; gap: 8px; }
     .ambient-arp-serieshead label { color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.78rem; }
-    .ambient-arp-add {
+    .ambient-arp-add, .ambient-arp-edit {
       margin-left: auto; padding: 4px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap;
       background: rgba(8, 8, 18, 0.7); border: 1px solid #2d2d44; color: #cbd5e0;
       font: 700 0.74rem 'Segoe UI', sans-serif;
     }
-    .ambient-arp-add:hover { border-color: #9f7aea; color: #f5d0fe; }
+    .ambient-arp-add:hover, .ambient-arp-edit:hover { border-color: #9f7aea; color: #f5d0fe; }
+    .ambient-arp-edit + .ambient-arp-add { margin-left: 6px; }   /* Edit takes the auto push; Add follows */
+    /* Chord-note editor popover (Arp series ✎ Edit). */
+    .amb-chordedit-modal { min-width: min(94vw, 420px); max-height: 80vh; overflow-y: auto; }
+    .amb-ce-hint { color: #8a8aa8; font: 0.72rem 'Segoe UI', sans-serif; margin: 2px 0 10px; }
+    .amb-ce-list { display: flex; flex-direction: column; gap: 10px; }
+    .amb-ce-entry { border: 1px solid #20203a; border-radius: 8px; padding: 8px; }
+    .amb-ce-elabel { color: #cbd5e0; font: 700 0.76rem 'Segoe UI', sans-serif; margin-bottom: 6px; }
+    .amb-ce-na { color: #6a6a88; font: 0.72rem 'Segoe UI', sans-serif; }
+    .amb-ce-chord { margin: 4px 0; }
+    .amb-ce-croot { color: #9f7aea; font: 700 0.7rem 'Segoe UI', sans-serif; }
+    .amb-ce-grid { display: flex; gap: 3px; margin-top: 3px; }
+    .amb-ce-cell {
+      flex: 1 1 0; min-width: 0; padding: 6px 0; border-radius: 5px; cursor: pointer;
+      font: 700 0.62rem 'Segoe UI', sans-serif;
+      background: rgba(255,255,255,0.03); border: 1px solid #2a2a40; color: #5a5a78;
+    }
+    .amb-ce-cell.on { background: rgba(79,209,197,0.22); border-color: #4fd1c5; color: #d6fffa; }
+    .amb-ce-cell.muted { background: rgba(120,120,150,0.12); border-color: #3a3a52; color: #6a6a88; text-decoration: line-through; }
+    @media (hover: hover) { .amb-ce-cell.off:hover { border-color: #4fd1c5; color: #a0aec0; } }
     .ambient-arp-list { display: flex; flex-direction: column; gap: 5px; }
     .ambient-arp-row {
       display: flex; align-items: center; flex-wrap: wrap; gap: 6px;

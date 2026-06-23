@@ -683,11 +683,19 @@
     // Key mode does NOT alter tones here (no conforming): the Notes menu only
     // offers material that already fits, so borrowed chords / passing tones play
     // true. The key's runtime effect is purely re-rooting (see _ambSrcRootPc).
+    // Effective intervals of a custom-edited chord: its raw `intervals` minus any
+    // in `muted` (never empty — a fully-muted chord falls back to its full set).
+    function _ambChordEffIntervals(o) {
+      if (!o || !Array.isArray(o.intervals) || !o.intervals.length) return null;
+      const m = Array.isArray(o.muted) ? o.muted : [];
+      const eff = o.intervals.filter(iv => m.indexOf(iv) < 0);
+      return eff.length ? eff : o.intervals.slice();
+    }
     function _ambScaleIntervals(src) {
       const n = _ambAsNotes(src);
-      if (n.type === 'chord') return _ambChordIntervals(n.form, n.inversion);
+      if (n.type === 'chord') { const eff = _ambChordEffIntervals(n); return eff || _ambChordIntervals(n.form, n.inversion); }
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return (w && Array.isArray(w.intervals) && w.intervals.length) ? w.intervals : [0, 4, 7]; }
-      if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); return (ch && Array.isArray(ch.intervals) && ch.intervals.length) ? ch.intervals : [0, 4, 7]; }
+      if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); const eff = ch && _ambChordEffIntervals(ch); return eff || ((ch && Array.isArray(ch.intervals) && ch.intervals.length) ? ch.intervals : [0, 4, 7]); }
       const name = _ambResolveScale(n.scale);
       return (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
     }
@@ -717,8 +725,13 @@
     function _ambNotesLabel(src) {
       const n = _ambAsNotes(src);
       if (n.type === 'chord') {
-        const def = _AMB_CHORD_FORMS.find(c => c[0] === n.form);
         const rootName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[((n.root % 12) + 12) % 12]) || '';
+        // Custom-edited chord (raw intervals): show note count, not a form name.
+        if (Array.isArray(n.intervals) && n.intervals.length) {
+          const eff = _ambChordEffIntervals(n) || n.intervals;
+          return rootName + ' chord ✎ (' + eff.length + ')';
+        }
+        const def = _AMB_CHORD_FORMS.find(c => c[0] === n.form);
         const invTxt = (n.inversion | 0) > 0 ? ' inv' + (n.inversion | 0) : '';
         return rootName + ' ' + (def ? def[1] : 'Chord') + invTxt;
       }
@@ -1778,6 +1791,32 @@
       if (dir === 'updown' || dir === 'downup') return 2 * (len - 1);
       return len; // up / down / random
     }
+    // Notes in ONE full pass through an Arp's series (Σ over entries of
+    // passLen(dir, pool) × passes) + the per-note interval — so queue mode snaps
+    // to the SERIES loop, not each note.
+    function _ambArpSeriesInfo(arp, cfg) {
+      const steps = (Array.isArray(arp.steps) && arp.steps.length) ? arp.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
+      const octs = Math.max(1, Math.min(4, (arp.octaves | 0) || 2));
+      const entryNotes = steps.map(entry => {
+        const len = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length) * octs;
+        const dir = (entry && entry.dir) || arp.dir || 'up';
+        return _ambArpPassLen(dir, len) * Math.max(1, (entry.passes | 0) || 1);
+      });
+      const totalNotes = Math.max(1, entryNotes.reduce((a, b) => a + b, 0));
+      // Use the SAME per-note interval the tick steps by (incl. sync-mode snap),
+      // so the cycle boundary doesn't drift over many notes.
+      const interval = cfg ? Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) : Math.max(0.02, _ambEffIntervalSec(arp));
+      return { entryNotes: entryNotes, totalNotes: totalNotes, interval: interval };
+    }
+    // Notes already emitted in the CURRENT cycle (from the live cursor), so the
+    // remaining count gives the time to the next series-loop boundary.
+    function _ambArpNotesInto(info, st) {
+      if (!st) return 0;
+      let into = 0;
+      const e = Math.max(0, Math.min(st.entry | 0, info.entryNotes.length));
+      for (let i = 0; i < e; i++) into += info.entryNotes[i];
+      return Math.max(0, Math.min(info.totalNotes - 1, into + (st.note | 0)));
+    }
     // One arp note per fire. Walks the current series entry's pitch pool in the
     // chosen Direction; after `entry.passes` full sweeps, advances to the next
     // entry (looping the series). Cursor state lives on _E.arpState[key].
@@ -2557,6 +2596,47 @@
       };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run); else run();
     }
+    // Human "unit length" readout for a layer header: the absolute length + the
+    // formula that produces it (so the user knows which parameter to tweak). e.g.
+    // Arp "⟳ 14 notes × 1/8 = 1.75s", Drone "⟳ Hold 4 × 0.50s = 2.0s",
+    // Bass "⟳ 2 bars = 4.0s @120", Bed "Δ Interval 4.75s".
+    function _ambLayerUnitText(E, key, L, cfg) {
+      if (!L) return '';
+      const type = String(key).split(':')[0];
+      const bpm = _ambBpm();
+      const fmt = (sec) => _ambFmtMs(Math.round(Math.max(0, sec) * 1000));
+      const rate = (L.rate && _ambRateBeats(L.rate) > 0) ? L.rate : null;
+      const unitSec = _ambEffIntervalSec(L);
+      const unitStr = rate ? (rate + ' (' + fmt(unitSec) + ')') : fmt(unitSec);
+      if (type === 'arp') {
+        const info = _ambArpSeriesInfo(L, cfg);
+        return '⟳ ' + info.totalNotes + ' notes × ' + (rate ? rate : fmt(info.interval)) + ' = ' + fmt(info.totalNotes * info.interval);
+      }
+      if (type === 'drone') {
+        const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1));
+        return '⟳ Hold ' + hold + ' × ' + unitStr + ' = ' + fmt(hold * unitSec);
+      }
+      if (type === 'bass' || type === 'run' || type === 'pedal') {
+        const bars = Math.max(1, (L.bars | 0) || 1);
+        return '⟳ ' + bars + ' bar' + (bars === 1 ? '' : 's') + ' = ' + fmt(bars * (60 / bpm) * 4) + ' @' + bpm;
+      }
+      if (type === 'seq') return '⟳ unit ' + fmt(_ambLayerPeriodSec(E, key, L, cfg));
+      if (type === 'samp') return 'Δ ' + unitStr;
+      // bed / motif / texture / beat — continuous stream; unit = Interval/Rate.
+      return 'Δ ' + unitStr;
+    }
+    // Refresh every layer header's unit readout in this engine's panel.
+    function _ambSyncLayerUnits(E) {
+      try {
+        const host = E && document.getElementById(E.hostId); if (!host) return;
+        const cfg = E.getCfg(); if (!cfg) return;
+        host.querySelectorAll('.ambient-layer-unit[data-ukey]').forEach(span => {
+          const key = span.getAttribute('data-ukey');
+          const L = _ambLayerByKey(E, key);
+          span.textContent = L ? _ambLayerUnitText(E, key, L, cfg) : '';
+        });
+      } catch (e) {}
+    }
     // The repeat period (seconds) of a layer's UNIT — one full iteration of
     // whatever loops: a Seq phrase, a Sample slice-grid step, a Bass phrase
     // cycle (bars), a Shape revolution, or a generative layer's event interval.
@@ -2575,6 +2655,7 @@
       if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
       if (type === 'drone') { const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1)); return hold * Math.max(0.05, _ambEffIntervalSec(L)); }
+      if (type === 'arp') { const info = _ambArpSeriesInfo(L, cfg); return info.totalNotes * info.interval; }
       if (type === 'shape') {
         if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
           const i = Math.max(0, Math.min(L.shapes.length - 1, L.sel | 0));
@@ -2597,8 +2678,15 @@
       if (!(P > 0)) return now + 0.1;
       const eps = 0.03;
       if (L.on) {
-        if (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
-            type === 'texture' || type === 'beat' || type === 'arp') {
+        if (type === 'arp') {
+          // Snap to the SERIES-loop boundary: next note + the notes left in the
+          // current cycle, so a queued change lands when the arp restarts its series.
+          const info = _ambArpSeriesInfo(L, cfg);
+          const c = E.clocks && E.clocks[key];
+          const st = E.arpState && E.arpState[key];
+          if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval; }
+        } else if (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
+            type === 'texture' || type === 'beat') {
           const c = E.clocks && E.clocks[key];
           if (c != null && c > now + eps) return c;     // next phrase / slice / step start
         } else if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone') {
@@ -2626,6 +2714,14 @@
       const P = _ambLayerPeriodSec(E, key, L, cfg);
       if (!(P > 0)) return now + 0.1;
       const eps = 0.02;
+      // Arp cuts at the end of the SERIES loop: next note + notes left in the cycle.
+      if (type === 'arp') {
+        const info = _ambArpSeriesInfo(L, cfg);
+        const c = E.clocks && E.clocks[key];
+        const st = E.arpState && E.arpState[key];
+        if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval; }
+        return (E._t0 != null ? E._t0 : now) + Math.ceil((now + eps - (E._t0 != null ? E._t0 : now)) / P) * P;
+      }
       let A = null;
       if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
       else if (type === 'shape') {
@@ -4493,6 +4589,9 @@
     const _ambHead = (label, onId, delId, freezeKey) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
       (freezeKey ? '<button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename layer" aria-label="Rename layer">✎</button>' : '') +
+      // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
+      // unit/loop length and the formula that produces it, so you know what to tweak.
+      (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
@@ -5180,6 +5279,7 @@
     function _ambArpSeriesHtml(p, inst) {
       return '<div class="ambient-ctrl ambient-arp-series">' +
         '<div class="ambient-arp-serieshead"><label>Series</label>' +
+          '<button type="button" class="ambient-arp-edit" id="' + p + '-arp-edit" title="Edit the notes of each chord in the series (add / remove / mute)">✎ Edit</button>' +
           '<button type="button" class="ambient-arp-add" id="' + p + '-arp-add" title="Add a scale / chord to the series">+ Add</button>' +
         '</div>' +
         '<div class="ambient-arp-list" id="' + p + '-arp-list"></div>' +
@@ -5267,7 +5367,103 @@
       const eng = E || _E;
       if (eng && eng.arpState) delete eng.arpState[key];
     }
+    // Make a chord object editable: ensure it carries a raw `intervals` array
+    // (converting a form-based chord) + a `muted` list, so add/remove/mute work.
+    function _ambChordEditable(o) {
+      if (!o || typeof o !== 'object') return o;
+      if (!Array.isArray(o.intervals) || !o.intervals.length) {
+        o.intervals = (typeof _ambChordIntervals === 'function' && o.form) ? _ambChordIntervals(o.form, o.inversion).slice() : [0, 4, 7];
+      }
+      if (!Array.isArray(o.muted)) o.muted = [];
+      return o;
+    }
+    // Cycle one semitone (relative to the chord root) absent → present → muted →
+    // absent. `iv` is semitones above the root (0..23 = two octaves).
+    function _ambChordCellCycle(o, iv) {
+      _ambChordEditable(o);
+      const inI = o.intervals.indexOf(iv), inM = o.muted.indexOf(iv);
+      if (inI < 0) { o.intervals.push(iv); o.intervals.sort((a, b) => a - b); }   // add
+      else if (inM < 0) { o.muted.push(iv); }                                      // mute
+      else { o.intervals.splice(inI, 1); o.muted.splice(o.muted.indexOf(iv), 1); } // remove
+    }
+    // The editable chord object(s) of one series entry: a chord entry → [chord];
+    // a progression entry → its chords[]; scale/wrap → null (not note-editable).
+    function _ambArpEntryChords(entry) {
+      const n = entry && entry.notes;
+      if (!n || typeof n !== 'object') return null;
+      if (n.type === 'chord') return [n];
+      if (n.type === 'prog' && Array.isArray(n.chords) && n.chords.length) return n.chords;
+      return null;
+    }
+    // Popover: edit the NOTES of every chord across the Arp series (add / remove /
+    // mute each note). Two octaves of semitone cells per chord, relative to root.
+    function _ambShowArpChordEditor(E, getL) {
+      const L0 = getL(); if (!L0) return;
+      const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-chordedit-modal';
+      overlay.appendChild(modal);
+      const close = () => { try { overlay.remove(); } catch (e) {} };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      // Display intervals/muted WITHOUT mutating a form-based chord — conversion to
+      // a custom chord happens only on an actual edit (in _ambChordCellCycle).
+      const dispOf = (o) => ({
+        iv: (Array.isArray(o.intervals) && o.intervals.length) ? o.intervals
+          : ((o.form && typeof _ambChordIntervals === 'function') ? _ambChordIntervals(o.form, o.inversion) : [0, 4, 7]),
+        m: Array.isArray(o.muted) ? o.muted : [],
+      });
+      const cellHtml = (disp, iv, rootPc) => {
+        const inI = disp.iv.indexOf(iv) >= 0, inM = disp.m.indexOf(iv) >= 0;
+        const cls = inI ? (inM ? 'muted' : 'on') : 'off';
+        const nm = names[((rootPc + iv) % 12 + 12) % 12];
+        const oct = iv >= 12 ? '′' : '';
+        return '<button type="button" class="amb-ce-cell ' + cls + '" data-iv="' + iv + '">' + esc(nm) + oct + '</button>';
+      };
+      const render = () => {
+        const L = getL(); if (!L) { close(); return; }
+        const steps = Array.isArray(L.steps) ? L.steps : [];
+        let h = '<div class="keep-sdiv-title">Edit chord notes</div>' +
+          '<div class="amb-ce-hint">Tap a note: add → mute → remove. Notes are relative to each chord\'s root.</div>' +
+          '<div class="amb-ce-list">';
+        steps.forEach((entry, ei) => {
+          const chords = _ambArpEntryChords(entry);
+          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</div>';
+          if (!chords) { h += '<div class="amb-ce-na">Set this row to a Chord or Progression to edit its notes.</div></div>'; return; }
+          chords.forEach((o, ci) => {
+            const disp = dispOf(o);
+            const rootPc = ((o.root | 0) % 12 + 12) % 12;
+            h += '<div class="amb-ce-chord" data-ei="' + ei + '" data-ci="' + ci + '">';
+            if (chords.length > 1) h += '<span class="amb-ce-croot">' + esc(names[rootPc]) + '</span>';
+            h += '<div class="amb-ce-grid">';
+            for (let iv = 0; iv < 12; iv++) h += cellHtml(disp, iv, rootPc);
+            h += '</div><div class="amb-ce-grid">';
+            for (let iv = 12; iv < 24; iv++) h += cellHtml(disp, iv, rootPc);
+            h += '</div></div>';
+          });
+          h += '</div>';
+        });
+        h += '</div><div class="sm-footer"><button type="button" class="sm-apply amb-ce-ok">Done</button></div>';
+        modal.innerHTML = h;
+        modal.querySelectorAll('.amb-ce-cell').forEach(btn => btn.addEventListener('click', () => {
+          const chordEl = btn.closest('.amb-ce-chord'); if (!chordEl) return;
+          const ei = chordEl.getAttribute('data-ei') | 0, ci = chordEl.getAttribute('data-ci') | 0;
+          const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
+          const chords = _ambArpEntryChords(L2.steps[ei]); if (!chords || !chords[ci]) return;
+          _ambChordCellCycle(chords[ci], (btn.getAttribute('data-iv') | 0));
+          _ambResetArp(E, L2.type + ':' + L2.id);
+          persist();
+          render();
+        }));
+        const ok = modal.querySelector('.amb-ce-ok'); if (ok) ok.addEventListener('click', () => { close(); try { _ambRenderArpList(E, getL, 'ambient-' + L.type + '-' + L.id + '-'); } catch (e) {} });
+      };
+      render();
+      document.body.appendChild(overlay);
+    }
     function _ambWireArpSeries(E, inst, p, get) {
+      const edB = _ambGet(E, p + 'arp-edit');
+      if (edB && !edB._ambBound) { edB._ambBound = true; edB.addEventListener('click', () => { try { _ambShowArpChordEditor(E, get); } catch (e) { console.warn('Arp chord editor failed', e); } }); }
       const addB = _ambGet(E, p + 'arp-add');
       if (addB && !addB._ambBound) {
         addB._ambBound = true;
@@ -6489,6 +6685,7 @@
       _ambRenderSampleLayers(E);
       _ambRenderExtras(E);   // each of the three renders the mixer in sync
       _ambRenderRamps(E);
+      try { _ambSyncLayerUnits(E); } catch (e) {} // header unit-length readouts
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
@@ -6724,6 +6921,11 @@
         e.stopPropagation();
         try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }
       });
+      // Any in-panel param change (slider / rate / notes / passes…) can change a
+      // layer's unit length — refresh the header readouts.
+      const _unitRefresh = () => { try { _ambSyncLayerUnits(E); } catch (e) {} };
+      host.addEventListener('input', _unitRefresh);
+      host.addEventListener('change', _unitRefresh);
       _ambFreezeSyncAll(E);
       _ambSoloSyncAll(E);
 

@@ -118,6 +118,8 @@
       updateBpmAccent();
       refreshBpmDigits();
       if (typeof _restartMetronomeIfActive === 'function') _restartMetronomeIfActive();
+      // BPM drives rate/bar-based unit lengths — refresh the Bloom header readouts.
+      try { if (typeof _ambSyncLayerUnits === 'function') { _ambSyncLayerUnits(_masterEng); _ambSyncLayerUnits(_laneEng); } } catch (e) {}
       persistWorkspace();
     }
     // Restart the bpm-pulse animation across all digits at the next

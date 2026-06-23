@@ -1991,6 +1991,7 @@
       else if (rnd > 0 && _ambRand() < rnd) idx = Math.floor(_ambRand() * len);
       else idx = _ambArpIndexFor(dir, st.note, len);
       const _stepIdx = st.note;   // this note's step position in the entry sweep (Sequence-tab mutes)
+      const _ei = st.entry | 0;
       // Advance the pass / entry cursor for NEXT time.
       st.note += 1;
       if (st.note >= _ambArpEntryNotes(entry, dir, len)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
@@ -1998,7 +1999,17 @@
       // a Sequence-tab muted step, a When-silenced loop, or a windowed past-note
       // catch-up (play === false).
       const _rested = (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0)));
-      const _stepMuted = !!(Array.isArray(entry.stepMutes) && entry.stepMutes[_stepIdx]);
+      // Step mutes are per-chord (Sequence tab shows every progression chord as
+      // its own block): entry.stepMutes[chordIdx][stepIdx]. chordIdx tracks the
+      // progression (st._loop), or 0 for a single chord/scale.
+      const _K = _arpProg ? Math.max(1, (notes.chords || []).length) : 1;
+      const _ci = _arpProg ? ((((st._loop | 0) % _K) + _K) % _K) : 0;
+      const _cm = Array.isArray(entry.stepMutes) ? entry.stepMutes[_ci] : null;
+      const _stepMuted = !!(Array.isArray(_cm) && _cm[_stepIdx]);
+      // While the Sequence editor is open on this arp, record each note's
+      // position (time + entry/chord/step) so the popover can light the playing
+      // step off the audible clock. Recorded regardless of mute/rest.
+      if (_E && _E._arpLiveKey === key) { (st.live || (st.live = [])).push({ at: at, ei: _ei, ci: _ci, s: _stepIdx }); if (st.live.length > 96) st.live.splice(0, st.live.length - 96); }
       if (_rested || _stepMuted || st._silent || play === false) return;
       // Resolve an ASCENDING pool: degree d within octave o, lifted so chord/scale
       // tones keep climbing across octaves (no pitch-class wrap inside one octave).
@@ -6220,7 +6231,7 @@
       const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
       const modal = document.createElement('div'); modal.className = 'step-div-modal amb-chordedit-modal';
       overlay.appendChild(modal);
-      const close = () => { try { overlay.remove(); } catch (e) {} };
+      const close = () => { try { E._arpLiveKey = null; } catch (e) {} try { overlay.remove(); } catch (e) {} };
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
       // Display intervals/muted WITHOUT mutating a form-based chord — conversion to
       // a custom chord happens only on an actual edit (in _ambChordCellCycle).
@@ -6271,25 +6282,40 @@
       const renderSequence = (steps) => {
         const Lc = getL() || L0;
         const octs = Math.max(1, Math.min(4, (Lc.octaves | 0) || 2));
-        let h = '<div class="amb-ce-hint">Tap a step to mute / unmute it in the loop.</div><div class="amb-ce-list">';
+        let h = '<div class="amb-ce-hint">Tap a step to mute / unmute. Each row is one chord iteration; the playing step lights up.</div><div class="amb-ce-list">';
         steps.forEach((entry, ei) => {
           const dir = (entry && entry.dir) || Lc.dir || 'up';
-          const src = _ambNotesOf(entry);
-          const intervals = _ambScaleIntervals(src);
-          const N = Math.max(1, intervals.length);
-          const len = N * octs;
-          const total = _ambArpEntryNotes(entry, dir, len);
-          const rootPc = ((_ambSrcRootPc(src) | 0) % 12 + 12) % 12;
+          const chords = _ambArpEntryChords(entry);
+          const blocks = chords || [_ambNotesOf(entry)];   // scale/wrap → one block
           if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
-          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(src)) + ' · ' + total + ' steps</div><div class="amb-seqgrid">';
-          for (let s = 0; s < total && s < 256; s++) {
-            const muted = !!entry.stepMutes[s];
-            let lbl;
-            if (dir === 'random') lbl = String(s + 1);
-            else { const idx = _ambArpIndexFor(dir, s, len); const d = idx % N, o = Math.floor(idx / N); lbl = names[((rootPc + (intervals[d] | 0)) % 12 + 12) % 12] + (o > 0 ? '′' : ''); }
-            h += '<button type="button" class="amb-seqcell ' + (muted ? 'muted' : 'on') + '" data-ei="' + ei + '" data-s="' + s + '">' + esc(lbl) + '</button>';
-          }
-          h += '</div></div>';
+          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</div>';
+          blocks.forEach((src, ci) => {
+            // Chord blocks: effective (unmuted) intervals like the Phrase tab.
+            // Scale/wrap fallback block: the resolved scale intervals.
+            let intervals, rootPc;
+            if (chords) { const disp = dispOf(src); intervals = disp.iv.filter(iv => disp.m.indexOf(iv) < 0); rootPc = ((src.root | 0) % 12 + 12) % 12; }
+            else { intervals = _ambScaleIntervals(src); rootPc = ((_ambSrcRootPc(src) | 0) % 12 + 12) % 12; }
+            const N = Math.max(1, intervals.length);
+            const len = N * octs;
+            const passLen = Math.max(1, _ambArpPassLen(dir, len));
+            const total = _ambArpEntryNotes(entry, dir, len);
+            if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
+            const mutes = entry.stepMutes[ci];
+            if (chords) h += '<div class="amb-seqlabel">' + esc(names[rootPc]) + ' · ' + total + ' steps</div>';
+            let s = 0;
+            while (s < total && s < 512) {
+              h += '<div class="amb-seqgrid">';
+              for (let c = 0; c < passLen && s < total; c++, s++) {
+                const muted = !!mutes[s];
+                let lbl;
+                if (dir === 'random') lbl = String(s + 1);
+                else { const idx = _ambArpIndexFor(dir, s, len); const d = idx % N, o = Math.floor(idx / N); lbl = names[((rootPc + (intervals[d] | 0)) % 12 + 12) % 12] + (o > 0 ? '′' : ''); }
+                h += '<button type="button" class="amb-seqcell ' + (muted ? 'muted' : 'on') + '" data-ei="' + ei + '" data-ci="' + ci + '" data-s="' + s + '">' + esc(lbl) + '</button>';
+              }
+              h += '</div>';
+            }
+          });
+          h += '</div>';
         });
         return h + '</div>';
       };
@@ -6304,6 +6330,8 @@
         h += (tab === 'sequence') ? renderSequence(steps) : renderPhrase(steps);
         h += '<div class="sm-footer"><button type="button" class="sm-apply amb-ce-ok">Done</button></div>';
         modal.innerHTML = h;
+        // Track this arp's notes (for the live playhead) only while on Sequence.
+        E._arpLiveKey = (tab === 'sequence') ? (L.type + ':' + L.id) : null;
         modal.querySelectorAll('.amb-ce-tab').forEach(b => b.addEventListener('click', () => { tab = b.getAttribute('data-tab') || 'phrase'; render(); }));
         modal.querySelectorAll('.amb-ce-cell').forEach(btn => btn.addEventListener('click', () => {
           const chordEl = btn.closest('.amb-ce-chord'); if (!chordEl) return;
@@ -6316,18 +6344,39 @@
           render();
         }));
         modal.querySelectorAll('.amb-seqcell').forEach(btn => btn.addEventListener('click', () => {
-          const ei = btn.getAttribute('data-ei') | 0, s = btn.getAttribute('data-s') | 0;
+          const ei = btn.getAttribute('data-ei') | 0, ci = btn.getAttribute('data-ci') | 0, s = btn.getAttribute('data-s') | 0;
           const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
           const entry = L2.steps[ei]; if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
-          entry.stepMutes[s] = !entry.stepMutes[s];
+          if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
+          entry.stepMutes[ci][s] = !entry.stepMutes[ci][s];
           _ambResetArp(E, L2.type + ':' + L2.id);
           persist();
           render();
         }));
         const ok = modal.querySelector('.amb-ce-ok'); if (ok) ok.addEventListener('click', () => { close(); try { _ambRenderArpList(E, getL, 'ambient-' + L.type + '-' + L.id + '-'); } catch (e) {} });
       };
+      // Live playhead: light the step that is AUDIBLY playing (recorded note times
+      // off the audible clock), updated each frame while the Sequence tab is open.
+      const hl = () => {
+        if (!overlay.isConnected) { try { E._arpLiveKey = null; } catch (e) {} return; }
+        let cur = null;
+        if (tab === 'sequence' && E.timer) {
+          const L = getL(); const key = L ? (L.type + ':' + L.id) : null;
+          const st = key && E.arpState && E.arpState[key];
+          if (st && Array.isArray(st.live) && st.live.length) {
+            const aNow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : 0) + 0.016;
+            for (let i = st.live.length - 1; i >= 0; i--) { if (st.live[i].at <= aNow) { cur = st.live[i]; break; } }
+          }
+        }
+        const next = cur ? modal.querySelector('.amb-seqcell[data-ei="' + cur.ei + '"][data-ci="' + cur.ci + '"][data-s="' + cur.s + '"]') : null;
+        if (modal._hlCell && modal._hlCell !== next) { try { modal._hlCell.classList.remove('playing'); } catch (e) {} }
+        if (next) next.classList.add('playing');
+        modal._hlCell = next;
+        requestAnimationFrame(hl);
+      };
       render();
       document.body.appendChild(overlay);
+      requestAnimationFrame(hl);
     }
     function _ambWireArpSeries(E, inst, p, get) {
       const edB = _ambGet(E, p + 'arp-edit');

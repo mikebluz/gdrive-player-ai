@@ -1131,14 +1131,67 @@
     // 'always'/unset → fire every event; '1st' → only the layer's first event;
     // 'A:B' → fire on event A of every B (1-based, e.g. '1:2' = events 1,3,5…).
     function _ambCondFires(cond, iter) {
-      if (!cond || cond === 'always') return true;
+      if (cond == null || cond === 'always') return true;
       if (cond === '1st') return iter === 0;
+      // Numeric BITMASK: the decimal value's binary (MSB-first, min 4 bits wide)
+      // is the per-cycle play pattern — a 1 = play, 0 = skip — repeating every
+      // bit. e.g. 2 → "0010" plays the 3rd cycle of every 4; 10 → "1010" every
+      // other; 15 → "1111" every cycle. 0 → never.
+      if (/^\d+$/.test(String(cond))) {
+        const n = parseInt(cond, 10) || 0;
+        if (n <= 0) return false;
+        const bits = _ambWhenBitsStr(n);
+        const w = bits.length;
+        return bits.charAt(((iter % w) + w) % w) === '1';
+      }
       const m = /^(\d+):(\d+)$/.exec(cond);
       if (m) {
         const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
         if (b > 0) return (iter % b) === (((a - 1) % b + b) % b);
       }
       return true;
+    }
+    // Decimal → on/off bitmask STRING (MSB-first), zero-padded to at least 4 bits
+    // so single small numbers read as a 4-slot pattern (e.g. 2 → "0010"). Larger
+    // numbers widen the pattern (period = string length). Shared by the engine
+    // (_ambCondFires) and the UI readout so they never disagree.
+    function _ambWhenBitsStr(n) {
+      n = (typeof n === 'number') ? n : (parseInt(n, 10) || 0);
+      if (!(n > 0)) return '0000';
+      const b = n.toString(2);
+      return b.length >= 4 ? b : b.padStart(4, '0');
+    }
+    // Any stored When (legacy 'always'/'1st'/'A:B' string OR a decimal bitmask)
+    // → the numeric value the new numeric input should show. Legacy ratios are
+    // mapped to the closest periodic bitmask (over width max(4,B)); 'always' →
+    // 15 (all on), '1st' → 8 (≈ first of four). The engine still understands the
+    // raw legacy strings, so old projects keep playing until the field is edited.
+    function _ambWhenToNum(when) {
+      if (when == null || when === 'always') return 15;
+      if (/^\d+$/.test(String(when))) return parseInt(when, 10) || 0;
+      if (when === '1st') return 8;
+      const m = /^(\d+):(\d+)$/.exec(String(when));
+      if (m) {
+        const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+        if (b > 0) { const w = Math.max(4, b); let v = 0; for (let i = 0; i < w; i++) { if ((i % b) === (((a - 1) % b) + b) % b) v |= (1 << (w - 1 - i)); } return v; }
+      }
+      return 15;
+    }
+    // Wire a When numeric input (id `<stem>when`) + its binary readout
+    // (`<stem>when-bits`): seed from the layer's current value, then store the
+    // typed decimal as a string and refresh the readout live. Shared by every
+    // layer type (primaries, extras, seq, sample).
+    function _ambBindWhen(E, stem, get, persist) {
+      const inp = _ambGet(E, stem + 'when'); if (!inp) return;
+      const bits = _ambGet(E, stem + 'when-bits');
+      const show = (n) => { if (bits) bits.textContent = _ambWhenBitsStr(n); };
+      const L0 = get(); const cur = _ambWhenToNum(L0 ? L0.when : 'always');
+      inp.value = String(cur); show(cur);
+      inp.addEventListener('input', () => {
+        _E = E; const L = get(); if (!L) return;
+        let n = parseInt(inp.value, 10); if (!Number.isFinite(n) || n < 0) n = 0;
+        L.when = String(n); show(n); persist();
+      });
     }
 
     // ================= BED engine ===================================
@@ -4601,10 +4654,23 @@
               prog = (((now - st.startAt) % P) / P + 1) % 1;
               active = true;
             }
+          } else if (on && type === 'seq') {
+            // Seq fills across the actual UNIT length (auto-mode phrases are spaced
+            // by the unit's natural length, not the Interval knob), so the bar can't
+            // reset mid-loop. E.clocks[key] is the NEXT phrase start (future).
+            const next = E.clocks && E.clocks[key];
+            const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
+            if (typeof next === 'number' && next > now && P > 0.001) {
+              const x = (next - now) / P;
+              prog = ((Math.ceil(x) - x) % 1 + 1) % 1;
+              active = true;
+            }
           } else if (on) {
             const next = E.clocks && E.clocks[key];
             if (typeof next === 'number' && next > now) {
-              const iv = Math.max(0.05, _ambEffIntervalSec(layer) || 1);
+              // Divide by the SAME interval the engine advances by (snapped in
+              // sync mode) so the bar can't drift away from the actual notes.
+              const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, E._cfg || E.getCfg()) || 1);
               const x = (next - now) / iv;
               prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
               active = true;
@@ -4809,10 +4875,17 @@
       const bindSub = (suf, key) => { const e = el('mod-' + t + '-' + suf); if (e) e.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return; L.mod[t][key] = e.value; if (sync) sync(); persist(); }); };
       bindSub('seqsrc', 'seqSource'); bindSub('seqinterp', 'seqInterp'); bindSub('seqrest', 'seqRest');
     }
-    const _ambCondCtrl = (layer) => '<div class="ambient-ctrl"><label for="ambient-' + layer + '-when">When</label>' +
-      '<select id="ambient-' + layer + '-when" class="ambient-select">' +
-      ['always', '1st', '1:2', '2:2', '1:3', '1:4'].map(c => '<option value="' + c + '">' + (c === 'always' ? 'Always' : c) + '</option>').join('') +
-      '</select><span class="ambient-hint">cond</span></div>';
+    // When control: a numeric bitmask. The typed decimal's binary (MSB-first,
+    // min 4 bits) is the per-cycle play pattern (1 = play, 0 = skip), repeating
+    // every bit; the readout shows the live binary, e.g. 2 → "0010".
+    const _ambWhenCtrl = (stem) => {
+      const dt = ' title="' + _ambTitleAttr('When', 'cond') + '"';
+      return '<div class="ambient-ctrl ambient-when-ctrl"' + dt + '>' +
+        '<label for="' + stem + 'when"' + dt + '>When</label>' +
+        '<input type="number" min="0" step="1" inputmode="numeric" class="ambient-when-num" id="' + stem + 'when" />' +
+        '<span class="ambient-hint ambient-when-bits" id="' + stem + 'when-bits" title="On/off bitmask (1 = play) — repeats each cycle">0000</span></div>';
+    };
+    const _ambCondCtrl = (layer) => _ambWhenCtrl('ambient-' + layer + '-');
     const _ambModTarget = (layer, target, label, hint, defRate) =>
       '<div class="ambient-mod-target"><div class="ambient-mod-sub">' + label + '</div>' +
         _ambSl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, 0, hint) +
@@ -5042,7 +5115,7 @@
         _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
         _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
         _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-        '<div class="ambient-ctrl"><label for="' + p + 'when">When</label><select id="' + p + 'when" class="ambient-select">' + opts([['always', 'Always'], ['1st', '1st'], ['1:2', '1:2'], ['2:2', '2:2'], ['1:3', '1:3'], ['1:4', '1:4']], s.when) + '</select><span class="ambient-hint">cond</span></div>' +
+        _ambWhenCtrl(p) +
         '<div class="ambient-ctrl"><label>Sections</label>' +
           '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
           '<span class="ambient-hint">edit ▸</span></div>' +
@@ -5148,7 +5221,7 @@
       if (ivModeBtn) ivModeBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.intervalMode = (sq.intervalMode === 'manual') ? 'auto' : 'manual'; _ambSeqIntervalModeVis(E, id); persist(); });
       const ivInput = el('interval');
       if (ivInput) ivInput.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; if (sq.intervalMode !== 'manual') { sq.intervalMode = 'manual'; _ambSeqIntervalModeVis(E, id); } });
-      bindInt('drift', 'drift'); bindStr('when', 'when');
+      bindInt('drift', 'drift'); _ambBindWhen(E, p, getSq, persist);
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));
       bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent');
       _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist, null);
@@ -5292,7 +5365,7 @@
         _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
         _ambTm('Length', p + 'length', 80, 16000, 20, s.lengthMs) +
         _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-        '<div class="ambient-ctrl"><label for="' + p + 'when">When</label><select id="' + p + 'when" class="ambient-select">' + opts([['always', 'Always'], ['1st', '1st'], ['1:2', '1:2'], ['2:2', '2:2'], ['1:3', '1:3'], ['1:4', '1:4']], s.when) + '</select><span class="ambient-hint">cond</span></div>' +
+        _ambWhenCtrl(p) +
         _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
         _ambSpreadCtrl('ambient-samp-' + id, s) +
         _ambModUi('samp-' + id) +
@@ -5310,7 +5383,7 @@
       const bindStr = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L[key] = e.value || L[key]; persist(); }); };
       bindInt('chop', 'chop'); bindStr('order', 'order');
       bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
-      bindInt('drift', 'drift'); bindStr('when', 'when'); bindInt('level', 'level');
+      bindInt('drift', 'drift'); _ambBindWhen(E, p, getL, persist); bindInt('level', 'level');
       _ambWireSpread(E, 'ambient-samp-' + id, getL, persist, sync);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L.mod[t][k] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
@@ -5624,7 +5697,7 @@
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
-          else if (k === 'cond') { const s = el('when'); if (s) { s.value = inst.when || 'always'; s.addEventListener('change', () => { const L = get(); if (L) { L.when = s.value || 'always'; persist(); } }); } }
+          else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
           else if (k === 'shapes') { _ambWireShapeBrowser(E, inst, p, get); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
@@ -6865,6 +6938,9 @@
       const tr = (id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
       const set = (id, v) => { const el = document.getElementById(tr(id)); if (el && v != null) el.value = String(v); };
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
+      // When is a numeric bitmask input + a binary readout; seed both from the
+      // stored value (legacy strings map via _ambWhenToNum).
+      const setWhen = (stem, when) => { const n = _ambWhenToNum(when); const inp = document.getElementById(tr(stem + '-when')); if (inp) inp.value = String(n); const b = document.getElementById(tr(stem + '-when-bits')); if (b) b.textContent = _ambWhenBitsStr(n); };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
       { const qOn = document.getElementById(tr('ambient-queue-on'));
         if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
@@ -6914,7 +6990,7 @@
       set('ambient-bed-interval', cfg.bed.intervalMs); hint('ambient-bed-interval-v', _ambFmtMs(cfg.bed.intervalMs));
       set('ambient-bed-length', cfg.bed.lengthMs);     hint('ambient-bed-length-v', _ambFmtMs(cfg.bed.lengthMs));
       set('ambient-bed-drift', cfg.bed.drift);
-      set('ambient-bed-when', cfg.bed.when);
+      setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strumfid', cfg.bed.strumFidelity);
@@ -6928,7 +7004,7 @@
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
       set('ambient-motif-drift', cfg.motif.drift);
-      set('ambient-motif-when', cfg.motif.when);
+      setWhen('ambient-motif', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
       set('ambient-motif-accent', cfg.motif.accent);
@@ -6941,7 +7017,7 @@
       set('ambient-texture-interval', cfg.texture.intervalMs); hint('ambient-texture-interval-v', _ambFmtMs(cfg.texture.intervalMs));
       set('ambient-texture-length', cfg.texture.lengthMs);     hint('ambient-texture-length-v', _ambFmtMs(cfg.texture.lengthMs));
       set('ambient-texture-drift', cfg.texture.drift);
-      set('ambient-texture-when', cfg.texture.when);
+      setWhen('ambient-texture', cfg.texture.when);
       set('ambient-texture-mutate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
       chk('ambient-beat-on', cfg.beat.on);
@@ -6950,7 +7026,7 @@
       set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-drift', cfg.beat.drift);
-      set('ambient-beat-when', cfg.beat.when);
+      setWhen('ambient-beat', cfg.beat.when);
       set('ambient-beat-rest', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
       // Per-layer FX values.
@@ -7388,11 +7464,14 @@
         fxBind('dist-mix', (lc, v) => { lc.dist.mix = v; });
       });
       const bindCond = (layer) => {
-        const sel = G('ambient-' + layer + '-when');
-        if (!sel) return;
-        sel.addEventListener('change', () => {
+        const inp = G('ambient-' + layer + '-when');
+        if (!inp) return;
+        const bits = G('ambient-' + layer + '-when-bits');
+        inp.addEventListener('input', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
-          cfg[layer].when = sel.value || 'always';
+          let n = parseInt(inp.value, 10); if (!Number.isFinite(n) || n < 0) n = 0;
+          cfg[layer].when = String(n);
+          if (bits) bits.textContent = _ambWhenBitsStr(n);
           persist();
         });
       };

@@ -2525,6 +2525,17 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
+    /* "When" bitmask: a small number input + a live binary readout (1=play). */
+    .ambient-when-num {
+      width: 100%; min-width: 0; padding: 4px 8px; border: 1px solid #2d2d3f;
+      border-radius: 6px; background: #0a0a14; color: #d6bcfa;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+    }
+    .ambient-when-bits {
+      font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.74rem; letter-spacing: 0.12em; color: #9f7aea;
+      white-space: nowrap;
+    }
     /* "Notes" source button — looks like the selects, reads left, truncates. */
     .ambient-notes-btn {
       text-align: left; cursor: pointer; overflow: hidden;

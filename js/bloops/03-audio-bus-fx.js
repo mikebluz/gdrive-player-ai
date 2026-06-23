@@ -528,12 +528,14 @@
     // of slamming the old 0.07-wide wall, which fizzed into audible hard-clip
     // distortion at phrase ends. e.g. 1.4 → ~0.94 smoothly; 0.84 → identity.
     const _MASTER_CLIP_KNEE = 0.85, _MASTER_CLIP_CEIL = 0.97, _MASTER_CLIP_SOFT = 0.6;
-    const masterClipper = new Tone.WaveShaper((x) => {
+    // Named so the Dynamics UI can swap it for an identity map (bypass) live.
+    const _masterClipCurve = (x) => {
       const s = x < 0 ? -1 : 1, ax = Math.abs(x);
       if (ax <= _MASTER_CLIP_KNEE) return x;
       const span = _MASTER_CLIP_CEIL - _MASTER_CLIP_KNEE;
       return s * (_MASTER_CLIP_KNEE + span * Math.tanh((ax - _MASTER_CLIP_KNEE) / _MASTER_CLIP_SOFT));
-    }, 4096);
+    };
+    const masterClipper = new Tone.WaveShaper(_masterClipCurve, 4096);
     try { masterClipper.oversample = '4x'; } catch (e) {}
     masterClipper.toDestination();
     // Master bus dynamics: a GENTLE glue compressor softens broad dynamic
@@ -589,6 +591,7 @@
             this.gAtt=Math.exp(-1/((o.gainAttackMs||0.4)/1000*sampleRate));  // gain-reduce smoothing
             this.gRel=Math.exp(-1/((o.gainReleaseMs||90)/1000*sampleRate));  // gain-recover smoothing
             this.L=this.look+1; this.wi=0; this.delay=null; this.peak=0; this.gain=1;
+            this.port.onmessage=(e)=>{ const d=e&&e.data; if(d&&typeof d.ceiling==='number'&&d.ceiling>0) this.ceil=d.ceiling; };
           }
           process(inputs,outputs){
             const inp=inputs[0], out=outputs[0];
@@ -634,6 +637,7 @@
           masterVolume.connect(node);                 // Tone → native (Tone handles it)
           Tone.connect(node, masterClipper);          // native → Tone input
           masterLookaheadLimiter = node;
+          try { applyMasterDynamics(); } catch (e) {}  // push any saved ceiling into the fresh worklet
         } catch (e) {
           // Rewire failed mid-way — restore the original feedforward chain.
           try { masterVolume.disconnect(); masterVolume.connect(masterLimiter); masterLimiter.connect(masterClipper); } catch (e2) {}
@@ -1032,11 +1036,26 @@
       warmthDrive:        12,
       warmthCut:          16000,
       warmthOn:           true,
+      // Master DYNAMICS — the master-bus glue compressor + lookahead limiter +
+      // soft-clip ceiling. Defaults match the tuned chain; exposed so the mix can
+      // be made less compressed. *On=false bypasses that stage (made transparent,
+      // no rerouting). Global: affects ALL output.
+      compOn:             true,
+      compThresh:         -3,    // dBFS
+      compRatio:          2,     // :1
+      compAttack:         5,     // ms
+      compRelease:        180,   // ms
+      compKnee:           10,    // dB
+      limitOn:            true,
+      limitCeil:          -1.5,  // dBFS (≈ 0.84 linear — the limiter's ceiling)
+      clipOn:             true,
       // Configurable FX chain order — array of effect IDs (see FX_NAMES).
       // Drives both the master chain and per-note chains in playNote.
       fxOrder:            FX_NAMES.slice(),
     };
-    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn'];
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'limitOn', 'clipOn'];
+    // Keys reset by the Dynamics "Reset" button.
+    const DYN_KEYS = ['compOn', 'compThresh', 'compRatio', 'compAttack', 'compRelease', 'compKnee', 'limitOn', 'limitCeil', 'clipOn'];
     const globalFx = (() => {
       try {
         const raw = JSON.parse(localStorage.getItem('sounds-global-fx') || '{}');
@@ -1121,7 +1140,37 @@
         if (Array.isArray(lanes)) lanes.forEach(applyLaneSends);
       } catch (e) {}
       try { applyMasterWarmth(); } catch (e) {}
+      try { applyMasterDynamics(); } catch (e) {}
     }
+    // Master dynamics: write the glue-compressor params, the lookahead-limiter
+    // ceiling (and the Tone.Limiter fallback threshold), and the soft-clip curve
+    // from globalFx. *On=false makes that stage transparent (no rerouting):
+    // compressor → unity, limiter → ceiling off, soft-clip → identity map.
+    function applyMasterDynamics() {
+      const cl = (v, lo, hi, d) => { const n = Number.isFinite(v) ? v : d; return Math.max(lo, Math.min(hi, n)); };
+      try {
+        if (globalFx.compOn === false) {
+          masterCompressor.ratio.value = 1; masterCompressor.threshold.value = 0;
+        } else {
+          masterCompressor.threshold.value = cl(globalFx.compThresh, -60, 0, -3);
+          masterCompressor.ratio.value     = cl(globalFx.compRatio, 1, 20, 2);
+          masterCompressor.attack.value    = cl(globalFx.compAttack, 0, 1000, 5) / 1000;
+          masterCompressor.release.value   = cl(globalFx.compRelease, 1, 2000, 180) / 1000;
+          masterCompressor.knee.value      = cl(globalFx.compKnee, 0, 40, 10);
+        }
+      } catch (e) {}
+      try {
+        const on = globalFx.limitOn !== false;
+        const ceilDb = on ? cl(globalFx.limitCeil, -24, 0, -1.5) : 0;       // 0 dBFS ≈ transparent
+        const ceilLin = on ? Math.pow(10, ceilDb / 20) : 4;                // worklet: huge ceiling = off
+        masterLimiter.threshold.value = ceilDb;                            // fallback path (no worklet)
+        if (masterLookaheadLimiter && masterLookaheadLimiter.port) {
+          try { masterLookaheadLimiter.port.postMessage({ ceiling: ceilLin }); } catch (e) {}
+        }
+      } catch (e) {}
+      try { masterClipper.setMap(globalFx.clipOn === false ? ((x) => x) : _masterClipCurve); } catch (e) {}
+    }
+    try { applyMasterDynamics(); } catch (e) {}   // apply saved dynamics on boot
     // Apply the Master Warmth settings (globalFx.warmth/warmthDrive/warmthCut/
     // warmthOn) to the warmth node chain. The single Warmth macro scales the
     // tilt EQ + presence dip; Drive sets the saturation; High-cut the LPF.

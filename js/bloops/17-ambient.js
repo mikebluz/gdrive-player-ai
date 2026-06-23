@@ -7969,6 +7969,17 @@
         set('ambient-warmth-cut', globalFx.warmthCut); hint('ambient-warmth-cut-v', (globalFx.warmthCut | 0) + ' Hz');
         const wOn = document.getElementById(tr('ambient-warmth-on'));
         if (wOn) { const on = globalFx.warmthOn !== false; wOn.classList.toggle('active', on); wOn.textContent = on ? 'On' : 'Off'; }
+        // Master Dynamics reflection (master Bloom only).
+        const dseg = (id, on) => { const el = document.getElementById(tr(id)); if (el) { el.classList.toggle('active', !!on); el.textContent = on ? 'On' : 'Off'; } };
+        set('ambient-comp-thresh', globalFx.compThresh); hint('ambient-comp-thresh-v', (globalFx.compThresh | 0) + ' dB');
+        set('ambient-comp-ratio', globalFx.compRatio);   hint('ambient-comp-ratio-v', (globalFx.compRatio | 0) + ':1');
+        set('ambient-comp-attack', globalFx.compAttack); hint('ambient-comp-attack-v', (globalFx.compAttack | 0) + ' ms');
+        set('ambient-comp-release', globalFx.compRelease); hint('ambient-comp-release-v', (globalFx.compRelease | 0) + ' ms');
+        set('ambient-comp-knee', globalFx.compKnee);     hint('ambient-comp-knee-v', (globalFx.compKnee | 0) + ' dB');
+        set('ambient-limit-ceil', globalFx.limitCeil);   hint('ambient-limit-ceil-v', (Math.round(globalFx.limitCeil * 10) / 10) + ' dB');
+        dseg('ambient-comp-on', globalFx.compOn !== false);
+        dseg('ambient-limit-on', globalFx.limitOn !== false);
+        dseg('ambient-clip-on', globalFx.clipOn !== false);
       }
       const chk = (id, v) => { const el = document.getElementById(tr(id)); if (el) el.classList.toggle('on', !!v); };
       // Show only "present" built-in layer cards (Bloom starts with just Bed;
@@ -8146,6 +8157,28 @@
             '<div class="ambient-ctrl"><label for="ambient-warmth">Warmth</label><input type="range" id="ambient-warmth" min="0" max="100" step="1" value="30" /><span class="ambient-hint" id="ambient-warmth-v"></span></div>' +
             '<div class="ambient-ctrl"><label for="ambient-warmth-drive">Drive</label><input type="range" id="ambient-warmth-drive" min="0" max="100" step="1" value="12" /><span class="ambient-hint" id="ambient-warmth-drive-v"></span></div>' +
             '<div class="ambient-ctrl"><label for="ambient-warmth-cut">High cut</label><input type="range" id="ambient-warmth-cut" min="2000" max="20000" step="500" value="16000" /><span class="ambient-hint" id="ambient-warmth-cut-v"></span></div>' +
+          '</div>') +
+        // Master DYNAMICS — the glue compressor + lookahead limiter + soft-clip
+        // ceiling, exposed so the mix can be made less compressed. GLOBAL: affects
+        // all output. Each stage has a bypass (On) toggle; one Reset restores the
+        // tuned defaults. Master Bloom only.
+        (E.isLane ? '' :
+          '<div class="ambient-warmth ambient-dyn">' +
+            '<div class="ambient-warmth-head"><span class="ambient-mod-sub">Dynamics</span>' +
+              '<button type="button" class="ambient-seg" id="ambient-dyn-reset" title="Reset all master dynamics to default">Reset</button>' +
+              '<span class="ambient-hint">global · master bus</span></div>' +
+            '<div class="ambient-dyn-row"><span class="ambient-dyn-name">Compressor</span>' +
+              '<button type="button" class="ambient-seg" id="ambient-comp-on" title="Bypass the master glue compressor">On</button></div>' +
+            sl('Threshold', 'ambient-comp-thresh', -60, 0, -3, 'dBFS') +
+            sl('Ratio', 'ambient-comp-ratio', 1, 20, 2, ':1') +
+            sl('Attack', 'ambient-comp-attack', 0, 200, 5, 'ms') +
+            sl('Release', 'ambient-comp-release', 1, 1000, 180, 'ms') +
+            sl('Knee', 'ambient-comp-knee', 0, 40, 10, 'dB') +
+            '<div class="ambient-dyn-row"><span class="ambient-dyn-name">Limiter</span>' +
+              '<button type="button" class="ambient-seg" id="ambient-limit-on" title="Bypass the lookahead brickwall limiter (peak safety)">On</button></div>' +
+            sl('Ceiling', 'ambient-limit-ceil', -24, 0, -2, 'dBFS') +
+            '<div class="ambient-dyn-row"><span class="ambient-dyn-name">Soft clip</span>' +
+              '<button type="button" class="ambient-seg" id="ambient-clip-on" title="Bypass the final soft-clip ceiling — WARNING: may allow hard clipping">On</button></div>' +
           '</div>') +
         // Dedicated reverb (fed by each layer's "Reverb send").
         '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
@@ -8460,6 +8493,45 @@
           wOn.classList.toggle('active', on); wOn.textContent = on ? 'On' : 'Off';
           try { applyGlobalFx(); } catch (e) {}
           try { persistGlobalFx(); } catch (e) {}
+        });
+      }
+      // Master Dynamics (global). Each slider writes globalFx + re-applies the
+      // master-bus compressor/limiter/soft-clip live; the On buttons bypass a
+      // stage; Reset restores the tuned defaults. Master Bloom only.
+      { const applyDyn = () => { try { applyMasterDynamics(); } catch (e) {} try { persistGlobalFx(); } catch (e) {} };
+        const wireDyn = (stem, key, unit, fl) => {
+          const el = G(stem); if (!el) return; const vEl = G(stem + '-v');
+          el.addEventListener('input', () => {
+            if (typeof globalFx === 'undefined' || !globalFx) return;
+            const v = fl ? (parseFloat(el.value) || 0) : (parseInt(el.value, 10) || 0);
+            globalFx[key] = v; if (vEl) vEl.textContent = v + unit; applyDyn();
+          });
+        };
+        wireDyn('ambient-comp-thresh', 'compThresh', ' dB');
+        wireDyn('ambient-comp-ratio', 'compRatio', ':1');
+        wireDyn('ambient-comp-attack', 'compAttack', ' ms');
+        wireDyn('ambient-comp-release', 'compRelease', ' ms');
+        wireDyn('ambient-comp-knee', 'compKnee', ' dB');
+        wireDyn('ambient-limit-ceil', 'limitCeil', ' dB', true);
+        const dynSeg = (id, key) => {
+          const el = G(id); if (!el) return;
+          el.addEventListener('click', () => {
+            if (typeof globalFx === 'undefined' || !globalFx) return;
+            globalFx[key] = !(globalFx[key] !== false);
+            const on = globalFx[key] !== false;
+            el.classList.toggle('active', on); el.textContent = on ? 'On' : 'Off';
+            applyDyn();
+          });
+        };
+        dynSeg('ambient-comp-on', 'compOn');
+        dynSeg('ambient-limit-on', 'limitOn');
+        dynSeg('ambient-clip-on', 'clipOn');
+        const dynReset = G('ambient-dyn-reset');
+        if (dynReset) dynReset.addEventListener('click', () => {
+          if (typeof globalFx === 'undefined' || !globalFx || typeof DYN_KEYS === 'undefined') return;
+          DYN_KEYS.forEach(k => { globalFx[k] = GLOBAL_FX_DEFAULTS[k]; });
+          try { _ambSyncControls(E); } catch (e) {}
+          applyDyn();
         });
       }
       bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release'); bind('ambient-bed-fine', 'bed', 'fine');

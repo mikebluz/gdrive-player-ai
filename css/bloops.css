@@ -2991,6 +2991,10 @@
     }
     .ambient-warmth-head { display: flex; align-items: center; gap: 10px; }
     .ambient-warmth-head .ambient-seg { padding: 2px 10px; font-size: 0.66rem; }
+    /* Dynamics panel: per-stage sub-rows (name + On/Off bypass on the right). */
+    .ambient-dyn-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+    .ambient-dyn-name { font: 600 0.72rem 'Segoe UI', sans-serif; color: #c9c9e0; }
+    .ambient-dyn-row .ambient-seg { margin-left: auto; padding: 2px 10px; font-size: 0.66rem; }
     .ambient-seq-layers { display: flex; flex-direction: column; gap: 12px; }
     .ambient-seq-layers:empty { display: none; }
     /* Master Bloom block in the Mix view (now its own sub-tab pane). Centered on

@@ -4934,7 +4934,13 @@
       // Footer elapsed-time readout: counts up while playing, 0 when stopped.
       { const elap = _ambGet(E, 'ambient-elapsed'); if (elap) elap.textContent = _ambFmtElapsed((E.timer && E._playStartMs) ? (performance.now() - E._playStartMs) : 0); }
       const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
-      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Drive the bars off the AUDIBLE clock (currentTime − latency), not the
+      // schedule clock (Tone.now() = currentTime + lookAhead), so they track what
+      // you HEAR instead of running ~lookAhead+latency ahead of it. Matches the
+      // Shape playheads (_shapeAudibleNow); the engine clocks/anchors are in the
+      // same scheduled coordinate space, so this aligns every branch.
+      const now = (typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
+        : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
       bars.forEach(el => {
         const key = el.dataset.phkey; if (!key) return;
         let prog = 0, active = false, frozen = false;

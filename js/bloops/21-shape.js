@@ -2314,8 +2314,8 @@
     let _shapeCap = null;
     function _shapeRefreshCaptureBtn() {
       const btn = document.getElementById('shape-master-capture'); if (!btn) return;
-      if (_shapeCap) { btn.textContent = '■ Finalize'; btn.classList.add('recording'); }
-      else { btn.textContent = '⤓ Capture'; btn.classList.remove('recording'); }
+      if (_shapeCap) { btn.textContent = '■'; btn.classList.add('recording'); }
+      else { btn.textContent = '⤓'; btn.classList.remove('recording'); }
     }
     function _shapeMasterCaptureToggle() {
       if (_shapeCap) { try { _shapeCap.rec.stop(); } catch (e) {} return; }   // 2nd press → finalize
@@ -2375,6 +2375,9 @@
       const list = Array.isArray(masterShapes) ? masterShapes : [];
       if (!list.length) { _shapeMasterStop(); return; }
       const now = performance.now() / 1000;
+      // Footer elapsed-time readout (MM:SS:hundredths) — counts up while playing.
+      { const el = document.getElementById('shape-master-elapsed');
+        if (el && typeof _ambFmtElapsed === 'function') el.textContent = _ambFmtElapsed(Math.max(0, (now - _shapeMaster.t0) * 1000)); }
       const phases = _shapeMaster.phases || (_shapeMaster.phases = {});
       // Every shape plays at once, each on its OWN loop length (barSec) but a
       // shared clock origin (t0), so they overlay like a multi-wheel ensemble.
@@ -2439,7 +2442,8 @@
     }
     function _shapeMasterReflectBtn() {
       const b = document.getElementById('shape-master-play');
-      if (b) { b.textContent = _shapeMaster.running ? '■ Stop' : '▶ Play'; b.classList.toggle('active', _shapeMaster.running); }
+      if (b) { b.textContent = _shapeMaster.running ? '⏹' : '▶'; b.classList.toggle('active', _shapeMaster.running); }
+      if (!_shapeMaster.running) { const el = document.getElementById('shape-master-elapsed'); if (el) el.textContent = '00:00:00'; }
     }
     // Remove every master shape (after confirm). Closes the editor, stops
     // playback, and refreshes the overview.
@@ -2562,19 +2566,33 @@
         _shapeMaster.ctx = _shapeMaster.canvas.getContext('2d');
         const bar = document.getElementById('shape-master-bar');
         if (bar) {
-          bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-play">▶ Play</button>' +
-            '<button type="button" class="shape-btn" id="shape-master-edit">✎ Edit</button>' +
-            '<button type="button" class="shape-btn" id="shape-master-capture" title="Record the active shape\'s audio to a take you can upload to Drive">⤓ Capture</button>' +
+          bar.innerHTML = '<button type="button" class="shape-btn" id="shape-master-edit">✎ Edit</button>' +
             '<button type="button" class="shape-btn shape-btn-danger" id="shape-master-clear" title="Remove every master shape">🗑 Clear</button>' +
             '<span style="color:#8a8aa8;font-size:0.72rem">Each “◎ Send” saves a copy here. Click a version to select it, ✎ to edit, ✕ to delete.</span>';
-          const pb = bar.querySelector('#shape-master-play');
-          if (pb) pb.addEventListener('click', () => { if (_shapeMaster.running) _shapeMasterStop(); else _shapeMasterStart(); });
           const eb = bar.querySelector('#shape-master-edit');
           if (eb) eb.addEventListener('click', () => { if (activeMasterShapeId != null) _shapeMasterEditOpen(activeMasterShapeId); });
-          const cb = bar.querySelector('#shape-master-capture');
-          if (cb) cb.addEventListener('click', () => { try { _shapeMasterCaptureToggle(); } catch (e) { console.warn('shape capture failed', e); } });
           const clb = bar.querySelector('#shape-master-clear');
           if (clb) clb.addEventListener('click', () => { try { _shapeMasterClearAll(); } catch (e) { console.warn('shape clear failed', e); } });
+        }
+        // Bloom-style transport footer: elapsed time · Capture · Play (pinned to
+        // the bottom, identical styling to the master Bloom footer). Play +
+        // Capture keep their ids so _shapeMasterReflectBtn / _shapeRefreshCaptureBtn
+        // drive them. Lives inside #mix-pane-shapes so it only shows on this subtab.
+        { const pane = document.getElementById('mix-pane-shapes');
+          if (pane && !document.getElementById('shape-master-footer')) {
+            const foot = document.createElement('div');
+            foot.className = 'ambient-footer-bar'; foot.id = 'shape-master-footer';
+            foot.innerHTML = '<div class="ambient-footer-transport">' +
+              '<span class="ambient-elapsed" id="shape-master-elapsed" title="Elapsed play time (MM:SS:hundredths) — resets on Stop">00:00:00</span>' +
+              '<button type="button" class="ambient-footer-capture" id="shape-master-capture" title="Record the active shape to a take — find it in Harvest">⤓</button>' +
+              '<button type="button" class="ambient-play" id="shape-master-play" title="Play / stop">▶</button>' +
+            '</div>';
+            pane.appendChild(foot);
+            const pb = foot.querySelector('#shape-master-play');
+            if (pb) pb.addEventListener('click', () => { if (_shapeMaster.running) _shapeMasterStop(); else _shapeMasterStart(); });
+            const cb = foot.querySelector('#shape-master-capture');
+            if (cb) cb.addEventListener('click', () => { try { _shapeMasterCaptureToggle(); } catch (e) { console.warn('shape capture failed', e); } });
+          }
         }
         _shapeMaster.canvas.addEventListener('click', _shapeMasterClick);
         const _redrawIfShapes = () => {

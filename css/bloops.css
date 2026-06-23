@@ -2498,6 +2498,8 @@
     }
     /* Reserve space so the fixed (tall) bar never covers the last panel content. */
     .ambient-inner { padding-bottom: 152px; }
+    /* Shapes subtab gets the same Bloom-style footer — reserve room for it. */
+    #mix-pane-shapes { padding-bottom: 140px; box-sizing: border-box; }
     /* Play / Stop — matches the Make footer transport play button exactly
        (.footer-transport > #play-btn): a large 104px round cyan-glowing icon. */
     .ambient-play {

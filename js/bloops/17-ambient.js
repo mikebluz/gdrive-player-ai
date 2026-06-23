@@ -1964,6 +1964,7 @@
       const S = _E.arpState || (_E.arpState = {});
       let st = S[key];
       if (!st || st.entry >= steps.length) st = S[key] = { entry: 0, note: 0, pos: 0 };
+      if (st.startAt == null) st.startAt = at;   // loop phase anchor (first note time) — for the audible playhead
       const entry = steps[Math.min(st.entry, steps.length - 1)];
       const notes = _ambNotesOf(entry);
       const _arpProg = (notes && notes.type === 'prog');   // per-layer: one chord per series loop
@@ -4980,16 +4981,15 @@
           const on = !!(layer && layer.present !== false && layer.on);
           const type = String(key).split(':')[0];
           if (on && type === 'arp') {
-            // Fill across the whole SERIES loop (cursor position + fraction through
-            // the current note), not per-note — so the bar matches the unit length.
+            // Phase-anchored to the first note (st.startAt), exactly like the
+            // windowed layers below — so the bar tracks AUDIBLE playback, not the
+            // scheduling cursor (which runs out to the 1.4 s horizon and made the
+            // Arp bar lead ~a second and never line up with phase-anchored layers).
             const cfg2 = E._cfg || E.getCfg();
-            const info = _ambArpSeriesInfo(layer, cfg2);
-            const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, layer, cfg2);   // Unit-Sync scaled per-note interval
-            const next = E.clocks && E.clocks[key], st = E.arpState && E.arpState[key];
-            if (typeof next === 'number' && info.totalNotes > 0) {
-              const into = st ? _ambArpNotesInto(info, st) : 0;
-              const rem = Math.max(0, Math.min(1, (next - now) / Math.max(0.02, ivSc)));
-              prog = (((into - rem) / info.totalNotes) % 1 + 1) % 1;
+            const P = _ambLayerPeriodSec(E, key, layer, cfg2);
+            const st = E.arpState && E.arpState[key];
+            if (st && st.startAt != null && P > 0 && now >= st.startAt) {
+              prog = (((now - st.startAt) % P) / P + 1) % 1;
               active = true;
             }
           } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape' || (type === 'beat' && layer && layer.gen === 'euclid'))) {

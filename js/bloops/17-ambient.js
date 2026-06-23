@@ -3407,7 +3407,12 @@
         }
         return (60 / _ambBpm()) * 4;
       }
-      return Math.max(0.05, _ambEffIntervalSec(L)); // bed/motif/texture/beat/arp
+      // Texture scans a 16-slot pattern, so ONE unit = 16 steps, not one step.
+      // Syncing (e.g. Bar×4) then spreads the 16-step pattern over the target —
+      // a busy stream locked to the grid — instead of stretching ONE step to it
+      // (which made a synced Texture fire once every several seconds = silent).
+      if (type === 'texture') return Math.max(0.05, _ambEffIntervalSec(L)) * 16;
+      return Math.max(0.05, _ambEffIntervalSec(L)); // bed/motif/beat (random) — continuous stream
     }
     // Ensure a layer's Unit-Sync descriptor exists (default FREE). `unit` =
     // { mode:'free'|'sync', ref, num, den }. Free is the default everywhere.
@@ -6203,7 +6208,7 @@
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
     // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.
-    const _AMB_GROUP_DEFAULT_OPEN = { Voice: true, Unit: true, Mix: true };
+    const _AMB_GROUP_DEFAULT_OPEN = {};   // all parameter groups start collapsed
     function _ambGroupOpen(inst, name) {
       const go = inst && inst.groupsOpen;
       if (go && typeof go === 'object' && typeof go[name] === 'boolean') return go[name];
@@ -6361,7 +6366,19 @@
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteExtra(E, type, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
       const cB = layerDiv ? layerDiv.querySelector('.ambient-collapse') : null;
-      if (cB && layerDiv) cB.addEventListener('click', () => layerDiv.classList.toggle('collapsed'));
+      if (cB && layerDiv) cB.addEventListener('click', () => {
+        const collapsed = layerDiv.classList.toggle('collapsed');
+        // Collapsing the layer folds its parameter groups too (persisted closed).
+        if (collapsed) {
+          const L = get();
+          layerDiv.querySelectorAll('.ambient-grp.open').forEach(g => {
+            g.classList.remove('open');
+            const nm = g.getAttribute('data-grp');
+            if (L && nm) { if (!L.groupsOpen || typeof L.groupsOpen !== 'object') L.groupsOpen = {}; L.groupsOpen[nm] = false; }
+          });
+          if (collapsed) persist();
+        }
+      });
       // Collapsible parameter groups: header click folds/unfolds + remembers state.
       if (layerDiv) layerDiv.querySelectorAll('.ambient-grp-head').forEach(h => {
         h.addEventListener('click', () => {
@@ -8097,6 +8114,10 @@
       // _ambNamespaceHtml rewrites the stems to E.idPrefix below.
       const sl = _ambSl, tm = _ambTm, head = _ambHead, shapeSel = _ambShapeSel,
             condCtrl = _ambCondCtrl, modTarget = _ambModTarget, modUi = _ambModUi, fxUi = _ambFxUi;
+      // Collapsible parameter group (matches the extra-layer .ambient-grp). Built
+      // collapsed; toggled by a delegated handler below. grp() opens, gpe() closes.
+      const grp = (name) => '<div class="ambient-grp" data-grp="' + name + '"><button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name + '<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">';
+      const gpe = () => '</div></div>';
       // Primary-layer headers read any user-set label from the loaded config.
       const _cfg0 = E.getCfg() || {};
       const _plabel = (k, fb) => _ambLayerLabel(_cfg0[k], fb);
@@ -8197,99 +8218,122 @@
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
-          '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-          sl('Attack', 'ambient-bed-attack', 0, 8000, 2000, 'ms') +
-          sl('Decay', 'ambient-bed-decay', 0, 4000, 200, 'ms') +
-          sl('Sustain', 'ambient-bed-sustain', 0, 100, 85, '%') +
-          sl('Release', 'ambient-bed-release', 0, 12000, 3650, 'ms') +
-          sl('Fine', 'ambient-bed-fine', -100, 100, 0, 'cents') +
-          _ambNotesButtonHtml('ambient-bed') +
-          sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
-          sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
-          sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') +
-          tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
-          _ambUnitSyncHtml('ambient-bed') +
-          tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
-          sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
-          condCtrl('bed') +
-          sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'detune') +
-          sl('Strum', 'ambient-bed-strum', 0, 100, 0, 'chord → arp') +
-          sl('Fidelity', 'ambient-bed-strumfid', 0, 100, 0, 'in order → random') +
-          sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
-          _ambSpreadCtrl('ambient-bed', null) +
-          modUi('bed') +
-          fxUi('bed') +
+          grp('Voice') +
+            '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+            sl('Attack', 'ambient-bed-attack', 0, 8000, 2000, 'ms') +
+            sl('Decay', 'ambient-bed-decay', 0, 4000, 200, 'ms') +
+            sl('Sustain', 'ambient-bed-sustain', 0, 100, 85, '%') +
+            sl('Release', 'ambient-bed-release', 0, 12000, 3650, 'ms') +
+            sl('Fine', 'ambient-bed-fine', -100, 100, 0, 'cents') + gpe() +
+          grp('Pitch') +
+            _ambNotesButtonHtml('ambient-bed') +
+            sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
+            sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
+            sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') + gpe() +
+          grp('Unit') +
+            tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
+            _ambUnitSyncHtml('ambient-bed') + gpe() +
+          grp('Rhythm') +
+            tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
+            sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
+            condCtrl('bed') + gpe() +
+          grp('Variation') +
+            sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'detune') +
+            sl('Strum', 'ambient-bed-strum', 0, 100, 0, 'chord → arp') +
+            sl('Fidelity', 'ambient-bed-strumfid', 0, 100, 0, 'in order → random') + gpe() +
+          grp('Mix') +
+            sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
+            _ambSpreadCtrl('ambient-bed', null) +
+            modUi('bed') +
+            fxUi('bed') + gpe() +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif') +
-          '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-          sl('Attack', 'ambient-motif-attack', 0, 2000, 100, 'ms') +
-          sl('Decay', 'ambient-motif-decay', 0, 2000, 120, 'ms') +
-          sl('Sustain', 'ambient-motif-sustain', 0, 100, 70, '%') +
-          sl('Release', 'ambient-motif-release', 0, 4000, 500, 'ms') +
-          sl('Fine', 'ambient-motif-fine', -100, 100, 0, 'cents') +
-          _ambNotesButtonHtml('ambient-motif') +
-          sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
-          sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
-          sl('Proximity', 'ambient-motif-proximity', 0, 100, 35, 'adjacent → leaps') +
-          tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
-          _ambUnitSyncHtml('ambient-motif') +
-          tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
-          sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
-          condCtrl('motif') +
-          sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
-          sl('Twist', 'ambient-motif-twist', 0, 100, 0, 'steady → bursts') +
-          sl('Accent', 'ambient-motif-accent', 0, 100, 0, 'flat → dynamic') +
-          sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
-          _ambSpreadCtrl('ambient-motif', null) +
-          modUi('motif') +
-          fxUi('motif') +
+          grp('Voice') +
+            '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+            sl('Attack', 'ambient-motif-attack', 0, 2000, 100, 'ms') +
+            sl('Decay', 'ambient-motif-decay', 0, 2000, 120, 'ms') +
+            sl('Sustain', 'ambient-motif-sustain', 0, 100, 70, '%') +
+            sl('Release', 'ambient-motif-release', 0, 4000, 500, 'ms') +
+            sl('Fine', 'ambient-motif-fine', -100, 100, 0, 'cents') + gpe() +
+          grp('Pitch') +
+            _ambNotesButtonHtml('ambient-motif') +
+            sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
+            sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
+            sl('Proximity', 'ambient-motif-proximity', 0, 100, 35, 'adjacent → leaps') + gpe() +
+          grp('Unit') +
+            tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
+            _ambUnitSyncHtml('ambient-motif') + gpe() +
+          grp('Rhythm') +
+            tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
+            sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
+            condCtrl('motif') + gpe() +
+          grp('Variation') +
+            sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
+            sl('Twist', 'ambient-motif-twist', 0, 100, 0, 'steady → bursts') +
+            sl('Accent', 'ambient-motif-accent', 0, 100, 0, 'flat → dynamic') + gpe() +
+          grp('Mix') +
+            sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
+            _ambSpreadCtrl('ambient-motif', null) +
+            modUi('motif') +
+            fxUi('motif') + gpe() +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture') +
-          '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-          sl('Attack', 'ambient-texture-attack', 0, 2000, 40, 'ms') +
-          sl('Decay', 'ambient-texture-decay', 0, 2000, 80, 'ms') +
-          sl('Sustain', 'ambient-texture-sustain', 0, 100, 0, '%') +
-          sl('Release', 'ambient-texture-release', 0, 4000, 240, 'ms') +
-          sl('Fine', 'ambient-texture-fine', -100, 100, 0, 'cents') +
-          _ambNotesButtonHtml('ambient-texture') +
-          sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
-          sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
-          tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
-          _ambUnitSyncHtml('ambient-texture') +
-          tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
-          sl('Drift', 'ambient-texture-drift', 0, 99, 0, 'phase offset') +
-          condCtrl('texture') +
-          sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') +
-          sl('Level', 'ambient-texture-level', 0, 100, 70, 'soft → boost') +
-          _ambSpreadCtrl('ambient-texture', null) +
-          modUi('texture') +
-          fxUi('texture') +
+          grp('Voice') +
+            '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+            sl('Attack', 'ambient-texture-attack', 0, 2000, 40, 'ms') +
+            sl('Decay', 'ambient-texture-decay', 0, 2000, 80, 'ms') +
+            sl('Sustain', 'ambient-texture-sustain', 0, 100, 0, '%') +
+            sl('Release', 'ambient-texture-release', 0, 4000, 240, 'ms') +
+            sl('Fine', 'ambient-texture-fine', -100, 100, 0, 'cents') + gpe() +
+          grp('Pitch') +
+            _ambNotesButtonHtml('ambient-texture') +
+            sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') + gpe() +
+          grp('Unit') +
+            tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
+            _ambUnitSyncHtml('ambient-texture') + gpe() +
+          grp('Rhythm') +
+            sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
+            tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
+            sl('Drift', 'ambient-texture-drift', 0, 99, 0, 'phase offset') +
+            condCtrl('texture') + gpe() +
+          grp('Variation') +
+            sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') + gpe() +
+          grp('Mix') +
+            sl('Level', 'ambient-texture-level', 0, 100, 70, 'soft → boost') +
+            _ambSpreadCtrl('ambient-texture', null) +
+            modUi('texture') +
+            fxUi('texture') + gpe() +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat') +
-          '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
-            '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
-          _ambGenSel('ambient-beat-') +
-          sl('Attack', 'ambient-beat-attack', 0, 500, 1, 'ms') +
-          sl('Decay', 'ambient-beat-decay', 0, 2000, 60, 'ms') +
-          sl('Sustain', 'ambient-beat-sustain', 0, 100, 70, '%') +
-          sl('Release', 'ambient-beat-release', 0, 2000, 120, 'ms') +
-          sl('Fine', 'ambient-beat-fine', -100, 100, 0, 'cents') +
-          _ambRateSel('ambient-beat-rate') +
-          tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
-          _ambUnitSyncHtml('ambient-beat') +
-          sl('Phrase', 'ambient-beat-bars', 1, 8, 1, 'bars (euclid)') +
-          sl('Pulses', 'ambient-beat-pulses', 1, 16, 4, 'euclid hits / bar') +
-          sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
-          sl('Rotate', 'ambient-beat-rotate', 0, 15, 0, 'euclid offset') +
-          tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
-          sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
-          condCtrl('beat') +
-          sl('Rhythm var', 'ambient-beat-rhythmVar', 0, 100, 0, 'stochastic') +
-          sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') +
-          sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
-          _ambSpreadCtrl('ambient-beat', null) +
-          modUi('beat') +
-          fxUi('beat') +
+          grp('Voice') +
+            '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
+              '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
+            _ambGenSel('ambient-beat-') +
+            sl('Attack', 'ambient-beat-attack', 0, 500, 1, 'ms') +
+            sl('Decay', 'ambient-beat-decay', 0, 2000, 60, 'ms') +
+            sl('Sustain', 'ambient-beat-sustain', 0, 100, 70, '%') +
+            sl('Release', 'ambient-beat-release', 0, 2000, 120, 'ms') +
+            sl('Fine', 'ambient-beat-fine', -100, 100, 0, 'cents') + gpe() +
+          grp('Unit') +
+            _ambRateSel('ambient-beat-rate') +
+            tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
+            _ambUnitSyncHtml('ambient-beat') + gpe() +
+          grp('Rhythm') +
+            sl('Phrase', 'ambient-beat-bars', 1, 8, 1, 'bars (euclid)') +
+            sl('Pulses', 'ambient-beat-pulses', 1, 16, 4, 'euclid hits / bar') +
+            sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
+            sl('Rotate', 'ambient-beat-rotate', 0, 15, 0, 'euclid offset') +
+            tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
+            sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
+            condCtrl('beat') + gpe() +
+          grp('Variation') +
+            sl('Rhythm var', 'ambient-beat-rhythmVar', 0, 100, 0, 'stochastic') +
+            sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') + gpe() +
+          grp('Mix') +
+            sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
+            _ambSpreadCtrl('ambient-beat', null) +
+            modUi('beat') +
+            fxUi('beat') + gpe() +
         '</div>' +
         // Extra generative instances render here (below the built-in Bed/Motif/
         // Texture/Beat block above). The Add button follows so it always sits at
@@ -8332,8 +8376,17 @@
       host.querySelectorAll('.ambient-collapse').forEach(btn => {
         btn.addEventListener('click', () => {
           const layer = btn.closest('.ambient-layer');
-          if (layer) layer.classList.toggle('collapsed');
+          if (!layer) return;
+          const collapsed = layer.classList.toggle('collapsed');
+          // Collapsing a layer also folds all its parameter groups.
+          if (collapsed) layer.querySelectorAll('.ambient-grp.open').forEach(g => g.classList.remove('open'));
         });
+      });
+      // Primary-layer parameter-group fold toggles (visual; not persisted, like
+      // the layer collapse above). Extras wire their own in _ambWireInst — those
+      // cards aren't in the DOM yet, so this only catches the primaries.
+      host.querySelectorAll('.ambient-grp-head').forEach(h => {
+        h.addEventListener('click', () => { const g = h.closest('.ambient-grp'); if (g) g.classList.toggle('open'); });
       });
       // Mixer collapse toggle (UI-only; the strip itself is re-rendered by
       // _ambRenderMixer as layers change).

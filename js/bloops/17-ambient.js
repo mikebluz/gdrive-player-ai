@@ -1995,7 +1995,21 @@
       const _loop0 = st._loop | 0;   // loop at THIS note (before the wrap below bumps it)
       // Advance the pass / entry cursor for NEXT time.
       st.note += 1;
-      if (st.note >= _ambArpEntryNotes(entry, dir, len)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
+      if (st.note >= _ambArpEntryNotes(entry, dir, len)) {
+        // EVOLVE: when the chord/loop just finished, re-roll its on/off pattern so
+        // it's fresh next time it comes around (st._loop is the chord that played;
+        // the wrap below bumps it). Lit ~60% of steps.
+        if (entry.evolve) {
+          const _ek = _arpProg ? Math.max(1, (notes.chords || []).length) : 1;
+          const _efc = _arpProg ? ((((st._loop | 0) % _ek) + _ek) % _ek) : 0;
+          if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
+          const _en = _ambArpEntryNotes(entry, dir, len), _ea = [];
+          for (let _s = 0; _s < _en; _s++) _ea[_s] = (Math.random() < 0.4);
+          entry.stepMutes[_efc] = _ea;
+          st._evolveSeq = (st._evolveSeq | 0) + 1;   // signals the open editor to refresh
+        }
+        st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1;
+      }
       // Skip the note (cursor already advanced, so timing stays steady) on a Rest,
       // a Sequence-tab muted step, a When-silenced loop, or a windowed past-note
       // catch-up (play === false).
@@ -6290,7 +6304,9 @@
           const chords = _ambArpEntryChords(entry);
           const blocks = chords || [_ambNotesOf(entry)];   // scale/wrap → one block
           if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
-          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</div>';
+          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel"><span>' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</span>' +
+            '<button type="button" class="amb-seqtool amb-seqevolve' + (entry.evolve ? ' active' : '') + '" data-act="evolve" data-ei="' + ei + '" title="Re-randomize each chord\'s pattern as the progression passes it">Evolve</button>' +
+            '</div>';
           blocks.forEach((src, ci) => {
             // Chord blocks: effective (unmuted) intervals like the Phrase tab.
             // Scale/wrap fallback block: the resolved scale intervals.
@@ -6368,6 +6384,7 @@
           const act = btn.getAttribute('data-act'), ei = btn.getAttribute('data-ei') | 0, ci = btn.getAttribute('data-ci') | 0;
           const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
           const entry = L2.steps[ei]; if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
+          if (act === 'evolve') { entry.evolve = !entry.evolve; persist(); render(); return; }   // toggle live re-randomize
           if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
           if (act === 'copy') { muteClip = entry.stepMutes[ci].slice(); render(); return; }   // enables Paste buttons
           if (act === 'paste') { if (!muteClip) return; entry.stepMutes[ci] = muteClip.slice(); }
@@ -6392,14 +6409,14 @@
       // off the audible clock), updated each frame while the Sequence tab is open.
       const hl = () => {
         if (!overlay.isConnected) { try { E._arpLiveKey = null; } catch (e) {} return; }
+        const L = getL(); const key = L ? (L.type + ':' + L.id) : null;
+        const st = (key && E.arpState) ? E.arpState[key] : null;
+        // Evolve re-rolled a chord's pattern → rebuild the grid to show it.
+        if (tab === 'sequence' && st && (st._evolveSeq | 0) !== (modal._evoSeq | 0)) { modal._evoSeq = st._evolveSeq | 0; render(); }
         let cur = null;
-        if (tab === 'sequence' && E.timer) {
-          const L = getL(); const key = L ? (L.type + ':' + L.id) : null;
-          const st = key && E.arpState && E.arpState[key];
-          if (st && Array.isArray(st.live) && st.live.length) {
-            const aNow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : 0) + 0.016;
-            for (let i = st.live.length - 1; i >= 0; i--) { if (st.live[i].at <= aNow) { cur = st.live[i]; break; } }
-          }
+        if (tab === 'sequence' && E.timer && st && Array.isArray(st.live) && st.live.length) {
+          const aNow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : 0) + 0.016;
+          for (let i = st.live.length - 1; i >= 0; i--) { if (st.live[i].at <= aNow) { cur = st.live[i]; break; } }
         }
         const next = cur ? modal.querySelector('.amb-seqcell[data-ei="' + cur.ei + '"][data-ci="' + cur.ci + '"][data-s="' + cur.s + '"]') : null;
         if (modal._hlCell && modal._hlCell !== next) { try { modal._hlCell.classList.remove('playing'); } catch (e) {} }

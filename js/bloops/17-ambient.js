@@ -566,11 +566,17 @@
       const arr = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
       return arr.find(w => w && w.id === id) || null;
     }
-    // The current chord of a progression note source (advances with _E.progStep).
+    // Per-layer progression override: when set (by a layer's emit to its own loop
+    // index), a progression advances ONE chord per that layer's unit/loop — so the
+    // unit IS a chord and prog layers stay in lockstep. null → the global clock.
+    let _ambProgStepOverride = null;
+    // The current chord of a progression note source. Uses the per-layer override
+    // when active, else the shared global step (_E.progStep, ~progRate).
     function _ambProgCurrentChord(n) {
       const chs = Array.isArray(n.chords) ? n.chords : [];
       if (!chs.length) return null;
-      const step = (_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0;
+      const step = (_ambProgStepOverride != null) ? (_ambProgStepOverride | 0)
+        : ((_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0);
       return chs[((step % chs.length) + chs.length) % chs.length] || null;
     }
     // ---- Instance "Key" -------------------------------------------------
@@ -1288,8 +1294,9 @@
       const bpm = _ambBpm();
       const barSec = (60 / bpm) * 4;                 // 4/4
       const bars   = Math.max(1, Math.min(8, inst.bars | 0) || 1);
-      const phraseSec = bars * barSec;
+      const phraseSec = bars * barSec;            // content length
       if (!(phraseSec > 0.05)) return;
+      const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
       const steps  = Math.max(2, Math.min(16, inst.steps | 0) || 8);
       const pulses = Math.max(1, Math.min(steps, inst.pulses | 0) || 1);
       const rotate = Math.max(0, inst.rotate | 0);
@@ -1312,13 +1319,16 @@
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
-      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / phraseSec));
-      const cTo   = Math.floor((tTo - st.startAt) / phraseSec);
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
+      const cTo   = Math.floor((tTo - st.startAt) / loopSec);
       let cap = 0;
+      const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per phrase cycle
+      try {
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         // 'when' conditional applies per phrase cycle (cycle = iteration index).
         if (!_ambCondFires(inst.when, c)) continue;
-        const cStart = st.startAt + c * phraseSec;
+        if (isProg) _ambProgStepOverride = c;
+        const cStart = st.startAt + c * loopSec;
         // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
         const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
@@ -1360,6 +1370,7 @@
           if (cap >= 256) break;
         }
       }
+      } finally { _ambProgStepOverride = null; }
       st.lastAt = tTo;
     }
 
@@ -1379,6 +1390,7 @@
       const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 2);
       const phraseSec = bars * barSec;
       if (!(phraseSec > 0.05)) return;
+      const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
       const perBar = Math.max(1, Math.min(16, inst.density | 0) || 8);
       const totalSlots = bars * perBar;
       const slotSec = barSec / perBar;
@@ -1411,12 +1423,15 @@
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
-      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / phraseSec));
-      const cTo   = Math.floor((tTo - st.startAt) / phraseSec);
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
+      const cTo   = Math.floor((tTo - st.startAt) / loopSec);
       let cap = 0;
+      const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per loop
+      try {
       for (let c = cFrom; c <= cTo && cap < 512; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        const cStart = st.startAt + c * phraseSec;
+        if (isProg) _ambProgStepOverride = c;
+        const cStart = st.startAt + c * loopSec;
         // Per-cycle RNG drives Vary — stable within a cycle, evolves per cycle.
         const vRnd = _ambSeededRand((baseSeed ^ ((c + 1) * 2246822519)) >>> 0);
         for (let i = 0; i < totalSlots; i++) {
@@ -1440,6 +1455,7 @@
           if (cap >= 512) break;
         }
       }
+      } finally { _ambProgStepOverride = null; }
       st.lastAt = tTo;
     }
 
@@ -1455,6 +1471,7 @@
       const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 1);
       const phraseSec = bars * barSec;
       if (!(phraseSec > 0.05)) return;
+      const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
       const perBar = Math.max(1, Math.min(16, inst.density | 0) || 4);
       const totalSlots = bars * perBar;
       const slotSec = barSec / perBar;
@@ -1483,12 +1500,15 @@
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
-      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / phraseSec));
-      const cTo   = Math.floor((tTo - st.startAt) / phraseSec);
+      const isProg = (_ambAsNotes(src).type === 'prog');
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
+      const cTo   = Math.floor((tTo - st.startAt) / loopSec);
       let cap = 0;
+      try {
       for (let c = cFrom; c <= cTo && cap < 512; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        const cStart = st.startAt + c * phraseSec;
+        if (isProg) _ambProgStepOverride = c;   // per-layer progression: one chord per loop
+        const cStart = st.startAt + c * loopSec;
         // One per-cycle RNG drives both Rests and Vary (stable within a cycle,
         // evolves per cycle — so the pedal stays mostly on the root and roams the
         // same way each pass until the cycle turns over).
@@ -1511,6 +1531,7 @@
           if (cap >= 512) break;
         }
       }
+      } finally { _ambProgStepOverride = null; }
       st.lastAt = tTo;
     }
 
@@ -1551,11 +1572,15 @@
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
+      const isProg = (n.type === 'prog');   // per-layer: one chord per drone cycle
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / cycleSec));
       const cTo   = Math.floor((tTo - st.startAt) / cycleSec);
       let cap = 0;
+      try {
       for (let c = cFrom; c <= cTo && cap < 64; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
+        if (isProg) _ambProgStepOverride = c;                 // advance this layer's progression
+        const cN = isProg ? Math.max(1, _ambScaleIntervals(src).length) : N;
         const cRnd = (timeVary > 0 || pitchVary > 0)
           ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
         let tOff = 0;
@@ -1565,10 +1590,10 @@
         let regShift = 0, degBase = rootDeg;
         if (cRnd && pitchVary > 0 && cRnd() * 100 < pitchVary) {
           regShift = (cRnd() < 0.5 ? -1 : 1);
-          if (!chordLike) degBase = Math.floor(cRnd() * N);   // single-note drone roams off the root degree
+          if (!chordLike) degBase = Math.floor(cRnd() * cN);   // single-note drone roams off the root degree
         }
         _ambKeyTime = at;
-        const degs = chordLike ? Array.from({ length: N }, (_, i) => i) : [degBase];
+        const degs = chordLike ? Array.from({ length: cN }, (_, i) => i) : [degBase];
         const bp = { type: vtype, attack: atk, decay: 0, sustain: 100, release: rel,
           volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan };
         if (dmod) bp._detuneMod = dmod;
@@ -1580,6 +1605,7 @@
         });
         cap++;
       }
+      } finally { _ambProgStepOverride = null; }
       st.lastAt = tTo;
     }
 
@@ -1829,6 +1855,9 @@
       if (!st || st.entry >= steps.length) st = S[key] = { entry: 0, note: 0, pos: 0 };
       const entry = steps[Math.min(st.entry, steps.length - 1)];
       const notes = _ambNotesOf(entry);
+      const _arpProg = (notes && notes.type === 'prog');   // per-layer: one chord per series loop
+      if (_arpProg) _ambProgStepOverride = (st._loop | 0);
+      try {
       const intervals = _ambScaleIntervals(notes);
       const N = Math.max(1, intervals.length);
       const octs = Math.max(1, Math.min(4, (arp.octaves | 0) || 2));
@@ -1848,7 +1877,7 @@
       // Advance the pass / entry cursor for NEXT time.
       const passLen = _ambArpPassLen(dir, len);
       st.note += 1;
-      if (st.note >= passLen * Math.max(1, (entry.passes | 0) || 1)) { st.note = 0; st.pos = 0; st.entry = (st.entry + 1) % steps.length; }
+      if (st.note >= passLen * Math.max(1, (entry.passes | 0) || 1)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
       // Rests skip the note (cursor already advanced, so timing stays steady).
       if (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0))) return;
       // Resolve an ASCENDING pool: degree d within octave o, lifted so chord/scale
@@ -1865,6 +1894,7 @@
       ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
       try { playNote(f, ap, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+      } finally { if (_arpProg) _ambProgStepOverride = null; }
     }
 
     // ================= BEAT engine ==================================
@@ -2618,7 +2648,8 @@
       }
       if (type === 'bass' || type === 'run' || type === 'pedal') {
         const bars = Math.max(1, (L.bars | 0) || 1);
-        return '⟳ ' + bars + ' bar' + (bars === 1 ? '' : 's') + ' = ' + fmt(bars * (60 / bpm) * 4) + ' @' + bpm;
+        const pad = Math.max(0, (L.unitPadMs | 0)) / 1000, baseSec = bars * (60 / bpm) * 4;
+        return '⟳ ' + bars + ' bar' + (bars === 1 ? '' : 's') + (pad > 0 ? ' + ' + fmt(pad) + ' pad' : '') + ' = ' + fmt(baseSec + pad) + ' @' + bpm;
       }
       if (type === 'seq') return '⟳ unit ' + fmt(_ambLayerPeriodSec(E, key, L, cfg));
       if (type === 'samp') return 'Δ ' + unitStr;
@@ -2637,6 +2668,210 @@
         });
       } catch (e) {}
     }
+    // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----
+    // A layer is "BPM-synced" when its Rate is a division (≠ Free); the free ms
+    // Interval then does nothing, so hide it. (p = the wire prefix, trailing '-'.)
+    function _ambUnitSyncViz(E, p, L) {
+      const intv = _ambGet(E, p + 'intervalMs'); if (!intv) return;
+      const ctrl = intv.closest('.ambient-ctrl'); if (!ctrl) return;
+      ctrl.style.display = (L && L.rate && _ambRateBeats(L.rate) > 0) ? 'none' : '';
+    }
+    function _ambUnitMatchHtml(p) {
+      return '<div class="ambient-ctrl ambient-unitmatch"><label>Match</label>' +
+        '<select id="' + p + '-umatch" class="ambient-select"></select>' +
+        '<button type="button" class="ambient-umatch-btn" id="' + p + '-umatch-go" title="Set this layer\'s unit length to the chosen layer\'s — closest unit ≤ it, padded with silence to match exactly">Sync</button></div>';
+    }
+    function _ambWireUnitMatch(E, inst, p, get) {
+      const sel = _ambGet(E, p + 'umatch'), go = _ambGet(E, p + 'umatch-go');
+      if (!sel || !go) return;
+      const selfKey = inst.type + ':' + inst.id;
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      const layers = (typeof _ambMixerLayers === 'function') ? _ambMixerLayers(E.getCfg()) : [];
+      sel.innerHTML = '<option value="">— pick layer —</option>' +
+        layers.filter(o => o.key !== selfKey).map(o => '<option value="' + esc(o.key) + '">' + esc(o.name) + '</option>').join('');
+      if (!go._ambBound) {
+        go._ambBound = true;
+        go.addEventListener('click', () => { const tk = sel.value, L = get(); if (tk && L) { try { _ambShowUnitMatchEditor(E, L, selfKey, tk); } catch (e) { console.warn('Unit match editor failed', e); } } });
+      }
+    }
+    // Set THIS layer's unit length to match the target layer's: pick the largest
+    // achievable unit ≤ target, then pad with silence (unitPadMs) so it's exact.
+    // Compute (without applying) the param changes that make a layer's unit equal
+    // `desiredSec`: closest achievable ≤ it, plus a silent pad. Returns
+    // { set, contentSec, padSec } — content plays, pad is silence to total desired.
+    function _ambUnitMatchPlan(E, L, key, cfg, desiredSec) {
+      const type = String(key).split(':')[0];
+      if (type === 'bass' || type === 'run' || type === 'pedal') {
+        const barSec = (60 / _ambBpm()) * 4, maxBars = (type === 'bass') ? 8 : 16;
+        const bars = Math.max(1, Math.min(maxBars, Math.floor(desiredSec / barSec + 1e-6)));
+        const content = bars * barSec, pad = Math.max(0, desiredSec - content);
+        return { set: { bars: bars, unitPadMs: Math.round(pad * 1000) }, contentSec: content, padSec: pad };
+      }
+      if (type === 'drone') {
+        const hold = Math.max(1, (L.hold | 0) || 1);
+        return { set: { rate: '', intervalMs: Math.max(20, Math.round((desiredSec / hold) * 1000)), unitPadMs: 0 }, contentSec: desiredSec, padSec: 0 };
+      }
+      if (type === 'arp') {
+        const n = Math.max(1, _ambArpSeriesInfo(L, cfg).totalNotes);
+        return { set: { rate: '', intervalMs: Math.max(20, Math.round((desiredSec / n) * 1000)), unitPadMs: 0 }, contentSec: desiredSec, padSec: 0 };
+      }
+      return { set: { rate: '', intervalMs: Math.max(20, Math.round(desiredSec * 1000)), unitPadMs: 0 }, contentSec: desiredSec, padSec: 0 };
+    }
+    // Structural event-onset fractions [0,1) within one unit (params-derived; no
+    // generator run), for the Match preview timeline.
+    // Note name for a frequency (e.g. 440 → "A4").
+    function _ambFreqName(f) {
+      if (f == null || !(f > 0)) return '';
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const m = Math.round(69 + 12 * Math.log2(f / A));
+      return names[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+    }
+    // The ordered note names an Arp plays across one series loop (ignoring
+    // randomness/rests — the underlying pattern), for the Match preview.
+    function _ambArpNoteNames(L, cfg) {
+      const steps = (Array.isArray(L.steps) && L.steps.length) ? L.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
+      const octs = Math.max(1, Math.min(4, (L.octaves | 0) || 2)), base = Math.max(1, Math.min(8, (L.register | 0) || 4));
+      const names = [];
+      steps.forEach(entry => {
+        const src = _ambNotesOf(entry), intervals = _ambScaleIntervals(src), N = Math.max(1, intervals.length), len = N * octs;
+        const dir = (entry && entry.dir) || L.dir || 'up', passLen = _ambArpPassLen(dir, len), passes = Math.max(1, (entry.passes | 0) || 1);
+        for (let p = 0; p < passes; p++) for (let i = 0; i < passLen; i++) {
+          const idx = _ambArpIndexFor(dir, i, len), d = idx % N, o = Math.floor(idx / N);
+          const carry = Math.floor((_ambSrcRootPc(src) + (intervals[d] | 0)) / 12);
+          names.push(_ambFreqName(_ambNoteFreq(intervals[d] | 0, base + o + carry, src)));
+        }
+      });
+      return names;
+    }
+    // Events in one unit for the Match preview: { at, dur, label } as fractions of
+    // the unit — onset, how long it sounds (from Length), and the note name(s)
+    // where deterministic (random/drum layers show bars without a pitch).
+    function _ambUnitEvents(E, key, L, cfg) {
+      const type = String(key).split(':')[0];
+      const period = Math.max(0.05, _ambLayerPeriodSec(E, key, L, cfg));
+      const lenSec = Math.max(0.02, (L.lengthMs | 0) / 1000 || 0.2);
+      const durFrac = Math.max(0.012, Math.min(1, lenSec / period));
+      const evs = [];
+      if (type === 'arp') {
+        const nn = _ambArpNoteNames(L, cfg), total = Math.max(1, nn.length);
+        for (let i = 0; i < total; i++) evs.push({ at: i / total, dur: durFrac, label: nn[i] });
+      } else if (type === 'drone') {
+        const src = _ambNotesOf(L), n = _ambAsNotes(src), N = Math.max(1, _ambScaleIntervals(src).length), reg = Math.max(1, Math.min(7, (L.register | 0) || 3));
+        let label = '';
+        if (n.type === 'chord' || n.type === 'wrap' || n.type === 'prog') { const a = []; for (let d = 0; d < Math.min(4, N); d++) { const f = _ambDegreeFreq(d, reg, src); if (f != null) a.push(_ambFreqName(f)); } label = a.join(' '); }
+        else { const d = Math.max(0, Math.min(N - 1, ((L.degree | 0) || 1) - 1)); label = _ambFreqName(_ambDegreeFreq(d, reg, src)); }
+        evs.push({ at: 0, dur: 0.985, label: label });   // held the whole cycle
+      } else if (type === 'pedal') {
+        const bars = Math.max(1, (L.bars | 0) || 1), dens = Math.max(1, Math.min(16, (L.density | 0) || 4)), total = bars * dens;
+        const src = _ambNotesOf(L), N = Math.max(1, _ambScaleIntervals(src).length), reg = Math.max(1, Math.min(7, (L.register | 0) || 4));
+        const d = Math.max(0, Math.min(N - 1, ((L.degree | 0) || 1) - 1)), lbl = _ambFreqName(_ambDegreeFreq(d, reg, src));
+        const cFrac = bars * (60 / _ambBpm()) * 4 / period;   // content portion (pad is silent)
+        for (let i = 0; i < total; i++) evs.push({ at: (i / total) * cFrac, dur: durFrac, label: lbl });
+      } else if (type === 'bass') {
+        const steps = Math.max(2, Math.min(16, (L.steps | 0) || 8)), pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1)), rotate = Math.max(0, L.rotate | 0), bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
+        const pat = (typeof euclideanPattern === 'function') ? euclideanPattern(pulses, steps, rotate) : [], totalS = bars * steps;
+        const cFrac = bars * (60 / _ambBpm()) * 4 / period;
+        for (let b = 0; b < bars; b++) for (let s = 0; s < steps; s++) if (pat[s] === 1) evs.push({ at: ((b * steps + s) / totalS) * cFrac, dur: durFrac, label: '' });
+      } else if (type === 'run') {
+        const bars = Math.max(1, (L.bars | 0) || 1), dens = Math.max(1, Math.min(16, (L.density | 0) || 8)), total = bars * dens;
+        const cFrac = bars * (60 / _ambBpm()) * 4 / period;
+        for (let i = 0; i < total; i++) evs.push({ at: (i / total) * cFrac, dur: durFrac, label: '' });
+      } else {
+        const iv = Math.max(0.02, _ambEffIntervalSec(L)), n = Math.max(1, Math.round(period / iv));
+        for (let i = 0; i < Math.min(64, n); i++) evs.push({ at: (i * iv) / period, dur: durFrac, label: '' });
+      }
+      return evs.sort((a, b) => a.at - b.at);
+    }
+    function _ambUnitMatch(E, L, key, targetKey, ratio) {
+      const cfg = E.getCfg(); if (!cfg || !L) return;
+      const tgt = _ambLayerByKey(E, targetKey); if (!tgt) return;
+      const T = _ambLayerPeriodSec(E, targetKey, tgt, cfg); if (!(T > 0)) return;
+      const r = (Number.isFinite(ratio) && ratio > 0) ? ratio : 1;
+      const desired = T * r;
+      const plan = _ambUnitMatchPlan(E, L, key, cfg, desired);
+      Object.assign(L, plan.set);
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { _ambSyncControls(E); } catch (e) {}
+      if (typeof showToast === 'function') showToast('Matched to ' + _ambLayerLabel(tgt, targetKey) + ' ×' + r + ' — ' + _ambFmtMs(Math.round(desired * 1000)));
+    }
+    // Sync editor: choose the ratio (this unit = target × ratio) and SEE how the
+    // two layers' audio events line up over the unit before applying.
+    const _AMB_UM_RATIOS = [['¼', 0.25], ['⅓', 1 / 3], ['½', 0.5], ['1', 1], ['2', 2], ['3', 3], ['4', 4]];
+    function _ambShowUnitMatchEditor(E, L, key, targetKey) {
+      const cfg = E.getCfg(); if (!cfg || !L) return;
+      const tgt = _ambLayerByKey(E, targetKey); if (!tgt) return;
+      const targetSec = _ambLayerPeriodSec(E, targetKey, tgt, cfg); if (!(targetSec > 0)) return;
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      const fmt = (s) => _ambFmtMs(Math.round(s * 1000));
+      const rgba = (c, a) => (typeof _shapeRgba === 'function') ? _shapeRgba(c, a) : c;
+      const thisName = _ambLayerLabel(L, String(key).split(':')[0]);
+      const tgtName = _ambLayerLabel(tgt, targetKey);
+      const tgtEvents = _ambUnitEvents(E, targetKey, tgt, cfg);
+      const TGT_C = '#4fd1c5', THIS_C = '#f6ad55';
+      const ratioLabel = (r) => { const f = _AMB_UM_RATIOS.find(rr => Math.abs(rr[1] - r) < 1e-6); return f ? ('×' + f[0]) : ('×' + (Math.round(r * 100) / 100)); };
+      let ratio = 1;
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-um-modal';
+      overlay.appendChild(modal);
+      const close = () => { try { overlay.remove(); } catch (e) {} };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      // Bars span each note's DURATION (from Length); labels show the pitch where
+      // deterministic. Tiled per unit with boundary lines so alignment is visible.
+      const drawTimeline = (desired, plan, thisEvents) => {
+        const cv = modal.querySelector('#amb-um-canvas'); if (!cv) return;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const cssW = cv.clientWidth || 320, cssH = 120;
+        cv.style.height = cssH + 'px'; cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+        const ctx = cv.getContext('2d'); if (!ctx) return; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssW, cssH);
+        const windowSec = Math.max(targetSec, desired) || 1;
+        const pps = cssW / windowSec, laneH = 22;
+        const drawLane = (y, periodSec, events, color) => {
+          for (let t = 0; t <= windowSec + 1e-6; t += periodSec) {   // unit boundaries
+            const x = Math.min(cssW - 0.5, t * pps);
+            ctx.strokeStyle = rgba(color, 0.6); ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(x, y - laneH / 2 - 5); ctx.lineTo(x, y + laneH / 2 + 5); ctx.stroke();
+          }
+          for (let base = 0; base < windowSec - 1e-6; base += periodSec) {   // events, tiled per unit
+            events.forEach(ev => {
+              const x0 = (base + ev.at * periodSec) * pps; if (x0 > cssW) return;
+              const w = Math.max(2.5, ev.dur * periodSec * pps), x1 = Math.min(cssW, x0 + w);
+              ctx.fillStyle = rgba(color, 0.8); ctx.fillRect(x0, y - laneH / 2, Math.max(2.5, x1 - x0), laneH);
+              ctx.strokeStyle = rgba(color, 1); ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, y - laneH / 2 + 0.5, Math.max(2.5, x1 - x0) - 1, laneH - 1);
+              if (ev.label && (x1 - x0) > 16) {   // pitch label inside the bar
+                ctx.fillStyle = '#0a0a14'; ctx.font = '9px Segoe UI, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                ctx.fillText(ev.label.length > 8 ? ev.label.slice(0, 8) : ev.label, x0 + 3, y);
+              }
+            });
+          }
+        };
+        ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = rgba(TGT_C, 0.95); ctx.fillText(esc(tgtName) + ' · ' + tgtEvents.length + ' notes', 2, 13);
+        drawLane(40, targetSec, tgtEvents, TGT_C);
+        ctx.fillStyle = rgba(THIS_C, 0.95); ctx.fillText(esc(thisName) + ' · ' + thisEvents.length + ' notes', 2, 76);
+        drawLane(103, desired, thisEvents, THIS_C);
+      };
+      const render = () => {
+        const desired = targetSec * ratio;
+        const plan = _ambUnitMatchPlan(E, L, key, cfg, desired);
+        const thisEvents = _ambUnitEvents(E, key, Object.assign({}, L, plan.set), cfg);   // post-match structure
+        modal.innerHTML =
+          '<div class="keep-sdiv-title">Match unit length</div>' +
+          '<div class="amb-um-ratios">' + _AMB_UM_RATIOS.map(rr => '<button type="button" class="amb-um-rbtn' + (Math.abs(rr[1] - ratio) < 1e-6 ? ' on' : '') + '" data-r="' + rr[1] + '">×' + rr[0] + '</button>').join('') + '</div>' +
+          '<div class="amb-um-calc"><span style="color:' + THIS_C + '">' + esc(thisName) + '</span> = <span style="color:' + TGT_C + '">' + esc(tgtName) + '</span> ' + fmt(targetSec) + ' ' + ratioLabel(ratio) + ' = <b>' + fmt(desired) + '</b>' + (plan.padSec > 0.001 ? ' <span class="amb-um-pad">(' + fmt(plan.contentSec) + ' + ' + fmt(plan.padSec) + ' silence)</span>' : '') + '</div>' +
+          '<canvas id="amb-um-canvas" class="amb-um-canvas"></canvas>' +
+          '<div class="sm-footer"><button type="button" class="sm-preview amb-um-cancel">Cancel</button><button type="button" class="sm-apply amb-um-ok">Sync</button></div>';
+        modal.querySelectorAll('.amb-um-rbtn').forEach(b => b.addEventListener('click', () => { ratio = parseFloat(b.dataset.r) || 1; render(); }));
+        const cx = modal.querySelector('.amb-um-cancel'); if (cx) cx.addEventListener('click', close);
+        const ok = modal.querySelector('.amb-um-ok'); if (ok) ok.addEventListener('click', () => { close(); _ambUnitMatch(E, L, key, targetKey, ratio); });
+        requestAnimationFrame(() => drawTimeline(desired, plan, thisEvents));
+      };
+      render();
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => { const d = targetSec * ratio; const pl = _ambUnitMatchPlan(E, L, key, cfg, d); drawTimeline(d, pl, _ambUnitEvents(E, key, Object.assign({}, L, pl.set), cfg)); });
+    }
     // The repeat period (seconds) of a layer's UNIT — one full iteration of
     // whatever loops: a Seq phrase, a Sample slice-grid step, a Bass phrase
     // cycle (bars), a Shape revolution, or a generative layer's event interval.
@@ -2651,9 +2886,9 @@
         return Math.max(0.1, (ms || 0) / 1000);
       }
       if (type === 'samp') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
-      if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
-      if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4; }
-      if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4; }
+      if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
+      if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
+      if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'drone') { const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1)); return hold * Math.max(0.05, _ambEffIntervalSec(L)); }
       if (type === 'arp') { const info = _ambArpSeriesInfo(L, cfg); return info.totalNotes * info.interval; }
       if (type === 'shape') {
@@ -3620,6 +3855,7 @@
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
+      E._playStartMs = performance.now();   // footer elapsed-time anchor
       _ambTick(E);
       E.timer = setInterval(() => _ambTick(E), 150);
       // The finer ramp clock only runs while ramps exist (started lazily) so a
@@ -3635,6 +3871,7 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      E._playStartMs = null;   // reset footer elapsed time to 00:00:00
       E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
       try { _ambFreezeStopAll(E); } catch (e) {}
@@ -4317,8 +4554,16 @@
     // Per-layer playback indicator: a thin bar in each layer head showing how
     // far through the current iteration (or frozen loop) playback is. Driven by
     // the viz rAF while the generator runs; reads the engine clocks/freeze state.
+    // Elapsed play time as MM:SS:hundredths.
+    function _ambFmtElapsed(ms) {
+      ms = Math.max(0, ms | 0);
+      const p2 = (n) => (n < 10 ? '0' : '') + n;
+      return p2(Math.floor(ms / 60000)) + ':' + p2(Math.floor((ms % 60000) / 1000)) + ':' + p2(Math.floor((ms % 1000) / 10));
+    }
     function _ambUpdatePlayheads(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
+      // Footer elapsed-time readout: counts up while playing, 0 when stopped.
+      { const elap = _ambGet(E, 'ambient-elapsed'); if (elap) elap.textContent = _ambFmtElapsed((E.timer && E._playStartMs) ? (performance.now() - E._playStartMs) : 0); }
       const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
       const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
       bars.forEach(el => {
@@ -4332,12 +4577,38 @@
         } else if (E.timer) {
           const layer = _ambLayerByKey(E, key);
           const on = !!(layer && layer.present !== false && layer.on);
-          const next = E.clocks && E.clocks[key];
-          if (on && typeof next === 'number' && next > now) {
-            const iv = Math.max(0.05, _ambEffIntervalSec(layer) || 1);
-            const x = (next - now) / iv;
-            prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
-            active = true;
+          const type = String(key).split(':')[0];
+          if (on && type === 'arp') {
+            // Fill across the whole SERIES loop (cursor position + fraction through
+            // the current note), not per-note — so the bar matches the unit length.
+            const info = _ambArpSeriesInfo(layer, E._cfg || E.getCfg());
+            const next = E.clocks && E.clocks[key], st = E.arpState && E.arpState[key];
+            if (typeof next === 'number' && info.totalNotes > 0) {
+              const into = st ? _ambArpNotesInto(info, st) : 0;
+              const rem = Math.max(0, Math.min(1, (next - now) / Math.max(0.02, info.interval)));
+              prog = (((into - rem) / info.totalNotes) % 1 + 1) % 1;
+              active = true;
+            }
+          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape')) {
+            // Windowed/phase-anchored layers track position in a phase clock, not
+            // E.clocks — fill the bar across the unit/loop from that anchor.
+            let st = null;
+            if (type === 'bass') st = E.bassPhase && E.bassPhase[key];
+            else if (type === 'shape') { const i = Math.max(0, Math.min((Array.isArray(layer.shapes) ? layer.shapes.length : 1) - 1, layer.sel | 0)); st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']); }
+            else st = E.runPhase && E.runPhase[key];
+            const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
+            if (st && st.startAt != null && P > 0 && now >= st.startAt) {
+              prog = (((now - st.startAt) % P) / P + 1) % 1;
+              active = true;
+            }
+          } else if (on) {
+            const next = E.clocks && E.clocks[key];
+            if (typeof next === 'number' && next > now) {
+              const iv = Math.max(0.05, _ambEffIntervalSec(layer) || 1);
+              const x = (next - now) / iv;
+              prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
+              active = true;
+            }
           }
         }
         el.style.setProperty('--ph', active ? prog.toFixed(3) : '0');
@@ -5098,24 +5369,28 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
-        ['grp', 'Rhythm'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitmatch'],
+        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Rhythm'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitmatch'],
+        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
-        ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitmatch'],
+        ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       beat: { label: 'Beat', ctrls: [
         ['grp', 'Voice'], ['kit'],
-        ['grp', 'Rhythm'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitmatch'],
+        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).
@@ -5129,7 +5404,8 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
-        ['grp', 'Rhythm'], ['rate'], ['tm', 'intervalMs', 'Rate', 40, 2000, 10], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['unitmatch'],
+        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -5137,21 +5413,24 @@
       bass: { label: 'Bass', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Rhythm'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitmatch'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Run: a fixed RANDOM note run, `bars` bars long, looping; Vary re-rolls.
       run: { label: 'Run', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
-        ['grp', 'Rhythm'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitmatch'],
+        ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
-        ['grp', 'Rhythm'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitmatch'],
+        ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -5159,13 +5438,14 @@
       drone: { label: 'Drone', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = key root)'], ['sl', 'register', 'Register', 1, 6, 'octave'],
-        ['grp', 'Rhythm'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitmatch'],
+        ['grp', 'Rhythm'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
     // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.
-    const _AMB_GROUP_DEFAULT_OPEN = { Voice: true, Mix: true };
+    const _AMB_GROUP_DEFAULT_OPEN = { Voice: true, Unit: true, Mix: true };
     function _ambGroupOpen(inst, name) {
       const go = inst && inst.groupsOpen;
       if (go && typeof go === 'object' && typeof go[name] === 'boolean') return go[name];
@@ -5194,7 +5474,7 @@
       // sliders start at 0 so the seed repeats verbatim until dialed up.
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
-        bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260,
+        bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
         rhythmVar: 0, pitchVar: 0, proximity: 40, restProb: 0, accent: 0,
       });
       // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
@@ -5202,13 +5482,13 @@
       // dialed up. A light rest % keeps the run from being wall-to-wall.
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
-        bars: 2, density: 8, lengthMs: 220, vary: 0, restProb: 10, accent: 20,
+        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, accent: 20,
       });
       // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
       // 4 (C4) + full volume matches a default Shape node so they sound the same.
       if (type === 'pedal') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 4,
-        bars: 1, density: 4, lengthMs: 400, restProb: 0, accent: 0, vary: 0, degree: 1,
+        bars: 1, density: 4, lengthMs: 400, unitPadMs: 0, restProb: 0, accent: 0, vary: 0, degree: 1,
         attack: 5, decay: 40, sustain: 75, release: 200,
       });
       // Drone: holds the key root every 4 units (4×2s = 8s) with a soft 200ms
@@ -5246,6 +5526,7 @@
         if (k === 'shapes') return _ambShapeBrowserHtml(p, inst);
         if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
         if (k === 'arpdir') return _ambArpDirHtml(p, inst);
+        if (k === 'unitmatch') return _ambUnitMatchHtml(p);
         return '';
       };
       sch.ctrls.forEach(c => {
@@ -5338,7 +5619,8 @@
         try {
           if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
           else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
-          else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; sync(); persist(); } }); } }
+          else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; _ambUnitSyncViz(E, p, L); sync(); persist(); } }); } }
+          else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
@@ -5359,6 +5641,7 @@
       setVal('fx-rev', inst.revSend);
       if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
+      try { _ambUnitSyncViz(E, p, inst); } catch (e) {}   // hide free Interval when BPM-synced
     }
     // ---- Arp layer: scale/chord series browser -----------------------------
     // Clear an Arp layer's playback cursor so a series/direction/passes edit
@@ -6043,7 +6326,7 @@
       run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       pedal:   [['register','Register',1,7],['degree','Note',1,12],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       drone:   [['degree','Note',1,12],['register','Register',1,6],['intervalMs','Unit (ms)',200,8000],['hold','Hold',1,16],['attack','Attack',0,8000],['release','Release',0,12000],['timeVary','Time vary',0,100],['pitchVary','Pitch vary',0,100],['level','Level',0,100]],
-      arp:     [['randomness','Randomness',0,100],['intervalMs','Rate (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      arp:     [['randomness','Randomness',0,100],['intervalMs','Interval (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       shape:   [['level','Level',0,100]],
       // Global (not per-layer): writes the shared tempo, so a BPM ramp retempos
       // grid + Bloom + Shapes together. Range is a musical 40–300.
@@ -6075,8 +6358,9 @@
           }
         }
       }
-      r.targets = r.targets.filter(t => typeof t === 'string' && t.indexOf('.') > 0);
-      if (!r.targets.length) r.targets = ['bed.level'];
+      // Dedupe (a stale duplicate showed as "2 targets" while the picker's Set
+      // ticked only one) and allow EMPTY (a target-less ramp is simply inert).
+      r.targets = Array.from(new Set(r.targets.filter(t => typeof t === 'string' && t.indexOf('.') > 0)));
       delete r.target;
       if (!Number.isFinite(r.a)) r.a = 0;
       if (!Number.isFinite(r.b)) r.b = 100;
@@ -6473,13 +6757,9 @@
       const cfg = E.getCfg(); if (!cfg) return;
       if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
       const newId = cfg.ramps.reduce((m, r) => Math.max(m, r.id | 0), 0) + 1;
-      const target = 'bed.level';
-      const res = _ambRampResolve(cfg, target);
-      // Default A and B to the target's CURRENT value (as a %) so adding a ramp
-      // doesn't immediately move (or silence) the parameter — the user then sets
-      // a distinct A/B span and adds more targets.
-      const curPct = (res && res.max > res.min) ? Math.round((res.obj[res.key] - res.min) / (res.max - res.min) * 100) : 50;
-      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [target], a: curPct, b: curPct, periodMs: 4000, wave: 'sine' }, newId, cfg));
+      // Start with NO target so the picker's first selection IS the only target
+      // (previously a default 'bed.level' lingered → "2 targets" after one pick).
+      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [], a: 0, b: 100, periodMs: 4000, wave: 'sine' }, newId, cfg));
       _ambRenderRamps(E);
       if (E.timer) { E._cfg = cfg; _ambStartRampClock(E); } // spin up the ramp clock if playing
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -6885,6 +7165,7 @@
           // Shape It (master only) — turn every Bloom layer into its own master
           // Shapes wheel. Sits to the left of Capture.
           (!E.isLane ? '<button type="button" id="ambient-shapeit-btn" class="ambient-footer-shapeit" title="Shape It — send every layer to master Shapes as its own wheel">⬡</button>' : '') +
+          '<span class="ambient-elapsed" id="ambient-elapsed" title="Elapsed play time (MM:SS:hundredths) — resets on Stop">00:00:00</span>' +
           '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';

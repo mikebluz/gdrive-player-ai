@@ -3868,9 +3868,12 @@
         const HZ = hz || horizon;
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, lc, cfg);
         const sc = _ambLayerScale(E, key, lc, cfg);   // Unit Sync time-scale (1 = Free)
+        // Texture's UNIT is its 16-slot pattern, so When gates whole patterns
+        // (16 steps), not each step — matching its status bar / step-div display.
+        const perCycle = (String(key).split(':')[0] === 'texture') ? 16 : 1;
         let g = 0;
         while (C[key] < HZ && g++ < guardMax) {
-          if (_ambCondFires(lc.when, I[key] | 0)) emit(C[key]);
+          if (_ambCondFires(lc.when, Math.floor((I[key] | 0) / perCycle))) emit(C[key]);
           I[key] = (I[key] | 0) + 1;
           C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc);   // floor so a fast Sync can't flood
         }
@@ -5279,6 +5282,18 @@
             if (typeof next === 'number' && next > now && P > 0.001) {
               const x = (next - now) / P;
               prog = ((Math.ceil(x) - x) % 1 + 1) % 1;
+              active = true;
+            }
+          } else if (on && type === 'texture') {
+            // Texture's UNIT is its 16-slot pattern, so the bar fills over the
+            // PATTERN (16 steps), flashing once per pattern — not once per step.
+            const cfg2 = E._cfg || E.getCfg();
+            const next = E.clocks && E.clocks[key];
+            const idx = E.iters && E.iters[key];
+            const step = Math.max(0.02, _ambStepSecFor(layer, 0.02, cfg2) * _ambLayerScale(E, key, layer, cfg2));
+            if (typeof next === 'number' && Number.isFinite(idx) && step > 0) {
+              const stepPos = idx - (next - now) / step;     // continuous step index at `now`
+              prog = (((stepPos % 16) + 16) % 16) / 16;       // position within the 16-step pattern
               active = true;
             }
           } else if (on) {

@@ -3231,11 +3231,16 @@
     // Multiply an engine's base interval / bar length by this to lock its unit.
     function _ambLayerScale(E, key, L, cfg) {
       const u = L && L.unit;
-      if (!u || u.mode !== 'sync' || !u.ref) return 1;
-      const nat = _ambNaturalUnitSec(E, key, L, cfg);
-      if (!(nat > 0.001)) return 1;
-      const res = _ambResolvedUnitSec(E, key, cfg, new Set());
-      return (res > 0.001) ? (res / nat) : 1;
+      if (!u || u.mode !== 'sync' || !u.ref) return 1;   // Free → no scaling, no work
+      try {
+        const nat = _ambNaturalUnitSec(E, key, L, cfg);
+        if (!(nat > 0.001)) return 1;
+        const res = _ambResolvedUnitSec(E, key, cfg, new Set());
+        if (!(res > 0.001)) return 1;
+        const sc = res / nat;
+        if (!(sc > 0) || !isFinite(sc)) return 1;
+        return Math.max(0.05, Math.min(40, sc));   // clamp so a pathological lock can't flood/stall the scheduler
+      } catch (e) { return 1; }
     }
     // The layer's effective unit length (Sync-aware) — used by the status bar,
     // unit readout, queue boundaries, and Unit-Match.
@@ -3595,7 +3600,7 @@
         while (C[key] < HZ && g++ < guardMax) {
           if (_ambCondFires(lc.when, I[key] | 0)) emit(C[key]);
           I[key] = (I[key] | 0) + 1;
-          C[key] += _ambStepSecFor(lc, minSec, cfg) * sc;
+          C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc);   // floor so a fast Sync can't flood
         }
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
@@ -3608,7 +3613,7 @@
         if (_ambFreezeGate(E, key, now, g.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
         try { runLayer(key, lc, guardMax, minSec, emit, g.hz); }
-        finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
       // Windowed wrapper — like stepLayer but for engines that schedule a whole
       // BPM-locked phrase over the lookahead (e.g. the Euclidean Beat). Anchors a
@@ -3621,7 +3626,7 @@
         if (_ambFreezeGate(E, key, now, gate.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key);
         try { emit(E, lc, key, now, gate.hz, lead, space, cfg); }
-        finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
@@ -3751,7 +3756,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitShape(E, ex, key, now, gate.hz, lead, space, cfg); }
-            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Bass layers realize a multi-bar euclidean phrase over the lookahead
@@ -3764,7 +3769,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitBass(E, ex, key, now, gate.hz, lead, space, cfg); }
-            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Run layers: a fixed random note-run that loops every `bars` bars,
@@ -3776,7 +3781,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitRun(E, ex, key, now, gate.hz, lead, space, cfg); }
-            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Pedal layers: a simple root-note loop. Windowed/phase-anchored too.
@@ -3787,7 +3792,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitPedal(E, ex, key, now, gate.hz, lead, space, cfg); }
-            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Drone layers: hold a note/chord, re-struck every `hold` units.
@@ -3799,7 +3804,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitDrone(E, ex, key, now, gate.hz, lead, space, cfg); }
-            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Euclidean Beat extra: windowed phrase like the primary beat.
@@ -3810,7 +3815,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitBeatEuclid(E, ex, key, now, gate.hz, lead, space, cfg); }
-            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           const gm = ex.type === 'bed' ? 8 : (ex.type === 'arp' ? 24 : 16);

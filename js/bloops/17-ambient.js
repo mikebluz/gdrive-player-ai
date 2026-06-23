@@ -6131,7 +6131,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'decay', 'Decay', 0, 4000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 12000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
-        ['grp', 'Pitch'], ['notes'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Pitch'], ['notes'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
         ['grp', 'Rhythm'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -6212,6 +6212,7 @@
         if (k === 'gen') return _ambGenSel(p + '-');
         if (k === 'rate') return _ambRateSel(p + '-rate');
         if (k === 'notes') return _ambNotesButtonHtml(p);
+        if (k === 'droneedit') return _ambDroneEditHtml(p);
         if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
         if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
         if (k === 'cond') return _ambCondCtrl(lk);
@@ -6319,6 +6320,7 @@
           else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }
           else if (k === 'unitsync') { _ambWireUnitSync(E, p, get, type + ':' + id); }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
+          else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
@@ -6376,6 +6378,83 @@
       if (n.type === 'chord') return [n];
       if (n.type === 'prog' && Array.isArray(n.chords) && n.chords.length) return n.chords;
       return null;
+    }
+    // ---- Drone note editor -------------------------------------------------
+    // The Drone plays one note/chord per iteration, so (unlike the Arp's series)
+    // there's nothing to sequence — this popover just edits the NOTES of the
+    // current source: the single chord, or every chord of a progression. Reuses
+    // the Arp cell model (_ambChordCellCycle / _ambChordEffIntervals), so muting a
+    // tone drops it from the Density/Degree stack on the next iteration.
+    function _ambDroneEditHtml(p) {
+      return '<div class="ambient-ctrl"><label>Notes ✎</label>' +
+        '<button type="button" class="ambient-select ambient-arp-edit" id="' + p + '-droneedit" title="Edit the chord notes (or each chord of the progression): tap a note add → mute → remove">Edit notes</button>' +
+        '<span class="ambient-hint">chord tones</span></div>';
+    }
+    function _ambWireDroneEdit(E, inst, p, get) {
+      const btn = _ambGet(E, p + 'droneedit'); if (!btn) return;
+      btn.addEventListener('click', () => { try { _ambShowDroneChordEditor(E, get); } catch (e) { console.warn('Drone note editor failed', e); } });
+    }
+    function _ambShowDroneChordEditor(E, getL) {
+      const L0 = getL(); if (!L0) return;
+      const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
+      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-chordedit-modal';
+      overlay.appendChild(modal);
+      const close = () => { try { overlay.remove(); } catch (e) {} };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      const dispOf = (o) => ({
+        iv: (Array.isArray(o.intervals) && o.intervals.length) ? o.intervals
+          : ((o.form && typeof _ambChordIntervals === 'function') ? _ambChordIntervals(o.form, o.inversion) : [0, 4, 7]),
+        m: Array.isArray(o.muted) ? o.muted : [],
+      });
+      const cellHtml = (disp, iv, rootPc) => {
+        const inI = disp.iv.indexOf(iv) >= 0, inM = disp.m.indexOf(iv) >= 0;
+        const cls = inI ? (inM ? 'muted' : 'on') : 'off';
+        const nm = names[((rootPc + iv) % 12 + 12) % 12];
+        const oct = iv >= 12 ? '′' : '';
+        return '<button type="button" class="amb-ce-cell ' + cls + '" data-iv="' + iv + '">' + esc(nm) + oct + '</button>';
+      };
+      const chordsNow = () => _ambArpEntryChords({ notes: _ambNotesOf(getL() || L0) });
+      const render = () => {
+        const L = getL() || L0;
+        const src = _ambNotesOf(L);
+        const chords = _ambArpEntryChords({ notes: src });
+        let h = '<div class="keep-sdiv-title">Drone Notes</div>';
+        if (!chords) {
+          h += '<div class="amb-ce-na">This Drone is on a ' + esc(_ambNotesLabel(src)) + ' source. Pick a Chord or Progression (the Notes button) to edit its notes here.</div>';
+        } else {
+          h += '<div class="amb-ce-hint">Tap a note: add → mute → remove.' + (chords.length > 1 ? ' One block per chord of the progression.' : '') + '</div><div class="amb-ce-list"><div class="amb-ce-entry">';
+          chords.forEach((o, ci) => {
+            const disp = dispOf(o);
+            const rootPc = ((o.root | 0) % 12 + 12) % 12;
+            const unmuted = Math.max(1, disp.iv.filter(iv => disp.m.indexOf(iv) < 0).length);
+            h += '<div class="amb-ce-chord" data-ci="' + ci + '">';
+            h += '<div class="amb-ce-chead"><span class="amb-ce-croot">' + esc(names[rootPc]) + (chords.length > 1 ? ' · ' + (ci + 1) : '') + '</span><span class="amb-ce-cann">' + unmuted + ' notes</span></div>';
+            h += '<div class="amb-ce-grid">';
+            for (let iv = 0; iv < 12; iv++) h += cellHtml(disp, iv, rootPc);
+            h += '</div><div class="amb-ce-grid">';
+            for (let iv = 12; iv < 24; iv++) h += cellHtml(disp, iv, rootPc);
+            h += '</div></div>';
+          });
+          h += '</div></div>';
+        }
+        h += '<div class="sm-footer"><button type="button" class="sm-apply amb-ce-ok">Done</button></div>';
+        modal.innerHTML = h;
+        const okB = modal.querySelector('.amb-ce-ok'); if (okB) okB.addEventListener('click', close);
+        modal.querySelectorAll('.amb-ce-cell').forEach(btn => btn.addEventListener('click', () => {
+          const chordEl = btn.closest('.amb-ce-chord'); if (!chordEl) return;
+          const ci = chordEl.getAttribute('data-ci') | 0;
+          const cs = chordsNow(); if (!cs || !cs[ci]) return;
+          // Engine re-reads the source live per iteration — no reset needed.
+          _ambChordCellCycle(cs[ci], (btn.getAttribute('data-iv') | 0));
+          persist();
+          render();
+        }));
+      };
+      render();
+      document.body.appendChild(overlay);
     }
     // Popover: edit the NOTES of every chord across the Arp series (add / remove /
     // mute each note). Two octaves of semitone cells per chord, relative to root.

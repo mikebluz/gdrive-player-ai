@@ -1992,6 +1992,7 @@
       else idx = _ambArpIndexFor(dir, st.note, len);
       const _stepIdx = st.note;   // this note's step position in the entry sweep (Sequence-tab mutes)
       const _ei = st.entry | 0;
+      const _loop0 = st._loop | 0;   // loop at THIS note (before the wrap below bumps it)
       // Advance the pass / entry cursor for NEXT time.
       st.note += 1;
       if (st.note >= _ambArpEntryNotes(entry, dir, len)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
@@ -2003,7 +2004,7 @@
       // its own block): entry.stepMutes[chordIdx][stepIdx]. chordIdx tracks the
       // progression (st._loop), or 0 for a single chord/scale.
       const _K = _arpProg ? Math.max(1, (notes.chords || []).length) : 1;
-      const _ci = _arpProg ? ((((st._loop | 0) % _K) + _K) % _K) : 0;
+      const _ci = _arpProg ? (((_loop0 % _K) + _K) % _K) : 0;   // chord of THIS note (pre-wrap loop)
       const _cm = Array.isArray(entry.stepMutes) ? entry.stepMutes[_ci] : null;
       const _stepMuted = !!(Array.isArray(_cm) && _cm[_stepIdx]);
       // While the Sequence editor is open on this arp, record each note's

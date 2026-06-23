@@ -6259,6 +6259,7 @@
         return '×' + Math.max(1, (entry.passes | 0) || 1) + ' · ' + notes + '♪';
       };
       let tab = 'phrase';
+      let muteClip = null;   // copied on/off pattern (Sequence tab, this session)
       const renderPhrase = (steps) => {
         let h = '<div class="amb-ce-hint">Tap a note: add → mute → remove. The badge shows plays × total notes per loop.</div><div class="amb-ce-list">';
         steps.forEach((entry, ei) => {
@@ -6302,7 +6303,13 @@
             const total = _ambArpEntryNotes(entry, dir, len);
             if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
             const mutes = entry.stepMutes[ci];
-            if (chords) h += '<div class="amb-seqlabel">' + esc(names[rootPc]) + ' · ' + total + ' steps</div>';
+            h += '<div class="amb-seqlabel"><span class="amb-seqname">' + (chords ? esc(names[rootPc]) + ' · ' : '') + total + ' steps</span>' +
+              '<span class="amb-seqtools">' +
+                '<button type="button" class="amb-seqtool" data-act="copy" data-ei="' + ei + '" data-ci="' + ci + '" title="Copy this chord\'s on/off pattern">Copy</button>' +
+                '<button type="button" class="amb-seqtool' + (muteClip ? '' : ' dim') + '" data-act="paste" data-ei="' + ei + '" data-ci="' + ci + '" title="Paste the copied pattern here">Paste</button>' +
+                '<button type="button" class="amb-seqtool" data-act="reset" data-ei="' + ei + '" data-ci="' + ci + '" title="Unmute every step">Reset</button>' +
+                '<button type="button" class="amb-seqtool" data-act="rand" data-ei="' + ei + '" data-ci="' + ci + '" title="Randomly mute / unmute steps">Rand</button>' +
+              '</span></div>';
             let s = 0;
             while (s < total && s < 512) {
               h += '<div class="amb-seqgrid">';
@@ -6355,6 +6362,29 @@
           const m = entry.stepMutes[ci][s] = !entry.stepMutes[ci][s];
           btn.classList.toggle('muted', m); btn.classList.toggle('on', !m);
           persist();
+        }));
+        modal.querySelectorAll('.amb-seqtool').forEach(btn => btn.addEventListener('click', () => {
+          if (btn.classList.contains('dim')) return;
+          const act = btn.getAttribute('data-act'), ei = btn.getAttribute('data-ei') | 0, ci = btn.getAttribute('data-ci') | 0;
+          const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
+          const entry = L2.steps[ei]; if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
+          if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
+          if (act === 'copy') { muteClip = entry.stepMutes[ci].slice(); render(); return; }   // enables Paste buttons
+          if (act === 'paste') { if (!muteClip) return; entry.stepMutes[ci] = muteClip.slice(); }
+          else if (act === 'reset') { entry.stepMutes[ci] = []; }
+          else if (act === 'rand') {
+            const dir = (entry.dir) || (getL() || L0).dir || 'up';
+            const octs = Math.max(1, Math.min(4, ((getL() || L0).octaves | 0) || 2));
+            const chs = _ambArpEntryChords(entry);
+            let N;
+            if (chs && chs[ci]) { const disp = dispOf(chs[ci]); N = Math.max(1, disp.iv.filter(iv => disp.m.indexOf(iv) < 0).length); }
+            else { N = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length); }
+            const total = _ambArpEntryNotes(entry, dir, N * octs);
+            const arr = []; for (let s = 0; s < total; s++) arr[s] = (Math.random() < 0.4);
+            entry.stepMutes[ci] = arr;
+          }
+          persist();
+          render();   // engine reads stepMutes live — no _ambResetArp, so playback keeps running
         }));
         const ok = modal.querySelector('.amb-ce-ok'); if (ok) ok.addEventListener('click', () => { close(); try { _ambRenderArpList(E, getL, 'ambient-' + L.type + '-' + L.id + '-'); } catch (e) {} });
       };

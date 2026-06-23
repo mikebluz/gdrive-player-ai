@@ -287,6 +287,7 @@
       _ambNormalizeFx(s);
       _ambNormalizeNotes(s);
       _ambNormalizeSpread(s);
+      _ambNormalizeUnit(s);
       return s;
     }
     // A Sample layer plays a single-buffer `sample:<id>` raw. `chop` 1 = retrigger
@@ -311,6 +312,7 @@
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
       _ambNormalizeSpread(s);
+      _ambNormalizeUnit(s);
       return s;
     }
     // Migrate + backfill a Bloom config in place (shared by per-lane + master).
@@ -401,6 +403,7 @@
         if (typeof cfg[l].present !== 'boolean') cfg[l].present = (l === 'bed') ? true : !!cfg[l].on;
       });
       ['bed', 'motif', 'texture'].forEach(l => _ambNormalizeNotes(cfg[l]));
+      ['bed', 'motif', 'texture', 'beat'].forEach(l => _ambNormalizeUnit(cfg[l]));
       // Seq layers: ensure array; migrate a legacy single `seq` slot → seqs[].
       if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
       if (cfg.seq && typeof cfg.seq === 'object') {
@@ -435,6 +438,7 @@
         if (typeof x.present !== 'boolean') x.present = true;
         _ambNormalizeModObj(x, _ambDefaultMod());
         _ambNormalizeFx(x);
+        _ambNormalizeUnit(x);
         if (x.type !== 'beat' && x.type !== 'shape' && x.type !== 'arp') _ambNormalizeNotes(x);
         if (x.type === 'shape') {
           if (!Array.isArray(x.shapes) || !x.shapes.length) x.shapes = (typeof _shapeDefault === 'function') ? [_shapeDefault()] : [];
@@ -1381,7 +1385,7 @@
       if (!E.bassPhase) E.bassPhase = {};
       if (typeof euclideanPattern !== 'function') return;
       const bpm = _ambBpm();
-      const barSec = (60 / bpm) * 4;                 // 4/4
+      const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, inst, cfg);   // 4/4, Unit-Sync scaled
       const bars   = Math.max(1, Math.min(8, inst.bars | 0) || 1);
       const phraseSec = bars * barSec;            // content length
       if (!(phraseSec > 0.05)) return;
@@ -1475,7 +1479,7 @@
     function _ambEmitRun(E, inst, key, now, horizon, lead, space, cfg) {
       if (!E.runPhase) E.runPhase = {};
       const bpm = _ambBpm();
-      const barSec = (60 / bpm) * 4;                 // 4/4
+      const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, inst, cfg);   // 4/4, Unit-Sync scaled
       const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 2);
       const phraseSec = bars * barSec;
       if (!(phraseSec > 0.05)) return;
@@ -1556,7 +1560,7 @@
     function _ambEmitPedal(E, inst, key, now, horizon, lead, space, cfg) {
       if (!E.runPhase) E.runPhase = {};
       const bpm = _ambBpm();
-      const barSec = (60 / bpm) * 4;                 // 4/4
+      const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, inst, cfg);   // 4/4, Unit-Sync scaled
       const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 1);
       const phraseSec = bars * barSec;
       if (!(phraseSec > 0.05)) return;
@@ -1631,7 +1635,7 @@
     // Phase-anchored to a downbeat like Pedal/Run; follows the key per note.
     function _ambEmitDrone(E, inst, key, now, horizon, lead, space, cfg) {
       if (!E.runPhase) E.runPhase = {};
-      const unitSec = Math.max(0.05, _ambEffIntervalSec(inst));
+      const unitSec = Math.max(0.05, _ambEffIntervalSec(inst)) * _ambLayerScale(E, key, inst, cfg);   // Unit-Sync scaled
       const hold = Math.max(1, Math.min(64, inst.hold | 0) || 1);
       const cycleSec = hold * unitSec;
       if (!(cycleSec > 0.05)) return;
@@ -2126,7 +2130,7 @@
       if (!E.runPhase) E.runPhase = {};
       if (typeof euclideanPattern !== 'function') return;
       const bpm = _ambBpm();
-      const barSec = (60 / bpm) * 4;                 // 4/4
+      const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, inst, cfg);   // 4/4, Unit-Sync scaled
       const bars   = Math.max(1, Math.min(8, inst.bars | 0) || 1);
       const phraseSec = bars * barSec;
       if (!(phraseSec > 0.05)) return;
@@ -2800,6 +2804,12 @@
       const rate = (L.rate && _ambRateBeats(L.rate) > 0) ? L.rate : null;
       const unitSec = _ambEffIntervalSec(L);
       const unitStr = rate ? (rate + ' (' + fmt(unitSec) + ')') : fmt(unitSec);
+      // Synced layers show what they're locked to + the resolved length.
+      if (L.unit && L.unit.mode === 'sync' && L.unit.ref) {
+        const n = Math.max(1, L.unit.num | 0), d = Math.max(1, L.unit.den | 0);
+        const ratioStr = (n === d) ? '' : (' ×' + (d === 1 ? n : (n + '/' + d)));
+        return '🔒 ' + _ambRefLabel(E, L.unit.ref, cfg) + ratioStr + ' = ' + fmt(_ambLayerPeriodSec(E, key, L, cfg));
+      }
       if (type === 'arp') {
         const info = _ambArpSeriesInfo(L, cfg);
         return '⟳ ' + info.totalNotes + ' notes × ' + (rate ? rate : fmt(info.interval)) + ' = ' + fmt(info.totalNotes * info.interval);
@@ -2844,6 +2854,75 @@
       const intv = _ambGet(E, p + 'intervalMs'); if (!intv) return;
       const ctrl = intv.closest('.ambient-ctrl'); if (!ctrl) return;
       ctrl.style.display = (L && L.rate && _ambRateBeats(L.rate) > 0) ? 'none' : '';
+    }
+    // ----- Unit-Sync control (Free / Sync = Reference × Ratio) --------------
+    const _AMB_RATIOS = [[1,4,'×¼'],[1,3,'×⅓'],[1,2,'×½'],[2,3,'×⅔'],[3,4,'×¾'],[1,1,'×1'],[3,2,'×1½'],[2,1,'×2'],[3,1,'×3'],[4,1,'×4']];
+    // Reference options for a layer: Bar/Beat grid + every OTHER present layer
+    // (its whole unit, and a sub-unit when it divides — one chord/bar/step/hold).
+    function _ambRefOptions(E, selfKey) {
+      const cfg = E.getCfg();
+      const opts = [['bar', 'Bar'], ['beat', 'Beat']];
+      const layers = (typeof _ambMixerLayers === 'function') ? _ambMixerLayers(cfg) : [];
+      layers.forEach(o => {
+        if (!o || o.key === selfKey) return;
+        opts.push([o.key, o.name]);
+        if (_ambLayerSubCount(o.layer, o.key) > 1) opts.push([o.key + '#sub', o.name + ' · ' + _ambLayerSubLabel(o.layer, o.key)]);
+      });
+      return opts;
+    }
+    // Human label for a Reference descriptor (for the header readout).
+    function _ambRefLabel(E, ref, cfg) {
+      if (!ref || ref === 'bar') return 'Bar';
+      if (ref === 'beat') return 'Beat';
+      const sub = ref.indexOf('#sub') >= 0;
+      const refKey = sub ? ref.slice(0, ref.indexOf('#sub')) : ref;
+      const RL = _ambLayerByKey(E, refKey);
+      const nm = RL ? _ambLayerLabel(RL, refKey) : refKey;
+      return sub ? (nm + ' ' + _ambLayerSubLabel(RL, refKey)) : nm;
+    }
+    function _ambUnitSyncHtml(p) {
+      return '<div class="ambient-ctrl ambient-unitsync" title="Unit length — Free (its own length) or Sync (lock to a reference × ratio)">' +
+        '<label>Unit</label>' +
+        '<span class="ambient-seg-row ambient-usync-seg">' +
+          '<button type="button" class="ambient-seg amb-usync-mode" data-usmode="free" id="' + p + '-us-free">Free</button>' +
+          '<button type="button" class="ambient-seg amb-usync-mode" data-usmode="sync" id="' + p + '-us-sync">Sync</button>' +
+        '</span></div>' +
+        '<div class="ambient-ctrl ambient-usync-lock" id="' + p + '-us-lock">' +
+          '<label for="' + p + '-us-ref">Lock to</label>' +
+          '<select id="' + p + '-us-ref" class="ambient-select"></select>' +
+          '<select id="' + p + '-us-ratio" class="ambient-select amb-usync-ratio"></select>' +
+        '</div>';
+    }
+    function _ambUnitSyncModeVis(E, p, L) {
+      const sync = !!(L && L.unit && L.unit.mode === 'sync');
+      const lock = _ambGet(E, p + 'us-lock'); if (lock) lock.style.display = sync ? '' : 'none';
+      const fb = _ambGet(E, p + 'us-free'); if (fb) fb.classList.toggle('on', !sync);
+      const sb = _ambGet(E, p + 'us-sync'); if (sb) sb.classList.toggle('on', sync);
+    }
+    // Wire the Unit-Sync control. `p` ends in '-'; `selfKey` excludes the layer
+    // from its own reference list. Re-populates references each render so newly
+    // added layers appear.
+    function _ambWireUnitSync(E, p, get, selfKey) {
+      const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
+      const refresh = () => { _ambUnitSyncModeVis(E, p, get()); try { _ambSyncLayerUnits(E); } catch (e) {} };
+      const ref = _ambGet(E, p + 'us-ref'), ratio = _ambGet(E, p + 'us-ratio');
+      const fb = _ambGet(E, p + 'us-free'), sb = _ambGet(E, p + 'us-sync');
+      const L0 = get();
+      if (ref) {
+        ref.innerHTML = _ambRefOptions(E, selfKey).map(o => '<option value="' + o[0] + '">' + String(o[1]).replace(/[<>&"]/g, '') + '</option>').join('');
+        ref.value = (L0 && L0.unit && L0.unit.ref) || 'bar'; if (!ref.value) ref.value = 'bar';
+        if (!ref._usB) { ref._usB = true; ref.addEventListener('change', () => { const L = get(); if (L && L.unit) { L.unit.ref = ref.value || 'bar'; sync(); persist(); refresh(); } }); }
+      }
+      if (ratio) {
+        ratio.innerHTML = _AMB_RATIOS.map(r => '<option value="' + r[0] + '/' + r[1] + '">' + r[2] + '</option>').join('');
+        ratio.value = (L0 && L0.unit) ? (((L0.unit.num | 0) || 1) + '/' + ((L0.unit.den | 0) || 1)) : '1/1';
+        if (!ratio._usB) { ratio._usB = true; ratio.addEventListener('change', () => { const L = get(); if (L && L.unit) { const m = /^(\d+)\/(\d+)$/.exec(ratio.value); if (m) { L.unit.num = parseInt(m[1], 10) || 1; L.unit.den = parseInt(m[2], 10) || 1; } sync(); persist(); refresh(); } }); }
+      }
+      const setMode = (mode) => { const L = get(); if (!L || !L.unit) return; L.unit.mode = mode; sync(); persist(); refresh(); };
+      if (fb && !fb._usB) { fb._usB = true; fb.addEventListener('click', () => setMode('free')); }
+      if (sb && !sb._usB) { sb._usB = true; sb.addEventListener('click', () => setMode('sync')); }
+      _ambUnitSyncModeVis(E, p, L0);
     }
     function _ambUnitMatchHtml(p) {
       return '<div class="ambient-ctrl ambient-unitmatch"><label>Match</label>' +
@@ -3045,7 +3124,9 @@
     // whatever loops: a Seq phrase, a Sample slice-grid step, a Bass phrase
     // cycle (bars), a Shape revolution, or a generative layer's event interval.
     // Used by Queue mode to land an on/off change on the layer's own boundary.
-    function _ambLayerPeriodSec(E, key, L, cfg) {
+    // The layer's NATURAL (Free) unit length — its own params, no Sync scaling.
+    // This is the building block; _ambLayerPeriodSec layers Sync on top.
+    function _ambNaturalUnitSec(E, key, L, cfg) {
       const type = String(key).split(':')[0];
       if (type === 'seq') {
         if (L.intervalMode === 'manual') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
@@ -3071,6 +3152,89 @@
       }
       return Math.max(0.05, _ambEffIntervalSec(L)); // bed/motif/texture/beat/arp
     }
+    // Ensure a layer's Unit-Sync descriptor exists (default FREE). `unit` =
+    // { mode:'free'|'sync', ref, num, den }. Free is the default everywhere.
+    function _ambNormalizeUnit(L) {
+      if (!L || typeof L !== 'object') return;
+      let u = L.unit;
+      if (!u || typeof u !== 'object') u = L.unit = {};
+      u.mode = (u.mode === 'sync') ? 'sync' : 'free';
+      if (typeof u.ref !== 'string' || !u.ref) u.ref = 'bar';
+      u.num = Math.max(1, Math.min(64, (u.num | 0) || 1));
+      u.den = Math.max(1, Math.min(64, (u.den | 0) || 1));
+    }
+    // ===== Unified Unit system =========================================
+    // Every layer's unit is either FREE (its own natural length, the default) or
+    // SYNC (= a Reference × a Ratio). References resolve to seconds: the BPM grid
+    // ('bar'/'beat'), another layer's whole unit (its key), or a SUB-unit of
+    // another layer (key + '#sub' — one chord/bar/step/hold). Sync time-SCALES the
+    // layer's whole pattern to fit, locking boundaries with exact ratios (no pad).
+    // Scaling is computed live and never written to params, so reverting to Free
+    // restores the original rhythm exactly. Layer→layer refs are cycle-guarded.
+    //
+    // How many sub-cells a layer's unit divides into (for '#sub' references).
+    function _ambLayerSubCount(L, key) {
+      const type = String(key).split(':')[0];
+      if (type === 'arp')   return Math.max(1, (Array.isArray(L.steps) ? L.steps.length : 1));
+      if (type === 'drone') return Math.max(1, Math.min(64, (L.hold | 0) || 1));
+      if (type === 'bass')  return Math.max(1, Math.min(8,  (L.bars | 0) || 1));
+      if (type === 'run')   return Math.max(1, Math.min(16, (L.bars | 0) || 2));
+      if (type === 'pedal') return Math.max(1, Math.min(16, (L.bars | 0) || 1));
+      if (type === 'beat' && L.gen === 'euclid') return Math.max(1, Math.min(8, (L.bars | 0) || 1));
+      if (type === 'seq')   return Math.max(1, (Array.isArray(L.units) ? L.units.length : 1));
+      return 1; // bed/motif/texture/beat(random)/sample — no finer cell
+    }
+    // A label for a layer's sub-unit (used in the Reference dropdown).
+    function _ambLayerSubLabel(L, key) {
+      const type = String(key).split(':')[0];
+      if (type === 'arp')   return 'chord';
+      if (type === 'drone') return 'hold';
+      if (type === 'seq')   return 'unit';
+      return 'bar';
+    }
+    // Resolve a Reference descriptor → seconds. seen = keys already on the
+    // resolution stack (cycle guard).
+    function _ambUnitRefSec(E, ref, cfg, seen) {
+      const bpm = _ambBpm();
+      if (!ref || ref === 'bar')  return (60 / bpm) * 4;
+      if (ref === 'beat')         return (60 / bpm);
+      const sub = ref.indexOf('#sub') >= 0;
+      const refKey = sub ? ref.slice(0, ref.indexOf('#sub')) : ref;
+      const whole = _ambResolvedUnitSec(E, refKey, cfg, seen);
+      if (!sub) return whole;
+      const RL = _ambLayerByKey(E, refKey);
+      return RL ? (whole / _ambLayerSubCount(RL, refKey)) : whole;
+    }
+    // A layer's RESOLVED unit length — its sync target if synced, else natural.
+    function _ambResolvedUnitSec(E, key, cfg, seen) {
+      const L = _ambLayerByKey(E, key);
+      if (!L) return (60 / _ambBpm()) * 4;
+      const nat = _ambNaturalUnitSec(E, key, L, cfg);
+      const u = L.unit;
+      if (!u || u.mode !== 'sync' || !u.ref) return nat;
+      if (seen && seen.has(key)) return nat;          // break a ref cycle → fall back to natural
+      const s = seen || new Set(); s.add(key);
+      const refSec = _ambUnitRefSec(E, u.ref, cfg, s);
+      if (!(refSec > 0)) return nat;
+      const r = Math.max(1, u.num | 0) / Math.max(1, u.den | 0);
+      const t = refSec * r;
+      return (t > 0.001) ? t : nat;
+    }
+    // Live time-scale for a layer: 1 when Free, else (synced target / natural).
+    // Multiply an engine's base interval / bar length by this to lock its unit.
+    function _ambLayerScale(E, key, L, cfg) {
+      const u = L && L.unit;
+      if (!u || u.mode !== 'sync' || !u.ref) return 1;
+      const nat = _ambNaturalUnitSec(E, key, L, cfg);
+      if (!(nat > 0.001)) return 1;
+      const res = _ambResolvedUnitSec(E, key, cfg, new Set());
+      return (res > 0.001) ? (res / nat) : 1;
+    }
+    // The layer's effective unit length (Sync-aware) — used by the status bar,
+    // unit readout, queue boundaries, and Unit-Match.
+    function _ambLayerPeriodSec(E, key, L, cfg) {
+      return _ambResolvedUnitSec(E, key, cfg, new Set());
+    }
     // Absolute time (Tone seconds) of the NEXT iteration boundary for layer
     // `key`. For a PLAYING layer the engine already tracks the next iteration
     // start (its clock / phase anchor) — that IS the boundary, so the current
@@ -3090,7 +3254,7 @@
           const info = _ambArpSeriesInfo(L, cfg);
           const c = E.clocks && E.clocks[key];
           const st = E.arpState && E.arpState[key];
-          if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval; }
+          if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval * _ambLayerScale(E, key, L, cfg); }
         } else if (!euclidBeat && (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
             type === 'texture' || type === 'beat')) {
           const c = E.clocks && E.clocks[key];
@@ -3125,7 +3289,7 @@
         const info = _ambArpSeriesInfo(L, cfg);
         const c = E.clocks && E.clocks[key];
         const st = E.arpState && E.arpState[key];
-        if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval; }
+        if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval * _ambLayerScale(E, key, L, cfg); }
         return (E._t0 != null ? E._t0 : now) + Math.ceil((now + eps - (E._t0 != null ? E._t0 : now)) / P) * P;
       }
       let A = null;
@@ -3419,11 +3583,12 @@
         if (E.windingDown) return; // Capture finalize: no new iterations (current ones, already scheduled, play out)
         const HZ = hz || horizon;
         if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(lc, cfg);
+        const sc = _ambLayerScale(E, key, lc, cfg);   // Unit Sync time-scale (1 = Free)
         let g = 0;
         while (C[key] < HZ && g++ < guardMax) {
           if (_ambCondFires(lc.when, I[key] | 0)) emit(C[key]);
           I[key] = (I[key] | 0) + 1;
-          C[key] += _ambStepSecFor(lc, minSec, cfg);
+          C[key] += _ambStepSecFor(lc, minSec, cfg) * sc;
         }
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
@@ -4778,11 +4943,13 @@
           if (on && type === 'arp') {
             // Fill across the whole SERIES loop (cursor position + fraction through
             // the current note), not per-note — so the bar matches the unit length.
-            const info = _ambArpSeriesInfo(layer, E._cfg || E.getCfg());
+            const cfg2 = E._cfg || E.getCfg();
+            const info = _ambArpSeriesInfo(layer, cfg2);
+            const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, layer, cfg2);   // Unit-Sync scaled per-note interval
             const next = E.clocks && E.clocks[key], st = E.arpState && E.arpState[key];
             if (typeof next === 'number' && info.totalNotes > 0) {
               const into = st ? _ambArpNotesInto(info, st) : 0;
-              const rem = Math.max(0, Math.min(1, (next - now) / Math.max(0.02, info.interval)));
+              const rem = Math.max(0, Math.min(1, (next - now) / Math.max(0.02, ivSc)));
               prog = (((into - rem) / info.totalNotes) % 1 + 1) % 1;
               active = true;
             }
@@ -4813,8 +4980,9 @@
             const next = E.clocks && E.clocks[key];
             if (typeof next === 'number' && next > now) {
               // Divide by the SAME interval the engine advances by (snapped in
-              // sync mode) so the bar can't drift away from the actual notes.
-              const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, E._cfg || E.getCfg()) || 1);
+              // sync mode, and Unit-Sync time-scaled) so the bar tracks the notes.
+              const cfg2 = E._cfg || E.getCfg();
+              const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, cfg2) * _ambLayerScale(E, key, layer, cfg2) || 1);
               const x = (next - now) / iv;
               prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
               active = true;
@@ -5617,27 +5785,27 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitmatch'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitmatch'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitmatch'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       beat: { label: 'Beat', ctrls: [
         ['grp', 'Voice'], ['kit'], ['gen'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitmatch'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
@@ -5652,7 +5820,7 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['unitmatch'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
@@ -5661,7 +5829,7 @@
       bass: { label: 'Bass', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitmatch'],
+        ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
@@ -5669,7 +5837,7 @@
       run: { label: 'Run', ctrls: [
         ['grp', 'Voice'], ['tone'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
-        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitmatch'],
+        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
@@ -5677,7 +5845,7 @@
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
-        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitmatch'],
+        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
@@ -5686,7 +5854,7 @@
       drone: { label: 'Drone', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = key root)'], ['sl', 'register', 'Register', 1, 6, 'octave'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitmatch'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
         ['grp', 'Rhythm'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
@@ -5776,6 +5944,7 @@
         if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
         if (k === 'arpdir') return _ambArpDirHtml(p, inst);
         if (k === 'unitmatch') return _ambUnitMatchHtml(p);
+        if (k === 'unitsync') return _ambUnitSyncHtml(p);
         return '';
       };
       sch.ctrls.forEach(c => {
@@ -5870,6 +6039,7 @@
           else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
           else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; _ambUnitSyncViz(E, p, L); sync(); persist(); } }); } }
           else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }
+          else if (k === 'unitsync') { _ambWireUnitSync(E, p, get, type + ':' + id); }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
@@ -7237,6 +7407,7 @@
       set('ambient-beat-rest', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
       try { _ambBeatGenVis(E, 'ambient-beat-', cfg.beat); } catch (e) {}
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer => { try { _ambWireUnitSync(E, 'ambient-' + layer + '-', () => cfg[layer], layer); } catch (e) {} });
       // Per-layer FX values.
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const L = cfg[layer]; if (!L) return;
@@ -7363,6 +7534,7 @@
           sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
           sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') +
           tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
+          _ambUnitSyncHtml('ambient-bed') +
           tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
           sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
           condCtrl('bed') +
@@ -7381,6 +7553,7 @@
           sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
           sl('Proximity', 'ambient-motif-proximity', 0, 100, 35, 'adjacent → leaps') +
           tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
+          _ambUnitSyncHtml('ambient-motif') +
           tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
           sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
           condCtrl('motif') +
@@ -7398,6 +7571,7 @@
           sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
           sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
           tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
+          _ambUnitSyncHtml('ambient-texture') +
           tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
           sl('Drift', 'ambient-texture-drift', 0, 99, 0, 'phase offset') +
           condCtrl('texture') +
@@ -7413,6 +7587,7 @@
           _ambGenSel('ambient-beat-') +
           _ambRateSel('ambient-beat-rate') +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
+          _ambUnitSyncHtml('ambient-beat') +
           sl('Phrase', 'ambient-beat-bars', 1, 8, 1, 'bars (euclid)') +
           sl('Pulses', 'ambient-beat-pulses', 1, 16, 4, 'euclid hits / bar') +
           sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
@@ -7709,6 +7884,8 @@
         });
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(bindCond);
+      ['bed', 'motif', 'texture', 'beat'].forEach(layer =>
+        _ambWireUnitSync(E, 'ambient-' + layer + '-', () => { const c = cfg0(); return c ? c[layer] : null; }, layer));
 
       const toggle = (id, layer) => {
         const el = G(id);

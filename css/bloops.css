@@ -2525,6 +2525,10 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
+    /* Unit-Sync: a Free/Sync toggle, then (when Sync) "Lock to" reference × ratio. */
+    .ambient-usync-seg { display: inline-flex; gap: 6px; }
+    .ambient-usync-lock { gap: 8px; }
+    .amb-usync-ratio { max-width: 78px; }
     /* "When" — a 16-step toggle grid (each cell = one cycle, lit = play), COLLAPSED
        by default behind a summary button. The lit cells ARE the binary; 2 rows of
        8 so they stay tappable on phones and the row never overflows. */

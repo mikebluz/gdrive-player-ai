@@ -6411,12 +6411,19 @@
         if (!overlay.isConnected) { try { E._arpLiveKey = null; } catch (e) {} return; }
         const L = getL(); const key = L ? (L.type + ':' + L.id) : null;
         const st = (key && E.arpState) ? E.arpState[key] : null;
-        // Evolve re-rolled a chord's pattern → rebuild the grid to show it.
-        if (tab === 'sequence' && st && (st._evolveSeq | 0) !== (modal._evoSeq | 0)) { modal._evoSeq = st._evolveSeq | 0; render(); }
         let cur = null;
         if (tab === 'sequence' && E.timer && st && Array.isArray(st.live) && st.live.length) {
           const aNow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : 0) + 0.016;
           for (let i = st.live.length - 1; i >= 0; i--) { if (st.live[i].at <= aNow) { cur = st.live[i]; break; } }
+        }
+        // Evolve refresh: show a re-rolled pattern only when its chord finishes
+        // AUDIBLY (the audible chord changed), not at the look-ahead schedule time.
+        if (tab === 'sequence' && cur) {
+          const ck = cur.ei + ':' + cur.ci;
+          if (modal._lastChordKey !== ck) {
+            modal._lastChordKey = ck;
+            if (st && (st._evolveSeq | 0) !== (modal._evoSeq | 0)) { modal._evoSeq = st._evolveSeq | 0; render(); }
+          }
         }
         const next = cur ? modal.querySelector('.amb-seqcell[data-ei="' + cur.ei + '"][data-ci="' + cur.ci + '"][data-s="' + cur.s + '"]') : null;
         if (modal._hlCell && modal._hlCell !== next) { try { modal._hlCell.classList.remove('playing'); } catch (e) {} }

@@ -2015,6 +2015,13 @@
       { pc: 11, w: 1 }, // perc   B2
     ];
     const _AMB_DRUM_WTOTAL = _AMB_DRUMS.reduce((s, d) => s + d.w, 0);
+    // Pitch-class → drum label (C2 = pc 0). Used by the master-Shape chip so a
+    // Beat layer reads "Kick / Snare / Hat", not a note name.
+    const _AMB_DRUM_NAMES = { 0: 'Kick', 2: 'Snare', 3: 'Clap', 4: 'Hat', 5: 'Open hat', 7: 'Tom', 9: 'Crash', 11: 'Perc' };
+    function _ambDrumName(midi) {
+      const pc = (((Math.round(midi) - 36) % 12) + 12) % 12;
+      return _AMB_DRUM_NAMES[pc] || ('Drum ' + pc);
+    }
     // Melodic tone choices for Bed/Motif/Texture: "Grid voice" + every
     // non-drum tone the app offers.
     // Melodic tones for Bed/Motif/Texture (drum kits excluded — Beat owns those).

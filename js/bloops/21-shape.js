@@ -2199,7 +2199,7 @@
     // The note(s) a Bloom-sourced shape is ACTUALLY sounding right now — read from
     // the render engine's capture (events bracketing Tone.now()). More accurate
     // than the wheel phase, whose window floats relative to the draw playhead.
-    function _shapeBloomCurrentNote(key) {
+    function _shapeBloomCurrentNote(key, isDrum) {
       const ev = (typeof _shapeBloomEng !== 'undefined' && _shapeBloomEng.cap && key) ? _shapeBloomEng.cap[key] : null;
       if (!Array.isArray(ev) || !ev.length) return '';
       const now = _shapeAudibleNow();   // match the audible playhead, not the schedule clock
@@ -2212,7 +2212,9 @@
         if (e.at <= now + 1e-3 && now < end) midis.push(Math.round(69 + 12 * Math.log2((e.freq > 0 ? e.freq : A) / A)));
       }
       if (!midis.length) return '';
-      return Array.from(new Set(midis)).sort((x, y) => x - y).map(_shapeNoteName).join(' ');
+      // Beat layers read as drum names (Kick/Snare/Hat), not note names.
+      const name = (isDrum && typeof _ambDrumName === 'function') ? _ambDrumName : _shapeNoteName;
+      return Array.from(new Set(midis)).sort((x, y) => x - y).map(name).join(' ');
     }
     // Update one chip's note text (called per shape from the draw loop). Note
     // detection is throttled (~12×/s) to keep the 60fps redraw cheap with many
@@ -2226,7 +2228,7 @@
       el._at = nowMs;
       let lbl = '';
       if (_shapeMaster.running) {
-        lbl = (c.bloomLayer && c._renderKey) ? _shapeBloomCurrentNote(c._renderKey) : _shapeCurrentNoteLabel(cfg, ph);
+        lbl = (c.bloomLayer && c._renderKey) ? _shapeBloomCurrentNote(c._renderKey, c.bloomLayer.type === 'beat') : _shapeCurrentNoteLabel(cfg, ph);
       }
       const show = lbl || '·';
       if (el._last === show) return;

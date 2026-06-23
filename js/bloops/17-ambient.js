@@ -1122,11 +1122,27 @@
       if (r > 1 - a * 0.22) return Math.max(0, Math.round(vol * (1 - a * 0.4)));               // ghost
       return vol;
     }
-    // Per-layer Drift (0..99): phase-offset the layer's event grid by that
-    // fraction of its Interval (snapped to the step grid in Sync mode).
-    function _ambDriftOffset(layer, cfg) {
+    // Per-layer Drift (0..99): phase-offset the layer's event grid.
+    //  • Unit-Sync ON  → the offset is quantized to whole STEP divisions of the
+    //    layer's *scaled* grid, small→large: the slider walks 0..(stepsPerUnit−1)
+    //    discrete step nudges so Drift tracks the real (stretched) interval and a
+    //    full drift lands just shy of wrapping back onto the downbeat.
+    //  • Unit-Sync OFF → smooth phase offset up to one interval (snapped to the
+    //    global step in global-Sync timing), i.e. the original behavior.
+    function _ambDriftOffset(E, key, layer, cfg) {
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
       if (drift <= 0) return 0;
+      const unitSync = !!(layer.unit && layer.unit.mode === 'sync' && layer.unit.ref);
+      if (unitSync) {
+        let sc = 1, period = 0;
+        try { sc = _ambLayerScale(E, key, layer, cfg); } catch (e) {}
+        const step = Math.max(0.01, _ambStepSecFor(layer, 0.02, cfg) * sc);
+        try { period = _ambLayerPeriodSec(E, key, layer, cfg); } catch (e) {}
+        if (!(period > 0)) period = step;
+        const nSteps = Math.max(1, Math.round(period / step));
+        const idx = Math.max(0, Math.min(nSteps - 1, Math.round((drift / 100) * nSteps)));
+        return idx * step;
+      }
       const intervalSec = _ambEffIntervalSec(layer);
       let off = (drift / 100) * intervalSec;
       if (cfg && cfg.timing === 'sync') {
@@ -1407,7 +1423,7 @@
       const pat    = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
 
       let st = E.bassPhase[key];
-      if (!st) st = E.bassPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      if (!st) st = E.bassPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -1511,7 +1527,7 @@
       }
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -1588,7 +1604,7 @@
       const rel = Math.max(0, Math.min(4000, Number.isFinite(inst.release) ? inst.release : 200));
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -1660,7 +1676,7 @@
       const lenMs = Math.max(60, Math.round(cycleSec * 1000 * 0.98));
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -1722,7 +1738,7 @@
         if (!(revSec > 0.02)) return;
         const skey = key + '#' + si;
         let st = E.shapePhase[skey];
-        if (!st) st = E.shapePhase[skey] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+        if (!st) st = E.shapePhase[skey] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
         const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
         const tTo = horizon;
         if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -2052,7 +2068,7 @@
       const S = E.arpState || (E.arpState = {});
       let st = S[key];
       if (!st) st = S[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: null, lastAt: null };
-      if (st.startAt == null) st.startAt = lead + _ambDriftOffset(arp, cfg);
+      if (st.startAt == null) st.startAt = lead + _ambDriftOffset(E, key, arp, cfg);
       if (!Number.isFinite(st.idx)) st.idx = 0;
       const sc = _ambLayerScale(E, key, arp, cfg);
       const interval = Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) * sc;
@@ -2227,7 +2243,7 @@
       const pat    = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = horizon;
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -3688,7 +3704,7 @@
         if (!lc || lc.present === false || _ambFreezeFrozen(E, key)) return;
         if (E.windingDown) return; // Capture finalize: no new iterations (current ones, already scheduled, play out)
         const HZ = hz || horizon;
-        if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(lc, cfg);
+        if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, lc, cfg);
         const sc = _ambLayerScale(E, key, lc, cfg);   // Unit Sync time-scale (1 = Free)
         let g = 0;
         while (C[key] < HZ && g++ < guardMax) {
@@ -3751,7 +3767,7 @@
           // C[key] tracks the NEXT phrase's start (always in the future); the
           // in-flight phrase streams separately via stSeq.plan, so C[key] never
           // sits in the past and the re-anchor guard below can't misfire.
-          if (!C[key] || C[key] < now - 0.001) { C[key] = lead + _ambDriftOffset(seq, cfg); stSeq.plan = null; }
+          if (!C[key] || C[key] < now - 0.001) { C[key] = lead + _ambDriftOffset(E, key, seq, cfg); stSeq.plan = null; }
           const manual = (seq.intervalMode === 'manual');
           // Schedule a plan's events whose absolute start is inside the horizon;
           // returns true when the whole plan is scheduled (nothing left).
@@ -3820,7 +3836,7 @@
           const HZ = gate.hz;
           if (_ambFreezeGate(E, key, now, HZ)) continue;
           window._ambCaptureSink = _ambCapSink(E, key);
-          if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(L, cfg);
+          if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
           let g = 0;
           while (C[key] < HZ && g++ < 4) {
             if (_ambCondFires(L.when, I[key] | 0)) {

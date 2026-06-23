@@ -888,9 +888,10 @@
     (function initTopBarTabs() {
       const bloopsTab = document.getElementById('bloops-tab');
       const mixTab    = document.getElementById('mix-tab');
+      const harvestTab = document.getElementById('harvest-tab');
       const sbTab     = document.getElementById('serialbox-tab');
       if (!bloopsTab || !sbTab) return;
-      const tabs = [bloopsTab, mixTab, sbTab].filter(Boolean);
+      const tabs = [bloopsTab, mixTab, harvestTab, sbTab].filter(Boolean);
       const setActive = (which) => {
         tabs.forEach(t => t.classList.toggle('tab-active', t === which));
       };
@@ -901,6 +902,7 @@
         // 'make' | 'mix' | 'serialbox'
         bloopsTab.textContent = 'Seed';
         if (mixTab) mixTab.textContent = 'Grow';
+        if (harvestTab) harvestTab.textContent = 'Harvest';
         sbTab.textContent     = (active === 'serialbox') ? 'Listen' : 'Listen →';
       };
       // Close every transient modal + open dropdown so a panel opened
@@ -931,7 +933,7 @@
         // every view switch so it can't leak the Mix DOM (Export button,
         // Tracks section) onto Make or Listen via the `body.tracks-
         // fullscreen > #mix-view { display: block !important }` rule.
-        document.body.classList.remove('view-serialbox', 'view-mix', 'tracks-fullscreen');
+        document.body.classList.remove('view-serialbox', 'view-mix', 'view-harvest', 'tracks-fullscreen');
         setActive(bloopsTab);
         updateLabels('make');
         _closeTransientUI();
@@ -940,7 +942,7 @@
         try { window.musicPlayer?.pause(); } catch (e) {}
       };
       const showMix = () => {
-        document.body.classList.remove('view-serialbox');
+        document.body.classList.remove('view-serialbox', 'view-harvest');
         document.body.classList.add('view-mix');
         setActive(mixTab);
         updateLabels('mix');
@@ -960,14 +962,25 @@
         }
       };
       const showSerialbox = () => {
-        document.body.classList.remove('view-mix', 'tracks-fullscreen');
+        document.body.classList.remove('view-mix', 'view-harvest', 'tracks-fullscreen');
         document.body.classList.add('view-serialbox');
         setActive(sbTab);
         updateLabels('serialbox');
         _closeTransientUI();
       };
+      const showHarvest = () => {
+        document.body.classList.remove('view-serialbox', 'view-mix', 'tracks-fullscreen');
+        document.body.classList.add('view-harvest');
+        setActive(harvestTab);
+        updateLabels('harvest');
+        _closeTransientUI();
+        try { window.musicPlayer?.pause(); } catch (e) {}
+        // Captures render into every .ambient-capture-bank — fill Harvest's now.
+        try { if (typeof _ambRenderCaptureBank === 'function') _ambRenderCaptureBank(); } catch (e) {}
+      };
       bloopsTab.addEventListener('click', showBloops);
       if (mixTab) mixTab.addEventListener('click', showMix);
+      if (harvestTab) harvestTab.addEventListener('click', showHarvest);
       sbTab.addEventListener('click', showSerialbox);
 
       // Mix sub-tabs: Bloom (master generative, default) / Mixdown (tracks +

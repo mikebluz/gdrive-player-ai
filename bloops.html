@@ -96,6 +96,7 @@
   <div class="top-bar">
     <button type="button" class="wip-banner tab-active" id="bloops-tab" title="Switch to the Bloops sequencer (Seed)">Seed</button>
     <button type="button" class="mix-top-link" id="mix-tab" title="Switch to the Grow view">Grow</button>
+    <button type="button" class="mix-top-link" id="harvest-tab" title="Switch to Harvest — your captured Blooms and Shapes">Harvest</button>
     <!-- Listen (Player) tab — hidden for now but kept in the DOM (tab-switching
          JS and the Player view stay wired). To bring it back, remove `hidden`. -->
     <button type="button" class="serialbox-top-link" id="serialbox-tab" title="Switch to the Player (Listen) — requires Google sign-in" hidden>Listen →</button>
@@ -871,10 +872,8 @@
           <canvas id="shape-master-canvas" class="shape-canvas"></canvas>
         </div>
         <div class="shape-master-legend" id="shape-master-legend"></div>
-        <!-- Capture bank — shared with master Bloom (class .ambient-capture-bank
-             is what _ambRenderCaptureBank targets). ⤓ Capture records the active
-             shape's audio here; each take uploads to Drive. -->
-        <div class="ambient-capture-bank" id="shape-master-capbank"></div>
+        <!-- Capture bank moved to the Harvest section; ⤓ Capture still records the
+             active shape's audio into the shared bank (now shown under Harvest). -->
       </div>
       <!-- Edit host — the full lane Shape editor (#shape-pad) is reparented
            here while editing a master-shape COPY, then moved back. Shown only
@@ -932,6 +931,17 @@
       <button id="tracks-share-btn" title="Render tracks and share via the system share sheet (text message, email, etc.)">Share</button>
     </div>
     </div><!-- /#mix-pane-mixdown -->
+  </div>
+
+  <!-- Harvest view — all captured Blooms + Shapes (from Grow). Playback /
+       rename / upload-to-Drive. The bank is rendered into .ambient-capture-bank
+       by _ambRenderCaptureBank(). -->
+  <div id="harvest-view">
+    <div class="harvest-wrap">
+      <div class="harvest-title">Harvest</div>
+      <div class="harvest-sub">Your captured Blooms and Shapes. Preview, rename, download, or upload to Drive.</div>
+      <div class="ambient-capture-bank" id="harvest-capbank"></div>
+    </div>
   </div>
 
 

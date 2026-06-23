@@ -2631,6 +2631,9 @@
     .ambient-cap-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
       background: rgba(10,10,20,0.55); border: 1px solid #232333; border-radius: 8px; padding: 6px 8px; }
     .ambient-cap-item.uploaded { border-color: rgba(104,211,145,0.5); }
+    .ambient-cap-src { flex: 0 0 auto; font: 600 0.62rem 'Segoe UI', sans-serif; color: #b794f4;
+      background: rgba(159,122,234,0.14); border: 1px solid rgba(159,122,234,0.35);
+      border-radius: 5px; padding: 1px 6px; text-transform: uppercase; letter-spacing: 0.03em; }
     .ambient-cap-name { flex: 1 1 120px; min-width: 0; color: #e2e8f0; font-family: 'Segoe UI', sans-serif;
       font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ambient-cap-item.uploaded .ambient-cap-name { color: #9ae6b4; }
@@ -9448,6 +9451,19 @@
        was left on the body. Without this, the Tracks section (and its
        Export button) leaked onto Make. */
     body:not(.view-mix) #mix-view { display: none !important; }
+    /* Harvest view — captured Blooms + Shapes bank. Same show/hide model as Mix. */
+    #harvest-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 16px; }
+    body.view-harvest > #harvest-view { display: block; }
+    body.view-harvest > *:not(.home-bar-row):not(.top-bar):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(script) {
+      display: none !important;
+    }
+    body.view-harvest { overflow-y: auto; }
+    body:not(.view-harvest) #harvest-view { display: none !important; }
+    .harvest-wrap { max-width: 900px; margin: 0 auto; }
+    .harvest-title { font: 700 1.1rem 'Segoe UI', sans-serif; color: #e6e6f5; margin: 4px 0 2px; }
+    .harvest-sub { font-size: 0.8rem; color: #8a8aa8; margin-bottom: 14px; }
+    /* Reuse the capture-bank styling; give it room in the full-page view. */
+    #harvest-view .ambient-capture-bank { display: block; }
     .sm-copy.open  { border-color: #4299e1; color: #4299e1; }
 
     .sm-copy-panel {

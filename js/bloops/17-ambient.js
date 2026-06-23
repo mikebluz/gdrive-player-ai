@@ -5087,7 +5087,7 @@
           durSec = 0;
         }
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
-        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false });
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: 'Bloom' });
         _ambRenderCaptureBank();
         if (typeof showToast === 'function') {
           showToast(audioBuf
@@ -5149,6 +5149,13 @@
       _ambCaptureBank.splice(i, 1);
       _ambRenderCaptureBank();
     }
+    function _ambRenameBankItem(item) {
+      if (!item) return;
+      const nn = (typeof window !== 'undefined' && window.prompt) ? window.prompt('Rename capture:', item.name) : null;
+      if (typeof nn !== 'string' || !nn.trim()) return;
+      item.name = nn.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 80) || item.name;
+      _ambRenderCaptureBank();
+    }
     function _ambPreviewBankItem(item) {
       try {
         if (_ambBankPreviewAudio) { _ambBankPreviewAudio.pause(); _ambBankPreviewAudio = null; }
@@ -5168,6 +5175,7 @@
             const it = _ambCaptureBank.find(x => x.id === id); if (!it) return;
             const act = btn.dataset.act;
             if (act === 'play') _ambPreviewBankItem(it);
+            else if (act === 'ren') _ambRenameBankItem(it);
             else if (act === 'dl') _ambDownloadBankItem(it);
             else if (act === 'up') _ambUploadBankItem(it);
             else if (act === 'del') _ambRemoveBankItem(id);
@@ -5176,9 +5184,11 @@
         if (!_ambCaptureBank.length) { host.innerHTML = '<div class="ambient-cap-empty">No captures yet — press ⤓ Capture to record a take.</div>'; return; }
         host.innerHTML = '<div class="ambient-cap-title">Captures</div>' + _ambCaptureBank.map(it =>
           '<div class="ambient-cap-item' + (it.uploaded ? ' uploaded' : '') + '" data-cap="' + it.id + '">' +
+            (it.source ? '<span class="ambient-cap-src" title="Source">' + String(it.source).replace(/[<>&]/g, '') + '</span>' : '') +
             '<span class="ambient-cap-name" title="' + (it.uploaded ? 'Uploaded' : 'Not uploaded') + '">' + (it.uploaded ? '✓ ' : '') + String(it.name).replace(/[<>&]/g, '') + '.' + it.ext + '</span>' +
             '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + '</span>' +
             '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview">▶</button>' +
+            '<button type="button" class="ambient-cap-btn" data-act="ren" title="Rename">✎</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-up" data-act="up" title="Upload to Google Drive">⬆ Upload</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-del" data-act="del" title="Remove from bank">✕</button>' +
@@ -8369,9 +8379,8 @@
           '<div class="ambient-ramps" id="ambient-ramps"></div>' +
         '</div>' +
         '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>' +
-        // Capture bank — ⤓ Capture records takes here; upload each to Drive
-        // when ready so an upload error never loses the audio.
-        '<div class="ambient-capture-bank"></div>' +
+        // (Capture bank moved to the Harvest section — ⤓ Capture still records
+        // into the shared bank, now shown under Harvest.)
         // Play / Stop transport — pinned to the bottom of the viewport, styled
         // like the Make footer transport. Lives inside the (namespaced) panel so
         // it only shows while this Bloom panel is the active view.

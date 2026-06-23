@@ -2364,7 +2364,7 @@
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
         if (typeof _ambCaptureBank !== 'undefined' && Array.isArray(_ambCaptureBank)) {
           const id = (typeof _ambCapBankSeq !== 'undefined') ? (++_ambCapBankSeq) : Date.now();
-          _ambCaptureBank.push({ id, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false });
+          _ambCaptureBank.push({ id, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec: audioBuf.duration, bytes: blob.size, blob, url, uploaded: false, source: 'Shape' });
           if (typeof _ambRenderCaptureBank === 'function') _ambRenderCaptureBank();
         }
         if (typeof showToast === 'function') showToast('Captured “' + filename + '” — upload it from the bank below.');

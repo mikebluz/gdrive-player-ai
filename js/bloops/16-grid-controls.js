@@ -1461,9 +1461,11 @@
       panel.className = 'xport-menu';
       panel.id = 'xport-menu';
       panel.innerHTML =
+        '<div class="xport-sec"><div class="xport-sec-title">Edit</div><div class="xport-row" id="xport-edit-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Tempo</div><div class="xport-row" id="xport-tempo-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Volume</div><div class="xport-row" id="xport-vol-row"></div></div>' +
-        '<div class="xport-sec"><div class="xport-sec-title">Groove</div><div class="xport-groove" id="xport-groove-row"></div></div>';
+        '<div class="xport-sec"><div class="xport-sec-title">Groove</div><div class="xport-groove" id="xport-groove-row"></div></div>' +
+        '<div class="xport-sec"><div class="xport-sec-title">MIDI</div><div class="xport-row" id="xport-midi-row"></div></div>';
       document.body.appendChild(panel);
 
       // Relocate the live, already-wired controls into the menu.
@@ -1475,6 +1477,14 @@
       const mvLabel = document.querySelector('#master-vol-panel .master-vol');
       if (mvLabel) panel.querySelector('#xport-vol-row').appendChild(mvLabel);
       _buildGrooveControls(panel.querySelector('#xport-groove-row'));
+      // Undo/Redo + MIDI now live in this one upper-right menu too.
+      const urPair = document.querySelector('.undo-redo-pair');
+      if (urPair) panel.querySelector('#xport-edit-row').appendChild(urPair);
+      const midiBtn = document.getElementById('midi-launch-btn');
+      if (midiBtn) {
+        panel.querySelector('#xport-midi-row').appendChild(midiBtn);
+        midiBtn.addEventListener('click', () => setOpen(false));   // close the menu; the MIDI modal opens (wired in 22-midi.js)
+      }
 
       const setOpen = (open) => {
         panel.classList.toggle('open', open);

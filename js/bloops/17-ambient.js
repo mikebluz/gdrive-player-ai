@@ -4221,6 +4221,7 @@
       if (!c || !Array.isArray(c.ramps) || !c.ramps.length) return;
       E.rampTimer = setInterval(() => {
         try {
+          _E = E;   // FX-param ramps push to _E.mod[...] live nodes — target this engine
           const cfg = E._cfg;
           if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) { _ambStopRampClock(E); return; }
           const t = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
@@ -6828,6 +6829,11 @@
       // grid + Bloom + Shapes together. Range is a musical 40–300.
       global:  [['bpm','BPM',40,300]],
     };
+    // Per-layer FX params are rampable too. They live nested (delay.*, dist.*)
+    // and need a live node push (handled in _ambRampResolve). Append to every
+    // layer type except the global group.
+    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.amount','Distortion',0,100],['dist.mix','Distortion mix',0,100]];
+    Object.keys(_AMB_RAMP_PARAMS).forEach(k => { if (k !== 'global') _AMB_RAMP_PARAMS[k] = _AMB_RAMP_PARAMS[k].concat(_AMB_FX_RAMP); });
     // Live-write the global tempo from a ramp (cheap: just the inputs + the
     // top-bar readout — no digit rebuild / persist at 40 Hz; engines read
     // tempoInput.value live).
@@ -6911,6 +6917,15 @@
       if (!obj) return null;
       const spec = (_AMB_RAMP_PARAMS[cat] || []).find(p => p[0] === key);
       if (!spec) return null;
+      // FX params (revSend / delay.* / dist.*) are nested and only audible once
+      // pushed to the live nodes — write the value then re-apply the layer FX.
+      if (key === 'revSend' || key.indexOf('.') >= 0) {
+        return { min: spec[2], max: spec[3], set: function (v) {
+          if (key === 'revSend') { obj.revSend = v; }
+          else { const di = key.indexOf('.'); const grp = key.slice(0, di), sub = key.slice(di + 1); if (!obj[grp] || typeof obj[grp] !== 'object') obj[grp] = {}; obj[grp][sub] = v; }
+          try { _ambApplyLayerFx(head, obj); } catch (e) {}
+        } };
+      }
       return { obj, key, min: spec[2], max: spec[3] };
     }
     // Grouped target list for the dropdown (built-in layers + dynamic layers).

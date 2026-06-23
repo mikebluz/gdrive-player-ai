@@ -78,10 +78,10 @@
         // `when` is an Elektron-style per-event conditional ('always' | '1st' |
         // 'A:B') that gates which of the layer's generated events actually fire —
         // e.g. '1:2' = every other event, for sparser/polymetric interplay.
-        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        motif:   { on: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        beat:    { on: false, kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', attack: 2000, decay: 200, sustain: 85, release: 3650, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        motif:   { on: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 100, decay: 120, sustain: 70, release: 500, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', attack: 40, decay: 80, sustain: 0, release: 240, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        beat:    { on: false, kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, attack: 1, decay: 60, sustain: 70, release: 120, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
         // "units", improvising variations and periodically returning to verbatim.
@@ -245,7 +245,7 @@
       // natural length, so the loop closes exactly on the sequence (and breathes
       // per-unit in Interleave). 'manual' → honor the Interval knob, as a knob.
       return { id: id | 0, on: true, intervalMode: 'auto', intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always',
-               panMode: 'spread', space: 0,
+               panMode: 'spread', space: 0, attack: 120, decay: 120, sustain: 70, release: 600,
                level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
                unitMode: 'single', units: [], keyMaster: false, ..._ambDefaultFx() };
@@ -264,7 +264,7 @@
       const d = _defaultSeqLayer(id);
       if (!Number.isFinite(s.id)) s.id = id;
       if (typeof s.on !== 'boolean') s.on = true;
-      ['intervalMs','lengthMs','drift','level','accent','varyDepth','returnN','returnChance'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
+      ['intervalMs','lengthMs','drift','level','accent','varyDepth','returnN','returnChance','attack','decay','sustain','release'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
       ['tone','scale'].forEach(k => { if (typeof s[k] !== 'string') s[k] = d[k]; });
       if (typeof s.when !== 'string') s.when = 'always';
       if (typeof s.ensembleLock !== 'boolean') s.ensembleLock = true;
@@ -297,6 +297,7 @@
       return { id: id | 0, on: true, sampleId: '', name: '',
                chop: 1, order: 'forward',
                intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0,
+               attack: 6, decay: 120, sustain: 70, release: 600,
                mod: _ambDefaultMod(), ..._ambDefaultFx() };
     }
     function _normalizeSampleLayer(s, id) {
@@ -305,7 +306,7 @@
       if (typeof s.on !== 'boolean') s.on = true;
       if (typeof s.sampleId !== 'string') s.sampleId = '';
       if (typeof s.name !== 'string') s.name = '';
-      ['chop','intervalMs','lengthMs','drift','level'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
+      ['chop','intervalMs','lengthMs','drift','level','attack','decay','sustain','release'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
       s.chop = Math.max(1, Math.min(16, s.chop | 0));
       if (s.order !== 'forward' && s.order !== 'random') s.order = 'forward';
       if (typeof s.when !== 'string') s.when = 'always';
@@ -1334,6 +1335,42 @@
       }
       return 1;
     }
+    // User ADSR override. Every layer's Voice section carries attack/decay/
+    // sustain/release (ms / %); these REPLACE whatever envelope a params builder
+    // derived from note length, so the sliders shape the sound directly (the
+    // model Pedal/Drone already used). Absent fields leave the builder's value.
+    function _ambApplyAdsr(p, inst) {
+      if (!p || !inst) return p;
+      if (Number.isFinite(inst.attack))  p.attack  = Math.max(0, Math.min(20000, inst.attack));
+      if (Number.isFinite(inst.decay))   p.decay   = Math.max(0, Math.min(20000, inst.decay));
+      if (Number.isFinite(inst.sustain)) p.sustain = Math.max(0, Math.min(100,   inst.sustain));
+      if (Number.isFinite(inst.release)) p.release = Math.max(0, Math.min(20000, inst.release));
+      return p;
+    }
+    // Per-type default ADSR — chosen to reproduce each layer's prior
+    // length-derived envelope at its DEFAULT note length, so existing layers
+    // sound unchanged until the user moves a slider. Used by the config
+    // factories + the save-migration backfill.
+    const _AMB_ADSR_DEFAULTS = {
+      bed:     { attack: 2000, decay: 200, sustain: 85,  release: 3650 },
+      motif:   { attack: 100,  decay: 120, sustain: 70,  release: 500 },
+      texture: { attack: 40,   decay: 80,  sustain: 0,   release: 240 },
+      beat:    { attack: 1,    decay: 60,  sustain: 70,  release: 120 },
+      bass:    { attack: 10,   decay: 160, sustain: 60,  release: 180 },
+      run:     { attack: 20,   decay: 120, sustain: 70,  release: 120 },
+      arp:     { attack: 20,   decay: 120, sustain: 70,  release: 120 },
+      pedal:   { attack: 5,    decay: 40,  sustain: 75,  release: 200 },
+      drone:   { attack: 200,  decay: 0,   sustain: 100, release: 1500 },
+      seq:     { attack: 120,  decay: 120, sustain: 70,  release: 600 },
+      samp:    { attack: 6,    decay: 120, sustain: 70,  release: 600 },
+    };
+    function _ambBackfillAdsr(host, type) {
+      const d = _AMB_ADSR_DEFAULTS[type]; if (!host || !d) return;
+      if (!Number.isFinite(host.attack))  host.attack  = d.attack;
+      if (!Number.isFinite(host.decay))   host.decay   = d.decay;
+      if (!Number.isFinite(host.sustain)) host.sustain = d.sustain;
+      if (!Number.isFinite(host.release)) host.release = d.release;
+    }
     function _ambBedParams(noteMs, density, motion, overlap, pan, tone) {
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const atkMs = Math.max(150, Math.round(noteMs * 0.30));
@@ -1388,7 +1425,7 @@
       const order = _ambStrumOrder(n, bed.strumFidelity || 0);
       order.forEach((vi, pos) => {
         const f = voicing[vi];
-        const params = _ambBedParams(durMs, n, bed.motion, overlap, pans[vi], bed.tone);
+        const params = _ambApplyAdsr(_ambBedParams(durMs, n, bed.motion, overlap, pans[vi], bed.tone), bed);
         params.volume = _ambApplyLevel(params.volume, bed.level);
         if (dmod) params._detuneMod = dmod;
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
@@ -1505,7 +1542,7 @@
             _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
-            const bp = _ambBassParams(lenMs, _ambLayerPan(inst), inst.tone);
+            const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
             try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -1592,7 +1629,7 @@
           let f = _ambDegreeFreq(deg % N, reg + Math.floor(deg / N), src);
           if (f == null) continue;
           f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
-          const bp = _ambMotifParams(lenMs, _ambLayerPan(inst), inst.tone);
+          const bp = _ambApplyAdsr(_ambMotifParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
           bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
           if (dmod) bp._detuneMod = dmod;
           try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -1705,6 +1742,8 @@
       const pan = _ambLayerPan(inst);
       const atk = Math.max(0, Math.min(8000, Number.isFinite(inst.attack) ? inst.attack : 200));
       const rel = Math.max(0, Math.min(12000, Number.isFinite(inst.release) ? inst.release : 1500));
+      const dec = Math.max(0, Math.min(4000, Number.isFinite(inst.decay) ? inst.decay : 0));
+      const sus = Math.max(0, Math.min(100, Number.isFinite(inst.sustain) ? inst.sustain : 100));
       const timeVary = Math.max(0, Math.min(100, inst.timeVary | 0));
       const pitchVary = Math.max(0, Math.min(100, inst.pitchVary | 0));
       // Hold the note across (almost) the whole span so it's continuous; a hair
@@ -1739,7 +1778,7 @@
         }
         _ambKeyTime = at;
         const degs = chordLike ? Array.from({ length: cN }, (_, i) => i) : [degBase];
-        const bp = { type: vtype, attack: atk, decay: 0, sustain: 100, release: rel,
+        const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
           volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan };
         if (dmod) bp._detuneMod = dmod;
         degs.forEach((d, vi) => {
@@ -1881,7 +1920,7 @@
         // Sequential single notes can't be "distributed" simultaneously, so
         // Space spreads them by panning each randomly within ±space.
         const pan = _ambLayerPan(motif);
-        const mp = _ambMotifParams(lenMs, pan, motif.tone);
+        const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, motif.tone), motif);
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
         if (dmod) mp._detuneMod = dmod;
         try { playNote(f, mp, lenMs, at + i * burstGap, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
@@ -1929,7 +1968,7 @@
         const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0), _ambNotesOf(texture));
         const lenMs = Math.max(60, texture.lengthMs | 0);
         const pan = _ambLayerPan(texture);
-        const tp = _ambTexParams(lenMs, pan, texture.tone);
+        const tp = _ambApplyAdsr(_ambTexParams(lenMs, pan, texture.tone), texture);
         tp.volume = _ambApplyLevel(tp.volume, texture.level);
         const dmod = _ambLayerDetuneMod(key); if (dmod) tp._detuneMod = dmod;
         try { playNote(f, tp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
@@ -2088,7 +2127,7 @@
       if (f == null) return;
       const lenMs = Math.max(40, arp.lengthMs | 0);
       const pan = _ambLayerPan(arp);
-      const ap = _ambMotifParams(lenMs, pan, arp.tone);
+      const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
       ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
       try { playNote(f, ap, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
@@ -2247,7 +2286,7 @@
       try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, beat.lengthMs | 0);
       const pan = _ambLayerPan(beat);
-      const bp = _ambBeatParams(beat.kit, lenMs, pan);
+      const bp = _ambApplyAdsr(_ambBeatParams(beat.kit, lenMs, pan), beat);
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
       try { playNote(f, bp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
@@ -2305,7 +2344,7 @@
             if (at < tFrom || at >= tTo) continue;
             const pc = _ambPickDrumPc();
             let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
-            const bp = _ambBeatParams(inst.kit, lenMs, pan);
+            const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, pan), inst);
             bp.volume = _ambApplyLevel(bp.volume, inst.level);
             if (dmod) bp._detuneMod = dmod;
             _ambKeyTime = at;
@@ -2415,9 +2454,9 @@
       for (let j = 0; j < chop; j++) {
         const idx = (chop === 1) ? 0 : (layer.order === 'random' ? Math.floor(_ambRand() * chop) : j);
         const dur = (chop > 1) ? sliceSec * 1000 : Math.max(80, layer.lengthMs | 0);
-        const p = { ...base, type,
+        const p = _ambApplyAdsr({ ...base, type,
           attack: 6, decay: 120, sustain: 70, release: Math.max(60, Math.round(dur * 0.5)),
-          volume: vol, pan: (pans[j] | 0) };
+          volume: vol, pan: (pans[j] | 0) }, layer);
         if (chop > 1) { p.sampleOffsetSec = idx * sliceSec; p.sliceDurSec = sliceSec; }
         if (dmod) p._detuneMod = dmod;
         try { playNote(baseFreq, p, dur, at + j * sliceSec, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -2613,9 +2652,9 @@
       let _ensPick = (st && Number.isFinite(st._ensPick)) ? st._ensPick : 0;
       freqs.forEach((f, vi) => {
         const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
-        const p = padStyle
+        const p = _ambApplyAdsr(padStyle
           ? { ...base, type: vtype, attack: Math.max(150, Math.round(durMs * 0.30)), decay: 200, sustain: 85, release: Math.max(300, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }
-          : { ...base, type: vtype, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] };
+          : { ...base, type: vtype, attack: Math.max(8, Math.round(durMs * 0.10)), decay: 120, sustain: 70, release: Math.max(60, Math.round(durMs * 0.50)), volume: vol, pan: pans[vi] }, seq);
         if (isEnsembleType(vtype)) {
           if (seqEnsLock) p._ensembleForceStack = true;   // locked: all members together
           else p._ensembleMemberIdx = _ensPick++;          // unlocked: one member per note, rotating
@@ -4474,7 +4513,7 @@
             && !(_ambRand() * 100 < Math.max(0, Math.min(100, cfg.beat.restProb | 0)))) {
           const pc = _ambPickDrumPc();
           let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { f = null; }
-          if (f) slot.push({ f, pan: 0, params: _ambBeatParams(cfg.beat.kit, Math.max(60, cfg.beat.lengthMs | 0), 0) });
+          if (f) slot.push({ f, pan: 0, params: _ambApplyAdsr(_ambBeatParams(cfg.beat.kit, Math.max(60, cfg.beat.lengthMs | 0), 0), cfg.beat) });
         }
         if (slot.length === 0) steps.push({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub });
         else if (slot.length === 1) steps.push({ ...voiceFor(slot[0].f, slot[0].pan, slot[0].params, slot[0].tone), duration: 1, subdivision: sub });
@@ -5647,6 +5686,10 @@
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id) +
         '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+        _ambSl('Attack', p + 'attack', 0, 4000, s.attack, 'ms') +
+        _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
+        _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
+        _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
         // Ensemble lock — only shown (un-hidden in wiring) when this seq's voice
         // is an ensemble. Locked = members fire together; Unlocked = members
         // spread across notes as independent generative voices.
@@ -5763,6 +5806,7 @@
       const lockBtn = el('enslock');
       if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
       _ambSeqEnsLockVis(E, id);
+      bindInt('attack', 'attack'); bindInt('decay', 'decay'); bindInt('sustain', 'sustain'); bindInt('release', 'release');
       bindInt('depth', 'varyDepth'); bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       // Loop-length Auto/Manual toggle. Dragging the Interval knob implies a
       // manual override, so it flips the mode to Manual and refreshes the UI.
@@ -5909,6 +5953,10 @@
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id) +
         '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
+        _ambSl('Attack', p + 'attack', 0, 2000, s.attack, 'ms') +
+        _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
+        _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
+        _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
         _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
         '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' +
         _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
@@ -5930,6 +5978,7 @@
       const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L[key] = parseInt(e.value, 10) || 0; sync(); persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; const val = parseInt(e.value, 10) || 0; L[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L[key] = e.value || L[key]; persist(); }); };
+      bindInt('attack', 'attack'); bindInt('decay', 'decay'); bindInt('sustain', 'sustain'); bindInt('release', 'release');
       bindInt('chop', 'chop'); bindStr('order', 'order');
       bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
       bindInt('drift', 'drift'); _ambBindWhen(E, p, getL, persist); bindInt('level', 'level');
@@ -5989,28 +6038,28 @@
     // Mix open by default; fold state is remembered per layer (inst.groupsOpen).
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
-        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'decay', 'Decay', 0, 4000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       motif: { label: 'Motif', ctrls: [
-        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       beat: { label: 'Beat', ctrls: [
-        ['grp', 'Voice'], ['kit'], ['gen'],
+        ['grp', 'Voice'], ['kit'], ['gen'], ['sl', 'attack', 'Attack', 0, 500, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 2000, 'ms'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
@@ -6024,7 +6073,7 @@
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
-        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
@@ -6033,7 +6082,7 @@
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
-        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
@@ -6041,7 +6090,7 @@
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Run: a fixed RANDOM note run, `bars` bars long, looping; Vary re-rolls.
       run: { label: 'Run', ctrls: [
-        ['grp', 'Voice'], ['tone'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
@@ -6058,7 +6107,7 @@
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
+        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'decay', 'Decay', 0, 4000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = key root)'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
         ['grp', 'Rhythm'], ['cond'],
@@ -6075,10 +6124,10 @@
     }
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
-      if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0 });
-      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
-      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40 });
-      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0 });
+      if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, ..._AMB_ADSR_DEFAULTS.bed });
+      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, ..._AMB_ADSR_DEFAULTS.motif });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, ..._AMB_ADSR_DEFAULTS.texture });
+      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // Shape layer: one wheel to start; the user adds more via the card browser.
       // _shapeDefault() lives in 21-shape.js (loaded later) — safe to call here
       // because _ambDefaultLayer only runs at add/normalize time, not file eval.
@@ -6088,7 +6137,7 @@
       if (type === 'arp') return Object.assign(base, {
         tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1, dir: 'up' }], sel: 0,
         dir: 'up', randomness: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
-        lengthMs: 220, restProb: 0, accent: 0,
+        lengthMs: 220, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.arp,
       });
       // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls
       // back via _ambLayerType if absent), a 2-bar seed phrase, and a sparse
@@ -6097,14 +6146,14 @@
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
         bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
-        rhythmVar: 0, pitchVar: 0, proximity: 40, restProb: 0, accent: 0,
+        rhythmVar: 0, pitchVar: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
       });
       // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
       // 2 octaves by default; Vary starts at 0 so it repeats verbatim until
       // dialed up. A light rest % keeps the run from being wall-to-wall.
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
-        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, accent: 20,
+        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, accent: 20, ..._AMB_ADSR_DEFAULTS.run,
       });
       // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
       // 4 (C4) + full volume matches a default Shape node so they sound the same.
@@ -6117,7 +6166,7 @@
       // attack + 1.5s release. Pick a chord Notes source to hold a whole chord.
       if (type === 'drone') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1,
-        intervalMs: 2000, hold: 4, attack: 200, release: 1500,
+        intervalMs: 2000, hold: 4, attack: 200, decay: 0, sustain: 100, release: 1500,
         timeVary: 0, pitchVary: 0, accent: 0,
       });
       return base;
@@ -7771,6 +7820,7 @@
       if (addBtn) addBtn.disabled = false; // can always add another instance
       chk('ambient-bed-on', cfg.bed.on);
       set('ambient-bed-tone', cfg.bed.tone);
+      set('ambient-bed-attack', cfg.bed.attack); set('ambient-bed-decay', cfg.bed.decay); set('ambient-bed-sustain', cfg.bed.sustain); set('ambient-bed-release', cfg.bed.release);
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-register', cfg.bed.register);
@@ -7785,6 +7835,7 @@
       set('ambient-bed-level', cfg.bed.level);
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
+      set('ambient-motif-attack', cfg.motif.attack); set('ambient-motif-decay', cfg.motif.decay); set('ambient-motif-sustain', cfg.motif.sustain); set('ambient-motif-release', cfg.motif.release);
       { const _nb = document.getElementById(tr('ambient-motif-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.motif)); }
       set('ambient-motif-register', cfg.motif.register);
       set('ambient-motif-range', cfg.motif.range);
@@ -7799,6 +7850,7 @@
       set('ambient-motif-level', cfg.motif.level);
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
+      set('ambient-texture-attack', cfg.texture.attack); set('ambient-texture-decay', cfg.texture.decay); set('ambient-texture-sustain', cfg.texture.sustain); set('ambient-texture-release', cfg.texture.release);
       { const _nb = document.getElementById(tr('ambient-texture-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.texture)); }
       set('ambient-texture-register', cfg.texture.register);
       set('ambient-texture-fill', cfg.texture.fill);
@@ -7810,6 +7862,7 @@
       set('ambient-texture-level', cfg.texture.level);
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
+      set('ambient-beat-attack', cfg.beat.attack); set('ambient-beat-decay', cfg.beat.decay); set('ambient-beat-sustain', cfg.beat.sustain); set('ambient-beat-release', cfg.beat.release);
       set('ambient-beat-gen', cfg.beat.gen || 'random');
       set('ambient-beat-rate', cfg.beat.rate || '');
       set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
@@ -7946,6 +7999,10 @@
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          sl('Attack', 'ambient-bed-attack', 0, 8000, 2000, 'ms') +
+          sl('Decay', 'ambient-bed-decay', 0, 4000, 200, 'ms') +
+          sl('Sustain', 'ambient-bed-sustain', 0, 100, 85, '%') +
+          sl('Release', 'ambient-bed-release', 0, 12000, 3650, 'ms') +
           _ambNotesButtonHtml('ambient-bed') +
           sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
           sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
@@ -7965,6 +8022,10 @@
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif') +
           '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          sl('Attack', 'ambient-motif-attack', 0, 2000, 100, 'ms') +
+          sl('Decay', 'ambient-motif-decay', 0, 2000, 120, 'ms') +
+          sl('Sustain', 'ambient-motif-sustain', 0, 100, 70, '%') +
+          sl('Release', 'ambient-motif-release', 0, 4000, 500, 'ms') +
           _ambNotesButtonHtml('ambient-motif') +
           sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
           sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
@@ -7984,6 +8045,10 @@
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture') +
           '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+          sl('Attack', 'ambient-texture-attack', 0, 2000, 40, 'ms') +
+          sl('Decay', 'ambient-texture-decay', 0, 2000, 80, 'ms') +
+          sl('Sustain', 'ambient-texture-sustain', 0, 100, 0, '%') +
+          sl('Release', 'ambient-texture-release', 0, 4000, 240, 'ms') +
           _ambNotesButtonHtml('ambient-texture') +
           sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') +
           sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
@@ -8002,6 +8067,10 @@
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
           _ambGenSel('ambient-beat-') +
+          sl('Attack', 'ambient-beat-attack', 0, 500, 1, 'ms') +
+          sl('Decay', 'ambient-beat-decay', 0, 2000, 60, 'ms') +
+          sl('Sustain', 'ambient-beat-sustain', 0, 100, 70, '%') +
+          sl('Release', 'ambient-beat-release', 0, 2000, 120, 'ms') +
           _ambRateSel('ambient-beat-rate') +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
           _ambUnitSyncHtml('ambient-beat') +
@@ -8223,6 +8292,7 @@
           try { persistGlobalFx(); } catch (e) {}
         });
       }
+      bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release');
       bind('ambient-bed-density', 'bed', 'density');
       bind('ambient-bed-register', 'bed', 'register');
       bind('ambient-bed-spread', 'bed', 'spread');
@@ -8233,6 +8303,7 @@
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strumfid', 'bed', 'strumFidelity');
       bind('ambient-bed-level', 'bed', 'level');
+      bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
       bind('ambient-motif-proximity', 'motif', 'proximity');
@@ -8243,6 +8314,7 @@
       bind('ambient-motif-twist', 'motif', 'twist');
       bind('ambient-motif-accent', 'motif', 'accent');
       bind('ambient-motif-level', 'motif', 'level');
+      bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');
       bindTime('ambient-texture-interval', 'texture', 'intervalMs');
@@ -8250,6 +8322,7 @@
       bind('ambient-texture-drift', 'texture', 'drift');
       bind('ambient-texture-mutate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
+      bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release');
       bindTime('ambient-beat-interval', 'beat', 'intervalMs');
       bindTime('ambient-beat-length', 'beat', 'lengthMs');
       bind('ambient-beat-bars', 'beat', 'bars');

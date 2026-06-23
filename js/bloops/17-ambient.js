@@ -3505,6 +3505,15 @@
       E._queuePending = null; E._queueAt = null;   // Queue-mode pending toggles
       E._t0 = null;        // engine grid anchor (set on first tick) for queued-START alignment
     }
+    // Throttled tick-error logger: surfaces a scheduling fault to the console at
+    // most ~once/2s (so a per-tick throw doesn't spam) without ever crashing.
+    let _ambTickErrAt = 0;
+    function _ambLogTickErr(e) {
+      try {
+        const t = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+        if (t - _ambTickErrAt > 2000) { _ambTickErrAt = t; console.error('[Bloom] scheduling error (layer skipped):', e); }
+      } catch (_) {}
+    }
     function _ambTick(E) {
       _E = E;
       if (!E.guard()) { _ambStopGenerator(E); return; }
@@ -3613,7 +3622,7 @@
         if (_ambFreezeGate(E, key, now, g.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key); // always roll-capture
         try { runLayer(key, lc, guardMax, minSec, emit, g.hz); }
-        catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
       // Windowed wrapper — like stepLayer but for engines that schedule a whole
       // BPM-locked phrase over the lookahead (e.g. the Euclidean Beat). Anchors a
@@ -3626,7 +3635,7 @@
         if (_ambFreezeGate(E, key, now, gate.hz)) return;
         window._ambCaptureSink = _ambCapSink(E, key);
         try { emit(E, lc, key, now, gate.hz, lead, space, cfg); }
-        catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+        catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
@@ -3641,7 +3650,7 @@
       // through, then choppily resumes next iteration" burst. Manual mode (where
       // phrases can overlap) still emits a whole phrase per fire.
       if (Array.isArray(cfg.seqs)) {
-        for (const seq of cfg.seqs) {
+        for (const seq of cfg.seqs) { try {
           if (!seq || !Array.isArray(seq.units) || !seq.units.length) continue;
           const key = 'seq:' + seq.id;
           const stSeq = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
@@ -3712,11 +3721,11 @@
             if (!done) break; // still streaming this phrase across ticks
           }
           window._ambCaptureSink = null; _ambPruneCap(E, key, now);
-        }
+        } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       }
       // Sample layers (dynamic list). Each fire schedules up to `chop` slices.
       if (Array.isArray(cfg.samples)) {
-        for (const L of cfg.samples) {
+        for (const L of cfg.samples) { try {
           if (!L || !L.sampleId) continue;
           const key = 'samp:' + L.id;
           if (_muted(L)) continue;
@@ -3738,12 +3747,12 @@
             C[key] += _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
           }
           window._ambCaptureSink = null; _ambPruneCap(E, key, now);
-        }
+        } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       }
       // Extra layer instances (additional Bed/Motif/Texture/Beat). runLayer
       // gates present/on/frozen and reads the instance's intervalMs/when.
       if (Array.isArray(cfg.extras)) {
-        for (const ex of cfg.extras) {
+        for (const ex of cfg.extras) { try {
           if (!ex || !_AMB_LAYER_SCHEMA[ex.type]) continue;
           const key = ex.type + ':' + ex.id;
           // Shape layers schedule continuously over the lookahead window (not on
@@ -3756,7 +3765,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitShape(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Bass layers realize a multi-bar euclidean phrase over the lookahead
@@ -3769,7 +3778,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitBass(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Run layers: a fixed random note-run that loops every `bars` bars,
@@ -3781,7 +3790,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitRun(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Pedal layers: a simple root-note loop. Windowed/phase-anchored too.
@@ -3792,7 +3801,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitPedal(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Drone layers: hold a note/chord, re-struck every `hold` units.
@@ -3804,7 +3813,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitDrone(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           // Euclidean Beat extra: windowed phrase like the primary beat.
@@ -3815,7 +3824,7 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitBeatEuclid(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) {} finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
           const gm = ex.type === 'bed' ? 8 : (ex.type === 'arp' ? 24 : 16);
@@ -3827,7 +3836,7 @@
             else if (ex.type === 'arp') _ambEmitArp(at, ex, space, key);
             else _ambEmitBeat(at, ex, space, key);
           });
-        }
+        } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       }
       // Queue mode: a layer toggle landed on its boundary this tick → persist.
       if (_qChanged && typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -4230,8 +4239,10 @@
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
       E._playStartMs = performance.now();   // footer elapsed-time anchor
-      _ambTick(E);
-      E.timer = setInterval(() => _ambTick(E), 150);
+      // The first tick must NOT prevent the interval from starting: if it throws,
+      // setInterval below would never run and playback would be dead forever.
+      try { _ambTick(E); } catch (e) { _ambLogTickErr(e); }
+      E.timer = setInterval(() => { try { _ambTick(E); } catch (e) { _ambLogTickErr(e); } }, 150);
       // The finer ramp clock only runs while ramps exist (started lazily) so a
       // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
       // with audio scheduling.

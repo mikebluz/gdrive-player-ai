@@ -1924,8 +1924,18 @@
     function _ambArpSeriesInfo(arp, cfg) {
       const steps = (Array.isArray(arp.steps) && arp.steps.length) ? arp.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
       const octs = Math.max(1, Math.min(4, (arp.octaves | 0) || 2));
+      // Size each entry by the chord the arp is ACTUALLY on (its own per-loop
+      // progression cursor st._loop), not the global progression clock — so the
+      // unit is exactly ONE progression chord and matches what the emit plays
+      // (otherwise the Sync scale and the real loop length disagree and synced
+      // arps drift). st may not exist yet (pre-play) → chord 0, which is correct.
+      const _st = _E && _E.arpState && _E.arpState['arp:' + (arp.id | 0)];
+      const _prevOv = _ambProgStepOverride;
       const entryNotes = steps.map(entry => {
+        const _isProg = _ambAsNotes(_ambNotesOf(entry)).type === 'prog';
+        if (_isProg) _ambProgStepOverride = (_st ? (_st._loop | 0) : 0);
         const len = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length) * octs;
+        if (_isProg) _ambProgStepOverride = _prevOv;
         const dir = (entry && entry.dir) || arp.dir || 'up';
         return _ambArpEntryNotes(entry, dir, len);
       });
@@ -5028,8 +5038,8 @@
         el._lastProg = active ? prog : -1;
         if (active && typeof lp === 'number' && lp >= 0 && prog < lp - 0.4) {
           const head = el.closest('.ambient-layer-head');
-          const nm = head && head.querySelector('.ambient-layer-name');
-          if (nm) { nm.classList.remove('amb-loopflash'); void nm.offsetWidth; nm.classList.add('amb-loopflash'); }
+          const btn = head && head.querySelector('.ambient-toggle');
+          if (btn) { btn.classList.remove('amb-loopflash'); void btn.offsetWidth; btn.classList.add('amb-loopflash'); }
         }
       });
     }

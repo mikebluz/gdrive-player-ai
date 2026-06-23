@@ -434,6 +434,14 @@
       cfg.extras = cfg.extras.filter(x => x && typeof x === 'object' && _AMB_LAYER_SCHEMA[x.type]).map(x => {
         if (!Number.isFinite(x.id)) x.id = ++maxXid;
         const d = _ambDefaultLayer(x.type, x.id);
+        // Drone gained Density/Degree voicing. A pre-existing drone on a chord /
+        // wrap / prog used to sound ALL its tones — preserve that by seeding
+        // Density to the tone count (single-note scale drones stay at 1).
+        if (x.type === 'drone' && typeof x.density === 'undefined') {
+          let cl = false, cnt = 1;
+          try { const sN = _ambNotesOf(x); cl = (sN.type === 'chord' || sN.type === 'wrap' || sN.type === 'prog'); if (cl) cnt = Math.max(1, Math.min(9, _ambScaleIntervals(sN).length)); } catch (e) {}
+          x.density = cl ? cnt : 1;
+        }
         Object.keys(d).forEach(k => { if (k === 'mod' || k === 'delay' || k === 'dist' || k === 'notes') return; if (typeof x[k] === 'undefined') x[k] = d[k]; });
         if (typeof x.on !== 'boolean') x.on = true;
         if (typeof x.present !== 'boolean') x.present = true;
@@ -1011,165 +1019,12 @@
     function _ambWireNotesBtn(E, btnId, getLayer) {
       const btn = _ambGet(E, btnId);
       if (!btn) return;
-      // If this layer also has a Drone Pitch button, keep its label in sync when
-      // the source changes here (Drone only — _ambGet no-ops for other layers).
-      const dpBtn = _ambGet(E, btnId.replace(/notes$/, 'dronepitch'));
-      const refresh = () => {
-        const L = getLayer(); if (!L) return;
-        btn.textContent = _ambNotesLabel(_ambNotesOf(L));
-        if (dpBtn) dpBtn.textContent = _ambDronePitchLabel(L);
-      };
+      const refresh = () => { const L = getLayer(); if (L) btn.textContent = _ambNotesLabel(_ambNotesOf(L)); };
       refresh();
       btn.addEventListener('click', () => {
         const r = btn.getBoundingClientRect();
         _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
       });
-    }
-    // ---- Drone Pitch picker (tabbed Note | Chord, like Edit Arp) -----------
-    // Replaces the Drone's old "Note" degree slider: the Note tab picks WHICH
-    // single scale note (degree) it holds; the Chord tab defines a chord. Wrap /
-    // Progression sources still come from the Notes button — this picker just
-    // shows their label read-only on its button.
-    function _ambDronePitchLabel(L) {
-      const n = _ambNotesOf(L);
-      if (n.type === 'chord' || n.type === 'wrap' || n.type === 'prog') return _ambNotesLabel(n);
-      const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
-      const iv = _ambScaleIntervals(n);
-      const N = Math.max(1, iv.length);
-      const d = Math.min(N - 1, Math.max(0, (((L.degree | 0) || 1) - 1)));
-      const pc = (((_ambSrcRootPc(n) + (iv[d] || 0)) % 12) + 12) % 12;
-      return '♪ ' + names[pc] + ' · ' + (d + 1);
-    }
-    function _ambDronePitchHtml(p) {
-      return '<div class="ambient-ctrl"><label>Pitch</label>' +
-        '<button type="button" id="' + p + '-dronepitch" class="ambient-select ambient-notes-btn">Note</button>' +
-        '<span class="ambient-hint">note / chord</span></div>';
-    }
-    function _ambWireDronePitch(E, inst, p, get) {
-      // Card HTML builds the id as <p_card>-dronepitch; the wiring `p` carries the
-      // trailing '-', so the lookup is `p + 'dronepitch'` (no extra dash).
-      const btn = _ambGet(E, p + 'dronepitch'); if (!btn) return;
-      // Keep BOTH the Pitch label and the sibling Notes button in sync after a
-      // change (a chord set here also changes the Notes source, and vice-versa).
-      const notesBtn = _ambGet(E, p + 'notes');
-      const refresh = () => {
-        const L = get(); if (!L) return;
-        btn.textContent = _ambDronePitchLabel(L);
-        if (notesBtn) notesBtn.textContent = _ambNotesLabel(_ambNotesOf(L));
-      };
-      refresh();
-      btn.addEventListener('click', () => { _ambOpenDronePitch(E, get, refresh); });
-    }
-    function _ambOpenDronePitch(E, getLayer, afterChange) {
-      _E = E;
-      const L0 = getLayer(); if (!L0) return;
-      const kcfg = E.getCfg();
-      const keyOn = !!(kcfg && kcfg.keyOn);
-      const CHROM = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-      const esc = (t) => String(t == null ? '' : t).replace(/[<>&"]/g, '');
-      const cur = _ambNotesOf(L0);
-      // The scale the Note tab draws from: the layer's current scale source if it
-      // is one, else the workspace scale (''). Single-degree notes stay in-scale.
-      const noteScale = (cur.type === 'scale') ? (cur.scale || '') : '';
-      let tab = (cur.type === 'chord') ? 'chord' : 'note';
-      const chordState = (cur.type === 'chord')
-        ? { form: cur.form || 'maj', root: cur.root | 0, inversion: cur.inversion | 0 }
-        : { form: 'maj', root: (keyOn ? _ambKeyRootPc(kcfg) : ((typeof rootIdx === 'number') ? rootIdx : 0)), inversion: 0 };
-      const ordinal = (i) => i === 0 ? 'Root' : (i === 1 ? '1st' : i === 2 ? '2nd' : i === 3 ? '3rd' : (i + 'th'));
-      const invOptsFor = (form, sel) => {
-        const def = _AMB_CHORD_FORMS.find(c => c[0] === form) || _AMB_CHORD_FORMS[0];
-        return def[2].map((_, i) => '<option value="' + i + '"' + (i === (sel | 0) ? ' selected' : '') + '>' + ordinal(i) + '</option>').join('');
-      };
-      const rootOptsFor = (form, selRoot) => {
-        if (!keyOn) return CHROM.map((nm, i) => '<option value="' + i + '"' + (i === (selRoot | 0) ? ' selected' : '') + '>' + nm + '</option>').join('');
-        const groups = { diatonic: [], borrowed: [], passing: [] };
-        for (let i = 0; i < 12; i++) { const cls = _ambChordKeyClass(form, i, kcfg); if (cls && groups[cls]) groups[cls].push(i); }
-        const valid = groups.diatonic.concat(groups.borrowed, groups.passing);
-        const sel = (valid.indexOf(selRoot | 0) >= 0) ? (selRoot | 0) : (valid.length ? valid[0] : (selRoot | 0));
-        const lbl = { diatonic: 'In key', borrowed: 'Borrowed', passing: 'Color (passing)' };
-        let html = '';
-        ['diatonic', 'borrowed', 'passing'].forEach(k => {
-          if (!groups[k].length) return;
-          html += '<optgroup label="' + lbl[k] + '">' +
-            groups[k].map(i => '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + CHROM[i] + '</option>').join('') + '</optgroup>';
-        });
-        if (!html) html = '<option value="' + (selRoot | 0) + '">' + CHROM[(selRoot | 0) % 12] + '</option>';
-        return html;
-      };
-      const overlay = document.createElement('div'); overlay.className = 'modal-overlay';
-      const modal = document.createElement('div'); modal.className = 'step-div-modal amb-dronepitch-modal';
-      overlay.appendChild(modal);
-      const close = () => { try { overlay.remove(); } catch (e) {} };
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-      const applyNotes = (notes, degree) => {
-        _E = E; const L = getLayer(); if (!L) return;
-        L.notes = notes;
-        if (degree != null) L.degree = degree;
-        if (typeof afterChange === 'function') afterChange();
-        if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
-        if (typeof persistWorkspace === 'function') persistWorkspace();
-      };
-      const renderNote = () => {
-        const src = { type: 'scale', scale: noteScale };
-        const iv = _ambScaleIntervals(src);
-        const N = Math.max(1, iv.length);
-        const L = getLayer();
-        const cn = _ambNotesOf(L);
-        const curDeg = (cn.type === 'scale') ? Math.min(N - 1, Math.max(0, (((L && L.degree | 0) || 1) - 1))) : -1;
-        const rootPc = _ambSrcRootPc(src);
-        const sName = noteScale ? ((typeof prettyScaleName === 'function') ? prettyScaleName(noteScale) : noteScale) : 'Workspace scale';
-        let h = '<div class="amb-dp-scale">' + esc(sName) + (keyOn ? '' : '') + '</div><div class="amb-dp-notes">';
-        for (let d = 0; d < N; d++) {
-          const pc = (((rootPc + (iv[d] || 0)) % 12) + 12) % 12;
-          h += '<button type="button" class="amb-ce-cell ' + (d === curDeg ? 'on' : 'off') + '" data-deg="' + (d + 1) + '" title="degree ' + (d + 1) + '">' +
-            '<span class="amb-dp-nm">' + esc(CHROM[pc]) + '</span><span class="amb-dp-dg">' + (d + 1) + '</span></button>';
-        }
-        return h + '</div>';
-      };
-      const renderChord = () =>
-        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Form</span><select id="amb-dp-form" class="sm-select">' +
-          _AMB_CHORD_FORMS.map(c => '<option value="' + c[0] + '"' + (c[0] === chordState.form ? ' selected' : '') + '>' + c[1] + '</option>').join('') + '</select></div>' +
-        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Root</span><select id="amb-dp-root" class="sm-select">' + rootOptsFor(chordState.form, chordState.root) + '</select></div>' +
-        '<div class="keep-sdiv-row"><span class="keep-sdiv-name">Inversion</span><select id="amb-dp-inv" class="sm-select">' + invOptsFor(chordState.form, chordState.inversion) + '</select></div>' +
-        '<div class="keep-sdiv-actions"><button type="button" class="keep-sdiv-apply" id="amb-dp-chord-apply">Use chord</button></div>';
-      const render = () => {
-        let h = '<div class="keep-sdiv-title">Drone Pitch' + (keyOn ? ' · ' + ((CHROM[_ambKeyRootPc(kcfg)]) || '') + ' ' + _ambKeyScaleName(kcfg) + ' key' : '') + '</div>' +
-          '<div class="amb-ce-tabs">' +
-            '<button type="button" class="amb-ce-tab' + (tab === 'note' ? ' active' : '') + '" data-tab="note">Note</button>' +
-            '<button type="button" class="amb-ce-tab' + (tab === 'chord' ? ' active' : '') + '" data-tab="chord">Chord</button>' +
-          '</div>';
-        h += '<div class="amb-dp-body">' + (tab === 'note' ? renderNote() : renderChord()) + '</div>';
-        h += '<div class="sm-footer"><button type="button" class="sm-apply amb-dp-done">Done</button></div>';
-        modal.innerHTML = h;
-        modal.querySelectorAll('.amb-ce-tab').forEach(b => b.addEventListener('click', () => { tab = b.getAttribute('data-tab') || 'note'; render(); }));
-        const doneB = modal.querySelector('.amb-dp-done'); if (doneB) doneB.addEventListener('click', close);
-        if (tab === 'note') {
-          modal.querySelectorAll('.amb-ce-cell').forEach(btn => btn.addEventListener('click', () => {
-            const deg = parseInt(btn.getAttribute('data-deg'), 10) || 1;
-            applyNotes({ type: 'scale', scale: noteScale }, deg);
-            render();
-          }));
-        } else {
-          const formSel = modal.querySelector('#amb-dp-form');
-          const rootSel = modal.querySelector('#amb-dp-root');
-          const invSel = modal.querySelector('#amb-dp-inv');
-          formSel.addEventListener('change', () => {
-            const keep = parseInt(rootSel.value, 10) || 0;
-            rootSel.innerHTML = rootOptsFor(formSel.value, keep);
-            invSel.innerHTML = invOptsFor(formSel.value, 0);
-          });
-          modal.querySelector('#amb-dp-chord-apply').addEventListener('click', () => {
-            applyNotes({
-              type: 'chord', form: formSel.value,
-              root: parseInt(rootSel.value, 10) || 0,
-              inversion: parseInt(invSel.value, 10) || 0,
-            });
-            close();
-          });
-        }
-      };
-      render();
-      document.body.appendChild(overlay);
     }
 
     // ---- Space (stereo distribution) -----------------------------------
@@ -1871,9 +1726,10 @@
     }
 
     // ================= DRONE engine ================================
-    // Holds a note (or the whole chord, if the Notes source is a chord/wrap/prog)
-    // and RE-STRIKES every `hold` units. Time vary jitters the strike time;
-    // Pitch vary drifts the octave (and the scale degree for a single-note drone).
+    // Holds a voicing of the Notes source and RE-STRIKES every `hold` units. The
+    // voicing is set by Density (how many tones to stack, 1–9) and Degree (which
+    // source tone is the bottom/root), stacking up and wrapping +1 octave past the
+    // top tone. Time vary jitters the strike time; Pitch vary drifts the octave.
     // Phase-anchored to a downbeat like Pedal/Run; follows the key per note.
     function _ambEmitDrone(E, inst, key, now, horizon, lead, space, cfg) {
       if (!E.runPhase) E.runPhase = {};
@@ -1884,12 +1740,14 @@
       const reg = Math.max(1, Math.min(7, inst.register | 0) || 3);
       const src = _ambNotesOf(inst);
       const n = _ambAsNotes(src);
-      const chordLike = (n.type === 'chord' || n.type === 'wrap' || n.type === 'prog');
-      const N = Math.max(1, _ambScaleIntervals(src).length);
-      // Chosen root for a single-note (scale) drone — a SCALE DEGREE, so it always
-      // stays in the current key/scale (1 = key root). Chord sources keep their own
-      // root (set in the Notes picker).
-      const rootDeg = Math.min(N - 1, Math.max(0, (((inst.degree | 0) || 1) - 1)));
+      // Density/Degree voicing: of the current source's tones (chord tones for a
+      // chord/wrap/prog, scale degrees for a scale), start at the Degree-th tone
+      // (the voicing root) and stack `density` consecutive tones, bumping up an
+      // octave each time we pass the top tone. So a major triad at Degree 2 /
+      // Density 3 = third, fifth, root(+8ve); a 7th chord adds the 7th instead.
+      const density = Math.max(1, Math.min(9, inst.density | 0) || 1);
+      const startIdx = Math.max(0, (((inst.degree | 0) || 1) - 1));
+      const tones0 = _ambScaleIntervals(src);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const vtype = _ambLayerType(inst.tone);
       const pan = _ambLayerPan(inst);
@@ -1917,29 +1775,30 @@
       for (let c = cFrom; c <= cTo && cap < 64; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
         if (isProg) _ambProgStepOverride = c;                 // advance this layer's progression
-        const cN = isProg ? Math.max(1, _ambScaleIntervals(src).length) : N;
+        const tones = isProg ? _ambScaleIntervals(src) : tones0;   // prog chord changes per cycle
+        const K = Math.max(1, tones.length);
         const cRnd = (timeVary > 0 || pitchVary > 0)
           ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
         let tOff = 0;
         if (cRnd && timeVary > 0) tOff = (cRnd() * 2 - 1) * (timeVary / 100) * unitSec * 0.5;
         const at = st.startAt + c * cycleSec + tOff;
         if (at < tFrom || at >= tTo) continue;
-        let regShift = 0, degBase = rootDeg;
-        if (cRnd && pitchVary > 0 && cRnd() * 100 < pitchVary) {
-          regShift = (cRnd() < 0.5 ? -1 : 1);
-          if (!chordLike) degBase = Math.floor(cRnd() * cN);   // single-note drone roams off the root degree
-        }
+        let regShift = 0;
+        if (cRnd && pitchVary > 0 && cRnd() * 100 < pitchVary) regShift = (cRnd() < 0.5 ? -1 : 1);
         _ambKeyTime = at;
-        const degs = chordLike ? Array.from({ length: cN }, (_, i) => i) : [degBase];
         const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
           volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan };
         if (dmod) bp._detuneMod = dmod;
-        degs.forEach((d, vi) => {
-          const f = _ambDegreeFreq(d, reg + regShift, src);
-          if (f == null) return;
+        // Stack `density` tones from the Degree-th, wrapping +1 octave per pass.
+        for (let i = 0; i < density; i++) {
+          const idx = startIdx + i;
+          const tIv = tones[(((idx % K) + K) % K)];
+          const oct = Math.floor(idx / K);
+          const f = _ambNoteFreq(tIv, reg + regShift + oct, src);
+          if (f == null) continue;
           const vp = Object.assign({}, bp);
-          try { playNote(f, vp, lenMs, at + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
-        });
+          try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+        }
         cap++;
       }
       } finally { _ambProgStepOverride = null; }
@@ -6261,7 +6120,7 @@
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'decay', 'Decay', 0, 4000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 12000, 'ms'],
-        ['grp', 'Pitch'], ['notes'], ['dronepitch'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
         ['grp', 'Rhythm'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -6318,7 +6177,7 @@
       // Drone: holds the key root every 4 units (4×2s = 8s) with a soft 200ms
       // attack + 1.5s release. Pick a chord Notes source to hold a whole chord.
       if (type === 'drone') return Object.assign(base, {
-        tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1,
+        tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1, density: 1,
         intervalMs: 2000, hold: 4, attack: 200, decay: 0, sustain: 100, release: 1500,
         timeVary: 0, pitchVary: 0, accent: 0,
       });
@@ -6342,7 +6201,6 @@
         if (k === 'gen') return _ambGenSel(p + '-');
         if (k === 'rate') return _ambRateSel(p + '-rate');
         if (k === 'notes') return _ambNotesButtonHtml(p);
-        if (k === 'dronepitch') return _ambDronePitchHtml(p);
         if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
         if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
         if (k === 'cond') return _ambCondCtrl(lk);
@@ -6450,7 +6308,6 @@
           else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }
           else if (k === 'unitsync') { _ambWireUnitSync(E, p, get, type + ':' + id); }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
-          else if (k === 'dronepitch') { _ambWireDronePitch(E, inst, p, get); }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }

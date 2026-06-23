@@ -3259,16 +3259,6 @@
     }
     .amb-ce-tab.active { background: rgba(159,122,234,0.18); border-color: #9f7aea; color: #ede9fe; }
     @media (hover: hover) { .amb-ce-tab:not(.active):hover { border-color: #9f7aea; color: #d6bcfa; } }
-    /* Drone Pitch picker (tabbed Note | Chord). */
-    .amb-dronepitch-modal .amb-dp-body { min-width: 244px; }
-    .amb-dp-scale { font: 600 0.72rem 'Segoe UI', sans-serif; color: #8a8aa8; text-align: center; margin: 0 0 8px; }
-    .amb-dp-notes { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; max-width: 300px; }
-    .amb-dp-notes .amb-ce-cell { flex: 0 0 auto; min-width: 42px; padding: 7px 9px; display: flex; flex-direction: column; align-items: center; gap: 1px; }
-    .amb-dp-notes .amb-ce-cell .amb-dp-nm { font: 700 0.74rem 'Segoe UI', sans-serif; }
-    .amb-dp-notes .amb-ce-cell .amb-dp-dg { font-size: 0.54rem; opacity: 0.6; }
-    .amb-dronepitch-modal .keep-sdiv-row { gap: 12px; }
-    .amb-dronepitch-modal .keep-sdiv-name { flex: 0 0 80px; }
-    .amb-dronepitch-modal .sm-select { flex: 1 1 auto; }
     /* Per-chord header in Phrase tab: root name + plays/notes badge. */
     .amb-ce-chead { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 1px; }
     .amb-ce-cann { color: #6a6a88; font: 0.66rem 'SFMono-Regular', ui-monospace, Menlo, monospace; }

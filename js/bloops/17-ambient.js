@@ -81,7 +81,7 @@
         bed:     { on: true,  density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, strum: 0, strumFidelity: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         motif:   { on: false, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, accent: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
         texture: { on: false, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, tone: '', scale: '', mod: _ambDefaultMod(), ..._ambDefaultFx() },
-        beat:    { on: false, kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
+        beat:    { on: false, kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() },
         // `seqs` is a DYNAMIC list of sequence-seeded layers (Seq1, Seq2…),
         // created by "Send to Bloom". Each replays one or more saved-sequence
         // "units", improvising variations and periodically returning to verbatim.
@@ -387,7 +387,7 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         Object.keys(d[layer]).forEach(k => {
           if (k === 'on') { if (typeof cfg[layer].on !== 'boolean') cfg[layer].on = d[layer].on; }
-          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when' || k === 'panMode') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
+          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when' || k === 'panMode' || k === 'gen') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
           else if (k === 'mod') { _ambNormalizeModObj(cfg[layer], d[layer].mod); }
           else if (k === 'delay' || k === 'dist') { /* handled by _ambNormalizeFx below */ }
           else if (!Number.isFinite(cfg[layer][k])) cfg[layer][k] = d[layer][k];
@@ -450,6 +450,10 @@
             if (!st.notes || typeof st.notes !== 'object' || typeof st.notes.type !== 'string') st.notes = { type: 'scale', scale: '' };
             _ambNormalizeNotes(st);
             st.passes = Math.max(1, Math.min(16, (st.passes | 0) || 1));
+            // Per-entry note unit: 'passes' (whole sweeps, default) or 'notes'
+            // (exact count). `count` holds the exact-notes value (0 = unset).
+            st.unit = (st.unit === 'notes') ? 'notes' : 'passes';
+            st.count = Math.max(0, Math.min(64, (st.count | 0) || 0));
             // Direction is per ENTRY now — migrate the old layer-wide dir onto
             // any entry that lacks one.
             if (_DIRS.indexOf(st.dir) < 0) st.dir = _layerDir;
@@ -1133,10 +1137,12 @@
     function _ambCondFires(cond, iter) {
       if (cond == null || cond === 'always') return true;
       if (cond === '1st') return iter === 0;
-      // Numeric BITMASK: the decimal value's binary (MSB-first, min 4 bits wide)
-      // is the per-cycle play pattern — a 1 = play, 0 = skip — repeating every
-      // bit. e.g. 2 → "0010" plays the 3rd cycle of every 4; 10 → "1010" every
-      // other; 15 → "1111" every cycle. 0 → never.
+      // STEP GRID: a 16-char binary string (the toggle grid) — each char is one
+      // cycle in a 16-step pattern (1 = play, 0 = skip), repeating every 16.
+      if (/^[01]{16}$/.test(String(cond))) return String(cond).charAt(((iter % 16) + 16) % 16) === '1';
+      // Legacy numeric BITMASK: the decimal value's binary (MSB-first, min 4 bits
+      // wide), repeating every bit. e.g. 2 → "0010" plays the 3rd of every 4.
+      // Kept so older saves still play; the UI now writes step-grid strings.
       if (/^\d+$/.test(String(cond))) {
         const n = parseInt(cond, 10) || 0;
         if (n <= 0) return false;
@@ -1151,46 +1157,76 @@
       }
       return true;
     }
-    // Decimal → on/off bitmask STRING (MSB-first), zero-padded to at least 4 bits
-    // so single small numbers read as a 4-slot pattern (e.g. 2 → "0010"). Larger
-    // numbers widen the pattern (period = string length). Shared by the engine
-    // (_ambCondFires) and the UI readout so they never disagree.
+    // Decimal → on/off bitmask STRING (MSB-first), zero-padded to at least 4 bits.
+    // Only the legacy numeric-bitmask path in _ambCondFires uses this now.
     function _ambWhenBitsStr(n) {
       n = (typeof n === 'number') ? n : (parseInt(n, 10) || 0);
       if (!(n > 0)) return '0000';
       const b = n.toString(2);
       return b.length >= 4 ? b : b.padStart(4, '0');
     }
-    // Any stored When (legacy 'always'/'1st'/'A:B' string OR a decimal bitmask)
-    // → the numeric value the new numeric input should show. Legacy ratios are
-    // mapped to the closest periodic bitmask (over width max(4,B)); 'always' →
-    // 15 (all on), '1st' → 8 (≈ first of four). The engine still understands the
-    // raw legacy strings, so old projects keep playing until the field is edited.
-    function _ambWhenToNum(when) {
-      if (when == null || when === 'always') return 15;
-      if (/^\d+$/.test(String(when))) return parseInt(when, 10) || 0;
-      if (when === '1st') return 8;
-      const m = /^(\d+):(\d+)$/.exec(String(when));
-      if (m) {
-        const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-        if (b > 0) { const w = Math.max(4, b); let v = 0; for (let i = 0; i < w; i++) { if ((i % b) === (((a - 1) % b) + b) % b) v |= (1 << (w - 1 - i)); } return v; }
-      }
-      return 15;
+    // Any stored When (legacy 'always'/'1st'/'A:B'/decimal OR a 16-char grid
+    // string) → 16 booleans for the toggle grid, by simply asking _ambCondFires
+    // what fires on cycles 0..15. So every legacy form maps onto the grid and the
+    // grid round-trips exactly.
+    function _ambWhenGridCells(when) {
+      const out = [];
+      for (let i = 0; i < 16; i++) out.push(_ambCondFires(when, i));
+      return out;
     }
-    // Wire a When numeric input (id `<stem>when`) + its binary readout
-    // (`<stem>when-bits`): seed from the layer's current value, then store the
-    // typed decimal as a string and refresh the readout live. Shared by every
-    // layer type (primaries, extras, seq, sample).
+    // 16 booleans → the stored When string (the grid's binary).
+    function _ambGridToWhen(cells) {
+      let s = ''; for (let i = 0; i < 16; i++) s += cells[i] ? '1' : '0';
+      return s;
+    }
+    // Collapsed-summary text for a 16-cell pattern: "Always" (all on), "Never"
+    // (all off), else the binary string (the live pattern).
+    function _ambWhenSummary(cells) {
+      let on = 0; for (let i = 0; i < 16; i++) if (cells[i]) on++;
+      if (on === 16) return 'Always';
+      if (on === 0) return 'Never';
+      return _ambGridToWhen(cells);
+    }
+    // Paint a When grid's cells (id `<stem>when`) + its collapsed summary from a
+    // stored value.
+    function _ambPaintWhenGrid(grid, when) {
+      if (!grid) return;
+      const cells = _ambWhenGridCells(when);
+      grid.querySelectorAll('.ambient-when-cell').forEach((el, i) => el.classList.toggle('on', !!cells[i]));
+      const wrap = grid.closest('.ambient-when-wrap');
+      const sum = wrap && wrap.querySelector('.ambient-when-summary');
+      if (sum) sum.textContent = _ambWhenSummary(cells);
+    }
+    // Wire the collapse/expand toggle (the grid is collapsed by default; the
+    // summary button reveals it). Bound once per control.
+    function _ambWireWhenToggle(grid) {
+      if (!grid) return;
+      const wrap = grid.closest('.ambient-when-wrap'); if (!wrap || wrap._ambTogBound) return;
+      const tog = wrap.querySelector('.ambient-when-toggle'); if (!tog) return;
+      wrap._ambTogBound = true;
+      tog.addEventListener('click', () => {
+        const exp = wrap.classList.toggle('expanded');
+        tog.setAttribute('aria-expanded', exp ? 'true' : 'false');
+      });
+    }
+    // Wire a When toggle grid (id `<stem>when`): seed from the layer's value, wire
+    // collapse/expand, then toggle the clicked step and store the 16-char pattern.
+    // Shared by every layer type (primaries use their own inline cell handler).
     function _ambBindWhen(E, stem, get, persist) {
-      const inp = _ambGet(E, stem + 'when'); if (!inp) return;
-      const bits = _ambGet(E, stem + 'when-bits');
-      const show = (n) => { if (bits) bits.textContent = _ambWhenBitsStr(n); };
-      const L0 = get(); const cur = _ambWhenToNum(L0 ? L0.when : 'always');
-      inp.value = String(cur); show(cur);
-      inp.addEventListener('input', () => {
+      const grid = _ambGet(E, stem + 'when'); if (!grid) return;
+      _ambWireWhenToggle(grid);
+      const L0 = get(); _ambPaintWhenGrid(grid, L0 ? L0.when : 'always');
+      if (grid._ambBound) return; grid._ambBound = true;
+      grid.addEventListener('click', (e) => {
+        const cell = e.target && e.target.closest ? e.target.closest('.ambient-when-cell') : null;
+        if (!cell || !grid.contains(cell)) return;
         _E = E; const L = get(); if (!L) return;
-        let n = parseInt(inp.value, 10); if (!Number.isFinite(n) || n < 0) n = 0;
-        L.when = String(n); show(n); persist();
+        const cells = _ambWhenGridCells(L.when);
+        const idx = Math.max(0, Math.min(15, parseInt(cell.getAttribute('data-step'), 10) || 0));
+        cells[idx] = !cells[idx];
+        L.when = _ambGridToWhen(cells);
+        _ambPaintWhenGrid(grid, L.when);
+        persist();
       });
     }
 
@@ -1870,6 +1906,14 @@
       if (dir === 'updown' || dir === 'downup') return 2 * (len - 1);
       return len; // up / down / random
     }
+    // How many notes one Arp series ENTRY plays before advancing to the next:
+    // an EXACT `count` when the entry's unit is 'notes' (precise control — the
+    // pool keeps wrapping past a full sweep), else `passLen × passes` (whole
+    // sweeps, the default). `len` = pool size (scale degrees × octaves).
+    function _ambArpEntryNotes(entry, dir, len) {
+      if (entry && entry.unit === 'notes' && (entry.count | 0) > 0) return entry.count | 0;
+      return _ambArpPassLen(dir, len) * Math.max(1, ((entry && entry.passes) | 0) || 1);
+    }
     // Notes in ONE full pass through an Arp's series (Σ over entries of
     // passLen(dir, pool) × passes) + the per-note interval — so queue mode snaps
     // to the SERIES loop, not each note.
@@ -1879,7 +1923,7 @@
       const entryNotes = steps.map(entry => {
         const len = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length) * octs;
         const dir = (entry && entry.dir) || arp.dir || 'up';
-        return _ambArpPassLen(dir, len) * Math.max(1, (entry.passes | 0) || 1);
+        return _ambArpEntryNotes(entry, dir, len);
       });
       const totalNotes = Math.max(1, entryNotes.reduce((a, b) => a + b, 0));
       // Use the SAME per-note interval the tick steps by (incl. sync-mode snap),
@@ -1928,9 +1972,8 @@
       else if (rnd > 0 && _ambRand() < rnd) idx = Math.floor(_ambRand() * len);
       else idx = _ambArpIndexFor(dir, st.note, len);
       // Advance the pass / entry cursor for NEXT time.
-      const passLen = _ambArpPassLen(dir, len);
       st.note += 1;
-      if (st.note >= passLen * Math.max(1, (entry.passes | 0) || 1)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
+      if (st.note >= _ambArpEntryNotes(entry, dir, len)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
       // Rests skip the note (cursor already advanced, so timing stays steady).
       if (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0))) return;
       // Resolve an ASCENDING pool: degree d within octave o, lifted so chord/scale
@@ -2072,6 +2115,72 @@
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
       try { playNote(f, bp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+    }
+    // Euclidean Beat: a BPM-locked drum pattern over `bars` bars. Windowed/
+    // phase-anchored like Bass (uses E.runPhase) so the seed pattern + per-cycle
+    // Rhythm-var stay locked to the tempo and the UNIT is a whole phrase (the
+    // status bar / unit length span the bars, not a single hit). Each euclidean
+    // pulse fires a drum from the layer's kit (random drum per hit, like the
+    // simple Beat). `when` applies per phrase cycle.
+    function _ambEmitBeatEuclid(E, inst, key, now, horizon, lead, space, cfg) {
+      if (!E.runPhase) E.runPhase = {};
+      if (typeof euclideanPattern !== 'function') return;
+      const bpm = _ambBpm();
+      const barSec = (60 / bpm) * 4;                 // 4/4
+      const bars   = Math.max(1, Math.min(8, inst.bars | 0) || 1);
+      const phraseSec = bars * barSec;
+      if (!(phraseSec > 0.05)) return;
+      const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
+      const steps  = Math.max(2, Math.min(16, inst.steps | 0) || 8);
+      const pulses = Math.max(1, Math.min(steps, inst.pulses | 0) || 1);
+      const rotate = Math.max(0, inst.rotate | 0);
+      const slotSec = barSec / steps;
+      const lenMs  = Math.max(60, inst.lengthMs | 0);
+      const rVar   = Math.max(0, Math.min(100, inst.rhythmVar | 0));
+      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const pan    = _ambLayerPan(inst);
+      const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const pat    = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
+
+      let st = E.runPhase[key];
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(inst, cfg), lastAt: null };
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
+      const cTo   = Math.floor((tTo - st.startAt) / loopSec);
+      let cap = 0;
+      for (let c = cFrom; c <= cTo && cap < 256; c++) {
+        if (!_ambCondFires(inst.when, c)) continue;
+        const cStart = st.startAt + c * loopSec;
+        // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
+        const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
+        for (let bar = 0; bar < bars; bar++) {
+          for (let slot = 0; slot < steps; slot++) {
+            let hit = pat[slot] === 1;
+            if (rVar > 0) {
+              if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
+              else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
+            }
+            if (!hit) continue;
+            if (restP > 0 && rnd() * 100 < restP) continue;
+            const at = cStart + (bar * steps + slot) * slotSec;
+            if (at < tFrom || at >= tTo) continue;
+            const pc = _ambPickDrumPc();
+            let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
+            const bp = _ambBeatParams(inst.kit, lenMs, pan);
+            bp.volume = _ambApplyLevel(bp.volume, inst.level);
+            if (dmod) bp._detuneMod = dmod;
+            _ambKeyTime = at;
+            try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+            cap++;
+            if (cap >= 256) break;
+          }
+          if (cap >= 256) break;
+        }
+      }
+      st.lastAt = tTo;
     }
 
     // ================= SEQ engine ===================================
@@ -2706,7 +2815,14 @@
       }
       if (type === 'seq') return '⟳ unit ' + fmt(_ambLayerPeriodSec(E, key, L, cfg));
       if (type === 'samp') return 'Δ ' + unitStr;
-      // bed / motif / texture / beat — continuous stream; unit = Interval/Rate.
+      if (type === 'beat' && L.gen === 'euclid') {
+        const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
+        const steps = Math.max(2, Math.min(16, (L.steps | 0) || 8));
+        const pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1));
+        const pad = Math.max(0, (L.unitPadMs | 0)) / 1000, baseSec = bars * (60 / bpm) * 4;
+        return '⟳ ' + pulses + '/' + steps + ' × ' + bars + ' bar' + (bars === 1 ? '' : 's') + (pad > 0 ? ' + ' + fmt(pad) + ' pad' : '') + ' = ' + fmt(baseSec + pad) + ' @' + bpm;
+      }
+      // bed / motif / texture / beat (random) — continuous stream; unit = Interval/Rate.
       return 'Δ ' + unitStr;
     }
     // Refresh every layer header's unit readout in this engine's panel.
@@ -2754,8 +2870,8 @@
     // { set, contentSec, padSec } — content plays, pad is silence to total desired.
     function _ambUnitMatchPlan(E, L, key, cfg, desiredSec) {
       const type = String(key).split(':')[0];
-      if (type === 'bass' || type === 'run' || type === 'pedal') {
-        const barSec = (60 / _ambBpm()) * 4, maxBars = (type === 'bass') ? 8 : 16;
+      if (type === 'bass' || type === 'run' || type === 'pedal' || (type === 'beat' && L.gen === 'euclid')) {
+        const barSec = (60 / _ambBpm()) * 4, maxBars = (type === 'run' || type === 'pedal') ? 16 : 8;
         const bars = Math.max(1, Math.min(maxBars, Math.floor(desiredSec / barSec + 1e-6)));
         const content = bars * barSec, pad = Math.max(0, desiredSec - content);
         return { set: { bars: bars, unitPadMs: Math.round(pad * 1000) }, contentSec: content, padSec: pad };
@@ -2788,8 +2904,8 @@
       const names = [];
       steps.forEach(entry => {
         const src = _ambNotesOf(entry), intervals = _ambScaleIntervals(src), N = Math.max(1, intervals.length), len = N * octs;
-        const dir = (entry && entry.dir) || L.dir || 'up', passLen = _ambArpPassLen(dir, len), passes = Math.max(1, (entry.passes | 0) || 1);
-        for (let p = 0; p < passes; p++) for (let i = 0; i < passLen; i++) {
+        const dir = (entry && entry.dir) || L.dir || 'up', total = _ambArpEntryNotes(entry, dir, len);
+        for (let i = 0; i < total; i++) {
           const idx = _ambArpIndexFor(dir, i, len), d = idx % N, o = Math.floor(idx / N);
           const carry = Math.floor((_ambSrcRootPc(src) + (intervals[d] | 0)) / 12);
           names.push(_ambFreqName(_ambNoteFreq(intervals[d] | 0, base + o + carry, src)));
@@ -2821,7 +2937,7 @@
         const d = Math.max(0, Math.min(N - 1, ((L.degree | 0) || 1) - 1)), lbl = _ambFreqName(_ambDegreeFreq(d, reg, src));
         const cFrac = bars * (60 / _ambBpm()) * 4 / period;   // content portion (pad is silent)
         for (let i = 0; i < total; i++) evs.push({ at: (i / total) * cFrac, dur: durFrac, label: lbl });
-      } else if (type === 'bass') {
+      } else if (type === 'bass' || (type === 'beat' && L.gen === 'euclid')) {
         const steps = Math.max(2, Math.min(16, (L.steps | 0) || 8)), pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1)), rotate = Math.max(0, L.rotate | 0), bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
         const pat = (typeof euclideanPattern === 'function') ? euclideanPattern(pulses, steps, rotate) : [], totalS = bars * steps;
         const cFrac = bars * (60 / _ambBpm()) * 4 / period;
@@ -2939,6 +3055,7 @@
         return Math.max(0.1, (ms || 0) / 1000);
       }
       if (type === 'samp') return _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
+      if (type === 'beat' && L && L.gen === 'euclid') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'bass') { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
@@ -2965,6 +3082,7 @@
       const P = _ambLayerPeriodSec(E, key, L, cfg);
       if (!(P > 0)) return now + 0.1;
       const eps = 0.03;
+      const euclidBeat = (type === 'beat' && L && L.gen === 'euclid');
       if (L.on) {
         if (type === 'arp') {
           // Snap to the SERIES-loop boundary: next note + the notes left in the
@@ -2973,11 +3091,11 @@
           const c = E.clocks && E.clocks[key];
           const st = E.arpState && E.arpState[key];
           if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval; }
-        } else if (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
-            type === 'texture' || type === 'beat') {
+        } else if (!euclidBeat && (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
+            type === 'texture' || type === 'beat')) {
           const c = E.clocks && E.clocks[key];
           if (c != null && c > now + eps) return c;     // next phrase / slice / step start
-        } else if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone') {
+        } else if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat) {
           const pm = (type === 'bass') ? E.bassPhase : E.runPhase;
           const st = pm && pm[key];
           if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
@@ -3011,7 +3129,8 @@
         return (E._t0 != null ? E._t0 : now) + Math.ceil((now + eps - (E._t0 != null ? E._t0 : now)) / P) * P;
       }
       let A = null;
-      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone') { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
+      const euclidBeat = (type === 'beat' && L && L.gen === 'euclid');
+      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat) { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
       else if (type === 'shape') {
         const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
         const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
@@ -3319,10 +3438,24 @@
         try { runLayer(key, lc, guardMax, minSec, emit, g.hz); }
         finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
       };
+      // Windowed wrapper — like stepLayer but for engines that schedule a whole
+      // BPM-locked phrase over the lookahead (e.g. the Euclidean Beat). Anchors a
+      // phase clock in E[anchorStore] and honors solo / freeze / queue / capture.
+      const windowLayer = (key, lc, anchorStore, emit) => {
+        if (!lc) return;
+        if (_muted(lc)) return;
+        const gate = _qGate(key, !!lc.on, (t) => { if (!E[anchorStore]) E[anchorStore] = {}; E[anchorStore][key] = { startAt: t, lastAt: null }; });
+        if (!gate.run) return;
+        if (_ambFreezeGate(E, key, now, gate.hz)) return;
+        window._ambCaptureSink = _ambCapSink(E, key);
+        try { emit(E, lc, key, now, gate.hz, lead, space, cfg); }
+        finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+      };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
       stepLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
-      stepLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
+      if (cfg.beat && cfg.beat.gen === 'euclid') windowLayer('beat', cfg.beat, 'runPhase', _ambEmitBeatEuclid);
+      else stepLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
       // Seq layers (dynamic list). Auto mode WINDOWS each phrase: only the
       // events falling inside the 1.2 s horizon are scheduled per tick, and the
       // rest resume on later ticks (the phrase plan persists in stSeq.plan).
@@ -3494,6 +3627,17 @@
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
             try { _ambEmitDrone(E, ex, key, now, gate.hz, lead, space, cfg); }
+            finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
+          // Euclidean Beat extra: windowed phrase like the primary beat.
+          if (ex.type === 'beat' && ex.gen === 'euclid') {
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitBeatEuclid(E, ex, key, now, gate.hz, lead, space, cfg); }
             finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
@@ -4642,7 +4786,7 @@
               prog = (((into - rem) / info.totalNotes) % 1 + 1) % 1;
               active = true;
             }
-          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape')) {
+          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape' || (type === 'beat' && layer && layer.gen === 'euclid'))) {
             // Windowed/phase-anchored layers track position in a phase clock, not
             // E.clocks — fill the bar across the unit/loop from that anchor.
             let st = null;
@@ -4777,6 +4921,7 @@
       tone: 'The voice / instrument this layer plays.',
       notes: 'The scale, chord, wrap or progression this layer draws pitches from.',
       when: 'Conditional — which cycles this layer plays on.',
+      gen: 'Beat pattern source — Random (a hit each Interval) or Euclidean (a BPM-locked pattern of Pulses spread over Steps, per bar).',
       kit: 'The drum kit this Beat layer triggers.',
     };
     function _ambParamDesc(label, hint) {
@@ -4875,17 +5020,47 @@
       const bindSub = (suf, key) => { const e = el('mod-' + t + '-' + suf); if (e) e.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod || !L.mod[t]) return; L.mod[t][key] = e.value; if (sync) sync(); persist(); }); };
       bindSub('seqsrc', 'seqSource'); bindSub('seqinterp', 'seqInterp'); bindSub('seqrest', 'seqRest');
     }
-    // When control: a numeric bitmask. The typed decimal's binary (MSB-first,
-    // min 4 bits) is the per-cycle play pattern (1 = play, 0 = skip), repeating
-    // every bit; the readout shows the live binary, e.g. 2 → "0010".
+    // When control: a 16-step toggle grid, COLLAPSED by default behind a summary
+    // button ("Always" all on / "Never" all off / the binary pattern). Each cell
+    // is one cycle in a 16-step pattern (lit = play, dark = skip), repeating every
+    // 16 cycles. The lit cells ARE the binary; tap to toggle. New layers default
+    // to Always (all 16 lit).
     const _ambWhenCtrl = (stem) => {
       const dt = ' title="' + _ambTitleAttr('When', 'cond') + '"';
+      let cells = '';
+      for (let i = 0; i < 16; i++) cells += '<button type="button" class="ambient-when-cell" data-step="' + i + '" aria-label="step ' + (i + 1) + '"></button>';
       return '<div class="ambient-ctrl ambient-when-ctrl"' + dt + '>' +
-        '<label for="' + stem + 'when"' + dt + '>When</label>' +
-        '<input type="number" min="0" step="1" inputmode="numeric" class="ambient-when-num" id="' + stem + 'when" />' +
-        '<span class="ambient-hint ambient-when-bits" id="' + stem + 'when-bits" title="On/off bitmask (1 = play) — repeats each cycle">0000</span></div>';
+        '<label' + dt + '>When</label>' +
+        '<div class="ambient-when-wrap">' +
+          '<button type="button" class="ambient-when-toggle" aria-expanded="false" title="Show / hide the 16-step play pattern">' +
+            '<span class="ambient-when-summary">Always</span>' +
+            '<span class="ambient-when-caret" aria-hidden="true"></span>' +
+          '</button>' +
+          '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + cells + '</div>' +
+        '</div></div>';
     };
     const _ambCondCtrl = (layer) => _ambWhenCtrl('ambient-' + layer + '-');
+    // Beat "Gen" mode select: Random (one hit per Interval) vs Euclidean (a
+    // BPM-locked euclidean pattern over N bars). `stem` ends with '-'.
+    const _ambGenSel = (stem) =>
+      '<div class="ambient-ctrl" title="' + _ambTitleAttr('Gen', 'pattern') + '"><label for="' + stem + 'gen">Gen</label>' +
+      '<select id="' + stem + 'gen" class="ambient-select"><option value="random">Random</option><option value="euclid">Euclidean</option></select>' +
+      '<span class="ambient-hint">pattern</span></div>';
+    // Beat Gen visibility: Euclidean shows Pulses/Steps/Rotate/Phrase + Rhythm
+    // var and hides the free Interval/Rate; Random does the opposite. `stem` is
+    // the id prefix ending in '-'; `p` (extras only) lets Random defer Interval
+    // vs Rate visibility to _ambUnitSyncViz.
+    function _ambBeatGenVis(E, stem, inst, p) {
+      const euclid = !!(inst && inst.gen === 'euclid');
+      const rowOf = (suf) => { const e = _ambGet(E, stem + suf); return (e && e.closest) ? e.closest('.ambient-ctrl') : null; };
+      const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
+      // Interval tm id differs: primary 'interval', extras 'intervalMs'.
+      const setIntervalRow = (show) => { const r = rowOf('intervalMs') || rowOf('interval'); if (r) r.style.display = show ? '' : 'none'; };
+      ['pulses', 'steps', 'rotate', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      setRow('rate', !euclid);
+      if (euclid) { setIntervalRow(false); }
+      else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
+    }
     const _ambModTarget = (layer, target, label, hint, defRate) =>
       '<div class="ambient-mod-target"><div class="ambient-mod-sub">' + label + '</div>' +
         _ambSl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, 0, hint) +
@@ -5461,10 +5636,10 @@
         ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       beat: { label: 'Beat', ctrls: [
-        ['grp', 'Voice'], ['kit'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitmatch'],
-        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
+        ['grp', 'Voice'], ['kit'], ['gen'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitmatch'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).
       // Pitch/voice/prog/gate live PER SHAPE inside the wheel editor.
@@ -5529,7 +5704,7 @@
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0 });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0 });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40 });
-      if (type === 'beat') return Object.assign(base, { kit: 'tr808', intervalMs: 500, lengthMs: 200, restProb: 25 });
+      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0 });
       // Shape layer: one wheel to start; the user adds more via the card browser.
       // _shapeDefault() lives in 21-shape.js (loaded later) — safe to call here
       // because _ambDefaultLayer only runs at add/normalize time, not file eval.
@@ -5588,6 +5763,7 @@
         const k = c[0];
         if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
         if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
+        if (k === 'gen') return _ambGenSel(p + '-');
         if (k === 'rate') return _ambRateSel(p + '-rate');
         if (k === 'notes') return _ambNotesButtonHtml(p);
         if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
@@ -5702,6 +5878,7 @@
           else if (k === 'shapes') { _ambWireShapeBrowser(E, inst, p, get); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
+          else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); } }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
@@ -5715,6 +5892,7 @@
       if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
       try { _ambUnitSyncViz(E, p, inst); } catch (e) {}   // hide free Interval when BPM-synced
+      if (type === 'beat') { try { _ambBeatGenVis(E, p, inst, p); } catch (e) {} }   // Gen mode rows (after UnitSyncViz so euclid can hide Interval)
     }
     // ---- Arp layer: scale/chord series browser -----------------------------
     // Clear an Arp layer's playback cursor so a series/direction/passes edit
@@ -5828,7 +6006,7 @@
           if (!Array.isArray(L.steps)) L.steps = [];
           const src = L.steps[L.sel | 0];
           const notes = (src && src.notes) ? JSON.parse(JSON.stringify(src.notes)) : { type: 'scale', scale: '' };
-          L.steps.push({ notes, passes: (src && src.passes) || 1, dir: (src && src.dir) || L.dir || 'up' });
+          L.steps.push({ notes, passes: (src && src.passes) || 1, dir: (src && src.dir) || L.dir || 'up', unit: (src && src.unit) || 'passes', count: (src && src.count) || 0 });
           L.sel = L.steps.length - 1;
           _ambRenderArpList(E, get, p);
           _ambResetArp(E, L.type + ':' + L.id);
@@ -5855,10 +6033,10 @@
         nb.type = 'button'; nb.className = 'ambient-select ambient-notes-btn ambient-arp-notes';
         nb.textContent = _ambNotesLabel(_ambNotesOf(st));
         nb.addEventListener('click', () => {
+          const r = nb.getBoundingClientRect();   // capture BEFORE re-render detaches this button
           L.sel = i; _ambRenderArpList(E, get, p);
-          const r = nb.getBoundingClientRect();
           _ambOpenNotesMenu(E, () => st, r.left, r.bottom + 4, () => {
-            nb.textContent = _ambNotesLabel(_ambNotesOf(st));
+            _ambRenderArpList(E, get, p);   // rebuild so the new scale/chord label shows immediately
             _ambResetArp(E, key);
           });
         });
@@ -5869,15 +6047,38 @@
         });
         ds.value = st.dir || 'up';
         ds.addEventListener('change', () => { st.dir = ds.value || 'up'; _ambResetArp(E, key); if (typeof persistWorkspace === 'function') persistWorkspace(); });
-        // Passes stepper (1..16 sweeps before advancing to the next entry).
+        // Per-entry count: a −/+ stepper plus a visible UNIT TOGGLE — × (whole
+        // passes before advancing) vs ♪ (an exact note count that wraps the pool).
+        // The lit segment is the active unit; −/+ adjust whichever is active.
         const pw = document.createElement('span'); pw.className = 'ambient-arp-passes';
-        const dec = document.createElement('button'); dec.type = 'button'; dec.className = 'ambient-arp-pbtn'; dec.textContent = '−'; dec.title = 'Fewer passes';
-        const pv = document.createElement('span'); pv.className = 'ambient-arp-pval'; pv.textContent = (st.passes || 1) + '×';
-        const inc = document.createElement('button'); inc.type = 'button'; inc.className = 'ambient-arp-pbtn'; inc.textContent = '+'; inc.title = 'More passes';
-        const setP = (d) => { st.passes = Math.max(1, Math.min(16, (st.passes || 1) + d)); pv.textContent = st.passes + '×'; _ambResetArp(E, key); if (typeof persistWorkspace === 'function') persistWorkspace(); };
-        dec.addEventListener('click', () => setP(-1));
-        inc.addEventListener('click', () => setP(1));
+        const dec = document.createElement('button'); dec.type = 'button'; dec.className = 'ambient-arp-pbtn'; dec.textContent = '−';
+        const pv = document.createElement('span'); pv.className = 'ambient-arp-pval';
+        const inc = document.createElement('button'); inc.type = 'button'; inc.className = 'ambient-arp-pbtn'; inc.textContent = '+';
         pw.appendChild(dec); pw.appendChild(pv); pw.appendChild(inc);
+        const ut = document.createElement('span'); ut.className = 'ambient-arp-unit';
+        const segP = document.createElement('button'); segP.type = 'button'; segP.className = 'ambient-arp-useg'; segP.textContent = '×'; segP.title = 'Whole passes';
+        const segN = document.createElement('button'); segN.type = 'button'; segN.className = 'ambient-arp-useg'; segN.textContent = '♪'; segN.title = 'Exact note count';
+        ut.appendChild(segP); ut.appendChild(segN);
+        const persistReset = () => { _ambResetArp(E, key); if (typeof persistWorkspace === 'function') persistWorkspace(); };
+        const poolLen = () => Math.max(1, _ambScaleIntervals(_ambNotesOf(st)).length) * Math.max(1, Math.min(4, (L.octaves | 0) || 2));
+        const isNotes = () => st.unit === 'notes';
+        const renderStep = () => {
+          const notes = isNotes();
+          pv.textContent = notes ? (Math.max(1, st.count | 0) + '♪') : ((st.passes || 1) + '×');
+          dec.title = notes ? 'Fewer notes' : 'Fewer passes';
+          inc.title = notes ? 'More notes' : 'More passes';
+          segP.classList.toggle('on', !notes); segN.classList.toggle('on', notes);
+        };
+        const setStep = (d) => {
+          if (isNotes()) st.count = Math.max(1, Math.min(64, (st.count || 1) + d));
+          else st.passes = Math.max(1, Math.min(16, (st.passes || 1) + d));
+          renderStep(); persistReset();
+        };
+        dec.addEventListener('click', () => setStep(-1));
+        inc.addEventListener('click', () => setStep(1));
+        segP.addEventListener('click', () => { if (isNotes()) { st.unit = 'passes'; renderStep(); persistReset(); } });
+        segN.addEventListener('click', () => { if (!isNotes()) { if (!((st.count | 0) > 0)) st.count = _ambArpPassLen(st.dir || L.dir || 'up', poolLen()) * Math.max(1, (st.passes | 0) || 1); st.unit = 'notes'; renderStep(); persistReset(); } });
+        renderStep();
         // Delete (keep ≥1 entry).
         const del = document.createElement('button'); del.type = 'button'; del.className = 'ambient-arp-del'; del.textContent = '✕'; del.title = 'Remove this entry';
         del.addEventListener('click', () => {
@@ -5888,7 +6089,7 @@
           _ambResetArp(E, key);
           if (typeof persistWorkspace === 'function') persistWorkspace();
         });
-        row.appendChild(idx); row.appendChild(nb); row.appendChild(ds); row.appendChild(pw); row.appendChild(del);
+        row.appendChild(idx); row.appendChild(nb); row.appendChild(ds); row.appendChild(pw); row.appendChild(ut); row.appendChild(del);
         list.appendChild(row);
       });
     }
@@ -6938,9 +7139,9 @@
       const tr = (id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
       const set = (id, v) => { const el = document.getElementById(tr(id)); if (el && v != null) el.value = String(v); };
       const hint = (id, txt) => { const el = document.getElementById(tr(id)); if (el) el.textContent = txt; };
-      // When is a numeric bitmask input + a binary readout; seed both from the
-      // stored value (legacy strings map via _ambWhenToNum).
-      const setWhen = (stem, when) => { const n = _ambWhenToNum(when); const inp = document.getElementById(tr(stem + '-when')); if (inp) inp.value = String(n); const b = document.getElementById(tr(stem + '-when-bits')); if (b) b.textContent = _ambWhenBitsStr(n); };
+      // When is a 16-step toggle grid; paint its cells from the stored value
+      // (legacy strings map onto the grid via _ambWhenGridCells).
+      const setWhen = (stem, when) => { _ambPaintWhenGrid(document.getElementById(tr(stem + '-when')), when); };
       ['free', 'sync'].forEach(t => { const el = document.getElementById(tr('ambient-timing-' + t)); if (el) el.classList.toggle('active', cfg.timing === t); });
       { const qOn = document.getElementById(tr('ambient-queue-on'));
         if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
@@ -7022,13 +7223,20 @@
       set('ambient-texture-level', cfg.texture.level);
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
+      set('ambient-beat-gen', cfg.beat.gen || 'random');
       set('ambient-beat-rate', cfg.beat.rate || '');
       set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
+      set('ambient-beat-bars', cfg.beat.bars);
+      set('ambient-beat-pulses', cfg.beat.pulses);
+      set('ambient-beat-steps', cfg.beat.steps);
+      set('ambient-beat-rotate', cfg.beat.rotate);
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
+      set('ambient-beat-rhythmVar', cfg.beat.rhythmVar);
       set('ambient-beat-drift', cfg.beat.drift);
       setWhen('ambient-beat', cfg.beat.when);
       set('ambient-beat-rest', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
+      try { _ambBeatGenVis(E, 'ambient-beat-', cfg.beat); } catch (e) {}
       // Per-layer FX values.
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const L = cfg[layer]; if (!L) return;
@@ -7202,11 +7410,17 @@
         '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat') +
           '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
             '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
+          _ambGenSel('ambient-beat-') +
           _ambRateSel('ambient-beat-rate') +
           tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
+          sl('Phrase', 'ambient-beat-bars', 1, 8, 1, 'bars (euclid)') +
+          sl('Pulses', 'ambient-beat-pulses', 1, 16, 4, 'euclid hits / bar') +
+          sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
+          sl('Rotate', 'ambient-beat-rotate', 0, 15, 0, 'euclid offset') +
           tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
           sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
           condCtrl('beat') +
+          sl('Rhythm var', 'ambient-beat-rhythmVar', 0, 100, 0, 'stochastic') +
           sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') +
           sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
           _ambSpreadCtrl('ambient-beat', null) +
@@ -7344,6 +7558,14 @@
         cfg.beat.rate = beatRateSel.value || '';
         persist();
       });
+      const beatGenSel = G('ambient-beat-gen');
+      if (beatGenSel) beatGenSel.addEventListener('change', () => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        cfg.beat.gen = beatGenSel.value || 'random';
+        _ambBeatGenVis(E, 'ambient-beat-', cfg.beat);   // primary: no UnitSyncViz p
+        if (E.runPhase) delete E.runPhase['beat']; if (E.clocks) delete E.clocks['beat'];
+        persist();
+      });
 
       const bind = (id, layer, key) => {
         const el = G(id);
@@ -7438,6 +7660,11 @@
       bind('ambient-texture-level', 'texture', 'level');
       bindTime('ambient-beat-interval', 'beat', 'intervalMs');
       bindTime('ambient-beat-length', 'beat', 'lengthMs');
+      bind('ambient-beat-bars', 'beat', 'bars');
+      bind('ambient-beat-pulses', 'beat', 'pulses');
+      bind('ambient-beat-steps', 'beat', 'steps');
+      bind('ambient-beat-rotate', 'beat', 'rotate');
+      bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
       bind('ambient-beat-drift', 'beat', 'drift');
       bind('ambient-beat-rest', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');
@@ -7464,14 +7691,20 @@
         fxBind('dist-mix', (lc, v) => { lc.dist.mix = v; });
       });
       const bindCond = (layer) => {
-        const inp = G('ambient-' + layer + '-when');
-        if (!inp) return;
-        const bits = G('ambient-' + layer + '-when-bits');
-        inp.addEventListener('input', () => {
+        const grid = G('ambient-' + layer + '-when');
+        if (!grid) return;
+        _ambWireWhenToggle(grid);
+        if (grid._ambBound) return;
+        grid._ambBound = true;
+        grid.addEventListener('click', (e) => {
+          const cell = e.target && e.target.closest ? e.target.closest('.ambient-when-cell') : null;
+          if (!cell || !grid.contains(cell)) return;
           _E = E; const cfg = cfg0(); if (!cfg) return;
-          let n = parseInt(inp.value, 10); if (!Number.isFinite(n) || n < 0) n = 0;
-          cfg[layer].when = String(n);
-          if (bits) bits.textContent = _ambWhenBitsStr(n);
+          const cells = _ambWhenGridCells(cfg[layer].when);
+          const idx = Math.max(0, Math.min(15, parseInt(cell.getAttribute('data-step'), 10) || 0));
+          cells[idx] = !cells[idx];
+          cfg[layer].when = _ambGridToWhen(cells);
+          _ambPaintWhenGrid(grid, cfg[layer].when);
           persist();
         });
       };

@@ -2525,17 +2525,38 @@
       border-radius: 6px; background: #0a0a14; color: #d6bcfa;
       font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
     }
-    /* "When" bitmask: a small number input + a live binary readout (1=play). */
-    .ambient-when-num {
-      width: 100%; min-width: 0; padding: 4px 8px; border: 1px solid #2d2d3f;
-      border-radius: 6px; background: #0a0a14; color: #d6bcfa;
-      font-family: 'Segoe UI', sans-serif; font-size: 0.8rem;
+    /* "When" — a 16-step toggle grid (each cell = one cycle, lit = play), COLLAPSED
+       by default behind a summary button. The lit cells ARE the binary; 2 rows of
+       8 so they stay tappable on phones and the row never overflows. */
+    .ambient-when-ctrl { grid-template-columns: 84px 1fr; align-items: center; }
+    .ambient-when-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+    .ambient-when-toggle {
+      display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+      max-width: 100%; min-width: 0;
+      padding: 3px 8px; border: 1px solid #2d2d3f; border-radius: 6px;
+      background: #0a0a14; color: #d6bcfa;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.78rem;
     }
-    .ambient-when-bits {
+    @media (hover: hover) { .ambient-when-toggle:hover { border-color: #9f7aea; } }
+    .ambient-when-summary {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
       font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
-      font-size: 0.74rem; letter-spacing: 0.12em; color: #9f7aea;
-      white-space: nowrap;
+      font-size: 0.72rem; letter-spacing: 0.04em;
     }
+    .ambient-when-caret::before { content: '▸'; font-size: 0.8em; color: #9f7aea; }
+    .ambient-when-wrap.expanded .ambient-when-caret::before { content: '▾'; }
+    .ambient-when-grid {
+      display: none; grid-template-columns: repeat(8, 1fr); gap: 4px;
+      width: 100%; min-width: 0;
+    }
+    .ambient-when-wrap.expanded .ambient-when-grid { display: grid; }
+    .ambient-when-cell {
+      height: 18px; padding: 0; min-width: 0;
+      border: 1px solid #2d2d3f; border-radius: 3px; background: #0a0a14;
+      cursor: pointer; transition: background 0.08s ease, border-color 0.08s ease;
+    }
+    .ambient-when-cell.on { background: #9f7aea; border-color: #b794f4; }
+    @media (hover: hover) { .ambient-when-cell:hover { border-color: #9f7aea; } }
     /* "Notes" source button — looks like the selects, reads left, truncates. */
     .ambient-notes-btn {
       text-align: left; cursor: pointer; overflow: hidden;
@@ -3232,7 +3253,15 @@
       cursor: pointer; font-size: 1rem; line-height: 1;
     }
     .ambient-arp-pbtn:hover { background: #1d1d38; color: #b2f5ea; }
-    .ambient-arp-pval { min-width: 30px; text-align: center; color: #a0aec0; font: 600 0.76rem 'Segoe UI', sans-serif; }
+    .ambient-arp-pval { min-width: 34px; text-align: center; color: #a0aec0; font: 600 0.76rem 'Segoe UI', sans-serif; }
+    /* Unit toggle: × (whole passes) vs ♪ (exact notes); lit segment = active. */
+    .ambient-arp-unit { flex: 0 0 auto; display: inline-flex; border: 1px solid #2d2d44; border-radius: 7px; overflow: hidden; }
+    .ambient-arp-useg {
+      width: 26px; height: 26px; border: none; background: #16162a; color: #8a8aa8;
+      cursor: pointer; font-size: 0.92rem; line-height: 1;
+    }
+    .ambient-arp-useg.on { background: #9f7aea; color: #0a0a14; }
+    @media (hover: hover) { .ambient-arp-useg:not(.on):hover { background: #1d1d38; color: #d6bcfa; } }
     .ambient-arp-del {
       flex: 0 0 auto; width: 24px; height: 26px; border-radius: 6px; cursor: pointer;
       background: transparent; border: 1px solid #2d2d44; color: #fc8181; font-size: 0.78rem;

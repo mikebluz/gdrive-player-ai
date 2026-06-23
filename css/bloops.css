@@ -3272,6 +3272,17 @@
     .amb-seqcell.muted { background: rgba(120,120,150,0.10); border-color: #3a3a52; color: #6a6a88; text-decoration: line-through; }
     .amb-seqcell.playing { box-shadow: 0 0 0 2px #fde68a, 0 0 10px rgba(253,230,138,0.85); border-color: #fde68a; }
     @media (hover: hover) { .amb-seqcell:hover { filter: brightness(1.15); } }
+    /* Row-scoped copy/paste bar + per-row select handle (Sequence tab). */
+    .amb-seqbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; padding: 6px 8px; border: 1px solid #20203a; border-radius: 7px; }
+    .amb-seqcount { color: #a0aec0; font: 0.7rem 'Segoe UI', sans-serif; margin-right: auto; }
+    .amb-seqrowsel {
+      flex: 0 0 auto; width: 20px; padding: 6px 0; border-radius: 5px; cursor: pointer;
+      font: 700 0.58rem 'Segoe UI', sans-serif; text-align: center;
+      background: rgba(255,255,255,0.04); border: 1px solid #2a2a40; color: #8a8aa8;
+    }
+    .amb-seqrowsel.on { background: rgba(159,122,234,0.28); border-color: #9f7aea; color: #ede9fe; }
+    @media (hover: hover) { .amb-seqrowsel:hover { border-color: #9f7aea; } }
+    .amb-seqgrid.rowsel { outline: 1px dashed #9f7aea; outline-offset: 2px; border-radius: 4px; }
     /* Per-chord block label + tools in the Sequence tab. */
     .amb-seqlabel { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 8px 0 2px; }
     .amb-seqname { color: #9f7aea; font: 700 0.68rem 'Segoe UI', sans-serif; }

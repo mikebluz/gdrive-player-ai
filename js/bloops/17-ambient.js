@@ -6273,7 +6273,19 @@
         return '×' + Math.max(1, (entry.passes | 0) || 1) + ' · ' + notes + '♪';
       };
       let tab = 'phrase';
-      let muteClip = null;   // copied on/off pattern (Sequence tab, this session)
+      let muteClip = null;   // copied whole-chord on/off pattern (Sequence tab)
+      const rowSel = new Set();   // selected rows "ei:ci:row" for row-scoped copy/paste
+      let rowClip = null;         // copied rows (array of step-bool arrays), in order
+      // Steps per row (one iteration) for a chord block — matches renderSequence.
+      const passLenOf = (entry, ci) => {
+        const dir = (entry && entry.dir) || (getL() || L0).dir || 'up';
+        const octs = Math.max(1, Math.min(4, ((getL() || L0).octaves | 0) || 2));
+        const chs = _ambArpEntryChords(entry);
+        let N;
+        if (chs && chs[ci]) { const disp = dispOf(chs[ci]); N = Math.max(1, disp.iv.filter(iv => disp.m.indexOf(iv) < 0).length); }
+        else { N = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length); }
+        return Math.max(1, _ambArpPassLen(dir, N * octs));
+      };
       const renderPhrase = (steps) => {
         let h = '<div class="amb-ce-hint">Tap a note: add → mute → remove. The badge shows plays × total notes per loop.</div><div class="amb-ce-list">';
         steps.forEach((entry, ei) => {
@@ -6298,7 +6310,12 @@
       const renderSequence = (steps) => {
         const Lc = getL() || L0;
         const octs = Math.max(1, Math.min(4, (Lc.octaves | 0) || 2));
-        let h = '<div class="amb-ce-hint">Tap a step to mute / unmute. Each row is one chord iteration; the playing step lights up.</div><div class="amb-ce-list">';
+        let h = '<div class="amb-ce-hint">Tap a step to mute / unmute. Tap a row number to select rows, then Copy / Paste them anywhere (tiles across targets).</div>' +
+          '<div class="amb-seqbar"><span class="amb-seqcount">' + rowSel.size + ' row' + (rowSel.size === 1 ? '' : 's') + ' selected</span>' +
+            '<button type="button" class="amb-seqtool" data-rowact="copy">Copy rows</button>' +
+            '<button type="button" class="amb-seqtool' + (rowClip ? '' : ' dim') + '" data-rowact="paste">Paste rows</button>' +
+            '<button type="button" class="amb-seqtool" data-rowact="clear">Clear</button>' +
+          '</div><div class="amb-ce-list">';
         steps.forEach((entry, ei) => {
           const dir = (entry && entry.dir) || Lc.dir || 'up';
           const chords = _ambArpEntryChords(entry);
@@ -6326,9 +6343,11 @@
                 '<button type="button" class="amb-seqtool" data-act="reset" data-ei="' + ei + '" data-ci="' + ci + '" title="Unmute every step">Reset</button>' +
                 '<button type="button" class="amb-seqtool" data-act="rand" data-ei="' + ei + '" data-ci="' + ci + '" title="Randomly mute / unmute steps">Rand</button>' +
               '</span></div>';
-            let s = 0;
+            let s = 0, row = 0;
             while (s < total && s < 512) {
-              h += '<div class="amb-seqgrid">';
+              const _rk = ei + ':' + ci + ':' + row, _rs = rowSel.has(_rk);
+              h += '<div class="amb-seqgrid' + (_rs ? ' rowsel' : '') + '" data-ei="' + ei + '" data-ci="' + ci + '" data-row="' + row + '">';
+              h += '<button type="button" class="amb-seqrowsel' + (_rs ? ' on' : '') + '" data-ei="' + ei + '" data-ci="' + ci + '" data-row="' + row + '" title="Select row ' + (row + 1) + '">' + (row + 1) + '</button>';
               for (let c = 0; c < passLen && s < total; c++, s++) {
                 const muted = !!mutes[s];
                 let lbl;
@@ -6337,6 +6356,7 @@
                 h += '<button type="button" class="amb-seqcell ' + (muted ? 'muted' : 'on') + '" data-ei="' + ei + '" data-ci="' + ci + '" data-s="' + s + '">' + esc(lbl) + '</button>';
               }
               h += '</div>';
+              row++;
             }
           });
           h += '</div>';
@@ -6379,7 +6399,7 @@
           btn.classList.toggle('muted', m); btn.classList.toggle('on', !m);
           persist();
         }));
-        modal.querySelectorAll('.amb-seqtool').forEach(btn => btn.addEventListener('click', () => {
+        modal.querySelectorAll('.amb-seqtool[data-act]').forEach(btn => btn.addEventListener('click', () => {
           if (btn.classList.contains('dim')) return;
           const act = btn.getAttribute('data-act'), ei = btn.getAttribute('data-ei') | 0, ci = btn.getAttribute('data-ci') | 0;
           const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
@@ -6402,6 +6422,50 @@
           }
           persist();
           render();   // engine reads stepMutes live — no _ambResetArp, so playback keeps running
+        }));
+        // Row select: toggle a row's membership in the row-copy selection (in place).
+        modal.querySelectorAll('.amb-seqrowsel').forEach(btn => btn.addEventListener('click', () => {
+          const k = btn.getAttribute('data-ei') + ':' + btn.getAttribute('data-ci') + ':' + btn.getAttribute('data-row');
+          if (rowSel.has(k)) rowSel.delete(k); else rowSel.add(k);
+          const on = rowSel.has(k);
+          btn.classList.toggle('on', on);
+          const grid = btn.closest('.amb-seqgrid'); if (grid) grid.classList.toggle('rowsel', on);
+          const cnt = modal.querySelector('.amb-seqcount'); if (cnt) cnt.textContent = rowSel.size + ' row' + (rowSel.size === 1 ? '' : 's') + ' selected';
+          const pb = modal.querySelector('.amb-seqtool[data-rowact="paste"]'); if (pb) pb.classList.toggle('dim', !rowClip);
+        }));
+        // Row-scoped copy / paste / clear (operates on the SELECTED rows).
+        modal.querySelectorAll('.amb-seqtool[data-rowact]').forEach(btn => btn.addEventListener('click', () => {
+          if (btn.classList.contains('dim')) return;
+          const act = btn.getAttribute('data-rowact');
+          const L2 = getL(); if (!L2 || !Array.isArray(L2.steps)) return;
+          if (act === 'clear') { rowSel.clear(); render(); return; }
+          const ordered = Array.from(rowSel).map(s => s.split(':').map(Number)).sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+          if (!ordered.length) return;
+          if (act === 'copy') {
+            rowClip = [];
+            ordered.forEach(([ei, ci, row]) => {
+              const entry = L2.steps[ei]; if (!entry) return;
+              const pl = passLenOf(entry, ci);
+              const arr = (Array.isArray(entry.stepMutes) && Array.isArray(entry.stepMutes[ci])) ? entry.stepMutes[ci] : [];
+              const start = row * pl, slice = [];
+              for (let s = 0; s < pl; s++) slice.push(!!arr[start + s]);
+              rowClip.push(slice);
+            });
+            render();   // un-dim Paste
+            return;
+          }
+          if (act === 'paste') {
+            if (!rowClip || !rowClip.length) return;
+            ordered.forEach(([ei, ci, row], i) => {
+              const entry = L2.steps[ei]; if (!entry) return;
+              if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
+              if (!Array.isArray(entry.stepMutes[ci])) entry.stepMutes[ci] = [];
+              const pl = passLenOf(entry, ci);
+              const clip = rowClip[i % rowClip.length], start = row * pl;
+              for (let s = 0; s < pl; s++) entry.stepMutes[ci][start + s] = !!clip[s % Math.max(1, clip.length)];   // tile/truncate
+            });
+            persist(); render();
+          }
         }));
         const ok = modal.querySelector('.amb-ce-ok'); if (ok) ok.addEventListener('click', () => { close(); try { _ambRenderArpList(E, getL, 'ambient-' + L.type + '-' + L.id + '-'); } catch (e) {} });
       };

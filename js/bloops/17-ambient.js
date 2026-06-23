@@ -2551,11 +2551,15 @@
       const lo = 0.02, hi = 8; // Hz (free): ~50 s cycle -> 8 Hz
       return lo * Math.pow(hi / lo, r);
     }
+    // Modulation ranges are now OFFSETS added on top of a NEUTRAL base value
+    // (VCA gain 1, VCF cutoff 20000) — so removing the source leaves the param
+    // open/full and a Depth of 0 can never close the filter or mute the layer.
+    // Depth = how far the LFO dips the param DOWN from neutral.
     function _ambTargetRange(target, depth) {
       const d = Math.max(0, Math.min(100, depth | 0)) / 100;
-      if (target === 'vca') return [1 - d, 1];
-      if (target === 'vcf') return [200, 200 + d * 8000];
-      return [-d * 100, d * 100]; // vco: ± cents
+      if (target === 'vca') return [-d, 0];                              // gain dips 1 → (1−d)
+      if (target === 'vcf') { const floor = 20000 * Math.pow(200 / 20000, d); return [floor - 20000, 0]; } // cutoff dips 20000 → floor (log-even)
+      return [-d * 100, d * 100]; // vco: ± cents (already centred on 0)
     }
     // (routing moved to _E.busNode())
     function _ambDisposeSrc(src) {
@@ -2592,8 +2596,8 @@
           node.start();
         }
         src.node = node;
-        if (target === 'vca') { e.vca.gain.value = 0; node.connect(e.vca.gain); }
-        else if (target === 'vcf') { e.vcf.frequency.value = 0; node.connect(e.vcf.frequency); }
+        if (target === 'vca') { e.vca.gain.value = 1; node.connect(e.vca.gain); }            // base = full; LFO offset dips it
+        else if (target === 'vcf') { e.vcf.frequency.value = 20000; node.connect(e.vcf.frequency); }  // base = open; LFO offset dips it
         // vco: connected to voices at emit via _ambLayerDetuneMod.
       } catch (x) { try { node && node.dispose(); } catch (y) {} return null; }
       return src;

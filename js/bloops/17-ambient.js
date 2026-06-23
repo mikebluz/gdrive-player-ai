@@ -1129,20 +1129,28 @@
     //    full drift lands just shy of wrapping back onto the downbeat.
     //  • Unit-Sync OFF → smooth phase offset up to one interval (snapped to the
     //    global step in global-Sync timing), i.e. the original behavior.
+    // Unit-Sync step quantization for Drift. Returns {idx, nSteps, step} (idx =
+    // how many scaled steps the current Drift maps to, 0..nSteps−1) or null when
+    // the layer isn't Unit-Synced. `driftOverride` lets the live readout use the
+    // slider's in-flight value before the per-control handler has committed it.
+    function _ambDriftSteps(E, key, layer, cfg, driftOverride) {
+      if (!(layer.unit && layer.unit.mode === 'sync' && layer.unit.ref)) return null;
+      const raw = (driftOverride != null) ? driftOverride : layer.drift;
+      const drift = Number.isFinite(raw) ? Math.max(0, Math.min(99, raw)) : 0;
+      let sc = 1, period = 0;
+      try { sc = _ambLayerScale(E, key, layer, cfg); } catch (e) {}
+      const step = Math.max(0.01, _ambStepSecFor(layer, 0.02, cfg) * sc);
+      try { period = _ambLayerPeriodSec(E, key, layer, cfg); } catch (e) {}
+      if (!(period > 0)) period = step;
+      const nSteps = Math.max(1, Math.round(period / step));
+      const idx = Math.max(0, Math.min(nSteps - 1, Math.round((drift / 100) * nSteps)));
+      return { idx, nSteps, step };
+    }
     function _ambDriftOffset(E, key, layer, cfg) {
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
       if (drift <= 0) return 0;
-      const unitSync = !!(layer.unit && layer.unit.mode === 'sync' && layer.unit.ref);
-      if (unitSync) {
-        let sc = 1, period = 0;
-        try { sc = _ambLayerScale(E, key, layer, cfg); } catch (e) {}
-        const step = Math.max(0.01, _ambStepSecFor(layer, 0.02, cfg) * sc);
-        try { period = _ambLayerPeriodSec(E, key, layer, cfg); } catch (e) {}
-        if (!(period > 0)) period = step;
-        const nSteps = Math.max(1, Math.round(period / step));
-        const idx = Math.max(0, Math.min(nSteps - 1, Math.round((drift / 100) * nSteps)));
-        return idx * step;
-      }
+      const ds = _ambDriftSteps(E, key, layer, cfg);
+      if (ds) return ds.idx * ds.step;
       const intervalSec = _ambEffIntervalSec(layer);
       let off = (drift / 100) * intervalSec;
       if (cfg && cfg.timing === 'sync') {
@@ -1150,6 +1158,34 @@
         off = Math.round(off / step) * step;
       }
       return off;
+    }
+    // Drift readout text: "idx/nSteps" (step division) in Unit-Sync, else the raw
+    // 0..99 slider value. Shared by the live-drag listener and the sync sweep.
+    function _ambDriftReadoutText(E, key, layer, cfg, driftOverride) {
+      const ds = _ambDriftSteps(E, key, layer, cfg, driftOverride);
+      if (ds) return ds.idx + '/' + ds.nSteps;
+      const raw = (driftOverride != null) ? driftOverride : layer.drift;
+      return String(Number.isFinite(raw) ? raw : 0);
+    }
+    // Pick the engine that owns a namespaced control id.
+    const _ambEngForId = (id) => /^mix-bloom-/.test(id) ? _masterEng
+      : (/^shape-bloom-/.test(id) ? _shapeBloomEng : _laneEng);
+    // Update every Drift slider's readout within E's panel (step-div in Sync,
+    // raw value in Free). Called from _ambSyncLayerUnits / _ambUnitSyncViz so a
+    // mode / ratio / interval change re-renders the readout.
+    function _ambSyncDriftReadouts(E) {
+      try {
+        const host = E && document.getElementById(E.hostId); if (!host) return;
+        const cfg = E.getCfg(); if (!cfg) return;
+        host.querySelectorAll('.ambient-layer').forEach(layEl => {
+          const sl = layEl.querySelector('input.ambient-sl[id$="-drift"]'); if (!sl) return;
+          const v = document.getElementById(sl.id + '-v'); if (!v) return;
+          const uk = layEl.querySelector('[data-ukey]');
+          const key = uk && uk.getAttribute('data-ukey');
+          const L = key && _ambLayerByKey(E, key);
+          v.textContent = L ? _ambDriftReadoutText(E, key, L, cfg) : sl.value;
+        });
+      } catch (e) {}
     }
     // Per-layer When (per-event conditional): mirrors the Grid step `cond`.
     // 'always'/unset → fire every event; '1st' → only the layer's first event;
@@ -2945,12 +2981,14 @@
           const L = _ambLayerByKey(E, key);
           span.textContent = L ? _ambLayerUnitText(E, key, L, cfg) : '';
         });
+        _ambSyncDriftReadouts(E);
       } catch (e) {}
     }
     // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----
     // A layer is "BPM-synced" when its Rate is a division (≠ Free); the free ms
     // Interval then does nothing, so hide it. (p = the wire prefix, trailing '-'.)
     function _ambUnitSyncViz(E, p, L) {
+      try { _ambSyncDriftReadouts(E); } catch (e) {}   // interval/rate edits change the step count → refresh Drift readouts
       const intv = _ambGet(E, p + 'intervalMs'); if (!intv) return;
       const ctrl = intv.closest('.ambient-ctrl'); if (!ctrl) return;
       ctrl.style.display = (L && L.rate && _ambRateBeats(L.rate) > 0) ? 'none' : '';
@@ -5270,7 +5308,22 @@
         const t = e.target;
         if (!t || t.tagName !== 'INPUT' || t.type !== 'range' || !t.id || !t.classList || !t.classList.contains('ambient-sl')) return;
         const v = document.getElementById(t.id + '-v');
-        if (v) v.textContent = t.value;
+        if (!v) return;
+        // Drift: in Unit-Sync, show the step division (idx/nSteps) instead of the
+        // raw 0..99. Compute from t.value (the per-control handler may not have
+        // committed L.drift yet — this listener runs in capture phase, first).
+        if (/-drift$/.test(t.id)) {
+          try {
+            const E = _ambEngForId(t.id);
+            const layEl = t.closest('.ambient-layer');
+            const uk = layEl && layEl.querySelector('[data-ukey]');
+            const key = uk && uk.getAttribute('data-ukey');
+            const L = key && _ambLayerByKey(E, key);
+            const cfg = E && E.getCfg && E.getCfg();
+            if (L && cfg) { v.textContent = _ambDriftReadoutText(E, key, L, cfg, parseInt(t.value, 10)); return; }
+          } catch (e) {}
+        }
+        v.textContent = t.value;
       }, true);
     } catch (e) {}
     // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire

@@ -2721,7 +2721,10 @@
           // then release — matching the synth/sample path's preReleaseDur
           // (now also = targetDur), so the note sustains for its full slot.
           // Skipped if the step carries a slice window.
-          if ((sampleSamplers.get(type.slice(7)) || {}).padLoop
+          // padLoop = a sample imported as a pad; params.loop = a sustaining
+          // caller (e.g. the Drone) that needs ANY tuned sample to loop so a
+          // long-held note doesn't cut off when the buffer ends.
+          if (((sampleSamplers.get(type.slice(7)) || {}).padLoop || params.loop)
               && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)) {
             const padAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, padAt, { pan });

@@ -1791,6 +1791,10 @@
         const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
           volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)) };
         if (dmod) bp._detuneMod = dmod;
+        // The Drone HOLDS each note for (almost) the whole cycle. A tuned sample's
+        // buffer is one-shot, so without looping it ends partway and the layer
+        // falls silent mid-hold — flag it to loop/sustain via the pad voice path.
+        bp.loop = true;
         // Stack `density` tones from the Degree-th, wrapping +1 octave per pass.
         for (let i = 0; i < density; i++) {
           const idx = startIdx + i;

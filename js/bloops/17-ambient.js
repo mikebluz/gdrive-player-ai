@@ -1957,14 +1957,18 @@
     // One arp note per fire. Walks the current series entry's pitch pool in the
     // chosen Direction; after `entry.passes` full sweeps, advances to the next
     // entry (looping the series). Cursor state lives on _E.arpState[key].
-    function _ambEmitArp(at, arp, space, key) {
+    function _ambEmitArp(at, arp, space, key, play) {
       key = key || ('arp:' + (arp.id | 0));
       _ambKeyTime = at;
       const steps = (Array.isArray(arp.steps) && arp.steps.length) ? arp.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
       const S = _E.arpState || (_E.arpState = {});
       let st = S[key];
-      if (!st || st.entry >= steps.length) st = S[key] = { entry: 0, note: 0, pos: 0 };
-      if (st.startAt == null) st.startAt = at;   // loop phase anchor (first note time) — for the audible playhead
+      if (!st || st.entry >= steps.length) { const _o = st || {}; st = S[key] = { entry: 0, note: 0, pos: 0, _loop: _o._loop | 0, idx: _o.idx | 0, startAt: _o.startAt, lastAt: _o.lastAt }; }
+      if (st.startAt == null) st.startAt = at;   // loop phase anchor (first note time)
+      // When is conditional per SERIES LOOP, not per note: decide once at each
+      // loop start whether the whole loop sounds, then advance the cursor through
+      // it regardless so the progression keeps moving.
+      if ((st.entry | 0) === 0 && (st.note | 0) === 0) st._silent = !_ambCondFires(arp.when, st._loop | 0);
       const entry = steps[Math.min(st.entry, steps.length - 1)];
       const notes = _ambNotesOf(entry);
       const _arpProg = (notes && notes.type === 'prog');   // per-layer: one chord per series loop
@@ -1989,8 +1993,10 @@
       // Advance the pass / entry cursor for NEXT time.
       st.note += 1;
       if (st.note >= _ambArpEntryNotes(entry, dir, len)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
-      // Rests skip the note (cursor already advanced, so timing stays steady).
-      if (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0))) return;
+      // Skip the note (cursor already advanced, so timing stays steady) on a Rest,
+      // a When-silenced loop, or a windowed past-note catch-up (play === false).
+      const _rested = (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0)));
+      if (_rested || st._silent || play === false) return;
       // Resolve an ASCENDING pool: degree d within octave o, lifted so chord/scale
       // tones keep climbing across octaves (no pitch-class wrap inside one octave).
       // `carry` lifts a tone whose absolute pc already crossed the octave; passing
@@ -2006,6 +2012,33 @@
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
       try { playNote(f, ap, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       } finally { if (_arpProg) _ambProgStepOverride = null; }
+    }
+    // Windowed, phase-anchored Arp scheduler. Each note's time is RE-DERIVED as
+    // startAt + idx × interval (no C += step accumulation, no "fell behind →
+    // reset to now" jump), so a long-running arp can't drift away from the
+    // phase-anchored Drone/Bass layers. Notes already past `now` are advanced
+    // silently (play=false) to keep the cursor in sync without scheduling in the
+    // past. _ambEmitArp gates When per loop and advances the cursor.
+    function _ambEmitArpWindow(E, arp, key, now, horizon, lead, space, cfg) {
+      const S = E.arpState || (E.arpState = {});
+      let st = S[key];
+      if (!st) st = S[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: null, lastAt: null };
+      if (st.startAt == null) st.startAt = lead + _ambDriftOffset(arp, cfg);
+      if (!Number.isFinite(st.idx)) st.idx = 0;
+      const sc = _ambLayerScale(E, key, arp, cfg);
+      const interval = Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) * sc;
+      if (!(interval > 0.001)) return;
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+      let cap = 0;
+      while (cap < 512) {
+        const at = st.startAt + st.idx * interval;
+        if (at >= tTo) break;
+        _ambEmitArp(at, arp, space, key, at >= tFrom - 1e-6);   // past notes: silent advance (play=false)
+        st.idx += 1; cap += 1;
+      }
+      st.lastAt = tTo;
     }
 
     // ================= BEAT engine ==================================
@@ -3279,9 +3312,13 @@
           // Snap to the SERIES-loop boundary: next note + the notes left in the
           // current cycle, so a queued change lands when the arp restarts its series.
           const info = _ambArpSeriesInfo(L, cfg);
-          const c = E.clocks && E.clocks[key];
           const st = E.arpState && E.arpState[key];
-          if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval * _ambLayerScale(E, key, L, cfg); }
+          const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg);
+          if (st && st.startAt != null && Number.isFinite(st.idx)) {
+            const c = st.startAt + st.idx * ivSc;   // windowed next-note time
+            const left = info.totalNotes - _ambArpNotesInto(info, st);
+            return c + Math.max(1, left) * ivSc;
+          }
         } else if (!euclidBeat && (type === 'seq' || type === 'samp' || type === 'bed' || type === 'motif' ||
             type === 'texture' || type === 'beat')) {
           const c = E.clocks && E.clocks[key];
@@ -3314,9 +3351,13 @@
       // Arp cuts at the end of the SERIES loop: next note + notes left in the cycle.
       if (type === 'arp') {
         const info = _ambArpSeriesInfo(L, cfg);
-        const c = E.clocks && E.clocks[key];
         const st = E.arpState && E.arpState[key];
-        if (c != null) { const left = info.totalNotes - _ambArpNotesInto(info, st); return c + Math.max(1, left) * info.interval * _ambLayerScale(E, key, L, cfg); }
+        const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg);
+        if (st && st.startAt != null && Number.isFinite(st.idx)) {
+          const c = st.startAt + st.idx * ivSc;   // windowed next-note time
+          const left = info.totalNotes - _ambArpNotesInto(info, st);
+          return c + Math.max(1, left) * ivSc;
+        }
         return (E._t0 != null ? E._t0 : now) + Math.ceil((now + eps - (E._t0 != null ? E._t0 : now)) / P) * P;
       }
       let A = null;
@@ -3831,6 +3872,17 @@
             catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
+          // Arp layers: windowed + phase-anchored (no drift) with per-loop When.
+          if (ex.type === 'arp') {
+            if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            const gate = _qGate(key, !!ex.on, (t) => { if (!E.arpState) E.arpState = {}; E.arpState[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: t, lastAt: null }; });
+            if (!gate.run) continue;
+            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+            window._ambCaptureSink = _ambCapSink(E, key);
+            try { _ambEmitArpWindow(E, ex, key, now, gate.hz, lead, space, cfg); }
+            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+            continue;
+          }
           // Euclidean Beat extra: windowed phrase like the primary beat.
           if (ex.type === 'beat' && ex.gen === 'euclid') {
             if (ex.present === false || _muted(ex) || E.windingDown) continue;
@@ -3842,13 +3894,12 @@
             catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
-          const gm = ex.type === 'bed' ? 8 : (ex.type === 'arp' ? 24 : 16);
+          const gm = ex.type === 'bed' ? 8 : 16;
           const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
           stepLayer(key, ex, gm, ms, (at) => {
             if (ex.type === 'bed') _ambEmitBed(at, ex, space, key);
             else if (ex.type === 'motif') _ambEmitMotif(at, ex, space, key);
             else if (ex.type === 'texture') _ambEmitTexture(at, ex, space, key);
-            else if (ex.type === 'arp') _ambEmitArp(at, ex, space, key);
             else _ambEmitBeat(at, ex, space, key);
           });
         } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }

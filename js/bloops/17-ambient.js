@@ -3032,7 +3032,26 @@
     // formula that produces it (so the user knows which parameter to tweak). e.g.
     // Arp "⟳ 14 notes × 1/8 = 1.75s", Drone "⟳ Hold 4 × 0.50s = 2.0s",
     // Bass "⟳ 2 bars = 4.0s @120", Bed "Δ Interval 4.75s".
+    // The unit length expressed as a musical step division of a whole note (bar)
+    // at the current BPM — e.g. 1/1 (a bar), 3/8, 11/16, 2/1 (two bars). Rounds
+    // to the nearest 1/16 then reduces. '' if it can't be expressed.
+    function _ambStepDivLabel(sec, bpm) {
+      if (!(sec > 0) || !(bpm > 0)) return '';
+      const sixteenth = (60 / bpm) / 4;
+      let n = Math.round(sec / sixteenth);
+      if (n < 1) n = 1;
+      const gcd = (a, b) => b ? gcd(b, a % b) : a;
+      const g = gcd(n, 16) || 1;
+      return (n / g) + '/' + (16 / g);
+    }
     function _ambLayerUnitText(E, key, L, cfg) {
+      const base = _ambLayerUnitTextBase(E, key, L, cfg);
+      if (!base) return base;
+      let sd = '';
+      try { sd = _ambStepDivLabel(_ambLayerPeriodSec(E, key, L, cfg), _ambBpm()); } catch (e) {}
+      return sd ? (base + ' · ' + sd) : base;
+    }
+    function _ambLayerUnitTextBase(E, key, L, cfg) {
       if (!L) return '';
       const type = String(key).split(':')[0];
       const bpm = _ambBpm();

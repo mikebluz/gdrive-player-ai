@@ -223,7 +223,7 @@
       // Baked-in fine tune (cents) from sample capture — pulls the buffer into
       // tune relative to its mapped root so the keyboard tracks chromatically.
       if (info && Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
-      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, panMakeupNode = null, detuneScale = null, _padLoop = false;
+      let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, panMakeupNode = null, detuneScale = null, _padLoop = false, _loopBuf = null;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
         // Per-note pan: place the voice in the stereo field (e.g. Bloom's
@@ -276,7 +276,21 @@
         // the OneShotSource fade-in ramp and leaves the gain at 0 (silence). The
         // native property has no such side effect.
         _padLoop = !!(info && info.padLoop);
-        source = new Tone.ToneBufferSource({ url: audioBuf, playbackRate }).connect(head);
+        // Seamless looping for a held tuned sample: swap in the crossfaded loop
+        // buffer (keeps the natural attack, loops the body click-free). The loop
+        // window is applied to the NATIVE node AFTER start (_applyVoiceLoop) —
+        // Tone's `loop` setter would cancel the source's fade-in (→ silence).
+        if (opts && opts.loop && !_slicing) {
+          const _lp = _getSeamlessLoop(id + '#' + sampleMidi, audioBuf, info);
+          if (_lp) _loopBuf = _lp;
+        }
+        // Set loop in the CONSTRUCTOR (pre-start): the wrapper's loop setter only
+        // does the fade-cancelling cancelStop() once the source has started, so
+        // here it just stamps the native node — safe. _applyVoiceLoop re-asserts
+        // it on the native node after start as a belt-and-suspenders.
+        source = new Tone.ToneBufferSource(_loopBuf
+          ? { url: _loopBuf.buffer, playbackRate, loop: true, loopStart: _loopBuf.loopStart, loopEnd: _loopBuf.loopEnd }
+          : { url: audioBuf, playbackRate }).connect(head);
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch
@@ -307,7 +321,8 @@
       // playbackRate, so a transposed slice still covers the right window.)
       const sliceOffset = (opts && Number.isFinite(opts.sampleOffsetSec)) ? Math.max(0, Math.min(audioBuf.duration, opts.sampleOffsetSec * playbackRate)) : 0;
       const sliceBufSec = (opts && Number.isFinite(opts.sliceDurSec)) ? Math.max(0.005, opts.sliceDurSec * playbackRate) : null;
-      return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec, padLoop: _padLoop };
+      return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec, padLoop: _padLoop,
+        loop: !!_loopBuf, loopStart: _loopBuf ? _loopBuf.loopStart : 0, loopEnd: _loopBuf ? _loopBuf.loopEnd : 0 };
     }
     // Dedicated LOOPING voice for pad samples, built from raw Web Audio nodes:
     //   native AudioBufferSourceNode(loop=true) → envGain (manual ADSR) →
@@ -320,6 +335,49 @@
     // user Stop gesture can cut them immediately (they bypass the Tone-based
     // _activeSampleVoices registry). Each entry carries a fast click-free kill().
     const _activePadVoices = new Set();
+    // Seamless-loop buffers, cached per sample id. A raw buffer looped 0→end
+    // clicks at the seam (waveform jump) and re-triggers the onset every pass —
+    // the "messy" loop. We bake a click-free loop ONCE: keep the natural attack
+    // [0, e), then crossfade the loop tail [e−c, e) toward the pre-loop region
+    // [s−c, s) so that wrapping e→s is continuous (the sample just before s flows
+    // into s, which is untouched). loopStart=s, loopEnd=e.
+    const _seamlessLoopCache = new Map();
+    function _makeSeamlessLoopBuffer(audioBuf, info) {
+      const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
+      if (!ac || !audioBuf || !(audioBuf.duration > 0)) return null;
+      const D = audioBuf.duration, sr = audioBuf.sampleRate;
+      // Loop a steady region: skip the onset, stop a hair before the end (drops a
+      // trailing release fade). A sample may pin its own window via info.
+      let ls = Number.isFinite(info && info.loopStartSec) ? info.loopStartSec : D * 0.25;
+      let le = Number.isFinite(info && info.loopEndSec)   ? info.loopEndSec   : D * 0.98;
+      ls = Math.max(0, Math.min(ls, D - 0.02));
+      le = Math.max(ls + 0.02, Math.min(le, D));
+      const s = Math.floor(ls * sr), e = Math.min(audioBuf.length, Math.floor(le * sr));
+      let c = Math.floor(Math.min(0.12, (le - ls) / 2) * sr);   // ≤120 ms crossfade, ≤ half the loop
+      c = Math.min(c, s);                                        // need c samples before s to blend in
+      if (c < 8 || e - s < 16) return null;                     // too short to loop usefully
+      let out;
+      try { out = ac.createBuffer(audioBuf.numberOfChannels, e, sr); } catch (x) { return null; }
+      for (let ch = 0; ch < audioBuf.numberOfChannels; ch++) {
+        const srcD = audioBuf.getChannelData(ch);
+        const dst = out.getChannelData(ch);
+        dst.set(srcD.subarray(0, e));
+        for (let k = 0; k < c; k++) {
+          const t = (k + 0.5) / c;                  // 0..1 across the crossfade
+          const wOut = Math.cos(t * Math.PI / 2);   // loop tail fades out (equal power)
+          const wIn  = Math.sin(t * Math.PI / 2);   // pre-loop region fades in
+          dst[e - c + k] = srcD[e - c + k] * wOut + srcD[s - c + k] * wIn;
+        }
+      }
+      return { buffer: out, loopStart: s / sr, loopEnd: e / sr };
+    }
+    function _getSeamlessLoop(id, audioBuf, info) {
+      if (_seamlessLoopCache.has(id)) return _seamlessLoopCache.get(id);
+      let res = null;
+      try { res = _makeSeamlessLoopBuffer(audioBuf, info); } catch (e) { res = null; }
+      _seamlessLoopCache.set(id, res);   // cache null too — don't re-attempt a too-short buffer
+      return res;
+    }
     function _startPadVoice(id, tunedFreq, env, destNode, velocity, when, opts) {
       try {
         const ac = (typeof Tone !== 'undefined' && Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
@@ -331,9 +389,15 @@
         let playbackRate = (rootFreq > 0 && tunedFreq > 0) ? tunedFreq / rootFreq : 1;
         if (Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
 
+        // Seamless (crossfaded) loop buffer when available — keeps the natural
+        // attack and loops the body without a seam click; falls back to the raw
+        // buffer (whole-buffer loop) only if the sample is too short to bake.
+        const lp = _getSeamlessLoop(id, audioBuf, info);
         const src = ac.createBufferSource();
-        src.buffer = audioBuf;
-        src.loop = true; src.loopStart = 0; src.loopEnd = audioBuf.duration;
+        src.buffer = lp ? lp.buffer : audioBuf;
+        src.loop = true;
+        src.loopStart = lp ? lp.loopStart : 0;
+        src.loopEnd   = lp ? lp.loopEnd   : audioBuf.duration;
         try { src.playbackRate.value = playbackRate; } catch (e) {}
 
         const envGain = ac.createGain(); envGain.gain.value = 0;
@@ -410,6 +474,17 @@
           },
         };
       } catch (e) { return null; }
+    }
+    // Enable the seamless loop on a built voice AFTER its source has started, by
+    // setting the loop window on the native AudioBufferSourceNode directly (Tone's
+    // ToneBufferSource.loop setter cancels the fade-in ramp → silence). No-op for
+    // non-looping voices. Call right after v.source.start(...).
+    function _applyVoiceLoop(v) {
+      if (!v || !v.loop || !v.source) return;
+      try {
+        const ns = v.source._source;   // native AudioBufferSourceNode (Tone v14)
+        if (ns) { ns.loop = true; ns.loopStart = v.loopStart; ns.loopEnd = v.loopEnd; }
+      } catch (e) {}
     }
     function _disposeSampleAdsrVoice(v) {
       if (!v) return;
@@ -1948,21 +2023,26 @@
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
         const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
-        // Pad voices loop continuously while held — a dedicated native looping
-        // voice (Tone's one-shot source can't loop without killing its fade-in).
+        // Pad-imported samples use the dedicated single-buffer looping voice.
         if ((sampleSamplers.get(type.slice(7)) || {}).padLoop) {
           const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, _warmAt(), { pan });
           if (padH) return padH;
         }
         // Full-ADSR held voice: attack → decay → sustain (held), then release
         // on pointer-up — the sound editor's full envelope (+ optional filter)
-        // shapes the held sample, not just a fade in/out.
+        // shapes the held sample, not just a fade in/out. Tuned (non-drum)
+        // samples LOOP seamlessly by default so a held note sustains past the
+        // buffer instead of cutting off; drums and per-note-filtered samples
+        // stay one-shot.
+        const _si = sampleSamplers.get(type.slice(7)) || {};
+        const _wantLoop = (params.loop || !_si.drumKit) && !Number.isFinite(params.filterCutoff);
         const v = _buildSampleAdsrVoice(entry.sampler, type.slice(7), tunedFreq, env, sampleDest,
-          { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan });
+          { filterCutoff: params.filterCutoff, filterQ: params.filterQ, pan, loop: _wantLoop });
         if (v) {
           const triggerAt = _warmAt();
           try {
             v.source.start(triggerAt);
+            _applyVoiceLoop(v);
             v.ampEnv.triggerAttack(triggerAt, velocity);
           } catch (e) { _disposeSampleAdsrVoice(v); }
           let released = false;
@@ -2716,23 +2796,25 @@
             : (destination
                || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
                || globalSendTap);
-          // Pad voices loop to fill the step (native looping voice, bounded by
-          // scheduleStop). Hold at full level for the WHOLE step (targetDur),
-          // then release — matching the synth/sample path's preReleaseDur
-          // (now also = targetDur), so the note sustains for its full slot.
-          // Skipped if the step carries a slice window.
-          // padLoop = a sample imported as a pad; params.loop = a sustaining
-          // caller (e.g. the Drone) that needs ANY tuned sample to loop so a
-          // long-held note doesn't cut off when the buffer ends.
-          if (((sampleSamplers.get(type.slice(7)) || {}).padLoop || params.loop)
+          // Loop to fill the step via the seamless native looping voice (bounded
+          // Pad-imported samples use the dedicated single-buffer looping voice,
+          // bounded by scheduleStop to the step length.
+          if ((sampleSamplers.get(type.slice(7)) || {}).padLoop
               && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)) {
             const padAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, padAt, { pan });
             if (padH) { try { padH.scheduleStop(Math.max(0.02, targetDur)); } catch (e) {} return; }
           }
+          // Tuned (non-drum) samples LOOP seamlessly so a step longer than the
+          // sample's buffer sustains instead of cutting off. Skipped for drums,
+          // slice windows, and per-note-filtered (Design) samples.
+          const _si = sampleSamplers.get(type.slice(7)) || {};
+          const _wantLoop = (params.loop || !_si.drumKit)
+            && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)
+            && !Number.isFinite(params.filterCutoff);
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
             { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,
-              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec });
+              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec, loop: _wantLoop });
           if (v) {
             const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
             try {
@@ -2740,6 +2822,7 @@
               // the plain whole-buffer start — byte-identical to the prior path.
               if (v.sliceBufSec != null || v.sliceOffset > 0) v.source.start(triggerAt, v.sliceOffset, v.sliceBufSec != null ? v.sliceBufSec : undefined);
               else v.source.start(triggerAt);
+              _applyVoiceLoop(v);
               // Hold for preReleaseDur (= the full step, ≥ 0.02), then release
               // over `rel` — same envelope timing the synth path uses, so a
               // sample voice and a synth voice sit identically in a slot.

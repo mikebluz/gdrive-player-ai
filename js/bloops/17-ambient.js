@@ -1990,13 +1990,16 @@
       else if (dir === 'random') idx = Math.floor(_ambRand() * len);
       else if (rnd > 0 && _ambRand() < rnd) idx = Math.floor(_ambRand() * len);
       else idx = _ambArpIndexFor(dir, st.note, len);
+      const _stepIdx = st.note;   // this note's step position in the entry sweep (Sequence-tab mutes)
       // Advance the pass / entry cursor for NEXT time.
       st.note += 1;
       if (st.note >= _ambArpEntryNotes(entry, dir, len)) { st.note = 0; st.pos = 0; const _wasLast = (st.entry >= steps.length - 1); st.entry = (st.entry + 1) % steps.length; if (_wasLast) st._loop = (st._loop | 0) + 1; }
       // Skip the note (cursor already advanced, so timing stays steady) on a Rest,
-      // a When-silenced loop, or a windowed past-note catch-up (play === false).
+      // a Sequence-tab muted step, a When-silenced loop, or a windowed past-note
+      // catch-up (play === false).
       const _rested = (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0)));
-      if (_rested || st._silent || play === false) return;
+      const _stepMuted = !!(Array.isArray(entry.stepMutes) && entry.stepMutes[_stepIdx]);
+      if (_rested || _stepMuted || st._silent || play === false) return;
       // Resolve an ASCENDING pool: degree d within octave o, lifted so chord/scale
       // tones keep climbing across octaves (no pitch-class wrap inside one octave).
       // `carry` lifts a tone whose absolute pc already crossed the octave; passing
@@ -6233,12 +6236,19 @@
         const oct = iv >= 12 ? '′' : '';
         return '<button type="button" class="amb-ce-cell ' + cls + '" data-iv="' + iv + '">' + esc(nm) + oct + '</button>';
       };
-      const render = () => {
-        const L = getL(); if (!L) { close(); return; }
-        const steps = Array.isArray(L.steps) ? L.steps : [];
-        let h = '<div class="keep-sdiv-title">Edit chord notes</div>' +
-          '<div class="amb-ce-hint">Tap a note: add → mute → remove. Notes are relative to each chord\'s root.</div>' +
-          '<div class="amb-ce-list">';
+      // Per-chord annotation: how many times it plays + total notes in one loop.
+      const annOf = (entry, disp) => {
+        const dir = (entry && entry.dir) || L0.dir || 'up';
+        const Lc = getL() || L0;
+        const octs = Math.max(1, Math.min(4, (Lc.octaves | 0) || 2));
+        const sz = Math.max(1, disp.iv.filter(iv => disp.m.indexOf(iv) < 0).length);   // unmuted chord notes
+        const notes = _ambArpEntryNotes(entry, dir, sz * octs);
+        if (entry.unit === 'notes') return notes + '♪';
+        return '×' + Math.max(1, (entry.passes | 0) || 1) + ' · ' + notes + '♪';
+      };
+      let tab = 'phrase';
+      const renderPhrase = (steps) => {
+        let h = '<div class="amb-ce-hint">Tap a note: add → mute → remove. The badge shows plays × total notes per loop.</div><div class="amb-ce-list">';
         steps.forEach((entry, ei) => {
           const chords = _ambArpEntryChords(entry);
           h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</div>';
@@ -6247,7 +6257,7 @@
             const disp = dispOf(o);
             const rootPc = ((o.root | 0) % 12 + 12) % 12;
             h += '<div class="amb-ce-chord" data-ei="' + ei + '" data-ci="' + ci + '">';
-            if (chords.length > 1) h += '<span class="amb-ce-croot">' + esc(names[rootPc]) + '</span>';
+            h += '<div class="amb-ce-chead"><span class="amb-ce-croot">' + esc(names[rootPc]) + '</span><span class="amb-ce-cann">' + esc(annOf(entry, disp)) + '</span></div>';
             h += '<div class="amb-ce-grid">';
             for (let iv = 0; iv < 12; iv++) h += cellHtml(disp, iv, rootPc);
             h += '</div><div class="amb-ce-grid">';
@@ -6256,14 +6266,60 @@
           });
           h += '</div>';
         });
-        h += '</div><div class="sm-footer"><button type="button" class="sm-apply amb-ce-ok">Done</button></div>';
+        return h + '</div>';
+      };
+      const renderSequence = (steps) => {
+        const Lc = getL() || L0;
+        const octs = Math.max(1, Math.min(4, (Lc.octaves | 0) || 2));
+        let h = '<div class="amb-ce-hint">Tap a step to mute / unmute it in the loop.</div><div class="amb-ce-list">';
+        steps.forEach((entry, ei) => {
+          const dir = (entry && entry.dir) || Lc.dir || 'up';
+          const src = _ambNotesOf(entry);
+          const intervals = _ambScaleIntervals(src);
+          const N = Math.max(1, intervals.length);
+          const len = N * octs;
+          const total = _ambArpEntryNotes(entry, dir, len);
+          const rootPc = ((_ambSrcRootPc(src) | 0) % 12 + 12) % 12;
+          if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
+          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(src)) + ' · ' + total + ' steps</div><div class="amb-seqgrid">';
+          for (let s = 0; s < total && s < 256; s++) {
+            const muted = !!entry.stepMutes[s];
+            let lbl;
+            if (dir === 'random') lbl = String(s + 1);
+            else { const idx = _ambArpIndexFor(dir, s, len); const d = idx % N, o = Math.floor(idx / N); lbl = names[((rootPc + (intervals[d] | 0)) % 12 + 12) % 12] + (o > 0 ? '′' : ''); }
+            h += '<button type="button" class="amb-seqcell ' + (muted ? 'muted' : 'on') + '" data-ei="' + ei + '" data-s="' + s + '">' + esc(lbl) + '</button>';
+          }
+          h += '</div></div>';
+        });
+        return h + '</div>';
+      };
+      const render = () => {
+        const L = getL(); if (!L) { close(); return; }
+        const steps = Array.isArray(L.steps) ? L.steps : [];
+        let h = '<div class="keep-sdiv-title">Edit Arp</div>' +
+          '<div class="amb-ce-tabs">' +
+            '<button type="button" class="amb-ce-tab' + (tab === 'phrase' ? ' active' : '') + '" data-tab="phrase">Phrase</button>' +
+            '<button type="button" class="amb-ce-tab' + (tab === 'sequence' ? ' active' : '') + '" data-tab="sequence">Sequence</button>' +
+          '</div>';
+        h += (tab === 'sequence') ? renderSequence(steps) : renderPhrase(steps);
+        h += '<div class="sm-footer"><button type="button" class="sm-apply amb-ce-ok">Done</button></div>';
         modal.innerHTML = h;
+        modal.querySelectorAll('.amb-ce-tab').forEach(b => b.addEventListener('click', () => { tab = b.getAttribute('data-tab') || 'phrase'; render(); }));
         modal.querySelectorAll('.amb-ce-cell').forEach(btn => btn.addEventListener('click', () => {
           const chordEl = btn.closest('.amb-ce-chord'); if (!chordEl) return;
           const ei = chordEl.getAttribute('data-ei') | 0, ci = chordEl.getAttribute('data-ci') | 0;
           const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
           const chords = _ambArpEntryChords(L2.steps[ei]); if (!chords || !chords[ci]) return;
           _ambChordCellCycle(chords[ci], (btn.getAttribute('data-iv') | 0));
+          _ambResetArp(E, L2.type + ':' + L2.id);
+          persist();
+          render();
+        }));
+        modal.querySelectorAll('.amb-seqcell').forEach(btn => btn.addEventListener('click', () => {
+          const ei = btn.getAttribute('data-ei') | 0, s = btn.getAttribute('data-s') | 0;
+          const L2 = getL(); if (!L2 || !L2.steps || !L2.steps[ei]) return;
+          const entry = L2.steps[ei]; if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
+          entry.stepMutes[s] = !entry.stepMutes[s];
           _ambResetArp(E, L2.type + ':' + L2.id);
           persist();
           render();

@@ -3248,6 +3248,27 @@
     .amb-ce-cell.on { background: rgba(79,209,197,0.22); border-color: #4fd1c5; color: #d6fffa; }
     .amb-ce-cell.muted { background: rgba(120,120,150,0.12); border-color: #3a3a52; color: #6a6a88; text-decoration: line-through; }
     @media (hover: hover) { .amb-ce-cell.off:hover { border-color: #4fd1c5; color: #a0aec0; } }
+    /* Edit-Arp tabs (Phrase / Sequence). */
+    .amb-ce-tabs { display: flex; gap: 6px; margin: 2px 0 10px; }
+    .amb-ce-tab {
+      flex: 1 1 0; padding: 6px 0; border-radius: 6px; cursor: pointer;
+      font: 700 0.76rem 'Segoe UI', sans-serif;
+      background: rgba(255,255,255,0.03); border: 1px solid #2a2a40; color: #8a8aa8;
+    }
+    .amb-ce-tab.active { background: rgba(159,122,234,0.18); border-color: #9f7aea; color: #ede9fe; }
+    @media (hover: hover) { .amb-ce-tab:not(.active):hover { border-color: #9f7aea; color: #d6bcfa; } }
+    /* Per-chord header in Phrase tab: root name + plays/notes badge. */
+    .amb-ce-chead { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 1px; }
+    .amb-ce-cann { color: #6a6a88; font: 0.66rem 'SFMono-Regular', ui-monospace, Menlo, monospace; }
+    /* Sequence tab: a step grid of the loop; tap to mute/unmute each step. */
+    .amb-seqgrid { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+    .amb-seqcell {
+      flex: 0 0 auto; width: clamp(26px, 8vw, 36px); padding: 6px 0; border-radius: 5px; cursor: pointer;
+      font: 700 0.6rem 'Segoe UI', sans-serif; text-align: center;
+      background: rgba(79,209,197,0.20); border: 1px solid #4fd1c5; color: #d6fffa;
+    }
+    .amb-seqcell.muted { background: rgba(120,120,150,0.10); border-color: #3a3a52; color: #6a6a88; text-decoration: line-through; }
+    @media (hover: hover) { .amb-seqcell:hover { filter: brightness(1.15); } }
     .ambient-arp-list { display: flex; flex-direction: column; gap: 5px; }
     .ambient-arp-row {
       display: flex; align-items: center; flex-wrap: wrap; gap: 6px;

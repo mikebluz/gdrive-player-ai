@@ -4550,8 +4550,8 @@
     function _ambRenameLayer(E, btn) {
       const key = btn && btn.dataset && btn.dataset.rkey; if (!key) return;
       const layer = _ambLayerByKey(E, key); if (!layer) return;
-      const head = btn.closest('.ambient-layer-head');
-      const span = head ? head.querySelector('.ambient-layer-name') : null;
+      const lay = btn.closest('.ambient-layer');
+      const span = lay ? lay.querySelector('.ambient-layer-name') : null;
       const cur = (typeof layer.label === 'string' && layer.label.trim())
         ? layer.label.trim() : (span ? span.textContent.trim() : '');
       const next = (typeof prompt === 'function') ? prompt('Layer name (leave blank to reset):', cur) : null;
@@ -6114,7 +6114,6 @@
     const _ambEscText = (s) => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
     const _ambHead = (label, onId, delId, freezeKey) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
-      (freezeKey ? '<button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename layer" aria-label="Rename layer">✎</button>' : '') +
       // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
       // unit/loop length and the formula that produces it, so you know what to tweak.
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
@@ -6128,7 +6127,11 @@
       // Read-only live notes line — wraps full-width under the head; shows the
       // notes this layer is currently sounding (filled by _ambUpdateNotesLive).
       (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '" aria-hidden="true"></span>' : '') +
-      '</div>';
+      '</div>' +
+      // Per-layer controls row — sits at the top of the expanded body (above the
+      // Voice group); hidden when the layer is collapsed. Holds Rename (moved out
+      // of the cramped head) and is a home for future per-layer controls.
+      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer">✎ Rename</button></div>' : '');
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
     const _ambGet = (E, id) => document.getElementById(_ambTrId(E, id));

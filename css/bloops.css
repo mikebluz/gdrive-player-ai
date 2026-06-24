@@ -2856,6 +2856,13 @@
     }
     @media (hover: hover) { .ambient-lock-btn:hover { border-color: #ffd479; color: #ffd479; } }
     .ambient-lock-btn.active { color: #1a202c; background: #ffd479; border-color: #ffd479; }
+    /* Per-layer top-controls row (above Voice) — holds Rename, hidden when the
+       layer is collapsed (covered by .ambient-layer.collapsed > *:not(head)). */
+    .ambient-layer-topctrls { display: flex; align-items: center; gap: 6px; padding: 5px 0 3px; }
+    .ambient-layer-topctrls .ambient-rename-btn {
+      width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
+      font: 600 0.72rem 'Segoe UI', sans-serif;
+    }
     /* Separator between consecutive unit colour-groups in a notes readout. */
     .ambient-np-sep { color: #4a4a5e; }
     /* Locked unit: one stable colour (no per-unit cycling, no next group). */

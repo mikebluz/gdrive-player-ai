@@ -169,7 +169,20 @@
       // Committed golden baseline (filled in once, against today's code). check()
       // prefers a freshly recorded localStorage baseline, else falls back to this
       // so it works in a clean browser / on any machine.
-      const BASELINE = null;
+      const BASELINE = {
+        'bed':         { hash: '1d8eacee', count: 12 },
+        'motif':       { hash: '8e39cc63', count: 9 },
+        'texture':     { hash: 'b766f5dc', count: 3 },
+        'beat-random': { hash: '872e5741', count: 19 },
+        'beat-euclid': { hash: 'c2c8241b', count: 19 },
+        'arp':         { hash: 'd5cc969a', count: 52 },
+        'bass':        { hash: '0a287885', count: 32 },
+        'run':         { hash: '587c0ec7', count: 46 },
+        'pedal':       { hash: 'e788032c', count: 26 },
+        'drone':       { hash: '45a97025', count: 2 },
+        'seq-pitch':   { hash: '64b0939b', count: 38 },
+        'combo':       { hash: 'ad0b1f59', count: 53 },
+      };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}
         return BASELINE;

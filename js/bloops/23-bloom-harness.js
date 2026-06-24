@@ -50,11 +50,19 @@
       };
 
       // Build a normalized config from the defaults with a fixed seed + a mutator.
+      // Layers with tone '' follow the live grid voice (cellParams[0]); pin those
+      // to a fixed voice so the baseline doesn't depend on session state and is
+      // reproducible across machines. Pitch/timing/note-selection are unaffected —
+      // only the recorded voice label changes.
       const mk = (mutate) => {
         const c = _defaultAmbientConfig();
         c.seed = SEED;
         if (mutate) mutate(c);
         try { _normalizeAmbientCfg(c); } catch (e) {}
+        const pin = (L) => { if (L && typeof L === 'object' && L.tone === '') L.tone = 'sine'; };
+        ['bed', 'motif', 'texture', 'beat'].forEach((k) => pin(c[k]));
+        (c.extras || []).forEach(pin);
+        (c.seqs || []).forEach(pin);
         return c;
       };
       // A small, fixed saved-sequence phrase for the Seq config.
@@ -158,8 +166,13 @@
         return out;
       }
 
+      // Committed golden baseline (filled in once, against today's code). check()
+      // prefers a freshly recorded localStorage baseline, else falls back to this
+      // so it works in a clean browser / on any machine.
+      const BASELINE = null;
       function loadBaseline() {
-        try { return JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); } catch (e) { return null; }
+        try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}
+        return BASELINE;
       }
       function record(opts) {
         const res = run(opts);

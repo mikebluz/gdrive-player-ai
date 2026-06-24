@@ -1395,7 +1395,8 @@
       const unit = arr.filter(ev => ev && (ev.freq > 0) && ((period > 0.05) ? (bk(ev.at) === cb) : (Math.abs(ev.at - cur.at) < 0.5)));
       if (!unit.length) return null;
       let start = unit[0].at; unit.forEach(ev => { if (ev.at < start) start = ev.at; });
-      return unit.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
+      const notes = unit.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
+      return { notes: notes, start: start };
     }
     // If `key`'s layer is locked, replay its stored unit at `at` and return true.
     function _ambEmitLocked(E, key, at) {
@@ -1413,9 +1414,21 @@
     // Capture + lock the current unit, or release. Returns the new lock state.
     function _ambToggleUnitLock(E, key) {
       const st = _ambUnitState(E, key);
-      if (st.lock) { st.lock = false; st.notes = null; }
-      else { const u = _ambCaptureUnit(E, key); if (u && u.length) { st.notes = u; st.lock = true; } }
-      return st.lock;
+      if (st.lock) { st.lock = false; st.notes = null; return false; }
+      const cap = _ambCaptureUnit(E, key);
+      if (!cap || !cap.notes || !cap.notes.length) return false;
+      st.notes = cap.notes; st.lock = true;
+      // Seamless: drop the layer's already-scheduled-ahead (next) generated notes
+      // and re-anchor its clock to the next boundary, so the locked unit takes
+      // over there instead of one iteration late (the lookahead had committed it).
+      try {
+        if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key);
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg);
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        if (P > 0.05) { E.clocks = E.clocks || {}; let b = cap.start + P; while (b < now + 0.03) b += P; E.clocks[key] = b; }
+      } catch (e) {}
+      return true;
     }
     // Update every Drift slider's readout within E's panel (step-div in Sync,
     // raw value in Free). Called from _ambSyncLayerUnits / _ambUnitSyncViz so a
@@ -4590,6 +4603,9 @@
       E.cap = E.cap || {};
       const arr = E.cap[key] || (E.cap[key] = []);
       return (freq, params, dur, at) => {
+        // Tag voices created for this layer (read by playNote's registration) so
+        // a lock can cancel just this layer's scheduled-ahead notes.
+        if (typeof window !== 'undefined') window._ambEmitKey = key;
         if (typeof freq !== 'number' || typeof at !== 'number') return;
         const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
         arr.push({ at: at, freq: freq, dur: dur, params: p });

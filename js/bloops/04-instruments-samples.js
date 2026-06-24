@@ -1862,6 +1862,9 @@
     const _VOICE_DEFER_MS = 150;
     const _pendingVoices = new Set();
     function _registerVoiceAtStart(entry, leadMs) {
+      // Tag with the Bloom layer key (when emitted inside a Bloom layer) so a
+      // unit Lock can cancel just this layer's scheduled-ahead voices.
+      try { entry._ak = (typeof window !== 'undefined' && window._ambCaptureSink) ? (window._ambEmitKey || null) : null; } catch (e) {}
       if (Number.isFinite(leadMs) && leadMs > _VOICE_DEFER_MS) {
         _pendingVoices.add(entry);
         entry.registerTimer = setTimeout(() => {
@@ -1916,6 +1919,7 @@
     // voices wait here until their start; a stop drains this set too.
     const _pendingSampleVoices = new Set();
     function _registerSampleVoiceAtStart(v, leadMs) {
+      try { v._ak = (typeof window !== 'undefined' && window._ambCaptureSink) ? (window._ambEmitKey || null) : null; } catch (e) {}
       if (Number.isFinite(leadMs) && leadMs > _VOICE_DEFER_MS) {
         _pendingSampleVoices.add(v);
         v.registerTimer = setTimeout(() => {
@@ -1979,6 +1983,15 @@
     // click-free, so "immediate" doesn't mean a hard cut/pop. Called by every
     // user stop gesture (transport stop, Bloom stop) so release tails don't
     // keep ringing after the user asked for silence.
+    // Cancel a Bloom layer's already-scheduled-ahead (pending, not-yet-sounding)
+    // voices — used by Unit Lock so a freshly locked layer's next-unit, already
+    // queued in the lookahead, is dropped and the locked unit takes over cleanly.
+    // Only touches PENDING (future) voices, never what's currently sounding.
+    function cancelBloomFutureVoices(key) {
+      if (!key) return;
+      Array.from(_pendingVoices).forEach(e => { if (e && e._ak === key) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
+      Array.from(_pendingSampleVoices).forEach(v => { if (v && v._ak === key) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
+    }
     function silenceActiveVoices() {
       // Drain pending (scheduled-ahead, not-yet-registered) voices too — a stop
       // must cancel notes the Bloom phrase dispatched for the near future, or

@@ -2846,6 +2846,11 @@
       overflow: hidden; text-overflow: ellipsis;
     }
     .ambient-notes-live.reserved { display: block; }
+    /* Click a bed/motif line to lock/unlock the current unit. */
+    .ambient-notes-live.lockable { cursor: pointer; }
+    @media (hover: hover) { .ambient-notes-live.lockable:hover { background: rgba(255,212,121,0.06); border-radius: 3px; } }
+    .ambient-notes-live.locked { color: #ffd479; }
+    .ambient-lock-ic { margin-right: 4px; opacity: 0.9; }
     /* Separator between consecutive unit colour-groups in a notes readout. */
     .ambient-np-sep { color: #4a4a5e; }
     /* "Now Playing" read-only panel — global readout of every layer's notes. */

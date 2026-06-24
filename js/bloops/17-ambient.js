@@ -1363,6 +1363,54 @@
     // Pick the engine that owns a namespaced control id.
     const _ambEngForId = (id) => /^mix-bloom-/.test(id) ? _masterEng
       : (/^shape-bloom-/.test(id) ? _shapeBloomEng : _laneEng);
+    // Which engine's panel contains a DOM element (for clicks on shared controls
+    // like the per-layer notes line that have no prefixed id).
+    const _ambEngForEl = (el) => {
+      const engs = [_masterEng, _laneEng, _shapeBloomEng];
+      for (const E of engs) { try { const h = E && document.getElementById(E.hostId); if (h && h.contains(el)) return E; } catch (e) {} }
+      return _masterEng;
+    };
+    // ---- Unit Lock (Phase 5 step 1) -------------------------------------
+    // A layer can LOCK its current iteration: the engine then replays that exact
+    // unit every iteration (no generation / no variance) until unlocked. The unit
+    // is captured from the rolling per-layer note buffer (E.cap) as portable
+    // {freq, off, durMs, params} and replayed note-for-note. This is the engine
+    // half of the unit editor; the note-for-note editor (step 2) just rewrites the
+    // captured list. Default (nothing locked) leaves generation byte-identical.
+    function _ambUnitState(E, key) { if (!E.unit) E.unit = {}; return E.unit[key] || (E.unit[key] = { lock: false, notes: null }); }
+    function _ambCaptureUnit(E, key) {
+      const arr = E.cap && E.cap[key];
+      if (!Array.isArray(arr) || !arr.length) return null;
+      let period = 0;
+      try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
+      const last = arr[arr.length - 1];
+      const bk = (a) => (period > 0.05) ? Math.floor(a / period) : 0;
+      const lb = bk(last.at);
+      const unit = arr.filter(ev => ev && (ev.freq > 0) && ((period > 0.05) ? (bk(ev.at) === lb) : (Math.abs(ev.at - last.at) < 0.5)));
+      if (!unit.length) return null;
+      let start = unit[0].at; unit.forEach(ev => { if (ev.at < start) start = ev.at; });
+      return unit.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
+    }
+    // If `key`'s layer is locked, replay its stored unit at `at` and return true.
+    function _ambEmitLocked(E, key, at) {
+      const st = E && E.unit && E.unit[key];
+      if (!st || !st.lock || !Array.isArray(st.notes) || !st.notes.length) return false;
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      st.notes.forEach(nt => {
+        if (!(nt.freq > 0)) return;
+        const params = Object.assign({}, nt.params);
+        if (dmod) params._detuneMod = dmod;
+        try { playNote(nt.freq, params, nt.durMs, at + (nt.off || 0), dest, undefined, _E.laneIdx()); } catch (e) {}
+      });
+      return true;
+    }
+    // Capture + lock the current unit, or release. Returns the new lock state.
+    function _ambToggleUnitLock(E, key) {
+      const st = _ambUnitState(E, key);
+      if (st.lock) { st.lock = false; st.notes = null; }
+      else { const u = _ambCaptureUnit(E, key); if (u && u.length) { st.notes = u; st.lock = true; } }
+      return st.lock;
+    }
     // Update every Drift slider's readout within E's panel (step-div in Sync,
     // raw value in Free). Called from _ambSyncLayerUnits / _ambUnitSyncViz so a
     // mode / ratio / interval change re-renders the readout.
@@ -1656,6 +1704,7 @@
     }
     function _ambEmitBed(at, bed, space, key) {
       key = key || 'bed';
+      if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;   // resolve this note's key by its play-time (keyMaster sections)
       const voicing = _ambPickVoicing(bed);
       if (!voicing.length) return;
@@ -2158,6 +2207,7 @@
     }
     function _ambEmitMotif(at, motif, space, key) {
       key = key || 'motif';
+      if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;
       if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return;
       const lenMs = Math.max(60, motif.lengthMs | 0);
@@ -5668,6 +5718,14 @@
         // of collapsing per-note and pulsing the head. Off layers stay collapsed.
         let layerOn = false;
         try { const L = _ambLayerByKey(E, key); layerOn = !!(playing && L && L.on !== false && L.present !== false); } catch (e) { layerOn = playing; }
+        // Unit Lock: bed/motif lines are clickable to lock the current unit; show
+        // the locked state (the locked layer keeps replaying, so its notes still
+        // show via E.cap). Reserve a locked line too, so it stays visible.
+        const lockable = /^(bed|motif)(:|$)/.test(key);
+        const locked = !!(E.unit && E.unit[key] && E.unit[key].lock);
+        el.classList.toggle('lockable', lockable);
+        el.classList.toggle('locked', locked);
+        if (locked) layerOn = true;
         el.classList.toggle('reserved', layerOn);
         let html = '';
         if (layerOn && E.cap && E.cap[key]) {
@@ -5688,6 +5746,7 @@
             st.map = nextMap;
           } else if (E._npCol[key]) { E._npCol[key].map = {}; }
         } else if (E._npCol[key]) { E._npCol[key].map = {}; }
+        if (locked) html = '<span class="ambient-lock-ic">🔒</span>' + html;
         if (el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; }
         if (html) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, html: html }); }
       });
@@ -5875,6 +5934,20 @@
         }
         v.textContent = t.value + _ambSlUnit(t.id);
       }, true);
+    } catch (e) {}
+    // Click a bed/motif notes line → Lock its current unit (replay it every
+    // iteration); click again → Unlock and let the layer resume. (Phase 5 step 1;
+    // the note-for-note editor builds on the same captured unit next.)
+    try {
+      document.addEventListener('click', (e) => {
+        const el = e.target && e.target.closest && e.target.closest('.ambient-notes-live');
+        if (!el) return;
+        const key = el.dataset.nkey; if (!key || !/^(bed|motif)(:|$)/.test(key)) return;
+        const E = _ambEngForEl(el); if (!E) return;
+        _E = E;
+        try { _ambToggleUnitLock(E, key); } catch (x) {}
+        try { _ambUpdateNotesLive(E); } catch (x) {}   // reflect immediately
+      });
     } catch (e) {}
     // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire
     // 'input') into the readouts. Sweeps every Bloom slider in `root`.

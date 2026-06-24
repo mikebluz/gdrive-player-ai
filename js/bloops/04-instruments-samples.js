@@ -2803,11 +2803,12 @@
             const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, padAt, { pan });
             if (padH) { try { padH.scheduleStop(Math.max(0.02, targetDur)); } catch (e) {} return; }
           }
-          // Tuned (non-drum) samples LOOP seamlessly so a step longer than the
-          // sample's buffer sustains instead of cutting off. Skipped for drums,
-          // slice windows, and per-note-filtered (Design) samples.
-          const _si = sampleSamplers.get(type.slice(7)) || {};
-          const _wantLoop = (params.loop || !_si.drumKit)
+          // Loop ONLY when the caller explicitly asks (params.loop — e.g. the
+          // Drone). SEQUENCED / Bloom-layer notes have a fixed length, so
+          // defaulting them to loop made notes longer than the buffer re-attack
+          // (glitchy, esp. a Bed pad on the piano grid-voice). Held GRID notes
+          // still loop by default — that's startSustainedNote, not this path.
+          const _wantLoop = !!params.loop
             && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)
             && !Number.isFinite(params.filterCutoff);
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,

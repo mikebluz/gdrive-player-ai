@@ -6138,7 +6138,11 @@
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id) +
         grp('Voice') +
-          '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint" style="margin-left:auto">' + nm + '</span></div>' +
+          '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint ambient-samp-srcname" id="' + p + 'srcname" style="margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nm + '</span></div>' +
+          '<div class="ambient-ctrl ambient-samp-srcbtns">' +
+            '<button type="button" class="ambient-srcbtn" id="' + p + 'import" title="Replace this layer’s sample with an audio file">+ Import…</button>' +
+            '<button type="button" class="ambient-srcbtn" id="' + p + 'drive" title="Replace this layer’s sample with audio from a Google Drive folder">☁ Drive…</button>' +
+          '</div>' +
           _ambSl('Attack', p + 'attack', 0, 2000, s.attack, 'ms') +
           _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
           _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
@@ -6185,6 +6189,10 @@
       bindFx('dly-fb', (q, v) => { q.delay.feedback = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
+      const impB = el('import');
+      if (impB) impB.addEventListener('click', () => { if (typeof triggerImportSample === 'function') triggerImportSample((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
+      const drvB = el('drive');
+      if (drvB) drvB.addEventListener('click', () => { if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
       const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; _ambToggleLayer(E, 'samp:' + id, L, onB, persist); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSampleLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
@@ -6218,6 +6226,37 @@
       if (E.seqState) delete E.seqState['samp:' + id];
       _ambRenderSampleLayers(E);
       if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Create a NEW Sample layer from a freshly imported sample id (file or Drive),
+    // re-render the list, and open it so the user lands on the new layer.
+    function _ambAddSampleLayerWith(E, sampleId) {
+      if (!sampleId) return;
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Add Bloom sample layer');
+      _ambSendSampleToInstance(E, sampleId, {});
+      try { _ambRenderSampleLayers(E); } catch (e) {}
+      // Expand the layer we just added (it's the last one) so it's obviously there.
+      try {
+        const wrap = _ambGet(E, 'ambient-sample-layers');
+        const last = wrap && wrap.querySelector('.ambient-layer[data-samp-id]:last-child');
+        if (last) { last.classList.remove('collapsed'); last.scrollIntoView({ block: 'nearest' }); }
+      } catch (e) {}
+      if (typeof showToast === 'function') showToast('Added sample layer.');
+    }
+    // Set / replace an existing Sample layer's source from an imported sample id,
+    // updating the Source name in place (no full re-render → the layer stays open).
+    function _ambSetSampleLayerSource(E, id, sampleId, name) {
+      if (!sampleId) return;
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.samples)) return;
+      const L = cfg.samples.find(x => x.id === id); if (!L) return;
+      let info = null; try { info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(sampleId) : null; } catch (e) {}
+      L.sampleId = sampleId;
+      L.name = name || (info && info.name) || sampleId;
+      const nmEl = _ambGet(E, 'ambient-samp-' + id + '-srcname');
+      if (nmEl) nmEl.textContent = L.name;
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Sample source set to “' + L.name + '”.');
     }
     // ---- Extra layer instances (multiple Bed/Motif/Texture/Beat) -----------
     // cfg.extras holds ADDITIONAL instances beyond the four primaries. Each is
@@ -8842,6 +8881,14 @@
         actions.push({ label: 'Pedal', fn: () => _ambAddExtra(E, 'pedal') });
         // Drone: holds a note/chord, re-struck every N units (extras-only).
         actions.push({ label: 'Drone', fn: () => _ambAddExtra(E, 'drone') });
+        // Sample layers: import an audio file (local or from a Google Drive
+        // folder) and drop it in as a new Sample layer in one step.
+        actions.push({ label: 'Sample — from file…', fn: () => {
+          if (typeof triggerImportSample === 'function') triggerImportSample((sid) => _ambAddSampleLayerWith(E, sid));
+        } });
+        actions.push({ label: 'Sample — from Drive…', fn: () => {
+          if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((sid) => _ambAddSampleLayerWith(E, sid));
+        } });
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

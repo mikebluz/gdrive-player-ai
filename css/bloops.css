@@ -8518,6 +8518,16 @@
     .drv-samp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .drv-samp-all { padding: 4px 2px; color: #e2e8f0; }
 
+    /* Bloom Sample-layer source import buttons (+ Import… / ☁ Drive…). */
+    .ambient-samp-srcbtns { display: flex; gap: 6px; }
+    .ambient-srcbtn {
+      flex: 1 1 0; min-width: 0; padding: 5px 8px; line-height: 1;
+      border: 1px solid #2d2d3f; border-radius: 6px; background: #0a0a14;
+      color: #c9c9e0; cursor: pointer; font: 600 0.72rem 'Segoe UI', sans-serif;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    @media (hover: hover) { .ambient-srcbtn:hover { border-color: #9f7aea; color: #fff; } }
+
     .sm-preview {
       padding: 6px 14px; border-radius: 18px;
       background: transparent; border: 1px solid #2d2d3f;

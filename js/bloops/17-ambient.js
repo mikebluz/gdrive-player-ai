@@ -3407,11 +3407,12 @@
         }
         return (60 / _ambBpm()) * 4;
       }
-      // Texture scans a 16-slot pattern, so ONE unit = 16 steps, not one step.
-      // Syncing (e.g. Bar×4) then spreads the 16-step pattern over the target —
-      // a busy stream locked to the grid — instead of stretching ONE step to it
-      // (which made a synced Texture fire once every several seconds = silent).
-      if (type === 'texture') return Math.max(0.05, _ambEffIntervalSec(L)) * 16;
+      // Texture scans a 16-slot pattern, so ONE unit = 16 steps. Use the SAME
+      // snapped step the engine advances by (_ambStepSecFor, not the raw
+      // interval) so 16 steps EXACTLY equal the synced target — otherwise, in
+      // BPM-sync the snapped≠raw gap made the pattern a few % long and the layer
+      // drifted out of phase with the others over time.
+      if (type === 'texture') return Math.max(0.03, _ambStepSecFor(L, 0.03, cfg)) * 16;
       return Math.max(0.05, _ambEffIntervalSec(L)); // bed/motif/beat (random) — continuous stream
     }
     // Ensure a layer's Unit-Sync descriptor exists (default FREE). `unit` =

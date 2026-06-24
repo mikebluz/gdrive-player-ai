@@ -93,6 +93,9 @@
           { name: 'drone',       cfg: mk(withExtra('drone')) },
           { name: 'seq-pitch',   cfg: mk((c) => { c.bed.on = false; const s = _defaultSeqLayer(1); s.units = [seqUnit()]; s.on = true; c.seqs = [s]; }) },
           { name: 'combo',       cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.texture.on = true; c.beat.on = true; }) },
+          // Key ON (root G major) — lock the new transpose/quantize behavior.
+          { name: 'key-transpose', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'transpose'; }) },
+          { name: 'key-quantize',  cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'quantize'; }) },
         ];
       }
 

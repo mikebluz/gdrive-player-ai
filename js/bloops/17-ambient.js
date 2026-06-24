@@ -53,6 +53,11 @@
         keyOn:    false,
         keyRoot:  0,
         keyScale: 'major',
+        // How Key reshapes the material: 'transpose' (default — move every layer
+        // wholesale into the key, intervals/voicings intact) or 'quantize' (leave
+        // layers where they are and snap each out-of-key note to the nearest tone
+        // of the key scale). Read live during generation; keyOff ignores it.
+        keyMode:  'transpose',
         progRateMs: 4000,               // ms per chord for "Progression" note sources
         freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
         // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
@@ -335,6 +340,7 @@
       cfg.keyRoot = ((((cfg.keyRoot | 0) % 12) + 12) % 12);
       if (typeof cfg.keyScale !== 'string' || !cfg.keyScale) cfg.keyScale = d.keyScale;
       if (typeof SCALES !== 'undefined' && SCALES && !SCALES[cfg.keyScale]) cfg.keyScale = d.keyScale;
+      if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.freezeLenMs)) cfg.freezeLenMs = d.freezeLenMs;
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
@@ -612,6 +618,29 @@
       const q = (c && typeof c.keyScale === 'string' && c.keyScale) ? c.keyScale : 'major';
       return (typeof SCALES !== 'undefined' && SCALES[q]) ? q : 'major';
     }
+    // Key reshape mode: 'transpose' (default) or 'quantize'.
+    function _ambKeyMode(cfg) {
+      const c = cfg || _ambKeyCfg();
+      return (c && c.keyMode === 'quantize') ? 'quantize' : 'transpose';
+    }
+    // QUANTIZE: snap an (integer) MIDI note to the nearest tone of the key's
+    // scale. In-key notes pass through; ties resolve downward. Used only when
+    // keyOn && mode === 'quantize'.
+    function _ambKeyQuantizeMidi(midi, cfg) {
+      const D = _ambKeyDiatonicPcs(cfg);
+      if (!D || !D.size) return midi;
+      const m = Math.round(midi);
+      const pc = (((m % 12) + 12) % 12);
+      if (D.has(pc)) return midi;
+      let bestOff = 0, bestDist = 99;
+      for (let off = -6; off <= 6; off++) {
+        const p = (((pc + off) % 12) + 12) % 12;
+        if (!D.has(p)) continue;
+        const dist = Math.abs(off);
+        if (dist < bestDist || (dist === bestDist && off < bestOff)) { bestDist = dist; bestOff = off; }
+      }
+      return midi + bestOff;
+    }
     // Absolute pitch-class Set of the key's own scale, rooted at keyRoot.
     function _ambKeyDiatonicPcs(cfg) {
       const c = cfg || _ambKeyCfg();
@@ -726,23 +755,30 @@
       const n = _ambAsNotes(src);
       const kc = _ambKeyCfg();
       const keyOn = !!(kc && kc.keyOn);
-      const keyRoot = keyOn ? _ambKeyRootPc(kc) : 0;
-      // Chords & wraps keep their OWN root in key mode, so degrees (IV, vi) and
-      // borrowed chords (♭VI, ♭VII) play on their real roots.
-      if (n.type === 'chord' && Number.isFinite(n.root)) return ((n.root % 12) + 12) % 12;
-      if (n.type === 'wrap') { const w = _ambFindWrap(n.id); if (w && Number.isFinite(w.root)) return ((w.root % 12) + 12) % 12; }
+      // TRANSPOSE moves every layer wholesale into the key; QUANTIZE leaves roots
+      // alone (the snap happens per-note in _ambNoteFreq), so for roots it is
+      // identical to keyOff.
+      const transpose = keyOn && _ambKeyMode(kc) === 'transpose';
+      const baseRoot = (typeof rootIdx === 'number') ? rootIdx : 0;
+      const keyRoot = transpose ? _ambKeyRootPc(kc) : baseRoot;
+      const delta = (((keyRoot - baseRoot) % 12) + 12) % 12;   // wholesale shift
+      // Chords & wraps: TRANSPOSE shifts them by the key delta (the whole Bloom
+      // moves together); otherwise they keep their OWN root, so degrees (IV, vi)
+      // and borrowed chords (♭VI, ♭VII) play on their real roots.
+      if (n.type === 'chord' && Number.isFinite(n.root)) { const r = ((n.root % 12) + 12) % 12; return transpose ? ((r + delta) % 12) : r; }
+      if (n.type === 'wrap') { const w = _ambFindWrap(n.id); if (w && Number.isFinite(w.root)) { const r = ((w.root % 12) + 12) % 12; return transpose ? ((r + delta) % 12) : r; } }
       // Progressions transpose so their tonic = keyRoot (relative motion kept).
       if (n.type === 'prog') {
         const ch = _ambProgCurrentChord(n);
-        let r = (ch && Number.isFinite(ch.root)) ? (((ch.root % 12) + 12) % 12) : ((typeof rootIdx === 'number') ? rootIdx : 0);
-        if (keyOn) r = ((r + _ambProgKeyOffset(n, keyRoot)) % 12 + 12) % 12;
+        let r = (ch && Number.isFinite(ch.root)) ? (((ch.root % 12) + 12) % 12) : baseRoot;
+        if (transpose) r = ((r + _ambProgKeyOffset(n, keyRoot)) % 12 + 12) % 12;
         return r;
       }
-      // Scales root to the key tonic. Time-indexed (keyMaster section) key first,
-      // so a scale re-roots exactly on the boundary for the note now computed.
+      // Scales root to the key tonic in transpose mode. Time-indexed (keyMaster)
+      // key first, so a scale re-roots exactly on the boundary for the note now.
       if (_ambKeyTime != null) { const ks = _ambKeyAt(_E, _ambKeyTime); if (ks) return (((ks.root | 0) % 12) + 12) % 12; }
-      if (keyOn) return keyRoot;
-      return (typeof rootIdx === 'number') ? rootIdx : 0;
+      if (transpose) return keyRoot;
+      return baseRoot;
     }
     // Human label for the Notes button.
     function _ambNotesLabel(src) {
@@ -830,8 +866,11 @@
       const notes = _ambAsNotes(src);
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       const root = _ambSrcRootPc(notes);
-      const pc = (((root + intervalSemi) % 12) + 12) % 12;
-      const midi = 12 * (octave + 1) + pc;
+      let pc = (((root + intervalSemi) % 12) + 12) % 12;
+      let midi = 12 * (octave + 1) + pc;
+      // Key QUANTIZE: snap the resolved note to the nearest tone of the key scale.
+      const _kc = _ambKeyCfg();
+      if (_kc && _kc.keyOn && _ambKeyMode(_kc) === 'quantize') { midi = _ambKeyQuantizeMidi(midi, _kc); pc = (((midi % 12) + 12) % 12); }
       let freq = A * Math.pow(2, (midi - 69) / 12);
       try {
         // Microtuning applies to scales only (chords/wraps/progs are equal-tempered).
@@ -8187,9 +8226,11 @@
         set('ambient-key-scale', cfg.keyScale);
         const kSel = document.getElementById(tr('ambient-key-root')); if (kSel) kSel.disabled = !cfg.keyOn;
         const kqSel = document.getElementById(tr('ambient-key-scale')); if (kqSel) kqSel.disabled = !cfg.keyOn;
+        const kMode = document.getElementById(tr('ambient-key-mode'));
+        if (kMode) { kMode.textContent = (cfg.keyMode === 'quantize') ? 'Quantize' : 'Transpose'; kMode.disabled = !cfg.keyOn; kMode.classList.toggle('active', !!cfg.keyOn); }
         const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[cfg.keyRoot | 0]) || '';
         const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(cfg.keyScale) : cfg.keyScale;
-        hint('ambient-key-hint', cfg.keyOn ? (kName + ' ' + kQual) : 'off'); }
+        hint('ambient-key-hint', cfg.keyOn ? (kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')) : 'off'); }
       set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
@@ -8377,6 +8418,7 @@
           '<button type="button" class="ambient-seg" id="ambient-key-on" title="Constrain every layer to one key — only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
           '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
           '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
+          '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
         '</div>' +
         tm('Prog rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
@@ -8915,6 +8957,12 @@
         if (kOn) kOn.addEventListener('click', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
           cfg.keyOn = !cfg.keyOn; _ambSyncControls(E); persist();
+        });
+        const kMode = G('ambient-key-mode');
+        if (kMode) kMode.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg || !cfg.keyOn) return;
+          cfg.keyMode = (cfg.keyMode === 'quantize') ? 'transpose' : 'quantize';
+          _ambSyncControls(E); persist();
         });
         const kRoot = G('ambient-key-root');
         if (kRoot) kRoot.addEventListener('change', () => {

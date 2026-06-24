@@ -5461,6 +5461,63 @@
         else if (wrapped) el._whenCycle = (el._whenCycle | 0) + 1;
         _ambPaintWhenCursor(el, active, el._whenCycle | 0);
       });
+      // Read-only note readout (per-layer live line + Now Playing panel), driven
+      // off the captured per-layer note buffers (E.cap). Throttled while playing;
+      // runs once on stop to clear. No generation involvement — display only.
+      { const playing = !!E.timer;
+        const pn = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+        if (!playing || !E._npAt || pn - E._npAt >= 120) { E._npAt = pn; try { _ambUpdateNotesLive(E); } catch (e) {} } }
+    }
+    // Read-only "what's sounding now" readout. Reads the rolling per-layer note
+    // buffer (E.cap[key], populated by the capture tee in playNote) and shows the
+    // notes currently RINGING (at ≤ audible-now < at+dur) per layer — a chord on a
+    // pad, the live note on a melodic layer. Pre-variance "seed" editing is Phase 5;
+    // this is purely a display of the actual played notes.
+    function _ambFreqNoteName(f) {
+      if (!(f > 0)) return '';
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const midi = Math.round(69 + 12 * Math.log2(f / A));
+      const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      return names[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+    }
+    function _ambRingingNames(arr, now) {
+      if (!Array.isArray(arr) || !arr.length) return [];
+      const seen = new Set(), out = [];
+      for (let i = 0; i < arr.length; i++) {
+        const ev = arr[i]; if (!ev || !(ev.freq > 0)) continue;
+        const durS = Math.max(0.05, (ev.dur || 0) / 1000);
+        if (ev.at <= now && now < ev.at + durS) {
+          const nm = _ambFreqNoteName(ev.freq);
+          if (nm && !seen.has(nm)) { seen.add(nm); out.push({ nm: nm, f: ev.freq }); }
+        }
+      }
+      out.sort((a, b) => a.f - b.f);
+      return out.map(x => x.nm);
+    }
+    function _ambUpdateNotesLive(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const lines = host.querySelectorAll('.ambient-notes-live'); if (!lines.length) return;
+      const playing = !!E.timer;
+      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
+      const rows = [];
+      lines.forEach(el => {
+        const key = el.dataset.nkey; if (!key) return;
+        const names = (playing && E.cap && E.cap[key]) ? _ambRingingNames(E.cap[key], now) : [];
+        const txt = names.join(' ');
+        if (el.textContent !== txt) el.textContent = txt;
+        if (txt) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, notes: txt }); }
+      });
+      _ambRenderNowPlaying(E, rows, playing);
+    }
+    function _ambRenderNowPlaying(E, rows, playing) {
+      const wrap = _ambGet(E, 'ambient-nowplaying-list'); if (!wrap) return;
+      const empty = _ambGet(E, 'ambient-nowplaying-empty');
+      if (empty) empty.textContent = playing ? (rows.length ? '' : '— silent —') : '— stopped —';
+      const sig = rows.map(r => r.name + '=' + r.notes).join('|');
+      if (wrap._npSig === sig) return; wrap._npSig = sig;     // skip DOM churn when unchanged
+      wrap.innerHTML = rows.map(() => '<div class="ambient-np-row"><span class="ambient-np-name"></span><span class="ambient-np-notes"></span></div>').join('');
+      const rowEls = wrap.querySelectorAll('.ambient-np-row');
+      rows.forEach((r, i) => { const e = rowEls[i]; if (!e) return; e.querySelector('.ambient-np-name').textContent = r.name; e.querySelector('.ambient-np-notes').textContent = r.notes; });
     }
     // Mark the currently-playing When cell for the layer that owns playhead `el`.
     // `cycle` is the audible iteration count; the live cell is cycle % length.
@@ -5789,6 +5846,9 @@
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
+      // Read-only live notes line — wraps full-width under the head; shows the
+      // notes this layer is currently sounding (filled by _ambUpdateNotesLive).
+      (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '" aria-hidden="true"></span>' : '') +
       '</div>';
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
@@ -8420,6 +8480,12 @@
           '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
           '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
+        '</div>' +
+        // Now Playing — read-only readout of the notes each layer is currently
+        // sounding (mirrors the per-layer live lines). Display only.
+        '<div class="ambient-nowplaying" id="ambient-nowplaying">' +
+          '<div class="ambient-nowplaying-head"><span class="ambient-mod-sub">Now Playing</span><span class="ambient-hint" id="ambient-nowplaying-empty">— stopped —</span></div>' +
+          '<div class="ambient-nowplaying-list" id="ambient-nowplaying-list"></div>' +
         '</div>' +
         tm('Prog rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
         tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +

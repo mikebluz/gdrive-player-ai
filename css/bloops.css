@@ -2833,7 +2833,27 @@
     .ambient-ctrl.ambient-mod-seqrow[hidden] { display: none; }
     .ambient-mod-seqrow > label { color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; font-weight: 700; }
     .ambient-mod-seqrow select { width: auto; }
-    .ambient-layer-head { display: flex; align-items: center; position: relative; }
+    .ambient-layer-head { display: flex; align-items: center; flex-wrap: wrap; position: relative; }
+    /* Read-only live notes line — wraps to its own full-width row under the head
+       buttons; hidden when the layer isn't sounding anything. */
+    .ambient-notes-live {
+      flex: 1 0 100%; min-width: 0; margin-top: 3px;
+      font: 600 0.7rem 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+      letter-spacing: 0.04em; color: #7fd6c4; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .ambient-notes-live:empty { display: none; }
+    /* "Now Playing" read-only panel — global readout of every layer's notes. */
+    .ambient-nowplaying {
+      border: 1px solid #20203a; border-radius: 8px; padding: 6px 10px;
+      background: rgba(255,255,255,0.012); margin: 2px 0;
+    }
+    .ambient-nowplaying-head { display: flex; align-items: center; gap: 10px; }
+    .ambient-nowplaying-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+    .ambient-nowplaying-list:empty { display: none; }
+    .ambient-np-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.72rem; }
+    .ambient-np-name { flex: 0 0 auto; min-width: 5.5em; color: #9a9ac0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-np-notes { flex: 1 1 auto; min-width: 0; font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace; color: #7fd6c4; letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Per-layer playhead: thin bar pinned to the bottom edge of the layer head,
        filled left→right across the current iteration / frozen loop. */
     .ambient-ph {

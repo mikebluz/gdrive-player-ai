@@ -98,6 +98,8 @@
           { name: 'key-quantize',  cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'quantize'; }) },
           // Phase 3 — relative mode (bed re-centred to the 6th, the relative minor).
           { name: 'mode-relminor', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.bed.modeRot = 5; c.motif.modeRot = 5; }) },
+          // Phase 4 — colour set (blue notes at 50%) inflecting bed + motif.
+          { name: 'color-blue', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.bed.colors = ['blue']; c.bed.colorAmt = 50; c.motif.colors = ['blue']; c.motif.colorAmt = 50; }) },
         ];
       }
 
@@ -151,12 +153,16 @@
               r(params && params.pan, 2), r(params && params.volume, 2),
             ]);
           };
+          // Mirror the live tick wrapper so the per-note colour engine engages
+          // (it gates on _ambInGeneration). No-op for configs without colours.
+          if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = true;
           for (let i = 0; i < ticks; i++) {
             try { _ambTick(E); }
             catch (e) { notes.push(['ERR@' + i, String((e && e.message) || e)]); }
             clock += dt;
           }
         } finally {
+          if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = false;
           for (let k = restorers.length - 1; k >= 0; k--) restorers[k]();
           // eslint-disable-next-line no-global-assign
           playNote = origPlay;

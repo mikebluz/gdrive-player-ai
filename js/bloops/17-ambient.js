@@ -112,6 +112,11 @@
     // `_E` before running. Ticks never interleave (JS is single-threaded and a
     // tick runs synchronously start-to-finish), so a shared pointer is safe.
     let _E = null;
+    // True only while a generator tick is running, so the per-note colour engine
+    // (in _ambNoteFreq) may consume the engine RNG. UI/label calls that also reach
+    // _ambNoteFreq (Notes-button labels, tone displays) leave it false → no colour
+    // applied, no RNG consumed → determinism + the invariant harness are preserved.
+    let _ambInGeneration = false;
     let masterAmbient = null; // global config for the master (Mix) instance
     function _makeAmbientEngine(opts) {
       return {
@@ -580,8 +585,14 @@
       // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
       // new tonic. Only meaningful for scale sources; carried on the descriptor so
       // _ambScaleIntervals / _ambSrcRootPc apply it. Absent/0 → no change (default).
-      if (layer && (layer.modeRot | 0) && (notes.type === 'scale' || !notes.type)) {
-        return { type: 'scale', scale: notes.scale || '', modeRot: ((layer.modeRot | 0) % 7 + 7) % 7 };
+      const hasMode = !!(layer && (layer.modeRot | 0) && (notes.type === 'scale' || !notes.type));
+      const hasColor = !!(layer && Array.isArray(layer.colors) && layer.colors.length && ((layer.colorAmt | 0) > 0));
+      if (hasMode || hasColor) {
+        const out = hasMode
+          ? { type: 'scale', scale: notes.scale || '', modeRot: ((layer.modeRot | 0) % 7 + 7) % 7 }
+          : Object.assign({}, notes);
+        if (hasColor) { out.colors = layer.colors; out.colorAmt = layer.colorAmt | 0; }
+        return out;
       }
       return notes;
     }
@@ -626,6 +637,47 @@
       const c = cfg || _ambKeyCfg();
       const q = (c && typeof c.keyScale === 'string' && c.keyScale) ? c.keyScale : 'major';
       return (typeof SCALES !== 'undefined' && SCALES[q]) ? q : 'major';
+    }
+    // ---- Colour sets (Phase 4) ------------------------------------------
+    // Named, deterministic chromatic colours, each a fixed set of degree
+    // alterations (semitones from the tonic). A layer opts into any number of
+    // them at an "amount" (0-100); the per-note engine then inflects notes toward
+    // the nearest enabled colour tone at that probability. Tonic = the key root
+    // when keyOn, else the workspace root. (Timed usages — passing/approach on
+    // weak beats, enclosures — are a later increment; this is the pitch-inflection
+    // "landing" usage.)
+    const _AMB_COLORS = {
+      blue:    { name: 'Blue notes (♭3 ♭5 ♭7)', alters: [3, 6, 10] },
+      lyd:     { name: 'Lydian ♯11', alters: [6] },
+      phryg:   { name: 'Phrygian ♭9', alters: [1] },
+      mixo:    { name: 'Mixolydian ♭7', alters: [10] },
+      borrow:  { name: 'Borrowed ♭6', alters: [8] },
+      dorian:  { name: 'Dorian ♮6', alters: [9] },
+      sixnine: { name: '6/9 colour (6 9)', alters: [9, 2] },
+      altered: { name: 'Altered (♭9 ♯9 ♯11 ♭13)', alters: [1, 3, 6, 8] },
+    };
+    const _AMB_COLOR_ORDER = ['blue', 'lyd', 'phryg', 'mixo', 'borrow', 'dorian', 'sixnine', 'altered'];
+    // Inflect a MIDI note toward the nearest enabled colour tone, at probability
+    // `amount`. Uses the passed `rand` (engine RNG) — call only during generation.
+    function _ambColorize(midi, notes, cfg, rand) {
+      const cols = notes && notes.colors;
+      const amt = Math.max(0, Math.min(100, (notes && notes.colorAmt) | 0));
+      if (!Array.isArray(cols) || !cols.length || amt <= 0) return midi;
+      if ((rand() * 100) >= amt) return midi;                 // density gate
+      const tonic = (cfg && cfg.keyOn) ? _ambKeyRootPc(cfg) : ((typeof rootIdx === 'number') ? rootIdx : 0);
+      const pcs = new Set();
+      cols.forEach(c => { const def = _AMB_COLORS[c]; if (def) def.alters.forEach(a => pcs.add((((tonic + a) % 12) + 12) % 12)); });
+      if (!pcs.size) return midi;
+      const m = Math.round(midi), pc = (((m % 12) + 12) % 12);
+      if (pcs.has(pc)) return midi;                           // already a colour tone
+      let bestOff = 0, bestDist = 99;
+      for (let off = -3; off <= 3; off++) {
+        const p = (((pc + off) % 12) + 12) % 12;
+        if (!pcs.has(p)) continue;
+        const d = Math.abs(off);
+        if (d < bestDist || (d === bestDist && off < bestOff)) { bestDist = d; bestOff = off; }
+      }
+      return (bestDist <= 3) ? (m + bestOff) : midi;
     }
     // Key reshape mode: 'transpose' (default) or 'quantize'.
     function _ambKeyMode(cfg) {
@@ -842,6 +894,7 @@
       }
       const fit = _ambKeyFit(src);
       if (fit) base += '  ' + (fit.inKey === fit.total ? '✓' : '') + fit.inKey + '/' + fit.total;
+      if (Array.isArray(n.colors) && n.colors.length && (n.colorAmt | 0) > 0) base += ' 🎨' + (n.colorAmt | 0) + '%';
       return base;
     }
     // Publish a wrap (saved-bank entry) to the master Bloom Notes registry as a
@@ -917,6 +970,9 @@
       // Key QUANTIZE: snap the resolved note to the nearest tone of the key scale.
       const _kc = _ambKeyCfg();
       if (_kc && _kc.keyOn && _ambKeyMode(_kc) === 'quantize') { midi = _ambKeyQuantizeMidi(midi, _kc); pc = (((midi % 12) + 12) % 12); }
+      // Colour sets: per-note chromatic inflection (generation only — the flag
+      // keeps UI/label calls out so RNG/determinism are untouched).
+      if (_ambInGeneration && notes && notes.colors) { midi = _ambColorize(midi, notes, _kc, _ambRand); pc = (((midi % 12) + 12) % 12); }
       let freq = A * Math.pow(2, (midi - 69) / 12);
       try {
         // Microtuning applies to scales only (chords/wraps/progs are equal-tempered).
@@ -1043,6 +1099,32 @@
         } }));
         showCtxMenu(x, y, items);
       };
+      // Colour sets: opt into named chromatic colours (blue notes, Lydian ♯11,
+      // modal interchange…) at an amount. Inflects notes toward colour tones.
+      const colorSub = () => {
+        const L0 = getLayer();
+        const on = (L0 && Array.isArray(L0.colors)) ? L0.colors : [];
+        const amt = (L0 && (L0.colorAmt | 0)) || 0;
+        const persist = () => { if (typeof afterChange === 'function') afterChange(); if (E.timer) { try { _ambSyncMods(); } catch (e) {} } if (typeof persistWorkspace === 'function') persistWorkspace(); };
+        const items = [{ label: 'Colour sets — chromatic inflection', disabled: true }];
+        _AMB_COLOR_ORDER.forEach(c => {
+          const def = _AMB_COLORS[c]; const isOn = on.indexOf(c) >= 0;
+          items.push({ label: (isOn ? '☑ ' : '☐ ') + def.name, fn: () => {
+            _E = E; const L = getLayer(); if (!L) return;
+            const arr = Array.isArray(L.colors) ? L.colors.slice() : [];
+            const i = arr.indexOf(c); if (i >= 0) arr.splice(i, 1); else arr.push(c);
+            L.colors = arr;
+            if (!(L.colorAmt | 0) && arr.length) L.colorAmt = 35;   // default amount on first enable
+            persist();
+          } });
+        });
+        items.push('hr');
+        [['Light', 20], ['Medium', 40], ['Strong', 70]].forEach(p => {
+          items.push({ label: (amt === p[1] ? '● ' : '   ') + 'Amount: ' + p[0] + ' (' + p[1] + '%)', fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colorAmt = p[1]; persist(); } });
+        });
+        if (on.length) items.push({ label: '✕ Clear colours', fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colors = []; persist(); } });
+        showCtxMenu(x, y, items);
+      };
       showCtxMenu(x, y, [
         (keyTag ? { label: 'Key' + keyTag, disabled: true } : null),
         { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
@@ -1050,6 +1132,7 @@
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
         { label: '⇶ Progression ▸', fn: () => setTimeout(progSub, 0) },
         { label: '↻ Relative mode ▸', fn: () => setTimeout(modeSub, 0) },
+        { label: '🎨 Colours ▸', fn: () => setTimeout(colorSub, 0) },
       ].filter(Boolean));
     }
     function _ambOpenChordPicker(E, getLayer, afterChange) {
@@ -4667,8 +4750,8 @@
       E._playStartMs = performance.now();   // footer elapsed-time anchor
       // The first tick must NOT prevent the interval from starting: if it throws,
       // setInterval below would never run and playback would be dead forever.
-      try { _ambTick(E); } catch (e) { _ambLogTickErr(e); }
-      E.timer = setInterval(() => { try { _ambTick(E); } catch (e) { _ambLogTickErr(e); } }, 150);
+      try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; }
+      E.timer = setInterval(() => { try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; } }, 150);
       // The finer ramp clock only runs while ramps exist (started lazily) so a
       // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
       // with audio scheduling.

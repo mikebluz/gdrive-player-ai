@@ -6188,8 +6188,8 @@
           _ambSl('Chop', p + 'chop', 1, 16, s.chop, '1 = whole → slices') +
           '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random']], s.order) + '</select><span class="ambient-hint">slices</span></div>' + gpe() +
         grp('Unit') +
-          _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
-          _ambTm('Length', p + 'length', 80, 16000, 20, s.lengthMs) + gpe() +
+          _ambTm('Interval', p + 'interval', 200, 120000, 50, s.intervalMs) +
+          _ambTm('Length', p + 'length', 80, 120000, 20, s.lengthMs) + gpe() +
         grp('Rhythm') +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
           _ambWhenCtrl(p) + gpe() +
@@ -7574,7 +7574,7 @@
       texture: [['register','Register',3,7],['fill','Fill',0,100],['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['mutateRate','Mutate',0,100],['level','Level',0,100]],
       beat:    [['intervalMs','Interval (ms)',80,2000],['lengthMs','Length (ms)',60,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['level','Level',0,100]],
       seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
-      samp:    [['chop','Chop',1,16],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',80,16000],['drift','Drift',0,99],['level','Level',0,100]],
+      samp:    [['chop','Chop',1,16],['intervalMs','Interval (ms)',200,120000],['lengthMs','Length (ms)',80,120000],['drift','Drift',0,99],['level','Level',0,100]],
       bass:    [['register','Register',1,4],['bars','Bars',1,8],['pulses','Pulses',1,16],['steps','Steps',2,16],['rotate','Rotate',0,15],['lengthMs','Length (ms)',60,2000],['rhythmVar','Rhythm var',0,100],['pitchVar','Pitch var',0,100],['proximity','Proximity',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       pedal:   [['register','Register',1,7],['degree','Note',1,12],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],

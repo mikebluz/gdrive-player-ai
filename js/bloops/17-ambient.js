@@ -4248,6 +4248,41 @@
       _ambSoloSyncAll(E);
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // Duplicate a layer with all its settings. A primary (bed/motif/texture/beat)
+    // clones into an ADDITIONAL instance (cfg.extras) of that type — its single
+    // slot is already taken; a seq/sample clones within its own array; any other
+    // extra (shape/arp/bass/run/pedal/drone/+1 instances) clones into cfg.extras.
+    // The copy gets a fresh id, solo cleared, and a "copy" name when the source
+    // was renamed, then the relevant list re-renders so it appears right away.
+    function _ambCloneLayer(E, key) {
+      _E = E;
+      const cfg = E.getCfg(); if (!cfg || !key) return;
+      const src = _ambLayerByKey(E, key); if (!src) return;
+      let clone; try { clone = JSON.parse(JSON.stringify(src)); } catch (e) { return; }
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Clone Bloom layer');
+      if (typeof clone.name === 'string' && clone.name) clone.name = clone.name + ' copy';
+      clone.solo = false;
+      const ci = key.indexOf(':');
+      const t = ci < 0 ? key : key.slice(0, ci);
+      const nextId = (arr) => arr.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      let render;
+      if (t === 'seq') {
+        if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
+        clone.id = nextId(cfg.seqs); cfg.seqs.push(clone); render = _ambRenderSeqLayers;
+      } else if (t === 'samp') {
+        if (!Array.isArray(cfg.samples)) cfg.samples = [];
+        clone.id = nextId(cfg.samples); cfg.samples.push(clone); render = _ambRenderSampleLayers;
+      } else {
+        // Primary or extra → land it in cfg.extras as a full instance.
+        if (!Array.isArray(cfg.extras)) cfg.extras = [];
+        clone.type = t; clone.present = true;
+        clone.id = nextId(cfg.extras); cfg.extras.push(clone); render = _ambRenderExtras;
+      }
+      try { render(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Layer cloned.');
+    }
     function _ambSoloSyncAll(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-solo-btn').forEach(btn => {
@@ -5678,6 +5713,7 @@
       // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
       // unit/loop length and the formula that produces it, so you know what to tweak.
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
+      (freezeKey ? '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
@@ -8539,6 +8575,8 @@
       host.addEventListener('click', (e) => {
         const rb = e.target && e.target.closest && e.target.closest('.ambient-rename-btn');
         if (rb) { e.stopPropagation(); try { _ambRenameLayer(E, rb); } catch (err) { console.warn('Rename failed', err); } return; }
+        const cb = e.target && e.target.closest && e.target.closest('.ambient-clone-btn');
+        if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');

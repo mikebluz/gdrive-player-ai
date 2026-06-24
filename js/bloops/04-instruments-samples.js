@@ -1406,6 +1406,120 @@
       input.click();
     }
 
+    // Remembered between opens so re-importing from the same Drive folder is one tap.
+    let _lastDriveSampleFolder = 'bloops/samples';
+    // List the audio files directly inside a Drive folder (paged), keeping
+    // anything whose MIME type is audio/* OR whose name has a known audio
+    // extension (Drive often labels uploads application/octet-stream).
+    async function _listDriveAudioFiles(folderId) {
+      const AUDIO_EXT = /\.(mp3|wav|flac|aac|ogg|m4a|opus|aif|aiff)$/i;
+      const out = [];
+      let pageToken = null;
+      do {
+        const resp = await gapi.client.drive.files.list({
+          q: `'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
+          fields: 'nextPageToken, files(id, name, mimeType)',
+          pageSize: 200, spaces: 'drive', pageToken: pageToken || undefined,
+        });
+        const fs = (resp.result && resp.result.files) || [];
+        for (const f of fs) {
+          if ((f.mimeType && f.mimeType.indexOf('audio/') === 0) || AUDIO_EXT.test(f.name || '')) out.push(f);
+        }
+        pageToken = resp.result && resp.result.nextPageToken;
+      } while (pageToken);
+      out.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      return out;
+    }
+    // Checkbox picker over the folder's audio files. Resolves to the chosen
+    // file objects (or null if cancelled). Styled like the other sm-modal dialogs.
+    function _showDriveSamplePicker(folder, files) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+        const modal = document.createElement('div'); modal.className = 'sm-modal drv-samp-modal';
+        modal.innerHTML =
+          '<div class="sm-title"></div>' +
+          '<label class="drv-samp-row drv-samp-all"><input type="checkbox" id="drv-all" checked /> <span></span></label>' +
+          '<div class="drv-samp-list"></div>' +
+          '<div class="sm-footer">' +
+            '<button type="button" class="sm-preview" id="drv-cancel">Cancel</button>' +
+            '<button type="button" class="sm-apply" id="drv-go">Import</button>' +
+          '</div>';
+        overlay.appendChild(modal); document.body.appendChild(overlay);
+        modal.querySelector('.sm-title').textContent = 'Import samples — ' + folder;
+        modal.querySelector('.drv-samp-all span').innerHTML = '<b>Select all</b> (' + files.length + ')';
+        // Build rows via DOM so file names can't inject markup.
+        const list = modal.querySelector('.drv-samp-list');
+        files.forEach((f, i) => {
+          const row = document.createElement('label'); row.className = 'drv-samp-row';
+          const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.dataset.i = String(i);
+          const nm = document.createElement('span'); nm.className = 'drv-samp-name'; nm.textContent = f.name || ('file ' + (i + 1));
+          row.appendChild(cb); row.appendChild(nm); list.appendChild(row);
+        });
+        const boxes = () => Array.from(list.querySelectorAll('input[type=checkbox]'));
+        const allBox = modal.querySelector('#drv-all');
+        allBox.addEventListener('change', () => boxes().forEach(b => { b.checked = allBox.checked; }));
+        list.addEventListener('change', () => { const bs = boxes(); allBox.checked = bs.length > 0 && bs.every(b => b.checked); });
+        const done = (val) => { try { overlay.remove(); } catch (e) {} resolve(val); };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+        modal.querySelector('#drv-cancel').addEventListener('click', () => done(null));
+        modal.querySelector('#drv-go').addEventListener('click', () => {
+          const picked = boxes().filter(b => b.checked).map(b => files[parseInt(b.dataset.i, 10)]).filter(Boolean);
+          done(picked.length ? picked : null);
+        });
+      });
+    }
+    // Import one or more samples straight from a Google Drive folder: ask for the
+    // folder path, sign in, list its audio files, let the user pick, then fetch +
+    // register each (persisted to IndexedDB like a local import). onLoaded(id,name)
+    // fires with the LAST imported sample so the caller can select it as the tone.
+    async function triggerImportSampleFromDrive(onLoaded) {
+      if (typeof googleSignInForDrive !== 'function' || typeof findDriveFolderByPath !== 'function'
+          || typeof fetchDriveBinaryAsBlob !== 'function' || typeof gapi === 'undefined') {
+        alert('Google Drive is not available in this build.'); return;
+      }
+      let folder;
+      try { folder = prompt('Google Drive folder to import samples from (e.g. bloops/samples):', _lastDriveSampleFolder); }
+      catch (e) { folder = null; }
+      if (folder == null) return;
+      folder = String(folder).trim();
+      if (!folder) return;
+      _lastDriveSampleFolder = folder;
+      const progress = (typeof showRenderProgressModal === 'function') ? showRenderProgressModal('Reading Drive folder…') : null;
+      try {
+        if (progress) progress.setStatus('Connecting to Google Drive…');
+        await googleSignInForDrive();
+        if (progress) progress.setStatus('Finding “' + folder + '”…');
+        const folderId = await findDriveFolderByPath(folder);
+        if (!folderId) { if (progress) progress.close(); alert('Folder not found in your Drive:\n' + folder); return; }
+        if (progress) progress.setStatus('Listing audio files…');
+        const files = await _listDriveAudioFiles(folderId);
+        if (progress) progress.close();
+        if (!files.length) { alert('No audio files found in:\n' + folder); return; }
+        const picks = await _showDriveSamplePicker(folder, files);
+        if (!picks || !picks.length) return;
+        const prog2 = (typeof showRenderProgressModal === 'function') ? showRenderProgressModal('Importing samples…') : null;
+        let lastId = null, lastName = null, ok = 0;
+        for (let i = 0; i < picks.length; i++) {
+          const f = picks[i];
+          if (prog2) { prog2.setStatus('Importing ' + (i + 1) + '/' + picks.length + ': ' + (f.name || '')); prog2.setProgress(i / picks.length); }
+          try {
+            const blob = await fetchDriveBinaryAsBlob(f.id);
+            const friendly = (f.name || 'sample').replace(/\.[^.]+$/, '');
+            const reg = await registerSampleFromBlob(blob, friendly);
+            lastId = reg.id; lastName = reg.name; ok++;
+          } catch (e) { console.warn('Drive sample import failed for', f.name, e); }
+        }
+        if (prog2) { prog2.markDone(); prog2.close(); }
+        if (ok && lastId && typeof onLoaded === 'function') onLoaded(lastId, lastName);
+        if (ok && typeof showToast === 'function') showToast('Imported ' + ok + ' sample' + (ok === 1 ? '' : 's') + ' from “' + folder + '”.');
+        else if (!ok) alert('No samples could be imported from “' + folder + '”.');
+      } catch (e) {
+        if (progress) progress.close();
+        console.error('Drive sample import failed', e);
+        alert('Drive import failed: ' + ((e && e.message) || e));
+      }
+    }
+
     // Scale a chord note's params so N simultaneous voices sum to a roughly
     // single-voice loudness, keeping the master limiter from being driven
     // hard enough to clip the waveform into audible harmonic distortion.

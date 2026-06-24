@@ -8503,6 +8503,21 @@
       display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end;
     }
 
+    /* Drive sample import picker (triggerImportSampleFromDrive). */
+    .drv-samp-list {
+      max-height: 46vh; overflow-y: auto; margin-top: 6px;
+      border: 1px solid #2d2d3f; border-radius: 6px; background: #0a0a14;
+    }
+    .drv-samp-row {
+      display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+      color: #cbd5e0; font-size: 0.82rem; cursor: pointer;
+    }
+    .drv-samp-list .drv-samp-row + .drv-samp-row { border-top: 1px solid #1c1c2a; }
+    @media (hover: hover) { .drv-samp-list .drv-samp-row:hover { background: #15152099; } }
+    .drv-samp-row input[type=checkbox] { flex: 0 0 auto; cursor: pointer; }
+    .drv-samp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .drv-samp-all { padding: 4px 2px; color: #e2e8f0; }
+
     .sm-preview {
       padding: 6px 14px; border-radius: 18px;
       background: transparent; border: 1px solid #2d2d3f;

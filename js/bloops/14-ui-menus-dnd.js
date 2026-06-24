@@ -2923,6 +2923,18 @@
         });
       });
       toneActions.appendChild(importBtn);
+      const driveBtn = document.createElement('button');
+      driveBtn.className = 'sm-wave';
+      driveBtn.textContent = '☁ Drive…';
+      driveBtn.title = 'Import audio file(s) from a Google Drive folder (saved across reloads)';
+      driveBtn.addEventListener('click', () => {
+        if (typeof triggerImportSampleFromDrive !== 'function') return;
+        triggerImportSampleFromDrive((id) => {
+          p.type = 'sample:' + id; _touched.add('type'); broadcastAll('type', p.type);
+          renderTonePicker();
+        });
+      });
+      toneActions.appendChild(driveBtn);
       if (typeof isSliceableSample === 'function' && isSliceableSample(p.type)) {
         const editBtn = document.createElement('button');
         editBtn.className = 'sm-wave';
@@ -4485,6 +4497,14 @@
           if (typeof triggerImportSample === 'function') triggerImportSample((id) => { _setTone('sample:' + id); renderTonePicker(); _renderToneActions(); });
         });
         toneActions.appendChild(importBtn);
+        const driveBtn = document.createElement('button');
+        driveBtn.className = 'sm-wave';
+        driveBtn.textContent = '☁ Drive…';
+        driveBtn.title = 'Import audio file(s) from a Google Drive folder (saved across reloads)';
+        driveBtn.addEventListener('click', () => {
+          if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((id) => { _setTone('sample:' + id); renderTonePicker(); _renderToneActions(); });
+        });
+        toneActions.appendChild(driveBtn);
         if (typeof isSliceableSample === 'function' && isSliceableSample(p.type)) {
           const editBtn = document.createElement('button');
           editBtn.className = 'sm-wave';

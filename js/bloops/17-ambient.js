@@ -5157,8 +5157,32 @@
       if (!choice) return;
       const name = choice.filename || item.name;
       const folder = choice.folder || item.folder || 'bloops/exports';
-      item.name = name; item.folder = folder; _ambRenderCaptureBank();
       const progress = (typeof showRenderProgressModal === 'function') ? showRenderProgressModal('Uploading to Drive…') : null;
+      // Honor the format chosen in the dialog. The bank item was encoded at
+      // CAPTURE time, so if the user now picks a different format we must
+      // transcode (decode the stored blob → re-encode) — otherwise the MP3
+      // choice was silently ignored and the original WAV got uploaded. Updates
+      // the bank item to the new format so download/re-upload stay consistent.
+      const wantFmt = choice.fmt === 'mp3' ? 'mp3' : (choice.fmt === 'wav' ? 'wav' : null);
+      const curFmt  = item.ext === 'mp3' ? 'mp3' : (item.ext === 'wav' ? 'wav' : null);
+      if (wantFmt && wantFmt !== curFmt) {
+        try {
+          progress && progress.setStatus(wantFmt === 'mp3' ? 'Encoding MP3…' : 'Encoding WAV…');
+          const ac = Tone.getContext().rawContext;
+          const audioBuf = await ac.decodeAudioData(await item.blob.arrayBuffer());
+          if (audioBuf && audioBuf.duration > 0) {
+            let nb = null, ne = null, nm = null;
+            if (wantFmt === 'mp3' && typeof audioBufferToMp3 === 'function') { nb = await audioBufferToMp3(audioBuf); ne = 'mp3'; nm = 'audio/mpeg'; }
+            else if (wantFmt === 'wav') { nb = audioBufferToWav(audioBuf); ne = 'wav'; nm = 'audio/wav'; }
+            if (nb) {
+              try { if (item.url) URL.revokeObjectURL(item.url); } catch (e) {}
+              item.blob = nb; item.ext = ne; item.mime = nm; item.bytes = nb.size;
+              try { item.url = URL.createObjectURL(nb); } catch (e) { item.url = null; }
+            }
+          }
+        } catch (e) { console.warn('Capture transcode failed — uploading the original format.', e); }
+      }
+      item.name = name; item.folder = folder; _ambRenderCaptureBank();
       const is401 = (err) => !!(err && (err.status === 401 || (err.result && err.result.error && err.result.error.code === 401)));
       const doDrive = async () => {
         await googleSignInForDrive();

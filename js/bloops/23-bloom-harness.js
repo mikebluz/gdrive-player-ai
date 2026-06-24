@@ -194,6 +194,8 @@
         // Phase 1 — Key transpose/quantize (G major). Locks the new behavior.
         'key-transpose': { hash: '56adac6e', count: 18 },
         'key-quantize':  { hash: 'dc3ce346', count: 18 },
+        // Phase 3 — relative mode (re-centred to the relative minor).
+        'mode-relminor': { hash: '33f6b03a', count: 18 },
       };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}

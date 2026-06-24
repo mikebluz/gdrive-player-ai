@@ -202,6 +202,8 @@
         'key-quantize':  { hash: 'dc3ce346', count: 18 },
         // Phase 3 — relative mode (re-centred to the relative minor).
         'mode-relminor': { hash: '33f6b03a', count: 18 },
+        // Phase 4 — blue-notes colour set at 50%.
+        'color-blue':    { hash: '94d352e9', count: 19 },
       };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}

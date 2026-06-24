@@ -1306,7 +1306,19 @@
       if (wrap && !wrap._ambLenBound) {
         wrap._ambLenBound = true;
         wrap.addEventListener('click', (e) => {
-          const lb = e.target && e.target.closest ? e.target.closest('.ambient-when-lenbtn') : null;
+          const t = e.target;
+          // "Always" → restore the default all-on state (every step lit) at the
+          // current pattern length, so the summary reads "Always" again.
+          const al = t && t.closest ? t.closest('.ambient-when-always') : null;
+          if (al && wrap.contains(al)) {
+            _E = E; const L = getLayer(); if (!L) return;
+            const n = _ambWhenGridCells(L.when).length;
+            L.when = _ambGridToWhen(new Array(n).fill(true));
+            _ambPaintWhenGrid(grid, L.when);
+            persist();
+            return;
+          }
+          const lb = t && t.closest ? t.closest('.ambient-when-lenbtn') : null;
           if (!lb || !wrap.contains(lb)) return;
           _E = E; const L = getLayer(); if (!L) return;
           const d = parseInt(lb.getAttribute('data-d'), 10) || 0;
@@ -5328,13 +5340,37 @@
         // the bar's progress wraps high→low (prog drops sharply). Driven off the
         // same audible clock as the bar, so the pulse lands with the sound.
         const lp = el._lastProg;
+        const wasActive = typeof lp === 'number' && lp >= 0;
         el._lastProg = active ? prog : -1;
-        if (active && typeof lp === 'number' && lp >= 0 && prog < lp - 0.4) {
+        const wrapped = active && wasActive && prog < lp - 0.4;
+        if (wrapped) {
           const head = el.closest('.ambient-layer-head');
           const btn = head && head.querySelector('.ambient-toggle');
           if (btn) { btn.classList.remove('amb-loopflash'); void btn.offsetWidth; btn.classList.add('amb-loopflash'); }
         }
+        // Highlight the When cell that's playing THIS cycle. One When step gates
+        // one whole unit, so the audible cycle index advances by one each time the
+        // bar wraps; reset to 0 when the layer (re)starts. The cell at
+        // cycle % patternLen gets `.cur` (cleared when the layer is idle).
+        if (active && !wasActive) el._whenCycle = 0;
+        else if (wrapped) el._whenCycle = (el._whenCycle | 0) + 1;
+        _ambPaintWhenCursor(el, active, el._whenCycle | 0);
       });
+    }
+    // Mark the currently-playing When cell for the layer that owns playhead `el`.
+    // `cycle` is the audible iteration count; the live cell is cycle % length.
+    function _ambPaintWhenCursor(el, active, cycle) {
+      const layEl = el.closest && el.closest('.ambient-layer');
+      const grid = layEl && layEl.querySelector('.ambient-when-grid');
+      if (!grid) return;
+      const cells = grid.querySelectorAll('.ambient-when-cell');
+      const n = cells.length;
+      if (!n) return;
+      const cur = active ? (((cycle % n) + n) % n) : -1;
+      if (grid._ambCurIdx === cur) return;            // unchanged → no DOM churn
+      if (grid._ambCurIdx >= 0 && cells[grid._ambCurIdx]) cells[grid._ambCurIdx].classList.remove('cur');
+      if (cur >= 0 && cells[cur]) cells[cur].classList.add('cur');
+      grid._ambCurIdx = cur;
     }
     function _ambVizKick(E) { if (E.viz && !E.viz.raf) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E)); }
     function _ambStartViz(E) {
@@ -5562,6 +5598,7 @@
           '</button>' +
           '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + _ambWhenCellsHtml(16) + '</div>' +
           '<div class="ambient-when-len" aria-label="Pattern length">' +
+            '<button type="button" class="ambient-when-always" title="Play every cycle (all steps on)">Always</button>' +
             '<button type="button" class="ambient-when-lenbtn" data-d="-1" aria-label="fewer steps" title="Fewer steps">−</button>' +
             '<span class="ambient-when-lenval">16</span>' +
             '<button type="button" class="ambient-when-lenbtn" data-d="1" aria-label="more steps" title="More steps">+</button>' +

@@ -2581,6 +2581,10 @@
     }
     .ambient-when-cell.on { background: #9f7aea; border-color: #b794f4; }
     @media (hover: hover) { .ambient-when-cell:hover { border-color: #9f7aea; } }
+    /* The When step playing on the current cycle — a bright ring (works whether
+       the step is lit or dark, so a skipped step still shows the playhead). */
+    .ambient-when-cell.cur { border-color: #ffd479; box-shadow: 0 0 0 1px #ffd479, 0 0 6px rgba(255, 212, 121, 0.6); }
+    .ambient-when-cell.cur.on { background: #d9b3ff; }
     /* When pattern-length stepper (− N + steps), shown with the expanded grid. */
     .ambient-when-len { display: none; align-items: center; gap: 6px; }
     .ambient-when-wrap.expanded .ambient-when-len { display: flex; }
@@ -2590,6 +2594,13 @@
       color: #c9c9e0; cursor: pointer;
     }
     @media (hover: hover) { .ambient-when-lenbtn:hover { border-color: #9f7aea; } }
+    /* "Always" reset — restores the all-on default at the current length. */
+    .ambient-when-always {
+      height: 18px; padding: 0 8px; margin-right: 2px; line-height: 1;
+      border: 1px solid #2d2d3f; border-radius: 3px; background: #0a0a14;
+      color: #c9c9e0; cursor: pointer; font: 600 0.68rem 'Segoe UI', sans-serif;
+    }
+    @media (hover: hover) { .ambient-when-always:hover { border-color: #9f7aea; color: #fff; } }
     .ambient-when-lenval { min-width: 1.6em; text-align: center; font: 600 0.72rem 'Segoe UI', sans-serif; color: #c9c9e0; }
     .ambient-when-lenlbl { font-size: 0.68rem; color: #8a8aa8; }
     /* "Notes" source button — looks like the selects, reads left, truncates. */

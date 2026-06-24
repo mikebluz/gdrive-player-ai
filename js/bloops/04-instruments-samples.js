@@ -1690,22 +1690,28 @@
     // Pick which voice to shed when over the cap. Stealing the OLDEST voice
     // unconditionally chops the long-sustaining FOUNDATION (bed / drone / pedal
     // pads start earliest, so they're always at index 0) every time a rapid short
-    // layer (texture / motif / arp) fires — the "everything cuts out" churn. So
-    // prefer a voice already in its RELEASE tail (its sustain has ended → fading
-    // anyway): among those, the one whose release began earliest (closest to
-    // silent). Only when NOTHING is in its tail do we fall back to the oldest
-    // voice overall (a genuinely dense all-sustaining stack still sheds its
-    // longest-ringing note). `relAtCtx` = Tone-context time the voice enters
-    // release; absent (percussive one-shots) → treat as already releasable.
+    // layer fires. But "anything in its release tail" over-corrects the other way:
+    // a short layer's notes (arp / texture / motif) enter release almost
+    // immediately, so they'd get culled the instant they start — arp goes silent,
+    // texture turns sparse/erratic. So score by how FAR a voice has DECAYED
+    // (fraction of its release elapsed): steal the MOST-decayed (closest to
+    // silent) voice — a freshly-released loud note scores ~0 and is spared, a tail
+    // that's nearly rung out scores ~1 and goes first. A still-sustaining pad
+    // isn't in release at all, so it's only taken when nothing is decaying (the
+    // genuinely dense all-sustaining case → fall back to the oldest).
+    // relAtCtx = time release begins; relDur = release length (seconds).
     function _pickVoiceVictim() {
       const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
-      let bestIdx = -1, bestRel = Infinity;
+      let bestIdx = -1, bestFrac = -1;
       for (let i = 0; i < _activeVoices.length; i++) {
-        const r = _activeVoices[i].relAtCtx;
-        const rel = Number.isFinite(r) ? r : -Infinity; // unknown → already releasable
-        if (rel <= now && rel < bestRel) { bestRel = rel; bestIdx = i; }
+        const v = _activeVoices[i];
+        const rs = v.relAtCtx;
+        if (!Number.isFinite(rs) || rs > now) continue;          // still sustaining/attacking → spare
+        const rd = Number.isFinite(v.relDur) ? v.relDur : 0;
+        const frac = rd > 0.001 ? Math.min(1, (now - rs) / rd) : 1; // 0 = just released, 1 = rung out
+        if (frac > bestFrac) { bestFrac = frac; bestIdx = i; }
       }
-      return bestIdx >= 0 ? bestIdx : 0; // none in release → oldest
+      return bestIdx >= 0 ? bestIdx : 0; // nothing decaying → oldest
     }
     function _registerVoice(entry) {
       _activeVoices.push(entry);
@@ -1807,21 +1813,22 @@
         _registerSampleVoice(v);
       }
     }
-    // Release-aware victim pick for the sample pool — same rationale as the synth
-    // path's _pickVoiceVictim: shed a voice already in its release tail before a
-    // still-sustaining one, so a sustaining sampled pad (bed / pedal) isn't chopped
-    // by a rapid short layer. `relAtCtx` is stamped at registration; absent → tail.
+    // Release-aware victim pick for the sample pool — same decay-fraction scoring
+    // as the synth path's _pickVoiceVictim: steal the MOST-decayed (closest to
+    // silent) voice so a sustaining sampled pad (bed / pedal) isn't chopped and a
+    // freshly-released short note isn't culled before it sounds. relAtCtx / relDur
+    // are stamped at registration; nothing decaying → fall back to the oldest.
     function _pickSampleVictim() {
       const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
-      let best = null, bestRel = Infinity, firstReleasable = null;
+      let best = null, bestFrac = -1;
       for (const v of _activeSampleVoices) {
-        const r = v.relAtCtx;
-        const rel = Number.isFinite(r) ? r : -Infinity; // unknown → already releasable
-        if (rel <= now) { if (firstReleasable === null) firstReleasable = v; if (rel < bestRel) { bestRel = rel; best = v; } }
+        const rs = v.relAtCtx;
+        if (!Number.isFinite(rs) || rs > now) continue;          // still sustaining → spare
+        const rd = Number.isFinite(v.relDur) ? v.relDur : 0;
+        const frac = rd > 0.001 ? Math.min(1, (now - rs) / rd) : 1;
+        if (frac > bestFrac) { bestFrac = frac; best = v; }
       }
-      if (best) return best;
-      if (firstReleasable) return firstReleasable;
-      return _activeSampleVoices.values().next().value || null; // none in release → oldest
+      return best || _activeSampleVoices.values().next().value || null; // none decaying → oldest
     }
     function _registerSampleVoice(v) {
       if (!v) return;
@@ -2876,9 +2883,10 @@
               // over `rel` — same envelope timing the synth path uses, so a
               // sample voice and a synth voice sit identically in a slot.
               v.ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
-              // When this voice enters its release tail — drives release-aware
-              // sample-voice stealing (_pickSampleVictim).
+              // When this voice enters its release tail + the tail length — drives
+              // release-aware sample-voice stealing (_pickSampleVictim).
               v.relAtCtx = triggerAt + (Number.isFinite(preReleaseDur) ? preReleaseDur : 0);
+              v.relDur = Number.isFinite(rel) ? rel : 0;
               try { v.source.stop(triggerAt + preReleaseDur + rel + 0.1); } catch (e) {}
             } catch (e) {
               _disposeSampleAdsrVoice(v);
@@ -3461,12 +3469,15 @@
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
       const voiceEntry = { synth, effectNodes, pooledPreset, disposeTimer: null, registerTimer: null };
-      // When this voice enters its release tail (Tone-context time) — drives
-      // release-aware voice stealing (_pickVoiceVictim) so a sustaining pad isn't
-      // chopped by a rapid short layer. Sustain ends after preReleaseDur.
+      // When this voice enters its release tail (Tone-context time) + how long
+      // that release lasts — drives release-aware voice stealing
+      // (_pickVoiceVictim): a sustaining pad isn't chopped by a rapid short layer,
+      // and a freshly-released short note isn't culled before it sounds. Sustain
+      // ends after preReleaseDur; the tail then lasts `rel` seconds.
       {
         const _startCtx = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
         voiceEntry.relAtCtx = _startCtx + (Number.isFinite(preReleaseDur) ? preReleaseDur : 0);
+        voiceEntry.relDur = Number.isFinite(rel) ? rel : 0;
       }
       voiceEntry.disposeTimer = setTimeout(() => {
         _unregisterVoice(voiceEntry);

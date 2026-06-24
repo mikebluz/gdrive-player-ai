@@ -2835,14 +2835,17 @@
     .ambient-mod-seqrow select { width: auto; }
     .ambient-layer-head { display: flex; align-items: center; flex-wrap: wrap; position: relative; }
     /* Read-only live notes line — wraps to its own full-width row under the head
-       buttons; hidden when the layer isn't sounding anything. */
+       buttons. Hidden by default; while the layer is active it's RESERVED (a
+       fixed-height row that stays put even between notes) so the head never
+       pulses as notes come and go — it only grows once on play, shrinks on stop. */
     .ambient-notes-live {
-      flex: 1 0 100%; min-width: 0; margin-top: 3px;
+      display: none; flex: 1 0 100%; min-width: 0; margin-top: 3px;
+      height: 1.05em; line-height: 1.05em;
       font: 600 0.7rem 'JetBrains Mono', 'SF Mono', Consolas, monospace;
       letter-spacing: 0.04em; color: #7fd6c4; white-space: nowrap;
       overflow: hidden; text-overflow: ellipsis;
     }
-    .ambient-notes-live:empty { display: none; }
+    .ambient-notes-live.reserved { display: block; }
     /* Separator between consecutive unit colour-groups in a notes readout. */
     .ambient-np-sep { color: #4a4a5e; }
     /* "Now Playing" read-only panel — global readout of every layer's notes. */

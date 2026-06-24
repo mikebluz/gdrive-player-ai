@@ -5580,8 +5580,14 @@
       const rows = [];
       lines.forEach(el => {
         const key = el.dataset.nkey; if (!key) return;
+        // Reserve the line's row whenever the layer is active (engine playing +
+        // layer on/present), so it holds a constant height between notes instead
+        // of collapsing per-note and pulsing the head. Off layers stay collapsed.
+        let layerOn = false;
+        try { const L = _ambLayerByKey(E, key); layerOn = !!(playing && L && L.on !== false && L.present !== false); } catch (e) { layerOn = playing; }
+        el.classList.toggle('reserved', layerOn);
         let html = '';
-        if (playing && E.cap && E.cap[key]) {
+        if (layerOn && E.cap && E.cap[key]) {
           let period = 0;
           try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
           const clusters = _ambRingingClusters(E.cap[key], now, period);

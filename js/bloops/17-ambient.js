@@ -5028,7 +5028,14 @@
       _ambRefreshCaptureBtn(E);
       if (typeof showToast === 'function') showToast('Finalizing — winding down, ending on silence…');
       const buf = r.analyser ? new Float32Array(r.analyser.fftSize) : null;
-      const SILENCE = 0.0025, NEED_SILENT_MS = 450, MAX_TAIL_MS = 30000;
+      // End the take only once the output has genuinely decayed to (near) zero —
+      // so reverb / delay TAILS ring out fully instead of being chopped. The old
+      // -52 dB floor (0.0025) cut audible tails; -76 dB (0.00015) lets them reach
+      // the noise floor. A tail decays monotonically, so once RMS dips below the
+      // floor it stays there → NEED_SILENT_MS just confirms it's truly settled.
+      // MAX_TAIL_MS is the safety ceiling for a pathological never-silent signal,
+      // raised so a long reverb (or a slow convolution tail) isn't truncated.
+      const SILENCE = 0.00015, NEED_SILENT_MS = 500, MAX_TAIL_MS = 90000;
       const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
       r.pollTimer = setInterval(() => {
         let rms = 0;
@@ -6202,6 +6209,7 @@
           '<div class="ambient-ctrl ambient-samp-srcbtns">' +
             '<button type="button" class="ambient-srcbtn" id="' + p + 'import" title="Replace this layer’s sample with an audio file">+ Import…</button>' +
             '<button type="button" class="ambient-srcbtn" id="' + p + 'drive" title="Replace this layer’s sample with audio from a Google Drive folder">☁ Drive…</button>' +
+            '<button type="button" class="ambient-srcbtn" id="' + p + 'edit" title="Trim / reverse this layer’s sample (saves as a new sample)">✂ Edit…</button>' +
           '</div>' +
           _ambSl('Attack', p + 'attack', 0, 2000, s.attack, 'ms') +
           _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
@@ -6253,6 +6261,15 @@
       if (impB) impB.addEventListener('click', () => { if (typeof triggerImportSample === 'function') triggerImportSample((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
       const drvB = el('drive');
       if (drvB) drvB.addEventListener('click', () => { if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
+      const edtB = el('edit');
+      if (edtB) edtB.addEventListener('click', () => {
+        const L = getL(); if (!L) return;
+        if (!L.sampleId) { alert('Import or pick a sample for this layer first, then edit it.'); return; }
+        if (typeof isSliceableSample === 'function' && !isSliceableSample('sample:' + L.sampleId)) {
+          alert('This sample can’t be waveform-edited (it’s a multi-sampled instrument or drum kit).'); return;
+        }
+        if (typeof showSampleEditor === 'function') showSampleEditor(L.sampleId, (newId) => _ambSetSampleLayerSource(E, id, newId));
+      });
       const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const L = getL(); if (!L) return; _ambToggleLayer(E, 'samp:' + id, L, onB, persist); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSampleLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;

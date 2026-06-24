@@ -1670,12 +1670,43 @@
     // their own lifetimes and aren't a sequence-density problem.
     // 24 was fine on desktop but multi-lane looped playback at fast
     // subdivisions piles up enough concurrent voices on mobile Safari
-    // to drive iOS into audio-thread underruns ("chops" over time). 16
-    // still covers a five-voice chord across three lanes with headroom
-    // and keeps the simultaneous-FX node count low enough for iOS to
-    // sustain over long sessions.
-    const VOICE_CAP = 16;
+    // to drive iOS into audio-thread underruns ("chops" over time). iOS
+    // stays at 16 (still covers a five-voice chord across three lanes with
+    // headroom and keeps the simultaneous-FX node count low enough to
+    // sustain over long sessions); desktop gets the roomier 24 back —
+    // a rich Bloom patch (bed + motif + texture + drone + pedal + arp …)
+    // genuinely needs more than 16 concurrent voices, and starving it at 16
+    // forced constant steals of the sustaining foundation (see _pickVoiceVictim).
+    const _IS_IOS_LIKE = (() => {
+      try {
+        const ua = navigator.userAgent || '';
+        if (/iPad|iPhone|iPod/.test(ua)) return true;
+        // iPadOS 13+ reports as desktop Safari — detect via touch + Mac platform.
+        return /Macintosh/.test(ua) && (navigator.maxTouchPoints | 0) > 1;
+      } catch (e) { return false; }
+    })();
+    const VOICE_CAP = _IS_IOS_LIKE ? 16 : 24;
     const _activeVoices = []; // FIFO; oldest at index 0
+    // Pick which voice to shed when over the cap. Stealing the OLDEST voice
+    // unconditionally chops the long-sustaining FOUNDATION (bed / drone / pedal
+    // pads start earliest, so they're always at index 0) every time a rapid short
+    // layer (texture / motif / arp) fires — the "everything cuts out" churn. So
+    // prefer a voice already in its RELEASE tail (its sustain has ended → fading
+    // anyway): among those, the one whose release began earliest (closest to
+    // silent). Only when NOTHING is in its tail do we fall back to the oldest
+    // voice overall (a genuinely dense all-sustaining stack still sheds its
+    // longest-ringing note). `relAtCtx` = Tone-context time the voice enters
+    // release; absent (percussive one-shots) → treat as already releasable.
+    function _pickVoiceVictim() {
+      const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
+      let bestIdx = -1, bestRel = Infinity;
+      for (let i = 0; i < _activeVoices.length; i++) {
+        const r = _activeVoices[i].relAtCtx;
+        const rel = Number.isFinite(r) ? r : -Infinity; // unknown → already releasable
+        if (rel <= now && rel < bestRel) { bestRel = rel; bestIdx = i; }
+      }
+      return bestIdx >= 0 ? bestIdx : 0; // none in release → oldest
+    }
     function _registerVoice(entry) {
       _activeVoices.push(entry);
       // Voice stealing is meaningful only during LIVE playback, where
@@ -1687,7 +1718,10 @@
       // voices. Bypass the cap when an offline render is in flight.
       if (_offlineSamplerOverride) return;
       while (_activeVoices.length > VOICE_CAP) {
-        _stealVoice(_activeVoices.shift());
+        const idx = _pickVoiceVictim();
+        const victim = _activeVoices.splice(idx, 1)[0];
+        if (!victim) break;
+        _stealVoice(victim);
       }
     }
     function _unregisterVoice(entry) {
@@ -1773,13 +1807,29 @@
         _registerSampleVoice(v);
       }
     }
+    // Release-aware victim pick for the sample pool — same rationale as the synth
+    // path's _pickVoiceVictim: shed a voice already in its release tail before a
+    // still-sustaining one, so a sustaining sampled pad (bed / pedal) isn't chopped
+    // by a rapid short layer. `relAtCtx` is stamped at registration; absent → tail.
+    function _pickSampleVictim() {
+      const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
+      let best = null, bestRel = Infinity, firstReleasable = null;
+      for (const v of _activeSampleVoices) {
+        const r = v.relAtCtx;
+        const rel = Number.isFinite(r) ? r : -Infinity; // unknown → already releasable
+        if (rel <= now) { if (firstReleasable === null) firstReleasable = v; if (rel < bestRel) { bestRel = rel; best = v; } }
+      }
+      if (best) return best;
+      if (firstReleasable) return firstReleasable;
+      return _activeSampleVoices.values().next().value || null; // none in release → oldest
+    }
     function _registerSampleVoice(v) {
       if (!v) return;
       while (_activeSampleVoices.size >= MAX_SAMPLE_VOICES) {
-        const oldest = _activeSampleVoices.values().next().value;
-        if (!oldest) break;
-        _activeSampleVoices.delete(oldest);
-        try { _killSampleVoiceFast(oldest); } catch (e) {}
+        const victim = _pickSampleVictim();
+        if (!victim) break;
+        _activeSampleVoices.delete(victim);
+        try { _killSampleVoiceFast(victim); } catch (e) {}
       }
       _activeSampleVoices.add(v);
     }
@@ -2826,6 +2876,9 @@
               // over `rel` — same envelope timing the synth path uses, so a
               // sample voice and a synth voice sit identically in a slot.
               v.ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
+              // When this voice enters its release tail — drives release-aware
+              // sample-voice stealing (_pickSampleVictim).
+              v.relAtCtx = triggerAt + (Number.isFinite(preReleaseDur) ? preReleaseDur : 0);
               try { v.source.stop(triggerAt + preReleaseDur + rel + 0.1); } catch (e) {}
             } catch (e) {
               _disposeSampleAdsrVoice(v);
@@ -3408,6 +3461,13 @@
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
       const voiceEntry = { synth, effectNodes, pooledPreset, disposeTimer: null, registerTimer: null };
+      // When this voice enters its release tail (Tone-context time) — drives
+      // release-aware voice stealing (_pickVoiceVictim) so a sustaining pad isn't
+      // chopped by a rapid short layer. Sustain ends after preReleaseDur.
+      {
+        const _startCtx = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+        voiceEntry.relAtCtx = _startCtx + (Number.isFinite(preReleaseDur) ? preReleaseDur : 0);
+      }
       voiceEntry.disposeTimer = setTimeout(() => {
         _unregisterVoice(voiceEntry);
         if (pooledPreset) safeReleaseSynth(pooledPreset, synth);

@@ -96,6 +96,8 @@
           // Key ON (root G major) — lock the new transpose/quantize behavior.
           { name: 'key-transpose', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'transpose'; }) },
           { name: 'key-quantize',  cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'quantize'; }) },
+          // Phase 3 — relative mode (bed re-centred to the 6th, the relative minor).
+          { name: 'mode-relminor', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.bed.modeRot = 5; c.motif.modeRot = 5; }) },
         ];
       }
 

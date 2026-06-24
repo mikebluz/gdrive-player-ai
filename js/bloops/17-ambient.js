@@ -573,8 +573,17 @@
       return { type: 'scale', scale: (typeof x === 'string') ? x : '' };
     }
     function _ambNotesOf(layer) {
-      if (layer && layer.notes && typeof layer.notes === 'object' && typeof layer.notes.type === 'string') return layer.notes;
-      return { type: 'scale', scale: (layer && typeof layer.scale === 'string') ? layer.scale : '' };
+      let notes;
+      if (layer && layer.notes && typeof layer.notes === 'object' && typeof layer.notes.type === 'string') notes = layer.notes;
+      else notes = { type: 'scale', scale: (layer && typeof layer.scale === 'string') ? layer.scale : '' };
+      // Relative MODE: re-centre a scale source to a different degree (a mode of
+      // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
+      // new tonic. Only meaningful for scale sources; carried on the descriptor so
+      // _ambScaleIntervals / _ambSrcRootPc apply it. Absent/0 → no change (default).
+      if (layer && (layer.modeRot | 0) && (notes.type === 'scale' || !notes.type)) {
+        return { type: 'scale', scale: notes.scale || '', modeRot: ((layer.modeRot | 0) % 7 + 7) % 7 };
+      }
+      return notes;
     }
     function _ambChordIntervals(form, inversion) {
       const def = _AMB_CHORD_FORMS.find(c => c[0] === form) || _AMB_CHORD_FORMS[0];
@@ -749,7 +758,12 @@
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return (w && Array.isArray(w.intervals) && w.intervals.length) ? w.intervals : [0, 4, 7]; }
       if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); const eff = ch && _ambChordEffIntervals(ch); return eff || ((ch && Array.isArray(ch.intervals) && ch.intervals.length) ? ch.intervals : [0, 4, 7]); }
       const name = _ambResolveScale(n.scale);
-      return (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
+      const iv = (typeof SCALES !== 'undefined' && SCALES[name]) ? SCALES[name] : [0, 2, 4, 5, 7, 9, 11];
+      // Relative mode: rotate the intervals so degree `modeRot` becomes the tonic
+      // (same pitch classes, re-centred). e.g. major @ 5 → Aeolian (rel. minor).
+      const rot = (n.modeRot | 0);
+      if (rot) { const N = iv.length, k = ((rot % N) + N) % N; if (k) { const base = iv[k]; return iv.map((_, i) => (((iv[(i + k) % N] - base) % 12) + 12) % 12); } }
+      return iv;
     }
     function _ambSrcRootPc(src) {
       const n = _ambAsNotes(src);
@@ -776,27 +790,59 @@
       }
       // Scales root to the key tonic in transpose mode. Time-indexed (keyMaster)
       // key first, so a scale re-roots exactly on the boundary for the note now.
-      if (_ambKeyTime != null) { const ks = _ambKeyAt(_E, _ambKeyTime); if (ks) return (((ks.root | 0) % 12) + 12) % 12; }
-      if (transpose) return keyRoot;
-      return baseRoot;
+      let sr = null;
+      if (_ambKeyTime != null) { const ks = _ambKeyAt(_E, _ambKeyTime); if (ks) sr = (((ks.root | 0) % 12) + 12) % 12; }
+      if (sr == null) sr = transpose ? keyRoot : baseRoot;
+      // Relative mode: shift the tonic to scale-degree `modeRot` (same pcs).
+      const rot = (n.modeRot | 0);
+      if (rot) {
+        const piv = (typeof SCALES !== 'undefined' && SCALES[_ambResolveScale(n.scale)]) || [0, 2, 4, 5, 7, 9, 11];
+        const N = piv.length, k = ((rot % N) + N) % N;
+        sr = (((sr + piv[k]) % 12) + 12) % 12;
+      }
+      return sr;
     }
     // Human label for the Notes button.
+    // Short diatonic mode names (for a 7-degree parent) shown on the Notes button.
+    const _AMB_MODE_NAMES = ['', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian', 'Aeolian', 'Locrian'];
+    // How well a note source fits the current key: how many of its pitch classes
+    // are diatonic to the key (reflects transpose/mode). Returns null when keyOff.
+    function _ambKeyFit(src, cfg) {
+      const c = cfg || _ambKeyCfg();
+      if (!c || !c.keyOn) return null;
+      try {
+        const iv = _ambScaleIntervals(src), root = _ambSrcRootPc(src), D = _ambKeyDiatonicPcs(c);
+        const pcs = new Set(); iv.forEach(i => pcs.add((((root + i) % 12) + 12) % 12));
+        let inKey = 0; pcs.forEach(p => { if (D.has(p)) inKey++; });
+        return { inKey: inKey, total: pcs.size };
+      } catch (e) { return null; }
+    }
     function _ambNotesLabel(src) {
       const n = _ambAsNotes(src);
+      let base;
       if (n.type === 'chord') {
         const rootName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[((n.root % 12) + 12) % 12]) || '';
         // Custom-edited chord (raw intervals): show note count, not a form name.
         if (Array.isArray(n.intervals) && n.intervals.length) {
           const eff = _ambChordEffIntervals(n) || n.intervals;
-          return rootName + ' chord ✎ (' + eff.length + ')';
+          base = rootName + ' chord ✎ (' + eff.length + ')';
+        } else {
+          const def = _AMB_CHORD_FORMS.find(c => c[0] === n.form);
+          const invTxt = (n.inversion | 0) > 0 ? ' inv' + (n.inversion | 0) : '';
+          base = rootName + ' ' + (def ? def[1] : 'Chord') + invTxt;
         }
-        const def = _AMB_CHORD_FORMS.find(c => c[0] === n.form);
-        const invTxt = (n.inversion | 0) > 0 ? ' inv' + (n.inversion | 0) : '';
-        return rootName + ' ' + (def ? def[1] : 'Chord') + invTxt;
+      } else if (n.type === 'wrap') { const w = _ambFindWrap(n.id); base = '⊕ ' + (w ? w.name : 'Wrap'); }
+      else if (n.type === 'prog') base = '⇶ ' + (n.name || 'Progression');
+      else base = n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
+      // Relative-mode rotation (scale sources) + live key-fit, appended once here
+      // so every Notes-button label reflects them.
+      if ((n.type === 'scale' || !n.type) && (n.modeRot | 0)) {
+        const nm = _AMB_MODE_NAMES[(n.modeRot | 0) % 7];
+        base += ' ·' + (nm ? nm : ('deg' + (((n.modeRot | 0) % 7) + 1)));
       }
-      if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return '⊕ ' + (w ? w.name : 'Wrap'); }
-      if (n.type === 'prog') return '⇶ ' + (n.name || 'Progression');
-      return n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
+      const fit = _ambKeyFit(src);
+      if (fit) base += '  ' + (fit.inKey === fit.total ? '✓' : '') + fit.inKey + '/' + fit.total;
+      return base;
     }
     // Publish a wrap (saved-bank entry) to the master Bloom Notes registry as a
     // pitch-class set: collect its notes' pitch classes, store as {root,intervals}
@@ -982,12 +1028,28 @@
         if (items.length <= 1) items.push({ label: 'No progressions fit this key', disabled: true });
         showCtxMenu(x, y, items);
       };
+      // Relative-mode submenu: re-centre a scale source onto another degree (a
+      // mode of its own scale; with Key-transpose, a mode of the key). Same pcs.
+      const modeSub = () => {
+        const L0 = getLayer(); const cur = (L0 && (L0.modeRot | 0)) || 0;
+        const MODES = [[0, 'Off (root / Ionian)'], [1, 'Dorian (2nd)'], [2, 'Phrygian (3rd)'], [3, 'Lydian (4th)'], [4, 'Mixolydian (5th)'], [5, 'Aeolian — rel. minor (6th)'], [6, 'Locrian (7th)']];
+        const items = [{ label: 'Relative mode — re-centre the scale', disabled: true }];
+        MODES.forEach(m => items.push({ label: (m[0] === cur ? '● ' : '   ') + m[1], fn: () => {
+          _E = E; const L = getLayer(); if (!L) return;
+          L.modeRot = m[0] | 0;
+          if (typeof afterChange === 'function') afterChange();
+          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        } }));
+        showCtxMenu(x, y, items);
+      };
       showCtxMenu(x, y, [
         (keyTag ? { label: 'Key' + keyTag, disabled: true } : null),
         { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
         { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
         { label: '⇶ Progression ▸', fn: () => setTimeout(progSub, 0) },
+        { label: '↻ Relative mode ▸', fn: () => setTimeout(modeSub, 0) },
       ].filter(Boolean));
     }
     function _ambOpenChordPicker(E, getLayer, afterChange) {

@@ -5821,6 +5821,22 @@
       const k = String(label || '').toLowerCase().trim();
       return _AMB_PARAM_DESC[k] || hint || '';
     }
+    // Units for the 0-100 (and cents) sliders, keyed by the param suffix of the
+    // control id — so every readout shows "40%" / "-12¢" instead of a bare number
+    // and you know precisely what each knob means. Counts (register/density/bars…)
+    // stay unit-less. Variance params are all percentages.
+    const _AMB_PARAM_UNIT = {
+      motion: '%', strum: '%', strumFidelity: '%', restProb: '%', twist: '%', proximity: '%',
+      accent: '%', fill: '%', mutateRate: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
+      timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%',
+      spread: '%', sustain: '%', level: '%', fine: '¢',
+    };
+    function _ambSlUnit(id) {
+      return _AMB_PARAM_UNIT[String(id || '').split('-').pop()] || '';
+    }
+    function _ambSlReadout(id, val) {
+      return (val != null && val !== '') ? (val + _ambSlUnit(id)) : '';
+    }
     // Quote-safe description for a title="" attribute.
     function _ambTitleAttr(label, hint) {
       return String(_ambParamDesc(label, hint)).replace(/"/g, '&quot;');
@@ -5831,7 +5847,7 @@
       return '<div class="ambient-ctrl"' + dt + '>' +
       '<label for="' + id + '"' + dt + '>' + label + '</label>' +
       '<input type="range" class="ambient-sl" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
-      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + ((val != null && val !== '') ? val : '') + '</span></div>';
+      '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + _ambSlReadout(id, val) + '</span></div>';
     };
     // One delegated listener mirrors every Bloom slider's value into its readout
     // as it's dragged — across all panels (master + lanes), no matter which
@@ -5857,7 +5873,7 @@
             if (L && cfg) { v.textContent = _ambDriftReadoutText(E, key, L, cfg, parseInt(t.value, 10)); return; }
           } catch (e) {}
         }
-        v.textContent = t.value;
+        v.textContent = t.value + _ambSlUnit(t.id);
       }, true);
     } catch (e) {}
     // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire
@@ -5865,7 +5881,7 @@
     function _ambSyncSliderReadouts(root) {
       const r = root || document;
       let list; try { list = r.querySelectorAll('input.ambient-sl'); } catch (e) { return; }
-      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value; });
+      list.forEach(sl => { if (!sl.id) return; const v = document.getElementById(sl.id + '-v'); if (v) v.textContent = sl.value + _ambSlUnit(sl.id); });
     }
     const _ambTm = (label, id, min, max, step, val) => {
       const desc = _ambParamDesc(label, '');

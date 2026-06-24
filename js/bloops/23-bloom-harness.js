@@ -122,23 +122,27 @@
         // plain `Tone.now = fn` throws ("has only a getter"). Shadow them with an
         // own data property via defineProperty (which bypasses the inherited
         // accessor), and remove the shadow to restore the original getter.
-        const ctx = (typeof Tone.getContext === 'function') ? Tone.getContext() : (Tone.context || null);
         const restorers = [];
         const stubNow = (obj) => {
-          if (!obj) return;
+          if (!obj) return false;
           const hadOwn = Object.prototype.hasOwnProperty.call(obj, 'now');
           const prevDesc = hadOwn ? Object.getOwnPropertyDescriptor(obj, 'now') : null;
           try {
             Object.defineProperty(obj, 'now', { configurable: true, writable: true, value: nowFn });
-            restorers.push(() => {
-              try { if (hadOwn && prevDesc) Object.defineProperty(obj, 'now', prevDesc); else delete obj.now; } catch (e) {}
-            });
-          } catch (e) { console.warn('[bloom-harness] could not stub a clock source; results may be non-deterministic.', e); }
+            restorers.push(() => { try { if (hadOwn && prevDesc) Object.defineProperty(obj, 'now', prevDesc); else delete obj.now; } catch (e) {} });
+            return true;
+          } catch (e) { return false; }   // non-configurable source — fine as long as Tone (critical) took
         };
         const origPlay = playNote;
         try {
           stubNow(Tone);
-          stubNow(ctx);
+          // context.now() is belt-and-suspenders — generation reads Tone.now(),
+          // not context.now() — so ignore quietly if it can't be redefined.
+          try { stubNow((typeof Tone.getContext === 'function') ? Tone.getContext() : Tone.context); } catch (e) {}
+          // Verify the clock the generator actually reads is controlled, instead
+          // of warning on the optional one.
+          let _ctl = false; try { _ctl = (Tone.now() === clock); } catch (e) {}
+          if (!_ctl) console.warn('[bloom-harness] Tone.now() not controllable — results may be non-deterministic.');
           // eslint-disable-next-line no-global-assign
           playNote = function (freq, params, durMs, at) {
             notes.push([

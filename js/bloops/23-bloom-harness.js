@@ -104,13 +104,28 @@
 
         const notes = [];
         let clock = 0;
-        const origNow = Tone.now;
-        const ctx = Tone.context;
-        const origCtxNow = (ctx && typeof ctx.now === 'function') ? ctx.now : null;
+        const nowFn = function () { return clock; };
+        // Tone.now and context.now are getter-only ACCESSORS in Tone v14, so a
+        // plain `Tone.now = fn` throws ("has only a getter"). Shadow them with an
+        // own data property via defineProperty (which bypasses the inherited
+        // accessor), and remove the shadow to restore the original getter.
+        const ctx = (typeof Tone.getContext === 'function') ? Tone.getContext() : (Tone.context || null);
+        const restorers = [];
+        const stubNow = (obj) => {
+          if (!obj) return;
+          const hadOwn = Object.prototype.hasOwnProperty.call(obj, 'now');
+          const prevDesc = hadOwn ? Object.getOwnPropertyDescriptor(obj, 'now') : null;
+          try {
+            Object.defineProperty(obj, 'now', { configurable: true, writable: true, value: nowFn });
+            restorers.push(() => {
+              try { if (hadOwn && prevDesc) Object.defineProperty(obj, 'now', prevDesc); else delete obj.now; } catch (e) {}
+            });
+          } catch (e) { console.warn('[bloom-harness] could not stub a clock source; results may be non-deterministic.', e); }
+        };
         const origPlay = playNote;
         try {
-          Tone.now = function () { return clock; };
-          if (origCtxNow) { try { ctx.now = function () { return clock; }; } catch (e) {} }
+          stubNow(Tone);
+          stubNow(ctx);
           // eslint-disable-next-line no-global-assign
           playNote = function (freq, params, durMs, at) {
             notes.push([
@@ -125,8 +140,7 @@
             clock += dt;
           }
         } finally {
-          Tone.now = origNow;
-          if (origCtxNow) { try { ctx.now = origCtxNow; } catch (e) {} }
+          for (let k = restorers.length - 1; k >= 0; k--) restorers[k]();
           // eslint-disable-next-line no-global-assign
           playNote = origPlay;
         }

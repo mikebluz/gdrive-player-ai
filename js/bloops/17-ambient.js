@@ -5480,32 +5480,65 @@
       const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
       return names[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
     }
-    function _ambRingingNames(arr, now) {
+    // Distinct hues so overlapping units (a new iteration ringing over the tail
+    // of the last) read as separate colour groups.
+    const _NP_PALETTE = ['#7fd6c4', '#e0a3ff', '#ffd479', '#86c5ff', '#ff9aa2', '#a0e57a'];
+    // Group the currently-ringing notes by which UNIT they belong to. Notes are
+    // bucketed by the layer's unit PERIOD (floor(at/period)) so a whole iteration
+    // — even a strummed/arpeggiated one spread over the unit — is one group, and
+    // the next iteration is the next bucket. Falls back to 60 ms onset proximity
+    // when no period is known. Returns clusters sorted oldest→newest.
+    function _ambRingingClusters(arr, now, period) {
       if (!Array.isArray(arr) || !arr.length) return [];
-      const seen = new Set(), out = [];
+      const useP = period > 0.05;
+      const groups = new Map();
       for (let i = 0; i < arr.length; i++) {
         const ev = arr[i]; if (!ev || !(ev.freq > 0)) continue;
         const durS = Math.max(0.05, (ev.dur || 0) / 1000);
-        if (ev.at <= now && now < ev.at + durS) {
-          const nm = _ambFreqNoteName(ev.freq);
-          if (nm && !seen.has(nm)) { seen.add(nm); out.push({ nm: nm, f: ev.freq }); }
-        }
+        if (!(ev.at <= now && now < ev.at + durS)) continue;
+        const bucket = useP ? Math.floor(ev.at / period) : Math.round(ev.at / 0.06);
+        let g = groups.get(bucket);
+        if (!g) { g = { bucket: bucket, onset: ev.at, seen: new Set(), names: [] }; groups.set(bucket, g); }
+        if (ev.at < g.onset) g.onset = ev.at;
+        const nm = _ambFreqNoteName(ev.freq);
+        if (nm && !g.seen.has(nm)) { g.seen.add(nm); g.names.push({ nm: nm, f: ev.freq }); }
       }
-      out.sort((a, b) => a.f - b.f);
-      return out.map(x => x.nm);
+      const out = Array.from(groups.values());
+      out.sort((a, b) => a.bucket - b.bucket);
+      out.forEach(g => { g.names.sort((a, b) => a.f - b.f); g.names = g.names.map(x => x.nm); });
+      return out;
     }
     function _ambUpdateNotesLive(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       const lines = host.querySelectorAll('.ambient-notes-live'); if (!lines.length) return;
       const playing = !!E.timer;
       const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
+      const cfg = E._cfg || (typeof E.getCfg === 'function' ? E.getCfg() : null);
+      if (!E._npCol) E._npCol = {};
       const rows = [];
       lines.forEach(el => {
         const key = el.dataset.nkey; if (!key) return;
-        const names = (playing && E.cap && E.cap[key]) ? _ambRingingNames(E.cap[key], now) : [];
-        const txt = names.join(' ');
-        if (el.textContent !== txt) el.textContent = txt;
-        if (txt) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, notes: txt }); }
+        let html = '';
+        if (playing && E.cap && E.cap[key]) {
+          let period = 0;
+          try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
+          const clusters = _ambRingingClusters(E.cap[key], now, period);
+          if (clusters.length) {
+            // Assign each unit a stable colour: a per-key counter hands out the
+            // next palette hue to each new bucket, and a bucket keeps its index
+            // for as long as it stays ringing (pruned when it stops).
+            const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
+            const nextMap = {};
+            html = clusters.map(c => {
+              let idx = st.map[c.bucket]; if (idx == null) idx = st.next++;
+              nextMap[c.bucket] = idx;
+              return '<span style="color:' + _NP_PALETTE[idx % _NP_PALETTE.length] + '">' + c.names.join(' ') + '</span>';
+            }).join('<span class="ambient-np-sep"> · </span>');
+            st.map = nextMap;
+          } else if (E._npCol[key]) { E._npCol[key].map = {}; }
+        } else if (E._npCol[key]) { E._npCol[key].map = {}; }
+        if (el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; }
+        if (html) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, html: html }); }
       });
       _ambRenderNowPlaying(E, rows, playing);
     }
@@ -5513,11 +5546,11 @@
       const wrap = _ambGet(E, 'ambient-nowplaying-list'); if (!wrap) return;
       const empty = _ambGet(E, 'ambient-nowplaying-empty');
       if (empty) empty.textContent = playing ? (rows.length ? '' : '— silent —') : '— stopped —';
-      const sig = rows.map(r => r.name + '=' + r.notes).join('|');
+      const sig = rows.map(r => r.name + '=' + r.html).join('|');
       if (wrap._npSig === sig) return; wrap._npSig = sig;     // skip DOM churn when unchanged
       wrap.innerHTML = rows.map(() => '<div class="ambient-np-row"><span class="ambient-np-name"></span><span class="ambient-np-notes"></span></div>').join('');
       const rowEls = wrap.querySelectorAll('.ambient-np-row');
-      rows.forEach((r, i) => { const e = rowEls[i]; if (!e) return; e.querySelector('.ambient-np-name').textContent = r.name; e.querySelector('.ambient-np-notes').textContent = r.notes; });
+      rows.forEach((r, i) => { const e = rowEls[i]; if (!e) return; e.querySelector('.ambient-np-name').textContent = r.name; e.querySelector('.ambient-np-notes').innerHTML = r.html; });
     }
     // Mark the currently-playing When cell for the layer that owns playhead `el`.
     // `cycle` is the audible iteration count; the live cell is cycle % length.

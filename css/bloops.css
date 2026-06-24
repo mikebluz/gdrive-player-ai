@@ -1341,14 +1341,19 @@
     /* Combined Tempo / Volume / Groove trigger — a compact pill that shows the
        current BPM at a glance and opens the #xport-menu dropdown. */
     #xport-menu-btn {
-      display: inline-flex; align-items: center; gap: 5px;
-      height: 26px; padding: 0 9px;
-      border: 1px solid #2d2d3f; border-radius: 13px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      height: 26px; width: 26px; padding: 0;
+      border: 1px solid #2d2d3f; border-radius: 50%;
       background: #050510; color: #cbd5e0;
       font-family: 'Segoe UI', sans-serif; font-size: 0.82rem;
       cursor: pointer; flex-shrink: 0; touch-action: manipulation;
       transition: all 0.15s ease;
     }
+    /* Settings-wheel icon (replaces the BPM number on the menu trigger). */
+    .xport-gear { font-size: 1.05rem; line-height: 1; }
+    @media (hover: hover) { #xport-menu-btn:hover .xport-gear { transform: rotate(30deg); } }
+    .xport-gear { transition: transform 0.2s ease; display: inline-block; }
+    #xport-menu-btn.open .xport-gear { transform: rotate(60deg); }
     @media (hover: hover) { #xport-menu-btn:hover { border-color: #4fd1c5; color: #81e6d9; } }
     #xport-menu-btn.open { border-color: #4fd1c5; color: #81e6d9; box-shadow: 0 0 8px rgba(79,209,197,0.4); }
     #xport-menu-btn #xport-bpm { font-weight: 700; letter-spacing: 0.5px; }

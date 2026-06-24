@@ -64,7 +64,7 @@
            #xport-menu popover. The hidden slider/input stay in the DOM so
            every existing tempoSlider.value / tempoInput.value reference keeps
            working. -->
-      <button type="button" id="xport-menu-btn" aria-haspopup="dialog" aria-expanded="false" title="Menu — Undo/Redo · Tempo · Volume · Groove · MIDI"><span id="xport-bpm">120</span><span class="xport-caret" aria-hidden="true">▾</span></button>
+      <button type="button" id="xport-menu-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings menu" title="Settings — Undo/Redo · Tempo · Volume · Groove · MIDI"><span class="xport-gear" aria-hidden="true">⚙</span><span id="xport-bpm" hidden>120</span></button>
       <!-- 3-digit BPM picker — each digit opens a 0–9 picker. Relocated into
            #xport-menu by initTransportMenu. -->
       <button type="button" id="metronome-btn" title="Metronome — click toggles the count" aria-label="Toggle metronome click">●</button>

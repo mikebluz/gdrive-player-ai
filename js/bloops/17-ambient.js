@@ -1381,12 +1381,18 @@
     function _ambCaptureUnit(E, key) {
       const arr = E.cap && E.cap[key];
       if (!Array.isArray(arr) || !arr.length) return null;
+      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0));
       let period = 0;
       try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
-      const last = arr[arr.length - 1];
+      // The unit PLAYING NOW = the most recent note that has already started
+      // (at ≤ audible-now). The engine schedules ahead, so the newest cap entries
+      // are FUTURE units — capturing those would lock the next phrase, not this one.
+      let cur = null;
+      for (let i = arr.length - 1; i >= 0; i--) { if (arr[i] && arr[i].at <= now) { cur = arr[i]; break; } }
+      if (!cur) cur = arr[0];
       const bk = (a) => (period > 0.05) ? Math.floor(a / period) : 0;
-      const lb = bk(last.at);
-      const unit = arr.filter(ev => ev && (ev.freq > 0) && ((period > 0.05) ? (bk(ev.at) === lb) : (Math.abs(ev.at - last.at) < 0.5)));
+      const cb = bk(cur.at);
+      const unit = arr.filter(ev => ev && (ev.freq > 0) && ((period > 0.05) ? (bk(ev.at) === cb) : (Math.abs(ev.at - cur.at) < 0.5)));
       if (!unit.length) return null;
       let start = unit[0].at; unit.forEach(ev => { if (ev.at < start) start = ev.at; });
       return unit.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
@@ -4524,6 +4530,14 @@
         btn.classList.toggle('soloed', !!(layer && layer.solo));
       });
     }
+    // Reflect each layer's Unit-Lock state on its 🔒 head button (after re-render).
+    function _ambLockSyncAll(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-lock-btn').forEach(btn => {
+        const k = btn.dataset.lkey;
+        btn.classList.toggle('active', !!(E.unit && E.unit[k] && E.unit[k].lock));
+      });
+    }
     function _ambFreezeState(E, key) {
       E.freeze = E.freeze || {};
       return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null });
@@ -5718,12 +5732,10 @@
         // of collapsing per-note and pulsing the head. Off layers stay collapsed.
         let layerOn = false;
         try { const L = _ambLayerByKey(E, key); layerOn = !!(playing && L && L.on !== false && L.present !== false); } catch (e) { layerOn = playing; }
-        // Unit Lock: bed/motif lines are clickable to lock the current unit; show
-        // the locked state (the locked layer keeps replaying, so its notes still
-        // show via E.cap). Reserve a locked line too, so it stays visible.
-        const lockable = /^(bed|motif)(:|$)/.test(key);
+        // Unit Lock (toggled from the 🔒 head button): show the locked state on
+        // the line — the locked layer keeps replaying, so its notes still show via
+        // E.cap. Reserve a locked line too, so it stays visible.
         const locked = !!(E.unit && E.unit[key] && E.unit[key].lock);
-        el.classList.toggle('lockable', lockable);
         el.classList.toggle('locked', locked);
         if (locked) layerOn = true;
         el.classList.toggle('reserved', layerOn);
@@ -5935,20 +5947,6 @@
         v.textContent = t.value + _ambSlUnit(t.id);
       }, true);
     } catch (e) {}
-    // Click a bed/motif notes line → Lock its current unit (replay it every
-    // iteration); click again → Unlock and let the layer resume. (Phase 5 step 1;
-    // the note-for-note editor builds on the same captured unit next.)
-    try {
-      document.addEventListener('click', (e) => {
-        const el = e.target && e.target.closest && e.target.closest('.ambient-notes-live');
-        if (!el) return;
-        const key = el.dataset.nkey; if (!key || !/^(bed|motif)(:|$)/.test(key)) return;
-        const E = _ambEngForEl(el); if (!E) return;
-        _E = E;
-        try { _ambToggleUnitLock(E, key); } catch (x) {}
-        try { _ambUpdateNotesLive(E); } catch (x) {}   // reflect immediately
-      });
-    } catch (e) {}
     // Mirror PROGRAMMATIC slider changes (sync / restore — these don't fire
     // 'input') into the readouts. Sweeps every Bloom slider in `root`.
     function _ambSyncSliderReadouts(root) {
@@ -6115,6 +6113,7 @@
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
       (freezeKey ? '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
+      (freezeKey && /^(bed|motif)(:|$)/.test(freezeKey) ? '<button type="button" class="ambient-lock-btn" data-lkey="' + freezeKey + '" title="Lock the unit playing now — replay it every iteration (click again to unlock)" aria-label="Lock unit">🔒</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
@@ -8676,6 +8675,7 @@
       try { _ambSyncLayerUnits(E); } catch (e) {} // header unit-length readouts
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render
+      try { _ambLockSyncAll(E); } catch (e) {}   // restore unit-lock button states
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const m = cfg[layer] && cfg[layer].mod;
         if (!m) return;
@@ -9001,6 +9001,8 @@
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
+        const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
+        if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();

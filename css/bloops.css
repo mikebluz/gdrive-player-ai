@@ -2846,11 +2846,16 @@
       overflow: hidden; text-overflow: ellipsis;
     }
     .ambient-notes-live.reserved { display: block; }
-    /* Click a bed/motif line to lock/unlock the current unit. */
-    .ambient-notes-live.lockable { cursor: pointer; }
-    @media (hover: hover) { .ambient-notes-live.lockable:hover { background: rgba(255,212,121,0.06); border-radius: 3px; } }
+    /* A locked layer's notes line reads amber with a 🔒 (toggled from the head button). */
     .ambient-notes-live.locked { color: #ffd479; }
     .ambient-lock-ic { margin-right: 4px; opacity: 0.9; }
+    /* Per-layer Unit-Lock head button (🔒) — amber when active. */
+    .ambient-lock-btn {
+      flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: transparent; color: #6b6b8a; cursor: pointer; line-height: 1; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-lock-btn:hover { border-color: #ffd479; color: #ffd479; } }
+    .ambient-lock-btn.active { color: #1a202c; background: #ffd479; border-color: #ffd479; }
     /* Separator between consecutive unit colour-groups in a notes readout. */
     .ambient-np-sep { color: #4a4a5e; }
     /* "Now Playing" read-only panel — global readout of every layer's notes. */
@@ -3035,6 +3040,7 @@
     .ambient-layer-head .ambient-rename-btn,
     .ambient-layer-head .ambient-clone-btn,
     .ambient-layer-head .ambient-solo-btn,
+    .ambient-layer-head .ambient-lock-btn,
     .ambient-layer-head .ambient-freeze-btn,
     .ambient-layer-head .ambient-seq-del,
     .ambient-layer-head .ambient-collapse {

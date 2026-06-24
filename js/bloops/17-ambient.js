@@ -5744,7 +5744,14 @@
           let period = 0;
           try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
           const clusters = _ambRingingClusters(E.cap[key], now, period);
-          if (clusters.length) {
+          if (locked) {
+            // Locked = one repeating unit. Show it as a SINGLE stable colour
+            // group (deduped) — no per-unit cycling, no separate "next".
+            const seen = new Set(), names = [];
+            clusters.forEach(c => c.names.forEach(n => { if (!seen.has(n)) { seen.add(n); names.push(n); } }));
+            html = names.length ? '<span class="ambient-np-locked">' + names.join(' ') + '</span>' : '';
+            if (E._npCol[key]) E._npCol[key].map = {};
+          } else if (clusters.length) {
             // Assign each unit a stable colour: a per-key counter hands out the
             // next palette hue to each new bucket, and a bucket keeps its index
             // for as long as it stays ringing (pruned when it stops).

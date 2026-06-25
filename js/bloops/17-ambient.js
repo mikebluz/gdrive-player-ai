@@ -5999,7 +5999,12 @@
     function _ambPositionNoteEditor(anchorEl) {
       const el = document.getElementById('ambient-note-editor'); if (!el || !anchorEl) return;
       const r = anchorEl.getBoundingClientRect();
-      el.style.visibility = 'hidden'; el.classList.add('open');
+      // Inline !important beats ANY selector-based rule (incl. the view-mode
+      // `body.<mode> > *:not(...) { display:none !important }` rules that hide
+      // body-attached overlays). This is why the popover stayed hidden.
+      el.style.visibility = 'hidden';
+      el.style.setProperty('display', 'block', 'important');
+      el.classList.add('open');
       const ew = el.offsetWidth, eh = el.offsetHeight;
       let left = r.left + r.width / 2 - ew / 2;
       let top = r.bottom + 6;
@@ -6026,14 +6031,15 @@
         const disp = el ? getComputedStyle(el).display : '-';
         const msg = 'NoteEd: ' + (el ? 'el✓' : 'NO-EL') + ' disp=' + disp +
           ' open=' + (el ? el.classList.contains('open') : '-') +
-          (r ? (' @' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + '×' + Math.round(r.height)) : '');
+          (r ? (' @' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + '×' + Math.round(r.height)) : '') +
+          ' body=[' + (document.body.className || '-') + ']';
         if (typeof showToast === 'function') showToast(msg); else if (typeof alert === 'function') alert(msg);
       } catch (e) { try { if (typeof showToast === 'function') showToast('NoteEd err: ' + e.message); } catch (x) {} }
     }
     function _ambCloseNoteEditor() {
       _ambNoteEd = null;
       const el = document.getElementById('ambient-note-editor');
-      if (el) { el.classList.remove('open'); el.style.visibility = ''; }
+      if (el) { el.classList.remove('open'); el.style.removeProperty('display'); el.style.visibility = ''; }
     }
     function _ambNoteEditOp(op) {
       const t = _ambNoteEd; if (!t) return;

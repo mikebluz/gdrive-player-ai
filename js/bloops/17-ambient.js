@@ -1483,46 +1483,87 @@
         if (P > 0.05) { E.clocks = E.clocks || {}; let b = base + P; while (b < tn + 0.03) b += P; E.clocks[key] = b; }
       } catch (e) {}
     }
-    function _ambToggleUnitLock(E, key) {
-      // Bed/Motif emit ONE discrete unit per iteration, so they lock that exact
-      // unit (precise, readout-coupled). Every OTHER layer streams a whole cycle
-      // across the lookahead, so it locks by FREEZING the current cycle (capture
-      // its notes, replay verbatim) — the user's "freeze current cycle" choice.
-      const _ltype = String(key).split(':')[0];
-      if (_ltype !== 'bed' && _ltype !== 'motif') {
-        const fs = E.freeze && E.freeze[key];
-        if (fs && fs.pendingFreezeAt != null && !fs.frozen) {  // armed but not engaged → cancel
-          fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; return false;
-        }
-        if (fs && fs.frozen) { _ambFreezeThaw(E, key); fs._lock = false; return false; }
-        const ok = _ambLockArm(E, key);
-        if (!ok && typeof showToast === 'function') showToast('Lock: give the layer a moment of playback first.');
-        try { _ambFreezeSyncAll(E); } catch (e) {}
-        return ok;
-      }
-      const st = _ambUnitState(E, key);
-      const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
-      if (st.lock) {
-        // Unlock: the current locked unit plays out, then the NEXT unit is freshly
-        // generated (drop the scheduled-ahead locked replays + re-anchor).
+    // Is `key` currently locked (single unit OR a frozen loop, incl. an armed
+    // pending one)? Bed/Motif can be locked either way (single → E.unit,
+    // multi-unit → a freeze loop).
+    function _ambIsLocked(E, key) {
+      const ty = String(key).split(':')[0];
+      if ((ty === 'bed' || ty === 'motif') && E.unit && E.unit[key] && E.unit[key].lock) return true;
+      const fs = E.freeze && E.freeze[key];
+      return !!(fs && fs._lock && (fs.frozen || fs.pendingFreezeAt != null));
+    }
+    // The start time of the unit currently sounding (= next boundary − one period).
+    function _ambCurUnitStart(E, key) {
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); const L = _ambLayerByKey(E, key);
+      const P = _ambLayerPeriodSec(E, key, L, cfg); const Pn = (P > 0.05) ? P : 0.5;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      let b = _ambLayerAudibleBoundary(E, key, L, cfg, now);
+      if (!(b > now)) b = now + Pn;
+      return b - Pn;
+    }
+    function _ambDoUnlock(E, key) {
+      const ty = String(key).split(':')[0];
+      if ((ty === 'bed' || ty === 'motif') && E.unit && E.unit[key] && E.unit[key].lock) {
+        const st = _ambUnitState(E, key);
+        const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
         st.lock = false; st.notes = null;
         const cAt = cur ? cur.at : _ambPlayNow();
-        // Also drop the recorded FUTURE locked replays so the lookahead stops
-        // showing the looped unit — the freshly generated next unit records into it.
         if (E.units && Array.isArray(E.units[key])) E.units[key] = E.units[key].filter(u => u.at <= cAt + 0.001);
         _ambReanchorNext(E, key, cAt);
+        return;
+      }
+      const fs = E.freeze && E.freeze[key]; if (!fs) return;
+      if (fs.pendingFreezeAt != null && !fs.frozen) { fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; return; }
+      _ambFreezeThaw(E, key); fs._lock = false;
+    }
+    // Close a lock selection: lock the span from `startAt` to the current unit's
+    // end. One bed/motif unit → the precise editable per-unit lock; any longer
+    // span (or any other layer) → defer-capture the [start,end) window as a frozen
+    // loop (engaged at the boundary by _ambFreezeGate → _ambLockEngage).
+    function _ambLockSpan(E, key, startAt) {
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); const L = _ambLayerByKey(E, key);
+      const P = _ambLayerPeriodSec(E, key, L, cfg); const Pn = (P > 0.05) ? P : 0.5;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      let endAt = _ambLayerAudibleBoundary(E, key, L, cfg, now);
+      if (!(endAt > now + 0.005)) endAt = now + Pn;
+      if (!Number.isFinite(startAt) || startAt >= endAt - 0.01) startAt = endAt - Pn;
+      const units = Math.max(1, Math.round((endAt - startAt) / Pn));
+      const ty = String(key).split(':')[0];
+      if ((ty === 'bed' || ty === 'motif') && units <= 1) {
+        const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
+        if (!cur || !Array.isArray(cur.notes) || !cur.notes.length) return false;
+        const st = _ambUnitState(E, key);
+        st.notes = cur.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
+        st.lock = true;
+        _ambReanchorNext(E, key, cur.at);
+        return true;
+      }
+      const fs = _ambFreezeState(E, key);
+      fs._lockWin = { bStart: startAt, bEnd: endAt, loopLen: Math.max(0.05, endAt - startAt) };
+      fs.pendingFreezeAt = endAt; fs._lock = true; fs.frozen = false; fs.recording = false; fs.pendingThawAt = null;
+      try { _ambFreezeSyncAll(E); } catch (e) {}
+      return true;
+    }
+    // Lock is a TWO-PRESS span selector: 1st press starts selecting (the button
+    // flashes from the current unit's start); 2nd press closes the span and locks
+    // it — within the same unit → one unit; let it flash through several units →
+    // a multi-unit loop. Pressing while locked unlocks. (Stopped Bed/Motif still
+    // single-press seeds + locks so you can edit before play.)
+    function _ambToggleUnitLock(E, key) {
+      if (_ambIsLocked(E, key)) { _ambDoUnlock(E, key); return false; }
+      const ty = String(key).split(':')[0];
+      if (!E.timer) {
+        if (ty === 'bed' || ty === 'motif') return _ambSeedAndLock(E, key);
+        if (typeof showToast === 'function') showToast('Lock: press play first to capture a cycle.');
         return false;
       }
-      if (!cur || !Array.isArray(cur.notes) || !cur.notes.length) {
-        // Nothing captured yet. If the engine is STOPPED, seed a unit silently so
-        // you can edit the initial state before ever pressing play.
-        if (!E.timer) return _ambSeedAndLock(E, key);
-        return false;   // playing but mid-warmup — wait a beat
+      E.lockSel = E.lockSel || {};
+      if (E.lockSel[key]) {                                  // 2nd press → close the span
+        const start = E.lockSel[key].startAt; delete E.lockSel[key];
+        return _ambLockSpan(E, key, start);
       }
-      st.notes = cur.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
-      st.lock = true;
-      _ambReanchorNext(E, key, cur.at);   // locked unit takes over at the next boundary
-      return true;
+      E.lockSel[key] = { startAt: _ambCurUnitStart(E, key) }; // 1st press → start selecting (flash)
+      return false;
     }
     // Pre-play "edit the initial state": for a stopped Bed/Motif layer with no
     // captured unit, run ONE emit with audio suppressed (window._ambSilentCapture,
@@ -4762,11 +4803,9 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-lock-btn').forEach(btn => {
         const k = btn.dataset.lkey;
-        const t = String(k).split(':')[0];
-        let on;
-        if (t === 'bed' || t === 'motif') on = !!(E.unit && E.unit[k] && E.unit[k].lock);
-        else { const fs = E.freeze && E.freeze[k]; on = !!(fs && fs._lock && ((fs.frozen && !fs.pendingThawAt) || fs.pendingFreezeAt != null)); }
-        btn.classList.toggle('active', on);
+        const selecting = !!(E.lockSel && E.lockSel[k]);   // 1st press, awaiting the 2nd → flash
+        btn.classList.toggle('selecting', selecting);
+        btn.classList.toggle('active', !selecting && _ambIsLocked(E, k));
       });
     }
     function _ambFreezeState(E, key) {
@@ -6193,7 +6232,7 @@
       if (t === 'bed' || t === 'motif') {
         const u = E.unit && E.unit[key];
         if (u && u.lock && Array.isArray(u.notes) && u.notes.length) return { kind: 'unit', list: u.notes };
-        return null;
+        // else fall through — a MULTI-unit Bed/Motif lock uses a frozen loop.
       }
       const fs = E.freeze && E.freeze[key];
       if (fs && fs.frozen && !fs.pendingThawAt && Array.isArray(fs.events) && fs.events.length) return { kind: 'loop', list: fs.events };
@@ -6222,18 +6261,19 @@
     // lock-initiated state is saved (a transient manual Freeze is not).
     function _ambSyncLockState(E, key) {
       const layer = _ambLayerByKey(E, key); if (!layer) return;
-      const ty = String(key).split(':')[0];
-      if (ty === 'bed' || ty === 'motif') {
-        const u = E.unit && E.unit[key];
-        if (u && u.lock && Array.isArray(u.notes) && u.notes.length)
-          layer.lockState = { kind: 'unit', notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
-        else delete layer.lockState;
-      } else {
-        const fs = E.freeze && E.freeze[key];
-        if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length)
-          layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
-        else delete layer.lockState;
+      // A single Bed/Motif unit saves as 'unit'; a multi-unit lock or any other
+      // layer's lock is a frozen loop → save as 'loop'. Branch on the live store.
+      const u = E.unit && E.unit[key];
+      if (u && u.lock && Array.isArray(u.notes) && u.notes.length) {
+        layer.lockState = { kind: 'unit', notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+        return;
       }
+      const fs = E.freeze && E.freeze[key];
+      if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length) {
+        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
+        return;
+      }
+      delete layer.lockState;
     }
     function _ambPersistLock(E, key) {
       try { _ambSyncLockState(E, key); } catch (e) {}
@@ -6246,12 +6286,11 @@
       const each = (key, layer) => {
         const ls = layer && layer.lockState;
         if (!ls || !Array.isArray(ls.notes) || !ls.notes.length) return;
-        const ty = String(key).split(':')[0];
-        if (ty === 'bed' || ty === 'motif') {
+        if (ls.kind === 'unit') {                                      // single Bed/Motif unit
           if (E.unit && E.unit[key] && E.unit[key].lock) return;       // runtime wins
           E.unit = E.unit || {};
           E.unit[key] = { lock: true, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
-        } else {
+        } else {                                                       // frozen loop (multi-unit / other layers)
           if (E.freeze && E.freeze[key] && E.freeze[key].frozen) return; // runtime wins
           E.freeze = E.freeze || {};
           E.freeze[key] = { frozen: true, _lock: true, recording: false, recStart: 0,
@@ -6326,8 +6365,10 @@
       if (!E || !E.timer) return;
       try {
         const tn = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-        const ty = String(key).split(':')[0];
-        if (ty === 'bed' || ty === 'motif') {
+        // Branch on the STORE, not the type: a multi-unit Bed/Motif lock is a
+        // frozen loop, not a single E.unit, and must take the loop re-emit path.
+        const u = E.unit && E.unit[key];
+        if (u && u.lock) {
           const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
           const fromAt = cur ? cur.at : _ambPlayNow();
           const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));

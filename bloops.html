@@ -940,6 +940,18 @@
     <div class="harvest-wrap">
       <div class="harvest-title">Harvest</div>
       <div class="harvest-sub">Your captured Blooms and Shapes. Preview, rename, download, or upload to Drive.</div>
+      <details class="harvest-master" id="harvest-master">
+        <summary class="harvest-master-head">Mastering chain <span class="harvest-master-hint">— applied to takes you mark ☆/★ (preview + Download/Upload)</span></summary>
+        <div class="harvest-master-grid">
+          <label class="hm-ctrl">EQ Low <input type="range" id="hm-eqlow" min="-12" max="12" step="0.5" value="0"><span class="hm-v" id="hm-eqlow-v">0</span><small>dB</small></label>
+          <label class="hm-ctrl">EQ Mid <input type="range" id="hm-eqmid" min="-12" max="12" step="0.5" value="0"><span class="hm-v" id="hm-eqmid-v">0</span><small>dB</small></label>
+          <label class="hm-ctrl">EQ High <input type="range" id="hm-eqhigh" min="-12" max="12" step="0.5" value="0"><span class="hm-v" id="hm-eqhigh-v">0</span><small>dB</small></label>
+          <label class="hm-ctrl">Comp Thresh <input type="range" id="hm-cthr" min="-48" max="0" step="1" value="-18"><span class="hm-v" id="hm-cthr-v">-18</span><small>dB</small></label>
+          <label class="hm-ctrl">Comp Ratio <input type="range" id="hm-crat" min="1" max="20" step="0.5" value="3"><span class="hm-v" id="hm-crat-v">3</span><small>:1</small></label>
+          <label class="hm-ctrl">Limit Ceil <input type="range" id="hm-lim" min="-24" max="0" step="0.5" value="-1"><span class="hm-v" id="hm-lim-v">-1</span><small>dB</small></label>
+          <label class="hm-ctrl">Output <input type="range" id="hm-gain" min="-12" max="12" step="0.5" value="0"><span class="hm-v" id="hm-gain-v">0</span><small>dB</small></label>
+        </div>
+      </details>
       <div class="ambient-capture-bank" id="harvest-capbank"></div>
     </div>
   </div>

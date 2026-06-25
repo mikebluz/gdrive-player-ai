@@ -6085,12 +6085,18 @@
         } catch (e) { console.warn('Capture transcode failed — uploading the original format.', e); }
       }
       item.name = name; item.folder = folder; _ambRenderCaptureBank();
+      // Mastered take → bake the chain into the uploaded file (offline render).
+      let upBlob = item.blob;
+      if (item.mastered) {
+        progress && progress.setStatus('Mastering…');
+        try { const mb = await _ambMasteredBlob(item); if (mb) upBlob = mb; } catch (e) {}
+      }
       const is401 = (err) => !!(err && (err.status === 401 || (err.result && err.result.error && err.result.error.code === 401)));
       const doDrive = async () => {
         await googleSignInForDrive();
         progress && progress.setStatus('Uploading to Drive…');
         const folderId = await findOrCreateDriveFolder(folder);
-        return uploadBlobToDrive(name + '.' + item.ext, item.blob, folderId, item.mime);
+        return uploadBlobToDrive(name + '.' + item.ext, upBlob, folderId, item.mime);
       };
       try {
         let file;
@@ -6112,9 +6118,74 @@
         progress && progress.close();
       }
     }
-    function _ambDownloadBankItem(item) {
-      if (!item || !item.url) return;
-      try { const a = document.createElement('a'); a.href = item.url; a.download = item.name + '.' + item.ext; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+    // ===== Harvest mastering chain ====================================
+    // A configurable EQ → Compressor → Limiter → Gain chain that captured takes
+    // marked "★ Master" run through — on Preview (live, via a MediaElementSource)
+    // and on Download/Upload (baked in via an OfflineAudioContext render). Settings
+    // are global (one chain), persisted to localStorage; the per-take `mastered`
+    // flag decides which takes use it.
+    let _ambHarvestMaster = { eqLow: 0, eqMid: 0, eqHigh: 0, compThresh: -18, compRatio: 3, limitCeil: -1, gain: 0 };
+    (function _ambLoadHarvestMaster() {
+      try { const s = localStorage.getItem('bloops.harvestMaster'); if (s) { const o = JSON.parse(s); if (o && typeof o === 'object') Object.assign(_ambHarvestMaster, o); } } catch (e) {}
+    })();
+    function _ambSaveHarvestMaster() { try { localStorage.setItem('bloops.harvestMaster', JSON.stringify(_ambHarvestMaster)); } catch (e) {} }
+    // Build the chain in any context (online for preview, offline for render) and
+    // return its input/output nodes (pre-connected) + the node list for teardown.
+    function _ambMasterFxNodes(ctx, fx) {
+      fx = fx || _ambHarvestMaster;
+      const cl = (v, a, b, d) => { v = +v; return Number.isFinite(v) ? Math.max(a, Math.min(b, v)) : d; };
+      const lo = ctx.createBiquadFilter(); lo.type = 'lowshelf'; lo.frequency.value = 180; lo.gain.value = cl(fx.eqLow, -18, 18, 0);
+      const mid = ctx.createBiquadFilter(); mid.type = 'peaking'; mid.frequency.value = 1200; mid.Q.value = 0.8; mid.gain.value = cl(fx.eqMid, -18, 18, 0);
+      const hi = ctx.createBiquadFilter(); hi.type = 'highshelf'; hi.frequency.value = 4500; hi.gain.value = cl(fx.eqHigh, -18, 18, 0);
+      const comp = ctx.createDynamicsCompressor();
+      try { comp.threshold.value = cl(fx.compThresh, -60, 0, -18); comp.ratio.value = cl(fx.compRatio, 1, 20, 3); comp.knee.value = 10; comp.attack.value = 0.012; comp.release.value = 0.18; } catch (e) {}
+      const lim = ctx.createDynamicsCompressor();   // brickwall-ish: high ratio, fast
+      try { lim.threshold.value = cl(fx.limitCeil, -24, 0, -1); lim.ratio.value = 20; lim.knee.value = 0; lim.attack.value = 0.002; lim.release.value = 0.06; } catch (e) {}
+      const g = ctx.createGain(); g.gain.value = Math.pow(10, cl(fx.gain, -18, 18, 0) / 20);
+      lo.connect(mid); mid.connect(hi); hi.connect(comp); comp.connect(lim); lim.connect(g);
+      return { input: lo, output: g, nodes: [lo, mid, hi, comp, lim, g] };
+    }
+    // Offline-render a take's blob through the mastering chain → encoded Blob (in
+    // the take's own format). null on failure (caller falls back to the raw blob).
+    async function _ambMasteredBlob(item) {
+      try {
+        const ac = Tone.getContext().rawContext;
+        const buf = await ac.decodeAudioData(await item.blob.arrayBuffer());
+        if (!buf || !(buf.duration > 0)) return null;
+        const off = new OfflineAudioContext(buf.numberOfChannels || 2, buf.length, buf.sampleRate);
+        const src = off.createBufferSource(); src.buffer = buf;
+        const ch = _ambMasterFxNodes(off, _ambHarvestMaster);
+        src.connect(ch.input); ch.output.connect(off.destination);
+        src.start(0);
+        const out = await off.startRendering();
+        if (item.ext === 'mp3' && typeof audioBufferToMp3 === 'function') return await audioBufferToMp3(out);
+        return (typeof audioBufferToWav === 'function') ? audioBufferToWav(out) : null;
+      } catch (e) { console.warn('Master render failed.', e); return null; }
+    }
+    // Reflect the saved chain values into the Harvest controls + wire live edits.
+    function _ambWireHarvestMaster() {
+      const panel = document.getElementById('harvest-master'); if (!panel) return;
+      const map = [['hm-eqlow', 'eqLow'], ['hm-eqmid', 'eqMid'], ['hm-eqhigh', 'eqHigh'], ['hm-cthr', 'compThresh'], ['hm-crat', 'compRatio'], ['hm-lim', 'limitCeil'], ['hm-gain', 'gain']];
+      map.forEach(([id, key]) => {
+        const el = document.getElementById(id), v = document.getElementById(id + '-v'); if (!el) return;
+        el.value = String(_ambHarvestMaster[key]);
+        if (v) v.textContent = String(_ambHarvestMaster[key]);
+        if (!el._wired) {
+          el._wired = true;
+          el.addEventListener('input', () => { const val = parseFloat(el.value); _ambHarvestMaster[key] = Number.isFinite(val) ? val : 0; if (v) v.textContent = el.value; _ambSaveHarvestMaster(); });
+        }
+      });
+    }
+    async function _ambDownloadBankItem(item) {
+      if (!item) return;
+      let url = item.url, name = item.name + '.' + item.ext, revoke = false;
+      if (item.mastered) {
+        const b = await _ambMasteredBlob(item);
+        if (b) { try { url = URL.createObjectURL(b); name = item.name + '-master.' + item.ext; revoke = true; } catch (e) {} }
+      }
+      if (!url) return;
+      try { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+      if (revoke) setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 15000);
     }
     function _ambRemoveBankItem(id) {
       const i = _ambCaptureBank.findIndex(x => x.id === id);
@@ -6130,11 +6201,35 @@
       item.name = nn.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 80) || item.name;
       _ambRenderCaptureBank();
     }
+    function _ambStopBankPreview() {
+      const a = _ambBankPreviewAudio;
+      if (a) {
+        try { a.pause(); } catch (e) {}
+        try { if (a._fx) { try { a._fx.src.disconnect(); } catch (e) {} a._fx.ch.nodes.forEach(n => { try { n.disconnect(); } catch (e) {} }); } } catch (e) {}
+      }
+      _ambBankPreviewAudio = null;
+    }
     function _ambPreviewBankItem(item) {
       try {
-        if (_ambBankPreviewAudio) { _ambBankPreviewAudio.pause(); _ambBankPreviewAudio = null; }
+        _ambStopBankPreview();
         if (!item || !item.url) return;
-        const a = new Audio(item.url); _ambBankPreviewAudio = a; a.play().catch(() => {});
+        const a = new Audio(item.url); _ambBankPreviewAudio = a;
+        // Mastered takes preview THROUGH the chain (live, via a MediaElementSource
+        // → EQ/Comp/Limiter/Gain → destination). A fresh <audio> each time avoids
+        // the "element already has a source node" error. Falls back to direct
+        // element playback if Web Audio routing fails.
+        if (item.mastered) {
+          try {
+            const ctx = Tone.getContext().rawContext;
+            try { if (ctx.state === 'suspended' && ctx.resume) ctx.resume(); } catch (e) {}
+            const src = ctx.createMediaElementSource(a);
+            const ch = _ambMasterFxNodes(ctx, _ambHarvestMaster);
+            src.connect(ch.input); ch.output.connect(ctx.destination);
+            a._fx = { src, ch };
+            a.addEventListener('ended', () => { if (_ambBankPreviewAudio === a) _ambStopBankPreview(); });
+          } catch (e) {}
+        }
+        a.play().catch(() => {});
       } catch (e) {}
     }
     function _ambRenderCaptureBank() {
@@ -6152,6 +6247,7 @@
             else if (act === 'ren') _ambRenameBankItem(it);
             else if (act === 'dl') _ambDownloadBankItem(it);
             else if (act === 'up') _ambUploadBankItem(it);
+            else if (act === 'master') { it.mastered = !it.mastered; _ambRenderCaptureBank(); }
             else if (act === 'del') _ambRemoveBankItem(id);
           });
         }
@@ -6161,13 +6257,15 @@
             (it.source ? '<span class="ambient-cap-src" title="Source">' + String(it.source).replace(/[<>&]/g, '') + '</span>' : '') +
             '<span class="ambient-cap-name" title="' + (it.uploaded ? 'Uploaded' : 'Not uploaded') + '">' + (it.uploaded ? '✓ ' : '') + String(it.name).replace(/[<>&]/g, '') + '.' + it.ext + '</span>' +
             '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + '</span>' +
-            '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview">▶</button>' +
+            '<button type="button" class="ambient-cap-btn ambient-cap-master' + (it.mastered ? ' on' : '') + '" data-act="master" title="Master this take — preview + Download/Upload run through the Mastering chain above">' + (it.mastered ? '★' : '☆') + '</button>' +
+            '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview' + (it.mastered ? ' (mastered)' : '') + '">▶</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="ren" title="Rename">✎</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-up" data-act="up" title="Upload to Google Drive">⬆ Upload</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-del" data-act="del" title="Remove from bank">✕</button>' +
           '</div>').join('');
       });
+      try { _ambWireHarvestMaster(); } catch (e) {}
     }
 
     // ---- Visual (analyser-bound waveform; animates only while playing) --

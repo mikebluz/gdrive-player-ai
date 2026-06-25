@@ -9673,6 +9673,22 @@
     .harvest-wrap { max-width: 900px; margin: 0 auto; }
     .harvest-title { font: 700 1.1rem 'Segoe UI', sans-serif; color: #e6e6f5; margin: 4px 0 2px; }
     .harvest-sub { font-size: 0.8rem; color: #8a8aa8; margin-bottom: 14px; }
+    /* Harvest mastering chain — collapsible controls above the capture bank. */
+    .harvest-master { border: 1px solid #24243a; border-radius: 9px; background: rgba(255,255,255,0.015); padding: 8px 12px; margin-bottom: 14px; }
+    .harvest-master-head { cursor: pointer; font: 600 0.82rem 'Segoe UI', sans-serif; color: #c9c9e0; list-style: none; }
+    .harvest-master-head::-webkit-details-marker { display: none; }
+    .harvest-master-head::before { content: '▸ '; color: #9f7aea; }
+    .harvest-master[open] .harvest-master-head::before { content: '▾ '; }
+    .harvest-master-hint { color: #7a7a98; font-weight: 400; }
+    .harvest-master-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 16px; margin-top: 10px; }
+    .hm-ctrl { display: flex; align-items: center; gap: 8px; font-size: 0.74rem; color: #a8a8c8; }
+    .hm-ctrl input[type=range] { flex: 1 1 auto; min-width: 0; accent-color: #9f7aea; }
+    .hm-ctrl .hm-v { flex: 0 0 auto; min-width: 2.6em; text-align: right; font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace; color: #c9c9e0; }
+    .hm-ctrl small { flex: 0 0 auto; color: #7a7a98; }
+    /* Per-take Master toggle (☆ → ★ amber when on). */
+    .ambient-cap-btn.ambient-cap-master { border-color: #3a3450; color: #8a8aa8; }
+    .ambient-cap-btn.ambient-cap-master.on { border-color: #ffd479; color: #1a202c; background: #ffd479; }
+    @media (hover: hover) { .ambient-cap-btn.ambient-cap-master:hover { border-color: #ffd479; color: #ffd479; } .ambient-cap-btn.ambient-cap-master.on:hover { color: #1a202c; } }
     /* Reuse the capture-bank styling; give it room in the full-page view. */
     #harvest-view .ambient-capture-bank { display: block; }
     .sm-copy.open  { border-color: #4299e1; color: #4299e1; }

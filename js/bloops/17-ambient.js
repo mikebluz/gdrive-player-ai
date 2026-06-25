@@ -2790,19 +2790,25 @@
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
       const cTo = Math.floor((tTo - st.startAt) / loopSec);
       let cap = 0;
+      // User caps: Max pitches limits the voices (distinct pitches) per unit; Max
+      // events limits the total note-events per unit (keep the EARLIEST). 0 = off.
+      const Veff = ((arp.maxPitches | 0) > 0) ? Math.max(1, Math.min(V, arp.maxPitches | 0)) : V;
+      const maxEv = (arp.maxEvents | 0) > 0 ? (arp.maxEvents | 0) : 0;
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         if (!_ambCondFires(arp.when, c)) continue;
         const cStart = st.startAt + c * loopSec;
         const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
         const rVar = Math.max(0, Math.min(100, arp.rhythmVar | 0));
-        for (let v = 0; v < V && cap < 256; v++) {
-          const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, arp.euclidRegen | 0);
+        // Collect the whole cycle's hits (deterministic via rnd), then cap.
+        const hits = [];
+        for (let v = 0; v < Veff; v++) {
+          const vpat = _ambEuclidVoicePat(pulses, rotate, steps, Veff, v, arp.euclidRegen | 0);
           const deg = v % N, oct = baseOct + Math.floor(v / N);
           const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[deg] | 0)) / 12);
           _ambKeyTime = cStart;
           const f = _ambNoteFreq(intervals[deg] | 0, oct + carry, notes);
           if (!(f > 0)) continue;
-          const pan = (V === 1) ? layPan : Math.max(-100, Math.min(100, (layPan | 0) + Math.round((v - (V - 1) / 2) * 35)));
+          const pan = (Veff === 1) ? layPan : Math.max(-100, Math.min(100, (layPan | 0) + Math.round((v - (Veff - 1) / 2) * 35)));
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
               let hit = vpat[slot] === 1;
@@ -2812,18 +2818,19 @@
               }
               if (!hit) continue;
               if (restP > 0 && rnd() * 100 < restP) continue;
-              const at = cStart + (bar * steps + slot) * slotSec;
-              if (at < tFrom || at >= tTo) continue;
-              const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
-              ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
-              if (dmod) ap._detuneMod = dmod;
-              _ambKeyTime = at;
-              try { playNote(f, ap, _ambVaryLen(lenMs, arp.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
-              cap++;
-              if (cap >= 256) break;
+              hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, pan: pan, dur: _ambVaryLen(lenMs, arp.lenVary, rnd) });
             }
-            if (cap >= 256) break;
           }
+        }
+        if (maxEv > 0 && hits.length > maxEv) { hits.sort((a, b) => a.at - b.at); hits.length = maxEv; }
+        for (const hh of hits) {
+          if (hh.at < tFrom || hh.at >= tTo) continue;
+          const ap = _ambApplyAdsr(_ambMotifParams(lenMs, hh.pan, arp.tone), arp);
+          ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
+          if (dmod) ap._detuneMod = dmod;
+          _ambKeyTime = hh.at;
+          try { playNote(hh.f, ap, hh.dur, hh.at, dest, undefined, _E.laneIdx()); } catch (e) {}
+          cap++; if (cap >= 256) break;
         }
       }
       st.lastAt = tTo;
@@ -7135,7 +7142,7 @@
       const euclid = !!(inst && inst.euclid);
       const rowOf = (suf) => { const e = _ambGet(E, stem + suf); return (e && e.closest) ? e.closest('.ambient-ctrl') : null; };
       const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
-      ['pulses', 'steps', 'rotate', 'euclidVoices', 'euclidregen', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      ['pulses', 'steps', 'rotate', 'euclidVoices', 'euclidregen', 'maxPitches', 'maxEvents', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       ['randomness'].forEach(s => setRow(s, !euclid));
       setRow('rate', !euclid);
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
@@ -7864,7 +7871,7 @@
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars

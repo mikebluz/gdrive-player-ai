@@ -5923,9 +5923,12 @@
         }
         // Highlight the When cell that's playing THIS cycle. One When step gates
         // one whole unit, so the audible cycle index advances by one each time the
-        // bar wraps; reset to 0 when the layer (re)starts. The cell at
-        // cycle % patternLen gets `.cur` (cleared when the layer is idle).
-        if (active && !wasActive) el._whenCycle = 0;
+        // bar wraps. Start at -1 (NOT 0): the layer goes active during the ~lead
+        // BEFORE the first unit sounds, and the wrap at the first unit's onset
+        // bumps the count — starting at 0 made the cursor lead the audio by one
+        // unit on every layer. At -1 the first onset's wrap lands on cell 0, in
+        // sync with the audio. Nothing is highlighted during the pre-onset lead.
+        if (active && !wasActive) el._whenCycle = -1;
         else if (wrapped) el._whenCycle = (el._whenCycle | 0) + 1;
         _ambPaintWhenCursor(el, active, el._whenCycle | 0);
       });
@@ -6391,7 +6394,7 @@
       const cells = grid.querySelectorAll('.ambient-when-cell');
       const n = cells.length;
       if (!n) return;
-      const cur = active ? (((cycle % n) + n) % n) : -1;
+      const cur = (active && cycle >= 0) ? (((cycle % n) + n) % n) : -1;   // <0 = pre-onset lead → no highlight
       if (grid._ambCurIdx === cur) return;            // unchanged → no DOM churn
       if (grid._ambCurIdx >= 0 && cells[grid._ambCurIdx]) cells[grid._ambCurIdx].classList.remove('cur');
       if (cur >= 0 && cells[cur]) cells[cur].classList.add('cur');

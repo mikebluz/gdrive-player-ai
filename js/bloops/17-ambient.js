@@ -3662,7 +3662,7 @@
             e.delay.connect(tail); tail = e.delay;
           }
           if (wantDist) {
-            if (!e.dist) e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: '4x' });
+            if (!e.dist) e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: _ambDistOversample() });
             try { e.dist.disconnect(); } catch (x) {}
             e.dist.connect(tail); tail = e.dist;
           }
@@ -3682,6 +3682,24 @@
         if (e.revSend) e.revSend.gain.value = Math.max(0, Math.min(1, (lc.revSend | 0) / 100));
       } catch (x) {}
       try { _ambApplyEq(layer, lc); } catch (x) {}
+      try { _ambNormalizeDistOversample(); } catch (x) {}
+    }
+    // Oversampled waveshaping (Tone.Distortion oversample) is costly; scale its
+    // quality DOWN as more layers run distortion at once so a fully-FX'd stack
+    // doesn't overload the audio render thread (the "glitchy → cut out" failure).
+    // 1 dist layer = 4x (best), 2-3 = 2x, 4+ = none. `extra` counts a node about
+    // to be created but not yet in _E.mod.
+    function _ambDistOversample(extra) {
+      let n = (extra | 0);
+      try { const m = _E && _E.mod; if (m) for (const k in m) { if (m[k] && m[k].dist) n++; } } catch (e) {}
+      return (n >= 4) ? 'none' : (n >= 2) ? '2x' : '4x';
+    }
+    // Re-level every live distortion node to the count-appropriate oversample
+    // (run after any FX add/remove). Cheap: only writes when the level changes.
+    function _ambNormalizeDistOversample() {
+      const m = _E && _E.mod; if (!m) return;
+      const ov = _ambDistOversample(0);
+      for (const k in m) { const d = m[k] && m[k].dist; if (d && d.oversample !== ov) { try { d.oversample = ov; } catch (e) {} } }
     }
     // Lazy per-layer EQ: splice an EQ3 between vcf and vca only while a band is
     // non-zero; dispose it when the layer returns to flat so a stack of flat

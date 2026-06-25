@@ -5945,6 +5945,7 @@
     // that list every iteration, so a change lands on the NEXT pass — the
     // "edit the queued iteration" model. Generation is untouched (display layer).
     let _ambNoteEd = null;   // { E, key, index } currently being edited
+    let _ambNoteEdOpenedAt = 0;
     function _ambNoteEditorEl() {
       let el = document.getElementById('ambient-note-editor');
       if (el) return el;
@@ -5966,10 +5967,13 @@
         if (!b) return; e.stopPropagation();
         _ambNoteEditOp(b.dataset.op);
       });
-      // Outside click / scroll dismisses (capture phase: runs before the panel's
-      // own bubble handlers, which stopPropagation on the chips themselves).
+      // Outside click dismisses (capture phase: runs before the panel's own
+      // bubble handlers, which stopPropagation on the chips themselves). The
+      // time guard prevents the very tap that OPENED the editor from also
+      // closing it (some touch stacks retarget the synthesized click).
       document.addEventListener('click', (e) => {
         if (!_ambNoteEd) return;
+        if (_ambNoteEdOpenedAt && ((typeof performance !== 'undefined' ? performance.now() : 0) - _ambNoteEdOpenedAt) < 300) return;
         if (e.target.closest && (e.target.closest('#ambient-note-editor') ||
             e.target.closest('.ambient-np-note') || e.target.closest('.ambient-np-add'))) return;
         _ambCloseNoteEditor();
@@ -6009,6 +6013,7 @@
     }
     function _ambOpenNoteEditor(E, key, index, anchorEl) {
       _ambNoteEd = { E: E, key: key, index: index };
+      _ambNoteEdOpenedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
       _ambNoteEditorEl();
       _ambNoteEdRefresh();
       if (_ambNoteEd) _ambPositionNoteEditor(anchorEl || _ambNoteChipEl(E, key, index));

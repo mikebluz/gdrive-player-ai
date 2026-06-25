@@ -2717,7 +2717,12 @@
       // the raw interval to _ambNoteFreq still applies scale microtuning.
       const d = idx % N, o = Math.floor(idx / N);
       const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[d] | 0)) / 12);
-      const f = _ambNoteFreq(intervals[d] | 0, base + o + carry, notes);
+      // Pitch vary: stochastic ±1-octave drift per sounding note (gated → no RNG
+      // consumed at 0, so the default stream stays harness-identical).
+      let octV = 0;
+      const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));
+      if (pVary > 0 && _ambRand() * 100 < pVary) octV = (_ambRand() < 0.5 ? -1 : 1);
+      const f = _ambNoteFreq(intervals[d] | 0, base + o + carry + octV, notes);
       if (f == null) return;
       const lenMs = Math.max(40, arp.lengthMs | 0);
       const pan = _ambLayerPan(arp);
@@ -2794,6 +2799,7 @@
       // events limits the total note-events per unit (keep the EARLIEST). 0 = off.
       const Veff = ((arp.maxPitches | 0) > 0) ? Math.max(1, Math.min(V, arp.maxPitches | 0)) : V;
       const maxEv = (arp.maxEvents | 0) > 0 ? (arp.maxEvents | 0) : 0;
+      const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));   // ±1-octave drift per hit (gated)
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         if (!_ambCondFires(arp.when, c)) continue;
         const cStart = st.startAt + c * loopSec;
@@ -2806,8 +2812,8 @@
           const deg = v % N, oct = baseOct + Math.floor(v / N);
           const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[deg] | 0)) / 12);
           _ambKeyTime = cStart;
-          const f = _ambNoteFreq(intervals[deg] | 0, oct + carry, notes);
-          if (!(f > 0)) continue;
+          const f0 = _ambNoteFreq(intervals[deg] | 0, oct + carry, notes);
+          if (!(f0 > 0)) continue;
           const pan = (Veff === 1) ? layPan : Math.max(-100, Math.min(100, (layPan | 0) + Math.round((v - (Veff - 1) / 2) * 35)));
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
@@ -2818,6 +2824,9 @@
               }
               if (!hit) continue;
               if (restP > 0 && rnd() * 100 < restP) continue;
+              // Pitch vary: per-hit ±1-octave drift (gated → no RNG at 0).
+              let f = f0;
+              if (pVary > 0 && rnd() * 100 < pVary) { const sh = (rnd() < 0.5 ? -1 : 1); const ff = _ambNoteFreq(intervals[deg] | 0, oct + carry + sh, notes); if (ff > 0) f = ff; }
               hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, pan: pan, dur: _ambVaryLen(lenMs, arp.lenVary, rnd) });
             }
           }
@@ -7904,7 +7913,7 @@
         ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
@@ -7963,7 +7972,7 @@
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
       if (type === 'arp') return Object.assign(base, {
         tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1, dir: 'up' }], sel: 0,
-        dir: 'up', randomness: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
+        dir: 'up', randomness: 0, pitchVary: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
         lengthMs: 220, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.arp,
       });
       // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls

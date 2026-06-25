@@ -56,7 +56,7 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
  Prog playback       ┘     Volume(lane.vol) ─► Panner                   │
  Per-lane BLOOM ─► layer        │                                       │
    mod chain ────────────────┐  ├─► laneSumBus ─► masterBus   (DRY)     │
-   (vcf → vca → GATE,         │  │                                      │
+   (vcf → EQ3 → vca → GATE,   │  │                                      │
     per-layer delay/dist,     └──┤                                      │
     Bloom Freeverb) ─────────────┤                                     ▼
                                   └─► lane send gains ───►  ┌────────────────────────┐
@@ -128,8 +128,10 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   bypasses all of these sends; per-lane Bloom (`_laneEng`) rides the active lane's bus and
   inherits that lane's sends.
 - **Each Bloom layer chain ends in a dedicated DRY output GATE.** The per-layer mod chain is
-  `voices → vcf → vca → gate → [dist] → [delay] → bus`, with the layer's reverb send tapped
-  off the **vca (pre-gate)**. The `gate` is a plain `Gain(1)` that never has an LFO connected
+  `voices → vcf → EQ3 → vca → gate → [dist] → [delay] → bus`, with the layer's reverb send
+  tapped off the **vca (pre-gate)**. The `EQ3` is the per-layer 3-band EQ (0 dB = transparent);
+  an FFT `Analyser` side-taps its output to drive the live band meters in the layer's Mix → EQ
+  panel. The `gate` is a plain `Gain(1)` that never has an LFO connected
   (unlike `vca`, whose gain carries the VCA tremolo when its mod depth > 0). That lets Queue
   mode ramp the gate to 0 at an exact iteration boundary to silence the dry voices the
   look-ahead scheduler already committed past it — a clean, click-free STOP that a

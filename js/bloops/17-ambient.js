@@ -3454,12 +3454,19 @@
         // (dist/delay) re-route the gate's out.
         const gate = new Tone.Gain(1).connect(out);
         const vca = new Tone.Gain(1).connect(gate);
-        const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 }).connect(vca);
+        // Per-layer 3-band EQ (#1) sits between the filter and the VCA: voice →
+        // vcf → eq → vca → gate → FX → bus. 0 dB by default = transparent. An FFT
+        // analyser side-taps the EQ output to drive the live band meters.
+        let eq = null, eqAnalyser = null;
+        try { eq = new Tone.EQ3(0, 0, 0); } catch (e) { eq = null; }
+        const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 });
+        if (eq) { vcf.connect(eq); eq.connect(vca); try { eqAnalyser = new Tone.Analyser('fft', 64); eq.connect(eqAnalyser); } catch (e) { eqAnalyser = null; } }
+        else { vcf.connect(vca); }
         const revSend = new Tone.Gain(0);
         vca.connect(revSend);
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, vca, gate, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, eq, eqAnalyser, vca, gate, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
@@ -3505,18 +3512,27 @@
           e.delay.wet.value = Math.max(0, Math.min(1, (dly.mix | 0) / 100));
         }
         if (e.revSend) e.revSend.gain.value = Math.max(0, Math.min(1, (lc.revSend | 0) / 100));
+        if (e.eq && lc.eq) {
+          const cl = (v) => Math.max(-24, Math.min(24, (v | 0)));
+          if (e.eq.low) e.eq.low.value = cl(lc.eq.low);
+          if (e.eq.mid) e.eq.mid.value = cl(lc.eq.mid);
+          if (e.eq.high) e.eq.high.value = cl(lc.eq.high);
+        }
       } catch (x) {}
     }
     function _ambUpdateMod(layer, cfg) {
       const e = _E.mod[layer];
       if (!e) return;
       ['vca', 'vco', 'vcf'].forEach(tg => _ambSyncTarget(e, layer, tg, cfg));
+      if (e.eq) { const L = _ambLayerByKey(_E, layer); if (L && L.eq) { const cl = (v) => Math.max(-24, Math.min(24, (v | 0))); if (e.eq.low) e.eq.low.value = cl(L.eq.low); if (e.eq.mid) e.eq.mid.value = cl(L.eq.mid); if (e.eq.high) e.eq.high.value = cl(L.eq.high); } }
     }
     function _ambTeardownMod(layer) {
       const e = _E.mod[layer];
       if (!e) return;
       ['vca', 'vco', 'vcf'].forEach(tg => { if (e.src && e.src[tg]) _ambDisposeSrc(e.src[tg]); });
       try { e.vcf && e.vcf.dispose(); } catch (x) {}
+      try { e.eq && e.eq.dispose(); } catch (x) {}
+      try { e.eqAnalyser && e.eqAnalyser.dispose(); } catch (x) {}
       try { e.vca && e.vca.dispose(); } catch (x) {}
       try { e.gate && e.gate.dispose(); } catch (x) {}
       try { e.dist && e.dist.dispose(); } catch (x) {}
@@ -6014,6 +6030,7 @@
         _ambPaintWhenCursor(el, active, el._whenCycle | 0);
       });
       try { _ambUpdatePianos(E, now); } catch (e) {}   // light any expanded piano keyboards
+      try { _ambUpdateEqMeters(E); } catch (e) {}       // light any open EQ band meters
       // Read-only note readout (per-layer live line + Now Playing panel), driven
       // off the captured per-layer note buffers (E.cap). Throttled while playing;
       // runs once on stop to clear. No generation involvement — display only.
@@ -6516,6 +6533,41 @@
         });
       });
     }
+    // ===== Per-layer EQ (#1) — live band meters + value sync ===========
+    // Resolve the layer key for any control inside a layer card.
+    function _ambKeyOfCard(lay) {
+      if (!lay) return null;
+      const kel = lay.querySelector('[data-nkey]') || lay.querySelector('[data-ukey]') || lay.querySelector('[data-ckey]');
+      return kel ? (kel.dataset.nkey || kel.dataset.ukey || kel.dataset.ckey) : (lay.dataset.inst || null);
+    }
+    // Light each OPEN EQ panel's band meters by that band's energy, from the
+    // layer's FFT analyser (continuous: louder → more intense, hue shifts up).
+    function _ambUpdateEqMeters(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const panels = host.querySelectorAll('details.ambient-eq[open]'); if (!panels.length) return;
+      panels.forEach(d => {
+        const key = _ambKeyOfCard(d.closest('.ambient-layer')); if (!key) return;
+        const e = E.mod && E.mod[key], an = e && e.eqAnalyser; if (!an) return;
+        let data; try { data = an.getValue(); } catch (x) { return; }
+        const n = data && data.length; if (!n) return;
+        const loEnd = Math.max(1, Math.floor(n * 0.12)), midEnd = Math.max(loEnd + 1, Math.floor(n * 0.5));
+        const avg = (a, b) => { let s = 0, c = 0; for (let i = a; i < b && i < n; i++) { const v = data[i]; if (isFinite(v)) { s += v; c++; } } return c ? s / c : -120; };
+        const norm = (db) => Math.max(0, Math.min(1, (db + 90) / 78));   // ~-90..-12 dB → 0..1
+        const bands = { low: norm(avg(0, loEnd)), mid: norm(avg(loEnd, midEnd)), high: norm(avg(midEnd, n)) };
+        d.querySelectorAll('.ambient-eq-meter').forEach(m => { m.style.setProperty('--e', (bands[m.dataset.band] || 0).toFixed(2)); });
+      });
+    }
+    // Set each EQ slider + dB readout from the layer's stored eq (on build/restore).
+    function _ambSyncEq(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-eq-sl').forEach(sl => {
+        const key = _ambKeyOfCard(sl.closest('.ambient-layer')); if (!key) return;
+        const L = _ambLayerByKey(E, key);
+        const b = sl.dataset.band, v = (L && L.eq && Number.isFinite(L.eq[b])) ? (L.eq[b] | 0) : 0;
+        sl.value = String(v);
+        const db = sl.parentNode && sl.parentNode.querySelector('.ambient-eq-db[data-band="' + b + '"]'); if (db) db.textContent = (v > 0 ? '+' : '') + v;
+      });
+    }
     // Mark the currently-playing When cell for the layer that owns playhead `el`.
     // `cycle` is the audible iteration count; the live cell is cycle % length.
     function _ambPaintWhenCursor(el, active, cycle) {
@@ -6828,6 +6880,23 @@
         '<div class="ambient-mod-target"><div class="ambient-mod-sub">Distortion</div>' +
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
           _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') + '</div>' +
+      '</details>' + _ambEqUi();
+    // Per-layer 3-band EQ subsection (#1) — lives inside the Mix group (after FX).
+    // The layer key is read from the closest .ambient-layer at interaction time, so
+    // ONE delegated handler + one meter loop drive every layer's EQ. Each band has
+    // a live meter that lights continuously by that band's energy (louder = more
+    // intense), driven by the layer's FFT analyser.
+    const _ambEqUi = () =>
+      '<details class="ambient-mod ambient-eq"><summary class="ambient-mod-head">EQ · 3-band</summary>' +
+        ['low', 'mid', 'high'].map(b => {
+          const lab = b === 'low' ? 'Lo' : b === 'mid' ? 'Mid' : 'Hi';
+          return '<div class="ambient-eq-row">' +
+            '<span class="ambient-eq-lab">' + lab + '</span>' +
+            '<span class="ambient-eq-meter" data-band="' + b + '"><i></i></span>' +
+            '<input type="range" class="ambient-eq-sl" data-band="' + b + '" min="-24" max="24" step="1" value="0" aria-label="' + lab + ' gain" />' +
+            '<span class="ambient-eq-db" data-band="' + b + '">0</span>' +
+          '</div>';
+        }).join('') +
       '</details>';
     // "Rate" selector — a layer's speed as a note division of the global BPM
     // ('' = Free, follow the ms Interval). Used by Beat layers.
@@ -9790,6 +9859,20 @@
       const _unitRefresh = () => { try { _ambSyncLayerUnits(E); } catch (e) {} };
       host.addEventListener('input', _unitRefresh);
       host.addEventListener('change', _unitRefresh);
+      // Per-layer EQ sliders (#1) — one delegated handler for every layer. The
+      // layer key is read from the card, so primaries/extras/seq/sample all work.
+      host.addEventListener('input', (e) => {
+        const sl = e.target;
+        if (!sl || !sl.classList || !sl.classList.contains('ambient-eq-sl')) return;
+        _E = E; const key = _ambKeyOfCard(sl.closest('.ambient-layer')); if (!key) return;
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const band = sl.dataset.band, v = Math.max(-24, Math.min(24, parseInt(sl.value, 10) || 0));
+        L.eq = L.eq || { low: 0, mid: 0, high: 0 }; L.eq[band] = v;
+        const db = sl.parentNode && sl.parentNode.querySelector('.ambient-eq-db[data-band="' + band + '"]'); if (db) db.textContent = (v > 0 ? '+' : '') + v;
+        try { _ambApplyLayerFx(key, L); } catch (x) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+      try { _ambSyncEq(E); } catch (e) {}   // initial EQ slider values from cfg
       _ambFreezeSyncAll(E);
       _ambSoloSyncAll(E);
 

@@ -2893,6 +2893,19 @@
     .ampk-b { position: absolute; top: 0; height: 62%; background: #14141d; border: 1px solid #000; border-radius: 0 0 3px 3px; z-index: 2; }
     .ampk-w.lit { background: rgba(127, 214, 196, calc(0.3 + 0.7 * var(--lit, 1))); }
     .ampk-b.lit { background: rgba(127, 214, 196, calc(0.45 + 0.55 * var(--lit, 1))); border-color: #7fd6c4; }
+    /* Per-layer 3-band EQ (#1) — in the Mix group. Each row: label · live band
+       meter · gain slider · dB. The meter fills + shifts hue continuously with
+       that band's energy (var(--e), 0..1): dim teal when quiet → bright amber loud. */
+    .ambient-eq-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    .ambient-eq-lab { flex: 0 0 28px; font: 600 0.7rem 'Segoe UI', sans-serif; color: #9a9ac0; }
+    .ambient-eq-meter { flex: 0 0 56px; height: 8px; border-radius: 4px; background: #16161f; border: 1px solid #20202e; overflow: hidden; }
+    .ambient-eq-meter > i {
+      display: block; height: 100%; width: calc(var(--e, 0) * 100%);
+      background: hsl(calc(170 - var(--e, 0) * 140), 85%, calc(42% + var(--e, 0) * 16%));
+      transition: width 0.06s linear;
+    }
+    .ambient-eq-sl { flex: 1 1 auto; min-width: 0; }
+    .ambient-eq-db { flex: 0 0 30px; text-align: right; font: 600 0.68rem 'JetBrains Mono', monospace; color: #7fd6c4; }
     /* Separator between consecutive unit colour-groups in a notes readout. */
     .ambient-np-sep { color: #4a4a5e; }
     /* Locked unit: one stable colour (no per-unit cycling, no next group). */

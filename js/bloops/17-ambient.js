@@ -5998,20 +5998,27 @@
     }
     function _ambPositionNoteEditor(anchorEl) {
       const el = document.getElementById('ambient-note-editor'); if (!el || !anchorEl) return;
-      const r = anchorEl.getBoundingClientRect();
       // Inline !important beats ANY selector-based rule (incl. the view-mode
       // `body.<mode> > *:not(...) { display:none !important }` rules that hide
       // body-attached overlays). This is why the popover stayed hidden.
       el.style.visibility = 'hidden';
       el.style.setProperty('display', 'block', 'important');
       el.classList.add('open');
+      // The popover is position:fixed, but the app uses backdrop-filter in places,
+      // which makes an ancestor a CONTAINING BLOCK — so left/top stop being
+      // viewport-relative and the menu drifts (down, with scroll). Measure where
+      // (0,0) actually lands, then offset by that so it hits true viewport coords.
+      el.style.left = '0px'; el.style.top = '0px';
+      const base = el.getBoundingClientRect();
+      const r = anchorEl.getBoundingClientRect();
       const ew = el.offsetWidth, eh = el.offsetHeight;
       let left = r.left + r.width / 2 - ew / 2;
       let top = r.bottom + 6;
       if (top + eh > window.innerHeight - 6) top = r.top - eh - 6;   // flip above if no room below
       left = Math.max(6, Math.min(left, window.innerWidth - ew - 6));
       top = Math.max(6, top);
-      el.style.left = left + 'px'; el.style.top = top + 'px';
+      el.style.left = (left - base.left) + 'px';
+      el.style.top = (top - base.top) + 'px';
       el.style.visibility = '';
     }
     function _ambNoteChipEl(E, key, index) {

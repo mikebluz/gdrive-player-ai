@@ -2751,6 +2751,10 @@
       font-size: 0.9rem; line-height: 1; padding: 0 2px;
     }
     .ambient-mixer.collapsed .ambient-mixer-strip { display: none; }
+    /* Master Fade In/Out controls under the mixer strip; hidden when collapsed. */
+    .ambient-mixer.collapsed .ambient-mixer-fades { display: none; }
+    .ambient-mixer-fades { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 2px; margin-top: 4px; border-top: 1px solid #20202e; }
+    .ambient-mixer-fades .ambient-mod-sub { margin: 2px 0; }
     .ambient-mixer-strip {
       display: flex; flex-wrap: nowrap; gap: 10px;
       overflow-x: auto; overflow-y: hidden;

@@ -60,6 +60,8 @@
         keyMode:  'transpose',
         progRateMs: 4000,               // ms per chord for "Progression" note sources
         freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
+        fadeInMs: 0,                    // Master Fade In: ramp all audio up over N ms on play (0 = off)
+        fadeOutMs: 0,                   // Master Fade Out: ramp all audio down over N ms from Finalize (0 = off)
         // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
         // size → Freeverb roomSize (0..1); damp → dampening Hz (higher = darker).
         reverb: { size: 80, damp: 45 },
@@ -348,6 +350,10 @@
       if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.freezeLenMs)) cfg.freezeLenMs = d.freezeLenMs;
+      if (!Number.isFinite(cfg.fadeInMs)) cfg.fadeInMs = d.fadeInMs;
+      cfg.fadeInMs = Math.max(0, Math.min(30000, cfg.fadeInMs | 0));
+      if (!Number.isFinite(cfg.fadeOutMs)) cfg.fadeOutMs = d.fadeOutMs;
+      cfg.fadeOutMs = Math.max(0, Math.min(30000, cfg.fadeOutMs | 0));
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
       else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
       ['bed','motif','texture','beat'].forEach(layer => {
@@ -4890,6 +4896,8 @@
     // limiter + soft-clip) so a recording matches what's heard. Falls back to
     // the (now output-orphaned) Tone limiter only if the clipper is absent.
     function _ambMasterTapNode() {
+      // Tap the post-fade node so a master fade-out is part of the capture.
+      if (typeof masterFade !== 'undefined' && masterFade) return masterFade;
       if (typeof masterClipper !== 'undefined' && masterClipper) return masterClipper;
       if (typeof masterLimiter !== 'undefined' && masterLimiter) return masterLimiter;
       return null;
@@ -5409,6 +5417,14 @@
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
+      // Master Fade In: ramp the whole mix up from silence over fadeInMs. When
+      // off (0), snap the master fade back to full so a prior capture fade-out
+      // can never leave this play silent.
+      try {
+        const fi = (cfg.fadeInMs | 0);
+        if (fi > 0 && typeof masterFadeIn === 'function') masterFadeIn(fi / 1000);
+        else if (typeof masterFadeReset === 'function') masterFadeReset();
+      } catch (e) {}
       E._playStartMs = performance.now();   // footer elapsed-time anchor
       // Start the interval (and play state / button) IMMEDIATELY so playback is
       // responsive and the Play button flips to Stop at once. The interval keeps
@@ -5441,6 +5457,10 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      // Restore the master fade to full on a normal stop (so a stop mid fade-in
+      // can't leave it partial). Skip while capturing — the capture's fade-out is
+      // in progress and _ambCaptureFinish resets it once the take is done.
+      try { if (!E.capRec && typeof masterFadeReset === 'function') masterFadeReset(); } catch (e) {}
       E._playStartMs = null;   // reset footer elapsed time to 00:00:00
       E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
@@ -5886,6 +5906,14 @@
       r.finalizing = true;
       E.windingDown = true;
       _ambRefreshCaptureBtn(E);
+      // Master Fade Out: ramp the whole mix down to silence over fadeOutMs from
+      // this Finalize press. The fade is captured (the recorder taps the post-fade
+      // node) and the silence detector below ends the take once it reaches zero.
+      try {
+        const cfg = E.getCfg();
+        const fo = cfg ? (cfg.fadeOutMs | 0) : 0;
+        if (fo > 0 && typeof masterFadeOut === 'function') masterFadeOut(fo / 1000);
+      } catch (e) {}
       if (typeof showToast === 'function') showToast('Finalizing — winding down, ending on silence…');
       const buf = r.analyser ? new Float32Array(r.analyser.fftSize) : null;
       // End the take only once the output has genuinely decayed to (near) zero —
@@ -5962,6 +5990,10 @@
         try { r.tap.disconnect(r.dest); } catch (e) {}
       }
       try { _ambStopGenerator(E); } catch (e) {}
+      // Restore the master output to full now the take (with its baked-in fade-out)
+      // is captured — otherwise a fade-out would leave live taps / the next play
+      // silent until something calls masterFadeIn/Reset.
+      try { if (typeof masterFadeReset === 'function') masterFadeReset(); } catch (e) {}
       E.windingDown = false;
       E.capRec = null;
       _ambRefreshCaptureBtn(E);
@@ -9777,6 +9809,8 @@
         hint('ambient-key-hint', cfg.keyOn ? (kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')) : 'off'); }
       set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
+      set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
+      set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
       // Master Warmth (global FX) reflection — master Bloom only; these IDs
       // don't exist on lane Bloom, so the guarded set()/hint() no-op there.
@@ -10031,6 +10065,13 @@
             '<span class="ambient-mod-sub">Mixer</span>' +
           '</div>' +
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
+          // Master Fade In/Out — ramp ALL audio up on play and down from the
+          // capture Finalize press (0 = off). Hidden with the strip when collapsed.
+          '<div class="ambient-mixer-fades">' +
+            '<div class="ambient-mod-sub">Master fade</div>' +
+            tm('Fade In', 'ambient-master-fadein', 0, 30000, 100, 0) +
+            tm('Fade Out', 'ambient-master-fadeout', 0, 30000, 100, 0) +
+          '</div>' +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           grp('Voice') +
@@ -10368,6 +10409,11 @@
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 4000; c.progRateMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       { const el = G('ambient-freeze-len'), vEl = G('ambient-freeze-len-v');
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 10000; c.freezeLenMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
+      // Master Fade In / Out (mixer panel) — ms; applied on play / Finalize.
+      { const el = G('ambient-master-fadein'), vEl = G('ambient-master-fadein-v');
+        if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 0; c.fadeInMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
+      { const el = G('ambient-master-fadeout'), vEl = G('ambient-master-fadeout-v');
+        if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 0; c.fadeOutMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       // Reverb Size / Damp → live reverb node.
       ['size', 'damp'].forEach(key => {
         const el = G('ambient-reverb-' + key); if (!el) return;

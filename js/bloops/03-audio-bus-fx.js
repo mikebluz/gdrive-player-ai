@@ -537,7 +537,31 @@
     };
     const masterClipper = new Tone.WaveShaper(_masterClipCurve, 4096);
     try { masterClipper.oversample = '4x'; } catch (e) {}
-    masterClipper.toDestination();
+    // Master FADE — the FINAL output gain. A fade-in (on play) / fade-out (on
+    // capture Finalize) ramps this, so it affects ALL audio AND is included in a
+    // capture (the recorder taps this node via _ambMasterTapNode). 1 = full.
+    const masterFade = new Tone.Gain(1);
+    masterClipper.connect(masterFade);
+    masterFade.toDestination();
+    // Ramp the master fade gain. masterFadeIn starts from silence; masterFadeOut
+    // ramps from the current level to 0; masterFadeReset snaps back to full (so a
+    // prior fade-out can never leave the next play silent). All no-op if the node
+    // never built. Times are seconds; <=0 applies instantly.
+    function masterFadeTo(target, seconds, fromZero) {
+      if (typeof masterFade === 'undefined' || !masterFade) return;
+      try {
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const s = Math.max(0, +seconds || 0);
+        const g = masterFade.gain;
+        g.cancelScheduledValues(now);
+        g.setValueAtTime(fromZero ? 0 : (g.value != null ? g.value : 1), now);
+        if (s > 0.005) g.linearRampToValueAtTime(target, now + s);
+        else g.setValueAtTime(target, now);
+      } catch (e) {}
+    }
+    function masterFadeIn(seconds) { masterFadeTo(1, seconds, true); }
+    function masterFadeOut(seconds) { masterFadeTo(0, seconds, false); }
+    function masterFadeReset() { masterFadeTo(1, 0, false); }
     // Master bus dynamics: a GENTLE glue compressor softens broad dynamic
     // swings, then the soft-knee clipper above guarantees the true-peak
     // ceiling. The limiter stays as belt-and-suspenders before the clipper.
@@ -893,7 +917,7 @@
     // to masterBus. Built lazily by rebuildMasterChain on first call.
     const fxSendBus = {};
     // Send/return wiring. Master chain is short and contains NO FX:
-    //   masterBus → masterCompressor → masterVolume → masterLimiter → masterClipper → destination
+    //   masterBus → masterCompressor → masterVolume → masterLimiter → masterClipper → masterFade → destination
     // Each master FX is a parallel return: per-lane send gains accumulate
     // into fxSendBus[name], which feeds the FX with wet=1 (always fully
     // wet — the per-lane send level controls how much of the lane signal

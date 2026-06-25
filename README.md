@@ -115,8 +115,12 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   Game, live Prog) and the per-lane bus from `getLaneBus(laneIdx)` (anything sequenced:
   recorded steps, Prog playback) both feed `masterBus`, which is the only path to the
   speakers: a short series chain `masterBus → Master Warmth stage → masterCompressor →
-  masterVolume → masterLimiter → masterClipper`. The 10 effects are **not** in this series
-  chain — each is a parallel send/return (see next note).
+  masterVolume → masterLimiter → masterClipper → masterFade → destination`. The 10 effects
+  are **not** in this series chain — each is a parallel send/return (see next note).
+- **`masterFade` is the final output gain** (1 = full). `masterFadeIn(sec)` ramps it up from
+  silence on play, `masterFadeOut(sec)` ramps it to 0 from the capture Finalize press
+  (driven by the mixer's Master Fade In/Out controls, `cfg.fadeInMs`/`cfg.fadeOutMs`).
+  Capture taps this node (`_ambMasterTapNode`), so a fade-out is part of the recording.
 - **The 10 effects are parallel send/return, not an in-series chain.** There is exactly one
   shared instance of each effect (one reverb, one delay, …). Two sets of send gains feed
   them: per-lane (`lane.sends[name]`, from each lane bus — and from Mix-key sliders in the

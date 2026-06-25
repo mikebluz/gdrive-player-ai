@@ -6196,6 +6196,7 @@
       });
       try { _ambUpdatePianos(E, now); } catch (e) {}   // light any expanded piano keyboards
       try { _ambUpdateEqMeters(E); } catch (e) {}       // light any open EQ band meters
+      try { _ambDrawRolls(E, now); } catch (e) {}       // draw the per-layer live piano rolls
       // Read-only note readout (per-layer live line + Now Playing panel), driven
       // off the captured per-layer note buffers (E.cap). Throttled while playing;
       // runs once on stop to clear. No generation involvement — display only.
@@ -6332,8 +6333,15 @@
           }
           html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
         }
-        if (el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; }
-        if (html) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, html: html }); }
+        // Line: LOCKED → editable chips; PLAYING → piano-roll canvas (time × pitch,
+        // drawn each frame by _ambDrawRolls); else empty. The Now Playing panel
+        // keeps the text form (pushed below) regardless.
+        if (lockEd) {
+          if (el._mode !== 'chips' || el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; el._mode = 'chips'; }
+        } else if (layerOn) {
+          if (el._mode !== 'roll') { el.innerHTML = ''; const cv = document.createElement('canvas'); cv.className = 'ambient-np-roll'; el.appendChild(cv); el._mode = 'roll'; el._npHtml = null; }
+        } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
+        if (html) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: html }); }
       });
       _ambRenderNowPlaying(E, rows, playing);
       // If the open note editor's target note no longer exists (unlocked, deleted,
@@ -6342,6 +6350,52 @@
         const still = host.querySelector('.ambient-np-note[data-ekey="' + _ambNoteEd.key + '"][data-ei="' + _ambNoteEd.index + '"]');
         if (!still) _ambCloseNoteEditor();
       }
+    }
+    // ===== Live piano-roll (per-layer line) ============================
+    // Draw each playing layer's notes as a scrolling piano roll: X = time
+    // (window ≈ one unit, playhead near the right), Y = pitch (auto-ranged), each
+    // note a block sized by its duration + shaded by velocity. Beat lanes range
+    // over their drum pitches. Driven every frame from the viz rAF off E.cap.
+    function _ambDrawRoll(cv, E, key, now) {
+      const w = cv.clientWidth | 0, h = cv.clientHeight | 0;
+      if (!w || !h) return;
+      if (cv.width !== w) cv.width = w; if (cv.height !== h) cv.height = h;
+      const ctx = cv.getContext('2d'); if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      const cap = (E.cap && E.cap[key]) || [];
+      let P = 0; try { P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
+      const W = Math.max(1.5, Math.min(16, P || 1.5));
+      const t0 = now - W * 0.72, t1 = now + W * 0.28;
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const win = cap.filter(e => e && e.freq > 0 && (e.at + Math.max(0.04, (e.dur || 100) / 1000)) > t0 && e.at < t1);
+      let lo = 999, hi = -999;
+      for (const e of win) { const m = Math.round(69 + 12 * Math.log2(e.freq / A)); if (m < lo) lo = m; if (m > hi) hi = m; }
+      if (lo > hi) { lo = 54; hi = 78; }
+      lo -= 2; hi += 2; const span = Math.max(1, hi - lo);
+      const xOf = (t) => (t - t0) / (t1 - t0) * w;
+      const yOf = (m) => h - ((m - lo + 0.5) / span) * h;
+      // playhead
+      const px = xOf(now);
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke();
+      // notes
+      const nh = Math.max(3, Math.min(10, h / span));
+      for (const e of win) {
+        const m = Math.round(69 + 12 * Math.log2(e.freq / A));
+        const x = xOf(e.at), x2 = xOf(e.at + Math.max(0.04, (e.dur || 100) / 1000));
+        const y = yOf(m);
+        const vol = (e.params && Number.isFinite(e.params.volume)) ? Math.max(0, Math.min(1, e.params.volume / 100)) : 0.8;
+        ctx.fillStyle = 'rgba(127,214,196,' + (0.3 + 0.6 * vol).toFixed(2) + ')';
+        ctx.fillRect(x, y - nh / 2, Math.max(2, x2 - x), nh);
+      }
+    }
+    function _ambDrawRolls(E, now) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-notes-live').forEach(el => {
+        if (el._mode !== 'roll') return;
+        const cv = el.querySelector('canvas.ambient-np-roll'); const key = el.dataset.nkey;
+        if (cv && key) { try { _ambDrawRoll(cv, E, key, now); } catch (e) {} }
+      });
     }
     // ===== Note-for-note unit editor (Phase 5 Part 2a) =================
     // Tap a note chip in a LOCKED Bed/Motif unit to open this popover and nudge

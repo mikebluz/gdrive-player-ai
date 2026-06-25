@@ -4455,6 +4455,7 @@
                            // from Shape (which does reset) on the next play.
       E._queuePending = null; E._queueAt = null;   // Queue-mode pending toggles
       E._t0 = null;        // engine grid anchor (set on first tick) for queued-START alignment
+      E._starting = false; // pending deferred-start (waiting on AudioContext resume)
     }
     // Throttled tick-error logger: surfaces a scheduling fault to the console at
     // most ~once/2s (so a per-tick throw doesn't spam) without ever crashing.
@@ -5345,24 +5346,55 @@
       const cfg = E.getCfg();
       if (!cfg) return;
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
-      if (E.timer) return;
+      if (E.timer || E._starting) return;
       _ambResetClocks(E);
       try { _ambRestoreLocks(E); } catch (e) {}   // reopen locked: rebuild lock state from saved config
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
-      E._playStartMs = performance.now();   // footer elapsed-time anchor
-      // The first tick must NOT prevent the interval from starting: if it throws,
-      // setInterval below would never run and playback would be dead forever.
-      try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; }
-      E.timer = setInterval(() => { try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; } }, 150);
-      // The finer ramp clock only runs while ramps exist (started lazily) so a
-      // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
-      // with audio scheduling.
-      _ambStartRampClock(E);
       cfg.playing = true;
       _ambRefreshPlayBtn(E);
       _ambVizKick(E);
+      // Begin the scheduling clock + interval — but ONLY once the AudioContext is
+      // actually 'running'. Pressing Play unlocks/resumes the context, but that
+      // resume is async; if we ran the first tick while still 'suspended' it would
+      // anchor every layer's first voice to a currentTime that's about to jump
+      // forward on resume, so the first onset lands in the past and is dropped.
+      // That cost the first note of each layer — most audible on Bed, whose
+      // iteration is long, so losing its first onset = seconds of silence.
+      const _beginTicks = () => {
+        if (E.timer || !cfg.playing) { E._starting = false; return; } // re-entrant / Stop pressed during the wait
+        E._starting = false;
+        E._t0 = null;                          // re-anchor the grid to the now-running clock
+        E._playStartMs = performance.now();    // footer elapsed-time anchor
+        // The first tick must NOT prevent the interval from starting: if it throws,
+        // setInterval below would never run and playback would be dead forever.
+        try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; }
+        E.timer = setInterval(() => { try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; } }, 150);
+        // The finer ramp clock only runs while ramps exist (started lazily) so a
+        // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
+        // with audio scheduling.
+        _ambStartRampClock(E);
+      };
+      let _ctxRunning = true;
+      try { const _ac = Tone.getContext().rawContext; _ctxRunning = !_ac || _ac.state === 'running'; } catch (e) { _ctxRunning = true; }
+      if (_ctxRunning) {
+        _beginTicks();
+      } else {
+        // Wait for the resume (started by the Play press) before the first tick.
+        // Resolve via Tone.start()'s promise AND a short poll fallback so a
+        // non-resolving promise can't strand playback; whichever fires first wins.
+        E._starting = true;
+        let _begun = false;
+        const _go = () => { if (_begun) return; _begun = true; try { _beginTicks(); } catch (e) {} };
+        try { const p = Tone.start(); if (p && p.then) p.then(_go, _go); } catch (e) {}
+        let _tries = 0;
+        const _poll = setInterval(() => {
+          let st = 'running';
+          try { const ac = Tone.getContext().rawContext; st = ac ? ac.state : 'running'; } catch (e) { st = 'running'; }
+          if (st === 'running' || _begun || ++_tries > 60) { clearInterval(_poll); _go(); }
+        }, 25);
+      }
       try { _ambShapeAnimEnsure(); } catch (e) {}   // spin any in-card Shape wheels
     }
     function _ambStopGenerator(E) {

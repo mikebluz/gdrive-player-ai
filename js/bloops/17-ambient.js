@@ -4782,7 +4782,8 @@
       let A = w.bEnd; while (A < now + 0.001) A += st.loopLen;   // first loop boundary ≥ now
       st.anchor = A; st.scheduledUpto = A;
       st.frozen = true; st.pendingFreezeAt = null; st._lockWin = null;
-      try { _ambFreezeSyncAll(E); } catch (e) {}
+      try { _ambFreezeSyncAll(E); _ambLockSyncAll(E); } catch (e) {}
+      _ambPersistLock(E, key);                          // save the now-engaged lock
       return true;
     }
     // Schedule the frozen layer's looped events that fall in [now, horizon].
@@ -4940,6 +4941,7 @@
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
       if (E.timer) return;
       _ambResetClocks(E);
+      try { _ambRestoreLocks(E); } catch (e) {}   // reopen locked: rebuild lock state from saved config
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
@@ -6025,6 +6027,54 @@
       const r = _ambLockedNotes(t.E, t.key);
       return r ? r.list : null;
     }
+    // ---- Lock persistence (survives reload; project reopens locked) ----
+    // Mirror a layer's live lock into its CONFIG (layer.lockState) so the
+    // workspace save carries it; clear it when the layer is unlocked. Only
+    // lock-initiated state is saved (a transient manual Freeze is not).
+    function _ambSyncLockState(E, key) {
+      const layer = _ambLayerByKey(E, key); if (!layer) return;
+      const ty = String(key).split(':')[0];
+      if (ty === 'bed' || ty === 'motif') {
+        const u = E.unit && E.unit[key];
+        if (u && u.lock && Array.isArray(u.notes) && u.notes.length)
+          layer.lockState = { kind: 'unit', notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+        else delete layer.lockState;
+      } else {
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length)
+          layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
+        else delete layer.lockState;
+      }
+    }
+    function _ambPersistLock(E, key) {
+      try { _ambSyncLockState(E, key); } catch (e) {}
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+    }
+    // Rebuild live lock state from saved layer.lockState on load / play-start, so
+    // a locked+edited layer reopens locked. Runtime locks are never clobbered.
+    function _ambRestoreLocks(E) {
+      const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
+      const each = (key, layer) => {
+        const ls = layer && layer.lockState;
+        if (!ls || !Array.isArray(ls.notes) || !ls.notes.length) return;
+        const ty = String(key).split(':')[0];
+        if (ty === 'bed' || ty === 'motif') {
+          if (E.unit && E.unit[key] && E.unit[key].lock) return;       // runtime wins
+          E.unit = E.unit || {};
+          E.unit[key] = { lock: true, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+        } else {
+          if (E.freeze && E.freeze[key] && E.freeze[key].frozen) return; // runtime wins
+          E.freeze = E.freeze || {};
+          E.freeze[key] = { frozen: true, _lock: true, recording: false, recStart: 0,
+            events: ls.notes.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })),
+            loopLen: ls.loopLen || 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null, pendingFreezeAt: null, _lockWin: null };
+        }
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) each(k, cfg[k]); });
+      (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) each(x.type + ':' + x.id, x); });
+      (cfg.seqs || []).forEach(s => { if (s && s.id != null) each('seq:' + s.id, s); });
+      (cfg.samples || []).forEach(s => { if (s && s.id != null) each('samp:' + s.id, s); });
+    }
     function _ambNoteEdRefresh() {
       const el = document.getElementById('ambient-note-editor'); if (!el || !_ambNoteEd) return;
       const notes = _ambNoteEdNotes();
@@ -6137,6 +6187,7 @@
         if (t.index >= notes.length) t.index = notes.length - 1;
       }
       _ambReemitLockedNext(t.E, t.key);                // apply on the next iteration
+      _ambPersistLock(t.E, t.key);                      // save the edit
       try { _ambUpdateNotesLive(t.E); } catch (e) {}
       if (!_ambNoteEd) return;                          // editor was dismissed by the refresh
       _ambNoteEdRefresh();
@@ -6166,6 +6217,7 @@
       nn[oK] = newOff; nn[dK] = last[dK];
       notes.push(nn);
       _ambReemitLockedNext(E, key);                    // apply on the next iteration
+      _ambPersistLock(E, key);                          // save the added note
       try { _ambUpdateNotesLive(E); } catch (e) {}
       return notes.length - 1;
     }
@@ -9083,6 +9135,7 @@
       _ambRenderExtras(E);   // each of the three renders the mixer in sync
       _ambRenderRamps(E);
       try { _ambSyncLayerUnits(E); } catch (e) {} // header unit-length readouts
+      try { _ambRestoreLocks(E); } catch (e) {}  // reopen locked: rebuild saved lock state so chips/buttons show
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render
       try { _ambLockSyncAll(E); } catch (e) {}   // restore unit-lock button states
@@ -9412,7 +9465,7 @@
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
-        if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
+        if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambPersistLock(E, lb.dataset.lkey); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;

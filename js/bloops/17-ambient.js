@@ -6345,14 +6345,14 @@
           }
           html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
         }
-        // Line: LOCKED → editable chips; PLAYING → text note readout ABOVE the
-        // piano-roll canvas (time × pitch, drawn each frame by _ambDrawRolls);
-        // else empty. The Now Playing panel keeps the text form (pushed below).
+        // Line: LOCKED → editable chips; PLAYING → piano-roll canvas (time × pitch,
+        // with a fixed-width pitch-name gutter on the LEFT — names line up with
+        // their event blocks; drawn each frame by _ambDrawRolls); else empty. The
+        // Now Playing panel keeps the text form (pushed below).
         if (lockEd) {
           if (el._mode !== 'chips' || el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; el._mode = 'chips'; }
         } else if (layerOn) {
-          if (el._mode !== 'roll') { el.innerHTML = '<div class="ambient-np-text"></div><canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
-          if (el._npHtml !== html) { el._npHtml = html; const tx = el.querySelector('.ambient-np-text'); if (tx) tx.innerHTML = html; }
+          if (el._mode !== 'roll') { el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
         } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
         if (html) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: html }); }
       });
@@ -6392,27 +6392,37 @@
       if (init) { lo -= 1; hi += 1; }       // a little headroom, once
       cv._rlo = lo; cv._rhi = hi;
       const span = Math.max(1, hi - lo) + 1;
-      const xOf = (t) => (t - t0) / (t1 - t0) * w;
+      const LBL = 40;                          // fixed-width left pitch-name gutter
+      const xOf = (t) => LBL + (t - t0) / (t1 - t0) * (w - LBL);
       const yOf = (m) => h - ((Math.max(lo, Math.min(hi, m)) - lo + 0.5) / span) * h;
+      const nh = Math.max(6, Math.min(18, h / span));
+      ctx.textBaseline = 'middle';
+      ctx.font = '9px "JetBrains Mono", "SF Mono", Consolas, monospace';
+      // Left gutter: the note READOUT — one label per distinct pitch in view, at
+      // its row Y, so names line up with their event blocks. The sticky range
+      // keeps these from moving (no resize).
+      ctx.fillStyle = 'rgba(12,12,20,0.96)'; ctx.fillRect(0, 0, LBL, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.beginPath(); ctx.moveTo(LBL + 0.5, 0); ctx.lineTo(LBL + 0.5, h); ctx.stroke();
+      { const seen = {}; const drawn = [];
+        for (const e of win) {
+          const m = Math.round(69 + 12 * Math.log2(e.freq / A)); if (seen[m]) continue; seen[m] = 1;
+          const y = yOf(m); if (drawn.some(dy => Math.abs(dy - y) < 9)) continue; drawn.push(y);
+          const label = isBeat ? _ambDrumNameFreq(e.freq) : _ambFreqNoteName(e.freq);
+          if (label) { ctx.fillStyle = '#9a9ac0'; ctx.fillText(label.slice(0, 6), 2, y); }
+        }
+      }
       // playhead
       const px = xOf(now);
       ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke();
-      // notes (block sized by duration, shaded by velocity, labelled when there's room)
-      const nh = Math.max(6, Math.min(18, h / span));
-      ctx.font = '9px "JetBrains Mono", "SF Mono", Consolas, monospace';
-      ctx.textBaseline = 'middle';
+      // notes (block sized by duration, shaded by velocity)
       for (const e of win) {
         const m = Math.round(69 + 12 * Math.log2(e.freq / A));
-        const x = xOf(e.at), x2 = xOf(e.at + Math.max(0.04, (e.dur || 100) / 1000));
+        const x = Math.max(LBL, xOf(e.at)), x2 = xOf(e.at + Math.max(0.04, (e.dur || 100) / 1000));
         const y = yOf(m), bw = Math.max(3, x2 - x);
         const vol = (e.params && Number.isFinite(e.params.volume)) ? Math.max(0, Math.min(1, e.params.volume / 100)) : 0.8;
         ctx.fillStyle = 'rgba(127,214,196,' + (0.3 + 0.6 * vol).toFixed(2) + ')';
         ctx.fillRect(x, y - nh / 2, bw, nh);
-        if (bw >= 16 && nh >= 8) {
-          const label = isBeat ? _ambDrumNameFreq(e.freq) : _ambFreqNoteName(e.freq);
-          if (label) { ctx.fillStyle = 'rgba(8,8,18,0.92)'; ctx.fillText(label, x + 2, y); }
-        }
       }
     }
     function _ambDrawRolls(E, now) {

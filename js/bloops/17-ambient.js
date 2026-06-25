@@ -2782,9 +2782,9 @@
         if (!_ambCondFires(arp.when, c)) continue;
         const cStart = st.startAt + c * loopSec;
         const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
+        const rVar = Math.max(0, Math.min(100, arp.rhythmVar | 0));
         for (let v = 0; v < V && cap < 256; v++) {
-          const vpat = (V === 1) ? euclideanPattern(pulses, steps, rotate)
-            : euclideanPattern(Math.max(1, Math.min(steps, pulses + POFF[v])), steps, rotate + v * Math.round(steps / V));
+          const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, arp.euclidRegen | 0);
           const deg = v % N, oct = baseOct + Math.floor(v / N);
           const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[deg] | 0)) / 12);
           _ambKeyTime = cStart;
@@ -2793,7 +2793,12 @@
           const pan = (V === 1) ? layPan : Math.max(-100, Math.min(100, (layPan | 0) + Math.round((v - (V - 1) / 2) * 35)));
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
-              if (vpat[slot] !== 1) continue;
+              let hit = vpat[slot] === 1;
+              if (rVar > 0) {                              // stochastic euclid variation per cycle
+                if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }
+                else      { if (rnd() * 100 < rVar * 0.22) hit = true; }
+              }
+              if (!hit) continue;
               if (restP > 0 && rnd() * 100 < restP) continue;
               const at = cStart + (bar * steps + slot) * slotSec;
               if (at < tFrom || at >= tTo) continue;
@@ -2942,6 +2947,48 @@
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
       try { playNote(f, bp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
     }
+    // One euclidean voice's pattern. salt 0 → deterministic: voice 0 = the base
+    // params; extra voices spread pulses/rotation to interlock. salt != 0 (a Regen
+    // press) re-rolls every voice's pulse count (±2) and rotation from a seeded
+    // RNG, so the patterns change but stay stable across ticks. V<=1 & salt 0 →
+    // the plain base pattern (byte-identical default).
+    function _ambEuclidVoicePat(basePulses, baseRotate, steps, V, v, salt) {
+      let pul, rot;
+      if (salt) {
+        const r = _ambSeededRand((((salt >>> 0) * 2654435761) ^ ((v + 1) * 40503)) >>> 0);
+        pul = Math.max(1, Math.min(steps, basePulses + (Math.floor(r() * 5) - 2)));
+        rot = Math.floor(r() * steps);
+      } else if (V <= 1) {
+        pul = basePulses; rot = baseRotate;
+      } else {
+        pul = Math.max(1, Math.min(steps, basePulses + [0, 2, -2, 3, -3, 1][v]));
+        rot = baseRotate + v * Math.round(steps / V);
+      }
+      return euclideanPattern(pul, steps, rot);
+    }
+    // Regen: re-roll the euclidean pattern(s) for a Beat/Arp layer. Sets a new salt
+    // (read per-cycle by the emitters) and, while playing, cancels the scheduled-
+    // ahead voices and re-anchors so the fresh pattern takes over at the NEXT unit
+    // boundary (the current unit plays out).
+    function _ambEuclidRegen(E, key) {
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      const t = (typeof performance !== 'undefined' && performance.now) ? Math.floor(performance.now()) : ((L.euclidRegen | 0) + 1);
+      L.euclidRegen = (((L.euclidRegen | 0) * 1103515245 + 12345 + t) >>> 0) || 1;
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      if (!E.timer) return;
+      try {
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const P = _ambLayerPeriodSec(E, key, L, cfg);
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const st = E.runPhase && E.runPhase[key];
+        if (st && st.startAt != null && P > 0.02) {
+          const k = Math.max(0, Math.ceil((now + 0.03 - st.startAt) / P));
+          const b = st.startAt + k * P;                 // next unit boundary
+          if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, b);
+          st.lastAt = b;                                // re-emit from the boundary with the new pattern
+        }
+      } catch (e) {}
+    }
     // Euclidean Beat: a BPM-locked drum pattern over `bars` bars. Windowed/
     // phase-anchored like Bass (uses E.runPhase) so the seed pattern + per-cycle
     // Rhythm-var stay locked to the tempo and the UNIT is a whole phrase (the
@@ -2989,7 +3036,7 @@
         // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
         const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
         for (let v = 0; v < V && cap < 256; v++) {
-          const vpat = (V === 1) ? pat : euclideanPattern(Math.max(1, Math.min(steps, pulses + POFF[v])), steps, rotate + v * Math.round(steps / V));
+          const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, inst.euclidRegen | 0);
           const vpan = (V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40)));
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
@@ -6951,7 +6998,7 @@
       // Interval tm id differs: primary 'interval', extras 'intervalMs'.
       const setIntervalRow = (show) => { const r = rowOf('intervalMs') || rowOf('interval'); if (r) r.style.display = show ? '' : 'none'; };
       // 'voices' = primary id; 'euclidVoices' = extra-layer (schema) id.
-      ['pulses', 'steps', 'rotate', 'voices', 'euclidVoices', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      ['pulses', 'steps', 'rotate', 'voices', 'euclidVoices', 'euclidregen', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       setRow('rate', !euclid);
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
@@ -6963,7 +7010,7 @@
       const euclid = !!(inst && inst.euclid);
       const rowOf = (suf) => { const e = _ambGet(E, stem + suf); return (e && e.closest) ? e.closest('.ambient-ctrl') : null; };
       const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
-      ['pulses', 'steps', 'rotate', 'euclidVoices', 'bars'].forEach(s => setRow(s, euclid));
+      ['pulses', 'steps', 'rotate', 'euclidVoices', 'euclidregen', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       ['randomness'].forEach(s => setRow(s, !euclid));
       setRow('rate', !euclid);
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
@@ -7674,7 +7721,7 @@
       beat: { label: 'Beat', ctrls: [
         ['grp', 'Voice'], ['kit'], ['gen'], ['sl', 'attack', 'Attack', 0, 500, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 2000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).
@@ -7689,8 +7736,8 @@
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
@@ -7801,6 +7848,7 @@
         if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
         if (k === 'gen') return _ambGenSel(p + '-');
         if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
+        if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
         if (k === 'rate') return _ambRateSel(p + '-rate');
         if (k === 'notes') return _ambNotesButtonHtml(p);
         if (k === 'droneedit') return _ambDroneEditHtml(p);
@@ -7932,6 +7980,7 @@
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); } }); } }
+          else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
           else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
@@ -9872,6 +9921,7 @@
             sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
             sl('Rotate', 'ambient-beat-rotate', 0, 15, 0, 'euclid offset') +
             sl('Voices', 'ambient-beat-voices', 1, 4, 1, 'polyphonic euclid') +
+            '<div class="ambient-ctrl"><label for="ambient-beat-euclidregen">Pattern</label><button type="button" id="ambient-beat-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>' +
             tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
             sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
             condCtrl('beat') + gpe() +
@@ -10209,6 +10259,7 @@
       bind('ambient-beat-steps', 'beat', 'steps');
       bind('ambient-beat-rotate', 'beat', 'rotate');
       bind('ambient-beat-voices', 'beat', 'euclidVoices');
+      { const rb = G('ambient-beat-euclidregen'); if (rb) rb.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, 'beat'); }); }
       bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
       bind('ambient-beat-drift', 'beat', 'drift');
       bind('ambient-beat-rest', 'beat', 'restProb');

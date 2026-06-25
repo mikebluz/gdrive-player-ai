@@ -1378,21 +1378,32 @@
     // half of the unit editor; the note-for-note editor (step 2) just rewrites the
     // captured list. Default (nothing locked) leaves generation byte-identical.
     function _ambUnitState(E, key) { if (!E.unit) E.unit = {}; return E.unit[key] || (E.unit[key] = { lock: false, notes: null }); }
-    function _ambCaptureUnit(E, key) {
-      const arr = E.cap && E.cap[key];
-      if (!Array.isArray(arr) || !arr.length) return null;
-      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0));
-      let period = 0;
-      try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
-      // Same unit grouping as the readout, so Lock captures EXACTLY the unit shown
-      // playing now (the latest cluster started; the engine schedules ahead, so the
-      // newest entries are future units we don't want).
-      const cn = _ambCurNextUnits(_ambUnitClustersRaw(arr, period), now);
-      const c = cn.cur || cn.nxt;
-      if (!c || !c.evs.length) return null;
-      const start = c.start;
-      const notes = c.evs.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
-      return { notes: notes, start: start };
+    // _shapeAudibleNow subtracts a generous latency; nudge unit selection forward
+    // so a unit whose scheduled onset just landed counts as "playing now".
+    const _AMB_AUDIBLE_MARGIN = 0.12;
+    // Record one EMITTED unit — its exact note list ({freq,off,durMs,params}) at
+    // its scheduled time — into a small per-layer ring. This is the SOURCE OF TRUTH
+    // for the readout + Lock (exact boundaries, every note incl. repeats), instead
+    // of reconstructing units from the rolling cap buffer (coordinate-fragile).
+    function _ambRecordUnit(E, key, at, notes) {
+      if (!notes || !notes.length) return;
+      if (!E.units) E.units = {};
+      const arr = E.units[key] || (E.units[key] = []);
+      arr.push({ at: at, notes: notes });
+      const cut = at - 16;
+      let i = 0; while (i < arr.length && arr[i].at < cut) i++;
+      if (i > 0) arr.splice(0, i);
+      if (arr.length > 48) arr.splice(0, arr.length - 48);
+    }
+    // The recorded unit playing at audible time `t` (latest onset ≤ t+margin) and
+    // the next one (the lookahead, already emitted into the buffer).
+    function _ambUnitAt(E, key, t) {
+      const arr = E.units && E.units[key];
+      if (!Array.isArray(arr) || !arr.length) return { cur: null, nxt: null };
+      const tt = t + _AMB_AUDIBLE_MARGIN;
+      let cur = null, nxt = null;
+      for (const u of arr) { if (u.at <= tt) cur = u; else { nxt = u; break; } }
+      return { cur: cur, nxt: nxt };
     }
     // If `key`'s layer is locked, replay its stored unit at `at` and return true.
     function _ambEmitLocked(E, key, at) {
@@ -1407,22 +1418,23 @@
       });
       return true;
     }
-    // Capture + lock the current unit, or release. Returns the new lock state.
+    // Lock the unit AUDIBLE now (exact, from the recorded units) and replay it
+    // every iteration; or release. Cancels the layer's already-scheduled-ahead
+    // generated notes and re-anchors the clock so the locked unit takes over at the
+    // next boundary — seamless, no stray, and exactly the unit you heard.
     function _ambToggleUnitLock(E, key) {
       const st = _ambUnitState(E, key);
       if (st.lock) { st.lock = false; st.notes = null; return false; }
-      const cap = _ambCaptureUnit(E, key);
-      if (!cap || !cap.notes || !cap.notes.length) return false;
-      st.notes = cap.notes; st.lock = true;
-      // Seamless: drop the layer's already-scheduled-ahead (next) generated notes
-      // and re-anchor its clock to the next boundary, so the locked unit takes
-      // over there instead of one iteration late (the lookahead had committed it).
+      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0));
+      const u = _ambUnitAt(E, key, now).cur;
+      if (!u || !Array.isArray(u.notes) || !u.notes.length) return false;
+      st.notes = u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
+      st.lock = true;
       try {
         if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key);
-        const cfg = E._cfg || (E.getCfg && E.getCfg());
-        const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg);
-        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-        if (P > 0.05) { E.clocks = E.clocks || {}; let b = cap.start + P; while (b < now + 0.03) b += P; E.clocks[key] = b; }
+        const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));
+        const tn = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        if (P > 0.05) { E.clocks = E.clocks || {}; let b = u.at + P; while (b < tn + 0.03) b += P; E.clocks[key] = b; }
       } catch (e) {}
       return true;
     }
@@ -1734,16 +1746,20 @@
       const strumAmt = Math.max(0, Math.min(100, bed.strum || 0));
       const spanSec = (strumAmt / 100) * Math.max(0, (bed.intervalMs | 0) / 1000);
       const order = _ambStrumOrder(n, bed.strumFidelity || 0);
+      const _unit = [];
       order.forEach((vi, pos) => {
         const f = voicing[vi];
         const params = _ambApplyAdsr(_ambBedParams(durMs, n, bed.motion, overlap, pans[vi], bed.tone), bed);
         params.volume = _ambApplyLevel(params.volume, bed.level);
-        if (dmod) params._detuneMod = dmod;
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
         // strum, space the onsets evenly across spanSec in play order.
         const offset = (spanSec > 0) ? (pos / Math.max(1, n)) * spanSec : (pos * 0.012);
+        const _rp = {}; for (const k in params) if (k !== '_detuneMod') _rp[k] = params[k];
+        _unit.push({ freq: f, off: offset, durMs: durMs, params: _rp });
+        if (dmod) params._detuneMod = dmod;
         try { playNote(f, params, durMs, at + offset, dest, undefined, _E.laneIdx()); } catch (e) {}
       });
+      _ambRecordUnit(_E, key, at, _unit);
     }
 
     // ================= BASS engine ==================================
@@ -2234,6 +2250,8 @@
       if (tw > 0 && _ambRand() < tw) count = 2 + Math.floor(_ambRand() * (1 + tw * 5)); // 2..~7
       const burstGap = Math.min(0.12, (lenMs / 1000) / Math.max(1, count)); // fast, ≤120 ms apart
       const dmod = _ambLayerDetuneMod(key);
+      const dest = _ambLayerDest(key);
+      const _unit = [];
       for (let i = 0; i < count; i++) {
         const f = _ambMotifNextNote(motif);
         if (f == null) continue;
@@ -2242,9 +2260,13 @@
         const pan = _ambLayerPan(motif);
         const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, motif.tone), motif);
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
+        const off = i * burstGap;
+        const _rp = {}; for (const k in mp) if (k !== '_detuneMod') _rp[k] = mp[k];
+        _unit.push({ freq: f, off: off, durMs: lenMs, params: _rp });
         if (dmod) mp._detuneMod = dmod;
-        try { playNote(f, mp, lenMs, at + i * burstGap, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, mp, lenMs, at + off, dest, undefined, _E.laneIdx()); } catch (e) {}
       }
+      _ambRecordUnit(_E, key, at, _unit);
     }
 
     // ================= TEXTURE engine ===============================
@@ -5756,33 +5778,37 @@
         if (locked) layerOn = true;
         el.classList.toggle('reserved', layerOn);
         let html = '';
-        if (layerOn && E.cap && E.cap[key]) {
-          let period = 0;
-          try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
-          const clusters = _ambUnitClustersRaw(E.cap[key], period);
-          const cn = _ambCurNextUnits(clusters, now);
-          if (locked) {
-            // Locked = one repeating unit. Show it ONCE in a single stable colour
-            // (whichever of current/next is the live unit — never both, no dimmed
-            // lookahead). Repeats shown in order.
-            const names = _ambUnitNames(cn.cur || cn.nxt);
-            html = names.length ? '<span class="ambient-np-locked">' + names.join(' ') + '</span>' : '';
-            if (E._npCol[key]) E._npCol[key].map = {};
-          } else if (cn.cur || cn.nxt) {
-            // Current unit + the next (lookahead). Each unit a stable colour keyed
-            // by its start; the next is dimmed and prefixed ▸. Notes in time order,
-            // no dedup → repeated notes appear.
+        if (locked && E.unit && E.unit[key] && Array.isArray(E.unit[key].notes)) {
+          // Locked: render the captured locked notes DIRECTLY — exactly what was
+          // locked, one stable colour, once (no cap reconstruction, no next).
+          const names = E.unit[key].notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
+          html = names.length ? '<span class="ambient-np-locked">' + names.join(' ') + '</span>' : '';
+          if (E._npCol[key]) E._npCol[key].map = {};
+        } else if (layerOn) {
+          // Unlocked: current unit ▸ next (lookahead). Prefer the discrete recorded
+          // units (exact boundaries + every note); fall back to clustering the cap
+          // buffer for layers that don't record units yet.
+          let curN = [], nxtN = [], curK = 0, nxtK = 1;
+          if (E.units && E.units[key] && E.units[key].length) {
+            const cn = _ambUnitAt(E, key, now);
+            if (cn.cur) { curN = cn.cur.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean); curK = Math.round(cn.cur.at * 20); }
+            if (cn.nxt) { nxtN = cn.nxt.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean); nxtK = Math.round(cn.nxt.at * 20); }
+          } else if (E.cap && E.cap[key]) {
+            let period = 0; try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
+            const cn = _ambCurNextUnits(_ambUnitClustersRaw(E.cap[key], period), now);
+            if (cn.cur) { curN = _ambUnitNames(cn.cur); curK = Math.round(cn.cur.start * 20); }
+            if (cn.nxt) { nxtN = _ambUnitNames(cn.nxt); nxtK = Math.round(cn.nxt.start * 20); }
+          }
+          if (curN.length || nxtN.length) {
             const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
             const nextMap = {};
-            const seg = (c, isNext) => {
-              if (!c) return '';
-              const names = _ambUnitNames(c); if (!names.length) return '';
-              const k = Math.round(c.start * 20);
+            const seg = (names, k, isNext) => {
+              if (!names.length) return '';
               let idx = st.map[k]; if (idx == null) idx = st.next++;
               nextMap[k] = idx;
               return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + _NP_PALETTE[idx % _NP_PALETTE.length] + '">' + names.join(' ') + '</span>';
             };
-            html = [seg(cn.cur, false), seg(cn.nxt, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
+            html = [seg(curN, curK, false), seg(nxtN, nxtK, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
             st.map = nextMap;
           } else if (E._npCol[key]) { E._npCol[key].map = {}; }
         } else if (E._npCol[key]) { E._npCol[key].map = {}; }

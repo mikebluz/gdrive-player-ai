@@ -6037,6 +6037,18 @@
       const el = document.getElementById('ambient-note-editor');
       if (el) { el.classList.remove('open'); el.style.removeProperty('display'); el.style.visibility = ''; }
     }
+    // Make a just-edited locked unit take effect on the NEXT iteration. The
+    // engine schedules ~1.4 s ahead, so the next iteration's voices were already
+    // committed with the OLD notes — without this the edit lands one unit late.
+    // Drop the layer's scheduled-ahead voices and re-anchor so the next boundary
+    // re-emits from the (edited) E.unit[key].notes. Only while playing.
+    function _ambReemitLockedNext(E, key) {
+      if (!E || !E.timer) return;
+      try {
+        const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
+        _ambReanchorNext(E, key, cur ? cur.at : _ambPlayNow());
+      } catch (e) {}
+    }
     function _ambNoteEditOp(op) {
       const t = _ambNoteEd; if (!t) return;
       const notes = _ambNoteEdNotes(); if (!notes) { _ambCloseNoteEditor(); return; }
@@ -6051,6 +6063,7 @@
         notes.splice(t.index, 1);
         if (t.index >= notes.length) t.index = notes.length - 1;
       }
+      _ambReemitLockedNext(t.E, t.key);                // apply on the next iteration
       try { _ambUpdateNotesLive(t.E); } catch (e) {}
       if (!_ambNoteEd) return;                          // editor was dismissed by the refresh
       _ambNoteEdRefresh();
@@ -6061,6 +6074,7 @@
       if (!u || !Array.isArray(u.notes) || !u.notes.length) return null;
       const last = u.notes[u.notes.length - 1];
       u.notes.push({ freq: last.freq, off: last.off || 0, durMs: last.durMs, params: Object.assign({}, last.params) });
+      _ambReemitLockedNext(E, key);                    // apply on the next iteration
       try { _ambUpdateNotesLive(E); } catch (e) {}
       return u.notes.length - 1;
     }

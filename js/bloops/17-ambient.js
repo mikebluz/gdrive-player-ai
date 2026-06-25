@@ -6367,26 +6367,39 @@
       const W = Math.max(1.5, Math.min(16, P || 1.5));
       const t0 = now - W * 0.72, t1 = now + W * 0.28;
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const isBeat = String(key).split(':')[0] === 'beat';
       const win = cap.filter(e => e && e.freq > 0 && (e.at + Math.max(0.04, (e.dur || 100) / 1000)) > t0 && e.at < t1);
-      let lo = 999, hi = -999;
-      for (const e of win) { const m = Math.round(69 + 12 * Math.log2(e.freq / A)); if (m < lo) lo = m; if (m > hi) hi = m; }
-      if (lo > hi) { lo = 54; hi = 78; }
-      lo -= 2; hi += 2; const span = Math.max(1, hi - lo);
+      // STICKY pitch range (expand-only) — the roll keeps a fixed Y-scale instead
+      // of rescaling every frame, so notes hold their vertical position. It only
+      // grows to admit new extremes; it never shrinks (no bounce).
+      let lo = cv._rlo, hi = cv._rhi;
+      const init = (lo == null || hi == null);
+      for (const e of win) { const m = Math.round(69 + 12 * Math.log2(e.freq / A)); if (lo == null || m < lo) lo = m; if (hi == null || m > hi) hi = m; }
+      if (lo == null || hi == null) { lo = isBeat ? 36 : 54; hi = isBeat ? 48 : 78; }
+      if (init) { lo -= 1; hi += 1; }       // a little headroom, once
+      cv._rlo = lo; cv._rhi = hi;
+      const span = Math.max(1, hi - lo) + 1;
       const xOf = (t) => (t - t0) / (t1 - t0) * w;
-      const yOf = (m) => h - ((m - lo + 0.5) / span) * h;
+      const yOf = (m) => h - ((Math.max(lo, Math.min(hi, m)) - lo + 0.5) / span) * h;
       // playhead
       const px = xOf(now);
       ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke();
-      // notes
-      const nh = Math.max(3, Math.min(10, h / span));
+      // notes (block sized by duration, shaded by velocity, labelled when there's room)
+      const nh = Math.max(6, Math.min(18, h / span));
+      ctx.font = '9px "JetBrains Mono", "SF Mono", Consolas, monospace';
+      ctx.textBaseline = 'middle';
       for (const e of win) {
         const m = Math.round(69 + 12 * Math.log2(e.freq / A));
         const x = xOf(e.at), x2 = xOf(e.at + Math.max(0.04, (e.dur || 100) / 1000));
-        const y = yOf(m);
+        const y = yOf(m), bw = Math.max(3, x2 - x);
         const vol = (e.params && Number.isFinite(e.params.volume)) ? Math.max(0, Math.min(1, e.params.volume / 100)) : 0.8;
         ctx.fillStyle = 'rgba(127,214,196,' + (0.3 + 0.6 * vol).toFixed(2) + ')';
-        ctx.fillRect(x, y - nh / 2, Math.max(2, x2 - x), nh);
+        ctx.fillRect(x, y - nh / 2, bw, nh);
+        if (bw >= 16 && nh >= 8) {
+          const label = isBeat ? _ambDrumNameFreq(e.freq) : _ambFreqNoteName(e.freq);
+          if (label) { ctx.fillStyle = 'rgba(8,8,18,0.92)'; ctx.fillText(label, x + 2, y); }
+        }
       }
     }
     function _ambDrawRolls(E, now) {

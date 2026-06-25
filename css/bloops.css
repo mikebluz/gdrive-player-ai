@@ -1391,6 +1391,13 @@
     .xport-menu #xport-tempo-row::before {
       content: 'BPM'; font-size: 0.72rem; color: #8a8aa8; letter-spacing: 0.5px;
     }
+    /* Load-flash fix: initTransportMenu moves the undo/redo pair, metronome (●)
+       and BPM digits from the home bar into the #xport-menu popover. Until that
+       JS runs they'd flash in the top bar, so hide them there. Once relocated
+       they're no longer under .home-bar-row, so the .xport-menu rules show them. */
+    .home-bar-row .undo-redo-pair,
+    .home-bar-row #metronome-btn,
+    .home-bar-row #bpm-digits { display: none; }
     /* Groove rows reuse the .groove-* styling; ranges fill the menu width. */
     .xport-menu input[type=range] { width: 100%; }
     #metronome-btn {

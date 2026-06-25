@@ -2382,6 +2382,22 @@
       const dmod = _ambLayerDetuneMod(key);
       const dest = _ambLayerDest(key);
       const _mnotes = _ambNotesOf(motif);   // carries colours + timed usage
+      // Phrase placement: don't always start on the 1. GATED behind motif.phrasePlace
+      // ('vary') so the default ('on1') keeps the byte-identical stream (harness). In
+      // 'vary', anchor the burst somewhere in the unit — often on/near the 1,
+      // sometimes mid, sometimes late so a phrase spills toward the next unit's 1
+      // (continuity). Only the 'vary' path consumes the RNG.
+      let _startOff = 0;
+      if (motif.phrasePlace === 'vary') {
+        const unitSec = Math.max(0.05, _ambEffIntervalSec(motif));
+        const slack = Math.max(0, unitSec - Math.max(0, (count - 1) * burstGap) - 0.02);
+        if (slack > 0.02) {
+          const r = _ambRand();
+          if (r < 0.45) _startOff = 0;                                   // on the 1 (most common)
+          else if (r < 0.8) _startOff = slack * (0.15 + _ambRand() * 0.5);  // mid
+          else _startOff = slack * (0.65 + _ambRand() * 0.35);           // late → continuity
+        }
+      }
       const _unit = [];
       for (let i = 0; i < count; i++) {
         const f = _ambMotifNextNote(motif);
@@ -2391,7 +2407,7 @@
         const pan = _ambLayerPan(motif);
         const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, motif.tone), motif);
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
-        const off = i * burstGap;
+        const off = _startOff + i * burstGap;
         const _rp = {}; for (const k in mp) if (k !== '_detuneMod') _rp[k] = mp[k];
         _unit.push({ freq: f, off: off, durMs: lenMs, params: _rp });
         if (dmod) mp._detuneMod = dmod;
@@ -9223,6 +9239,7 @@
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
       set('ambient-motif-drift', cfg.motif.drift);
+      set('ambient-motif-place', cfg.motif.phrasePlace || 'on1');
       setWhen('ambient-motif', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
@@ -9461,6 +9478,7 @@
           grp('Rhythm') +
             tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
             sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
+            '<div class="ambient-ctrl"><label for="ambient-motif-place">Phrase</label><select id="ambient-motif-place" class="ambient-select"><option value="on1">On the 1</option><option value="vary">Varied (mid / late)</option></select><span class="ambient-hint">start position</span></div>' +
             condCtrl('motif') + gpe() +
           grp('Variation') +
             sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
@@ -9693,6 +9711,12 @@
         persist();
       });
 
+      const motifPlaceSel = G('ambient-motif-place');
+      if (motifPlaceSel) motifPlaceSel.addEventListener('change', () => {
+        _E = E; const cfg = cfg0(); if (!cfg || !cfg.motif) return;
+        cfg.motif.phrasePlace = (motifPlaceSel.value === 'vary') ? 'vary' : 'on1';
+        persist();
+      });
       const bind = (id, layer, key) => {
         const el = G(id);
         if (!el) return;

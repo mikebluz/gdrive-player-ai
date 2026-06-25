@@ -5902,9 +5902,11 @@
             // note editor popover), plus an add-note (+) affordance. Edits mutate
             // E.unit[key].notes in place; the locked replay re-reads it next pass.
             const col = colorFor(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean));
+            // Spans (not <button>) so they take no focus — focusable controls
+            // inside the live readout collided with its churn + a11y focus rules.
             html = '<span class="ambient-np-ed" style="color:' + col + '">' +
-              _ns.map((n, i) => '<button type="button" class="ambient-np-note" data-ekey="' + key + '" data-ei="' + i + '">' + (_ambFreqNoteName(n.freq) || '?') + '</button>').join('') +
-              '<button type="button" class="ambient-np-add" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</button>' +
+              _ns.map((n, i) => '<span class="ambient-np-note" role="button" tabindex="-1" data-ekey="' + key + '" data-ei="' + i + '">' + (_ambFreqNoteName(n.freq) || '?') + '</span>').join('') +
+              '<span class="ambient-np-add" role="button" tabindex="-1" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</span>' +
             '</span>';
           } else {
             // Locked, non-editable (other layer types) → static, in content colour.
@@ -9294,14 +9296,21 @@
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
         if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
-        const nn = e.target && e.target.closest && e.target.closest('.ambient-np-note');
-        if (nn) { e.stopPropagation(); try { _ambOpenNoteEditor(E, nn.dataset.ekey, parseInt(nn.dataset.ei, 10) || 0, nn); } catch (err) { console.warn('Note edit failed', err); } return; }
-        const na = e.target && e.target.closest && e.target.closest('.ambient-np-add');
-        if (na) { e.stopPropagation(); try { const k = na.dataset.ekey, idx = _ambAddNote(E, k); if (idx != null) _ambOpenNoteEditor(E, k, idx); } catch (err) { console.warn('Add note failed', err); } return; }
+        // (note-edit chips are handled on pointerdown — see below)
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();
         try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }
+      });
+      // Note-edit chips open the popover on POINTERDOWN (not click): the readout
+      // can repaint between press and release, which would drop a click (its
+      // down/up targets must match). Pointerdown fires on the press, before any
+      // repaint, so the editor reliably opens.
+      host.addEventListener('pointerdown', (e) => {
+        const nn = e.target && e.target.closest && e.target.closest('.ambient-np-note');
+        if (nn) { e.preventDefault(); e.stopPropagation(); try { _ambOpenNoteEditor(E, nn.dataset.ekey, parseInt(nn.dataset.ei, 10) || 0, nn); } catch (err) { console.warn('Note edit failed', err); } return; }
+        const na = e.target && e.target.closest && e.target.closest('.ambient-np-add');
+        if (na) { e.preventDefault(); e.stopPropagation(); try { const k = na.dataset.ekey, idx = _ambAddNote(E, k); if (idx != null) _ambOpenNoteEditor(E, k, idx); } catch (err) { console.warn('Add note failed', err); } return; }
       });
       // Any in-panel param change (slider / rate / notes / passes…) can change a
       // layer's unit length — refresh the header readouts.

@@ -591,7 +591,13 @@
         const out = hasMode
           ? { type: 'scale', scale: notes.scale || '', modeRot: ((layer.modeRot | 0) % 7 + 7) % 7 }
           : Object.assign({}, notes);
-        if (hasColor) { out.colors = layer.colors; out.colorAmt = layer.colorAmt | 0; }
+        if (hasColor) {
+          out.colors = layer.colors; out.colorAmt = layer.colorAmt | 0;
+          // Timed usage (Phase 4b): how colours are applied — 'landing' just
+          // inflects the note (default), 'approach'/'enclosure' also insert
+          // chromatic lead-in notes before melodic notes.
+          out.colorUsage = (layer.colorUsage === 'approach' || layer.colorUsage === 'enclosure') ? layer.colorUsage : 'landing';
+        }
         return out;
       }
       return notes;
@@ -678,6 +684,33 @@
         if (d < bestDist || (d === bestDist && off < bestOff)) { bestDist = d; bestOff = off; }
       }
       return (bestDist <= 3) ? (m + bestOff) : midi;
+    }
+    // Timed colour usage (Phase 4b): schedule chromatic LEAD-IN note(s) just
+    // before a melodic target, so an enabled colour set doesn't only inflect the
+    // landing note but also approaches it. 'approach' = one semitone below;
+    // 'enclosure' = a semitone above then a semitone below. Gated by colorAmt.
+    // Ornaments are GENERATIVE only — not recorded into the unit (so a locked /
+    // edited unit stays the clean landing notes). Returns nothing.
+    function _ambColourLeadIn(targetFreq, params, at, dest, laneIdx, notes) {
+      const usage = notes && notes.colorUsage;
+      if (usage !== 'approach' && usage !== 'enclosure') return;
+      const amt = Math.max(0, Math.min(100, (notes && notes.colorAmt) | 0));
+      if (!(amt > 0) || !Array.isArray(notes.colors) || !notes.colors.length) return;
+      if ((_ambRand() * 100) >= amt) return;                  // density gate
+      if (!(targetFreq > 0)) return;
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const midi = Math.round(69 + 12 * Math.log2(targetFreq / A));
+      const lead = 0.085;                                     // grace lead per step (s)
+      const gdurMs = 80;
+      const mk = (semi, tOff) => {
+        const f = A * Math.pow(2, (midi + semi - 69) / 12);
+        if (!(f > 0) || at + tOff <= 0) return;
+        const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
+        p.volume = Math.max(0, Math.round((p.volume != null ? p.volume : 100) * 0.7));  // ornaments sit under the line
+        try { playNote(f, p, gdurMs, at + tOff, dest, undefined, laneIdx); } catch (e) {}
+      };
+      if (usage === 'approach') mk(-1, -lead);
+      else { mk(1, -lead * 2); mk(-1, -lead); }               // enclosure: above → below → target
     }
     // Key reshape mode: 'transpose' (default) or 'quantize'.
     function _ambKeyMode(cfg) {
@@ -1122,7 +1155,14 @@
         [['Light', 20], ['Medium', 40], ['Strong', 70]].forEach(p => {
           items.push({ label: (amt === p[1] ? '● ' : '   ') + 'Amount: ' + p[0] + ' (' + p[1] + '%)', fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colorAmt = p[1]; persist(); } });
         });
-        if (on.length) items.push({ label: '✕ Clear colours', fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colors = []; persist(); } });
+        // Timed usage (Phase 4b) — Landing only inflects the note; Approach /
+        // Enclosure also insert chromatic lead-in notes before melodic notes.
+        items.push('hr', { label: 'Usage', disabled: true });
+        const curU = (L0 && L0.colorUsage) || 'landing';
+        [['landing', 'Landing (inflect note)'], ['approach', '+ Approach note'], ['enclosure', '+ Enclosure (around)']].forEach(u => {
+          items.push({ label: (curU === u[0] ? '● ' : '   ') + u[1], fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colorUsage = u[0]; persist(); } });
+        });
+        if (on.length) items.push('hr', { label: '✕ Clear colours', fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colors = []; persist(); } });
         showCtxMenu(x, y, items);
       };
       showCtxMenu(x, y, [
@@ -2341,6 +2381,7 @@
       const burstGap = Math.min(0.12, (lenMs / 1000) / Math.max(1, count)); // fast, ≤120 ms apart
       const dmod = _ambLayerDetuneMod(key);
       const dest = _ambLayerDest(key);
+      const _mnotes = _ambNotesOf(motif);   // carries colours + timed usage
       const _unit = [];
       for (let i = 0; i < count; i++) {
         const f = _ambMotifNextNote(motif);
@@ -2354,6 +2395,9 @@
         const _rp = {}; for (const k in mp) if (k !== '_detuneMod') _rp[k] = mp[k];
         _unit.push({ freq: f, off: off, durMs: lenMs, params: _rp });
         if (dmod) mp._detuneMod = dmod;
+        // Timed colour usage: chromatic lead-in just before this note (generative
+        // ornament, not recorded — no-op unless a colour usage is enabled).
+        _ambColourLeadIn(f, mp, at + off, dest, _E.laneIdx(), _mnotes);
         try { playNote(f, mp, lenMs, at + off, dest, undefined, _E.laneIdx()); } catch (e) {}
       }
       _ambRecordUnit(_E, key, at, _unit);

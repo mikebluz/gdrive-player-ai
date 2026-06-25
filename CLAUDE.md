@@ -13,11 +13,15 @@ Apply these rules to every UI change:
 
 3. **Keep the audio signal-flow diagram current.** `README.md` (section *"Bloops — audio signal flow"*) holds an ASCII diagram of how notes route from each source through the two entry buses (`globalSendTap` vs. the per-lane bus) to the shared master chain and speakers. Whenever you change audio routing — `playNote()` destination resolution, `globalSendTap`, `getLaneBus()`, the FX send/return wiring, or the master chain order — **update that diagram in the same change** so it never drifts from the code. Prefer one global routing rule over per-mode volume/FX hacks; if modes sound inconsistent, fix it at the bus/master level (and re-draw the diagram) rather than scaling individual call sites.
 
+## Deployment policy
+
+**NEVER run `./deploy.sh` unless the user explicitly asks for it in that message** (e.g. "deploy", "push it live", "ship it"). Committing and pushing to git is fine when the user asks; deploying to the live GoDaddy site is a separate, explicit step. Do not deploy as an automatic follow-up to a code change, a commit, or a push. When work is ready, say so and let the user request the deploy.
+
 ## Commands
 
 ```bash
 npm start        # Start Express server at http://localhost:3001
-./deploy.sh      # Deploy to GoDaddy cPanel via SFTP (requires lftp)
+./deploy.sh      # Deploy to GoDaddy cPanel via SFTP (requires lftp) — ONLY on explicit user request (see Deployment policy)
 ```
 
 There is no build step, no linter, and no test suite. All JavaScript runs directly in the browser.

@@ -4670,12 +4670,21 @@
       E.cap = E.cap || {};
       const arr = E.cap[key] || (E.cap[key] = []);
       return (freq, params, dur, at) => {
-        // Tag voices created for this layer (read by playNote's registration) so
-        // a lock can cancel just this layer's scheduled-ahead notes.
-        if (typeof window !== 'undefined') window._ambEmitKey = key;
+        // Tag voices created for this layer (read by playNote's registration) so a
+        // lock/edit can cancel just this layer's scheduled-ahead notes — by key,
+        // and by scheduled start time (window._ambEmitAt) for thresholded cancel.
+        if (typeof window !== 'undefined') { window._ambEmitKey = key; window._ambEmitAt = (typeof at === 'number' ? at : null); }
         if (typeof freq !== 'number' || typeof at !== 'number') return;
         const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
         arr.push({ at: at, freq: freq, dur: dur, params: p });
+      };
+    }
+    // A capture sink that ONLY tags voices (key + start time) without recording
+    // them into E.cap — used during locked-loop replay so those voices can be
+    // cancelled on edit, but don't pollute the rolling capture buffer.
+    function _ambTagSink(key) {
+      return (freq, params, dur, at) => {
+        if (typeof window !== 'undefined') { window._ambEmitKey = key; window._ambEmitAt = (typeof at === 'number' ? at : null); }
       };
     }
     function _ambPruneCap(E, key, now) {
@@ -4795,15 +4804,22 @@
       if (from == null || from < now) from = Math.max(now, st.anchor || now);
       const L = st.loopLen, A = st.anchor || now;
       let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
-      while (guard++ < 4096) {
-        const base = A + k * L;
-        if (base >= horizon) break;
-        for (const e of st.events) {
-          const at = base + e.t;
-          if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
+      // Tag these replay voices (key + start time) so an edit can cancel just the
+      // ones at/after the next boundary. (The freeze gate runs before the dispatch
+      // sets the capture sink, so without this they'd be untagged.)
+      const prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : null;
+      if (typeof window !== 'undefined') window._ambCaptureSink = _ambTagSink(key);
+      try {
+        while (guard++ < 4096) {
+          const base = A + k * L;
+          if (base >= horizon) break;
+          for (const e of st.events) {
+            const at = base + e.t;
+            if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
+          }
+          k++;
         }
-        k++;
-      }
+      } finally { if (typeof window !== 'undefined') window._ambCaptureSink = prevSink; }
       st.scheduledUpto = horizon;
     }
     // Thaw is deferred: schedule generation to resume at the end of the loop's
@@ -6134,19 +6150,25 @@
     function _ambReemitLockedNext(E, key) {
       if (!E || !E.timer) return;
       try {
+        const tn = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
         const ty = String(key).split(':')[0];
         if (ty === 'bed' || ty === 'motif') {
           const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
-          _ambReanchorNext(E, key, cur ? cur.at : _ambPlayNow());
+          const fromAt = cur ? cur.at : _ambPlayNow();
+          const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));
+          if (!(P > 0.05)) return;
+          let b = fromAt + P; while (b < tn + 0.03) b += P;          // next boundary in the future
+          // Cancel ONLY the next iteration+ (start ≥ b); the current unit plays out.
+          if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, b);
+          E.clocks = E.clocks || {}; E.clocks[key] = b;              // re-emit from the boundary
           return;
         }
         const fs = E.freeze && E.freeze[key];
         if (!fs || !fs.frozen) return;
-        if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key);
-        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-        const L = fs.loopLen || 0, A = fs.anchor || now;
-        if (L > 0.02) { let b = A, g = 0; while (b < now + 0.03 && g++ < 100000) b += L; fs.scheduledUpto = b; }
-        else fs.scheduledUpto = now;
+        const L = fs.loopLen || 0, A = fs.anchor || tn;
+        let b = A, g = 0; if (L > 0.02) { while (b < tn + 0.03 && g++ < 100000) b += L; } else b = tn;
+        if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, b); // keep current loop, redo next+
+        fs.scheduledUpto = b;
       } catch (e) {}
     }
     function _ambNoteEditOp(op) {

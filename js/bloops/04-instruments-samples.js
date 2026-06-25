@@ -1862,9 +1862,14 @@
     const _VOICE_DEFER_MS = 150;
     const _pendingVoices = new Set();
     function _registerVoiceAtStart(entry, leadMs) {
-      // Tag with the Bloom layer key (when emitted inside a Bloom layer) so a
-      // unit Lock can cancel just this layer's scheduled-ahead voices.
-      try { entry._ak = (typeof window !== 'undefined' && window._ambCaptureSink) ? (window._ambEmitKey || null) : null; } catch (e) {}
+      // Tag with the Bloom layer key + scheduled start time (when emitted inside a
+      // Bloom layer) so a unit Lock / edit can cancel just this layer's
+      // scheduled-ahead voices — optionally only those AT/AFTER a boundary.
+      try {
+        const tagged = (typeof window !== 'undefined' && window._ambCaptureSink);
+        entry._ak = tagged ? (window._ambEmitKey || null) : null;
+        entry._akAt = (tagged && Number.isFinite(window._ambEmitAt)) ? window._ambEmitAt : null;
+      } catch (e) {}
       if (Number.isFinite(leadMs) && leadMs > _VOICE_DEFER_MS) {
         _pendingVoices.add(entry);
         entry.registerTimer = setTimeout(() => {
@@ -1919,7 +1924,11 @@
     // voices wait here until their start; a stop drains this set too.
     const _pendingSampleVoices = new Set();
     function _registerSampleVoiceAtStart(v, leadMs) {
-      try { v._ak = (typeof window !== 'undefined' && window._ambCaptureSink) ? (window._ambEmitKey || null) : null; } catch (e) {}
+      try {
+        const tagged = (typeof window !== 'undefined' && window._ambCaptureSink);
+        v._ak = tagged ? (window._ambEmitKey || null) : null;
+        v._akAt = (tagged && Number.isFinite(window._ambEmitAt)) ? window._ambEmitAt : null;
+      } catch (e) {}
       if (Number.isFinite(leadMs) && leadMs > _VOICE_DEFER_MS) {
         _pendingSampleVoices.add(v);
         v.registerTimer = setTimeout(() => {
@@ -1987,10 +1996,15 @@
     // voices — used by Unit Lock so a freshly locked layer's next-unit, already
     // queued in the lookahead, is dropped and the locked unit takes over cleanly.
     // Only touches PENDING (future) voices, never what's currently sounding.
-    function cancelBloomFutureVoices(key) {
+    // Cancel a Bloom layer's scheduled-ahead (not-yet-started) voices. With
+    // `fromAt`, cancel ONLY voices whose scheduled start is at/after it (keeps the
+    // currently-sounding iteration intact) — used so an edit re-does just the NEXT
+    // iteration. Untagged voices (no start time) are kept when thresholding.
+    function cancelBloomFutureVoices(key, fromAt) {
       if (!key) return;
-      Array.from(_pendingVoices).forEach(e => { if (e && e._ak === key) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
-      Array.from(_pendingSampleVoices).forEach(v => { if (v && v._ak === key) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
+      const hit = (e) => e && e._ak === key && (fromAt == null || (Number.isFinite(e._akAt) && e._akAt >= fromAt));
+      Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
+      Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
     }
     function silenceActiveVoices() {
       // Drain pending (scheduled-ahead, not-yet-registered) voices too — a stop

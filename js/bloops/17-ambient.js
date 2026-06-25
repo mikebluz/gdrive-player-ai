@@ -1444,6 +1444,22 @@
       } catch (e) {}
     }
     function _ambToggleUnitLock(E, key) {
+      // Bed/Motif emit ONE discrete unit per iteration, so they lock that exact
+      // unit (precise, readout-coupled). Every OTHER layer streams a whole cycle
+      // across the lookahead, so it locks by FREEZING the current cycle (capture
+      // its notes, replay verbatim) — the user's "freeze current cycle" choice.
+      const _ltype = String(key).split(':')[0];
+      if (_ltype !== 'bed' && _ltype !== 'motif') {
+        const fs = E.freeze && E.freeze[key];
+        if (fs && fs.pendingFreezeAt != null && !fs.frozen) {  // armed but not engaged → cancel
+          fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; return false;
+        }
+        if (fs && fs.frozen) { _ambFreezeThaw(E, key); fs._lock = false; return false; }
+        const ok = _ambLockArm(E, key);
+        if (!ok && typeof showToast === 'function') showToast('Lock: give the layer a moment of playback first.');
+        try { _ambFreezeSyncAll(E); } catch (e) {}
+        return ok;
+      }
       const st = _ambUnitState(E, key);
       const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
       if (st.lock) {
@@ -4595,12 +4611,16 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-lock-btn').forEach(btn => {
         const k = btn.dataset.lkey;
-        btn.classList.toggle('active', !!(E.unit && E.unit[k] && E.unit[k].lock));
+        const t = String(k).split(':')[0];
+        let on;
+        if (t === 'bed' || t === 'motif') on = !!(E.unit && E.unit[k] && E.unit[k].lock);
+        else { const fs = E.freeze && E.freeze[k]; on = !!(fs && fs._lock && ((fs.frozen && !fs.pendingThawAt) || fs.pendingFreezeAt != null)); }
+        btn.classList.toggle('active', on);
       });
     }
     function _ambFreezeState(E, key) {
       E.freeze = E.freeze || {};
-      return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null });
+      return E.freeze[key] || (E.freeze[key] = { frozen: false, recording: false, recStart: 0, events: [], loopLen: 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null, pendingFreezeAt: null, _lock: false, _lockWin: null });
     }
     function _ambFreezeFrozen(E, key) { return !!(E && E.freeze && E.freeze[key] && E.freeze[key].frozen); }
     // Resolve a freeze key ('bed' | 'bed:5' | 'seq:3' | 'samp:2') → its layer cfg.
@@ -4670,6 +4690,7 @@
     function _ambFreezeArm(E, key) {
       const st = _ambFreezeState(E, key);
       st.recording = true; st.frozen = false; st.events = []; st.pendingThawAt = null;
+      st.pendingFreezeAt = null; st._lock = false; st._lockWin = null;  // drop any armed lock
       st.recStart = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
     }
     // Nearest captured note onset to a target time (within a sane range), so the
@@ -4723,6 +4744,47 @@
       st.recording = false; st.frozen = true; st.pendingThawAt = null;
       _ambFreezeSyncAll(E);
     }
+    // Unit Lock for windowed / multi-step layers (everything except Bed/Motif):
+    // repeat the cycle sounding now verbatim — ignoring Vary — until unlocked.
+    // ARM here (mark the current cycle's window + its end boundary); the actual
+    // capture+freeze ENGAGES at that boundary, inside _ambFreezeGate, once the
+    // cycle has fully played and been recorded into the capture buffer. Deferring
+    // matters for cycles longer than the lookahead: capturing mid-cycle would
+    // both miss the not-yet-scheduled tail and cut the live cycle short. Reuses
+    // the Freeze replay/gate, so no per-layer scheduling hook is needed.
+    function _ambLockArm(E, key) {
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return false;
+      const L = _ambLayerByKey(E, key); if (!L) return false;
+      const P = _ambLayerPeriodSec(E, key, L, cfg);
+      if (!(P > 0.02)) return false;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      let bEnd = _ambLayerAudibleBoundary(E, key, L, cfg, now);
+      if (!(bEnd > now + 0.005)) bEnd = now + P;        // fallback if no live phase
+      const st = _ambFreezeState(E, key);
+      st._lockWin = { bStart: bEnd - P, bEnd: bEnd, loopLen: P };
+      st.pendingFreezeAt = bEnd;                        // engage when the cycle completes
+      st._lock = true; st.frozen = false; st.recording = false; st.pendingThawAt = null;
+      return true;
+    }
+    // Engage an armed lock: the cycle window has fully played, so capture its
+    // recorded notes and start replaying them from the next boundary. Called from
+    // _ambFreezeGate when `now` reaches the engage boundary. Returns true if it
+    // engaged (caller should now treat the layer as frozen), false otherwise.
+    function _ambLockEngage(E, key, now) {
+      const st = E.freeze && E.freeze[key];
+      if (!st || !st._lockWin) { if (st) { st.pendingFreezeAt = null; st._lock = false; } return false; }
+      const w = st._lockWin, eps = 0.001;
+      const cap = (E.cap && E.cap[key]) || [];
+      const win = cap.filter(e => e.at >= w.bStart - eps && e.at < w.bEnd - eps);
+      if (!win.length) { st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; return false; }
+      st.events = win.map(e => ({ t: Math.max(0, e.at - w.bStart), freq: e.freq, dur: e.dur, params: e.params }));
+      st.loopLen = w.loopLen;
+      let A = w.bEnd; while (A < now + 0.001) A += st.loopLen;   // first loop boundary ≥ now
+      st.anchor = A; st.scheduledUpto = A;
+      st.frozen = true; st.pendingFreezeAt = null; st._lockWin = null;
+      try { _ambFreezeSyncAll(E); } catch (e) {}
+      return true;
+    }
     // Schedule the frozen layer's looped events that fall in [now, horizon].
     function _ambReplayFrozen(E, key, now, horizon) {
       const st = E.freeze && E.freeze[key];
@@ -4764,7 +4826,7 @@
         const k = Math.max(1, Math.ceil((ref - A) / L)); // boundary at/after the last queued loop
         st.pendingThawAt = A + k * L;
       } else {
-        st.frozen = false; st.scheduledUpto = 0; st.events = [];
+        st.frozen = false; st.scheduledUpto = 0; st.events = []; st._lock = false;
       }
       _ambFreezeSyncAll(E);
     }
@@ -4774,11 +4836,18 @@
     // tail up to the boundary, flips back to generation, and re-grids the clock.
     function _ambFreezeGate(E, key, now, horizon) {
       const st = E.freeze && E.freeze[key];
-      if (!st || !st.frozen) return false;
+      if (!st) return false;
+      // Deferred lock-ON: keep generating until the armed cycle's boundary, then
+      // capture that (now-complete) cycle and engage the locked loop.
+      if (!st.frozen && st.pendingFreezeAt != null) {
+        if (now < st.pendingFreezeAt) return false;    // cycle still finishing → generate
+        if (!_ambLockEngage(E, key, now)) return false; // engage failed → resume generation
+      }
+      if (!st.frozen) return false;
       const tA = st.pendingThawAt;
       if (tA != null && horizon >= tA) {
         _ambReplayFrozen(E, key, now, tA);          // flush remaining loop events up to the boundary
-        st.frozen = false; st.scheduledUpto = 0; st.pendingThawAt = null; st.events = [];
+        st.frozen = false; st.scheduledUpto = 0; st.pendingThawAt = null; st.events = []; st._lock = false;
         try { _ambFreezeSyncAll(E); } catch (e) {}
         if (E.clocks && tA > now) E.clocks[key] = tA; // generation resumes exactly on the grid
         return false;
@@ -6199,7 +6268,7 @@
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
       (freezeKey ? '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
-      (freezeKey && /^(bed|motif)(:|$)/.test(freezeKey) ? '<button type="button" class="ambient-lock-btn" data-lkey="' + freezeKey + '" title="Lock the unit playing now — replay it every iteration (click again to unlock)" aria-label="Lock unit">🔒</button>' : '') +
+      (freezeKey ? '<button type="button" class="ambient-lock-btn" data-lkey="' + freezeKey + '" title="Lock the unit / cycle playing now — replay it every iteration (click again to unlock)" aria-label="Lock unit">🔒</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
@@ -9092,7 +9161,7 @@
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
-        if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
+        if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();

@@ -1330,6 +1330,17 @@
       const b = _ambRateBeats(lc && lc.rate);
       return b > 0 ? b * (60 / _ambBpm()) : Math.max(0.05, ((lc && lc.intervalMs) | 0) / 1000);
     }
+    // Length Vary: at 0 every note is exactly `baseMs` (homebase); above 0 each
+    // note's length jitters around it (±~75% at 100). GATED — vary 0 returns the
+    // base and consumes NO RNG (keeps the default stream byte-identical). Pass a
+    // seeded `rnd` for windowed/euclid layers so the value is stable across ticks;
+    // omit it (→ engine RNG) for per-fire layers.
+    function _ambVaryLen(baseMs, vary, rnd) {
+      const v = Math.max(0, Math.min(100, vary | 0));
+      if (v <= 0) return baseMs;
+      const r = (typeof rnd === 'function') ? rnd : _ambRand;
+      return Math.max(20, Math.round(baseMs * (1 + (r() * 2 - 1) * (v / 100) * 0.75)));
+    }
     // Per-layer Level (0..100): 70 = the layer's tuned default (unchanged from
     // before). 0..70 attenuates that toward silence; 70..100 BOOSTS the layer's
     // pre-staged volume up toward a full grid-press voice (100), so at the slider
@@ -1971,7 +1982,7 @@
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
         // strum, space the onsets evenly across spanSec in play order.
         const offset = (spanSec > 0) ? (pos / Math.max(1, n)) * spanSec : (pos * 0.012);
-        let noteMs = durMs;
+        let noteMs = _ambVaryLen(durMs, bed.lenVary);   // Len var: jitter each voice's length around Length
         if (bed.choke && unitSec > 0.05) {
           noteMs = Math.max(60, Math.min(durMs, Math.round((unitSec - offset - 0.012) * 1000)));
           // Keep the release inside the (shortened) note so it actually finishes
@@ -2096,7 +2107,7 @@
             const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
-            try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+            try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
             cap++;
             if (cap >= 256) break;
           }
@@ -2498,13 +2509,14 @@
         const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, motif.tone), motif);
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
         const off = _startOff + i * burstGap;
+        const noteMs = _ambVaryLen(lenMs, motif.lenVary);   // Len var: per-note length jitter
         const _rp = {}; for (const k in mp) if (k !== '_detuneMod') _rp[k] = mp[k];
-        _unit.push({ freq: f, off: off, durMs: lenMs, params: _rp });
+        _unit.push({ freq: f, off: off, durMs: noteMs, params: _rp });
         if (dmod) mp._detuneMod = dmod;
         // Timed colour usage: chromatic lead-in just before this note (generative
         // ornament, not recorded — no-op unless a colour usage is enabled).
         _ambColourLeadIn(f, mp, at + off, dest, _E.laneIdx(), _mnotes);
-        try { playNote(f, mp, lenMs, at + off, dest, undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, mp, noteMs, at + off, dest, undefined, _E.laneIdx()); } catch (e) {}
       }
       _ambRecordUnit(_E, key, at, _unit);
     }
@@ -2553,7 +2565,7 @@
         const tp = _ambApplyAdsr(_ambTexParams(lenMs, pan, texture.tone), texture);
         tp.volume = _ambApplyLevel(tp.volume, texture.level);
         const dmod = _ambLayerDetuneMod(key); if (dmod) tp._detuneMod = dmod;
-        try { playNote(f, tp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, tp, _ambVaryLen(lenMs, texture.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       }
       const mr = Math.max(0, Math.min(100, texture.mutateRate | 0));
       if (!_E.texMutateAt) _E.texMutateAt = at + (6 - mr / 100 * 5);
@@ -2712,7 +2724,7 @@
       const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
       ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
-      try { playNote(f, ap, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+      try { playNote(f, ap, _ambVaryLen(lenMs, arp.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       } finally { if (_arpProg) _ambProgStepOverride = null; }
     }
     // Windowed, phase-anchored Arp scheduler. Each note's time is RE-DERIVED as
@@ -2806,7 +2818,7 @@
               ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
               if (dmod) ap._detuneMod = dmod;
               _ambKeyTime = at;
-              try { playNote(f, ap, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              try { playNote(f, ap, _ambVaryLen(lenMs, arp.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
               cap++;
               if (cap >= 256) break;
             }
@@ -2945,7 +2957,7 @@
       const bp = _ambApplyAdsr(_ambBeatParams(beat.kit, lenMs, pan), beat);
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
-      try { playNote(f, bp, lenMs, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+      try { playNote(f, bp, _ambVaryLen(lenMs, beat.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
     }
     // One euclidean voice's pattern. salt 0 → deterministic: voice 0 = the base
     // params; extra voices spread pulses/rotation to interlock. salt != 0 (a Regen
@@ -3055,7 +3067,7 @@
               bp.volume = _ambApplyLevel(bp.volume, inst.level);
               if (dmod) bp._detuneMod = dmod;
               _ambKeyTime = at;
-              try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
               cap++;
               if (cap >= 256) break;
             }
@@ -6887,6 +6899,7 @@
       rate: 'How fast it cycles.',
       drift: 'Phase offset — nudges the layer off the downbeat for polymetric interplay.',
       start: 'Chance a phrase begins at a random point in the unit instead of on the 1 (0 = always on the 1, 50 = half).',
+      'len var': 'How much each note’s length jitters around the Length value (0 = exact, higher = more variation).',
       vary: 'How much it deviates from its base pattern (0 = repeats exactly).',
       hold: 'How many units the note is held before it is struck again.',
       unit: 'Length of one hold unit — re-strike happens every Hold × Unit.',
@@ -6942,7 +6955,7 @@
     const _AMB_PARAM_UNIT = {
       motion: '%', strum: '%', strumFidelity: '%', restProb: '%', twist: '%', proximity: '%',
       accent: '%', fill: '%', mutateRate: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
-      timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%', pvary: '%',
+      timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%', pvary: '%', lenvary: '%', lenVary: '%',
       spread: '%', sustain: '%', level: '%', fine: '¢',
     };
     function _ambSlUnit(id) {
@@ -7842,7 +7855,7 @@
         ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
@@ -7851,7 +7864,7 @@
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Run: a fixed RANDOM note run, `bars` bars long, looping; Vary re-rolls.
       run: { label: 'Run', ctrls: [
@@ -9705,7 +9718,7 @@
       set('ambient-bed-spread', cfg.bed.spread);
       set('ambient-bed-interval', cfg.bed.intervalMs); hint('ambient-bed-interval-v', _ambFmtMs(cfg.bed.intervalMs));
       set('ambient-bed-length', cfg.bed.lengthMs);     hint('ambient-bed-length-v', _ambFmtMs(cfg.bed.lengthMs));
-      set('ambient-bed-drift', cfg.bed.drift);
+      set('ambient-bed-drift', cfg.bed.drift); set('ambient-bed-lenvary', cfg.bed.lenVary | 0);
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-strum', cfg.bed.strum);
@@ -9720,7 +9733,7 @@
       set('ambient-motif-proximity', cfg.motif.proximity);
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
-      set('ambient-motif-drift', cfg.motif.drift);
+      set('ambient-motif-drift', cfg.motif.drift); set('ambient-motif-lenvary', cfg.motif.lenVary | 0);
       set('ambient-motif-pvary', cfg.motif.phraseVary | 0);
       setWhen('ambient-motif', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
@@ -9735,7 +9748,7 @@
       set('ambient-texture-fill', cfg.texture.fill);
       set('ambient-texture-interval', cfg.texture.intervalMs); hint('ambient-texture-interval-v', _ambFmtMs(cfg.texture.intervalMs));
       set('ambient-texture-length', cfg.texture.lengthMs);     hint('ambient-texture-length-v', _ambFmtMs(cfg.texture.lengthMs));
-      set('ambient-texture-drift', cfg.texture.drift);
+      set('ambient-texture-drift', cfg.texture.drift); set('ambient-texture-lenvary', cfg.texture.lenVary | 0);
       setWhen('ambient-texture', cfg.texture.when);
       set('ambient-texture-mutate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
@@ -9752,7 +9765,7 @@
       set('ambient-beat-voices', (cfg.beat.euclidVoices | 0) || 1);
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-rhythmVar', cfg.beat.rhythmVar);
-      set('ambient-beat-drift', cfg.beat.drift);
+      set('ambient-beat-drift', cfg.beat.drift); set('ambient-beat-lenvary', cfg.beat.lenVary | 0);
       setWhen('ambient-beat', cfg.beat.when);
       set('ambient-beat-rest', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
@@ -9935,6 +9948,7 @@
             sl('Times', 'ambient-bed-chordreps', 1, 16, 4, 'phrase repeats') + gpe() +
           grp('Rhythm') +
             tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
+            sl('Len var', 'ambient-bed-lenvary', 0, 100, 0, 'around Length') +
             sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
             '<div class="ambient-ctrl"><label for="ambient-bed-choke">Choke</label><select id="ambient-bed-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>' +
             condCtrl('bed') + gpe() +
@@ -9966,6 +9980,7 @@
             _ambUnitSyncHtml('ambient-motif') + gpe() +
           grp('Rhythm') +
             tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
+            sl('Len var', 'ambient-motif-lenvary', 0, 100, 0, 'around Length') +
             sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
             sl('Start', 'ambient-motif-pvary', 0, 100, 0, 'on the 1 → anywhere') +
             condCtrl('motif') + gpe() +
@@ -9996,6 +10011,7 @@
           grp('Rhythm') +
             sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
             tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
+            sl('Len var', 'ambient-texture-lenvary', 0, 100, 0, 'around Length') +
             sl('Drift', 'ambient-texture-drift', 0, 99, 0, 'phase offset') +
             condCtrl('texture') + gpe() +
           grp('Variation') +
@@ -10028,6 +10044,7 @@
             sl('Voices', 'ambient-beat-voices', 1, 4, 1, 'polyphonic euclid') +
             '<div class="ambient-ctrl"><label for="ambient-beat-euclidregen">Pattern</label><button type="button" id="ambient-beat-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>' +
             tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
+            sl('Len var', 'ambient-beat-lenvary', 0, 100, 0, 'around Length') +
             sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
             condCtrl('beat') + gpe() +
           grp('Variation') +
@@ -10332,6 +10349,7 @@
       bindTime('ambient-bed-interval', 'bed', 'intervalMs');
       bindTime('ambient-bed-length', 'bed', 'lengthMs');
       bind('ambient-bed-drift', 'bed', 'drift');
+      bind('ambient-bed-lenvary', 'bed', 'lenVary');
       bind('ambient-bed-motion', 'bed', 'motion');
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strumfid', 'bed', 'strumFidelity');
@@ -10343,6 +10361,7 @@
       bindTime('ambient-motif-interval', 'motif', 'intervalMs');
       bindTime('ambient-motif-length', 'motif', 'lengthMs');
       bind('ambient-motif-drift', 'motif', 'drift');
+      bind('ambient-motif-lenvary', 'motif', 'lenVary');
       bind('ambient-motif-pvary', 'motif', 'phraseVary');
       bind('ambient-motif-rest', 'motif', 'restProb');
       bind('ambient-motif-twist', 'motif', 'twist');
@@ -10354,6 +10373,7 @@
       bindTime('ambient-texture-interval', 'texture', 'intervalMs');
       bindTime('ambient-texture-length', 'texture', 'lengthMs');
       bind('ambient-texture-drift', 'texture', 'drift');
+      bind('ambient-texture-lenvary', 'texture', 'lenVary');
       bind('ambient-texture-mutate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
       bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release'); bind('ambient-beat-fine', 'beat', 'fine');
@@ -10367,6 +10387,7 @@
       { const rb = G('ambient-beat-euclidregen'); if (rb) rb.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, 'beat'); }); }
       bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
       bind('ambient-beat-drift', 'beat', 'drift');
+      bind('ambient-beat-lenvary', 'beat', 'lenVary');
       bind('ambient-beat-rest', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');
       ['bed', 'motif', 'texture', 'beat'].forEach(layer =>

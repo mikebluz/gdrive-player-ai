@@ -1281,18 +1281,20 @@
       return (layer && Number.isFinite(layer.space)) ? (layer.space | 0) : 0;
     }
     // Pan array for an n-voice event (bed voicings, sample slices, seq notes).
+    // In PAN mode the per-layer Panner node holds the position (so a pan ramp can
+    // sweep it smoothly), so each voice is centred here; in SPREAD mode the voices
+    // fan across the width.
     function _ambLayerPans(layer, n) {
       const val = _ambLayerSpace(layer);
       if (layer && layer.panMode === 'pan') {
-        const p = Math.max(-100, Math.min(100, val));
-        const out = []; for (let i = 0; i < n; i++) out.push(p); return out;
+        const out = []; for (let i = 0; i < n; i++) out.push(0); return out;
       }
       return _ambSpacePans(n, Math.max(0, Math.min(100, val)));
     }
     // Single pan for a one-shot event (motif note, texture/beat hit).
     function _ambLayerPan(layer) {
       const val = _ambLayerSpace(layer);
-      if (layer && layer.panMode === 'pan') return Math.max(-100, Math.min(100, val));
+      if (layer && layer.panMode === 'pan') return 0;   // position is on the layer Panner
       return Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, val)));
     }
 
@@ -3613,11 +3615,14 @@
         // dry gate and leaves the reverb feeding for a fuller tail; "tails off"
         // ramps the send down with the gate. vca → gate is permanent; FX
         // (dist/delay) re-route the gate's out.
-        const gate = new Tone.Gain(1).connect(out);
+        // Per-layer PANNER carries the pan-mode position so it can be automated
+        // CONTINUOUSLY (a smooth pan ramp) rather than only re-panning per note.
+        // Chain: vcf → [eq] → vca → gate → pan → [FX] → bus. In Spread mode the
+        // pan stays centred and per-voice pans fan the width; in Pan mode the
+        // per-voice pan is centred and this node holds the (rampable) position.
+        const pan = new Tone.Panner(0).connect(out);
+        const gate = new Tone.Gain(1).connect(pan);
         const vca = new Tone.Gain(1).connect(gate);
-        // Per-layer 3-band EQ (#1) sits between the filter and the VCA: voice →
-        // vcf → eq → vca → gate → FX → bus. 0 dB by default = transparent. An FFT
-        // analyser side-taps the EQ output to drive the live band meters.
         // Per-layer 3-band EQ is spliced in LAZILY (see _ambApplyEq) — an EQ3 is
         // several always-on biquads, so building one per layer even at a flat
         // 0/0/0 dB is the same dense-stack DSP drain that made dist/delay lazy
@@ -3634,7 +3639,7 @@
         vca.connect(revSend);
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, gate, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, gate, pan, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
@@ -3651,7 +3656,7 @@
       try {
         if (wantDelay !== !!e.delay || wantDist !== !!e.dist) {
           const out = _E.busNode();
-          const g = e.gate || e.vca;            // route the FX tail off the gate (post-vca)
+          const g = e.pan || e.gate || e.vca;   // route the FX tail off the panner (post-gate)
           try { g.disconnect(); } catch (x) {}
           if (!wantDelay && e.delay) { try { e.delay.dispose(); } catch (x) {} e.delay = null; }
           if (!wantDist && e.dist) { try { e.dist.dispose(); } catch (x) {} e.dist = null; }
@@ -3735,7 +3740,18 @@
       const e = _E.mod[layer];
       if (!e) return;
       ['vca', 'vco', 'vcf'].forEach(tg => _ambSyncTarget(e, layer, tg, cfg));
-      try { _ambApplyEq(layer, _ambLayerByKey(_E, layer)); } catch (x) {}   // engage/flatten the lazy EQ
+      const L = _ambLayerByKey(_E, layer);
+      try { _ambApplyEq(layer, L); } catch (x) {}        // engage/flatten the lazy EQ
+      try { _ambApplyLayerPan(layer, L); } catch (x) {}  // set the per-layer panner from space (pan mode)
+    }
+    // Set a layer's panner position from its Stereo fader: Pan mode → the position
+    // (−100..100 → −1..1); Spread mode → centred (0), per-voice pans do the width.
+    // The pan ramp also drives this node directly (see _ambRampResolve 'space').
+    function _ambApplyLayerPan(layer, lc) {
+      const e = _E.mod[layer]; if (!e || !e.pan) return;
+      const pos = (lc && lc.panMode === 'pan' && Number.isFinite(lc.space))
+        ? Math.max(-1, Math.min(1, (lc.space | 0) / 100)) : 0;
+      try { e.pan.pan.value = pos; } catch (x) {}
     }
     function _ambTeardownMod(layer) {
       const e = _E.mod[layer];
@@ -3746,6 +3762,7 @@
       try { e.eqAnalyser && e.eqAnalyser.dispose(); } catch (x) {}
       try { e.vca && e.vca.dispose(); } catch (x) {}
       try { e.gate && e.gate.dispose(); } catch (x) {}
+      try { e.pan && e.pan.dispose(); } catch (x) {}
       try { e.dist && e.dist.dispose(); } catch (x) {}
       try { e.delay && e.delay.dispose(); } catch (x) {}
       try { e.revSend && e.revSend.dispose(); } catch (x) {}
@@ -9276,6 +9293,17 @@
           if (key === 'revSend') { obj.revSend = v; }
           else { const di = key.indexOf('.'); const grp = key.slice(0, di), sub = key.slice(di + 1); if (!obj[grp] || typeof obj[grp] !== 'object') obj[grp] = {}; obj[grp][sub] = v; }
           try { _ambApplyLayerFx(head, obj); } catch (e) {}
+        } };
+      }
+      // Stereo: write `space`, and in Pan mode push the position to the live
+      // per-layer Panner so the ramp pans SMOOTHLY (not just per note onset).
+      if (key === 'space') {
+        return { min: spec[2], max: spec[3], set: function (v) {
+          obj.space = v;
+          try {
+            const e = _E && _E.mod && _E.mod[head];
+            if (e && e.pan && obj.panMode === 'pan') e.pan.pan.value = Math.max(-1, Math.min(1, v / 100));
+          } catch (e) {}
         } };
       }
       return { obj, key, min: spec[2], max: spec[3] };

@@ -1738,26 +1738,68 @@
     }
 
     // ================= BED engine ===================================
-    function _ambPickVoicing(bed) {
-      const intervals = _ambScaleIntervals(_ambNotesOf(bed));
+    // Standard vs extended/exotic chord catalogs (forms from _AMB_CHORD_FORMS),
+    // for the Bed chord modes.
+    const _AMB_CHORDS_STD = ['maj', 'min', 'dom7', 'maj7', 'min7', 'sus2', 'sus4'];
+    const _AMB_CHORDS_EXO = ['maj9', 'min9', 'm7b5', 'dim7', 'aug', 'add9'];
+    function _ambPickVoicing(bed, iter, key) {
+      const notes = _ambNotesOf(bed);
+      const intervals = _ambScaleIntervals(notes);
       const N = intervals.length;
-      const chordDegrees = [0, 2, 4, 6].filter(d => d < N);
       const center = Math.max(1, Math.min(8, bed.register | 0));
       const spread = Math.max(0, Math.min(4, bed.spread | 0));
       const want = Math.max(1, Math.min(8, bed.density | 0));
-      const used = new Set();
-      const out = [];
-      let guard = 0;
-      while (out.length < want && guard++ < 64) {
-        const deg = (_ambRand() < 0.75 && chordDegrees.length)
-          ? chordDegrees[Math.floor(_ambRand() * chordDegrees.length)]
-          : Math.floor(_ambRand() * N);
-        const oct = center + Math.round((_ambRand() * 2 - 1) * spread);
-        const key = deg + ':' + oct;
-        if (used.has(key)) continue;
-        used.add(key);
-        out.push(_ambDegreeFreq(deg, oct, _ambNotesOf(bed)));
+      const mode = bed.chordMode || 'chaos';
+      if (mode === 'chaos') {
+        // CHAOS (default, unchanged → harness byte-identical): random stack of
+        // scale degrees, biased toward chord tones.
+        const chordDegrees = [0, 2, 4, 6].filter(d => d < N);
+        const used = new Set();
+        const out = [];
+        let guard = 0;
+        while (out.length < want && guard++ < 64) {
+          const deg = (_ambRand() < 0.75 && chordDegrees.length)
+            ? chordDegrees[Math.floor(_ambRand() * chordDegrees.length)]
+            : Math.floor(_ambRand() * N);
+          const oct = center + Math.round((_ambRand() * 2 - 1) * spread);
+          const k2 = deg + ':' + oct;
+          if (used.has(k2)) continue;
+          used.add(k2);
+          out.push(_ambDegreeFreq(deg, oct, notes));
+        }
+        return out.sort((a, b) => a - b);
       }
+      // STRUCTURED modes (Chords / Chords+ / Monk): build a repeating phrase of
+      // PL real chords, repeated RP times, then a fresh phrase. Each (phrase-group,
+      // slot) maps deterministically to one chord (root scale-degree + a form from
+      // the mode's catalog) via a seeded RNG, so the same PL chords recur for all
+      // RP repeats and the layer feels composed rather than chaotic.
+      const PL = Math.max(1, Math.min(16, (bed.chordPhraseLen | 0) || 4));
+      const RP = Math.max(1, Math.min(16, (bed.chordRepeats | 0) || 4));
+      const it = (iter | 0);
+      const group = Math.floor(it / (PL * RP));
+      const slot = ((it % PL) + PL) % PL;
+      const seedBase = (_E && _E._cfg && (_E._cfg.seed | 0)) || 0;
+      const kn = key ? (parseInt(String(key).split(':').pop(), 10) || 0) : 0;
+      const rng = _ambSeededRand(((group * 2654435761) ^ (slot * 40503) ^ ((seedBase * 97 + kn * 131) >>> 0)) >>> 0);
+      const cat = (mode === 'chords') ? _AMB_CHORDS_STD : (mode === 'monk') ? _AMB_CHORDS_EXO : _AMB_CHORDS_STD.concat(_AMB_CHORDS_EXO);
+      const form = cat[Math.floor(rng() * cat.length) % cat.length];
+      const def = _AMB_CHORD_FORMS.find(c => c[0] === form) || _AMB_CHORD_FORMS[0];
+      const ivs = def[2];
+      const deg = Math.floor(rng() * Math.max(1, N)) % Math.max(1, N);
+      const rootFreq = _ambDegreeFreq(deg, center, notes);
+      if (!(rootFreq > 0)) return [];
+      // Voice the chord tones above the in-key root; Spread lifts upper tones an
+      // octave. Fit to Density (octave-double up if fewer tones than Density).
+      const tones = [];
+      for (let i = 0; i < ivs.length; i++) {
+        const oShift = (spread > 0 && i > 0 && rng() < (spread / 5)) ? 1 : 0;
+        tones.push(rootFreq * Math.pow(2, (ivs[i] + 12 * oShift) / 12));
+      }
+      let out = tones.slice();
+      let g2 = 0;
+      while (out.length < want && tones.length && g2++ < 16) out.push(tones[out.length % tones.length] * 2);
+      if (out.length > want) out = out.slice(0, want);
       return out.sort((a, b) => a - b);
     }
     // Pad voice params. CRITICAL: attack + release stay INSIDE the note window
@@ -1863,7 +1905,7 @@
       key = key || 'bed';
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;   // resolve this note's key by its play-time (keyMaster sections)
-      const voicing = _ambPickVoicing(bed);
+      const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key);
       if (!voicing.length) { _ambRecordUnit(_E, key, at, []); return; }
       const durMs = Math.max(80, bed.lengthMs | 0);
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
@@ -9222,6 +9264,9 @@
       set('ambient-bed-attack', cfg.bed.attack); set('ambient-bed-decay', cfg.bed.decay); set('ambient-bed-sustain', cfg.bed.sustain); set('ambient-bed-release', cfg.bed.release); set('ambient-bed-fine', cfg.bed.fine);
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
+      set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
+      set('ambient-bed-chordlen', (cfg.bed.chordPhraseLen | 0) || 4);
+      set('ambient-bed-chordreps', (cfg.bed.chordRepeats | 0) || 4);
       set('ambient-bed-register', cfg.bed.register);
       set('ambient-bed-spread', cfg.bed.spread);
       set('ambient-bed-interval', cfg.bed.intervalMs); hint('ambient-bed-interval-v', _ambFmtMs(cfg.bed.intervalMs));
@@ -9442,12 +9487,17 @@
             sl('Fine', 'ambient-bed-fine', -100, 100, 0, 'cents') + gpe() +
           grp('Pitch') +
             _ambNotesButtonHtml('ambient-bed') +
+            '<div class="ambient-ctrl"><label for="ambient-bed-chordmode">Chords</label><select id="ambient-bed-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>' +
             sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
             sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
             sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') + gpe() +
           grp('Unit') +
             tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
-            _ambUnitSyncHtml('ambient-bed') + gpe() +
+            _ambUnitSyncHtml('ambient-bed') +
+            // Chord-mode repeat structure (inert in Chaos): play a phrase of N
+            // chords, repeat it M times, then a fresh phrase.
+            sl('Repeat', 'ambient-bed-chordlen', 1, 16, 4, 'chords / phrase') +
+            sl('Times', 'ambient-bed-chordreps', 1, 16, 4, 'phrase repeats') + gpe() +
           grp('Rhythm') +
             tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
             sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
@@ -9827,6 +9877,9 @@
       bind('ambient-bed-density', 'bed', 'density');
       bind('ambient-bed-register', 'bed', 'register');
       bind('ambient-bed-spread', 'bed', 'spread');
+      bind('ambient-bed-chordlen', 'bed', 'chordPhraseLen');
+      bind('ambient-bed-chordreps', 'bed', 'chordRepeats');
+      { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; persist(); }); }
       bindTime('ambient-bed-interval', 'bed', 'intervalMs');
       bindTime('ambient-bed-length', 'bed', 'lengthMs');
       bind('ambient-bed-drift', 'bed', 'drift');

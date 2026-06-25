@@ -6024,17 +6024,6 @@
       _ambNoteEditorEl();
       _ambNoteEdRefresh();
       if (_ambNoteEd) _ambPositionNoteEditor(anchorEl || _ambNoteChipEl(E, key, index));
-      // TEMP DIAGNOSTIC — remove once the editor is confirmed working.
-      try {
-        const el = document.getElementById('ambient-note-editor');
-        const r = el && el.getBoundingClientRect();
-        const disp = el ? getComputedStyle(el).display : '-';
-        const msg = 'NoteEd: ' + (el ? 'el✓' : 'NO-EL') + ' disp=' + disp +
-          ' open=' + (el ? el.classList.contains('open') : '-') +
-          (r ? (' @' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + '×' + Math.round(r.height)) : '') +
-          ' body=[' + (document.body.className || '-') + ']';
-        if (typeof showToast === 'function') showToast(msg); else if (typeof alert === 'function') alert(msg);
-      } catch (e) { try { if (typeof showToast === 'function') showToast('NoteEd err: ' + e.message); } catch (x) {} }
     }
     function _ambCloseNoteEditor() {
       _ambNoteEd = null;

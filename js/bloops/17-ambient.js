@@ -3618,16 +3618,23 @@
         // Per-layer 3-band EQ (#1) sits between the filter and the VCA: voice →
         // vcf → eq → vca → gate → FX → bus. 0 dB by default = transparent. An FFT
         // analyser side-taps the EQ output to drive the live band meters.
-        let eq = null, eqAnalyser = null;
-        try { eq = new Tone.EQ3(0, 0, 0); } catch (e) { eq = null; }
+        // Per-layer 3-band EQ is spliced in LAZILY (see _ambApplyEq) — an EQ3 is
+        // several always-on biquads, so building one per layer even at a flat
+        // 0/0/0 dB is the same dense-stack DSP drain that made dist/delay lazy
+        // (it glitched modest stacks). Base chain is just vcf → vca; the EQ3 is
+        // inserted only when a band is non-zero. The FFT analyser that drives the
+        // band meters taps the VCA (post-EQ-or-bypass) so meters work in both
+        // states and stay cheap (it only buffers; the FFT runs on demand for
+        // OPEN panels via _ambUpdateEqMeters).
         const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 });
-        if (eq) { vcf.connect(eq); eq.connect(vca); try { eqAnalyser = new Tone.Analyser('fft', 64); eq.connect(eqAnalyser); } catch (e) { eqAnalyser = null; } }
-        else { vcf.connect(vca); }
+        vcf.connect(vca);
+        let eqAnalyser = null;
+        try { eqAnalyser = new Tone.Analyser('fft', 64); vca.connect(eqAnalyser); } catch (e) { eqAnalyser = null; }
         const revSend = new Tone.Gain(0);
         vca.connect(revSend);
         const rev = _ambEnsureReverb();
         if (rev) revSend.connect(rev);
-        _E.mod[layer] = { input: vcf, vcf, eq, eqAnalyser, vca, gate, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
+        _E.mod[layer] = { input: vcf, vcf, eq: null, eqAnalyser, vca, gate, dist: null, delay: null, revSend, src: { vca: null, vco: null, vcf: null } };
         _ambUpdateMod(layer, cfg);
       } catch (e) {}
     }
@@ -3673,11 +3680,36 @@
           e.delay.wet.value = Math.max(0, Math.min(1, (dly.mix | 0) / 100));
         }
         if (e.revSend) e.revSend.gain.value = Math.max(0, Math.min(1, (lc.revSend | 0) / 100));
-        if (e.eq && lc.eq) {
-          const cl = (v) => Math.max(-24, Math.min(24, (v | 0)));
-          if (e.eq.low) e.eq.low.value = cl(lc.eq.low);
-          if (e.eq.mid) e.eq.mid.value = cl(lc.eq.mid);
-          if (e.eq.high) e.eq.high.value = cl(lc.eq.high);
+      } catch (x) {}
+      try { _ambApplyEq(layer, lc); } catch (x) {}
+    }
+    // Lazy per-layer EQ: splice an EQ3 between vcf and vca only while a band is
+    // non-zero; dispose it when the layer returns to flat so a stack of flat
+    // layers carries no EQ DSP at all. The meter analyser stays on the VCA, so
+    // band meters work whether or not the EQ is engaged.
+    function _ambApplyEq(layer, lc) {
+      const e = _E.mod[layer];
+      if (!e || typeof Tone === 'undefined') return;
+      const eqv = (lc && lc.eq) ? lc.eq : null;
+      const cl = (v) => Math.max(-24, Math.min(24, (v | 0)));
+      const lo = eqv ? cl(eqv.low) : 0, mi = eqv ? cl(eqv.mid) : 0, hi = eqv ? cl(eqv.high) : 0;
+      const wantEq = (lo !== 0 || mi !== 0 || hi !== 0);
+      try {
+        if (wantEq && !e.eq) {                         // engage: vcf → eq → vca
+          const eq = new Tone.EQ3(lo, mi, hi);
+          try { e.vcf.disconnect(); } catch (x) {}
+          e.vcf.connect(eq); eq.connect(e.vca);
+          e.eq = eq;
+        } else if (!wantEq && e.eq) {                  // back to flat: vcf → vca, drop the EQ
+          try { e.vcf.disconnect(); } catch (x) {}
+          try { e.eq.disconnect(); } catch (x) {}
+          try { e.eq.dispose(); } catch (x) {}
+          e.eq = null;
+          e.vcf.connect(e.vca);
+        } else if (e.eq) {                             // already engaged: just update bands
+          if (e.eq.low) e.eq.low.value = lo;
+          if (e.eq.mid) e.eq.mid.value = mi;
+          if (e.eq.high) e.eq.high.value = hi;
         }
       } catch (x) {}
     }
@@ -3685,7 +3717,7 @@
       const e = _E.mod[layer];
       if (!e) return;
       ['vca', 'vco', 'vcf'].forEach(tg => _ambSyncTarget(e, layer, tg, cfg));
-      if (e.eq) { const L = _ambLayerByKey(_E, layer); if (L && L.eq) { const cl = (v) => Math.max(-24, Math.min(24, (v | 0))); if (e.eq.low) e.eq.low.value = cl(L.eq.low); if (e.eq.mid) e.eq.mid.value = cl(L.eq.mid); if (e.eq.high) e.eq.high.value = cl(L.eq.high); } }
+      try { _ambApplyEq(layer, _ambLayerByKey(_E, layer)); } catch (x) {}   // engage/flatten the lazy EQ
     }
     function _ambTeardownMod(layer) {
       const e = _E.mod[layer];

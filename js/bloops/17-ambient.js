@@ -2793,8 +2793,6 @@
       const N = Math.max(1, intervals.length);
       const baseOct = Math.max(1, Math.min(8, (arp.register | 0) || 4));
       const V = Math.max(1, Math.min(6, (arp.euclidVoices | 0) || 1));
-      const POFF = [0, 2, -2, 3, -3, 1];
-      const layPan = _ambLayerPan(arp);
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, arp, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
@@ -2807,6 +2805,11 @@
       // events limits the total note-events per unit (keep the EARLIEST). 0 = off.
       const Veff = ((arp.maxPitches | 0) > 0) ? Math.max(1, Math.min(V, arp.maxPitches | 0)) : V;
       const maxEv = (arp.maxEvents | 0) > 0 ? (arp.maxEvents | 0) : 0;
+      // Stereo Spread: fan the V voices across the field by the Spread width
+      // (Pan mode → 0s, the layer Panner positions the whole arp). Deterministic
+      // per voice, like Bed/Sample — replaces the old random base + fixed ±35 fan
+      // that ignored the Spread amount.
+      const vpans = _ambLayerPans(arp, Veff);
       const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));   // ±1-octave drift per hit (gated)
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         if (!_ambCondFires(arp.when, c)) continue;
@@ -2822,7 +2825,7 @@
           _ambKeyTime = cStart;
           const f0 = _ambNoteFreq(intervals[deg] | 0, oct + carry, notes);
           if (!(f0 > 0)) continue;
-          const pan = (Veff === 1) ? layPan : Math.max(-100, Math.min(100, (layPan | 0) + Math.round((v - (Veff - 1) / 2) * 35)));
+          const pan = (vpans[v] | 0);
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
               let hit = vpat[slot] === 1;

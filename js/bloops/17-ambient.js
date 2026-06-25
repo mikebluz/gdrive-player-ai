@@ -6403,9 +6403,11 @@
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
-      // Read-only live notes line — wraps full-width under the head; shows the
-      // notes this layer is currently sounding (filled by _ambUpdateNotesLive).
-      (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '" aria-hidden="true"></span>' : '') +
+      // Live notes line — wraps full-width under the head; shows the notes this
+      // layer is currently sounding (filled by _ambUpdateNotesLive). NOT
+      // aria-hidden: when a unit is locked it holds focusable note-edit chips,
+      // and focus inside an aria-hidden subtree is blocked by the browser.
+      (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '"></span>' : '') +
       '</div>' +
       // Per-layer controls row — sits at the top of the expanded body (above the
       // Voice group); hidden when the layer is collapsed. Holds Rename (moved out

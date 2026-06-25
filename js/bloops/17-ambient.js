@@ -5895,9 +5895,21 @@
           return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>';
         };
         if (locked && E.unit && E.unit[key] && Array.isArray(E.unit[key].notes)) {
-          // Locked: the captured notes, once, in their content colour (same notes
-          // → same colour, so locking doesn't recolour the unit).
-          html = seg(E.unit[key].notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean), false);
+          const _ns = E.unit[key].notes;
+          const _lt = String(key).split(':')[0];
+          if (_lt === 'bed' || _lt === 'motif') {
+            // Locked Bed/Motif → EDITABLE: each note is a tappable chip (opens the
+            // note editor popover), plus an add-note (+) affordance. Edits mutate
+            // E.unit[key].notes in place; the locked replay re-reads it next pass.
+            const col = colorFor(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean));
+            html = '<span class="ambient-np-ed" style="color:' + col + '">' +
+              _ns.map((n, i) => '<button type="button" class="ambient-np-note" data-ekey="' + key + '" data-ei="' + i + '">' + (_ambFreqNoteName(n.freq) || '?') + '</button>').join('') +
+              '<button type="button" class="ambient-np-add" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</button>' +
+            '</span>';
+          } else {
+            // Locked, non-editable (other layer types) → static, in content colour.
+            html = seg(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean), false);
+          }
         } else if (layerOn) {
           // Unlocked: current unit ▸ next (lookahead). Prefer the discrete recorded
           // units (exact boundaries, every note, and recorded RESTS → "–"); fall
@@ -5919,6 +5931,119 @@
         if (html) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, html: html }); }
       });
       _ambRenderNowPlaying(E, rows, playing);
+      // If the open note editor's target note no longer exists (unlocked, deleted,
+      // panel rebuilt), dismiss the popover.
+      if (_ambNoteEd && _ambNoteEd.E === E) {
+        const still = host.querySelector('.ambient-np-note[data-ekey="' + _ambNoteEd.key + '"][data-ei="' + _ambNoteEd.index + '"]');
+        if (!still) _ambCloseNoteEditor();
+      }
+    }
+    // ===== Note-for-note unit editor (Phase 5 Part 2a) =================
+    // Tap a note chip in a LOCKED Bed/Motif unit to open this popover and nudge
+    // its pitch (±semitone / ±octave), remove it, or add a note. Edits mutate
+    // E.unit[key].notes in place; the locked replay (_ambEmitLocked) re-reads
+    // that list every iteration, so a change lands on the NEXT pass — the
+    // "edit the queued iteration" model. Generation is untouched (display layer).
+    let _ambNoteEd = null;   // { E, key, index } currently being edited
+    function _ambNoteEditorEl() {
+      let el = document.getElementById('ambient-note-editor');
+      if (el) return el;
+      el = document.createElement('div');
+      el.id = 'ambient-note-editor';
+      el.className = 'ambient-note-editor';
+      el.innerHTML =
+        '<div class="ane-name"></div>' +
+        '<div class="ane-row">' +
+          '<button type="button" class="ane-btn" data-op="oct-" title="Down an octave">8vb</button>' +
+          '<button type="button" class="ane-btn" data-op="semi-" title="Down a semitone">&#9837;</button>' +
+          '<button type="button" class="ane-btn" data-op="semi+" title="Up a semitone">&#9839;</button>' +
+          '<button type="button" class="ane-btn" data-op="oct+" title="Up an octave">8va</button>' +
+        '</div>' +
+        '<button type="button" class="ane-btn ane-del" data-op="del">&#10005; Remove</button>';
+      document.body.appendChild(el);
+      el.addEventListener('click', (e) => {
+        const b = e.target && e.target.closest && e.target.closest('.ane-btn');
+        if (!b) return; e.stopPropagation();
+        _ambNoteEditOp(b.dataset.op);
+      });
+      // Outside click / scroll dismisses (capture phase: runs before the panel's
+      // own bubble handlers, which stopPropagation on the chips themselves).
+      document.addEventListener('click', (e) => {
+        if (!_ambNoteEd) return;
+        if (e.target.closest && (e.target.closest('#ambient-note-editor') ||
+            e.target.closest('.ambient-np-note') || e.target.closest('.ambient-np-add'))) return;
+        _ambCloseNoteEditor();
+      }, true);
+      window.addEventListener('resize', _ambCloseNoteEditor);
+      return el;
+    }
+    function _ambNoteEdNotes() {
+      const t = _ambNoteEd; if (!t || !t.E) return null;
+      const u = t.E.unit && t.E.unit[t.key];
+      return (u && Array.isArray(u.notes)) ? u.notes : null;
+    }
+    function _ambNoteEdRefresh() {
+      const el = document.getElementById('ambient-note-editor'); if (!el || !_ambNoteEd) return;
+      const notes = _ambNoteEdNotes();
+      const n = notes && notes[_ambNoteEd.index];
+      if (!n) { _ambCloseNoteEditor(); return; }
+      const nm = el.querySelector('.ane-name'); if (nm) nm.textContent = _ambFreqNoteName(n.freq) || '—';
+      const del = el.querySelector('.ane-del'); if (del) del.disabled = (notes.length <= 1);
+    }
+    function _ambPositionNoteEditor(anchorEl) {
+      const el = document.getElementById('ambient-note-editor'); if (!el || !anchorEl) return;
+      const r = anchorEl.getBoundingClientRect();
+      el.style.visibility = 'hidden'; el.classList.add('open');
+      const ew = el.offsetWidth, eh = el.offsetHeight;
+      let left = r.left + r.width / 2 - ew / 2;
+      let top = r.bottom + 6;
+      if (top + eh > window.innerHeight - 6) top = r.top - eh - 6;   // flip above if no room below
+      left = Math.max(6, Math.min(left, window.innerWidth - ew - 6));
+      top = Math.max(6, top);
+      el.style.left = left + 'px'; el.style.top = top + 'px';
+      el.style.visibility = '';
+    }
+    function _ambNoteChipEl(E, key, index) {
+      const host = document.getElementById(E.hostId); if (!host) return null;
+      return host.querySelector('.ambient-np-note[data-ekey="' + key + '"][data-ei="' + index + '"]');
+    }
+    function _ambOpenNoteEditor(E, key, index, anchorEl) {
+      _ambNoteEd = { E: E, key: key, index: index };
+      _ambNoteEditorEl();
+      _ambNoteEdRefresh();
+      if (_ambNoteEd) _ambPositionNoteEditor(anchorEl || _ambNoteChipEl(E, key, index));
+    }
+    function _ambCloseNoteEditor() {
+      _ambNoteEd = null;
+      const el = document.getElementById('ambient-note-editor');
+      if (el) { el.classList.remove('open'); el.style.visibility = ''; }
+    }
+    function _ambNoteEditOp(op) {
+      const t = _ambNoteEd; if (!t) return;
+      const notes = _ambNoteEdNotes(); if (!notes) { _ambCloseNoteEditor(); return; }
+      const n = notes[t.index];
+      if (!n) { _ambCloseNoteEditor(); return; }
+      if (op === 'semi+') n.freq *= Math.pow(2, 1 / 12);
+      else if (op === 'semi-') n.freq *= Math.pow(2, -1 / 12);
+      else if (op === 'oct+') n.freq *= 2;
+      else if (op === 'oct-') n.freq /= 2;
+      else if (op === 'del') {
+        if (notes.length <= 1) return;                 // never empty a locked unit
+        notes.splice(t.index, 1);
+        if (t.index >= notes.length) t.index = notes.length - 1;
+      }
+      try { _ambUpdateNotesLive(t.E); } catch (e) {}
+      if (!_ambNoteEd) return;                          // editor was dismissed by the refresh
+      _ambNoteEdRefresh();
+      _ambPositionNoteEditor(_ambNoteChipEl(t.E, t.key, t.index));
+    }
+    function _ambAddNote(E, key) {
+      const u = E.unit && E.unit[key];
+      if (!u || !Array.isArray(u.notes) || !u.notes.length) return null;
+      const last = u.notes[u.notes.length - 1];
+      u.notes.push({ freq: last.freq, off: last.off || 0, durMs: last.durMs, params: Object.assign({}, last.params) });
+      try { _ambUpdateNotesLive(E); } catch (e) {}
+      return u.notes.length - 1;
     }
     function _ambRenderNowPlaying(E, rows, playing) {
       const wrap = _ambGet(E, 'ambient-nowplaying-list'); if (!wrap) return;
@@ -9162,6 +9287,10 @@
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
         if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
+        const nn = e.target && e.target.closest && e.target.closest('.ambient-np-note');
+        if (nn) { e.stopPropagation(); try { _ambOpenNoteEditor(E, nn.dataset.ekey, parseInt(nn.dataset.ei, 10) || 0, nn); } catch (err) { console.warn('Note edit failed', err); } return; }
+        const na = e.target && e.target.closest && e.target.closest('.ambient-np-add');
+        if (na) { e.stopPropagation(); try { const k = na.dataset.ekey, idx = _ambAddNote(E, k); if (idx != null) _ambOpenNoteEditor(E, k, idx); } catch (err) { console.warn('Add note failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();

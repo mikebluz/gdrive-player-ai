@@ -2871,6 +2871,42 @@
     .ambient-np-next { opacity: 0.5; }
     /* A recorded REST (the unit played nothing) — a muted dash. */
     .ambient-np-rest { color: #5a5a72; }
+    /* Editable locked unit: each note is a tappable chip; + adds a note. The
+       chips inherit the unit's content colour from the wrapping .ambient-np-ed. */
+    .ambient-np-ed { display: inline; }
+    .ambient-np-note, .ambient-np-add {
+      font: inherit; color: inherit; background: transparent; cursor: pointer;
+      border: 0; border-radius: 4px; padding: 0 3px; margin: 0 1px;
+      vertical-align: baseline; line-height: inherit; -webkit-tap-highlight-color: transparent;
+    }
+    .ambient-np-add { color: #6b6b8a; }
+    @media (hover: hover) {
+      .ambient-np-note:hover, .ambient-np-add:hover { background: rgba(255,255,255,0.09); box-shadow: inset 0 0 0 1px currentColor; }
+    }
+    .ambient-np-note:active, .ambient-np-add:active { background: rgba(255,255,255,0.16); }
+    /* Note-for-note unit editor popover (one global instance, body-anchored). */
+    .ambient-note-editor {
+      position: fixed; z-index: 10600; display: none; left: 0; top: 0;
+      background: #16161f; border: 1px solid #2d2d3f; border-radius: 10px;
+      padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      font-family: 'Segoe UI', sans-serif; min-width: 168px;
+    }
+    .ambient-note-editor.open { display: block; }
+    .ambient-note-editor .ane-name {
+      text-align: center; font: 700 0.95rem 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+      color: #ffd479; letter-spacing: 0.04em; margin-bottom: 7px;
+    }
+    .ambient-note-editor .ane-row { display: flex; gap: 5px; margin-bottom: 6px; }
+    .ambient-note-editor .ane-btn {
+      flex: 1 1 auto; padding: 8px 6px; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: #20202e; color: #c8c8e0; cursor: pointer; font: 600 0.8rem 'Segoe UI', sans-serif;
+      line-height: 1; transition: all 0.12s ease;
+    }
+    @media (hover: hover) { .ambient-note-editor .ane-btn:hover { border-color: #7fd6c4; color: #fff; } }
+    .ambient-note-editor .ane-btn:active { background: #2a2a3c; }
+    .ambient-note-editor .ane-del { width: 100%; color: #ff9aa2; }
+    @media (hover: hover) { .ambient-note-editor .ane-del:hover { border-color: #ff9aa2; color: #fff; background: #3a2230; } }
+    .ambient-note-editor .ane-del:disabled { opacity: 0.4; cursor: default; }
     /* "Now Playing" read-only panel — global readout of every layer's notes. */
     .ambient-nowplaying {
       border: 1px solid #20203a; border-radius: 8px; padding: 6px 10px;

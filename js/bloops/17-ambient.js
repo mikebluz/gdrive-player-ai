@@ -6333,13 +6333,14 @@
           }
           html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
         }
-        // Line: LOCKED → editable chips; PLAYING → piano-roll canvas (time × pitch,
-        // drawn each frame by _ambDrawRolls); else empty. The Now Playing panel
-        // keeps the text form (pushed below) regardless.
+        // Line: LOCKED → editable chips; PLAYING → text note readout ABOVE the
+        // piano-roll canvas (time × pitch, drawn each frame by _ambDrawRolls);
+        // else empty. The Now Playing panel keeps the text form (pushed below).
         if (lockEd) {
           if (el._mode !== 'chips' || el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; el._mode = 'chips'; }
         } else if (layerOn) {
-          if (el._mode !== 'roll') { el.innerHTML = ''; const cv = document.createElement('canvas'); cv.className = 'ambient-np-roll'; el.appendChild(cv); el._mode = 'roll'; el._npHtml = null; }
+          if (el._mode !== 'roll') { el.innerHTML = '<div class="ambient-np-text"></div><canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
+          if (el._npHtml !== html) { el._npHtml = html; const tx = el.querySelector('.ambient-np-text'); if (tx) tx.innerHTML = html; }
         } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
         if (html) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: html }); }
       });

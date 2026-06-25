@@ -2886,6 +2886,12 @@
       width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
       font: 600 0.72rem 'Segoe UI', sans-serif;
     }
+    /* Layer Delete moved into the body controls row — a reddish pill beside
+       Rename (overrides the base .ambient-seq-del 26px square + auto-margin). */
+    .ambient-layer-topctrls .ambient-seq-del {
+      width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
+      font: 600 0.72rem 'Segoe UI', sans-serif;
+    }
     /* Per-layer piano visualizer (#6) — toggle button + expandable keyboard. */
     .ambient-piano-toggle {
       flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 7px;
@@ -3063,10 +3069,10 @@
     .ambient-layer-head .ambient-seq-del { flex: 0 0 auto; }
     .ambient-listen-row { gap: 8px; align-items: center; }
     .ambient-toggle {
-      height: 47px; padding: 0 16px; border: 1px solid #2d2d3f; border-radius: 12px;
+      height: 38px; padding: 0 13px; border: 1px solid #2d2d3f; border-radius: 10px;
       display: inline-flex; align-items: center;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
-      font-size: 1.28rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+      font-size: 1.02rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
     }
     /* Hover is NEUTRAL (not the on-accent) so an off layer never looks on. */
     .ambient-toggle:hover { border-color: #5a5a7a; color: #a8a8c8; }
@@ -3151,12 +3157,11 @@
     .ambient-layer-head .ambient-lock-btn,
     .ambient-layer-head .ambient-freezelock-btn,
     .ambient-layer-head .ambient-freeze-btn,
-    .ambient-layer-head .ambient-seq-del,
     .ambient-layer-head .ambient-collapse {
-      width: 47px; height: 47px; padding: 0; margin-left: 8px;
-      border-radius: 12px; flex: 0 0 auto;
+      width: 38px; height: 38px; padding: 0; margin-left: 8px;
+      border-radius: 10px; flex: 0 0 auto;
       display: inline-flex; align-items: center; justify-content: center;
-      font-size: 1.28rem; line-height: 1;
+      font-size: 1.02rem; line-height: 1;
     }
     /* Clone is the first of the right-hand cluster — it carries the lone auto
        margin so ⧉ S ❄ ✕ ⌄ group and right-align identically on every layer. */

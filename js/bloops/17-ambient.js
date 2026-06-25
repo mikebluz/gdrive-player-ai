@@ -7226,7 +7226,6 @@
       // action; this just sets the snap mode.
       (freezeKey ? '<button type="button" class="ambient-freezelock-btn" data-flkey="' + freezeKey + '" title="Lock — snap the Freeze loop to whole units (off = free / arbitrary length)" aria-label="Lock freeze to units">🔒</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length (Lock 🔒 snaps to whole units)">❄</button>' : '') +
-      (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
       '</div>' +
@@ -7238,9 +7237,11 @@
       // is blocked by the browser.
       (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '"></span>' : '') +
       // Per-layer controls row — sits at the top of the expanded body (above the
-      // Voice group); hidden when the layer is collapsed. Holds Rename and the
-      // piano-visualizer toggle (every non-Beat layer; moved out of the head).
+      // Voice group); hidden when the layer is collapsed. Holds Rename, the layer
+      // Delete (moved out of the head, next to Rename), and the piano-visualizer
+      // toggle (every non-Beat layer; also moved out of the head).
       (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer">✎ Rename</button>' +
+        (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕ Delete</button>' : '') +
         (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹 Piano</button>' : '') +
       '</div>' : '') +
       // Piano visualizer keyboard — in the body, below the controls row (built

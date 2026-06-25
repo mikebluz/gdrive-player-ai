@@ -2742,6 +2742,75 @@
       }
       st.lastAt = tTo;
     }
+    // Polyphonic euclidean Arp (arp.euclid): a windowed, BPM-locked mode parallel
+    // to the series walker. V interlocking euclidean voices over `steps`×`bars`,
+    // each voice a distinct tone of the arp's chord/scale (voice v → degree v,
+    // octave-stacked past the pool), spread across the stereo field. Mirrors the
+    // euclidean Beat; phase-anchored in E.runPhase like Bass/Beat-euclid.
+    function _ambEmitArpEuclid(E, arp, key, now, horizon, lead, space, cfg) {
+      if (!E.runPhase) E.runPhase = {};
+      if (typeof euclideanPattern !== 'function') return;
+      const bpm = _ambBpm();
+      const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, arp, cfg);
+      const bars = Math.max(1, Math.min(8, (arp.bars | 0) || 1));
+      const phraseSec = bars * barSec; if (!(phraseSec > 0.05)) return;
+      const loopSec = phraseSec + Math.max(0, (arp.unitPadMs | 0)) / 1000;
+      const steps = Math.max(2, Math.min(16, (arp.steps | 0) || 8));
+      const pulses = Math.max(1, Math.min(steps, (arp.pulses | 0) || 1));
+      const rotate = Math.max(0, arp.rotate | 0);
+      const slotSec = barSec / steps;
+      const lenMs = Math.max(40, arp.lengthMs | 0);
+      const restP = Math.max(0, Math.min(100, arp.restProb | 0));
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const entry = (Array.isArray(arp.steps) && arp.steps[0]) ? arp.steps[0] : { notes: { type: 'scale', scale: '' } };
+      const notes = _ambNotesOf(entry);
+      const intervals = _ambScaleIntervals(notes);
+      const N = Math.max(1, intervals.length);
+      const baseOct = Math.max(1, Math.min(8, (arp.register | 0) || 4));
+      const V = Math.max(1, Math.min(6, (arp.euclidVoices | 0) || 1));
+      const POFF = [0, 2, -2, 3, -3, 1];
+      const layPan = _ambLayerPan(arp);
+      let st = E.runPhase[key];
+      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, arp, cfg), lastAt: null };
+      const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
+      const tTo = horizon;
+      if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
+      const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
+      const cTo = Math.floor((tTo - st.startAt) / loopSec);
+      let cap = 0;
+      for (let c = cFrom; c <= cTo && cap < 256; c++) {
+        if (!_ambCondFires(arp.when, c)) continue;
+        const cStart = st.startAt + c * loopSec;
+        const rnd = _ambSeededRand(((arp.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
+        for (let v = 0; v < V && cap < 256; v++) {
+          const vpat = (V === 1) ? euclideanPattern(pulses, steps, rotate)
+            : euclideanPattern(Math.max(1, Math.min(steps, pulses + POFF[v])), steps, rotate + v * Math.round(steps / V));
+          const deg = v % N, oct = baseOct + Math.floor(v / N);
+          const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[deg] | 0)) / 12);
+          _ambKeyTime = cStart;
+          const f = _ambNoteFreq(intervals[deg] | 0, oct + carry, notes);
+          if (!(f > 0)) continue;
+          const pan = (V === 1) ? layPan : Math.max(-100, Math.min(100, (layPan | 0) + Math.round((v - (V - 1) / 2) * 35)));
+          for (let bar = 0; bar < bars; bar++) {
+            for (let slot = 0; slot < steps; slot++) {
+              if (vpat[slot] !== 1) continue;
+              if (restP > 0 && rnd() * 100 < restP) continue;
+              const at = cStart + (bar * steps + slot) * slotSec;
+              if (at < tFrom || at >= tTo) continue;
+              const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
+              ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
+              if (dmod) ap._detuneMod = dmod;
+              _ambKeyTime = at;
+              try { playNote(f, ap, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              cap++;
+              if (cap >= 256) break;
+            }
+            if (cap >= 256) break;
+          }
+        }
+      }
+      st.lastAt = tTo;
+    }
 
     // ================= BEAT engine ==================================
     // Works like Motif (per-event generative trigger on its own Interval),
@@ -3947,6 +4016,7 @@
       if (type === 'run')  { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 2)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'pedal') { const bars = Math.max(1, Math.min(16, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'drone') { const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1)); return hold * Math.max(0.05, _ambEffIntervalSec(L)); }
+      if (type === 'arp' && L && L.euclid) { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'arp') { const info = _ambArpSeriesInfo(L, cfg); return info.totalNotes * info.interval; }
       if (type === 'shape') {
         if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
@@ -4064,8 +4134,9 @@
       if (!(P > 0)) return now + 0.1;
       const eps = 0.03;
       const euclidBeat = (type === 'beat' && L && L.gen === 'euclid');
+      const euclidArp = (type === 'arp' && L && L.euclid);
       if (L.on) {
-        if (type === 'arp') {
+        if (type === 'arp' && !euclidArp) {
           // Snap to the SERIES-loop boundary: next note + the notes left in the
           // current cycle, so a queued change lands when the arp restarts its series.
           const info = _ambArpSeriesInfo(L, cfg);
@@ -4080,7 +4151,7 @@
             type === 'texture' || type === 'beat')) {
           const c = E.clocks && E.clocks[key];
           if (c != null && c > now + eps) return c;     // next phrase / slice / step start
-        } else if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat) {
+        } else if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat || euclidArp) {
           const pm = (type === 'bass') ? E.bassPhase : E.runPhase;
           const st = pm && pm[key];
           if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
@@ -4106,7 +4177,8 @@
       if (!(P > 0)) return now + 0.1;
       const eps = 0.02;
       // Arp cuts at the end of the SERIES loop: next note + notes left in the cycle.
-      if (type === 'arp') {
+      const euclidArp = (type === 'arp' && L && L.euclid);
+      if (type === 'arp' && !euclidArp) {
         const info = _ambArpSeriesInfo(L, cfg);
         const st = E.arpState && E.arpState[key];
         const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg);
@@ -4119,7 +4191,7 @@
       }
       let A = null;
       const euclidBeat = (type === 'beat' && L && L.gen === 'euclid');
-      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat) { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
+      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat || euclidArp) { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
       else if (type === 'shape') {
         const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
         const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
@@ -4639,6 +4711,15 @@
           // Arp layers: windowed + phase-anchored (no drift) with per-loop When.
           if (ex.type === 'arp') {
             if (ex.present === false || _muted(ex) || E.windingDown) continue;
+            if (ex.euclid) {   // polyphonic euclidean Arp — windowed, phase-anchored like Beat-euclid
+              const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
+              if (!gate.run) continue;
+              if (_ambFreezeGate(E, key, now, gate.hz)) continue;
+              window._ambCaptureSink = _ambCapSink(E, key);
+              try { _ambEmitArpEuclid(E, ex, key, now, gate.hz, lead, space, cfg); }
+              catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
+              continue;
+            }
             const gate = _qGate(key, !!ex.on, (t) => { if (!E.arpState) E.arpState = {}; E.arpState[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: t, lastAt: null }; });
             if (!gate.run) continue;
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
@@ -5959,7 +6040,7 @@
           const layer = _ambLayerByKey(E, key);
           const on = !!(layer && layer.present !== false && layer.on);
           const type = String(key).split(':')[0];
-          if (on && type === 'arp') {
+          if (on && type === 'arp' && !layer.euclid) {
             // Phase-anchored to the first note (st.startAt), exactly like the
             // windowed layers below — so the bar tracks AUDIBLE playback, not the
             // scheduling cursor (which runs out to the 1.4 s horizon and made the
@@ -5971,7 +6052,7 @@
               prog = (((now - st.startAt) % P) / P + 1) % 1;
               active = true;
             }
-          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape' || (type === 'beat' && layer && layer.gen === 'euclid'))) {
+          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape' || (type === 'arp' && layer.euclid) || (type === 'beat' && layer && layer.gen === 'euclid'))) {
             // Windowed/phase-anchored layers track position in a phase clock, not
             // E.clocks — fill the bar across the unit/loop from that anchor.
             let st = null;
@@ -6875,6 +6956,19 @@
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
     }
+    // Arp Series ↔ Euclid mode: show the euclid controls (pulses/steps/rotate/
+    // voices/bars) only in euclid; hide the series-only timing (Interval/Rate)
+    // and Randomness. The note pool (arpseries) stays visible either way.
+    function _ambArpEuclidVis(E, stem, inst) {
+      const euclid = !!(inst && inst.euclid);
+      const rowOf = (suf) => { const e = _ambGet(E, stem + suf); return (e && e.closest) ? e.closest('.ambient-ctrl') : null; };
+      const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
+      ['pulses', 'steps', 'rotate', 'euclidVoices', 'bars'].forEach(s => setRow(s, euclid));
+      ['randomness'].forEach(s => setRow(s, !euclid));
+      setRow('rate', !euclid);
+      const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
+      if (!euclid && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, stem, inst); } catch (e) {} }
+    }
     const _ambModTarget = (layer, target, label, hint, defRate) =>
       '<div class="ambient-mod-target"><div class="ambient-mod-sub">' + label + '</div>' +
         _ambSl('Depth', 'ambient-' + layer + '-mod-' + target + '-depth', 0, 100, 0, hint) +
@@ -7593,9 +7687,9 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
-        ['grp', 'Pitch'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['unitsync'],
-        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
+        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -7706,6 +7800,7 @@
         if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
         if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
         if (k === 'gen') return _ambGenSel(p + '-');
+        if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
         if (k === 'rate') return _ambRateSel(p + '-rate');
         if (k === 'notes') return _ambNotesButtonHtml(p);
         if (k === 'droneedit') return _ambDroneEditHtml(p);
@@ -7837,6 +7932,7 @@
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); } }); } }
+          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {
@@ -7851,6 +7947,7 @@
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
       try { _ambUnitSyncViz(E, p, inst); } catch (e) {}   // hide free Interval when BPM-synced
       if (type === 'beat') { try { _ambBeatGenVis(E, p, inst, p); } catch (e) {} }   // Gen mode rows (after UnitSyncViz so euclid can hide Interval)
+      if (type === 'arp') { try { _ambArpEuclidVis(E, p, inst); } catch (e) {} }      // Series/Euclid mode rows
     }
     // ---- Arp layer: scale/chord series browser -----------------------------
     // Clear an Arp layer's playback cursor so a series/direction/passes edit

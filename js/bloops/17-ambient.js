@@ -6923,9 +6923,6 @@
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-lock-btn" data-lkey="' + freezeKey + '" title="Lock the unit / cycle playing now — replay it every iteration (click again to unlock)" aria-label="Lock unit">🔒</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
-      // Piano visualizer toggle (every non-Beat layer) — expandable keyboard that
-      // lights the notes this layer plays in real time. Collapsed by default.
-      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
@@ -6934,13 +6931,16 @@
       // aria-hidden: when a unit is locked it holds focusable note-edit chips,
       // and focus inside an aria-hidden subtree is blocked by the browser.
       (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '"></span>' : '') +
-      // Piano visualizer (built lazily on first expand; lit by _ambUpdatePianos).
-      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '') +
       '</div>' +
       // Per-layer controls row — sits at the top of the expanded body (above the
-      // Voice group); hidden when the layer is collapsed. Holds Rename (moved out
-      // of the cramped head) and is a home for future per-layer controls.
-      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer">✎ Rename</button></div>' : '');
+      // Voice group); hidden when the layer is collapsed. Holds Rename and the
+      // piano-visualizer toggle (every non-Beat layer; moved out of the head).
+      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer">✎ Rename</button>' +
+        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹 Piano</button>' : '') +
+      '</div>' : '') +
+      // Piano visualizer keyboard — in the body, below the controls row (built
+      // lazily on first expand; lit by _ambUpdatePianos).
+      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '');
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
     const _ambGet = (E, id) => document.getElementById(_ambTrId(E, id));

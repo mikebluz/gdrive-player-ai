@@ -2884,6 +2884,8 @@
     }
     @media (hover: hover) { .ambient-piano-toggle:hover { border-color: #7fd6c4; color: #7fd6c4; } }
     .ambient-piano-toggle.active { color: #1a202c; background: #7fd6c4; border-color: #7fd6c4; }
+    /* In the body controls row it reads as a pill, matching the Rename button. */
+    .ambient-layer-topctrls .ambient-piano-toggle { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
     /* Keyboard strip — relative box; white keys tile (float), black keys overlay
        (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
     .ambient-piano { display: none; flex: 0 0 100%; width: 100%; margin-top: 4px; position: relative; height: 34px; }

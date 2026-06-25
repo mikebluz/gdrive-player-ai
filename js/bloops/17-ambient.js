@@ -5963,6 +5963,12 @@
           '<button type="button" class="ane-btn" data-op="short" title="Shorter">len&#8722;</button>' +
           '<button type="button" class="ane-btn" data-op="long" title="Longer">len+</button>' +
         '</div>' +
+        '<div class="ane-row">' +
+          '<button type="button" class="ane-btn" data-op="vel-" title="Quieter">vol&#8722;</button>' +
+          '<button type="button" class="ane-btn" data-op="vel+" title="Louder">vol+</button>' +
+          '<button type="button" class="ane-btn" data-op="panl" title="Pan left">pan&#9664;</button>' +
+          '<button type="button" class="ane-btn" data-op="panr" title="Pan right">pan&#9654;</button>' +
+        '</div>' +
         '<button type="button" class="ane-btn ane-del" data-op="del">&#10005; Remove</button>';
       document.body.appendChild(el);
       el.addEventListener('click', (e) => {
@@ -6117,6 +6123,14 @@
         let v = (op === 'long') ? cur * 1.25 : cur * 0.8;
         v = Math.max(40, Math.min(v, P * 1000));
         n[meta.durKey] = Math.round(v);
+      } else if (op === 'vel-' || op === 'vel+') {
+        n.params = n.params || {};
+        const cur = Number.isFinite(n.params.volume) ? n.params.volume : 100;
+        n.params.volume = Math.max(0, Math.min(100, Math.round(cur + (op === 'vel+' ? 8 : -8))));
+      } else if (op === 'panl' || op === 'panr') {
+        n.params = n.params || {};
+        const cur = Number.isFinite(n.params.pan) ? n.params.pan : 0;
+        n.params.pan = Math.max(-100, Math.min(100, Math.round(cur + (op === 'panr' ? 15 : -15))));
       } else if (op === 'del') {
         if (notes.length <= 1) return;                 // never empty a locked unit
         notes.splice(t.index, 1);

@@ -5974,6 +5974,7 @@
         else if (wrapped) el._whenCycle = (el._whenCycle | 0) + 1;
         _ambPaintWhenCursor(el, active, el._whenCycle | 0);
       });
+      try { _ambUpdatePianos(E, now); } catch (e) {}   // light any expanded piano keyboards
       // Read-only note readout (per-layer live line + Now Playing panel), driven
       // off the captured per-layer note buffers (E.cap). Throttled while playing;
       // runs once on stop to clear. No generation involvement — display only.
@@ -6427,6 +6428,53 @@
       const rowEls = wrap.querySelectorAll('.ambient-np-row');
       rows.forEach((r, i) => { const e = rowEls[i]; if (!e) return; e.querySelector('.ambient-np-name').textContent = r.name; e.querySelector('.ambient-np-notes').innerHTML = r.html; });
     }
+    // ===== Piano visualizer (#6) — per-layer expandable keyboard ========
+    // Build the keys once (lazily, on first expand). C2..C6; white keys flex, black
+    // keys absolutely positioned straddling the gaps. Lit in real time by
+    // _ambUpdatePianos from the layer's captured notes (E.cap).
+    function _ambBuildPiano(el) {
+      if (!el || el._built) return; el._built = true;
+      const LO = 36, HI = 84;
+      const black = (m) => { const p = ((m % 12) + 12) % 12; return p === 1 || p === 3 || p === 6 || p === 8 || p === 10; };
+      const whites = [];
+      for (let m = LO; m <= HI; m++) if (!black(m)) whites.push(m);
+      const wW = 100 / whites.length;
+      let html = '';
+      whites.forEach((m) => { html += '<div class="ampk ampk-w" data-m="' + m + '" style="width:' + wW + '%"></div>'; });
+      let wi = 0;
+      for (let m = LO; m <= HI; m++) {
+        if (black(m)) html += '<div class="ampk ampk-b" data-m="' + m + '" style="left:' + (wi * wW - wW * 0.32) + '%;width:' + (wW * 0.64) + '%"></div>';
+        else wi++;
+      }
+      el.innerHTML = html;
+    }
+    // Light each expanded piano's keys for the notes its layer is sounding at
+    // `now` (audible clock). Intensity fades over the note's duration. Only open
+    // pianos are touched (perf).
+    function _ambUpdatePianos(E, now) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const pianos = host.querySelectorAll('.ambient-piano.open'); if (!pianos.length) return;
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      pianos.forEach(el => {
+        const key = el.dataset.pkey; if (!key || !el._built) return;
+        const cap = (E.cap && E.cap[key]) || [];
+        const lit = {};
+        for (let i = cap.length - 1; i >= 0 && i >= cap.length - 96; i--) {
+          const ev = cap[i]; if (!ev || !(ev.freq > 0)) continue;
+          const dur = Math.max(0.05, (ev.dur || 200) / 1000);
+          if (ev.at <= now && now < ev.at + dur) {
+            const m = Math.round(69 + 12 * Math.log2(ev.freq / A));
+            const rem = Math.max(0.3, 1 - (now - ev.at) / dur);
+            if (!lit[m] || rem > lit[m]) lit[m] = rem;
+          }
+        }
+        el.querySelectorAll('.ampk').forEach(k => {
+          const m = +k.dataset.m, v = lit[m];
+          if (v) { k.classList.add('lit'); k.style.setProperty('--lit', v.toFixed(2)); }
+          else if (k.classList.contains('lit')) { k.classList.remove('lit'); k.style.removeProperty('--lit'); }
+        });
+      });
+    }
     // Mark the currently-playing When cell for the layer that owns playhead `el`.
     // `cycle` is the audible iteration count; the live cell is cycle % length.
     function _ambPaintWhenCursor(el, active, cycle) {
@@ -6768,6 +6816,9 @@
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-lock-btn" data-lkey="' + freezeKey + '" title="Lock the unit / cycle playing now — replay it every iteration (click again to unlock)" aria-label="Lock unit">🔒</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
+      // Piano visualizer toggle (every non-Beat layer) — expandable keyboard that
+      // lights the notes this layer plays in real time. Collapsed by default.
+      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
@@ -6776,6 +6827,8 @@
       // aria-hidden: when a unit is locked it holds focusable note-edit chips,
       // and focus inside an aria-hidden subtree is blocked by the browser.
       (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '"></span>' : '') +
+      // Piano visualizer (built lazily on first expand; lit by _ambUpdatePianos).
+      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '') +
       '</div>' +
       // Per-layer controls row — sits at the top of the expanded body (above the
       // Voice group); hidden when the layer is collapsed. Holds Rename (moved out
@@ -9674,6 +9727,8 @@
         const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
         if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambPersistLock(E, lb.dataset.lkey); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
+        const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
+        if (pb) { e.stopPropagation(); try { const h2 = document.getElementById(E.hostId); const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]'); if (pe) { _ambBuildPiano(pe); const open = pe.classList.toggle('open'); pb.classList.toggle('active', open); } } catch (err) { console.warn('Piano toggle failed', err); } return; }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();

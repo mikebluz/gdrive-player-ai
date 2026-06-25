@@ -2870,6 +2870,22 @@
       width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
       font: 600 0.72rem 'Segoe UI', sans-serif;
     }
+    /* Per-layer piano visualizer (#6) — toggle button + expandable keyboard. */
+    .ambient-piano-toggle {
+      flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: transparent; color: #6b6b8a; cursor: pointer; line-height: 1; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-piano-toggle:hover { border-color: #7fd6c4; color: #7fd6c4; } }
+    .ambient-piano-toggle.active { color: #1a202c; background: #7fd6c4; border-color: #7fd6c4; }
+    /* Keyboard strip — relative box; white keys tile (float), black keys overlay
+       (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
+    .ambient-piano { display: none; flex: 0 0 100%; width: 100%; margin-top: 4px; position: relative; height: 34px; }
+    .ambient-piano.open { display: block; }
+    .ampk { box-sizing: border-box; transition: background 0.05s linear; }
+    .ampk-w { float: left; height: 100%; background: #d7d7e2; border: 1px solid #20202e; border-radius: 0 0 3px 3px; }
+    .ampk-b { position: absolute; top: 0; height: 62%; background: #14141d; border: 1px solid #000; border-radius: 0 0 3px 3px; z-index: 2; }
+    .ampk-w.lit { background: rgba(127, 214, 196, calc(0.3 + 0.7 * var(--lit, 1))); }
+    .ampk-b.lit { background: rgba(127, 214, 196, calc(0.45 + 0.55 * var(--lit, 1))); border-color: #7fd6c4; }
     /* Separator between consecutive unit colour-groups in a notes readout. */
     .ambient-np-sep { color: #4a4a5e; }
     /* Locked unit: one stable colour (no per-unit cycling, no next group). */

@@ -1430,19 +1430,33 @@
     // every iteration; or release. Cancels the layer's already-scheduled-ahead
     // generated notes and re-anchors the clock so the locked unit takes over at the
     // next boundary — seamless, no stray, and exactly the unit you heard.
-    function _ambToggleUnitLock(E, key) {
-      const st = _ambUnitState(E, key);
-      if (st.lock) { st.lock = false; st.notes = null; return false; }
-      const u = _ambUnitAt(E, key, _ambPlayNow()).cur;
-      if (!u || !Array.isArray(u.notes) || !u.notes.length) return false;
-      st.notes = u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
-      st.lock = true;
+    // Drop a layer's scheduled-ahead voices (the lookahead-committed ones; the
+    // currently-sounding unit is active and plays out) and re-anchor its clock to
+    // the boundary after `fromAt`, so whatever the engine does next (replay a
+    // locked unit, or generate a fresh one) takes over cleanly there.
+    function _ambReanchorNext(E, key, fromAt) {
       try {
         if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key);
         const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));
         const tn = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-        if (P > 0.05) { E.clocks = E.clocks || {}; let b = u.at + P; while (b < tn + 0.03) b += P; E.clocks[key] = b; }
+        const base = Number.isFinite(fromAt) ? fromAt : tn;
+        if (P > 0.05) { E.clocks = E.clocks || {}; let b = base + P; while (b < tn + 0.03) b += P; E.clocks[key] = b; }
       } catch (e) {}
+    }
+    function _ambToggleUnitLock(E, key) {
+      const st = _ambUnitState(E, key);
+      const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
+      if (st.lock) {
+        // Unlock: the current locked unit plays out, then the NEXT unit is freshly
+        // generated (drop the scheduled-ahead locked replays + re-anchor).
+        st.lock = false; st.notes = null;
+        _ambReanchorNext(E, key, cur ? cur.at : _ambPlayNow());
+        return false;
+      }
+      if (!cur || !Array.isArray(cur.notes) || !cur.notes.length) return false;
+      st.notes = cur.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
+      st.lock = true;
+      _ambReanchorNext(E, key, cur.at);   // locked unit takes over at the next boundary
       return true;
     }
     // Update every Drift slider's readout within E's panel (step-div in Sync,

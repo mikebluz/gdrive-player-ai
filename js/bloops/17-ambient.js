@@ -5987,8 +5987,26 @@
           '<button type="button" class="ane-btn" data-op="panl" title="Pan left">pan&#9664;</button>' +
           '<button type="button" class="ane-btn" data-op="panr" title="Pan right">pan&#9654;</button>' +
         '</div>' +
+        '<select class="ane-tone ambient-select" title="Voice for this note"></select>' +
         '<button type="button" class="ane-btn ane-del" data-op="del">&#10005; Remove</button>';
       document.body.appendChild(el);
+      // Per-note voice picker — same option list as a layer's Tone dropdown. The
+      // option value IS params.type (an empty value = the default grid voice).
+      try {
+        const toneSel = el.querySelector('.ane-tone');
+        if (toneSel && typeof populateGroupedToneSelect === 'function') {
+          populateGroupedToneSelect(toneSel, _ambToneOptions(), _ambGridVoiceOption());
+          toneSel.addEventListener('change', () => {
+            const t = _ambNoteEd; if (!t) return;
+            const notes = _ambNoteEdNotes(); const n = notes && notes[t.index]; if (!n) return;
+            n.params = n.params || {};
+            n.params.type = toneSel.value || _ambLayerType('');
+            _ambReemitLockedNext(t.E, t.key);
+            _ambPersistLock(t.E, t.key);
+            try { _ambUpdateNotesLive(t.E); } catch (e) {}
+          });
+        }
+      } catch (e) {}
       el.addEventListener('click', (e) => {
         const b = e.target && e.target.closest && e.target.closest('.ane-btn');
         if (!b) return; e.stopPropagation();
@@ -6098,6 +6116,8 @@
       if (!n) { _ambCloseNoteEditor(); return; }
       const nm = el.querySelector('.ane-name'); if (nm) nm.textContent = _ambFreqNoteName(n.freq) || '—';
       const del = el.querySelector('.ane-del'); if (del) del.disabled = (notes.length <= 1);
+      const toneSel = el.querySelector('.ane-tone');
+      if (toneSel) { const ty = (n.params && n.params.type) || ''; toneSel.value = ty; if (toneSel.value !== ty) toneSel.value = ''; }
     }
     function _ambPositionNoteEditor(anchorEl) {
       const el = document.getElementById('ambient-note-editor'); if (!el || !anchorEl) return;

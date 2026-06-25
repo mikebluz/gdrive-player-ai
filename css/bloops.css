@@ -2905,6 +2905,7 @@
     }
     @media (hover: hover) { .ambient-note-editor .ane-btn:hover { border-color: #7fd6c4; color: #fff; } }
     .ambient-note-editor .ane-btn:active { background: #2a2a3c; }
+    .ambient-note-editor .ane-tone { width: 100%; margin: 0 0 6px; box-sizing: border-box; }
     .ambient-note-editor .ane-del { width: 100%; color: #ff9aa2; }
     @media (hover: hover) { .ambient-note-editor .ane-del:hover { border-color: #ff9aa2; color: #fff; background: #3a2230; } }
     .ambient-note-editor .ane-del:disabled { opacity: 0.4; cursor: default; }

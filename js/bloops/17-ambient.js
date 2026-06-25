@@ -1378,9 +1378,14 @@
     // half of the unit editor; the note-for-note editor (step 2) just rewrites the
     // captured list. Default (nothing locked) leaves generation byte-identical.
     function _ambUnitState(E, key) { if (!E.unit) E.unit = {}; return E.unit[key] || (E.unit[key] = { lock: false, notes: null }); }
-    // _shapeAudibleNow subtracts a generous latency; nudge unit selection forward
-    // so a unit whose scheduled onset just landed counts as "playing now".
-    const _AMB_AUDIBLE_MARGIN = 0.12;
+    // Select units in the SAME coordinate as their recorded `at` (AudioContext
+    // play-time), not _shapeAudibleNow (which subtracts up to 0.3 s of latency and
+    // skewed selection off-by-one). A tiny margin absorbs scheduling jitter.
+    const _AMB_AUDIBLE_MARGIN = 0.03;
+    function _ambPlayNow() {
+      try { const ac = Tone.getContext().rawContext; if (ac && typeof ac.currentTime === 'number') return ac.currentTime; } catch (e) {}
+      return (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+    }
     // Record one EMITTED unit — its exact note list ({freq,off,durMs,params}) at
     // its scheduled time — into a small per-layer ring. This is the SOURCE OF TRUTH
     // for the readout + Lock (exact boundaries, every note incl. repeats), instead
@@ -1416,6 +1421,9 @@
         if (dmod) params._detuneMod = dmod;
         try { playNote(nt.freq, params, nt.durMs, at + (nt.off || 0), dest, undefined, _E.laneIdx()); } catch (e) {}
       });
+      // Record the replay too, so on UNLOCK the readout keeps showing this (still
+      // sounding) locked unit until it ends, then picks up freshly generated units.
+      _ambRecordUnit(E, key, at, st.notes);
       return true;
     }
     // Lock the unit AUDIBLE now (exact, from the recorded units) and replay it
@@ -1425,8 +1433,7 @@
     function _ambToggleUnitLock(E, key) {
       const st = _ambUnitState(E, key);
       if (st.lock) { st.lock = false; st.notes = null; return false; }
-      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0));
-      const u = _ambUnitAt(E, key, now).cur;
+      const u = _ambUnitAt(E, key, _ambPlayNow()).cur;
       if (!u || !Array.isArray(u.notes) || !u.notes.length) return false;
       st.notes = u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
       st.lock = true;
@@ -5749,7 +5756,7 @@
     // scheduling jitter so a unit whose onset just landed counts as CURRENT rather
     // than slipping into the next slot.
     function _ambCurNextUnits(clusters, now) {
-      const M = 0.12;
+      const M = _AMB_AUDIBLE_MARGIN;
       let cur = null, nxt = null;
       for (const c of clusters) { if (c.start <= now + M) cur = c; else { nxt = c; break; } }
       return { cur: cur, nxt: nxt };
@@ -5759,7 +5766,7 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       const lines = host.querySelectorAll('.ambient-notes-live'); if (!lines.length) return;
       const playing = !!E.timer;
-      const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
+      const now = _ambPlayNow();
       const cfg = E._cfg || (typeof E.getCfg === 'function' ? E.getCfg() : null);
       if (!E._npCol) E._npCol = {};
       const rows = [];
@@ -5812,7 +5819,6 @@
             st.map = nextMap;
           } else if (E._npCol[key]) { E._npCol[key].map = {}; }
         } else if (E._npCol[key]) { E._npCol[key].map = {}; }
-        if (locked) html = '<span class="ambient-lock-ic">🔒</span>' + html;
         if (el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; }
         if (html) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, html: html }); }
       });

@@ -5868,12 +5868,13 @@
         // of collapsing per-note and pulsing the head. Off layers stay collapsed.
         let layerOn = false;
         try { const L = _ambLayerByKey(E, key); layerOn = !!(playing && L && L.on !== false && L.present !== false); } catch (e) { layerOn = playing; }
-        // Unit Lock (toggled from the 🔒 head button): show the locked state on
-        // the line — the locked layer keeps replaying, so its notes still show via
-        // E.cap. Reserve a locked line too, so it stays visible.
-        const locked = !!(E.unit && E.unit[key] && E.unit[key].lock);
-        el.classList.toggle('locked', locked);
-        if (locked) layerOn = true;
+        // Unit Lock (toggled from the 🔒 head button): a locked layer's notes are
+        // EDITABLE. _ambLockedNotes returns the live editable list for whichever
+        // backing store this layer uses (Bed/Motif unit, or any other layer's
+        // frozen loop). Reserve a locked line so it stays visible.
+        const lockEd = _ambLockedNotes(E, key);
+        el.classList.toggle('locked', !!lockEd);
+        if (lockEd) layerOn = true;
         el.classList.toggle('reserved', layerOn);
         let html = '';
         const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
@@ -5894,24 +5895,18 @@
           if (!names.length) return '<span class="ambient-np-rest' + (isNext ? ' ambient-np-next' : '') + '">–</span>';
           return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>';
         };
-        if (locked && E.unit && E.unit[key] && Array.isArray(E.unit[key].notes)) {
-          const _ns = E.unit[key].notes;
-          const _lt = String(key).split(':')[0];
-          if (_lt === 'bed' || _lt === 'motif') {
-            // Locked Bed/Motif → EDITABLE: each note is a tappable chip (opens the
-            // note editor popover), plus an add-note (+) affordance. Edits mutate
-            // E.unit[key].notes in place; the locked replay re-reads it next pass.
-            const col = colorFor(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean));
-            // Spans (not <button>) so they take no focus — focusable controls
-            // inside the live readout collided with its churn + a11y focus rules.
-            html = '<span class="ambient-np-ed" style="color:' + col + '">' +
-              _ns.map((n, i) => '<span class="ambient-np-note" role="button" tabindex="-1" data-ekey="' + key + '" data-ei="' + i + '">' + (_ambFreqNoteName(n.freq) || '?') + '</span>').join('') +
-              '<span class="ambient-np-add" role="button" tabindex="-1" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</span>' +
-            '</span>';
-          } else {
-            // Locked, non-editable (other layer types) → static, in content colour.
-            html = seg(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean), false);
-          }
+        if (lockEd) {
+          // Locked → EDITABLE: each note is a tappable chip (opens the note editor
+          // popover), plus an add-note (+) affordance. Edits mutate the locked
+          // list in place; the locked replay re-reads it, so they land next pass.
+          // Spans (not <button>) so they take no focus — focusable controls inside
+          // the live readout collided with its churn + a11y focus rules.
+          const _ns = lockEd.list;
+          const col = colorFor(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean));
+          html = '<span class="ambient-np-ed" style="color:' + col + '">' +
+            _ns.map((n, i) => '<span class="ambient-np-note" role="button" tabindex="-1" data-ekey="' + key + '" data-ei="' + i + '">' + (_ambFreqNoteName(n.freq) || '?') + '</span>').join('') +
+            '<span class="ambient-np-add" role="button" tabindex="-1" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</span>' +
+          '</span>';
         } else if (layerOn) {
           // Unlocked: current unit ▸ next (lookahead). Prefer the discrete recorded
           // units (exact boundaries, every note, and recorded RESTS → "–"); fall
@@ -5962,6 +5957,12 @@
           '<button type="button" class="ane-btn" data-op="semi+" title="Up a semitone">&#9839;</button>' +
           '<button type="button" class="ane-btn" data-op="oct+" title="Up an octave">8va</button>' +
         '</div>' +
+        '<div class="ane-row">' +
+          '<button type="button" class="ane-btn" data-op="earlier" title="Move earlier">&#9664;</button>' +
+          '<button type="button" class="ane-btn" data-op="later" title="Move later">&#9654;</button>' +
+          '<button type="button" class="ane-btn" data-op="short" title="Shorter">len&#8722;</button>' +
+          '<button type="button" class="ane-btn" data-op="long" title="Longer">len+</button>' +
+        '</div>' +
         '<button type="button" class="ane-btn ane-del" data-op="del">&#10005; Remove</button>';
       document.body.appendChild(el);
       el.addEventListener('click', (e) => {
@@ -5983,10 +5984,40 @@
       window.addEventListener('resize', _ambCloseNoteEditor);
       return el;
     }
+    // The live, editable note list for a LOCKED layer, whatever its backing store:
+    //   Bed/Motif → E.unit[key].notes  ({freq, off(s), durMs, params})
+    //   any other → E.freeze[key].events ({freq, t(s), dur(ms), params})  (a frozen loop)
+    // Returns { kind:'unit'|'loop', list } or null when the layer isn't locked.
+    // This is the single bridge the note editor edits through, so one popover
+    // works across every layer type.
+    function _ambLockedNotes(E, key) {
+      if (!E) return null;
+      const t = String(key).split(':')[0];
+      if (t === 'bed' || t === 'motif') {
+        const u = E.unit && E.unit[key];
+        if (u && u.lock && Array.isArray(u.notes) && u.notes.length) return { kind: 'unit', list: u.notes };
+        return null;
+      }
+      const fs = E.freeze && E.freeze[key];
+      if (fs && fs.frozen && !fs.pendingThawAt && Array.isArray(fs.events) && fs.events.length) return { kind: 'loop', list: fs.events };
+      return null;
+    }
+    // Editable list + the field names / period for that store (off vs t, durMs vs
+    // dur), so the editor's pitch / timing / add ops are store-agnostic.
+    function _ambLockMeta(E, key) {
+      const r = _ambLockedNotes(E, key); if (!r) return null;
+      const loop = (r.kind === 'loop');
+      let P = 0;
+      try {
+        P = loop ? ((E.freeze[key] && E.freeze[key].loopLen) || 0)
+                 : _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));
+      } catch (e) {}
+      return { kind: r.kind, list: r.list, offKey: loop ? 't' : 'off', durKey: loop ? 'dur' : 'durMs', P: P };
+    }
     function _ambNoteEdNotes() {
       const t = _ambNoteEd; if (!t || !t.E) return null;
-      const u = t.E.unit && t.E.unit[t.key];
-      return (u && Array.isArray(u.notes)) ? u.notes : null;
+      const r = _ambLockedNotes(t.E, t.key);
+      return r ? r.list : null;
     }
     function _ambNoteEdRefresh() {
       const el = document.getElementById('ambient-note-editor'); if (!el || !_ambNoteEd) return;
@@ -6037,28 +6068,56 @@
       const el = document.getElementById('ambient-note-editor');
       if (el) { el.classList.remove('open'); el.style.removeProperty('display'); el.style.visibility = ''; }
     }
-    // Make a just-edited locked unit take effect on the NEXT iteration. The
+    // Make a just-edited locked layer take effect on the NEXT iteration. The
     // engine schedules ~1.4 s ahead, so the next iteration's voices were already
     // committed with the OLD notes — without this the edit lands one unit late.
-    // Drop the layer's scheduled-ahead voices and re-anchor so the next boundary
-    // re-emits from the (edited) E.unit[key].notes. Only while playing.
+    // Bed/Motif: re-anchor the clock (drops scheduled-ahead voices, re-emits from
+    // the edited unit). Frozen loops: cancel scheduled-ahead voices and rewind
+    // scheduledUpto to the next loop boundary so the replay re-schedules from the
+    // edited events. Only while playing (nothing is scheduled when stopped).
     function _ambReemitLockedNext(E, key) {
       if (!E || !E.timer) return;
       try {
-        const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
-        _ambReanchorNext(E, key, cur ? cur.at : _ambPlayNow());
+        const ty = String(key).split(':')[0];
+        if (ty === 'bed' || ty === 'motif') {
+          const cur = _ambUnitAt(E, key, _ambPlayNow()).cur;
+          _ambReanchorNext(E, key, cur ? cur.at : _ambPlayNow());
+          return;
+        }
+        const fs = E.freeze && E.freeze[key];
+        if (!fs || !fs.frozen) return;
+        if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key);
+        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const L = fs.loopLen || 0, A = fs.anchor || now;
+        if (L > 0.02) { let b = A, g = 0; while (b < now + 0.03 && g++ < 100000) b += L; fs.scheduledUpto = b; }
+        else fs.scheduledUpto = now;
       } catch (e) {}
     }
     function _ambNoteEditOp(op) {
       const t = _ambNoteEd; if (!t) return;
-      const notes = _ambNoteEdNotes(); if (!notes) { _ambCloseNoteEditor(); return; }
-      const n = notes[t.index];
+      const meta = _ambLockMeta(t.E, t.key); if (!meta) { _ambCloseNoteEditor(); return; }
+      const notes = meta.list, n = notes[t.index];
       if (!n) { _ambCloseNoteEditor(); return; }
+      const P = meta.P > 0.05 ? meta.P : 1;
       if (op === 'semi+') n.freq *= Math.pow(2, 1 / 12);
       else if (op === 'semi-') n.freq *= Math.pow(2, -1 / 12);
       else if (op === 'oct+') n.freq *= 2;
       else if (op === 'oct-') n.freq /= 2;
-      else if (op === 'del') {
+      else if (op === 'earlier' || op === 'later') {
+        const step = Math.max(0.01, Math.min(0.25, P / 16));
+        let v = (n[meta.offKey] || 0) + (op === 'later' ? step : -step);
+        v = Math.max(0, Math.min(v, Math.max(0, P - 0.02)));
+        n[meta.offKey] = v;
+        // Keep array order = time order so chips read left→right in time, and
+        // follow the moved note so the popover stays on it.
+        notes.sort((a, b) => (a[meta.offKey] || 0) - (b[meta.offKey] || 0));
+        t.index = notes.indexOf(n);
+      } else if (op === 'short' || op === 'long') {
+        const cur = n[meta.durKey] || 200;
+        let v = (op === 'long') ? cur * 1.25 : cur * 0.8;
+        v = Math.max(40, Math.min(v, P * 1000));
+        n[meta.durKey] = Math.round(v);
+      } else if (op === 'del') {
         if (notes.length <= 1) return;                 // never empty a locked unit
         notes.splice(t.index, 1);
         if (t.index >= notes.length) t.index = notes.length - 1;
@@ -6070,11 +6129,10 @@
       _ambPositionNoteEditor(_ambNoteChipEl(t.E, t.key, t.index));
     }
     function _ambAddNote(E, key) {
-      const u = E.unit && E.unit[key];
-      if (!u || !Array.isArray(u.notes) || !u.notes.length) return null;
-      const notes = u.notes;
+      const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return null;
+      const notes = meta.list, oK = meta.offKey, dK = meta.durKey;
       const last = notes[notes.length - 1];
-      const offs = notes.map(n => n.off || 0);
+      const offs = notes.map(n => n[oK] || 0);
       const lastOff = Math.max.apply(null, offs);
       // Place the new note AFTER the last one (sequential) rather than stacked on
       // top of it. Infer the unit's own spacing from the last inter-onset gap; if
@@ -6084,14 +6142,13 @@
         const sorted = offs.slice().sort((a, b) => a - b);
         gap = sorted[sorted.length - 1] - sorted[sorted.length - 2];
       }
-      if (!(gap > 0.005)) gap = Math.max(0.12, (last.durMs || 200) / 1000);
+      if (!(gap > 0.005)) gap = Math.max(0.12, (last[dK] || 200) / 1000);
       let newOff = lastOff + gap;
-      // Keep it inside the unit so it doesn't bleed into the next iteration.
-      try {
-        const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));
-        if (P > 0.1 && newOff > P - 0.02) newOff = Math.max(lastOff + 0.02, P - 0.02);
-      } catch (e) {}
-      notes.push({ freq: last.freq, off: newOff, durMs: last.durMs, params: Object.assign({}, last.params) });
+      // Keep it inside the unit/loop so it doesn't bleed into the next iteration.
+      if (meta.P > 0.1 && newOff > meta.P - 0.02) newOff = Math.max(lastOff + 0.02, meta.P - 0.02);
+      const nn = { freq: last.freq, params: Object.assign({}, last.params) };
+      nn[oK] = newOff; nn[dK] = last[dK];
+      notes.push(nn);
       _ambReemitLockedNext(E, key);                    // apply on the next iteration
       try { _ambUpdateNotesLive(E); } catch (e) {}
       return notes.length - 1;

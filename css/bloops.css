@@ -3063,9 +3063,10 @@
     .ambient-layer-head .ambient-seq-del { flex: 0 0 auto; }
     .ambient-listen-row { gap: 8px; align-items: center; }
     .ambient-toggle {
-      padding: 4px 14px; border: 1px solid #2d2d3f; border-radius: 14px;
+      height: 47px; padding: 0 16px; border: 1px solid #2d2d3f; border-radius: 12px;
+      display: inline-flex; align-items: center;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
-      font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+      font-size: 1.28rem; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
     }
     /* Hover is NEUTRAL (not the on-accent) so an off layer never looks on. */
     .ambient-toggle:hover { border-color: #5a5a7a; color: #a8a8c8; }

@@ -1473,10 +1473,59 @@
         _ambReanchorNext(E, key, cAt);
         return false;
       }
-      if (!cur || !Array.isArray(cur.notes) || !cur.notes.length) return false;
+      if (!cur || !Array.isArray(cur.notes) || !cur.notes.length) {
+        // Nothing captured yet. If the engine is STOPPED, seed a unit silently so
+        // you can edit the initial state before ever pressing play.
+        if (!E.timer) return _ambSeedAndLock(E, key);
+        return false;   // playing but mid-warmup — wait a beat
+      }
       st.notes = cur.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) }));
       st.lock = true;
       _ambReanchorNext(E, key, cur.at);   // locked unit takes over at the next boundary
+      return true;
+    }
+    // Pre-play "edit the initial state": for a stopped Bed/Motif layer with no
+    // captured unit, run ONE emit with audio suppressed (window._ambSilentCapture,
+    // the same dry-render Shape It uses) so a unit is recorded into E.units, then
+    // lock it. On play, _ambEmitLocked replays this (edited) seed.
+    function _ambSeedAndLock(E, key) {
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return false;
+      const ty = String(key).split(':')[0];
+      if (ty !== 'bed' && ty !== 'motif') return false;   // discrete-unit layers only
+      const layer = _ambLayerByKey(E, key); if (!layer) return false;
+      const prevE = _E, prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : null,
+            prevSilent = (typeof window !== 'undefined') ? window._ambSilentCapture : null,
+            prevKeyTime = _ambKeyTime, prevGen = _ambInGeneration;
+      try {
+        _E = E;
+        try { _ambSeed(cfg.seed); } catch (e) {}
+        const space = cfg.space | 0;
+        const at = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        _ambInGeneration = true;
+        if (typeof window !== 'undefined') { window._ambSilentCapture = true; window._ambCaptureSink = _ambCapSink(E, key); }
+        // A Motif iteration can be a rest / a Bed voicing can be empty — retry a
+        // few times (advancing the seeded RNG) until a non-empty unit is recorded.
+        for (let i = 0; i < 8; i++) {
+          _ambKeyTime = at;
+          if (ty === 'bed') _ambEmitBed(at, layer, space, key);
+          else _ambEmitMotif(at, layer, space, key);
+          const a = E.units && E.units[key];
+          const last = a && a.length ? a[a.length - 1] : null;
+          if (last && Array.isArray(last.notes) && last.notes.length) break;
+        }
+      } catch (e) {
+      } finally {
+        if (typeof window !== 'undefined') { window._ambCaptureSink = prevSink; window._ambSilentCapture = prevSilent; }
+        _E = prevE; _ambKeyTime = prevKeyTime; _ambInGeneration = prevGen;
+      }
+      const arr = E.units && E.units[key];
+      const u = arr && arr.length ? arr[arr.length - 1] : null;
+      if (!u || !Array.isArray(u.notes) || !u.notes.length) {
+        if (typeof showToast === 'function') showToast('Lock: couldn’t seed a unit — try pressing play first.');
+        return false;
+      }
+      if (!E.unit) E.unit = {};
+      E.unit[key] = { lock: true, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
       return true;
     }
     // Update every Drift slider's readout within E's panel (step-div in Sync,

@@ -1450,7 +1450,11 @@
         // Unlock: the current locked unit plays out, then the NEXT unit is freshly
         // generated (drop the scheduled-ahead locked replays + re-anchor).
         st.lock = false; st.notes = null;
-        _ambReanchorNext(E, key, cur ? cur.at : _ambPlayNow());
+        const cAt = cur ? cur.at : _ambPlayNow();
+        // Also drop the recorded FUTURE locked replays so the lookahead stops
+        // showing the looped unit — the freshly generated next unit records into it.
+        if (E.units && Array.isArray(E.units[key])) E.units[key] = E.units[key].filter(u => u.at <= cAt + 0.001);
+        _ambReanchorNext(E, key, cAt);
         return false;
       }
       if (!cur || !Array.isArray(cur.notes) || !cur.notes.length) return false;

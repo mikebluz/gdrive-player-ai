@@ -6126,7 +6126,9 @@
       try { _ambUpdateNotesLive(t.E); } catch (e) {}
       if (!_ambNoteEd) return;                          // editor was dismissed by the refresh
       _ambNoteEdRefresh();
-      _ambPositionNoteEditor(_ambNoteChipEl(t.E, t.key, t.index));
+      // NOTE: do NOT reposition here — the menu is anchored once on open and must
+      // stay put while you nudge (the chip re-renders/moves underneath, but the
+      // popover should not chase it around).
     }
     function _ambAddNote(E, key) {
       const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return null;

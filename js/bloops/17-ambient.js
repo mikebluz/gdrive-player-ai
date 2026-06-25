@@ -6072,11 +6072,29 @@
     function _ambAddNote(E, key) {
       const u = E.unit && E.unit[key];
       if (!u || !Array.isArray(u.notes) || !u.notes.length) return null;
-      const last = u.notes[u.notes.length - 1];
-      u.notes.push({ freq: last.freq, off: last.off || 0, durMs: last.durMs, params: Object.assign({}, last.params) });
+      const notes = u.notes;
+      const last = notes[notes.length - 1];
+      const offs = notes.map(n => n.off || 0);
+      const lastOff = Math.max.apply(null, offs);
+      // Place the new note AFTER the last one (sequential) rather than stacked on
+      // top of it. Infer the unit's own spacing from the last inter-onset gap; if
+      // there isn't one (single note), fall back to the note's length.
+      let gap = 0;
+      if (notes.length >= 2) {
+        const sorted = offs.slice().sort((a, b) => a - b);
+        gap = sorted[sorted.length - 1] - sorted[sorted.length - 2];
+      }
+      if (!(gap > 0.005)) gap = Math.max(0.12, (last.durMs || 200) / 1000);
+      let newOff = lastOff + gap;
+      // Keep it inside the unit so it doesn't bleed into the next iteration.
+      try {
+        const P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg()));
+        if (P > 0.1 && newOff > P - 0.02) newOff = Math.max(lastOff + 0.02, P - 0.02);
+      } catch (e) {}
+      notes.push({ freq: last.freq, off: newOff, durMs: last.durMs, params: Object.assign({}, last.params) });
       _ambReemitLockedNext(E, key);                    // apply on the next iteration
       try { _ambUpdateNotesLive(E); } catch (e) {}
-      return u.notes.length - 1;
+      return notes.length - 1;
     }
     function _ambRenderNowPlaying(E, rows, playing) {
       const wrap = _ambGet(E, 'ambient-nowplaying-list'); if (!wrap) return;

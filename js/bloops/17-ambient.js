@@ -5785,40 +5785,40 @@
         if (locked) layerOn = true;
         el.classList.toggle('reserved', layerOn);
         let html = '';
+        const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
+        // Colour a unit by its NOTE CONTENT (not its time), persistently per layer
+        // — so identical units (a locked loop, a recurring phrase) ALWAYS read the
+        // same colour, unchanged across lock/unlock. Distinct contents cycle the
+        // palette; the map is capped to avoid unbounded growth over long sessions.
+        const colorFor = (names) => {
+          const s = names.join(' ');
+          let idx = st.map[s];
+          if (idx == null) { if (st.next > 2000) { st.map = {}; st.next = 0; } idx = st.next++; st.map[s] = idx; }
+          return _NP_PALETTE[idx % _NP_PALETTE.length];
+        };
         if (locked && E.unit && E.unit[key] && Array.isArray(E.unit[key].notes)) {
-          // Locked: render the captured locked notes DIRECTLY — exactly what was
-          // locked, one stable colour, once (no cap reconstruction, no next).
+          // Locked: the captured notes, once, in their content colour (same notes
+          // → same colour, so locking doesn't recolour the unit).
           const names = E.unit[key].notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
-          html = names.length ? '<span class="ambient-np-locked">' + names.join(' ') + '</span>' : '';
-          if (E._npCol[key]) E._npCol[key].map = {};
+          html = names.length ? '<span style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>' : '';
         } else if (layerOn) {
           // Unlocked: current unit ▸ next (lookahead). Prefer the discrete recorded
           // units (exact boundaries + every note); fall back to clustering the cap
           // buffer for layers that don't record units yet.
-          let curN = [], nxtN = [], curK = 0, nxtK = 1;
+          let curN = [], nxtN = [];
           if (E.units && E.units[key] && E.units[key].length) {
             const cn = _ambUnitAt(E, key, now);
-            if (cn.cur) { curN = cn.cur.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean); curK = Math.round(cn.cur.at * 20); }
-            if (cn.nxt) { nxtN = cn.nxt.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean); nxtK = Math.round(cn.nxt.at * 20); }
+            if (cn.cur) curN = cn.cur.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
+            if (cn.nxt) nxtN = cn.nxt.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
           } else if (E.cap && E.cap[key]) {
             let period = 0; try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
             const cn = _ambCurNextUnits(_ambUnitClustersRaw(E.cap[key], period), now);
-            if (cn.cur) { curN = _ambUnitNames(cn.cur); curK = Math.round(cn.cur.start * 20); }
-            if (cn.nxt) { nxtN = _ambUnitNames(cn.nxt); nxtK = Math.round(cn.nxt.start * 20); }
+            if (cn.cur) curN = _ambUnitNames(cn.cur);
+            if (cn.nxt) nxtN = _ambUnitNames(cn.nxt);
           }
-          if (curN.length || nxtN.length) {
-            const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
-            const nextMap = {};
-            const seg = (names, k, isNext) => {
-              if (!names.length) return '';
-              let idx = st.map[k]; if (idx == null) idx = st.next++;
-              nextMap[k] = idx;
-              return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + _NP_PALETTE[idx % _NP_PALETTE.length] + '">' + names.join(' ') + '</span>';
-            };
-            html = [seg(curN, curK, false), seg(nxtN, nxtK, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
-            st.map = nextMap;
-          } else if (E._npCol[key]) { E._npCol[key].map = {}; }
-        } else if (E._npCol[key]) { E._npCol[key].map = {}; }
+          const seg = (names, isNext) => names.length ? '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>' : '';
+          html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
+        }
         if (el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; }
         if (html) { const lay = el.closest('.ambient-layer'); const nm = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nm ? nm.textContent : key, html: html }); }
       });

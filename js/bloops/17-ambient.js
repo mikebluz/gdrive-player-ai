@@ -2898,6 +2898,12 @@
       const pan    = _ambLayerPan(inst);
       const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const pat    = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
+      // Polyphonic euclid: V interlocking voices over the same grid, each a
+      // distinct drum (kick/snare/hat/clap), with its own pulse count (offset)
+      // and rotation (phase) so they weave. V === 1 (default) keeps the single
+      // pattern + random-per-hit drum exactly as before (harness byte-identical).
+      const V = Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
+      const POFF = [0, 2, -2, 3], VDRUM = [0, 2, 4, 3];
 
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
@@ -2913,28 +2919,32 @@
         const cStart = st.startAt + c * loopSec;
         // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
         const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
-        for (let bar = 0; bar < bars; bar++) {
-          for (let slot = 0; slot < steps; slot++) {
-            let hit = pat[slot] === 1;
-            if (rVar > 0) {
-              if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
-              else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
+        for (let v = 0; v < V && cap < 256; v++) {
+          const vpat = (V === 1) ? pat : euclideanPattern(Math.max(1, Math.min(steps, pulses + POFF[v])), steps, rotate + v * Math.round(steps / V));
+          const vpan = (V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40)));
+          for (let bar = 0; bar < bars; bar++) {
+            for (let slot = 0; slot < steps; slot++) {
+              let hit = vpat[slot] === 1;
+              if (rVar > 0) {
+                if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
+                else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
+              }
+              if (!hit) continue;
+              if (restP > 0 && rnd() * 100 < restP) continue;
+              const at = cStart + (bar * steps + slot) * slotSec;
+              if (at < tFrom || at >= tTo) continue;
+              const pc = (V === 1) ? _ambPickDrumPc() : VDRUM[v];
+              let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
+              const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, vpan), inst);
+              bp.volume = _ambApplyLevel(bp.volume, inst.level);
+              if (dmod) bp._detuneMod = dmod;
+              _ambKeyTime = at;
+              try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              cap++;
+              if (cap >= 256) break;
             }
-            if (!hit) continue;
-            if (restP > 0 && rnd() * 100 < restP) continue;
-            const at = cStart + (bar * steps + slot) * slotSec;
-            if (at < tFrom || at >= tTo) continue;
-            const pc = _ambPickDrumPc();
-            let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
-            const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, pan), inst);
-            bp.volume = _ambApplyLevel(bp.volume, inst.level);
-            if (dmod) bp._detuneMod = dmod;
-            _ambKeyTime = at;
-            try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
-            cap++;
             if (cap >= 256) break;
           }
-          if (cap >= 256) break;
         }
       }
       st.lastAt = tTo;
@@ -6859,7 +6869,7 @@
       const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
       // Interval tm id differs: primary 'interval', extras 'intervalMs'.
       const setIntervalRow = (show) => { const r = rowOf('intervalMs') || rowOf('interval'); if (r) r.style.display = show ? '' : 'none'; };
-      ['pulses', 'steps', 'rotate', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      ['pulses', 'steps', 'rotate', 'voices', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       setRow('rate', !euclid);
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
@@ -9487,6 +9497,7 @@
       set('ambient-beat-pulses', cfg.beat.pulses);
       set('ambient-beat-steps', cfg.beat.steps);
       set('ambient-beat-rotate', cfg.beat.rotate);
+      set('ambient-beat-voices', (cfg.beat.euclidVoices | 0) || 1);
       set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-rhythmVar', cfg.beat.rhythmVar);
       set('ambient-beat-drift', cfg.beat.drift);
@@ -9762,6 +9773,7 @@
             sl('Pulses', 'ambient-beat-pulses', 1, 16, 4, 'euclid hits / bar') +
             sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
             sl('Rotate', 'ambient-beat-rotate', 0, 15, 0, 'euclid offset') +
+            sl('Voices', 'ambient-beat-voices', 1, 4, 1, 'polyphonic euclid') +
             tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
             sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
             condCtrl('beat') + gpe() +
@@ -10098,6 +10110,7 @@
       bind('ambient-beat-pulses', 'beat', 'pulses');
       bind('ambient-beat-steps', 'beat', 'steps');
       bind('ambient-beat-rotate', 'beat', 'rotate');
+      bind('ambient-beat-voices', 'beat', 'euclidVoices');
       bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
       bind('ambient-beat-drift', 'beat', 'drift');
       bind('ambient-beat-rest', 'beat', 'restProb');

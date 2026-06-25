@@ -536,7 +536,12 @@
       return s * (_MASTER_CLIP_KNEE + span * Math.tanh((ax - _MASTER_CLIP_KNEE) / _MASTER_CLIP_SOFT));
     };
     const masterClipper = new Tone.WaveShaper(_masterClipCurve, 4096);
-    try { masterClipper.oversample = '4x'; } catch (e) {}
+    // 2x (not 4x) oversampling: the curve is identity below the 0.85 knee, so
+    // oversampling only matters for the rare peak it soft-clips — 2x handles that
+    // inaudibly while halving this always-on master waveshaper's CPU (4x ran the
+    // whole mix through 4x up/down-sampling every sample, a fixed drain that, with
+    // dense FX-heavy Bloom stacks, contributed to glitching).
+    try { masterClipper.oversample = '2x'; } catch (e) {}
     // Master FADE — the FINAL output gain. A fade-in (on play) / fade-out (on
     // capture Finalize) ramps this, so it affects ALL audio AND is included in a
     // capture (the recorder taps this node via _ambMasterTapNode). 1 = full.

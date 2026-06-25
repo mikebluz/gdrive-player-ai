@@ -3737,51 +3737,18 @@
       const g = gcd(n, 16) || 1;
       return (n / g) + '/' + (16 / g);
     }
+    // Condensed unit readout: just the layer's absolute unit/loop length
+    // (ms/s) + its step-division label (e.g. "2.0s · 1/2", "250ms · 1/4").
+    // Both derive from the canonical resolved period, so it's Sync-aware.
     function _ambLayerUnitText(E, key, L, cfg) {
-      const base = _ambLayerUnitTextBase(E, key, L, cfg);
-      if (!base) return base;
-      let sd = '';
-      try { sd = _ambStepDivLabel(_ambLayerPeriodSec(E, key, L, cfg), _ambBpm()); } catch (e) {}
-      return sd ? (base + ' · ' + sd) : base;
-    }
-    function _ambLayerUnitTextBase(E, key, L, cfg) {
       if (!L) return '';
-      const type = String(key).split(':')[0];
-      const bpm = _ambBpm();
-      const fmt = (sec) => _ambFmtMs(Math.round(Math.max(0, sec) * 1000));
-      const rate = (L.rate && _ambRateBeats(L.rate) > 0) ? L.rate : null;
-      const unitSec = _ambEffIntervalSec(L);
-      const unitStr = rate ? (rate + ' (' + fmt(unitSec) + ')') : fmt(unitSec);
-      // Synced layers show what they're locked to + the resolved length.
-      if (L.unit && L.unit.mode === 'sync' && L.unit.ref) {
-        const n = Math.max(1, L.unit.num | 0), d = Math.max(1, L.unit.den | 0);
-        const ratioStr = (n === d) ? '' : (' ×' + (d === 1 ? n : (n + '/' + d)));
-        return '🔒 ' + _ambRefLabel(E, L.unit.ref, cfg) + ratioStr + ' = ' + fmt(_ambLayerPeriodSec(E, key, L, cfg));
-      }
-      if (type === 'arp') {
-        const info = _ambArpSeriesInfo(L, cfg);
-        return '⟳ ' + info.totalNotes + ' notes × ' + (rate ? rate : fmt(info.interval)) + ' = ' + fmt(info.totalNotes * info.interval);
-      }
-      if (type === 'drone') {
-        const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1));
-        return '⟳ Hold ' + hold + ' × ' + unitStr + ' = ' + fmt(hold * unitSec);
-      }
-      if (type === 'bass' || type === 'run' || type === 'pedal') {
-        const bars = Math.max(1, (L.bars | 0) || 1);
-        const pad = Math.max(0, (L.unitPadMs | 0)) / 1000, baseSec = bars * (60 / bpm) * 4;
-        return '⟳ ' + bars + ' bar' + (bars === 1 ? '' : 's') + (pad > 0 ? ' + ' + fmt(pad) + ' pad' : '') + ' = ' + fmt(baseSec + pad) + ' @' + bpm;
-      }
-      if (type === 'seq') return '⟳ unit ' + fmt(_ambLayerPeriodSec(E, key, L, cfg));
-      if (type === 'samp') return 'Δ ' + unitStr;
-      if (type === 'beat' && L.gen === 'euclid') {
-        const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
-        const steps = Math.max(2, Math.min(16, (L.steps | 0) || 8));
-        const pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1));
-        const pad = Math.max(0, (L.unitPadMs | 0)) / 1000, baseSec = bars * (60 / bpm) * 4;
-        return '⟳ ' + pulses + '/' + steps + ' × ' + bars + ' bar' + (bars === 1 ? '' : 's') + (pad > 0 ? ' + ' + fmt(pad) + ' pad' : '') + ' = ' + fmt(baseSec + pad) + ' @' + bpm;
-      }
-      // bed / motif / texture / beat (random) — continuous stream; unit = Interval/Rate.
-      return 'Δ ' + unitStr;
+      let period = 0;
+      try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+      if (!(period > 0)) return '';
+      const absStr = _ambFmtMs(Math.round(period * 1000));
+      let sd = '';
+      try { sd = _ambStepDivLabel(period, _ambBpm()); } catch (e) {}
+      return sd ? (absStr + ' · ' + sd) : absStr;
     }
     // Refresh every layer header's unit readout in this engine's panel.
     function _ambSyncLayerUnits(E) {

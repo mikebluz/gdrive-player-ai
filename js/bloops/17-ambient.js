@@ -1391,7 +1391,7 @@
     // for the readout + Lock (exact boundaries, every note incl. repeats), instead
     // of reconstructing units from the rolling cap buffer (coordinate-fragile).
     function _ambRecordUnit(E, key, at, notes) {
-      if (!notes || !notes.length) return;
+      if (!Array.isArray(notes)) return;   // [] = a recorded REST (shows "–")
       if (!E.units) E.units = {};
       const arr = E.units[key] || (E.units[key] = []);
       arr.push({ at: at, notes: notes });
@@ -1741,7 +1741,7 @@
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;   // resolve this note's key by its play-time (keyMaster sections)
       const voicing = _ambPickVoicing(bed);
-      if (!voicing.length) return;
+      if (!voicing.length) { _ambRecordUnit(_E, key, at, []); return; }
       const durMs = Math.max(80, bed.lengthMs | 0);
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
       const pans = _ambLayerPans(bed, voicing.length);
@@ -2247,7 +2247,7 @@
       key = key || 'motif';
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;
-      if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return;
+      if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) { _ambRecordUnit(_E, key, at, []); return; }
       const lenMs = Math.max(60, motif.lengthMs | 0);
       // Twist: 0 = a single note per fire (steady cadence). As it rises, the
       // chance AND size of a quick note-burst grow — a flurry of walk-steps
@@ -4165,6 +4165,10 @@
         let g = 0;
         while (C[key] < HZ && g++ < guardMax) {
           if (_ambCondFires(lc.when, Math.floor((I[key] | 0) / perCycle))) emit(C[key]);
+          // When-gated OFF this iteration = a REST. For recording layers (those
+          // that already log units), log an empty unit so the readout shows "–"
+          // instead of the previous notes lingering.
+          else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
           I[key] = (I[key] | 0) + 1;
           C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc);   // floor so a fast Sync can't flood
         }
@@ -5796,16 +5800,22 @@
           if (idx == null) { if (st.next > 2000) { st.map = {}; st.next = 0; } idx = st.next++; st.map[s] = idx; }
           return _NP_PALETTE[idx % _NP_PALETTE.length];
         };
+        // names: null = no unit (render nothing); [] = a recorded REST (render "–");
+        // [..] = notes (render coloured).
+        const seg = (names, isNext) => {
+          if (names == null) return '';
+          if (!names.length) return '<span class="ambient-np-rest' + (isNext ? ' ambient-np-next' : '') + '">–</span>';
+          return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>';
+        };
         if (locked && E.unit && E.unit[key] && Array.isArray(E.unit[key].notes)) {
           // Locked: the captured notes, once, in their content colour (same notes
           // → same colour, so locking doesn't recolour the unit).
-          const names = E.unit[key].notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
-          html = names.length ? '<span style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>' : '';
+          html = seg(E.unit[key].notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean), false);
         } else if (layerOn) {
           // Unlocked: current unit ▸ next (lookahead). Prefer the discrete recorded
-          // units (exact boundaries + every note); fall back to clustering the cap
-          // buffer for layers that don't record units yet.
-          let curN = [], nxtN = [];
+          // units (exact boundaries, every note, and recorded RESTS → "–"); fall
+          // back to clustering the cap buffer for layers that don't record units.
+          let curN = null, nxtN = null;
           if (E.units && E.units[key] && E.units[key].length) {
             const cn = _ambUnitAt(E, key, now);
             if (cn.cur) curN = cn.cur.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
@@ -5816,7 +5826,6 @@
             if (cn.cur) curN = _ambUnitNames(cn.cur);
             if (cn.nxt) nxtN = _ambUnitNames(cn.nxt);
           }
-          const seg = (names, isNext) => names.length ? '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>' : '';
           html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
         }
         if (el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; }

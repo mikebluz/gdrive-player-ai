@@ -1959,6 +1959,10 @@
       const strumAmt = Math.max(0, Math.min(100, bed.strum || 0));
       const spanSec = (strumAmt / 100) * Math.max(0, (bed.intervalMs | 0) / 1000);
       const order = _ambStrumOrder(n, bed.strumFidelity || 0);
+      // Choke (default off): clamp each note's duration AND release so the chord
+      // is silent by the next unit boundary, instead of overlapping/ringing past
+      // it — useful for the Chords/Monk modes where you want distinct chords.
+      const unitSec = bed.choke ? _ambLayerPeriodSec(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())) : 0;
       const _unit = [];
       order.forEach((vi, pos) => {
         const f = voicing[vi];
@@ -1967,10 +1971,17 @@
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
         // strum, space the onsets evenly across spanSec in play order.
         const offset = (spanSec > 0) ? (pos / Math.max(1, n)) * spanSec : (pos * 0.012);
+        let noteMs = durMs;
+        if (bed.choke && unitSec > 0.05) {
+          noteMs = Math.max(60, Math.min(durMs, Math.round((unitSec - offset - 0.012) * 1000)));
+          // Keep the release inside the (shortened) note so it actually finishes
+          // by the boundary rather than collapsing to a near-silent voice.
+          params.release = Math.min(params.release || 0, Math.max(20, Math.round(noteMs * 0.5)));
+        }
         const _rp = {}; for (const k in params) if (k !== '_detuneMod') _rp[k] = params[k];
-        _unit.push({ freq: f, off: offset, durMs: durMs, params: _rp });
+        _unit.push({ freq: f, off: offset, durMs: noteMs, params: _rp });
         if (dmod) params._detuneMod = dmod;
-        try { playNote(f, params, durMs, at + offset, dest, undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, params, noteMs, at + offset, dest, undefined, _E.laneIdx()); } catch (e) {}
       });
       _ambRecordUnit(_E, key, at, _unit);
     }
@@ -9425,6 +9436,7 @@
       { const _nb = document.getElementById(tr('ambient-bed-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.bed)); }
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
+      set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
       set('ambient-bed-chordlen', (cfg.bed.chordPhraseLen | 0) || 4);
       set('ambient-bed-chordreps', (cfg.bed.chordRepeats | 0) || 4);
       set('ambient-bed-register', cfg.bed.register);
@@ -9661,6 +9673,7 @@
           grp('Rhythm') +
             tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
             sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
+            '<div class="ambient-ctrl"><label for="ambient-bed-choke">Choke</label><select id="ambient-bed-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>' +
             condCtrl('bed') + gpe() +
           grp('Variation') +
             sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'detune') +
@@ -10050,6 +10063,7 @@
       bind('ambient-bed-chordlen', 'bed', 'chordPhraseLen');
       bind('ambient-bed-chordreps', 'bed', 'chordRepeats');
       { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; persist(); }); }
+      { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
       bindTime('ambient-bed-interval', 'bed', 'intervalMs');
       bindTime('ambient-bed-length', 'bed', 'lengthMs');
       bind('ambient-bed-drift', 'bed', 'drift');

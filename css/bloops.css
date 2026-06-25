@@ -2861,13 +2861,13 @@
     /* A locked layer's notes line reads amber with a 🔒 (toggled from the head button). */
     .ambient-notes-live.locked { color: #ffd479; }
     .ambient-lock-ic { margin-right: 4px; opacity: 0.9; }
-    /* Per-layer Unit-Lock head button (🔒) — amber when active. */
-    .ambient-lock-btn {
+    /* Freeze Lock toggle (🔒) — amber when on (snaps the Freeze loop to whole units). */
+    .ambient-lock-btn, .ambient-freezelock-btn {
       flex: 0 0 auto; border: 1px solid #2d2d3f; border-radius: 7px;
       background: transparent; color: #6b6b8a; cursor: pointer; line-height: 1; transition: all 0.15s ease;
     }
-    @media (hover: hover) { .ambient-lock-btn:hover { border-color: #ffd479; color: #ffd479; } }
-    .ambient-lock-btn.active { color: #1a202c; background: #ffd479; border-color: #ffd479; }
+    @media (hover: hover) { .ambient-lock-btn:hover, .ambient-freezelock-btn:hover { border-color: #ffd479; color: #ffd479; } }
+    .ambient-lock-btn.active, .ambient-freezelock-btn.active { color: #1a202c; background: #ffd479; border-color: #ffd479; }
     /* Selecting (1st press, awaiting the 2nd to close a multi-unit span): flash. */
     .ambient-lock-btn.selecting { color: #ffd479; border-color: #ffd479; animation: amb-lock-flash 0.5s steps(1, end) infinite; }
     @keyframes amb-lock-flash {

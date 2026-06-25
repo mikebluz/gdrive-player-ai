@@ -4960,13 +4960,12 @@
       });
     }
     // Reflect each layer's Unit-Lock state on its 🔒 head button (after re-render).
+    // Sync the Freeze Lock TOGGLE (🔒) from each layer's freezeLock flag.
     function _ambLockSyncAll(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
-      host.querySelectorAll('.ambient-lock-btn').forEach(btn => {
-        const k = btn.dataset.lkey;
-        const selecting = !!(E.lockSel && E.lockSel[k]);   // 1st press, awaiting the 2nd → flash
-        btn.classList.toggle('selecting', selecting);
-        btn.classList.toggle('active', !selecting && _ambIsLocked(E, k));
+      host.querySelectorAll('.ambient-freezelock-btn').forEach(btn => {
+        const L = _ambLayerByKey(E, btn.dataset.flkey);
+        btn.classList.toggle('active', !!(L && L.freezeLock));
       });
     }
     function _ambFreezeState(E, key) {
@@ -5083,6 +5082,23 @@
       let loopStart = P1;
       let loopEnd = P2;
       if (loopEnd <= loopStart + 0.01) loopEnd = loopStart + intervalSec; // too-fast double press
+      // Lock toggle ON → snap the window to WHOLE units: start of the unit holding
+      // the 1st press → end of the unit holding the 2nd, so the loop is N whole
+      // units (Free/off keeps the arbitrary held length, possibly partial).
+      let _lockSnap = false;
+      if (layer && layer.freezeLock) {
+        try {
+          const cfg = E._cfg || (E.getCfg && E.getCfg());
+          const P = _ambLayerPeriodSec(E, key, layer, cfg);
+          if (P > 0.05) {
+            const b1 = _ambLayerAudibleBoundary(E, key, layer, cfg, P1 - 0.001);
+            loopStart = b1 - P;
+            loopEnd = _ambLayerAudibleBoundary(E, key, layer, cfg, P2 - 0.001);
+            if (loopEnd <= loopStart + 0.01) loopEnd = loopStart + P;
+            _lockSnap = true;
+          }
+        } catch (e) {}
+      }
       const eps = 0.001;
       const win = cap.filter(e => e.at >= loopStart - eps && e.at < loopEnd - eps);
       if (!win.length) {
@@ -5099,7 +5115,8 @@
       // from generation to loop lands cleanly on the grid. Fall back to a small
       // lead past the press if no clock is available.
       const nextOnset = E.clocks && E.clocks[key];
-      const A = (typeof nextOnset === 'number' && nextOnset > P2) ? nextOnset : (P2 + 0.12);
+      let A = (typeof nextOnset === 'number' && nextOnset > P2) ? nextOnset : (P2 + 0.12);
+      if (_lockSnap && loopEnd > P2) A = loopEnd;   // unit-locked → begin the loop on the snapped boundary
       st.anchor = A; st.scheduledUpto = A;
       st.recording = false; st.frozen = true; st.pendingThawAt = null;
       _ambFreezeSyncAll(E);
@@ -5225,6 +5242,9 @@
     }
     // One button, three states: idle → (arm) recording → (commit) looping → (thaw) idle.
     function _ambFreezeCycle(E, key) {
+      // Legacy per-unit lock (old separate Lock button, now consolidated into
+      // Freeze + the Lock toggle): pressing Freeze frees it.
+      if (E.unit && E.unit[key] && E.unit[key].lock) { try { _ambDoUnlock(E, key); } catch (e) {} _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); return; }
       const st = _ambFreezeState(E, key);
       if (st.frozen) _ambFreezeThaw(E, key);
       else if (st.recording) _ambFreezeCommit(E, key);
@@ -7098,8 +7118,11 @@
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
       (freezeKey ? '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
-      (freezeKey ? '<button type="button" class="ambient-lock-btn" data-lkey="' + freezeKey + '" title="Lock the unit / cycle playing now — replay it every iteration (click again to unlock)" aria-label="Lock unit">🔒</button>' : '') +
-      (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length">❄</button>' : '') +
+      // Lock TOGGLE for Freeze: off = Free (arbitrary loop length, two presses);
+      // on = snap the loop to whole unit boundaries. The ❄ Freeze button is the
+      // action; this just sets the snap mode.
+      (freezeKey ? '<button type="button" class="ambient-freezelock-btn" data-flkey="' + freezeKey + '" title="Lock — snap the Freeze loop to whole units (off = free / arbitrary length)" aria-label="Lock freeze to units">🔒</button>' : '') +
+      (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length (Lock 🔒 snaps to whole units)">❄</button>' : '') +
       (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
@@ -10018,8 +10041,8 @@
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
-        const lb = e.target && e.target.closest && e.target.closest('.ambient-lock-btn');
-        if (lb) { e.stopPropagation(); try { _ambToggleUnitLock(E, lb.dataset.lkey); _ambLockSyncAll(E); _ambFreezeSyncAll(E); _ambPersistLock(E, lb.dataset.lkey); _ambUpdateNotesLive(E); } catch (err) { console.warn('Lock failed', err); } return; }
+        const fl = e.target && e.target.closest && e.target.closest('.ambient-freezelock-btn');
+        if (fl) { e.stopPropagation(); try { const L = _ambLayerByKey(E, fl.dataset.flkey); if (L) { L.freezeLock = !L.freezeLock; fl.classList.toggle('active', !!L.freezeLock); if (typeof persistWorkspace === 'function') persistWorkspace(); } } catch (err) { console.warn('Lock toggle failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
         const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
         if (pb) { e.stopPropagation(); try { const h2 = document.getElementById(E.hostId); const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]'); if (pe) { _ambBuildPiano(pe); const open = pe.classList.toggle('open'); pb.classList.toggle('active', open); } } catch (err) { console.warn('Piano toggle failed', err); } return; }

@@ -6195,6 +6195,17 @@
       const names = (typeof CHROMATIC !== 'undefined' && CHROMATIC.length === 12) ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
       return names[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
     }
+    // Beat layers read out DRUM names (Kick/Snare/Hat…), not pitches.
+    function _ambDrumNameFreq(f) {
+      if (!(f > 0)) return '';
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      return _ambDrumName(Math.round(69 + 12 * Math.log2(f / A)));
+    }
+    // Note labels for a unit, sorted HIGH→LOW (the readout's Y-axis: top = highest)
+    // so chords/polyphony stack legibly. `nm` is the per-layer namer (drum or pitch).
+    function _ambSortedNames(arr, nm) {
+      return (arr || []).filter(n => n && n.freq > 0).slice().sort((a, b) => b.freq - a.freq).map(n => nm(n.freq)).filter(Boolean);
+    }
     // Distinct hues so overlapping units (a new iteration ringing over the tail
     // of the last) read as separate colour groups.
     const _NP_PALETTE = ['#7fd6c4', '#e0a3ff', '#ffd479', '#86c5ff', '#ff9aa2', '#a0e57a'];
@@ -6262,23 +6273,26 @@
           if (idx == null) { if (st.next > 2000) { st.map = {}; st.next = 0; } idx = st.next++; st.map[s] = idx; }
           return _NP_PALETTE[idx % _NP_PALETTE.length];
         };
+        // Per-layer name: Beat → drum names, else pitch names.
+        const _isBeat = String(key).split(':')[0] === 'beat';
+        const nm = _isBeat ? _ambDrumNameFreq : _ambFreqNoteName;
         // names: null = no unit (render nothing); [] = a recorded REST (render "–");
-        // [..] = notes (render coloured).
+        // [..] = notes (render as a vertical stack — the Y-axis — so chords read).
         const seg = (names, isNext) => {
           if (names == null) return '';
           if (!names.length) return '<span class="ambient-np-rest' + (isNext ? ' ambient-np-next' : '') + '">–</span>';
-          return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>';
+          return '<span class="ambient-np-col' + (isNext ? ' ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.map(n => '<span>' + n + '</span>').join('') + '</span>';
         };
         if (lockEd) {
           // Locked → EDITABLE: each note is a tappable chip (opens the note editor
-          // popover), plus an add-note (+) affordance. Edits mutate the locked
-          // list in place; the locked replay re-reads it, so they land next pass.
+          // popover), plus an add-note (+) affordance. Stacked HIGH→LOW (Y-axis);
+          // data-ei keeps the ORIGINAL list index so edits target the right note.
           // Spans (not <button>) so they take no focus — focusable controls inside
           // the live readout collided with its churn + a11y focus rules.
-          const _ns = lockEd.list;
-          const col = colorFor(_ns.map(n => _ambFreqNoteName(n.freq)).filter(Boolean));
+          const ordered = lockEd.list.map((n, i) => ({ n: n, i: i })).filter(o => o.n && o.n.freq > 0).sort((a, b) => b.n.freq - a.n.freq);
+          const col = colorFor(ordered.map(o => nm(o.n.freq)).filter(Boolean));
           html = '<span class="ambient-np-ed" style="color:' + col + '">' +
-            _ns.map((n, i) => '<span class="ambient-np-note" role="button" tabindex="-1" data-ekey="' + key + '" data-ei="' + i + '">' + (_ambFreqNoteName(n.freq) || '?') + '</span>').join('') +
+            ordered.map(o => '<span class="ambient-np-note" role="button" tabindex="-1" data-ekey="' + key + '" data-ei="' + o.i + '">' + (nm(o.n.freq) || '?') + '</span>').join('') +
             '<span class="ambient-np-add" role="button" tabindex="-1" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</span>' +
           '</span>';
         } else if (layerOn) {
@@ -6288,13 +6302,13 @@
           let curN = null, nxtN = null;
           if (E.units && E.units[key] && E.units[key].length) {
             const cn = _ambUnitAt(E, key, now);
-            if (cn.cur) curN = cn.cur.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
-            if (cn.nxt) nxtN = cn.nxt.notes.map(n => _ambFreqNoteName(n.freq)).filter(Boolean);
+            if (cn.cur) curN = _ambSortedNames(cn.cur.notes, nm);
+            if (cn.nxt) nxtN = _ambSortedNames(cn.nxt.notes, nm);
           } else if (E.cap && E.cap[key]) {
             let period = 0; try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
             const cn = _ambCurNextUnits(_ambUnitClustersRaw(E.cap[key], period), now);
-            if (cn.cur) curN = _ambUnitNames(cn.cur);
-            if (cn.nxt) nxtN = _ambUnitNames(cn.nxt);
+            if (cn.cur) curN = _ambSortedNames(cn.cur.evs, nm);
+            if (cn.nxt) nxtN = _ambSortedNames(cn.nxt.evs, nm);
           }
           html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
         }

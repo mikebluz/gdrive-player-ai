@@ -6423,13 +6423,15 @@
         // Per-layer name: Beat → drum names, else pitch names.
         const _isBeat = String(key).split(':')[0] === 'beat';
         const nm = _isBeat ? _ambDrumNameFreq : _ambFreqNoteName;
-        // names: null = no unit (render nothing); [] = a recorded REST (render "–");
-        // [..] = notes (render as a vertical stack — the Y-axis — so chords read).
-        const seg = (names, isNext) => {
+        // Now Playing row: the CURRENT unit only, ONE compact horizontal line per
+        // layer — no lookahead "next", no vertical note stacks (those made it a
+        // gigantic list). names: null = no unit (skip); [] = REST ("–"); [..] notes.
+        const npSeg = (names) => {
           if (names == null) return '';
-          if (!names.length) return '<span class="ambient-np-rest' + (isNext ? ' ambient-np-next' : '') + '">–</span>';
-          return '<span class="ambient-np-col' + (isNext ? ' ambient-np-next' : '') + '" style="color:' + colorFor(names) + '">' + names.map(n => '<span>' + n + '</span>').join('') + '</span>';
+          if (!names.length) return '<span class="ambient-np-rest">–</span>';
+          return '<span class="ambient-np-cur" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>';
         };
+        let curNames = null;   // current unit's note names → the Now Playing row
         if (lockEd) {
           // Locked → EDITABLE: each note is a tappable chip (opens the note editor
           // popover), plus an add-note (+) affordance. Stacked HIGH→LOW (Y-axis);
@@ -6442,33 +6444,32 @@
             ordered.map(o => '<span class="ambient-np-note" role="button" tabindex="-1" data-ekey="' + key + '" data-ei="' + o.i + '">' + (nm(o.n.freq) || '?') + '</span>').join('') +
             '<span class="ambient-np-add" role="button" tabindex="-1" data-ekey="' + key + '" title="Add a note" aria-label="Add a note">+</span>' +
           '</span>';
+          curNames = ordered.map(o => nm(o.n.freq) || '?');
         } else if (layerOn) {
-          // Unlocked: current unit ▸ next (lookahead). Prefer the discrete recorded
-          // units (exact boundaries, every note, and recorded RESTS → "–"); fall
-          // back to clustering the cap buffer for layers that don't record units.
-          let curN = null, nxtN = null;
+          // Unlocked: just the CURRENT unit. Prefer the discrete recorded units
+          // (exact boundaries, every note, and recorded RESTS → "–"); fall back to
+          // clustering the cap buffer for layers that don't record units.
+          let curN = null;
           if (E.units && E.units[key] && E.units[key].length) {
             const cn = _ambUnitAt(E, key, now);
             if (cn.cur) curN = _ambSortedNames(cn.cur.notes, nm);
-            if (cn.nxt) nxtN = _ambSortedNames(cn.nxt.notes, nm);
           } else if (E.cap && E.cap[key]) {
             let period = 0; try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
             const cn = _ambCurNextUnits(_ambUnitClustersRaw(E.cap[key], period), now);
             if (cn.cur) curN = _ambSortedNames(cn.cur.evs, nm);
-            if (cn.nxt) nxtN = _ambSortedNames(cn.nxt.evs, nm);
           }
-          html = [seg(curN, false), seg(nxtN, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
+          curNames = curN;
         }
         // Line: LOCKED → editable chips; PLAYING → piano-roll canvas (time × pitch,
         // with a fixed-width pitch-name gutter on the LEFT — names line up with
-        // their event blocks; drawn each frame by _ambDrawRolls); else empty. The
-        // Now Playing panel keeps the text form (pushed below).
+        // their event blocks; drawn each frame by _ambDrawRolls); else empty.
         if (lockEd) {
           if (el._mode !== 'chips' || el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; el._mode = 'chips'; }
         } else if (layerOn) {
           if (el._mode !== 'roll') { el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
         } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
-        if (html) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: html }); }
+        const npHtml = npSeg(curNames);
+        if (npHtml) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: npHtml }); }
       });
       _ambRenderNowPlaying(E, rows, playing);
       // If the open note editor's target note no longer exists (unlocked, deleted,

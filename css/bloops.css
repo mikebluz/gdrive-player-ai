@@ -2981,7 +2981,9 @@
       background: rgba(255,255,255,0.012); margin: 2px 0;
     }
     .ambient-nowplaying-head { display: flex; align-items: center; gap: 10px; }
-    .ambient-nowplaying-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+    .ambient-nowplaying-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; max-height: 220px; overflow-y: auto; }
+    /* Now Playing notes: one compact horizontal line per layer (current unit). */
+    .ambient-np-cur { white-space: nowrap; }
     .ambient-nowplaying-list:empty { display: none; }
     .ambient-np-row { display: flex; align-items: flex-start; gap: 8px; font-size: 0.72rem; line-height: 1.2; }
     .ambient-np-name { flex: 0 0 auto; min-width: 5.5em; color: #9a9ac0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

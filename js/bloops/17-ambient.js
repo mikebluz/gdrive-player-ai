@@ -6869,7 +6869,8 @@
       const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
       // Interval tm id differs: primary 'interval', extras 'intervalMs'.
       const setIntervalRow = (show) => { const r = rowOf('intervalMs') || rowOf('interval'); if (r) r.style.display = show ? '' : 'none'; };
-      ['pulses', 'steps', 'rotate', 'voices', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      // 'voices' = primary id; 'euclidVoices' = extra-layer (schema) id.
+      ['pulses', 'steps', 'rotate', 'voices', 'euclidVoices', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       setRow('rate', !euclid);
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
@@ -7579,7 +7580,7 @@
       beat: { label: 'Beat', ctrls: [
         ['grp', 'Voice'], ['kit'], ['gen'], ['sl', 'attack', 'Attack', 0, 500, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 2000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
       // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).

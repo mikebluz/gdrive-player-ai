@@ -1384,18 +1384,14 @@
       const now = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0));
       let period = 0;
       try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
-      // The unit PLAYING NOW = the most recent note that has already started
-      // (at ≤ audible-now). The engine schedules ahead, so the newest cap entries
-      // are FUTURE units — capturing those would lock the next phrase, not this one.
-      let cur = null;
-      for (let i = arr.length - 1; i >= 0; i--) { if (arr[i] && arr[i].at <= now) { cur = arr[i]; break; } }
-      if (!cur) cur = arr[0];
-      const bk = (a) => (period > 0.05) ? Math.floor(a / period) : 0;
-      const cb = bk(cur.at);
-      const unit = arr.filter(ev => ev && (ev.freq > 0) && ((period > 0.05) ? (bk(ev.at) === cb) : (Math.abs(ev.at - cur.at) < 0.5)));
-      if (!unit.length) return null;
-      let start = unit[0].at; unit.forEach(ev => { if (ev.at < start) start = ev.at; });
-      const notes = unit.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
+      // Same unit grouping as the readout, so Lock captures EXACTLY the unit shown
+      // playing now (the latest cluster started; the engine schedules ahead, so the
+      // newest entries are future units we don't want).
+      const cn = _ambCurNextUnits(_ambUnitClustersRaw(arr, period), now);
+      const c = cn.cur || cn.nxt;
+      if (!c || !c.evs.length) return null;
+      const start = c.start;
+      const notes = c.evs.map(ev => ({ freq: ev.freq, off: Math.max(0, ev.at - start), durMs: ev.dur, params: Object.assign({}, ev.params) }));
       return { notes: notes, start: start };
     }
     // If `key`'s layer is locked, replay its stored unit at `at` and return true.
@@ -5708,31 +5704,32 @@
     // Distinct hues so overlapping units (a new iteration ringing over the tail
     // of the last) read as separate colour groups.
     const _NP_PALETTE = ['#7fd6c4', '#e0a3ff', '#ffd479', '#86c5ff', '#ff9aa2', '#a0e57a'];
-    // Group the currently-ringing notes by which UNIT they belong to. Notes are
-    // bucketed by the layer's unit PERIOD (floor(at/period)) so a whole iteration
-    // — even a strummed/arpeggiated one spread over the unit — is one group, and
-    // the next iteration is the next bucket. Falls back to 60 ms onset proximity
-    // when no period is known. Returns clusters sorted oldest→newest.
-    function _ambRingingClusters(arr, now, period) {
+    // Group a layer's captured notes into UNITS by onset GAP (a new unit starts
+    // when the gap to the previous note exceeds ~half the period). Gap-based, not
+    // grid-bucketed, so a burst/strum stays one unit even across a period boundary
+    // (the old bucketing split them — the "messed up" readout). Each unit keeps
+    // its raw cap entries in time order — NO dedup, so repeated notes show. Sorted
+    // by start; includes future (scheduled-ahead) units for the lookahead.
+    function _ambUnitClustersRaw(arr, period) {
       if (!Array.isArray(arr) || !arr.length) return [];
-      const useP = period > 0.05;
-      const groups = new Map();
-      for (let i = 0; i < arr.length; i++) {
-        const ev = arr[i]; if (!ev || !(ev.freq > 0)) continue;
-        const durS = Math.max(0.05, (ev.dur || 0) / 1000);
-        if (!(ev.at <= now && now < ev.at + durS)) continue;
-        const bucket = useP ? Math.floor(ev.at / period) : Math.round(ev.at / 0.06);
-        let g = groups.get(bucket);
-        if (!g) { g = { bucket: bucket, onset: ev.at, seen: new Set(), names: [] }; groups.set(bucket, g); }
-        if (ev.at < g.onset) g.onset = ev.at;
-        const nm = _ambFreqNoteName(ev.freq);
-        if (nm && !g.seen.has(nm)) { g.seen.add(nm); g.names.push({ nm: nm, f: ev.freq }); }
+      const list = arr.filter(ev => ev && ev.freq > 0).slice().sort((a, b) => a.at - b.at);
+      if (!list.length) return [];
+      const gap = Math.max(0.25, (period > 0.05 ? period : 0.6) * 0.45);
+      const out = []; let cur = null, last = -1e9;
+      for (const ev of list) {
+        if (!cur || (ev.at - last) > gap) { cur = { start: ev.at, evs: [] }; out.push(cur); }
+        cur.evs.push(ev); last = ev.at;
       }
-      const out = Array.from(groups.values());
-      out.sort((a, b) => a.bucket - b.bucket);
-      out.forEach(g => { g.names.sort((a, b) => a.f - b.f); g.names = g.names.map(x => x.nm); });
       return out;
     }
+    // The unit playing at `now` (latest start ≤ now) and the next one (first
+    // start > now = the lookahead, already scheduled in the buffer).
+    function _ambCurNextUnits(clusters, now) {
+      let cur = null, nxt = null;
+      for (const c of clusters) { if (c.start <= now) cur = c; else { nxt = c; break; } }
+      return { cur: cur, nxt: nxt };
+    }
+    function _ambUnitNames(c) { return c ? c.evs.map(ev => _ambFreqNoteName(ev.freq)).filter(Boolean) : []; }
     function _ambUpdateNotesLive(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       const lines = host.querySelectorAll('.ambient-notes-live'); if (!lines.length) return;
@@ -5759,25 +5756,29 @@
         if (layerOn && E.cap && E.cap[key]) {
           let period = 0;
           try { period = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), cfg); } catch (e) {}
-          const clusters = _ambRingingClusters(E.cap[key], now, period);
+          const clusters = _ambUnitClustersRaw(E.cap[key], period);
+          const cn = _ambCurNextUnits(clusters, now);
           if (locked) {
-            // Locked = one repeating unit. Show it as a SINGLE stable colour
-            // group (deduped) — no per-unit cycling, no separate "next".
-            const seen = new Set(), names = [];
-            clusters.forEach(c => c.names.forEach(n => { if (!seen.has(n)) { seen.add(n); names.push(n); } }));
+            // Locked = one repeating unit. Show just the current unit in one
+            // stable colour (no next, no per-unit cycling). Repeats shown in order.
+            const names = _ambUnitNames(cn.cur);
             html = names.length ? '<span class="ambient-np-locked">' + names.join(' ') + '</span>' : '';
             if (E._npCol[key]) E._npCol[key].map = {};
-          } else if (clusters.length) {
-            // Assign each unit a stable colour: a per-key counter hands out the
-            // next palette hue to each new bucket, and a bucket keeps its index
-            // for as long as it stays ringing (pruned when it stops).
+          } else if (cn.cur || cn.nxt) {
+            // Current unit + the next (lookahead). Each unit a stable colour keyed
+            // by its start; the next is dimmed and prefixed ▸. Notes in time order,
+            // no dedup → repeated notes appear.
             const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
             const nextMap = {};
-            html = clusters.map(c => {
-              let idx = st.map[c.bucket]; if (idx == null) idx = st.next++;
-              nextMap[c.bucket] = idx;
-              return '<span style="color:' + _NP_PALETTE[idx % _NP_PALETTE.length] + '">' + c.names.join(' ') + '</span>';
-            }).join('<span class="ambient-np-sep"> · </span>');
+            const seg = (c, isNext) => {
+              if (!c) return '';
+              const names = _ambUnitNames(c); if (!names.length) return '';
+              const k = Math.round(c.start * 20);
+              let idx = st.map[k]; if (idx == null) idx = st.next++;
+              nextMap[k] = idx;
+              return '<span class="' + (isNext ? 'ambient-np-next' : '') + '" style="color:' + _NP_PALETTE[idx % _NP_PALETTE.length] + '">' + names.join(' ') + '</span>';
+            };
+            html = [seg(cn.cur, false), seg(cn.nxt, true)].filter(Boolean).join('<span class="ambient-np-sep"> ▸ </span>');
             st.map = nextMap;
           } else if (E._npCol[key]) { E._npCol[key].map = {}; }
         } else if (E._npCol[key]) { E._npCol[key].map = {}; }

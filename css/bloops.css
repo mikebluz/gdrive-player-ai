@@ -2867,6 +2867,8 @@
     .ambient-np-sep { color: #4a4a5e; }
     /* Locked unit: one stable colour (no per-unit cycling, no next group). */
     .ambient-np-locked { color: #ffd479; }
+    /* The "next" (lookahead) unit in a readout — dimmed, after a ▸ separator. */
+    .ambient-np-next { opacity: 0.5; }
     /* "Now Playing" read-only panel — global readout of every layer's notes. */
     .ambient-nowplaying {
       border: 1px solid #20203a; border-radius: 8px; padding: 6px 10px;

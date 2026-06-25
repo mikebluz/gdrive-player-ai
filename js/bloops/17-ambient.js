@@ -6431,6 +6431,7 @@
       range: 'How many octaves the notes span.',
       transpose: 'Shift the whole layer by half-steps (±2 octaves), chromatically.',
       bars: 'Length of the loop in bars before it repeats.',
+      phrase: 'Length of the phrase/loop in bars before it repeats.',
       density: 'Notes per bar.',
       length: 'How long each note sustains.',
       interval: 'Time between events.',

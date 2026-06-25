@@ -4431,6 +4431,7 @@
                            // from Shape (which does reset) on the next play.
       E._queuePending = null; E._queueAt = null;   // Queue-mode pending toggles
       E._t0 = null;        // engine grid anchor (set on first tick) for queued-START alignment
+      E._everRan = false;  // cold-start gate: becomes true on the first 'running'-context tick
     }
     // Throttled tick-error logger: surfaces a scheduling fault to the console at
     // most ~once/2s (so a per-tick throw doesn't spam) without ever crashing.
@@ -4450,14 +4451,20 @@
       // cost grows with layer count, was glitching dense Bloom stacks).
       E._cfg = cfg;
       if (!cfg) return;
-      // Skip SCHEDULING until the AudioContext is actually 'running'. Pressing
-      // Play resumes it asynchronously; ticking while 'suspended' would anchor
-      // every layer's first voice to a frozen clock (the first onset then lands
-      // in the past on resume and is dropped — worst on Bed, whose long iteration
-      // = seconds of silence). The interval keeps running, so the first running
-      // tick (≤150 ms after resume) anchors cleanly. The Play button already
+      // COLD START ONLY: skip scheduling until the AudioContext first reaches
+      // 'running'. Pressing Play resumes it asynchronously; ticking while still
+      // 'suspended' on the very first start would anchor every layer's first
+      // voice to a frozen clock (the onset then lands in the past on resume and
+      // is dropped — worst on Bed). Once it has run once (E._everRan) we NEVER
+      // block again: a mid-playback context dip (tab backgrounded, power blip) is
+      // handled by the keep-alive watchdog + the lookahead, so blocking there
+      // would only starve the schedule and cut audio out. The Play button already
       // shows Stop because E.timer/cfg.playing were set the moment Play was hit.
-      try { const _ac = Tone.getContext().rawContext; if (_ac && _ac.state !== 'running') return; } catch (e) {}
+      try {
+        const _ac = Tone.getContext().rawContext;
+        if (_ac && _ac.state === 'running') E._everRan = true;
+        else if (!E._everRan) return;
+      } catch (e) {}
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
       if (E._t0 == null) E._t0 = now;   // engine grid anchor (queued-START alignment)
       // keyMaster: drop the key schedule when no keyMaster Seq is active (so the
@@ -9123,7 +9130,11 @@
     // and need a live node push (handled in _ambRampResolve). Append to every
     // layer type except the global group.
     const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.amount','Distortion',0,100],['dist.mix','Distortion mix',0,100]];
-    Object.keys(_AMB_RAMP_PARAMS).forEach(k => { if (k !== 'global') _AMB_RAMP_PARAMS[k] = _AMB_RAMP_PARAMS[k].concat(_AMB_FX_RAMP); });
+    // Stereo (the Spread/Pan fader, stored in `space`) is rampable on every layer.
+    // Range spans the full Pan field (-100..100); in Spread mode the engine reads
+    // the magnitude, so the positive half (0..100) is the spread amount.
+    const _AMB_STEREO_RAMP = [['space','Spread / Pan',-100,100]];
+    Object.keys(_AMB_RAMP_PARAMS).forEach(k => { if (k !== 'global') _AMB_RAMP_PARAMS[k] = _AMB_RAMP_PARAMS[k].concat(_AMB_STEREO_RAMP, _AMB_FX_RAMP); });
     // Live-write the global tempo from a ramp (cheap: just the inputs + the
     // top-bar readout — no digit rebuild / persist at 40 Hz; engines read
     // tempoInput.value live).

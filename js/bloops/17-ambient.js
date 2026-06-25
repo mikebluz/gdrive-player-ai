@@ -5722,11 +5722,14 @@
       }
       return out;
     }
-    // The unit playing at `now` (latest start ≤ now) and the next one (first
-    // start > now = the lookahead, already scheduled in the buffer).
+    // The unit playing at `now` (latest started) and the next one (the lookahead,
+    // already scheduled in the buffer). A small margin absorbs output-latency /
+    // scheduling jitter so a unit whose onset just landed counts as CURRENT rather
+    // than slipping into the next slot.
     function _ambCurNextUnits(clusters, now) {
+      const M = 0.12;
       let cur = null, nxt = null;
-      for (const c of clusters) { if (c.start <= now) cur = c; else { nxt = c; break; } }
+      for (const c of clusters) { if (c.start <= now + M) cur = c; else { nxt = c; break; } }
       return { cur: cur, nxt: nxt };
     }
     function _ambUnitNames(c) { return c ? c.evs.map(ev => _ambFreqNoteName(ev.freq)).filter(Boolean) : []; }
@@ -5759,9 +5762,10 @@
           const clusters = _ambUnitClustersRaw(E.cap[key], period);
           const cn = _ambCurNextUnits(clusters, now);
           if (locked) {
-            // Locked = one repeating unit. Show just the current unit in one
-            // stable colour (no next, no per-unit cycling). Repeats shown in order.
-            const names = _ambUnitNames(cn.cur);
+            // Locked = one repeating unit. Show it ONCE in a single stable colour
+            // (whichever of current/next is the live unit — never both, no dimmed
+            // lookahead). Repeats shown in order.
+            const names = _ambUnitNames(cn.cur || cn.nxt);
             html = names.length ? '<span class="ambient-np-locked">' + names.join(' ') + '</span>' : '';
             if (E._npCol[key]) E._npCol[key].map = {};
           } else if (cn.cur || cn.nxt) {

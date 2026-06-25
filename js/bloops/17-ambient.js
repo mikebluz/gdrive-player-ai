@@ -2465,21 +2465,17 @@
       const dmod = _ambLayerDetuneMod(key);
       const dest = _ambLayerDest(key);
       const _mnotes = _ambNotesOf(motif);   // carries colours + timed usage
-      // Phrase placement: don't always start on the 1. GATED behind motif.phrasePlace
-      // ('vary') so the default ('on1') keeps the byte-identical stream (harness). In
-      // 'vary', anchor the burst somewhere in the unit — often on/near the 1,
-      // sometimes mid, sometimes late so a phrase spills toward the next unit's 1
-      // (continuity). Only the 'vary' path consumes the RNG.
+      // Phrase placement (Start %): with probability motif.phraseVary, this phrase
+      // begins at a STOCHASTIC point anywhere in the unit instead of on the 1 —
+      // sometimes early, sometimes near the end (its tail then spills into the next
+      // unit, giving continuity). Default 0 = always on the 1 → no RNG consumed →
+      // byte-identical stream (harness-safe).
       let _startOff = 0;
-      if (motif.phrasePlace === 'vary') {
+      const _pv = Math.max(0, Math.min(100, motif.phraseVary | 0));
+      if (_pv > 0 && _ambRand() * 100 < _pv) {
         const unitSec = Math.max(0.05, _ambEffIntervalSec(motif));
         const slack = Math.max(0, unitSec - Math.max(0, (count - 1) * burstGap) - 0.02);
-        if (slack > 0.02) {
-          const r = _ambRand();
-          if (r < 0.45) _startOff = 0;                                   // on the 1 (most common)
-          else if (r < 0.8) _startOff = slack * (0.15 + _ambRand() * 0.5);  // mid
-          else _startOff = slack * (0.65 + _ambRand() * 0.35);           // late → continuity
-        }
+        if (slack > 0.02) _startOff = _ambRand() * slack;   // uniformly anywhere in the unit
       }
       const _unit = [];
       for (let i = 0; i < count; i++) {
@@ -6639,6 +6635,7 @@
       interval: 'Time between events.',
       rate: 'How fast it cycles.',
       drift: 'Phase offset — nudges the layer off the downbeat for polymetric interplay.',
+      start: 'Chance a phrase begins at a random point in the unit instead of on the 1 (0 = always on the 1, 50 = half).',
       vary: 'How much it deviates from its base pattern (0 = repeats exactly).',
       hold: 'How many units the note is held before it is struck again.',
       unit: 'Length of one hold unit — re-strike happens every Hold × Unit.',
@@ -6694,7 +6691,7 @@
     const _AMB_PARAM_UNIT = {
       motion: '%', strum: '%', strumFidelity: '%', restProb: '%', twist: '%', proximity: '%',
       accent: '%', fill: '%', mutateRate: '%', rhythmVar: '%', pitchVar: '%', vary: '%',
-      timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%',
+      timeVary: '%', pitchVary: '%', randomness: '%', varyDepth: '%', returnChance: '%', pvary: '%',
       spread: '%', sustain: '%', level: '%', fine: '¢',
     };
     function _ambSlUnit(id) {
@@ -9450,7 +9447,7 @@
       set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
       set('ambient-motif-drift', cfg.motif.drift);
-      set('ambient-motif-place', cfg.motif.phrasePlace || 'on1');
+      set('ambient-motif-pvary', cfg.motif.phraseVary | 0);
       setWhen('ambient-motif', cfg.motif.when);
       set('ambient-motif-rest', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
@@ -9694,7 +9691,7 @@
           grp('Rhythm') +
             tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
             sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
-            '<div class="ambient-ctrl"><label for="ambient-motif-place">Phrase</label><select id="ambient-motif-place" class="ambient-select"><option value="on1">On the 1</option><option value="vary">Varied (mid / late)</option></select><span class="ambient-hint">start position</span></div>' +
+            sl('Start', 'ambient-motif-pvary', 0, 100, 0, 'on the 1 → anywhere') +
             condCtrl('motif') + gpe() +
           grp('Variation') +
             sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
@@ -9943,12 +9940,6 @@
         persist();
       });
 
-      const motifPlaceSel = G('ambient-motif-place');
-      if (motifPlaceSel) motifPlaceSel.addEventListener('change', () => {
-        _E = E; const cfg = cfg0(); if (!cfg || !cfg.motif) return;
-        cfg.motif.phrasePlace = (motifPlaceSel.value === 'vary') ? 'vary' : 'on1';
-        persist();
-      });
       const bind = (id, layer, key) => {
         const el = G(id);
         if (!el) return;
@@ -10073,6 +10064,7 @@
       bindTime('ambient-motif-interval', 'motif', 'intervalMs');
       bindTime('ambient-motif-length', 'motif', 'lengthMs');
       bind('ambient-motif-drift', 'motif', 'drift');
+      bind('ambient-motif-pvary', 'motif', 'phraseVary');
       bind('ambient-motif-rest', 'motif', 'restProb');
       bind('ambient-motif-twist', 'motif', 'twist');
       bind('ambient-motif-accent', 'motif', 'accent');

@@ -62,6 +62,7 @@
         freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
         fadeInMs: 0,                    // Master Fade In: ramp all audio up over N ms on play (0 = off)
         fadeOutMs: 0,                   // Master Fade Out: ramp all audio down over N ms from Finalize (0 = off)
+        fadeShape: 'linear',            // Master fade curve: linear | exponential | logarithmic | s-curve (both in & out)
         // Dedicated per-instance reverb (the per-layer "Reverb send" feeds it).
         // size → Freeverb roomSize (0..1); damp → dampening Hz (higher = darker).
         reverb: { size: 80, damp: 45 },
@@ -354,6 +355,7 @@
       cfg.fadeInMs = Math.max(0, Math.min(30000, cfg.fadeInMs | 0));
       if (!Number.isFinite(cfg.fadeOutMs)) cfg.fadeOutMs = d.fadeOutMs;
       cfg.fadeOutMs = Math.max(0, Math.min(30000, cfg.fadeOutMs | 0));
+      if (['linear', 'exponential', 'logarithmic', 's-curve'].indexOf(cfg.fadeShape) < 0) cfg.fadeShape = d.fadeShape;
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
       else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
       ['bed','motif','texture','beat'].forEach(layer => {
@@ -2747,6 +2749,7 @@
     // silently (play=false) to keep the cursor in sync without scheduling in the
     // past. _ambEmitArp gates When per loop and advances the cursor.
     function _ambEmitArpWindow(E, arp, key, now, horizon, lead, space, cfg) {
+      try { _ambArpLfoTeardown(E, key); } catch (e) {}   // series arp: drop any spread LFO left over from euclid mode
       const S = E.arpState || (E.arpState = {});
       let st = S[key];
       if (!st) st = S[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: null, lastAt: null };
@@ -2766,6 +2769,55 @@
         st.idx += 1; cap += 1;
       }
       st.lastAt = tTo;
+    }
+    // Stereo Spread for the euclid Arp — AUDIO-SAFE. Earlier attempts failed on
+    // sound integrity: a per-NOTE Tone.Panner doesn't survive the layer mod chain
+    // (centred) AND costs a node per hit (glitch); scheduling the layer's output
+    // Panner (e.pan) PER HIT via setValueAtTime/setTargetAtTime accumulated
+    // automation on a persistent param, a build-up that glitched and only cleared
+    // on Stop→Play. This drives e.pan with ONE persistent LFO instead: bounded
+    // (a single node, ZERO per-note scheduling → no timeline growth), click-free
+    // (continuous sine), at the one node that pans audibly. A moderate rate (≈2
+    // cycles/bar) lands consecutive notes at different points in the field, so it
+    // reads as spread. `sp` 0 / Pan mode → disengage and recentre.
+    function _ambArpSpreadLfo(E, key, me, sp, barSec) {
+      if (typeof Tone === 'undefined') return;
+      E.arpLfo = E.arpLfo || {};
+      const cur = E.arpLfo[key];
+      const want = sp > 0 && me && me.pan && me.pan.pan;
+      if (!want) {
+        if (cur) {
+          try { cur.lfo.stop(); } catch (e) {}
+          try { cur.lfo.disconnect(); } catch (e) {}
+          try { cur.lfo.dispose(); } catch (e) {}
+          delete E.arpLfo[key];
+          try { if (me && me.pan) me.pan.pan.value = 0; } catch (e) {}   // recentre
+        }
+        return;
+      }
+      const amp = Math.max(0, Math.min(1, sp / 100));
+      const freq = Math.max(0.05, 2 / Math.max(0.25, barSec));   // ~2 pan cycles per bar
+      if (!cur || cur.dest !== me.pan) {
+        if (cur) { try { cur.lfo.dispose(); } catch (e) {} }
+        let lfo = null;
+        try {
+          lfo = new Tone.LFO({ frequency: freq, min: -amp, max: amp, type: 'sine' });
+          lfo.connect(me.pan.pan);
+          lfo.start();
+        } catch (e) { lfo = null; }
+        if (lfo) E.arpLfo[key] = { lfo, dest: me.pan, amp, freq };
+        return;
+      }
+      // Update width / rate in place — no node churn, no scheduling.
+      if (cur.amp !== amp) { try { cur.lfo.min = -amp; cur.lfo.max = amp; } catch (e) {} cur.amp = amp; }
+      if (cur.freq !== freq) { try { cur.lfo.frequency.value = freq; } catch (e) {} cur.freq = freq; }
+    }
+    function _ambArpLfoTeardown(E, key) {
+      const m = E && E.arpLfo && E.arpLfo[key]; if (!m) return;
+      try { m.lfo.stop(); } catch (e) {}
+      try { m.lfo.disconnect(); } catch (e) {}
+      try { m.lfo.dispose(); } catch (e) {}
+      delete E.arpLfo[key];
     }
     // Polyphonic euclidean Arp (arp.euclid): a windowed, BPM-locked mode parallel
     // to the series walker. V interlocking euclidean voices over `steps`×`bars`,
@@ -2805,11 +2857,12 @@
       // events limits the total note-events per unit (keep the EARLIEST). 0 = off.
       const Veff = ((arp.maxPitches | 0) > 0) ? Math.max(1, Math.min(V, arp.maxPitches | 0)) : V;
       const maxEv = (arp.maxEvents | 0) > 0 ? (arp.maxEvents | 0) : 0;
-      // Stereo Spread: fan the V voices across the field by the Spread width
-      // (Pan mode → 0s, the layer Panner positions the whole arp). Deterministic
-      // per voice, like Bed/Sample — replaces the old random base + fixed ±35 fan
-      // that ignored the Spread amount.
-      const vpans = _ambLayerPans(arp, Veff);
+      // Stereo Spread — engage/refresh the persistent output-Panner LFO (see
+      // _ambArpSpreadLfo). No per-note pan work happens in the hit loop, so there's
+      // no per-hit node and no growing automation timeline. Off in Pan mode.
+      const _sp = _ambLayerSpace(arp);
+      const _me = (E.mod && E.mod[key]) || (_E && _E.mod && _E.mod[key]) || null;
+      _ambArpSpreadLfo(E, key, _me, (arp.panMode === 'pan') ? 0 : _sp, barSec);
       const pVary = Math.max(0, Math.min(100, arp.pitchVary | 0));   // ±1-octave drift per hit (gated)
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         if (!_ambCondFires(arp.when, c)) continue;
@@ -2825,7 +2878,6 @@
           _ambKeyTime = cStart;
           const f0 = _ambNoteFreq(intervals[deg] | 0, oct + carry, notes);
           if (!(f0 > 0)) continue;
-          const pan = (vpans[v] | 0);
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
               let hit = vpat[slot] === 1;
@@ -2838,14 +2890,16 @@
               // Pitch vary: per-hit ±1-octave drift (gated → no RNG at 0).
               let f = f0;
               if (pVary > 0 && rnd() * 100 < pVary) { const sh = (rnd() < 0.5 ? -1 : 1); const ff = _ambNoteFreq(intervals[deg] | 0, oct + carry + sh, notes); if (ff > 0) f = ff; }
-              hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, pan: pan, dur: _ambVaryLen(lenMs, arp.lenVary, rnd) });
+              hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd) });
             }
           }
         }
         if (maxEv > 0 && hits.length > maxEv) { hits.sort((a, b) => a.at - b.at); hits.length = maxEv; }
         for (const hh of hits) {
           if (hh.at < tFrom || hh.at >= tTo) continue;
-          const ap = _ambApplyAdsr(_ambMotifParams(lenMs, hh.pan, arp.tone), arp);
+          // pan = 0 in the params: spread is handled by the layer-output LFO above,
+          // NOT a per-note panner (which both glitched and didn't reach the bus).
+          const ap = _ambApplyAdsr(_ambMotifParams(lenMs, 0, arp.tone), arp);
           ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
           if (dmod) ap._detuneMod = dmod;
           _ambKeyTime = hh.at;
@@ -3765,6 +3819,7 @@
     function _ambTeardownMod(layer) {
       const e = _E.mod[layer];
       if (!e) return;
+      try { _ambArpLfoTeardown(_E, layer); } catch (x) {}   // dispose the spread LFO before its target panner
       ['vca', 'vco', 'vcf'].forEach(tg => { if (e.src && e.src[tg]) _ambDisposeSrc(e.src[tg]); });
       try { e.vcf && e.vcf.dispose(); } catch (x) {}
       try { e.eq && e.eq.dispose(); } catch (x) {}
@@ -3836,17 +3891,34 @@
           const L = _ambLayerByKey(E, key);
           span.textContent = L ? _ambLayerUnitText(E, key, L, cfg) : '';
         });
+        // One-block reminder beside each When dropdown: one step gates one whole
+        // unit, so a block lasts exactly the layer's period. Key comes from the
+        // layer header's data-phkey (the same key the unit readout uses).
+        host.querySelectorAll('.ambient-when-blocklen').forEach(span => {
+          const lay = span.closest('.ambient-layer');
+          const ph = lay && lay.querySelector('[data-phkey]');
+          const key = ph && ph.getAttribute('data-phkey');
+          const L = key ? _ambLayerByKey(E, key) : null;
+          let p = 0; if (L) { try { p = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {} }
+          span.textContent = (L && p > 0) ? (_ambFmtMs(Math.round(p * 1000)) + ' / block') : '';
+        });
         _ambSyncDriftReadouts(E);
       } catch (e) {}
     }
     // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----
-    // A layer is "BPM-synced" when its Rate is a division (≠ Free); the free ms
-    // Interval then does nothing, so hide it. (p = the wire prefix, trailing '-'.)
+    // The free ms Interval is a NO-OP when the layer's length is otherwise locked,
+    // so hide it then: either Rate is a BPM division (≠ Free), OR Unit-Sync mode is
+    // 'sync' (the unit is locked to a reference × ratio, so the engine time-scales
+    // the pattern and the Interval knob does nothing). (p = the wire prefix, '-'.)
+    // The interval control's id stem differs by layer family (primaries use
+    // '…-interval', extras use '…-intervalMs'), so try both.
     function _ambUnitSyncViz(E, p, L) {
       try { _ambSyncDriftReadouts(E); } catch (e) {}   // interval/rate edits change the step count → refresh Drift readouts
-      const intv = _ambGet(E, p + 'intervalMs'); if (!intv) return;
+      const intv = _ambGet(E, p + 'intervalMs') || _ambGet(E, p + 'interval'); if (!intv) return;
       const ctrl = intv.closest('.ambient-ctrl'); if (!ctrl) return;
-      ctrl.style.display = (L && L.rate && _ambRateBeats(L.rate) > 0) ? 'none' : '';
+      const rateLocked = !!(L && L.rate && _ambRateBeats(L.rate) > 0);
+      const unitLocked = !!(L && L.unit && L.unit.mode === 'sync');
+      ctrl.style.display = (rateLocked || unitLocked) ? 'none' : '';
     }
     // ----- Unit-Sync control (Free / Sync = Reference × Ratio) --------------
     const _AMB_RATIOS = [[1,4,'×¼'],[1,3,'×⅓'],[1,2,'×½'],[2,3,'×⅔'],[3,4,'×¾'],[1,1,'×1'],[3,2,'×1½'],[2,1,'×2'],[3,1,'×3'],[4,1,'×4']];
@@ -3898,7 +3970,7 @@
     function _ambWireUnitSync(E, p, get, selfKey) {
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
-      const refresh = () => { _ambUnitSyncModeVis(E, p, get()); try { _ambSyncLayerUnits(E); } catch (e) {} };
+      const refresh = () => { _ambUnitSyncModeVis(E, p, get()); try { _ambUnitSyncViz(E, p, get()); } catch (e) {} try { _ambSyncLayerUnits(E); } catch (e) {} };
       const ref = _ambGet(E, p + 'us-ref'), ratio = _ambGet(E, p + 'us-ratio');
       const fb = _ambGet(E, p + 'us-free'), sb = _ambGet(E, p + 'us-sync');
       const L0 = get();
@@ -3916,6 +3988,7 @@
       if (fb && !fb._usB) { fb._usB = true; fb.addEventListener('click', () => setMode('free')); }
       if (sb && !sb._usB) { sb._usB = true; sb.addEventListener('click', () => setMode('sync')); }
       _ambUnitSyncModeVis(E, p, L0);
+      try { _ambUnitSyncViz(E, p, L0); } catch (e) {}   // hide Interval if this layer loads already Synced
     }
     function _ambUnitMatchHtml(p) {
       return '<div class="ambient-ctrl ambient-unitmatch"><label>Match</label>' +
@@ -5334,7 +5407,10 @@
       // Freeze + the Lock toggle): pressing Freeze frees it.
       if (E.unit && E.unit[key] && E.unit[key].lock) { try { _ambDoUnlock(E, key); } catch (e) {} _ambFreezeSyncAll(E); _ambUpdateNotesLive(E); return; }
       const st = _ambFreezeState(E, key);
-      if (st.frozen) _ambFreezeThaw(E, key);
+      if (st.frozen) {
+        if (st.pendingThawAt != null) st.pendingThawAt = null;   // press during the deferred thaw → cancel it, keep looping
+        else _ambFreezeThaw(E, key);
+      }
       else if (st.recording) _ambFreezeCommit(E, key);
       else _ambFreezeArm(E, key);
       _ambFreezeSyncAll(E);
@@ -5349,11 +5425,21 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-freeze-btn').forEach(btn => {
         const fs = E.freeze && E.freeze[btn.dataset.fkey];
-        const frozen = !!(fs && fs.frozen), recording = !!(fs && fs.recording);
+        const recording = !!(fs && fs.recording);
+        // A pending (deferred) thaw means the user already pressed Thaw; the audio
+        // handoff completes at the loop boundary, but reflect their intent NOW as
+        // "thawing" → idle, so the button doesn't linger on the frozen look for a
+        // whole loop. Use the ❄ glyph for every state (the .frozen teal fill marks
+        // the frozen one) so the label always fits the icon-sized button — the word
+        // "Thaw" overflowed the fixed 38px square.
+        const pendingThaw = !!(fs && fs.frozen && fs.pendingThawAt != null);
+        const frozen = !!(fs && fs.frozen) && !pendingThaw;
         btn.classList.toggle('frozen', frozen);
         btn.classList.toggle('recording', recording);
-        btn.textContent = frozen ? 'Thaw' : recording ? '◉' : '❄';
-        btn.title = frozen ? 'Thaw — resume generative playback'
+        btn.classList.toggle('thawing', pendingThaw);
+        btn.textContent = recording ? '◉' : '❄';
+        btn.title = frozen ? 'Frozen loop — press to Thaw (resume generative playback)'
+                  : pendingThaw ? 'Thawing — resumes generation at the loop boundary (press to cancel)'
                   : recording ? 'Recording — press again to set the loop end'
                   : 'Freeze — press to start the loop, press again to set its length';
       });
@@ -5425,7 +5511,7 @@
       // can never leave this play silent.
       try {
         const fi = (cfg.fadeInMs | 0);
-        if (fi > 0 && typeof masterFadeIn === 'function') masterFadeIn(fi / 1000);
+        if (fi > 0 && typeof masterFadeIn === 'function') masterFadeIn(fi / 1000, cfg.fadeShape);
         else if (typeof masterFadeReset === 'function') masterFadeReset();
       } catch (e) {}
       E._playStartMs = performance.now();   // footer elapsed-time anchor
@@ -5915,7 +6001,7 @@
       try {
         const cfg = E.getCfg();
         const fo = cfg ? (cfg.fadeOutMs | 0) : 0;
-        if (fo > 0 && typeof masterFadeOut === 'function') masterFadeOut(fo / 1000);
+        if (fo > 0 && typeof masterFadeOut === 'function') masterFadeOut(fo / 1000, cfg.fadeShape);
       } catch (e) {}
       if (typeof showToast === 'function') showToast('Finalizing — winding down, ending on silence…');
       const buf = r.analyser ? new Float32Array(r.analyser.fftSize) : null;
@@ -6321,7 +6407,7 @@
         : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
       bars.forEach(el => {
         const key = el.dataset.phkey; if (!key) return;
-        let prog = 0, active = false, frozen = false;
+        let prog = 0, active = false, frozen = false, cyc = null;
         const fs = E.freeze && E.freeze[key];
         if (fs && fs.frozen && fs.loopLen > 0) {
           frozen = true; active = true;
@@ -6341,6 +6427,7 @@
             const st = E.arpState && E.arpState[key];
             if (st && st.startAt != null && P > 0 && now >= st.startAt) {
               prog = (((now - st.startAt) % P) / P + 1) % 1;
+              cyc = Math.floor((now - st.startAt) / P);   // absolute When-cycle (= series-loop index)
               active = true;
             }
           } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape' || (type === 'arp' && layer.euclid) || (type === 'beat' && layer && layer.gen === 'euclid'))) {
@@ -6353,6 +6440,7 @@
             const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
             if (st && st.startAt != null && P > 0 && now >= st.startAt) {
               prog = (((now - st.startAt) % P) / P + 1) % 1;
+              cyc = Math.floor((now - st.startAt) / P);   // absolute When-cycle (= unit/loop index)
               active = true;
             }
           } else if (on && type === 'seq') {
@@ -6408,13 +6496,16 @@
           if (btn) { btn.classList.remove('amb-loopflash'); void btn.offsetWidth; btn.classList.add('amb-loopflash'); }
         }
         // Highlight the When cell that's playing THIS cycle. One When step gates
-        // one whole unit, so the audible cycle index advances by one each time the
-        // bar wraps. Start at -1 (NOT 0): the layer goes active during the ~lead
-        // BEFORE the first unit sounds, and the wrap at the first unit's onset
-        // bumps the count — starting at 0 made the cursor lead the audio by one
-        // unit on every layer. At -1 the first onset's wrap lands on cell 0, in
-        // sync with the audio. Nothing is highlighted during the pre-onset lead.
-        if (active && !wasActive) el._whenCycle = -1;
+        // one whole unit. PHASE-ANCHORED layers (arp / bass / run / shape / euclid)
+        // know their absolute cycle index directly from the audible clock (`cyc` =
+        // floor((now − startAt) / period)) — the SAME index scheduling gates When
+        // by — so use it straight. It's self-correcting (no dependence on catching
+        // the activation edge), which fixes the old wrap-counter being one unit
+        // BEHIND on these layers: they go active AT the first onset (now ≥ startAt),
+        // not during the pre-onset lead the −1 seed assumed, so the first onset had
+        // no wrap to bump 0 and the cursor trailed the audio by a unit.
+        if (cyc != null) el._whenCycle = cyc;
+        else if (active && !wasActive) el._whenCycle = -1;   // lead-anchored layers (seq/texture/interval): bump to 0 on the first onset wrap
         else if (wrapped) el._whenCycle = (el._whenCycle | 0) + 1;
         _ambPaintWhenCursor(el, active, el._whenCycle | 0);
       });
@@ -7304,10 +7395,15 @@
       return '<div class="ambient-ctrl ambient-when-ctrl"' + dt + '>' +
         '<label' + dt + '>When</label>' +
         '<div class="ambient-when-wrap">' +
-          '<button type="button" class="ambient-when-toggle" aria-expanded="false" title="Show / hide the play pattern">' +
-            '<span class="ambient-when-summary">Always</span>' +
-            '<span class="ambient-when-caret" aria-hidden="true"></span>' +
-          '</button>' +
+          '<div class="ambient-when-toprow">' +
+            '<button type="button" class="ambient-when-toggle" aria-expanded="false" title="Show / hide the play pattern">' +
+              '<span class="ambient-when-summary">Always</span>' +
+              '<span class="ambient-when-caret" aria-hidden="true"></span>' +
+            '</button>' +
+            // Reminder: how long ONE block (one When step) lasts — one step gates
+            // one whole unit. Filled live by _ambSyncLayerUnits from the layer period.
+            '<span class="ambient-when-blocklen" aria-label="Length of one block" title="How long one block lasts — each When step gates one whole unit"></span>' +
+          '</div>' +
           '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + _ambWhenCellsHtml(16) + '</div>' +
           '<div class="ambient-when-len" aria-label="Pattern length">' +
             '<button type="button" class="ambient-when-always" title="Play every cycle (all steps on)">Always</button>' +
@@ -7738,7 +7834,7 @@
       const getSq = () => { const c = E.getCfg(); return (c && Array.isArray(c.seqs)) ? c.seqs.find(x => x.id === id) : null; };
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const el = (suf) => _ambGet(E, p + suf);
-      const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = parseInt(e.value, 10) || 0; persist(); }); };
+      const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = parseInt(e.value, 10) || 0; if (key === 'level') _ambSyncLevelUI(E, 'seq:' + sq.id, sq.level); persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; const val = parseInt(e.value, 10) || 0; sq[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key, after) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = e.value || sq[key]; if (after) after(); persist(); }); };
       const toneSel = el('tone');
@@ -7828,6 +7924,34 @@
       });
       return out;
     }
+    // A layer's Level has TWO controls — the mixer fader and the layer card's
+    // Level slider — that are just shortcuts for the same `level` value, so a
+    // change in either must show in the other. Push `v` into both controls'
+    // sliders + readouts. Only sets element values (no re-render, no synthetic
+    // 'input' dispatch → no feedback loop); the control the user dragged already
+    // holds `v`, so re-setting it is a harmless no-op.
+    function _ambSyncLevelUI(E, key, v) {
+      const host = E && document.getElementById(E.hostId); if (!host || key == null) return;
+      const s = String(v);
+      // Mixer channel fader + its % readout.
+      let mx = null; try { mx = host.querySelector('.ambient-mix-slider[data-mixkey="' + key + '"]'); } catch (e) {}
+      if (mx) {
+        if (mx.value !== s) mx.value = s;
+        const mv = mx.parentNode && mx.parentNode.querySelector('.ambient-mix-val'); if (mv) mv.textContent = v + '%';
+      }
+      // Layer card Level slider + its readout (card located via its data-phkey).
+      const cards = host.querySelectorAll('.ambient-layer');
+      for (let i = 0; i < cards.length; i++) {
+        const ph = cards[i].querySelector('[data-phkey]');
+        if (!ph || ph.getAttribute('data-phkey') !== key) continue;
+        const sl = cards[i].querySelector('input[id$="-level"]');
+        if (sl) {
+          if (sl.value !== s) sl.value = s;
+          const rv = document.getElementById(sl.id + '-v'); if (rv) rv.textContent = v + _ambSlUnit(sl.id);
+        }
+        break;
+      }
+    }
     // (Re)render the Mixer strip — one vertical fader per layer, bound to that
     // layer's `level`. Level is applied per-note at emit time, so a drag affects
     // subsequent notes (same as each card's Level slider, which this mirrors).
@@ -7844,7 +7968,7 @@
         strip.appendChild(hint);
         return;
       }
-      layers.forEach(({ name, layer }) => {
+      layers.forEach(({ name, layer, key }) => {
         const lvl = Number.isFinite(layer.level) ? layer.level : 70;
         const ch = document.createElement('div');
         ch.className = 'ambient-mix-ch';
@@ -7854,12 +7978,14 @@
         const sld = document.createElement('input');
         sld.type = 'range'; sld.min = '0'; sld.max = '100'; sld.step = '1'; sld.value = String(lvl);
         sld.className = 'ambient-mix-slider';
+        sld.dataset.mixkey = key;   // so _ambSyncLevelUI can find this fader from the card slider
         sld.setAttribute('orient', 'vertical');
         sld.title = name + ' level';
         sld.addEventListener('input', () => {
           const v = Math.max(0, Math.min(100, parseInt(sld.value, 10) || 0));
           layer.level = v;
           val.textContent = v + '%';
+          _ambSyncLevelUI(E, key, v);   // mirror into the layer card's Level slider
           if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
         });
         const lab = document.createElement('span');
@@ -7935,7 +8061,7 @@
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const el = (suf) => _ambGet(E, p + suf);
       const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
-      const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L[key] = parseInt(e.value, 10) || 0; sync(); persist(); }); };
+      const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L[key] = parseInt(e.value, 10) || 0; if (key === 'level') _ambSyncLevelUI(E, 'samp:' + L.id, L.level); sync(); persist(); }); };
       const bindMs = (suf, key) => { const e = el(suf), v = el(suf + '-v'); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; const val = parseInt(e.value, 10) || 0; L[key] = val; if (v) v.textContent = _ambFmtMs(val); persist(); }); };
       const bindStr = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L[key] = e.value || L[key]; persist(); }); };
       bindInt('attack', 'attack'); bindInt('decay', 'decay'); bindInt('sustain', 'sustain'); bindInt('release', 'release'); bindInt('fine', 'fine');
@@ -8316,7 +8442,7 @@
           else if (k === 'unitsync') { _ambWireUnitSync(E, p, get, type + ':' + id); }
           else if (k === 'notes') { _ambWireNotesBtn(E, p + 'notes', get); }
           else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
-          else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; sync(); persist(); } }); }
+          else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
@@ -9913,6 +10039,7 @@
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
       set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
+      set('ambient-master-fadeshape', cfg.fadeShape);
       if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
       // Master Warmth (global FX) reflection — master Bloom only; these IDs
       // don't exist on lane Bloom, so the guarded set()/hint() no-op there.
@@ -10163,8 +10290,8 @@
         // whenever the layer set changes.
         '<div class="ambient-mixer collapsed" id="ambient-mixer">' +
           '<div class="ambient-mixer-head">' +
-            '<button type="button" class="ambient-mixer-toggle" id="ambient-mixer-toggle" title="Collapse / expand the mixer">▸</button>' +
             '<span class="ambient-mod-sub">Mixer</span>' +
+            '<button type="button" class="ambient-mixer-toggle" id="ambient-mixer-toggle" title="Collapse / expand the mixer" aria-label="Collapse or expand the mixer"></button>' +
           '</div>' +
           '<div class="ambient-mixer-strip" id="ambient-mixer-strip"></div>' +
           // Master Fade In/Out — ramp ALL audio up on play and down from the
@@ -10173,6 +10300,14 @@
             '<div class="ambient-mod-sub">Master fade</div>' +
             tm('Fade In', 'ambient-master-fadein', 0, 30000, 100, 0) +
             tm('Fade Out', 'ambient-master-fadeout', 0, 30000, 100, 0) +
+            // Fade curve — shapes both the fade-in and fade-out ramps.
+            '<div class="ambient-ctrl" title="Curve shape for the master fade in & out. Exponential lingers near silence (gentle); Logarithmic moves fast near silence; S-curve eases both ends.">' +
+              '<label for="ambient-master-fadeshape">Curve</label>' +
+              '<select id="ambient-master-fadeshape" class="ambient-select">' +
+                ['linear', 'exponential', 'logarithmic', 's-curve'].map(s => '<option value="' + s + '">' + s + '</option>').join('') +
+              '</select>' +
+              '<span class="ambient-hint">shape</span>' +
+            '</div>' +
           '</div>' +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
@@ -10363,7 +10498,7 @@
       { const mxBtn = host.querySelector('.ambient-mixer-toggle');
         if (mxBtn) mxBtn.addEventListener('click', () => {
           const mx = mxBtn.closest('.ambient-mixer');
-          if (mx) { const c = mx.classList.toggle('collapsed'); mxBtn.textContent = c ? '▸' : '▾'; }
+          if (mx) mx.classList.toggle('collapsed');   // caret direction handled by CSS (.collapsed)
         });
         try { _ambRenderMixer(E); } catch (e) {}
       }
@@ -10492,6 +10627,7 @@
           _E = E; const cfg = cfg0(); if (!cfg) return;
           if (layer === null) cfg[key] = parseInt(el.value, 10) || 0;
           else cfg[layer][key] = parseInt(el.value, 10) || 0;
+          if (layer && key === 'level') _ambSyncLevelUI(E, layer, cfg[layer].level);   // mirror into the mixer fader
           persist();
         });
       };
@@ -10516,6 +10652,8 @@
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 0; c.fadeInMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       { const el = G('ambient-master-fadeout'), vEl = G('ambient-master-fadeout-v');
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 0; c.fadeOutMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
+      { const el = G('ambient-master-fadeshape');
+        if (el) el.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c) return; c.fadeShape = el.value; persist(); }); }
       // Reverb Size / Damp → live reverb node.
       ['size', 'damp'].forEach(key => {
         const el = G('ambient-reverb-' + key); if (!el) return;

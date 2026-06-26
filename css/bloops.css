@@ -2560,6 +2560,15 @@
        8 so they stay tappable on phones and the row never overflows. */
     .ambient-when-ctrl { grid-template-columns: 84px 1fr; align-items: center; }
     .ambient-when-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+    /* Top row: the When dropdown + a one-block-length reminder to its right. */
+    .ambient-when-toprow { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+    .ambient-when-toprow .ambient-when-toggle { flex: 0 1 auto; }
+    .ambient-when-blocklen {
+      flex: 0 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 0.68rem; color: #8a8aa8; letter-spacing: 0.02em;
+    }
+    .ambient-when-blocklen:empty { display: none; }
     .ambient-when-toggle {
       display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
       max-width: 100%; min-width: 0;
@@ -2746,10 +2755,14 @@
       display: flex; flex-direction: column; gap: 6px;
     }
     .ambient-mixer-head { display: flex; align-items: center; gap: 8px; }
+    /* Collapse caret on the RIGHT, matching the layer-header collapse buttons. */
     .ambient-mixer-toggle {
+      margin-left: auto; flex: 0 0 auto;
       background: none; border: none; color: #9f7aea; cursor: pointer;
       font-size: 0.9rem; line-height: 1; padding: 0 2px;
     }
+    .ambient-mixer-toggle::before { content: '▾'; display: inline-block; transition: transform 0.12s ease; }
+    .ambient-mixer.collapsed .ambient-mixer-toggle::before { transform: rotate(-90deg); }
     .ambient-mixer.collapsed .ambient-mixer-strip { display: none; }
     /* Master Fade In/Out controls under the mixer strip; hidden when collapsed. */
     .ambient-mixer.collapsed .ambient-mixer-fades { display: none; }
@@ -3069,7 +3082,11 @@
     @media (hover: hover) { .ambient-freeze-btn:hover { border-color: #4fd1c5; color: #b2f5ea; } }
     .ambient-freeze-btn.recording { color: #fff; background: rgba(229,62,62,0.30); border-color: #e53e3e; animation: amb-freeze-rec 1s ease-in-out infinite; }
     .ambient-freeze-btn.frozen { color: #fff; background: rgba(79,209,197,0.28); border-color: #4fd1c5; }
+    /* Deferred thaw in progress (resumes at the loop boundary): a dim teal pulse,
+       distinct from idle (outline) and frozen (filled), so the press registers. */
+    .ambient-freeze-btn.thawing { color: #4fd1c5; border-color: #4fd1c5; border-style: dashed; opacity: 0.7; animation: amb-freeze-thaw 1.1s ease-in-out infinite; }
     @keyframes amb-freeze-rec { 0%,100% { box-shadow: 0 0 0 rgba(229,62,62,0); } 50% { box-shadow: 0 0 8px rgba(229,62,62,0.7); } }
+    @keyframes amb-freeze-thaw { 0%,100% { opacity: 0.45; } 50% { opacity: 0.85; } }
     /* When a delete ✕ is also present, the freeze button shouldn't eat all the
        margin — only the first auto-margin element pushes right. */
     .ambient-layer-head .ambient-seq-del { flex: 0 0 auto; }

@@ -548,24 +548,56 @@
     const masterFade = new Tone.Gain(1);
     masterClipper.connect(masterFade);
     masterFade.toDestination();
+    // Shape the fade's progress toward its target. t (0..1 normalized time) →
+    // shaped progress (0..1). Direction-aware so a named curve sounds the same
+    // fading IN or OUT: 'exponential' always lingers near silence (gentle),
+    // 'logarithmic' always moves fast near silence (abrupt), 's-curve' eases both
+    // ends, 'linear' is a constant slope.
+    function _masterFadeProgress(shape, t, rising) {
+      const easeIn = t * t;                      // slow start, fast finish
+      const easeOut = 1 - (1 - t) * (1 - t);     // fast start, slow finish
+      switch (shape) {
+        case 'exponential': return rising ? easeIn : easeOut;
+        case 'logarithmic': return rising ? easeOut : easeIn;
+        case 's-curve':     return t * t * (3 - 2 * t);
+        default:            return t;            // linear
+      }
+    }
     // Ramp the master fade gain. masterFadeIn starts from silence; masterFadeOut
     // ramps from the current level to 0; masterFadeReset snaps back to full (so a
     // prior fade-out can never leave the next play silent). All no-op if the node
-    // never built. Times are seconds; <=0 applies instantly.
-    function masterFadeTo(target, seconds, fromZero) {
+    // never built. Times are seconds; <=0 applies instantly. `shape` picks the
+    // fade curve (linear | exponential | logarithmic | s-curve; default linear).
+    function masterFadeTo(target, seconds, fromZero, shape) {
       if (typeof masterFade === 'undefined' || !masterFade) return;
       try {
         const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
         const s = Math.max(0, +seconds || 0);
         const g = masterFade.gain;
+        const start = fromZero ? 0 : (g.value != null ? g.value : 1);
         g.cancelScheduledValues(now);
-        g.setValueAtTime(fromZero ? 0 : (g.value != null ? g.value : 1), now);
-        if (s > 0.005) g.linearRampToValueAtTime(target, now + s);
-        else g.setValueAtTime(target, now);
+        if (s <= 0.005) { g.setValueAtTime(target, now); return; }
+        const sh = shape || 'linear';
+        if (sh === 'linear' || typeof g.setValueCurveAtTime !== 'function') {
+          g.setValueAtTime(start, now);
+          g.linearRampToValueAtTime(target, now + s);
+          return;
+        }
+        // Non-linear curve: build the whole gain trajectory as a value curve. A
+        // value curve (vs. exponentialRamp) can touch 0, so fades to/from silence
+        // work, and it lets us shape progress per-direction (see above).
+        const rising = target >= start;
+        const N = 64, curve = new Float32Array(N);
+        for (let i = 0; i < N; i++) {
+          const t = i / (N - 1);
+          curve[i] = start + (target - start) * _masterFadeProgress(sh, t, rising);
+        }
+        curve[0] = start; curve[N - 1] = target;   // pin exact endpoints
+        g.setValueCurveAtTime(curve, now, s);
       } catch (e) {}
     }
-    function masterFadeIn(seconds) { masterFadeTo(1, seconds, true); }
-    function masterFadeOut(seconds) { masterFadeTo(0, seconds, false); }
+    function masterFadeIn(seconds, shape) { masterFadeTo(1, seconds, true, shape); }
+    function masterFadeOut(seconds, shape) { masterFadeTo(0, seconds, false, shape); }
     function masterFadeReset() { masterFadeTo(1, 0, false); }
     // Master bus dynamics: a GENTLE glue compressor softens broad dynamic
     // swings, then the soft-knee clipper above guarantees the true-peak

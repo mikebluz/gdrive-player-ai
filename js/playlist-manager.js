@@ -55,16 +55,18 @@ class PlaylistManager {
         // taps the play button to start.
         if (this.tracks.length > 0) {
             this.currentIndex = 0;
-            this.musicPlayer.loadTrack(this.tracks[0]);
-            this.updateActiveTrack();
-            this._buildPrefetchWindow(0);
-            // Standalone player.html has no Bloops chrome, so auto-play
-            // applies there too (no other view to disturb). On bloops.html
-            // we still gate on view-serialbox so playback doesn't start
-            // while the user is on the Make or Mix tab.
+            this.updateActiveTrack();   // highlight the first track in the list
+            // Only TOUCH audio when the Player is actually on screen. On bloops.html
+            // the Player is the (hidden) Listen/serialbox view; on the standalone
+            // player there is no bloops-tab, so it's always "on Listen". When the
+            // Player is hidden we do NOT load the track, prefetch, or play — that was
+            // causing background fetches + the occasional unprompted playback on the
+            // Make/Mix tabs. The Listen view lazy-loads the track when opened.
             const onListen = document.body.classList.contains('view-serialbox')
                 || !document.getElementById('bloops-tab');
             if (onListen) {
+                this.musicPlayer.loadTrack(this.tracks[0]);
+                this._buildPrefetchWindow(0);
                 const p = this.musicPlayer.play();
                 if (p && typeof p.catch === 'function') p.catch(() => {});
             }

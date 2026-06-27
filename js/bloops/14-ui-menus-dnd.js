@@ -622,11 +622,27 @@
         }
       } catch (e) {}
 
-      // Master Bloom (Mix) config — global, not per-lane.
+      // Master Bloom (Mix) config + AREAS — global, not per-lane. Prefer the full
+      // areas list; fall back to the legacy single masterAmbient (old projects →
+      // one area). Then make masterAmbient point at the active area and adopt that
+      // area's per-area tempo/groove (overrides the workspace globals loaded above).
       try {
-        masterAmbient = (snap.masterAmbient && typeof snap.masterAmbient === 'object')
-          ? _normalizeAmbientCfg(JSON.parse(JSON.stringify({ ...snap.masterAmbient, playing: false }))) : null;
-        if (typeof _masterEng !== 'undefined' && _masterEng.inited) _ambSyncControls(_masterEng);
+        const snapAreas = snap.masterBloomAreas;
+        if (snapAreas && Array.isArray(snapAreas.areas) && snapAreas.areas.length) {
+          const areas = snapAreas.areas.map(a => _normalizeAmbientCfg(JSON.parse(JSON.stringify({ ...a, playing: false }))));
+          const activeIdx = Math.max(0, Math.min(areas.length - 1, snapAreas.activeIdx | 0));
+          const orch = (snapAreas.orch && typeof snapAreas.orch === 'object')
+            ? { mode: snapAreas.orch.mode === 'sequence' ? 'sequence' : 'single', shuffle: !!snapAreas.orch.shuffle }
+            : { mode: 'single', shuffle: false };
+          masterBloomAreas = { areas, activeIdx, orch };
+          masterAmbient = areas[activeIdx];
+          try { if (typeof _ambApplyAreaGlobals === 'function') _ambApplyAreaGlobals(masterAmbient); } catch (e) {}
+        } else {
+          masterBloomAreas = null;   // pre-areas project → _masterBloomState() wraps masterAmbient as one area
+          masterAmbient = (snap.masterAmbient && typeof snap.masterAmbient === 'object')
+            ? _normalizeAmbientCfg(JSON.parse(JSON.stringify({ ...snap.masterAmbient, playing: false }))) : null;
+        }
+        if (typeof _masterEng !== 'undefined' && _masterEng.inited) { _masterEng.inited = false; _ambientInit(_masterEng); }
       } catch (e) {}
 
       // Master Shapes (Mix) — independent shape copies (global). If the snapshot
@@ -967,6 +983,19 @@
         setActive(sbTab);
         updateLabels('serialbox');
         _closeTransientUI();
+        // The Player is now visible — lazy-load the selected track + its prefetch
+        // window (setTracks skipped this while hidden). NO auto-play: the user presses
+        // play, so opening Listen never starts audio on its own.
+        try {
+          const pl = window.playlist, mp = window.musicPlayer;
+          if (pl && Array.isArray(pl.tracks) && pl.tracks.length && mp && !mp.currentTrack) {
+            const idx = (pl.currentIndex >= 0 && pl.currentIndex < pl.tracks.length) ? pl.currentIndex : 0;
+            pl.currentIndex = idx;
+            mp.loadTrack(pl.tracks[idx]);
+            if (typeof pl._buildPrefetchWindow === 'function') pl._buildPrefetchWindow(idx);
+            if (typeof pl.updateActiveTrack === 'function') pl.updateActiveTrack();
+          }
+        } catch (e) {}
       };
       const showHarvest = () => {
         document.body.classList.remove('view-serialbox', 'view-mix', 'tracks-fullscreen');
@@ -1262,21 +1291,35 @@
       // Send this sequence to the MASTER Bloom (in Mix), in one of 3 modes.
       // Deferred (setTimeout) so showCtxMenu's dismiss doesn't tear the submenu.
       actions.push({ label: '🌸 Send to Bloom ▸', fn: () => setTimeout(() => {
-        const seqs = (typeof _ambListMasterSeqs === 'function') ? _ambListMasterSeqs() : [];
-        const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new') }];
-        sub.push('hr');
-        // Append adds this sequence as a new SECTION on an existing Seq layer
-        // (edit reps / order / Random / Key-master in the layer's Sections popover).
-        if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id) }));
-        else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
-        // If this sequence's voice is a single-buffer sample, also offer the
-        // raw Sample layer (chopped/whole) on the master Bloom.
+        // Mode submenu (New Seq / Append → SeqN / As Sample) targeting one area.
         const _sid = (typeof _ambSampleIdOfSaved === 'function') ? _ambSampleIdOfSaved(saved) : null;
-        if (_sid) {
+        const buildModeMenu = (areaIdx) => {
+          const seqs = (typeof _ambListAreaSeqs === 'function') ? _ambListAreaSeqs(areaIdx) : [];
+          const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new', undefined, areaIdx) }];
           sub.push('hr');
-          sub.push({ label: '◫ As Sample layer', fn: () => _ambSendSampleToMaster(_sid, { chop: Math.max(1, (saved.steps || []).length) }) });
+          // Append adds this sequence as a new SECTION on an existing Seq layer
+          // (edit reps / order / Random / Key-master in the layer's Sections popover).
+          if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id, areaIdx) }));
+          else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
+          // If this sequence's voice is a single-buffer sample, also offer the
+          // raw Sample layer (chopped/whole) on the master Bloom.
+          if (_sid) {
+            sub.push('hr');
+            sub.push({ label: '◫ As Sample layer', fn: () => _ambSendSampleToMaster(_sid, { chop: Math.max(1, (saved.steps || []).length) }, areaIdx) });
+          }
+          return sub;
+        };
+        // With multiple areas, ask WHICH area first; otherwise go straight to the
+        // mode menu (targets the only/active area, as before).
+        const areas = (typeof _ambSendAreaList === 'function') ? _ambSendAreaList() : [];
+        if (areas.length > 1) {
+          const sub = areas.map(a => ({ label: '→ ' + a.name + ' ▸', fn: () => setTimeout(() => showCtxMenu(x, y, buildModeMenu(a.idx)), 0) }));
+          sub.push('hr');
+          sub.push({ label: '＋ New Area', fn: () => _ambSendSavedToMaster(seqIndex, 'new', undefined, 'new') });
+          showCtxMenu(x, y, sub);
+        } else {
+          showCtxMenu(x, y, buildModeMenu(undefined));   // one area → target the active area (no switch)
         }
-        showCtxMenu(x, y, sub);
       }, 0) });
       actions.push('hr');
       actions.push({ label: 'Delete', danger: true, fn: () => {
@@ -2195,6 +2238,7 @@
       const nm = (info && info.name) || sampleId;
       let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return; }
       let startF = 0, endF = 1, reverse = false, previewSrc = null, drag = null;
+      let playStart = null, sliceDur = 0, phRAF = null;   // preview playhead state
 
       const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
       const modal = document.createElement('div'); modal.className = 'sm-modal sample-editor-modal';
@@ -2212,7 +2256,7 @@
 
       const canvas = modal.querySelector('#se-wave-canvas');
       const selEl = modal.querySelector('#se-wave-sel');
-      const stopPreview = () => { try { previewSrc && previewSrc.stop(); } catch (e) {} previewSrc = null; };
+      const stopPreview = () => { try { previewSrc && previewSrc.stop(); } catch (e) {} previewSrc = null; playStart = null; if (phRAF) { cancelAnimationFrame(phRAF); phRAF = null; } try { draw(); } catch (e) {} };
       const fmtSel = () => {
         const dur = buf.duration * (endF - startF);
         selEl.textContent = (reverse ? '⇄ ' : '') + (dur >= 1 ? dur.toFixed(2) + ' s' : Math.round(dur * 1000) + ' ms') +
@@ -2240,6 +2284,23 @@
       };
       requestAnimationFrame(draw);
 
+      // Preview playhead: a moving cursor over the selection while previewing. Tracks
+      // the slice's playback position in the FULL-buffer coordinate space (so it rides
+      // the selected region); reversed playback runs the cursor end→start.
+      const drawPlayhead = () => {
+        if (playStart == null || !previewSrc) { phRAF = null; return; }
+        const elapsed = ac.currentTime - playStart;
+        if (elapsed >= sliceDur) { playStart = null; phRAF = null; try { draw(); } catch (e) {} return; }
+        const frac = sliceDur > 0 ? (elapsed / sliceDur) : 0;
+        const f = reverse ? (endF - frac * (endF - startF)) : (startF + frac * (endF - startF));
+        draw();
+        const W = canvas.width, H = canvas.height, ctx = canvas.getContext('2d');
+        const px = Math.max(0, Math.min(W, f * W));
+        ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+        phRAF = requestAnimationFrame(drawPlayhead);
+      };
+
       const xToF = (clientX) => { const r = canvas.getBoundingClientRect(); return Math.max(0, Math.min(1, (clientX - r.left) / r.width)); };
       canvas.addEventListener('pointerdown', (e) => {
         const f = xToF(e.clientX);
@@ -2260,7 +2321,15 @@
       modal.querySelector('#se-wave-reverse').addEventListener('change', (e) => { reverse = !!e.target.checked; draw(); });
       modal.querySelector('#se-wave-preview').addEventListener('click', () => {
         stopPreview();
-        try { const sliced = _sliceAudioBuffer(ac, buf, startF, endF, reverse); const src = new Tone.ToneBufferSource({ url: sliced }).toDestination(); src.start(); previewSrc = src; } catch (e) {}
+        try {
+          const sliced = _sliceAudioBuffer(ac, buf, startF, endF, reverse);
+          const src = new Tone.ToneBufferSource({ url: sliced }).toDestination();
+          src.start(); previewSrc = src;
+          playStart = ac.currentTime;
+          sliceDur = (sliced && sliced.duration) || (buf.duration * (endF - startF));
+          if (phRAF) cancelAnimationFrame(phRAF);
+          phRAF = requestAnimationFrame(drawPlayhead);
+        } catch (e) {}
       });
       const close = () => { stopPreview(); overlay.remove(); };
       modal.querySelector('#se-wave-cancel').addEventListener('click', close);

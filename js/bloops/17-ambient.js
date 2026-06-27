@@ -58,7 +58,9 @@
         // layers where they are and snap each out-of-key note to the nearest tone
         // of the key scale). Read live during generation; keyOff ignores it.
         keyMode:  'transpose',
-        progRateMs: 4000,               // ms per chord for "Progression" note sources
+        progRateMs: 4000,               // ms per chord (LEGACY — superseded by barsPerChord; removed in prog rework 1b)
+        barsPerChord: 1,                // bars each chord of a Progression holds (bar-aligned chord clock)
+        prog: { on: false, name: '', chords: [] },   // GLOBAL progression (Configure) — inherited by empty-scale layers when on
         freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
         fadeInMs: 0,                    // Master Fade In: ramp all audio up over N ms on play (0 = off)
         fadeOutMs: 0,                   // Master Fade Out: ramp all audio down over N ms from Finalize (0 = off)
@@ -101,6 +103,18 @@
         // Additional Bed/Motif/Texture/Beat instances beyond the four primaries
         // (each {type,id,...layerParams}). Empty default. See _ambDefaultLayer().
         extras:  [],
+        // ----- AREAS (orchestration) -------------------------------------
+        // This whole config object is ONE "area": an independent bundle of layers
+        // + settings that the master Bloom can hold several of (all drawing from
+        // the same shared Seed page / grid). These fields describe the area for
+        // orchestration; they are INERT for a single area played on its own, so
+        // the default config stays byte-identical to the pre-areas behaviour.
+        name:   '',                     // area label ('' → "Area N" by position)
+        bars:   4,                      // length of ONE play of this area (bars on the BPM grid)
+        plays:  1,                      // how many plays before advancing to the next area
+        barLock: false,                 // Bar Lock: capture the bar-rational layers over the LCM loop + repeat verbatim (free layers improvise live)
+        bpm:    null,                   // per-area tempo OVERRIDE (null = inherit the shared/global BPM)
+        groove: null,                   // per-area groove OVERRIDE (null = inherit the shared/global groove)
         // `playing` is never persisted as true — the generator only starts on
         // an explicit gesture (a suspended AudioContext would swallow autostart).
       };
@@ -120,7 +134,546 @@
     // _ambNoteFreq (Notes-button labels, tone displays) leave it false → no colour
     // applied, no RNG consumed → determinism + the invariant harness are preserved.
     let _ambInGeneration = false;
-    let masterAmbient = null; // global config for the master (Mix) instance
+    let masterAmbient = null; // global config for the master (Mix) instance — ALWAYS the ACTIVE area's config
+    // ===== AREAS (master Bloom) ==========================================
+    // The master Bloom holds one or more "areas": independent layer/setting
+    // bundles (each a full ambient config) that all draw from the SAME shared
+    // Seed page / grid. `masterAmbient` always POINTS AT the active area, so every
+    // existing reader/editor of masterAmbient.* transparently operates on the
+    // active area. This container holds the list + orchestration. ONE area with
+    // orchestration mode 'single' is byte-identical to the pre-areas behaviour
+    // (the invariant harness pins this).
+    let masterBloomAreas = null; // { areas:[cfg,...], activeIdx, orch:{ mode:'single'|'sequence', shuffle } }
+    function _masterBloomState() {
+      // Lazily wrap whatever masterAmbient is into area 0 (first run + migration
+      // of pre-areas projects). Always re-syncs masterAmbient === active area.
+      if (!masterBloomAreas || !Array.isArray(masterBloomAreas.areas) || !masterBloomAreas.areas.length) {
+        masterAmbient = masterAmbient || _defaultAmbientConfig();
+        masterBloomAreas = { areas: [masterAmbient], activeIdx: 0, orch: { mode: 'single', shuffle: false } };
+      }
+      const s = masterBloomAreas;
+      if (!s.orch || typeof s.orch !== 'object') s.orch = { mode: 'single', shuffle: false };
+      if (s.orch.mode !== 'sequence') s.orch.mode = 'single';
+      s.orch.shuffle = !!s.orch.shuffle;
+      s.activeIdx = Math.max(0, Math.min(s.areas.length - 1, s.activeIdx | 0));
+      masterAmbient = s.areas[s.activeIdx];   // keep the active-area pointer authoritative
+      return s;
+    }
+    // Read-only-ish accessors.
+    function _ambAreas() { return _masterBloomState().areas; }
+    function _ambActiveAreaIdx() { return _masterBloomState().activeIdx; }
+    function _ambOrch() { return _masterBloomState().orch; }
+    function _ambAreaLabel(cfg, i) {
+      return (cfg && typeof cfg.name === 'string' && cfg.name.trim()) ? cfg.name.trim() : ('Area ' + ((i | 0) + 1));
+    }
+    // Switch which area is active (= the one being edited / shown). Pointer swap
+    // only here — applying a per-area BPM/groove + rebuilding the panel is wired
+    // in the UI/orchestration phases. Returns the new active index.
+    function _ambSetActiveArea(idx) {
+      const s = _masterBloomState();
+      s.activeIdx = Math.max(0, Math.min(s.areas.length - 1, idx | 0));
+      masterAmbient = s.areas[s.activeIdx];
+      return s.activeIdx;
+    }
+    // Add a new area, optionally cloned from an existing one (duplicate). Returns
+    // its index. Does NOT switch to it (caller decides).
+    function _ambAddArea(fromIdx) {
+      const s = _masterBloomState();
+      let clone;
+      if (fromIdx != null && s.areas[fromIdx]) {
+        clone = JSON.parse(JSON.stringify(s.areas[fromIdx]));
+        clone.name = _ambAreaLabel(s.areas[fromIdx], fromIdx) + ' copy';
+      } else {
+        clone = _defaultAmbientConfig();
+        clone.name = 'Area ' + (s.areas.length + 1);
+      }
+      clone.playing = false;
+      try { _normalizeAmbientCfg(clone); } catch (e) {}
+      s.areas.push(clone);
+      return s.areas.length - 1;
+    }
+    // Delete an area (never the last one). Re-points active to a valid index.
+    function _ambDeleteArea(idx) {
+      const s = _masterBloomState();
+      if (s.areas.length <= 1) return false;
+      idx = Math.max(0, Math.min(s.areas.length - 1, idx | 0));
+      s.areas.splice(idx, 1);
+      if (s.activeIdx >= s.areas.length) s.activeIdx = s.areas.length - 1;
+      else if (s.activeIdx > idx) s.activeIdx -= 1;
+      masterAmbient = s.areas[s.activeIdx];
+      return true;
+    }
+    function _ambRenameArea(idx, name) {
+      const s = _masterBloomState();
+      if (s.areas[idx]) s.areas[idx].name = String(name == null ? '' : name).slice(0, 40);
+    }
+    // ---- Per-area globals (BPM + groove) --------------------------------
+    // Only the Seed page/grid is shared; an area also remembers its OWN tempo +
+    // groove. The existing global BPM/groove controls double as the active area's
+    // controls — we snapshot them into the area, and re-apply on area switch.
+    function _ambGrooveSnapshot() {
+      return {
+        swing:       (typeof grooveSwing !== 'undefined') ? grooveSwing : 0,
+        swingDiv:    (typeof grooveSwingDiv !== 'undefined') ? grooveSwingDiv : 0.5,
+        humanizeMs:  (typeof grooveHumanizeMs !== 'undefined') ? grooveHumanizeMs : 0,
+        humanizeVel: (typeof grooveHumanizeVel !== 'undefined') ? grooveHumanizeVel : 0,
+        accentEvery: (typeof grooveAccentEvery !== 'undefined') ? grooveAccentEvery : 0,
+        accentAmt:   (typeof grooveAccentAmt !== 'undefined') ? grooveAccentAmt : 35,
+      };
+    }
+    function _ambApplyGroove(g) {
+      if (!g || typeof g !== 'object') return;
+      try {
+        if (Number.isFinite(g.swing)) grooveSwing = g.swing;
+        if (Number.isFinite(g.swingDiv)) grooveSwingDiv = g.swingDiv;
+        if (Number.isFinite(g.humanizeMs)) grooveHumanizeMs = g.humanizeMs;
+        if (Number.isFinite(g.humanizeVel)) grooveHumanizeVel = g.humanizeVel;
+        if (Number.isFinite(g.accentEvery)) grooveAccentEvery = g.accentEvery;
+        if (Number.isFinite(g.accentAmt)) grooveAccentAmt = g.accentAmt;
+        if (typeof refreshGrooveUI === 'function') refreshGrooveUI();
+      } catch (e) {}
+    }
+    function _ambCaptureGlobalsInto(cfg) {   // live global tempo+groove → this area
+      if (!cfg) return;
+      try { if (typeof getBpm === 'function') { const b = getBpm(); if (b > 0) cfg.bpm = b; } } catch (e) {}
+      try { cfg.groove = _ambGrooveSnapshot(); } catch (e) {}
+    }
+    function _ambApplyAreaGlobals(cfg) {     // this area's tempo+groove → global (null = inherit)
+      if (!cfg) return;
+      try { if (Number.isFinite(cfg.bpm) && cfg.bpm > 0 && typeof setBpm === 'function') setBpm(cfg.bpm); } catch (e) {}
+      if (cfg.groove) _ambApplyGroove(cfg.groove);
+    }
+    function _ambSyncActiveAreaGlobals() {   // called from persist so the active area stays current
+      if (!masterBloomAreas) return;
+      const s = _masterBloomState();
+      _ambCaptureGlobalsInto(s.areas[s.activeIdx]);
+    }
+    // ---- Master panel rebuild + area switching --------------------------
+    function _ambRebuildMaster() {
+      _masterEng.inited = false;
+      try { _ambientInit(_masterEng); } catch (e) {}
+    }
+    function _ambSwitchToArea(idx) {
+      const s = _masterBloomState();
+      idx = Math.max(0, Math.min(s.areas.length - 1, idx | 0));
+      const playing = !!(_masterEng && _masterEng.timer);
+      if (!playing) {
+        // Stopped: the active area is also what will PLAY next, so carry the
+        // per-area tempo/groove across.
+        if (idx !== s.activeIdx) _ambCaptureGlobalsInto(s.areas[s.activeIdx]);
+        _ambSetActiveArea(idx);
+        _ambApplyAreaGlobals(masterAmbient);
+      } else {
+        // Playing: VIEW select only — show/edit area `idx` WITHOUT disturbing what
+        // the engine is playing (E._playIdx) or the live tempo/groove.
+        _ambSetActiveArea(idx);
+      }
+      _ambRebuildMaster();                                                    // repaint the panel for the viewed area
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    }
+    // The config the ENGINE is GENERATING (master: the PLAYING area, which can
+    // differ from the viewed/edited area = getCfg()). Lane/Shape: just getCfg().
+    function _ambPlayCfg(E) {
+      if (E === _masterEng && Number.isFinite(E._playIdx)) {
+        try { const s = _masterBloomState(); const a = s.areas[E._playIdx]; if (a) return _normalizeAmbientCfg(a); } catch (e) {}
+      }
+      return E.getCfg();
+    }
+    // Effective play count for one area entry — random in [1, plays] when the
+    // area's stochastic toggle is on, else exactly `plays`.
+    function _ambEffectivePlays(area) {
+      const plays = Math.max(1, (area && (area.plays | 0)) || 1);
+      return (area && area.playsRandom) ? (1 + Math.floor(Math.random() * plays)) : plays;
+    }
+    // Area tab strip (master Bloom only). Wired by CLASS (namespacing rewrites ids).
+    function _ambAreaStripHtml() {
+      const s = _masterBloomState();
+      const seq = (s.orch.mode === 'sequence');
+      const act = s.areas[s.activeIdx] || {};
+      // Bar Lock: the auto loop length (LCM of capturable layers) for the readout.
+      const lockBars = act.barLock ? _ambAreaLoopBars(_masterEng, act) : 0;
+      const lockLabel = !act.barLock ? '' : (lockBars > 0
+        ? (lockBars + ' bar' + (lockBars === 1 ? '' : 's') + ' loop' + (lockBars > 64 ? ' ⚠' : '') + ' (auto)')
+        : 'no locked layers — Sync some');
+      // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
+      // (can differ while you edit another area mid-play).
+      const play = (_masterEng.timer && Number.isFinite(_masterEng._playIdx)) ? _masterEng._playIdx : -1;
+      const chips = s.areas.map((a, i) =>
+        '<button type="button" class="ambient-area-chip' + (i === s.activeIdx ? ' on' : '') + (i === play ? ' playing' : '') + '" data-aidx="' + i + '" title="Click to select / edit · double-click to rename">' +
+        _ambEscText(_ambAreaLabel(a, i)) + '</button>').join('');
+      return '<div class="ambient-areas">' +
+        '<div class="ambient-areas-row">' +
+          '<span class="ambient-areas-label">Areas</span>' +
+          '<div class="ambient-areas-strip">' + chips + '</div>' +
+          '<button type="button" class="ambient-area-btn ambient-area-add" title="Add a new area">+</button>' +
+          '<button type="button" class="ambient-area-btn ambient-area-dup" title="Clone the current area">⧉</button>' +
+          '<button type="button" class="ambient-area-btn ambient-area-ren" title="Rename the current area">✎</button>' +
+          '<button type="button" class="ambient-area-btn ambient-area-del" title="Delete the current area"' + (s.areas.length <= 1 ? ' disabled' : '') + '>✕</button>' +
+        '</div>' +
+        // Orchestration: Single vs Sequence (play each area Plays×Bars, then advance),
+        // Shuffle, and the active area's Plays × Bars.
+        '<div class="ambient-orch">' +
+          '<button type="button" class="ambient-orch-mode' + (seq ? ' on' : '') + '" title="Single = play this area only. Sequence = play each area for Plays×Bars, then advance to the next.">' + (seq ? 'Sequence' : 'Single') + '</button>' +
+          '<button type="button" class="ambient-orch-shuffle' + (s.orch.shuffle ? ' on' : '') + '"' + (seq ? '' : ' disabled') + ' title="Randomize the area order each cycle">Shuffle</button>' +
+          '<span class="ambient-orch-sep" aria-hidden="true"></span>' +
+          '<label class="ambient-orch-lbl">Plays</label>' +
+          '<input type="number" class="ambient-orch-plays" min="1" max="64" value="' + Math.max(1, (act.plays | 0) || 1) + '" title="How many times this area plays before advancing">' +
+          // Stochastic: play a RANDOM number of times in [1, Plays] each entry.
+          '<button type="button" class="ambient-orch-rand' + (act.playsRandom ? ' on' : '') + '" title="Stochastic — play this area a random number of times (1 to Plays) on each pass">⚄</button>' +
+          '<span class="ambient-orch-sep" aria-hidden="true"></span>' +
+          // Bar Lock: capture the bar-rational layers over their combined loop and
+          // repeat verbatim; free layers improvise live over it. When on, Bars is the
+          // AUTO loop length (LCM); when off, a manual section length.
+          '<button type="button" class="ambient-orch-lock' + (act.barLock ? ' on' : '') + '" title="Bar Lock — capture this area’s bar-rational (synced / bar-native) layers over their combined loop and repeat it verbatim; free layers keep improvising live over it.">🔒 Lock</button>' +
+          '<label class="ambient-orch-lbl">Bars</label>' +
+          (act.barLock
+            ? '<span class="ambient-orch-loopbars" title="Auto loop length — the LCM of this area’s capturable layers (and the progression). Unit-Sync a layer to include it.">' + _ambEscText(lockLabel) + '</span>'
+            : '<input type="number" class="ambient-orch-bars" min="1" max="64" value="' + Math.max(1, (act.bars | 0) || 4) + '" title="Length of one play of the current area (bars)">') +
+          // Live bar / play counter (during playback) — schedule areas by what you see here.
+          '<span class="ambient-orch-bar" aria-live="polite" title="Current bar (and play) of the area — use this to set Plays × Bars"></span>' +
+        '</div>' +
+      '</div>';
+    }
+    function _ambWireAreaStrip(E) {
+      if (E !== _masterEng) return;   // master Mix Bloom only
+      const host = document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-area-chip').forEach(chip => {
+        chip.addEventListener('click', () => { _ambSwitchToArea(parseInt(chip.dataset.aidx, 10) || 0); });
+        chip.addEventListener('dblclick', () => {
+          const i = parseInt(chip.dataset.aidx, 10) || 0;
+          if (typeof prompt !== 'function') return;
+          const nm = prompt('Area name:', _ambAreaLabel(_ambAreas()[i], i));
+          if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
+        });
+      });
+      const add = host.querySelector('.ambient-area-add');
+      if (add) add.addEventListener('click', () => { _ambSwitchToArea(_ambAddArea()); });
+      const dup = host.querySelector('.ambient-area-dup');
+      if (dup) dup.addEventListener('click', () => { _ambSwitchToArea(_ambAddArea(_ambActiveAreaIdx())); });
+      const ren = host.querySelector('.ambient-area-ren');
+      if (ren) ren.addEventListener('click', () => {
+        const i = _ambActiveAreaIdx();
+        if (typeof prompt !== 'function') return;
+        const nm = prompt('Area name:', _ambAreaLabel(_ambAreas()[i], i));
+        if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
+      });
+      const del = host.querySelector('.ambient-area-del');
+      if (del) del.addEventListener('click', () => {
+        if (_ambAreas().length <= 1) return;
+        if (typeof confirm === 'function' && !confirm('Delete this area? This can’t be undone.')) return;
+        _ambDeleteArea(_ambActiveAreaIdx());
+        _ambApplyAreaGlobals(masterAmbient);
+        _ambRebuildMaster();
+        try { persistWorkspace(); } catch (e) {}
+      });
+      // Orchestration row: Single/Sequence mode, Shuffle, and the active area's
+      // Plays × Bars (length of one play).
+      const modeB = host.querySelector('.ambient-orch-mode');
+      if (modeB) modeB.addEventListener('click', () => {
+        const st = _masterBloomState();
+        st.orch.mode = (st.orch.mode === 'sequence') ? 'single' : 'sequence';
+        const seq = st.orch.mode === 'sequence';
+        modeB.textContent = seq ? 'Sequence' : 'Single';
+        modeB.classList.toggle('on', seq);
+        const sh = host.querySelector('.ambient-orch-shuffle'); if (sh) sh.disabled = !seq;
+        // Engage/disengage live if playing.
+        if (_masterEng.timer) { if (seq) _ambOrchMaybeStart(_masterEng); else { _masterEng._orchActive = false; _ambOrchUpdateNowPlaying(_masterEng); } }
+        try { persistWorkspace(); } catch (e) {}
+      });
+      const shufB = host.querySelector('.ambient-orch-shuffle');
+      if (shufB) shufB.addEventListener('click', () => {
+        const st = _masterBloomState();
+        st.orch.shuffle = !st.orch.shuffle;
+        shufB.classList.toggle('on', st.orch.shuffle);
+        _masterEng._orchBag = null;
+        try { persistWorkspace(); } catch (e) {}
+      });
+      // Plays/Bars edit the VIEWED area (masterAmbient). Only re-time the running
+      // sequence if the viewed area IS the one currently playing.
+      const _viewIsPlaying = () => (_masterEng.timer && _masterEng._playIdx === _ambActiveAreaIdx());
+      const playsI = host.querySelector('.ambient-orch-plays');
+      if (playsI) playsI.addEventListener('change', () => {
+        const v = Math.max(1, Math.min(64, parseInt(playsI.value, 10) || 1)); playsI.value = String(v);
+        masterAmbient.plays = v;
+        if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
+        try { persistWorkspace(); } catch (e) {}
+      });
+      const randB = host.querySelector('.ambient-orch-rand');
+      if (randB) randB.addEventListener('click', () => {
+        masterAmbient.playsRandom = !masterAmbient.playsRandom;
+        randB.classList.toggle('on', !!masterAmbient.playsRandom);
+        if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
+        try { persistWorkspace(); } catch (e) {}
+      });
+      const barsI = host.querySelector('.ambient-orch-bars');
+      if (barsI) barsI.addEventListener('change', () => {
+        const v = Math.max(1, Math.min(64, parseInt(barsI.value, 10) || 4)); barsI.value = String(v);
+        masterAmbient.bars = v;
+        if (_viewIsPlaying()) _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays);
+        try { persistWorkspace(); } catch (e) {}
+      });
+      const lockB = host.querySelector('.ambient-orch-lock');
+      if (lockB) lockB.addEventListener('click', () => {
+        masterAmbient.barLock = !masterAmbient.barLock;
+        if (_viewIsPlaying()) {
+          if (!masterAmbient.barLock) { try { _ambBarLockClear(_masterEng, true); } catch (e) {} }   // off → cancel loop voices + resume live cleanly
+          else _masterEng._barLockArmed = false;                                                // on → next tick arms
+          _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays);
+        }
+        _ambRebuildMaster();   // swap the Bars input ↔ the auto-loop readout
+        try { persistWorkspace(); } catch (e) {}
+      });
+      _ambOrchUpdateNowPlaying(E);
+    }
+    // ---- Orchestration (sequence areas) ---------------------------------
+    // One PLAY of an area = its `bars` bars at the area's tempo; an area runs for
+    // `plays × bars` bars before advancing. Switches dip the bloom output to
+    // silence, swap the active area, reseed + reconcile mod chains, then ramp back
+    // — so the heavy teardown/build is inaudible (a clean section change).
+    function _ambAreaDurSec(cfg, playsOverride) {
+      if (!cfg) return 8;
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const bars  = Math.max(1, cfg.bars | 0);
+      const plays = Number.isFinite(playsOverride) ? Math.max(1, playsOverride | 0) : Math.max(1, cfg.plays | 0);
+      // Bar Lock: the area's loop is the auto LCM of its capturable layers, not the
+      // manual `bars`. (No-capturable → 0 → fall back to manual bars.)
+      const loopBars = cfg.barLock ? _ambAreaLoopBars((typeof _masterEng !== 'undefined' ? _masterEng : null), cfg) : 0;
+      const useBars = (loopBars > 0) ? loopBars : bars;
+      return Math.max(0.25, useBars * plays * barSec);
+    }
+    function _ambGcd(a, b) { a = Math.abs(a | 0); b = Math.abs(b | 0); while (b) { const t = a % b; a = b; b = t; } return a || 1; }
+    function _ambLcm(a, b) { a = Math.abs(a | 0); b = Math.abs(b | 0); if (!a || !b) return a || b || 1; return (a / _ambGcd(a, b)) * b; }
+    // Is this layer bar-rational (so it can be captured into a verbatim loop)?
+    // Bar-native types (Bass/Run/Pedal/Shape, Euclid Beat/Arp) qualify even in Free
+    // mode; anything else qualifies only when Unit-Synced. Free interval layers
+    // (Bed/Motif/Texture/random Beat/series Arp/Drone/Sample/Seq) float → live.
+    function _ambIsCapturable(L, key) {
+      if (!L || L.on === false || L.present === false) return false;
+      if (L.unit && L.unit.mode === 'sync') return true;
+      const type = String(key).split(':')[0];
+      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'shape') return true;
+      if ((type === 'beat' || type === 'arp') && L.gen === 'euclid') return true;
+      return false;
+    }
+    // The area's Bar-Lock loop length in WHOLE bars: the smallest window in which
+    // every capturable layer (and the global progression cycle) completes whole
+    // loops AND lands on a barline. Computed as LCM in twelfths-of-a-bar (every
+    // bar-ratio ¼…×4 is an integer #twelfths). 0 = nothing capturable → no-op.
+    function _ambAreaLoopBars(E, cfg) {
+      if (!cfg) return 0;
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      if (!(barSec > 0.05) || !E) return 0;
+      let tw = 12, any = false;   // 12 twelfths/bar seeds whole-bar alignment
+      const add = (L, key) => {
+        if (!_ambIsCapturable(L, key)) return;
+        let loopBars = 0; try { loopBars = _ambLayerPeriodSec(E, key, L, cfg) / barSec; } catch (e) {}
+        const t = Math.round(loopBars * 12);
+        if (t > 0) { tw = _ambLcm(tw, t); any = true; }
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => add(cfg[k], k));
+      (cfg.extras || []).forEach(L => add(L, (L && L.type) + ':' + (L && (L.id | 0))));
+      (cfg.seqs || []).forEach(L => add(L, 'seq:' + (L && (L.id | 0))));
+      (cfg.samples || []).forEach(L => add(L, 'samp:' + (L && (L.id | 0))));
+      if (cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
+        const _bpc0 = Math.max(0.01, cfg.barsPerChord || 1);
+        const _cycleBars = cfg.prog.chords.reduce((s, c) => s + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : _bpc0), 0);   // per-chord lengths sum to the prog cycle
+        tw = _ambLcm(tw, Math.max(1, Math.round(_cycleBars * 12))); any = true;
+      }
+      return any ? Math.min(256, Math.round(tw / 12)) : 0;
+    }
+    // Reconfigure a SHARED layer's mod chain (params/EQ/FX/mod sources) click-free
+    // while it's carrying a ringing tail: briefly mute its own dry gate, apply the
+    // graph change while muted, then unmute. ~6 ms — inaudible under the other
+    // layers + tails, so the overall area handoff stays seamless.
+    function _ambReconfigSharedQuiet(E, key, lc) {
+      const e = E.mod && E.mod[key];
+      if (!e || !e.gate || !e.gate.gain) { try { _ambBuildMod(key, { [key]: lc }); _ambApplyLayerFx(key, lc); } catch (x) {} return; }
+      const g = e.gate.gain;
+      let prev = 1; try { if (typeof g.value === 'number' && g.value > 0) prev = g.value; } catch (x) {}
+      try { const t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0; g.cancelScheduledValues(t0); g.setValueAtTime(prev, t0); g.linearRampToValueAtTime(0, t0 + 0.006); } catch (x) {}
+      setTimeout(() => {
+        try { _E = E; _ambBuildMod(key, { [key]: lc }); _ambApplyLayerFx(key, lc); } catch (x) {}
+        try { const t1 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0; g.cancelScheduledValues(t1); g.setValueAtTime(0, t1); g.linearRampToValueAtTime(prev, t1 + 0.008); } catch (x) {}
+      }, 14);
+    }
+    // Next PLAY index in the sequence, from the current play index `cur`. Sets
+    // E._plotWrapped when a new pass through all areas (a "Plot") begins.
+    function _ambOrchNextIdx(E, s, cur) {
+      const n = s.areas.length;
+      if (n < 2) return cur;
+      if (s.orch.shuffle) {
+        if (!Array.isArray(E._orchBag) || !E._orchBag.length) {
+          const idxs = []; for (let i = 0; i < n; i++) if (i !== cur) idxs.push(i);
+          for (let i = idxs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = idxs[i]; idxs[i] = idxs[j]; idxs[j] = t; }
+          E._orchBag = idxs;
+          E._plotWrapped = true;   // refilled bag = a fresh pass through every area
+        }
+        const nx = E._orchBag.shift();
+        return (nx == null) ? ((cur + 1) % n) : nx;
+      }
+      const nxt = (cur + 1) % n;
+      if (nxt === 0) E._plotWrapped = true;   // wrapped to the first area = new Plot
+      return nxt;
+    }
+    function _ambOrchUpdateNowPlaying(E) {
+      if (E !== _masterEng) return;
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const view = _masterBloomState().activeIdx;
+      const play = Number.isFinite(E._playIdx) ? E._playIdx : view;
+      host.querySelectorAll('.ambient-area-chip').forEach(chip => {
+        const i = parseInt(chip.dataset.aidx, 10) || 0;
+        chip.classList.toggle('on', i === view);                       // viewed/edited area
+        chip.classList.toggle('playing', !!E.timer && i === play);     // sounding area
+      });
+    }
+    function _ambOrchMaybeStart(E) {
+      if (E !== _masterEng) return;
+      const s = _masterBloomState();
+      E._orchActive = (s.orch.mode === 'sequence' && s.areas.length > 1);
+      E._orchSwitching = false;
+      E._orchBag = null; E._plotWrapped = false;
+      // Fresh play → start from the viewed area; mid-play mode toggle → keep the
+      // area already sounding. Re-time the current area from now either way.
+      if (!Number.isFinite(E._playIdx)) { E._playIdx = s.activeIdx; E._plotCount = 1; }
+      E._curPlays = _ambEffectivePlays(s.areas[E._playIdx]);
+      E._orchStartAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      E._orchDurSec = _ambAreaDurSec(_ambPlayCfg(E), E._curPlays);
+      _ambOrchUpdateNowPlaying(E);
+    }
+    // SEAMLESS area handoff — no bus dip. The outgoing area stops GENERATING at
+    // the boundary but its already-sounding voices RING OUT (release/reverb
+    // tails), while the incoming area starts immediately into the same shared mod
+    // chains. Shared-key layers (bed/motif/…) keep their chains (tails uninterrupted,
+    // params updated to the new area); layers only in the OLD area gate-fade then
+    // dispose (no click); layers only in the NEW area build fresh. The overlap of
+    // outgoing tails + incoming onsets makes the section change gapless.
+    // Effective area-change fade (ms) per layer, keyed like E.mod. Area fade applies
+    // ONLY to FREE layers (they float, so they can bleed/decay across the boundary);
+    // synced / bar-native layers are part of the loop/structure and HARD-CUT at the
+    // boundary (fade 0) regardless of their slider — so they never overflow.
+    function _ambAreaFadeMap(areaCfg) {
+      const m = {};
+      if (!areaCfg) return m;
+      const add = (L, key) => {
+        if (!L) return;
+        const free = (typeof _ambIsCapturable === 'function') ? !_ambIsCapturable(L, key) : true;
+        m[key] = free ? (Number.isFinite(L.areaFadeMs) ? Math.max(0, L.areaFadeMs | 0) : 250) : 0;
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => add(areaCfg[k], k));
+      (areaCfg.extras || []).forEach(L => add(L, (L && L.type) + ':' + (L && (L.id | 0))));
+      (areaCfg.seqs || []).forEach(L => add(L, 'seq:' + (L && (L.id | 0))));
+      (areaCfg.samples || []).forEach(L => add(L, 'samp:' + (L && (L.id | 0))));
+      return m;
+    }
+    // Move a layer's CURRENT chain onto a unique "departing" key and gate-fade it to
+    // silence over `fadeMs` starting at the boundary `at`, then STOP its sounding voices
+    // and dispose — so the outgoing layer decays over its Area fade (free) / cuts (synced)
+    // while the new area builds a FRESH chain on the real key (a true overlap).
+    // `at` = the (future) boundary AudioContext time.
+    // The per-sample-layer boundary Fade Out (ms) for a 'samp:<id>' key, read from the
+    // departing (old) area's config. 0 for non-sample keys or samples with no fade set.
+    function _ambSampBoundaryFade(areaCfg, key) {
+      if (!areaCfg || typeof key !== 'string' || key.indexOf('samp:') !== 0) return 0;
+      const id = parseInt(key.slice(5), 10);
+      const L = (areaCfg.samples || []).find(s => s && (s.id | 0) === id);
+      return (L && Number.isFinite(L.boundaryFadeMs)) ? Math.max(0, L.boundaryFadeMs) : 0;
+    }
+    function _ambDepartLayer(E, key, fadeMs, at, sampFadeMs) {
+      const e = E.mod && E.mod[key];
+      if (!e) return;
+      const depKey = key + '#dep' + (E._depSeq = (E._depSeq | 0) + 1);
+      E.mod[depKey] = e; delete E.mod[key];
+      const fadeSec = Math.max(0.005, (fadeMs | 0) / 1000);
+      // Sample Fade Out: a sample overrunning the boundary fades from `at` over its own
+      // boundaryFadeMs (scheduled NOW so the ramp lands on the future boundary), instead
+      // of the hard stop below. Default 0 → falls through to the stop (identical to before).
+      const sampFadeSec = Math.max(0, (sampFadeMs | 0) / 1000);
+      if (sampFadeSec > 0) { try { if (typeof fadeBloomSampleVoicesFrom === 'function') fadeBloomSampleVoicesFrom(key, at, sampFadeSec); } catch (ex) {} }
+      try { _ambGateRamp(E, depKey, 0, at, fadeSec); } catch (ex) {}
+      // The reverb send taps PRE-gate, so the gate fade alone leaves the layer feeding
+      // the reverb past the boundary (wet tail rings on, esp. at fade=0). Cut the send
+      // on the SAME ramp so the layer stops contributing entirely at its Area fade.
+      try { _ambRevSendRamp(E, depKey, 0, at, fadeSec); } catch (ex) {}
+      // AFTER the fade completes: (1) STOP this layer's sounding voices that started
+      // BEFORE the boundary — the gate-fade only silences gate-routed voices, but
+      // looping sample/pad voices (and any that slip the gate) would ring on/retrigger
+      // and pile up (= the "samples run over + get louder" bug). (2) Dispose the chain.
+      // Timed from the FUTURE boundary `at` (NOT the advance call ~0.6 s earlier), so a
+      // short fade is never torn down before it finishes (the old bug cut the fade off).
+      const now0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      // Wait for the LONGER of the gate fade and the sample fade so neither is cut off
+      // (the sample voices route through this chain, so teardown must not precede them).
+      const afterMs = Math.max(0, (at - now0) * 1000) + Math.max(fadeMs | 0, sampFadeMs | 0) + 60;
+      setTimeout(() => {
+        try { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, at); } catch (ex) {}
+        try { _E = E; if (E.mod[depKey]) _ambTeardownMod(depKey); } catch (ex) {}
+      }, afterMs);
+    }
+    function _ambOrchAdvance(E, boundaryAt) {
+      const s = _masterBloomState();
+      if (s.areas.length < 2) { E._orchSwitching = false; return; }
+      try {
+        _E = E;
+        const tnow = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        // `at` = the time to STOP the outgoing area (cancel pending + start the fade).
+        // For locked areas the caller passes the precise loop boundary (may be slightly
+        // in the future) so the cut/fade land exactly on the loop point; else = now.
+        const at = (Number.isFinite(boundaryAt) && boundaryAt > tnow) ? boundaryAt : tnow;
+        const now = tnow;
+        const playIdx = Number.isFinite(E._playIdx) ? E._playIdx : s.activeIdx;
+        E._plotWrapped = false;
+        const nextIdx = _ambOrchNextIdx(E, s, playIdx);
+        if (E._plotWrapped) { E._plotCount = (E._plotCount | 0) + 1; E._plotWrapped = false; }
+        const oldKeys = Object.keys(E.mod);
+        // EVERY area change is a SECTION transition: each outgoing layer DEPARTS on its
+        // own "Area fade" (its voices decay over that time) while the incoming area
+        // builds FRESH chains — so a layer bleeds exactly as much as its Area fade
+        // (0 = cut at the boundary, higher = crossfade into the next area). This is
+        // independent of Bar Lock, which only governs whether layers LOOP.
+        const fadeMap = _ambAreaFadeMap(s.areas[playIdx]);
+        // 1. Stop the outgoing area at the boundary: cancel each layer's voices
+        //    scheduled to START at/after `at`; anything already sounding rings out.
+        try { oldKeys.forEach(key => { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, at); }); } catch (e) {}
+        // 2. Hand off to the next PLAY area (NOT the viewed/active area — the panel
+        //    stays where the user is editing). Tempo / groove follow the play area.
+        _ambCaptureGlobalsInto(s.areas[playIdx]);
+        E._playIdx = nextIdx;
+        E._curPlays = _ambEffectivePlays(s.areas[nextIdx]);
+        _ambApplyAreaGlobals(s.areas[nextIdx]);
+        const cfg = _ambPlayCfg(E);   // = areas[nextIdx]
+        // 3. Fresh clocks/phases so the new area's layers anchor at the boundary
+        //    (E.mod is NOT cleared by this — shared chains persist for the tails).
+        _ambResetClocks(E);
+        // Anchor the incoming area's grid to the PRECISE boundary (not the late tick),
+        // so its synced/bar-native layers' first onsets land ON the boundary — matching
+        // the outgoing layers' cut there. (Was null → tick set it to now+0.3, which with
+        // a big early-fire lead placed incoming onsets BEFORE the boundary = overlap.)
+        E._barGridAnchor = at;
+        E._barLockArmed = false; E._barLockLoopBars = 0;   // re-arm Bar Lock fresh for the incoming area
+        try { _ambFreezeStopAll(E); } catch (e) {}
+        _ambSeed(cfg.seed);
+        try { _ambApplyRamps(cfg, 0); } catch (e) {}
+        // 4. Depart EVERY outgoing layer on its own Area fade (chain moved aside, gate +
+        //    reverb-send fade to silence, then disposed), and build the incoming area's
+        //    layers FRESH on the real keys → controllable overlap, no indefinite bleed.
+        const want = _ambWantSet(cfg);
+        oldKeys.forEach(key => { _ambDepartLayer(E, key, (fadeMap && fadeMap[key] != null) ? fadeMap[key] : 250, at, _ambSampBoundaryFade(s.areas[playIdx], key)); });
+        Object.keys(want).forEach(key => { _ambBuildMod(key, { [key]: want[key] }); _ambApplyLayerFx(key, want[key]); });
+        try { _ambApplyReverb(); } catch (e) {}
+        // 5. Generate the new area, anchoring its first onsets AT the boundary `at`
+        //    (not the advance time ~0.6 s earlier) so synced layers start ON the boundary,
+        //    not before it (= overflow into the outgoing area). _emitFloor is honored by
+        //    the tick's `lead`; cleared right after so later ticks anchor normally.
+        E._orchStartAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        E._orchDurSec = _ambAreaDurSec(cfg, E._curPlays);
+        E._emitFloor = at;
+        try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; E._emitFloor = 0; }
+        _ambOrchUpdateNowPlaying(E);   // move the "playing" highlight; view/panel unchanged
+      } catch (e) { try { _ambLogTickErr(e); } catch (x) {} }
+      E._orchSwitching = false;
+    }
     function _makeAmbientEngine(opts) {
       return {
         getCfg: opts.getCfg, busNode: opts.busNode, laneIdx: opts.laneIdx, guard: opts.guard,
@@ -157,7 +710,7 @@
       return _bloomMasterGain;
     }
     const _masterEng = _makeAmbientEngine({
-      getCfg:  function () { masterAmbient = masterAmbient || _defaultAmbientConfig(); return _normalizeAmbientCfg(masterAmbient); },
+      getCfg:  function () { _masterBloomState(); return _normalizeAmbientCfg(masterAmbient); },   // masterAmbient = active area
       busNode: function () { return _ambMasterBloomBus(); },
       laneIdx: function () { return null; },
       guard:   function () { return true; },
@@ -310,6 +863,7 @@
       return { id: id | 0, on: true, sampleId: '', name: '',
                chop: 1, order: 'forward',
                intervalMs: 2000, lengthMs: 1200, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0,
+               boundaryFadeMs: 0,   // fade-out applied when a unit/area transition truncates this sample mid-play (0 = hard cut)
                attack: 6, decay: 120, sustain: 70, release: 600, fine: 0,
                mod: _ambDefaultMod(), ..._ambDefaultFx() };
     }
@@ -319,7 +873,8 @@
       if (typeof s.on !== 'boolean') s.on = true;
       if (typeof s.sampleId !== 'string') s.sampleId = '';
       if (typeof s.name !== 'string') s.name = '';
-      ['chop','intervalMs','lengthMs','drift','level','attack','decay','sustain','release','fine'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
+      ['chop','intervalMs','lengthMs','drift','level','attack','decay','sustain','release','fine','boundaryFadeMs'].forEach(k => { if (!Number.isFinite(s[k])) s[k] = d[k]; });
+      s.boundaryFadeMs = Math.max(0, Math.min(8000, s.boundaryFadeMs | 0));
       s.chop = Math.max(1, Math.min(16, s.chop | 0));
       if (s.order !== 'forward' && s.order !== 'random') s.order = 'forward';
       if (typeof s.when !== 'string') s.when = 'always';
@@ -330,6 +885,24 @@
       return s;
     }
     // Migrate + backfill a Bloom config in place (shared by per-lane + master).
+    // Bars/chord can be fractional. Parse "8/7" / "1/2" / "0.5" / "2" → a float (>0),
+    // and format a float back to the simplest fraction (or trimmed decimal) for display.
+    function _ambParseBpc(str) {
+      if (typeof str !== 'string') return null;
+      const m = /^\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*$/.exec(str);
+      if (m) { const n = parseFloat(m[1]), d = parseFloat(m[2]); return (n > 0 && d > 0) ? n / d : null; }
+      const f = parseFloat(str);
+      return (Number.isFinite(f) && f > 0) ? f : null;
+    }
+    function _ambFmtBpc(v) {
+      if (!(v > 0)) return '1';
+      if (Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
+      for (const den of [2, 3, 4, 6, 8, 12, 16, 5, 7, 9, 10]) {
+        const num = v * den;
+        if (Math.abs(num - Math.round(num)) < 1e-4) return Math.round(num) + '/' + den;
+      }
+      return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    }
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
@@ -350,12 +923,25 @@
       if (typeof SCALES !== 'undefined' && SCALES && !SCALES[cfg.keyScale]) cfg.keyScale = d.keyScale;
       if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
+      if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
+      if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
+      if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
+      else { cfg.prog.on = !!cfg.prog.on; if (!Array.isArray(cfg.prog.chords)) cfg.prog.chords = []; if (typeof cfg.prog.name !== 'string') cfg.prog.name = ''; }
       if (!Number.isFinite(cfg.freezeLenMs)) cfg.freezeLenMs = d.freezeLenMs;
       if (!Number.isFinite(cfg.fadeInMs)) cfg.fadeInMs = d.fadeInMs;
       cfg.fadeInMs = Math.max(0, Math.min(30000, cfg.fadeInMs | 0));
       if (!Number.isFinite(cfg.fadeOutMs)) cfg.fadeOutMs = d.fadeOutMs;
       cfg.fadeOutMs = Math.max(0, Math.min(30000, cfg.fadeOutMs | 0));
       if (['linear', 'exponential', 'logarithmic', 's-curve'].indexOf(cfg.fadeShape) < 0) cfg.fadeShape = d.fadeShape;
+      // Area orchestration fields (inert for a single area).
+      if (typeof cfg.name !== 'string') cfg.name = d.name;
+      if (!Number.isFinite(cfg.bars)) cfg.bars = d.bars;
+      cfg.bars = Math.max(1, Math.min(64, cfg.bars | 0));
+      if (!Number.isFinite(cfg.plays)) cfg.plays = d.plays;
+      cfg.plays = Math.max(1, Math.min(64, cfg.plays | 0));
+      cfg.barLock = !!cfg.barLock;
+      if (cfg.bpm != null && (!Number.isFinite(cfg.bpm) || cfg.bpm <= 0)) cfg.bpm = null;   // null = inherit global tempo
+      if (cfg.groove != null && typeof cfg.groove !== 'object') cfg.groove = null;           // null = inherit global groove
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
       else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
       ['bed','motif','texture','beat'].forEach(layer => {
@@ -373,6 +959,8 @@
           if (L.panMode !== 'pan' && L.panMode !== 'spread') L.panMode = 'spread';
           if (!Number.isFinite(L.space)) L.space = legacy;
           L.space = Math.max(-100, Math.min(100, L.space | 0));
+          if (!Number.isFinite(L.areaFadeMs)) L.areaFadeMs = 250;   // per-layer decay on area change
+          L.areaFadeMs = Math.max(0, Math.min(8000, L.areaFadeMs | 0));
         };
         ['bed','motif','texture','beat'].forEach(l => mig(cfg[l]));
         if (Array.isArray(cfg.seqs)) cfg.seqs.forEach(mig);
@@ -585,10 +1173,27 @@
       if (x && typeof x === 'object' && typeof x.type === 'string') return x;
       return { type: 'scale', scale: (typeof x === 'string') ? x : '' };
     }
+    // The GLOBAL progression source (Configure → Progression), or null when it's
+    // off / has no chords. A layer whose source is the default "follow the Key"
+    // scale (empty scale) inherits this; an explicit scale/chord/wrap/prog overrides.
+    function _ambGlobalProg() {
+      const c = (typeof _ambKeyCfg === 'function') ? _ambKeyCfg() : null;
+      const p = c && c.prog;
+      if (p && p.on && Array.isArray(p.chords) && p.chords.length) {
+        return { type: 'prog', name: p.name || 'Progression', chords: p.chords };
+      }
+      return null;
+    }
     function _ambNotesOf(layer) {
       let notes;
       if (layer && layer.notes && typeof layer.notes === 'object' && typeof layer.notes.type === 'string') notes = layer.notes;
       else notes = { type: 'scale', scale: (layer && typeof layer.scale === 'string') ? layer.scale : '' };
+      // Inherit the global progression when this layer is on the default "follow the
+      // Key" scale (empty scale) and a global progression is active.
+      if (notes && notes.type === 'scale' && !notes.scale) {
+        const gp = _ambGlobalProg();
+        if (gp) notes = gp;
+      }
       // Relative MODE: re-centre a scale source to a different degree (a mode of
       // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
       // new tonic. Only meaningful for scale sources; carried on the descriptor so
@@ -635,6 +1240,36 @@
       const step = (_ambProgStepOverride != null) ? (_ambProgStepOverride | 0)
         : ((_E && Number.isFinite(_E.progStep)) ? (_E.progStep | 0) : 0);
       return chs[((step % chs.length) + chs.length) % chs.length] || null;
+    }
+    // Bar-aligned chord step at an absolute onset time `atSec` (Tone seconds):
+    //   floor(barsElapsed / barsPerChord), anchored at play start.
+    // This is the per-ONSET replacement for the legacy ms `progStep`: resolving
+    // the chord from the VOICE'S scheduled time (not emit time) keeps the
+    // progression tight across the ~1.4 s lookahead. `_progAnchor` lets Bar Lock
+    // later make this LOOP-relative; until set it falls back to play start.
+    // (Phase 1a: defined but NOT yet wired into the emits — that's 1b.)
+    function _ambProgStepAt(E, atSec) {
+      E = E || _E; if (!E) return 0;
+      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);   // fractional bars/chord supported
+      const anchor = Number.isFinite(E._progAnchor) ? E._progAnchor
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : 0);
+      const bars = Math.max(0, atSec - anchor) / barSec;
+      // Per-chord lengths: if any chord carries its own `bars`, walk the cumulative
+      // lengths to find the active chord; else the uniform fast path (byte-identical to
+      // before → harness-safe). Returns a MONOTONIC step (chord = step mod chords.length).
+      const chords = (cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null;
+      if (chords && chords.length && chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0)) {
+        const lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+        const cycle = lens.reduce((s, v) => s + v, 0) || bpc;
+        const cyc = Math.floor(bars / cycle);
+        let pos = bars - cyc * cycle, i = 0;
+        while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
+        return cyc * chords.length + i;
+      }
+      return Math.floor(bars / bpc);
     }
     // ---- Instance "Key" -------------------------------------------------
     // Read the current engine's (already-normalized) cfg cheaply: the tick
@@ -1061,6 +1696,222 @@
         '<button type="button" id="' + prefix + '-notes" class="ambient-select ambient-notes-btn">Scale</button>' +
         '<span class="ambient-hint">source</span></div>';
     }
+    // Phase 2c: when the global progression is turned on, snap the FREE continuous
+    // layers (Bed/Motif/Texture, and Beat in 'random' gen) onto the bar grid by
+    // Unit-Syncing each to the nearest bar-ratio — so their onsets stop floating
+    // against the chord changes. Bar-native layers (Bass/Run/Pedal/Euclid) are
+    // already aligned; Arp is handled separately. Only touches layers currently in
+    // Free mode, and is reversible (set a layer back to Free in its Unit menu).
+    function _ambAutoSyncFreeForProg(E, cfg) {
+      if (!cfg) return 0;
+      _E = E;
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      if (!(barSec > 0.05)) return 0;
+      const nearest = (natBars) => {
+        let best = null, err = Infinity;
+        _AMB_RATIOS.forEach(r => { const e = Math.abs((r[0] / r[1]) - natBars); if (e < err) { err = e; best = r; } });
+        return best;
+      };
+      const snap = (key, L) => {
+        if (!L || (L.unit && L.unit.mode === 'sync')) return false;   // missing / already synced
+        let nat = 0; try { nat = _ambNaturalUnitSec(E, key, L, cfg); } catch (e) {}
+        if (!(nat > 0.02)) return false;
+        const r = nearest(nat / barSec); if (!r) return false;
+        L.unit = { mode: 'sync', ref: 'bar', num: r[0], den: r[1] };
+        return true;
+      };
+      let count = 0;
+      if (snap('bed', cfg.bed)) count++;
+      if (snap('motif', cfg.motif)) count++;
+      if (snap('texture', cfg.texture)) count++;
+      if (cfg.beat && cfg.beat.gen === 'random' && snap('beat', cfg.beat)) count++;
+      if (count && typeof showToast === 'function') {
+        showToast('Snapped ' + count + ' free layer' + (count === 1 ? '' : 's') + ' to the bar grid — set any back to Free in its Unit menu.');
+      }
+      return count;
+    }
+    // Resolve a user "wrap progression" (a wrapProgs entry: {items:[{name, step}]})
+    // to a chord array [{root, intervals}] — each wrap's step → its pitch-class set,
+    // the same conversion _ambPublishWrap uses for a single wrap.
+    function _ambWrapProgChords(wp) {
+      const out = [];
+      const items = (wp && Array.isArray(wp.items)) ? wp.items : [];
+      items.forEach(it => {
+        const step = it && it.step; if (!step) return;
+        let freqs = [];
+        try { freqs = (typeof collectStepFreqs === 'function') ? (collectStepFreqs(step) || []) : []; } catch (e) {}
+        const pcs = [], seen = new Set();
+        freqs.forEach(f => {
+          const m = (typeof _freqToMidi === 'function') ? _freqToMidi(f) : null;
+          if (m == null) return;
+          const pc = ((Math.round(m) % 12) + 12) % 12;
+          if (!seen.has(pc)) { seen.add(pc); pcs.push(pc); }
+        });
+        if (!pcs.length) return;
+        const root = Math.min.apply(null, pcs);
+        const intervals = Array.from(new Set(pcs.map(p => (((p - root) % 12) + 12) % 12))).sort((a, b) => a - b);
+        out.push({ root, intervals });
+      });
+      return out;
+    }
+    // Picker for the GLOBAL progression (Configure → Prog). Two groups: User (the
+    // user's wrap progressions + published progs) and Standard (built-ins). Writes
+    // to cfg.prog (turns it on). Edits the VIEWED area's cfg (panel = viewed area).
+    function _ambOpenGlobalProgMenu(E, x, y) {
+      if (typeof showCtxMenu !== 'function') return;
+      _E = E;
+      const cfg = E.getCfg();
+      const keyOn = !!(cfg && cfg.keyOn);
+      const apply = (name, chords) => {
+        _E = E; const c = E.getCfg(); if (!c) return;
+        if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
+        c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
+        if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
+        try { _ambSyncControls(E); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      };
+      const items = [];
+      // USER group — wrap progressions (resolved to chords) + published progs.
+      const userItems = [];
+      const wps = (typeof wrapProgs !== 'undefined' && Array.isArray(wrapProgs)) ? wrapProgs : [];
+      wps.forEach(wp => {
+        const chords = _ambWrapProgChords(wp);
+        if (!chords.length) return;
+        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
+        userItems.push({ label: '  ' + (wp.name || 'Prog'), fn: () => apply(wp.name || 'Prog', chords) });
+      });
+      const pub = (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+      pub.forEach(p => {
+        const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals, bars: c.bars }));
+        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
+        userItems.push({ label: '  ' + p.name, fn: () => apply(p.name, chords) });
+      });
+      if (userItems.length) { items.push({ label: 'User', disabled: true }); userItems.forEach(i => items.push(i)); }
+      // STANDARD group — built-ins.
+      const stdItems = [];
+      _AMB_PROG_STANDARDS.forEach(([nm, fam, steps]) => {
+        const chords = _ambResolveStandard(fam, steps);
+        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
+        stdItems.push({ label: '  ' + nm, fn: () => apply(nm, chords) });
+      });
+      if (stdItems.length) { if (items.length) items.push('hr'); items.push({ label: 'Standard', disabled: true }); stdItems.forEach(i => items.push(i)); }
+      if (!items.some(i => i && i.fn)) items.push({ label: 'No progressions available', disabled: true });
+      showCtxMenu(x, y, items);
+    }
+    // ---- Standard-progression EDITOR (Configure → Prog → Edit) ----------
+    // Edit the CURRENT global progression on a COPY (nothing changes live until
+    // Save). Chords are {root:pc, intervals:[semis from root]}. Save As New pushes
+    // to masterAmbient.publishedProgs (which the prog picker's User group reads) and
+    // applies it. Body-attached popover → show via inline !important display (view-mode
+    // hide rule), act on pointerdown (live-repaint-safe).
+    let _ambProgEd = null;   // { E, chords, sel, name }
+    const _AMB_CHROM = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+    const _AMB_PE_QUALITIES = [['maj', [0, 4, 7]], ['min', [0, 3, 7]], ['dim', [0, 3, 6]], ['aug', [0, 4, 8]],
+      ['sus2', [0, 2, 7]], ['sus4', [0, 5, 7]], ['7', [0, 4, 7, 10]], ['maj7', [0, 4, 7, 11]],
+      ['min7', [0, 3, 7, 10]], ['m7♭5', [0, 3, 6, 10]], ['dim7', [0, 3, 6, 9]], ['6', [0, 4, 7, 9]], ['9', [0, 4, 7, 10, 14]]];
+    function _ambPeNotes(ch) { return (ch.intervals || [0]).map(iv => ((((ch.root | 0) + (iv | 0)) % 12) + 12) % 12); }
+    function _ambPeSetNotes(ch, pcs, keepRoot) {
+      const root = keepRoot ? (((ch.root | 0) % 12) + 12) % 12 : null;
+      const uniq = Array.from(new Set(pcs.map(p => (((p | 0) % 12) + 12) % 12)));
+      if (!uniq.length) return;
+      const base = (root != null && uniq.indexOf(root) >= 0) ? root : uniq.slice().sort((a, b) => a - b)[0];
+      ch.root = base;
+      ch.intervals = uniq.map(p => (((p - base) % 12) + 12) % 12).sort((a, b) => a - b);
+    }
+    function _ambPeChLabel(ch) { return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
+    function _ambPeClose() { const h = document.getElementById('ambient-prog-editor'); if (h) h.style.setProperty('display', 'none', 'important'); _ambProgEd = null; }
+    function _ambOpenProgEditor(E) {
+      const cfg = E.getCfg();
+      if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.chords) || !cfg.prog.chords.length) return;
+      _ambProgEd = { E, chords: cfg.prog.chords.map(c => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; }), sel: 0, name: (cfg.prog.name || 'Prog') + ' edit' };
+      let host = document.getElementById('ambient-prog-editor');
+      if (!host) {
+        host = document.createElement('div'); host.id = 'ambient-prog-editor'; host.className = 'ambient-prog-editor';
+        document.body.appendChild(host);
+        host.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-pe]'); if (!b) return; e.preventDefault(); _ambPeAct(b.getAttribute('data-pe'), b); });
+        document.addEventListener('pointerdown', (e) => { if (_ambProgEd && host.style.display !== 'none' && !host.contains(e.target) && !(e.target.closest && e.target.closest('#ambient-prog-edit'))) _ambPeClose(); }, true);
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _ambProgEd) _ambPeClose(); });
+      }
+      _ambPeRender();
+      host.style.setProperty('display', 'flex', 'important');
+    }
+    function _ambPeRender() {
+      const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
+      const ed = _ambProgEd, sel = Math.max(0, Math.min(ed.chords.length - 1, ed.sel)); ed.sel = sel;
+      const ch = ed.chords[sel];
+      const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const gcfg = ed.E.getCfg();
+      const gbpcStr = (gcfg && (gcfg.barsPerChordStr || _ambFmtBpc(gcfg.barsPerChord))) || '1';
+      const chordsRow = ed.chords.map((c, i) =>
+        '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + '">' + (i + 1) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em></button>').join('') +
+        '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
+      const notes = _ambPeNotes(ch).slice().sort((a, b) => a - b);
+      const noteChips = notes.map((p, ni) =>
+        '<span class="pe-note"><b>' + _AMB_CHROM[p] + '</b>' +
+        '<button type="button" data-pe="flat:' + ni + '" title="Down a semitone">♭</button>' +
+        '<button type="button" data-pe="sharp:' + ni + '" title="Up a semitone">♯</button>' +
+        '<button type="button" class="pe-x" data-pe="rmnote:' + ni + '" title="Remove note"' + (notes.length <= 1 ? ' disabled' : '') + '>✕</button></span>').join('');
+      const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
+      host.innerHTML =
+        '<div class="pe-title">Edit progression</div>' +
+        '<div class="pe-chords">' + chordsRow + '</div>' +
+        '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length +
+          '<span class="pe-chordops">' +
+            '<button type="button" data-pe="trdn" title="Transpose chord down a semitone">◀</button>' +
+            '<button type="button" data-pe="trup" title="Transpose chord up a semitone">▶</button>' +
+            '<button type="button" data-pe="inv" title="Invert (re-root to the next chord tone)">⟳ Inv</button>' +
+            '<button type="button" data-pe="addnote" title="Add a note">＋ note</button>' +
+            '<button type="button" class="pe-x" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ chord</button>' +
+          '</span></div>' +
+        '<div class="pe-lenrow"><label>Chord length</label>' +
+          '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = the global Bars/chord." />' +
+          '<span class="pe-lenhint">bars — blank = global (' + esc(gbpcStr) + ')</span></div>' +
+        '<div class="pe-notes">' + noteChips + '</div>' +
+        '<div class="pe-qrow"><label>Set quality</label>' + qButtons + '</div>' +
+        '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
+          '<button type="button" data-pe="cancel">Cancel</button>' +
+          '<button type="button" class="pe-apply" data-pe="save">Save as new</button></div>';
+      const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
+      const ln = host.querySelector('#pe-len');
+      if (ln) ln.addEventListener('change', () => {
+        const v = (ln.value || '').trim();
+        if (!v) { delete ed.chords[ed.sel].bars; }   // blank → inherit global Bars/chord
+        else { const f = _ambParseBpc(v); if (f != null) ed.chords[ed.sel].bars = f; }
+        _ambPeRender();
+      });
+    }
+    function _ambPeAct(act, el) {
+      const ed = _ambProgEd; if (!ed) return;
+      const ch = ed.chords[ed.sel];
+      const a = act.split(':'), op = a[0], arg = a[1];
+      const notesSorted = () => _ambPeNotes(ch).slice().sort((x, y) => x - y);
+      if (op === 'sel') { ed.sel = arg | 0; }
+      else if (op === 'addchord') { ed.chords.splice(ed.sel + 1, 0, { root: ch.root, intervals: ch.intervals.slice() }); ed.sel++; }
+      else if (op === 'rmchord') { if (ed.chords.length > 1) { ed.chords.splice(ed.sel, 1); ed.sel = Math.min(ed.sel, ed.chords.length - 1); } }
+      else if (op === 'flat' || op === 'sharp') { const ns = notesSorted(); const ni = arg | 0; if (ns[ni] != null) { ns[ni] = (((ns[ni] + (op === 'sharp' ? 1 : -1)) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, true); } }
+      else if (op === 'rmnote') { const ns = notesSorted(); if (ns.length > 1) { ns.splice(arg | 0, 1); _ambPeSetNotes(ch, ns, true); } }
+      else if (op === 'addnote') { const ns = notesSorted(); for (let p = 0; p < 12; p++) { if (ns.indexOf((ns[0] + p) % 12) < 0) { ns.push((ns[0] + p) % 12); break; } } _ambPeSetNotes(ch, ns, true); }
+      else if (op === 'qual') { const q = _AMB_PE_QUALITIES.find(x => x[0] === arg); if (q) { ch.intervals = q[1].map(iv => ((iv % 12) + 12) % 12); ch.intervals = Array.from(new Set(ch.intervals)).sort((x, y) => x - y); } }
+      else if (op === 'trup' || op === 'trdn') { const d = (op === 'trup') ? 1 : -1; ch.root = (((ch.root + d) % 12) + 12) % 12; }
+      else if (op === 'inv') { const ns = _ambPeNotes(ch); if (ns.length > 1) { const newRoot = (((ch.root + ch.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, false); ch.root = newRoot; ch.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
+      else if (op === 'cancel') { _ambPeClose(); return; }
+      else if (op === 'save') {
+        const E = ed.E; masterAmbient = masterAmbient || _defaultAmbientConfig();
+        if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
+        const id = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
+        const name = (ed.name || ('Prog ' + id)).trim() || ('Prog ' + id);
+        masterAmbient.publishedProgs.push({ id, name, chords });
+        const c = E.getCfg(); if (c) { if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] }; c.prog.name = name; c.prog.chords = chords; c.prog.on = true; try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }
+        try { _ambSyncControls(E); } catch (e) {}
+        if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Saved "' + name + '"');
+        _ambPeClose(); return;
+      }
+      _ambPeRender();
+    }
     function _ambOpenNotesMenu(E, getLayer, x, y, afterChange) {
       if (typeof showCtxMenu !== 'function') return;
       _E = E;
@@ -1116,7 +1967,7 @@
         if (pub.length) {
           const pubItems = [];
           pub.forEach(p => {
-            const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals }));
+            const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals, bars: c.bars }));
             if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return;
             pubItems.push({ label: '  ' + p.name, fn: () => apply({ type: 'prog', name: p.name, chords }) });
           });
@@ -1748,6 +2599,47 @@
     // wire collapse/expand, toggle a clicked step, and grow/shrink the pattern
     // (1..32 steps) via the − / + buttons. `getLayer` returns the object whose
     // `.when` holds the pattern. Shared by every layer type.
+    // ---- "Temp" When: live block edits that revert after they play -----
+    // Snapshot the pre-play When pattern of every temp-mode layer (call at play
+    // start). _whenBase = the baseline edits revert to.
+    function _ambForEachLayer(cfg, fn) {
+      if (!cfg) return;
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => fn(cfg[k]));
+      (cfg.extras || []).forEach(fn); (cfg.seqs || []).forEach(fn); (cfg.samples || []).forEach(fn);
+    }
+    function _ambSnapshotTempWhen(cfg) {
+      _ambForEachLayer(cfg, (L) => { if (L && L.whenTemp) { L._whenBase = (typeof L.when === 'string') ? L.when : 'always'; L._whenTempPending = []; } });
+    }
+    // On stop, drop any lingering temp edits back to the baseline.
+    function _ambRestoreTempWhen(E) {
+      const cfg = E && E.getCfg && E.getCfg(); if (!cfg) return;
+      let any = false;
+      _ambForEachLayer(cfg, (L) => {
+        if (L && L.whenTemp && typeof L._whenBase === 'string') { if (L.when !== L._whenBase) { L.when = L._whenBase; any = true; } L._whenTempPending = []; }
+      });
+      if (any && E.inited) { try { _ambSyncControls(E); } catch (e) {} }
+    }
+    // Called per frame from the playhead loop: when the playing block changes,
+    // revert the block that JUST finished if it was a temp edit. `cycle` is the
+    // layer's absolute When-cycle (el._whenCycle), so this works for every layer.
+    function _ambWhenTempStep(E, key, el, active, cycle) {
+      const L = _ambLayerByKey(E, key);
+      if (!active || !L || !L.whenTemp) { if (el) el._whenPrevCell = null; return; }
+      const cells = _ambWhenGridCells(L.when); const n = cells.length; if (!n) return;
+      const playing = (((cycle % n) + n) % n);
+      const prev = el._whenPrevCell;
+      el._whenPrevCell = playing;
+      if (prev == null || prev === playing) return;
+      const pend = L._whenTempPending; if (!Array.isArray(pend) || !pend.length) return;
+      const pi = pend.indexOf(prev); if (pi < 0) return;       // the finished block wasn't temp-edited
+      const base = _ambWhenGridCells(typeof L._whenBase === 'string' ? L._whenBase : L.when);
+      if (prev < cells.length && prev < base.length && cells[prev] !== base[prev]) {
+        cells[prev] = base[prev];
+        L.when = _ambGridToWhen(cells);
+        try { const card = el.closest && el.closest('.ambient-layer'); const grid = card && card.querySelector('.ambient-when-grid'); if (grid) _ambPaintWhenGrid(grid, L.when); } catch (e) {}
+      }
+      pend.splice(pi, 1);
+    }
     function _ambWireWhenGrid(E, grid, getLayer, persist) {
       if (!grid) return;
       _ambWireWhenToggle(grid);
@@ -1782,17 +2674,46 @@
           persist();
         });
       }
+      // "Temp" toggle: while playing, block edits auto-revert after they play.
+      const tempBtn = wrap && wrap.querySelector('.ambient-when-temp');
+      if (tempBtn) {
+        const L0t = getLayer();
+        const on0 = !!(L0t && L0t.whenTemp);
+        tempBtn.classList.toggle('on', on0); tempBtn.setAttribute('aria-pressed', on0 ? 'true' : 'false');
+        if (!tempBtn._ambBound) {
+          tempBtn._ambBound = true;
+          tempBtn.addEventListener('click', (e) => {
+            if (e && e.stopPropagation) e.stopPropagation();
+            _E = E; const L = getLayer(); if (!L) return;
+            L.whenTemp = !L.whenTemp;
+            tempBtn.classList.toggle('on', !!L.whenTemp); tempBtn.setAttribute('aria-pressed', L.whenTemp ? 'true' : 'false');
+            if (L.whenTemp && E.timer) { L._whenBase = (typeof L.when === 'string') ? L.when : 'always'; L._whenTempPending = []; }   // snapshot if engaged mid-play
+            if (!L.whenTemp) { L._whenTempPending = []; }
+            persist();
+          });
+        }
+      }
       if (grid._ambBound) return; grid._ambBound = true;
       grid.addEventListener('click', (e) => {
         const cell = e.target && e.target.closest ? e.target.closest('.ambient-when-cell') : null;
         if (!cell || !grid.contains(cell)) return;
         _E = E; const L = getLayer(); if (!L) return;
+        const isTempLive = !!(E.timer && L.whenTemp);
         const cells = _ambWhenGridCells(L.when);
         const idx = Math.max(0, Math.min(cells.length - 1, parseInt(cell.getAttribute('data-step'), 10) || 0));
+        if (isTempLive && typeof L._whenBase !== 'string') L._whenBase = L.when;   // capture the PRE-edit baseline
         cells[idx] = !cells[idx];
         L.when = _ambGridToWhen(cells);
         _ambPaintWhenGrid(grid, L.when);
-        persist();
+        if (isTempLive) {
+          // Ephemeral punch-in: mark this block to auto-revert once it has played
+          // through (see _ambWhenTempStep), and DON'T persist — the saved pattern
+          // stays the baseline so a temp edit can't be baked in by an autosave.
+          if (!Array.isArray(L._whenTempPending)) L._whenTempPending = [];
+          if (L._whenTempPending.indexOf(idx) < 0) L._whenTempPending.push(idx);
+        } else {
+          persist();
+        }
       });
     }
     function _ambBindWhen(E, stem, get, persist) {
@@ -1967,7 +2888,13 @@
       key = key || 'bed';
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;   // resolve this note's key by its play-time (keyMaster sections)
+      // Progression: resolve the chord at THIS iteration's bar-aligned onset (was the
+      // global ms clock), so a prog-driven bed follows the changes per bar like the
+      // loop layers. Cleared right after the voicing is picked.
+      const _bedProg = (_ambAsNotes(_ambNotesOf(bed)).type === 'prog');
+      if (_bedProg) _ambProgStepOverride = _ambProgStepAt(_E, at);
       const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key);
+      if (_bedProg) _ambProgStepOverride = null;
       if (!voicing.length) { _ambRecordUnit(_E, key, at, []); return; }
       const durMs = Math.max(80, bed.lengthMs | 0);
       const overlap = durMs / Math.max(1, bed.intervalMs | 0);
@@ -2081,7 +3008,6 @@
       for (let c = cFrom; c <= cTo && cap < 256; c++) {
         // 'when' conditional applies per phrase cycle (cycle = iteration index).
         if (!_ambCondFires(inst.when, c)) continue;
-        if (isProg) _ambProgStepOverride = c;
         const cStart = st.startAt + c * loopSec;
         // Deterministic per-cycle RNG — stable across ticks, evolves per cycle.
         const rnd = _ambSeededRand(((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503));
@@ -2112,11 +3038,15 @@
               walkDeg = Math.max(0, Math.min(span, walkDeg));
             }
             _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
+            // Progression chord resolved at THIS note's ONSET (bar-aligned), so a
+            // multi-bar bass loop follows the changes instead of holding one chord.
+            if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
             const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
+            _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
             try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
             cap++;
             if (cap >= 256) break;
@@ -2151,6 +3081,7 @@
       const lenMs  = Math.max(40, inst.lengthMs | 0);
       const vary   = Math.max(0, Math.min(100, inst.vary | 0));
       const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const lenVary = Math.max(0, Math.min(100, inst.lenVary | 0));   // note-length distribution (0 = uniform)
       const reg    = Math.max(2, Math.min(7, inst.register | 0) || 5);
       const range  = Math.max(1, Math.min(4, inst.range | 0) || 2);
       const transpose = Math.max(-24, Math.min(24, inst.transpose | 0));  // half steps, ±2 oct
@@ -2184,7 +3115,6 @@
       try {
       for (let c = cFrom; c <= cTo && cap < 512; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        if (isProg) _ambProgStepOverride = c;
         const cStart = st.startAt + c * loopSec;
         // Per-cycle RNG drives Vary — stable within a cycle, evolves per cycle.
         const vRnd = _ambSeededRand((baseSeed ^ ((c + 1) * 2246822519)) >>> 0);
@@ -2198,13 +3128,18 @@
           const at = cStart + i * slotSec;
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
           let f = _ambDegreeFreq(deg % N, reg + Math.floor(deg / N), src);
           if (f == null) continue;
           f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
-          const bp = _ambApplyAdsr(_ambMotifParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
+          // Len var: spread this note's length around Length via the shared helper
+          // (returns baseMs with NO rng draw at lenVary=0 → byte-identical default → harness-safe).
+          const noteLen = _ambVaryLen(lenMs, lenVary, vRnd);
+          const bp = _ambApplyAdsr(_ambMotifParams(noteLen, _ambLayerPan(inst), inst.tone), inst);
           bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
           if (dmod) bp._detuneMod = dmod;
-          try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
+          _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours (no-op at default 'landing')
+          try { playNote(f, bp, noteLen, at, dest, undefined, _E.laneIdx()); } catch (e) {}
           cap++;
           if (cap >= 512) break;
         }
@@ -2261,7 +3196,6 @@
       try {
       for (let c = cFrom; c <= cTo && cap < 512; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        if (isProg) _ambProgStepOverride = c;   // per-layer progression: one chord per loop
         const cStart = st.startAt + c * loopSec;
         // One per-cycle RNG drives both Rests and Vary (stable within a cycle,
         // evolves per cycle — so the pedal stays mostly on the root and roams the
@@ -2275,11 +3209,13 @@
           const at = cStart + i * slotSec;
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
           const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
           if (f == null) continue;
           const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
             volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)) };
           if (dmod) bp._detuneMod = dmod;
+          _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours (no-op at default 'landing')
           try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
           cap++;
           if (cap >= 512) break;
@@ -2338,8 +3274,8 @@
       try {
       for (let c = cFrom; c <= cTo && cap < 64; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        if (isProg) _ambProgStepOverride = c;                 // advance this layer's progression
-        const tones = isProg ? _ambScaleIntervals(src) : tones0;   // prog chord changes per cycle
+        if (isProg) _ambProgStepOverride = _ambProgStepAt(E, st.startAt + c * cycleSec);  // chord at the cycle's bar-aligned onset
+        const tones = isProg ? _ambScaleIntervals(src) : tones0;   // prog chord re-resolved per cycle
         const K = Math.max(1, tones.length);
         const cRnd = (timeVary > 0 || pitchVary > 0)
           ? _ambSeededRand((((inst.id | 0) * 2654435761) ^ ((c + 1) * 2246822519) ^ ((cfg && cfg.seed | 0) * 40503)) >>> 0) : null;
@@ -2365,6 +3301,7 @@
           const f = _ambNoteFreq(tIv, reg + regShift + oct, src);
           if (f == null) continue;
           const vp = Object.assign({}, bp);
+          if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);   // Harmony colours: lead-in once per onset (root), no-op at default
           try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
         }
         cap++;
@@ -2509,8 +3446,10 @@
         const slack = Math.max(0, unitSec - Math.max(0, (count - 1) * burstGap) - 0.02);
         if (slack > 0.02) _startOff = _ambRand() * slack;   // uniformly anywhere in the unit
       }
+      const _motifProg = (_mnotes && _mnotes.type === 'prog');
       const _unit = [];
       for (let i = 0; i < count; i++) {
+        if (_motifProg) _ambProgStepOverride = _ambProgStepAt(_E, at + _startOff + i * burstGap);   // chord at THIS note's onset (bar-aligned)
         const f = _ambMotifNextNote(motif);
         if (f == null) continue;
         // Sequential single notes can't be "distributed" simultaneously, so
@@ -2528,6 +3467,7 @@
         _ambColourLeadIn(f, mp, at + off, dest, _E.laneIdx(), _mnotes);
         try { playNote(f, mp, noteMs, at + off, dest, undefined, _E.laneIdx()); } catch (e) {}
       }
+      if (_motifProg) _ambProgStepOverride = null;
       _ambRecordUnit(_E, key, at, _unit);
     }
 
@@ -2569,7 +3509,10 @@
       const slot = _E.texPattern[_E.texStep % _E.texPattern.length];
       _E.texStep++;
       if (slot && slot.on) {
+        const _texProg = (_ambAsNotes(_ambNotesOf(texture)).type === 'prog');
+        if (_texProg) _ambProgStepOverride = _ambProgStepAt(_E, at);   // chord at THIS step's onset (bar-aligned)
         const f = _ambDegreeFreq(slot.deg, center + (_ambRand() < 0.3 ? 1 : 0), _ambNotesOf(texture));
+        if (_texProg) _ambProgStepOverride = null;
         const lenMs = Math.max(60, texture.lengthMs | 0);
         const pan = _ambLayerPan(texture);
         const tp = _ambApplyAdsr(_ambTexParams(lenMs, pan, texture.tone), texture);
@@ -2619,11 +3562,12 @@
     function _ambArpSeriesInfo(arp, cfg) {
       const steps = (Array.isArray(arp.steps) && arp.steps.length) ? arp.steps : [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
       const octs = Math.max(1, Math.min(4, (arp.octaves | 0) || 2));
-      // Size each entry by the chord the arp is ACTUALLY on (its own per-loop
-      // progression cursor st._loop), not the global progression clock — so the
-      // unit is exactly ONE progression chord and matches what the emit plays
-      // (otherwise the Sync scale and the real loop length disagree and synced
-      // arps drift). st may not exist yet (pre-play) → chord 0, which is correct.
+      // Sizing for the QUEUE boundary only (notes per series pass). Uses the
+      // structural cursor st._loop's chord to size each entry's pool. The emit now
+      // resolves pitch off the BAR-ALIGNED chord (_chordIdx), but for uniform chord
+      // sizes (e.g. all triads) the pool length is identical, so the boundary still
+      // matches; only mixed chord sizes + queue mode can drift slightly.
+      // st may not exist yet (pre-play) → chord 0.
       const _st = _E && _E.arpState && _E.arpState['arp:' + (arp.id | 0)];
       const _prevOv = _ambProgStepOverride;
       const entryNotes = steps.map(entry => {
@@ -2666,8 +3610,14 @@
       if ((st.entry | 0) === 0 && (st.note | 0) === 0) st._silent = !_ambCondFires(arp.when, st._loop | 0);
       const entry = steps[Math.min(st.entry, steps.length - 1)];
       const notes = _ambNotesOf(entry);
-      const _arpProg = (notes && notes.type === 'prog');   // per-layer: one chord per series loop
-      if (_arpProg) _ambProgStepOverride = (st._loop | 0);
+      const _arpProg = (notes && notes.type === 'prog');
+      // Bar-aligned chord at THIS note's onset (was st._loop, i.e. one chord per
+      // series loop). Decouples the chord from the structural cursor: the arp walks
+      // its series at its own rate while the chords follow the global bars-per-chord
+      // clock like every other layer. (Pool/mutes/evolve all key off this; st._loop
+      // stays the structural entry-cursor + queue-sizing index.)
+      const _chordIdx = _arpProg ? _ambProgStepAt(_E, at) : 0;
+      if (_arpProg) _ambProgStepOverride = _chordIdx;
       try {
       const intervals = _ambScaleIntervals(notes);
       const N = Math.max(1, intervals.length);
@@ -2687,7 +3637,6 @@
       else idx = _ambArpIndexFor(dir, st.note, len);
       const _stepIdx = st.note;   // this note's step position in the entry sweep (Sequence-tab mutes)
       const _ei = st.entry | 0;
-      const _loop0 = st._loop | 0;   // loop at THIS note (before the wrap below bumps it)
       // Advance the pass / entry cursor for NEXT time.
       st.note += 1;
       if (st.note >= _ambArpEntryNotes(entry, dir, len)) {
@@ -2696,7 +3645,7 @@
         // the wrap below bumps it). Lit ~60% of steps.
         if (entry.evolve) {
           const _ek = _arpProg ? Math.max(1, (notes.chords || []).length) : 1;
-          const _efc = _arpProg ? ((((st._loop | 0) % _ek) + _ek) % _ek) : 0;
+          const _efc = _arpProg ? (((_chordIdx % _ek) + _ek) % _ek) : 0;
           if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
           const _en = _ambArpEntryNotes(entry, dir, len), _ea = [];
           for (let _s = 0; _s < _en; _s++) _ea[_s] = (Math.random() < 0.4);
@@ -2710,10 +3659,10 @@
       // catch-up (play === false).
       const _rested = (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0)));
       // Step mutes are per-chord (Sequence tab shows every progression chord as
-      // its own block): entry.stepMutes[chordIdx][stepIdx]. chordIdx tracks the
-      // progression (st._loop), or 0 for a single chord/scale.
+      // its own block): entry.stepMutes[chordIdx][stepIdx]. chordIdx is the
+      // bar-aligned chord at this note, or 0 for a single chord/scale.
       const _K = _arpProg ? Math.max(1, (notes.chords || []).length) : 1;
-      const _ci = _arpProg ? (((_loop0 % _K) + _K) % _K) : 0;   // chord of THIS note (pre-wrap loop)
+      const _ci = _arpProg ? (((_chordIdx % _K) + _K) % _K) : 0;   // chord of THIS note (bar-aligned)
       const _cm = Array.isArray(entry.stepMutes) ? entry.stepMutes[_ci] : null;
       const _stepMuted = !!(Array.isArray(_cm) && _cm[_stepIdx]);
       // While the Sequence editor is open on this arp, record each note's
@@ -2739,6 +3688,7 @@
       const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
       ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
+      _ambColourLeadIn(f, ap, at, _ambLayerDest(key), _E.laneIdx(), notes);   // Harmony colours (no-op at default 'landing')
       try { playNote(f, ap, _ambVaryLen(lenMs, arp.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       } finally { if (_arpProg) _ambProgStepOverride = null; }
     }
@@ -3252,9 +4202,15 @@
       const sliceSec = Math.max(0.02, (layer.intervalMs | 0) / 1000 / chop);
       const vol = _ambApplyLevel(100, layer.level);
       const pans = _ambLayerPans(layer, chop);
+      // A single-shot sample's voice length is capped to its cycle interval so the
+      // NEXT retrigger doesn't start while this one is still playing — otherwise each
+      // cycle stacks another full copy and the layer's volume climbs linearly as the
+      // voices pile up (and pad-loop samples aren't voice-capped at all). Chopped
+      // slices already span exactly one cycle, so they never overlap.
+      const cycleMs = Math.max(80, layer.intervalMs | 0);
       for (let j = 0; j < chop; j++) {
         const idx = (chop === 1) ? 0 : (layer.order === 'random' ? Math.floor(_ambRand() * chop) : j);
-        const dur = (chop > 1) ? sliceSec * 1000 : Math.max(80, layer.lengthMs | 0);
+        const dur = (chop > 1) ? sliceSec * 1000 : Math.min(Math.max(80, layer.lengthMs | 0), cycleMs);
         const p = _ambApplyAdsr({ ...base, type,
           attack: 6, decay: 120, sustain: 70, release: Math.max(60, Math.round(dur * 0.5)),
           volume: vol, pan: (pans[j] | 0) }, layer);
@@ -3627,7 +4583,7 @@
     function _ambApplyReverb() {
       const E = _E;
       if (!E.reverb) return;
-      const cfg = E.getCfg(); if (!cfg || !cfg.reverb) return;
+      const cfg = E._cfg || _ambPlayCfg(E); if (!cfg || !cfg.reverb) return;   // playing area's reverb
       try {
         if (E._revConv) {
           const decay = (typeof _reverbDecaySec === 'function') ? _reverbDecaySec(cfg.reverb.size | 0) : 2;
@@ -3841,7 +4797,15 @@
     // deferring it past the next paint keeps a layer toggle instant — the full
     // graph rebuild was blocking the repaint, so the click looked dropped and
     // the user clicked again, re-toggling the state ("stays highlighted").
+    // A UI edit may push LIVE to the engine only if it targets the area currently
+    // PLAYING. While viewing/editing a DIFFERENT area mid-play, edits are stored on
+    // that area's config and take effect when it next plays — they must not touch
+    // the running engine (whose chains belong to the playing area).
+    function _ambLiveApplyOK(E) {
+      return !(E === _masterEng && E.timer && Number.isFinite(E._playIdx) && E._playIdx !== _ambActiveAreaIdx());
+    }
     function _ambSyncOneLayerMod(E, key, layer) {
+      if (!_ambLiveApplyOK(E)) return;   // editing a non-playing area → don't disturb playback
       const run = () => {
         _E = E;
         try {
@@ -3964,13 +4928,35 @@
       const fb = _ambGet(E, p + 'us-free'); if (fb) fb.classList.toggle('on', !sync);
       const sb = _ambGet(E, p + 'us-sync'); if (sb) sb.classList.toggle('on', sync);
     }
+    // Area fade only applies to FREE layers; disable (grey out) the fader whenever a
+    // layer is currently capturable (synced / bar-native / euclid → it hard-cuts at
+    // the boundary). Maps each fader to its layer via the enclosing card's key, so it
+    // works for primaries (header data-phkey) and extras (data-inst). Call after a
+    // render and whenever a layer's sync/gen mode changes.
+    function _ambRefreshAreaFadeUI(E) {
+      try {
+        const host = document.getElementById(E.hostId); if (!host) return;
+        host.querySelectorAll('input[id$="areafade"], input[id$="areaFadeMs"]').forEach(inp => {
+          const card = inp.closest('.ambient-layer'); if (!card) return;
+          let key = card.getAttribute('data-inst');
+          if (!key && card.getAttribute('data-seq-id') != null) key = 'seq:' + card.getAttribute('data-seq-id');
+          if (!key && card.getAttribute('data-samp-id') != null) key = 'samp:' + card.getAttribute('data-samp-id');
+          if (!key) { const ph = card.querySelector('[data-phkey]'); key = ph && ph.getAttribute('data-phkey'); }
+          if (!key) return;
+          const L = (typeof _ambLayerByKey === 'function') ? _ambLayerByKey(E, key) : null;
+          const cap = L ? _ambIsCapturable(L, key) : false;
+          inp.disabled = cap;
+          const ctrl = inp.closest('.ambient-ctrl'); if (ctrl) ctrl.classList.toggle('amb-disabled', cap);
+        });
+      } catch (e) {}
+    }
     // Wire the Unit-Sync control. `p` ends in '-'; `selfKey` excludes the layer
     // from its own reference list. Re-populates references each render so newly
     // added layers appear.
     function _ambWireUnitSync(E, p, get, selfKey) {
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
-      const refresh = () => { _ambUnitSyncModeVis(E, p, get()); try { _ambUnitSyncViz(E, p, get()); } catch (e) {} try { _ambSyncLayerUnits(E); } catch (e) {} };
+      const refresh = () => { _ambUnitSyncModeVis(E, p, get()); try { _ambUnitSyncViz(E, p, get()); } catch (e) {} try { _ambSyncLayerUnits(E); } catch (e) {} try { _ambRefreshAreaFadeUI(E); } catch (e) {} };
       const ref = _ambGet(E, p + 'us-ref'), ratio = _ambGet(E, p + 'us-ratio');
       const fb = _ambGet(E, p + 'us-free'), sb = _ambGet(E, p + 'us-sync');
       const L0 = get();
@@ -4487,12 +5473,11 @@
       E._queueAt = null;
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
     }
-    function _ambSyncMods() {
-      const cfg = _E.getCfg();
-      if (!cfg) return;
-      // Build a chain for EVERY on layer (not just mod-active) so per-layer FX
-      // (reverb send / delay / distortion) are always available.
+    // The set of layer keys that SHOULD have a mod chain for `cfg` (every on
+    // layer, so per-layer FX/sends are available). key → layer config.
+    function _ambWantSet(cfg) {
       const want = {};
+      if (!cfg) return want;
       ['bed', 'motif', 'texture', 'beat'].forEach(l => {
         if (cfg[l] && cfg[l].present !== false && cfg[l].on) want[l] = cfg[l];
       });
@@ -4505,6 +5490,12 @@
       if (Array.isArray(cfg.extras)) cfg.extras.forEach(ex => {
         if (ex && ex.present !== false && ex.on && _AMB_LAYER_SCHEMA[ex.type]) want[ex.type + ':' + ex.id] = ex;
       });
+      return want;
+    }
+    function _ambSyncMods() {
+      const cfg = _ambPlayCfg(_E);   // build chains for the PLAYING area (≠ viewed area while editing during play)
+      if (!cfg) return;
+      const want = _ambWantSet(cfg);
       // Build/update wanted chains (pass a one-key cfg-shim so the existing
       // _ambSyncTarget keeps reading cfg[layerKey].mod unchanged), then FX.
       Object.keys(want).forEach(key => { _ambBuildMod(key, { [key]: want[key] }); _ambApplyLayerFx(key, want[key]); });
@@ -4594,7 +5585,9 @@
     function _ambTick(E) {
       _E = E;
       if (!E.guard()) { _ambStopGenerator(E); return; }
-      const cfg = E.getCfg();
+      // Generate the PLAYING area (master: E._playIdx, which can differ from the
+      // viewed/edited area = getCfg()). Everything downstream reads this via E._cfg.
+      const cfg = _ambPlayCfg(E);
       // Cache the (already-normalized) cfg so the finer ramp clock can read it
       // without re-running _normalizeAmbientCfg 40×/s (that re-normalize, whose
       // cost grows with layer count, was glitching dense Bloom stacks).
@@ -4616,16 +5609,46 @@
       } catch (e) {}
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
       if (E._t0 == null) E._t0 = now;   // engine grid anchor (queued-START alignment)
+      // AREAS orchestration: once this area has played its plays×bars, advance to
+      // the next area via a SEAMLESS handoff (no dip) — the outgoing area's tails
+      // ring out while the incoming area starts (see _ambOrchAdvance).
+      // A Bar-Locked area's loop is anchored at the lead grid (_barGridAnchor), ~0.3s+
+      // after _orchStartAt — so time the advance off the loop grid, so it lands on a
+      // LOOP boundary (old loop completes, tails ring → seamless) instead of mid-loop.
+      // Time EVERY area advance off the layers' lead grid (_barGridAnchor) and fire
+      // EARLY with a generous margin (0.6 s) so that even if a tick janks, the advance
+      // still fires BEFORE the boundary — the cut + per-layer fade are then scheduled at
+      // the precise FUTURE boundary (`at`), jank-proof, so outgoing layers never bleed
+      // past it. The incoming area is anchored AT the boundary (_ambOrchAdvance sets
+      // E._barGridAnchor = at), so its synced layers also start on the boundary, not
+      // before. (A late-firing advance would fall back to at=now and the outgoing synced
+      // layers would overflow — which is exactly the regression a too-small lead caused.)
+      const _haveGrid = Number.isFinite(E._barGridAnchor);
+      const _orchRef = _haveGrid ? E._barGridAnchor : E._orchStartAt;
+      const _lead = _haveGrid ? 0.6 : 0;
+      const _boundary = _orchRef + E._orchDurSec;
+      if (E._orchActive && !E._orchSwitching && _orchRef != null && now >= _boundary - _lead) {
+        E._orchSwitching = true;
+        try { _ambOrchAdvance(E, _boundary); } catch (e) { E._orchSwitching = false; }
+        // CRITICAL: the advance swapped E._playIdx to the new area AND already generated
+        // it (its own _ambTick). `cfg` here was captured at the TOP of this tick = the
+        // OLD area, so continuing would re-emit the OLD area's layers (bass/pedal) AFTER
+        // the cancel ran — they'd start past the boundary and play into the new area.
+        // Stop this tick now; the next tick generates the new area cleanly.
+        return;
+      }
       // keyMaster: drop the key schedule when no keyMaster Seq is active (so the
       // global/cfg key takes back over), then apply any boundary that's now due.
       {
         const _km = !E.isLane && Array.isArray(cfg.seqs) && cfg.seqs.some(s => s && s.keyMaster && s.on && s.present !== false && Array.isArray(s.units) && s.units.length);
         if (!_km) { E._keySched = null; } else { _ambApplyDueKey(E, now); }
       }
-      // Progression clock: a shared per-engine step that advances every
-      // progRateMs, so all "Progression" note-source layers move through their
-      // chords together (a single harmonic pulse).
-      { const pr = Math.max(250, (cfg.progRateMs | 0) || 4000); E.progStep = Math.floor((now * 1000) / pr); }
+      // Progression clock: the shared bar-aligned chord step at the current time.
+      // Generation resolves the chord PER-ONSET via _ambProgStepAt (set as the
+      // override before each pitch pick), so this E.progStep is now only the
+      // fallback for UI label calls that don't set the override — keep it bar-aligned
+      // too so labels match the audio. (Replaces the legacy ms progRateMs clock.)
+      E.progStep = _ambProgStepAt(E, now);
       // (Ramps run on their own finer clock — see _ambStartGenerator.)
       // Schedule lead-time: how far ahead of "now" the first events land. A
       // larger lead gives freshly-created voice nodes time to connect + the
@@ -4633,7 +5656,16 @@
       // lane/Seq layers) don't pop / cut in and out. Bloom is generative (not
       // touch-triggered), so the extra ~0.2 s latency is inaudible. Horizon
       // grows with it to keep a comfortable buffer across ticks.
-      const horizon = now + 1.4, lead = now + 0.3;
+      // `lead` = where this tick anchors first onsets. Normally now+0.3, but at an area
+      // advance E._emitFloor is set to the boundary so the INCOMING area's first onsets
+      // land ON the boundary, not 0.3 s before it (the advance fires ~0.6 s early for
+      // jank margin on the outgoing cut, which would otherwise start the new area early
+      // = synced layers sounding in the outgoing area = "overflow"). Only binds while
+      // E._emitFloor is in the future; cleared right after the advance's tick.
+      const horizon = now + 1.4, lead = Math.max(now + 0.3, (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
+      // Bar Lock: pin the loop grid to the layers' first-onset lead, once per play,
+      // so every (re)lock snaps to the same phase (stays in sync with live layers).
+      if (E === _masterEng && E._barGridAnchor == null) E._barGridAnchor = lead;
       const space = cfg.space | 0;
       const C = E.clocks, I = E.iters;
       // Solo: if ANY on layer is soloed, only soloed layers sound.
@@ -4957,6 +5989,8 @@
       }
       // Queue mode: a layer toggle landed on its boundary this tick → persist.
       if (_qChanged && typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      // Bar Lock (Areas): arm the capturable layers once, now they've anchored.
+      try { _ambBarLockSync(E, now); } catch (e) {}
       _ambKeyTime = null;   // clear the per-note key-time stamp after the tick
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
@@ -5210,7 +6244,7 @@
     function _ambFreezeArm(E, key) {
       const st = _ambFreezeState(E, key);
       st.recording = true; st.frozen = false; st.events = []; st.pendingThawAt = null;
-      st.pendingFreezeAt = null; st._lock = false; st._lockWin = null;  // drop any armed lock
+      st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; st._barLock = false;  // fresh USER freeze (not Bar-Lock)
       st.recStart = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
     }
     // Nearest captured note onset to a target time (within a sane range), so the
@@ -5317,12 +6351,89 @@
       if (!win.length) { st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; return false; }
       st.events = win.map(e => ({ t: Math.max(0, e.at - w.bStart), freq: e.freq, dur: e.dur, params: e.params }));
       st.loopLen = w.loopLen;
-      let A = w.bEnd; while (A < now + 0.001) A += st.loopLen;   // first loop boundary ≥ now
+      // Bar-Lock: anchor the loop at the captured window's END and cancel the layer's
+      // pre-scheduled (lookahead) generated voices past it, so the verbatim loop takes
+      // over with NO gap and NO doubled generated+looped notes at the handoff. (User
+      // Freeze keeps the original behavior: step the anchor to the first boundary ≥ now.)
+      let A;
+      if (st._barLock) {
+        A = w.bEnd;
+        try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, A); } catch (e) {}
+      } else {
+        A = w.bEnd; while (A < now + 0.001) A += st.loopLen;   // first loop boundary ≥ now
+      }
       st.anchor = A; st.scheduledUpto = A;
       st.frozen = true; st.pendingFreezeAt = null; st._lockWin = null;
       try { _ambFreezeSyncAll(E); _ambLockSyncAll(E); } catch (e) {}
-      _ambPersistLock(E, key);                          // save the now-engaged lock
+      if (!st._barLock) _ambPersistLock(E, key);        // Bar-Lock loops are EPHEMERAL — never persisted
       return true;
+    }
+    // ---- Bar Lock (Areas) -------------------------------------------------
+    // Capture an area's bar-rational layers over their combined LCM loop and repeat
+    // it verbatim (free layers keep improvising live). Reuses the proven deferred-
+    // lock → freeze gate → replay path; the only new behavior is arming each
+    // capturable layer with the LCM window. Loops are ephemeral (`_barLock`): never
+    // persisted, hard-cleared on stop.
+    function _ambBarLockArm(E, key, startAt, loopSec) {
+      const fs = _ambFreezeState(E, key);
+      const endAt = startAt + loopSec;
+      fs._lockWin = { bStart: startAt, bEnd: endAt, loopLen: Math.max(0.05, loopSec) };
+      fs.pendingFreezeAt = endAt; fs._lock = true; fs.frozen = false; fs.recording = false; fs.pendingThawAt = null;
+      fs._barLock = true;
+    }
+    // Arm the capturable layers ONCE per Bar-Locked area play (master only). Anchors
+    // the loop to the FIXED bar grid (E._barGridAnchor = the layers' first-onset lead,
+    // set on the first tick) so every (re)lock snaps to the same phase and stays in
+    // sync with the live layers — bStart = the first LCM boundary ≥ now on that grid.
+    // The window plays generatively (captured), then loops verbatim — seamless handoff.
+    // >~31 s exceeds the rolling capture buffer → stay live.
+    function _ambBarLockSync(E, now) {
+      if (E !== _masterEng || E._barLockArmed) return;
+      const cfg = E._cfg; if (!cfg || !cfg.barLock) return;
+      E._barLockArmed = true;   // attempt once
+      const loopBars = _ambAreaLoopBars(E, cfg);
+      if (!(loopBars > 0)) return;   // nothing capturable → everything stays live
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const loopSec = loopBars * barSec;
+      if (loopSec > 31) {
+        if (typeof showToast === 'function') showToast('Bar Lock: ' + loopBars + '-bar loop exceeds the ~31 s capture limit — playing live.');
+        return;
+      }
+      E._barLockLoopBars = loopBars;   // cached for the loop-position indicator (no per-frame LCM recompute)
+      const tNow = (typeof now === 'number') ? now : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : (tNow + 0.3);
+      const bStart = anchor + Math.max(0, Math.ceil((tNow - anchor) / loopSec)) * loopSec;   // first loop boundary ≥ now, on the grid
+      const arm = (L, key) => { if (_ambIsCapturable(L, key)) _ambBarLockArm(E, key, bStart, loopSec); };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => arm(cfg[k], k));
+      (cfg.extras || []).forEach(L => arm(L, (L && L.type) + ':' + (L && (L.id | 0))));
+      (cfg.seqs || []).forEach(L => arm(L, 'seq:' + (L && (L.id | 0))));
+      (cfg.samples || []).forEach(L => arm(L, 'samp:' + (L && (L.id | 0))));
+    }
+    // Hard-clear all ephemeral Bar-Lock loops (on stop / toggle-off / area change),
+    // without touching user Freeze loops or persisting anything.
+    function _ambBarLockClear(E, resume) {
+      if (!E) return;
+      E._barLockArmed = false;
+      E._barLockLoopBars = 0;
+      if (!E.freeze) return;
+      Object.keys(E.freeze).forEach(key => {
+        const fs = E.freeze[key];
+        if (!fs || !fs._barLock) return;
+        if (resume && fs.frozen) {
+          // Unlock WHILE PLAYING: graceful thaw — the loop keeps playing to its next
+          // boundary, then live generation resumes on-grid (no cut, no overlap). KEEP
+          // `_barLock` set so a STOP mid-thaw still recognizes + clears this loop (else
+          // it lingers and replays on the next play).
+          try { _ambFreezeThaw(E, key); } catch (e) {}
+        } else {
+          // STOP (or armed-but-not-yet-looping): hard-clear; any scheduled loop voices
+          // ring out as the tail.
+          fs.frozen = false; fs.recording = false; fs._lock = false; fs._lockWin = null;
+          fs.pendingFreezeAt = null; fs.pendingThawAt = null; fs.events = []; fs.scheduledUpto = 0; fs._barLock = false;
+        }
+      });
+      try { _ambFreezeSyncAll(E); } catch (e) {}
     }
     // Schedule the frozen layer's looped events that fall in [now, horizon].
     function _ambReplayFrozen(E, key, now, horizon) {
@@ -5376,6 +6487,19 @@
       }
       _ambFreezeSyncAll(E);
     }
+    // Resume a windowed/phase layer's generation AT the thaw boundary `tA` (not now),
+    // so it doesn't regenerate over the loop tail the gate just flushed (→ doubled =
+    // loud). Bass/Run/Pedal/Drone use their own phase clock, not E.clocks, so the
+    // gate's E.clocks re-grid misses them; startAt is kept so they resume in phase.
+    function _ambResumePhaseAt(E, key, tA) {
+      if (!E || !(tA > 0)) return;
+      const type = String(key).split(':')[0];
+      let st = null;
+      if (type === 'bass') st = E.bassPhase && E.bassPhase[key];
+      else if (type === 'run' || type === 'pedal' || type === 'drone' || type === 'beat') st = E.runPhase && E.runPhase[key];
+      else if (type === 'arp') st = E.arpState && E.arpState[key];
+      if (st && st.startAt != null) st.lastAt = tA;
+    }
     // Per-tick freeze gate. Returns true if the caller should SKIP generation
     // (the loop is playing); false if it should generate. Handles the deferred
     // thaw: when the iteration boundary enters the horizon, it flushes the loop
@@ -5395,7 +6519,8 @@
         _ambReplayFrozen(E, key, now, tA);          // flush remaining loop events up to the boundary
         st.frozen = false; st.scheduledUpto = 0; st.pendingThawAt = null; st.events = []; st._lock = false;
         try { _ambFreezeSyncAll(E); } catch (e) {}
-        if (E.clocks && tA > now) E.clocks[key] = tA; // generation resumes exactly on the grid
+        if (E.clocks && tA > now) E.clocks[key] = tA; // stepLayer layers (bed/motif) resume on-grid
+        _ambResumePhaseAt(E, key, tA);                // windowed/phase layers (bass/run/pedal/drone) resume at tA too — else they regenerate over the flushed loop tail (doubled = loud)
         return false;
       }
       _ambReplayFrozen(E, key, now, (tA != null) ? Math.min(horizon, tA) : horizon);
@@ -5503,9 +6628,12 @@
       if (E.timer) return;
       _ambResetClocks(E);
       try { _ambRestoreLocks(E); } catch (e) {}   // reopen locked: rebuild lock state from saved config
+      try { _ambBarLockClear(E); } catch (e) {}   // defensive: drop any lingering ephemeral Bar-Lock loop before play
+      E._barGridAnchor = null;                     // fresh loop grid this play
       _ambSeed(cfg.seed);
       try { _ambApplyRamps(cfg, 0); } catch (e) {} // reset ramped params to A so the FIRST events use A
       try { _ambSyncMods(); } catch (e) {} // build mod chains before the first voices fire
+      try { _ambOrchMaybeStart(E); } catch (e) {}  // AREAS: begin sequencing if mode='sequence' (>1 area)
       // Master Fade In: ramp the whole mix up from silence over fadeInMs. When
       // off (0), snap the master fade back to full so a prior capture fade-out
       // can never leave this play silent.
@@ -5515,6 +6643,8 @@
         else if (typeof masterFadeReset === 'function') masterFadeReset();
       } catch (e) {}
       E._playStartMs = performance.now();   // footer elapsed-time anchor
+      E._playStartAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;   // bar-counter anchor (Tone clock)
+      try { _ambSnapshotTempWhen(cfg); } catch (e) {}   // baseline for "Temp" When edits
       // Start the interval (and play state / button) IMMEDIATELY so playback is
       // responsive and the Play button flips to Stop at once. The interval keeps
       // ticking regardless of the AudioContext state; _ambTick itself skips
@@ -5546,6 +6676,13 @@
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
+      // AREAS: end any sequencing and restore the bloom output gain (a stop mid
+      // area-switch dip must not leave it at 0). Clear the now-playing highlight.
+      E._orchActive = false; E._orchSwitching = false; E._playIdx = null;
+      try { _ambBarLockClear(E); } catch (e) {}   // drop ephemeral Bar-Lock loops (never persisted)
+      E._barGridAnchor = null;                     // fresh loop grid next play
+      try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain && _bloomMasterGain.gain) { const _n = (Tone && Tone.now) ? Tone.now() : 0; _bloomMasterGain.gain.cancelScheduledValues(_n); _bloomMasterGain.gain.setValueAtTime(_BLOOM_MASTER_TRIM, _n); } } catch (e) {}
+      try { _ambOrchUpdateNowPlaying(E); } catch (e) {}
       // Restore the master fade to full on a normal stop (so a stop mid fade-in
       // can't leave it partial). Skip while capturing — the capture's fade-out is
       // in progress and _ambCaptureFinish resets it once the take is done.
@@ -5553,6 +6690,7 @@
       E._playStartMs = null;   // reset footer elapsed time to 00:00:00
       E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
+      try { _ambRestoreTempWhen(E); } catch (e) {}   // drop lingering "Temp" When edits back to baseline
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
       const cfg = E.getCfg();
@@ -5675,12 +6813,39 @@
       return u ? [{ unit: u, name: null }] : [];
     }
 
-    function _ambSendSavedToMaster(seqIndex, mode, targetSeqId) {
+    // Areas for the "Send to Bloom" picker, and a target area's existing Seq
+    // layers (for Append). areaIdx null → the active area.
+    function _ambSendAreaList() {
+      try { const s = _masterBloomState(); return s.areas.map((a, i) => ({ idx: i, name: _ambAreaLabel(a, i) })); } catch (e) { return []; }
+    }
+    function _ambListAreaSeqs(areaIdx) {
+      try {
+        const s = _masterBloomState();
+        const cfg = (areaIdx == null) ? masterAmbient : s.areas[areaIdx | 0];
+        return ((cfg && cfg.seqs) || []).map((sq, i) => ({ id: sq.id, name: (sq.name && sq.name.trim()) ? sq.name.trim() : ('Seq' + (i + 1)) }));
+      } catch (e) { return []; }
+    }
+    // Make the chosen area the ACTIVE one before sending, so the existing send
+    // path (which targets masterAmbient = active area) lands in it. areaIdx:
+    // a number = that area; 'new' = create a fresh area; null/undefined = leave
+    // the active area as-is (legacy single-area behaviour). Returns true if it
+    // switched (→ caller rebuilds the panel to show the result).
+    function _ambSendTargetArea(areaIdx) {
+      if (areaIdx == null) return false;
+      const idx = (areaIdx === 'new') ? _ambAddArea() : (areaIdx | 0);
+      const s = _masterBloomState();
+      if (idx < 0 || idx >= s.areas.length) return false;
+      _ambSetActiveArea(idx);
+      try { _ambApplyAreaGlobals(masterAmbient); } catch (e) {}
+      return true;
+    }
+    function _ambSendSavedToMaster(seqIndex, mode, targetSeqId, areaIdx) {
       const saved = (typeof savedSequences !== 'undefined') ? savedSequences[seqIndex] : null;
       if (!saved) return;
       const laneUnits = _ambLaneUnitsFromSaved(saved);
       if (!laneUnits.length) { try { alert('That sequence has no playable notes to send to Bloom.'); } catch (e) {} return; }
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Bloom');
+      const switched = _ambSendTargetArea(areaIdx);   // route to the chosen area (active area by default)
       // Multi-lane: each lane becomes its own Seq layer. With 'new' that's a
       // fresh Seq per lane; with append/interleave each lane's unit folds into
       // the chosen target (only the first resolves the target — the rest chain
@@ -5688,8 +6853,11 @@
       laneUnits.forEach((lu) => {
         _ambSendSeedToInstance(_masterEng, lu.unit, mode, targetSeqId, lu.name);
       });
-      // Reflect immediately if the Mix Bloom panel is built.
-      try { if (_masterEng.inited) _ambRenderSeqLayers(_masterEng); } catch (e) {}
+      // Reflect: a new active area needs a full panel rebuild; otherwise just
+      // re-render the Seq list.
+      if (switched) { try { _ambRebuildMaster(); } catch (e) {} }
+      else { try { if (_masterEng.inited) _ambRenderSeqLayers(_masterEng); } catch (e) {} }
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
     // Build a unit from a LANE's own steps (+ workspace key/tempo).
     function _ambUnitFromLane(laneIdx) {
@@ -5773,10 +6941,13 @@
       const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
       return lane ? _ambSampleIdFromSteps(lane.steps) : null;
     }
-    function _ambSendSampleToMaster(sampleId, opts) {
+    function _ambSendSampleToMaster(sampleId, opts, areaIdx) {
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Bloom (sample)');
+      const switched = _ambSendTargetArea(areaIdx);   // route to the chosen area (active area by default)
       _ambSendSampleToInstance(_masterEng, sampleId, opts);
-      try { if (_masterEng.inited) _ambRenderSampleLayers(_masterEng); } catch (e) {}
+      if (switched) { try { _ambRebuildMaster(); } catch (e) {} }
+      else { try { if (_masterEng.inited) _ambRenderSampleLayers(_masterEng); } catch (e) {} }
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
     function _ambSendSampleToLane(laneIdx, sampleId, opts) {
       const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
@@ -5959,7 +7130,11 @@
         } catch (e) { recNode = null; }
         if (recNode) {
           const r = { mode: 'worklet', recNode, sink, analyser, tap, sr: ac.sampleRate || 48000, L: [], R: [], frames: 0, silentMs: 0, pollTimer: null, finalizing: false };
-          recNode.port.onmessage = (ev) => { const d = ev.data; if (!d || !d.l) return; r.L.push(d.l); r.R.push(d.r); r.frames += d.l.length; };
+          // Guard `r.L`: after Finalize, _ambCaptureFinish posts {stop:true}, builds
+          // the buffer and nulls r.L/r.R, then awaits the Save dialog. The worklet's
+          // final flush message can land AFTER that (during the dialog) — without the
+          // null check it'd `push` on null and throw (the "Save does nothing" bug).
+          recNode.port.onmessage = (ev) => { const d = ev.data; if (!d || !d.l || !r.L) return; r.L.push(d.l); r.R.push(d.r); r.frames += d.l.length; };
           try { Tone.connect(tap, recNode); Tone.connect(recNode, sink); sink.connect(ac.destination); }
           catch (e) { try { if (analyser) tap.disconnect(analyser); } catch (_) {} alert('Capture failed.'); return; }
           E.capRec = r;
@@ -6075,6 +7250,7 @@
         try { Tone.disconnect(r.tap, r.recNode); } catch (e) {}
         try { r.recNode.disconnect(); } catch (e) {}
         try { r.sink.disconnect(); } catch (e) {}
+        try { if (r.recNode && r.recNode.port) r.recNode.port.onmessage = null; } catch (e) {}  // stop late flush callbacks (already drained into r.L)
       } else if (r && r.mode === 'mr') {
         try { r.tap.disconnect(r.dest); } catch (e) {}
       }
@@ -6390,10 +7566,73 @@
       const p2 = (n) => (n < 10 ? '0' : '') + n;
       return p2(Math.floor(ms / 60000)) + ':' + p2(Math.floor((ms % 60000) / 1000)) + ':' + p2(Math.floor((ms % 1000) / 10));
     }
+    // Live "which bar are we on" readout for the master Bloom — helps the user
+    // pick Plays × Bars. In Sequence it shows bar/play within the current area;
+    // in Single it's a running bar count from play start.
+    // Re-trigger a one-shot flash animation on `el` (remove all flash classes,
+    // force reflow, add the chosen one).
+    function _ambFlashEl(el, cls) {
+      try { el.classList.remove('amb-bar-flash-a', 'amb-bar-flash-b', 'amb-area-flash'); void el.offsetWidth; el.classList.add(cls); } catch (e) {}
+    }
+    function _ambUpdateBarIndicator(E) {
+      if (E !== _masterEng) return;
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const el = host.querySelector('.ambient-orch-bar'); if (!el) return;
+      if (!E.timer) { if (el.textContent) el.textContent = ''; E._biInit = false; return; }
+      // AUDIBLE clock (currentTime − latency, +1 frame), same as the layer status
+      // bars — so the counter tracks what you HEAR, not the schedule clock (Tone.now,
+      // which runs ~a lookahead ahead and made the counter lead the layer bars).
+      const tnow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
+        : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
+      const bpm = (typeof _ambBpm === 'function') ? _ambBpm() : 120;
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const seq = !!E._orchActive;
+      const playArea = Number.isFinite(E._playIdx) ? E._playIdx : 0;
+      // Bar-Locked area: count from the LOOP grid (E._barGridAnchor) and show the
+      // position within the captured loop (e.g. "🔒 Bar 1/2"); else from the area/play
+      // start. loopBars is cached at arm time (no per-frame LCM recompute).
+      const loopBars = E._barLockLoopBars | 0;
+      // Anchor to the LAYERS' grid (E._barGridAnchor = their first-onset lead), so the
+      // counter shares the same anchor as the layer status bars and lines up with them
+      // (using _playStartAt instead leads by the whole cold-start gap + lead). Falls
+      // back to the orch/play start before the first tick sets the grid.
+      const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor
+        : (seq && Number.isFinite(E._orchStartAt)) ? E._orchStartAt
+        : (Number.isFinite(E._playStartAt) ? E._playStartAt : tnow);
+      const barsElapsed = Math.max(0, Math.floor(Math.max(0, tnow - anchor) / barSec));
+      let txt;
+      if (loopBars > 0) {
+        const loopPos = (barsElapsed % loopBars) + 1;
+        if (seq) {
+          const a = (_masterBloomState().areas[playArea]) || {};
+          const plays = Math.max(1, (E._curPlays | 0) || (a.plays | 0) || 1);
+          const playN = Math.min(plays - 1, Math.floor(barsElapsed / loopBars));
+          txt = 'Plot ' + (E._plotCount | 0 || 1) + ' · 🔒 Bar ' + loopPos + '/' + loopBars + ' · Play ' + (playN + 1) + '/' + plays;
+        } else {
+          txt = '🔒 Bar ' + loopPos + '/' + loopBars;
+        }
+      } else if (seq) {
+        const s = _masterBloomState(); const a = s.areas[playArea] || {};
+        const bars = Math.max(1, a.bars | 0), plays = Math.max(1, (E._curPlays | 0) || (a.plays | 0) || 1);
+        const playN = Math.min(plays - 1, Math.floor(barsElapsed / bars));
+        txt = 'Plot ' + (E._plotCount | 0 || 1) + ' · Bar ' + ((barsElapsed % bars) + 1) + '/' + bars + ' · Play ' + (playN + 1) + '/' + plays;
+      } else {
+        txt = 'Bar ' + (barsElapsed + 1);
+      }
+      if (el.textContent !== txt) el.textContent = txt;
+      // Flash: every bar pulses (alternating colours so consecutive bars read as
+      // distinct); an area boundary (the playing area changed) pulses brighter.
+      if (E._biInit) {
+        if (seq && playArea !== E._biArea) _ambFlashEl(el, 'amb-area-flash');
+        else if (barsElapsed !== E._biBar) _ambFlashEl(el, (barsElapsed % 2) ? 'amb-bar-flash-b' : 'amb-bar-flash-a');
+      }
+      E._biBar = barsElapsed; E._biArea = playArea; E._biInit = true;
+    }
     function _ambUpdatePlayheads(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       // Footer elapsed-time readout: counts up while playing, 0 when stopped.
       { const elap = _ambGet(E, 'ambient-elapsed'); if (elap) elap.textContent = _ambFmtElapsed((E.timer && E._playStartMs) ? (performance.now() - E._playStartMs) : 0); }
+      try { _ambUpdateBarIndicator(E); } catch (e) {}
       const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
       // Drive the bars off the AUDIBLE clock (currentTime − latency), not the
       // schedule clock (Tone.now() = currentTime + lookAhead), so they track what
@@ -6412,7 +7651,17 @@
         if (fs && fs.frozen && fs.loopLen > 0) {
           frozen = true; active = true;
           const d = now - (fs.anchor || now);
-          prog = d <= 0 ? 0 : (d % fs.loopLen) / fs.loopLen;
+          if (fs._barLock) {
+            // Bar-Lock loop: fill per the LAYER's own unit (per chord), consistent
+            // with its generative phase — the area counter shows the whole loop.
+            const layer = _ambLayerByKey(E, key);
+            const P = layer ? _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg()) : 0;
+            const unitP = (P > 0.05) ? P : fs.loopLen;
+            prog = d <= 0 ? 0 : (((d % unitP) / unitP) + 1) % 1;
+            if (d > 0) cyc = Math.floor(d / unitP);   // keep the When cursor moving per unit
+          } else {
+            prog = d <= 0 ? 0 : (d % fs.loopLen) / fs.loopLen;   // user Freeze: the captured loop length
+          }
         } else if (E.timer) {
           const layer = _ambLayerByKey(E, key);
           const on = !!(layer && layer.present !== false && layer.on);
@@ -6469,14 +7718,17 @@
             }
           } else if (on) {
             const next = E.clocks && E.clocks[key];
-            if (typeof next === 'number' && next > now) {
+            const idx = E.iters && E.iters[key];
+            if (typeof next === 'number' && Number.isFinite(idx) && next > now) {
               // Divide by the SAME interval the engine advances by (snapped in
               // sync mode, and Unit-Sync time-scaled) so the bar tracks the notes.
               const cfg2 = E._cfg || E.getCfg();
               const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, cfg2) * _ambLayerScale(E, key, layer, cfg2) || 1);
-              const x = (next - now) / iv;
-              prog = Math.max(0, Math.min(1, Math.ceil(x) - x));
-              active = true;
+              // Continuous iteration index at `now`; <0 = before the first onset, so
+              // stay EMPTY instead of rendering ~full ("near the end of a phantom
+              // previous cycle") right after Play. (Same guard as the texture branch.)
+              const pos = idx - (next - now) / iv;
+              if (pos >= 0) { prog = ((pos % 1) + 1) % 1; active = true; }
             }
           }
         }
@@ -6508,6 +7760,7 @@
         else if (active && !wasActive) el._whenCycle = -1;   // lead-anchored layers (seq/texture/interval): bump to 0 on the first onset wrap
         else if (wrapped) el._whenCycle = (el._whenCycle | 0) + 1;
         _ambPaintWhenCursor(el, active, el._whenCycle | 0);
+        try { _ambWhenTempStep(E, key, el, active, el._whenCycle | 0); } catch (e) {}   // revert temp block edits after they play
       });
       try { _ambUpdatePianos(E, now); } catch (e) {}   // light any expanded piano keyboards
       try { _ambUpdateEqMeters(E); } catch (e) {}       // light any open EQ band meters
@@ -6653,7 +7906,8 @@
         // with a fixed-width pitch-name gutter on the LEFT — names line up with
         // their event blocks; drawn each frame by _ambDrawRolls); else empty.
         if (lockEd) {
-          if (el._mode !== 'chips' || el._npHtml !== html) { el._npHtml = html; el.innerHTML = html; el._mode = 'chips'; }
+          // Locked → editable piano-roll (click a block to edit, empty to add).
+          if (el._mode !== 'lockroll') { el.innerHTML = '<canvas class="ambient-np-roll ambient-np-lockroll"></canvas>'; el._mode = 'lockroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
         } else if (layerOn) {
           if (el._mode !== 'roll') { el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
         } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
@@ -6664,8 +7918,12 @@
       // If the open note editor's target note no longer exists (unlocked, deleted,
       // panel rebuilt), dismiss the popover.
       if (_ambNoteEd && _ambNoteEd.E === E) {
-        const still = host.querySelector('.ambient-np-note[data-ekey="' + _ambNoteEd.key + '"][data-ei="' + _ambNoteEd.index + '"]');
-        if (!still) _ambCloseNoteEditor();
+        // Chips mode: dismiss if the target chip is gone. Roll mode (no chips):
+        // dismiss only if the locked note index is no longer valid.
+        const chip = host.querySelector('.ambient-np-note[data-ekey="' + _ambNoteEd.key + '"][data-ei="' + _ambNoteEd.index + '"]');
+        const lr = _ambLockedNotes(E, _ambNoteEd.key);
+        const valid = chip || (lr && Array.isArray(lr.list) && _ambNoteEd.index >= 0 && _ambNoteEd.index < lr.list.length);
+        if (!valid) _ambCloseNoteEditor();
       }
     }
     // ===== Live piano-roll (per-layer line) ============================
@@ -6732,10 +7990,110 @@
     function _ambDrawRolls(E, now) {
       const host = document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-notes-live').forEach(el => {
-        if (el._mode !== 'roll') return;
         const cv = el.querySelector('canvas.ambient-np-roll'); const key = el.dataset.nkey;
-        if (cv && key) { try { _ambDrawRoll(cv, E, key, now); } catch (e) {} }
+        if (!cv || !key) return;
+        if (el._mode === 'roll') { try { _ambDrawRoll(cv, E, key, now); } catch (e) {} }
+        else if (el._mode === 'lockroll') { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
       });
+    }
+    // ===== Editable frozen-loop piano roll (locked layers) =============
+    // A LOCKED layer's frozen loop, drawn STATIC over its loop period (time → ,
+    // pitch ↑), with a moving playhead. Click a note block → the note editor
+    // popover (pitch/timing/velocity/delete); click empty → add a note there.
+    // Source notes come through _ambLockMeta so it works for every layer's store.
+    function _ambDrawLockedRoll(cv, E, key, now) {
+      const w = cv.clientWidth | 0, h = cv.clientHeight | 0;
+      if (!w || !h) return;
+      if (cv.width !== w) cv.width = w; if (cv.height !== h) cv.height = h;
+      const ctx = cv.getContext('2d'); if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return;
+      const P = meta.P > 0.05 ? meta.P : 1;
+      const list = meta.list, oK = meta.offKey, dK = meta.durKey;
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const isBeat = String(key).split(':')[0] === 'beat';
+      // Sticky pitch range (expand-only) so blocks hold their vertical position.
+      let lo = cv._rlo, hi = cv._rhi;
+      for (const n of list) { if (!(n && n.freq > 0)) continue; const m = Math.round(69 + 12 * Math.log2(n.freq / A)); if (lo == null || m < lo) lo = m; if (hi == null || m > hi) hi = m; }
+      if (lo == null || hi == null) { lo = isBeat ? 36 : 54; hi = isBeat ? 48 : 78; }
+      cv._rlo = lo; cv._rhi = hi;
+      const span = Math.max(1, hi - lo) + 1;
+      const LBL = 40; cv._LBL = LBL; cv._P = P;
+      const xOf = (t) => LBL + (t / P) * (w - LBL);
+      const yOf = (m) => h - ((Math.max(lo, Math.min(hi, m)) - lo + 0.5) / span) * h;
+      const nh = Math.max(6, Math.min(18, h / span));
+      ctx.textBaseline = 'middle'; ctx.font = '9px "JetBrains Mono", "SF Mono", Consolas, monospace';
+      // Left pitch-name gutter.
+      ctx.fillStyle = 'rgba(12,12,20,0.96)'; ctx.fillRect(0, 0, LBL, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.beginPath(); ctx.moveTo(LBL + 0.5, 0); ctx.lineTo(LBL + 0.5, h); ctx.stroke();
+      { const seen = {}, drawn = [];
+        for (const n of list) { if (!(n && n.freq > 0)) continue; const m = Math.round(69 + 12 * Math.log2(n.freq / A)); if (seen[m]) continue; seen[m] = 1; const y = yOf(m); if (drawn.some(dy => Math.abs(dy - y) < 9)) continue; drawn.push(y); const label = isBeat ? _ambDrumNameFreq(n.freq) : _ambFreqNoteName(n.freq); if (label) { ctx.fillStyle = '#9a9ac0'; ctx.fillText(label.slice(0, 6), 2, y); } }
+      }
+      // Playhead at the current loop phase (when the loop's anchor is known).
+      let anchor = null; try { const fs = E.freeze && E.freeze[key]; if (fs && Number.isFinite(fs.anchor) && fs.anchor > 0) anchor = fs.anchor; } catch (e) {}
+      if (anchor != null && P > 0) { const ph = (((now - anchor) % P) + P) % P; const px = xOf(ph); ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke(); }
+      // Note blocks (the one being edited is highlighted gold).
+      const edIdx = (_ambNoteEd && _ambNoteEd.E === E && _ambNoteEd.key === key) ? _ambNoteEd.index : -1;
+      for (let i = 0; i < list.length; i++) {
+        const n = list[i]; if (!(n && n.freq > 0)) continue;
+        const m = Math.round(69 + 12 * Math.log2(n.freq / A));
+        const off = n[oK] || 0, dur = Math.max(0.04, (n[dK] || 100) / 1000);
+        const x = Math.max(LBL, xOf(off)), x2 = xOf(off + dur);
+        const y = yOf(m), bw = Math.max(3, x2 - x);
+        const vol = (n.params && Number.isFinite(n.params.volume)) ? Math.max(0, Math.min(1, n.params.volume / 100)) : 0.8;
+        ctx.fillStyle = (i === edIdx) ? 'rgba(255,209,102,0.95)' : 'rgba(127,214,196,' + (0.35 + 0.55 * vol).toFixed(2) + ')';
+        ctx.fillRect(x, y - nh / 2, bw, nh);
+      }
+    }
+    function _ambWireLockedRoll(cv, E, key) {
+      if (cv._lockWired) return; cv._lockWired = true;
+      cv.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return;
+        const rect = cv.getBoundingClientRect();
+        const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+        const w = cv.clientWidth, h = cv.clientHeight;
+        const LBL = cv._LBL || 40, P = (cv._P > 0) ? cv._P : (meta.P || 1);
+        const lo = cv._rlo, hi = cv._rhi;
+        if (x < LBL || !(P > 0) || lo == null || hi == null) return;
+        const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+        const span = Math.max(1, hi - lo) + 1;
+        const yOf = (m) => h - ((Math.max(lo, Math.min(hi, m)) - lo + 0.5) / span) * h;
+        const tClick = (x - LBL) / Math.max(1, w - LBL) * P;
+        // Hit-test: the note block under the click (within its [off,off+dur] and row).
+        let hitIdx = -1, hitDy = 1e9;
+        for (let i = 0; i < meta.list.length; i++) {
+          const n = meta.list[i]; if (!(n && n.freq > 0)) continue;
+          const off = n[meta.offKey] || 0, dur = Math.max(0.04, (n[meta.durKey] || 100) / 1000);
+          if (tClick < off - 0.03 || tClick > off + dur + 0.03) continue;
+          const m = Math.round(69 + 12 * Math.log2(n.freq / A));
+          const dy = Math.abs(yOf(m) - y);
+          if (dy < hitDy) { hitDy = dy; hitIdx = i; }
+        }
+        if (hitIdx >= 0 && hitDy < 16) { _ambOpenNoteEditor(E, key, hitIdx, cv); return; }
+        // Empty space → add a note at the clicked time + pitch, then edit it.
+        const midi = Math.round(lo + (h - y) / h * span);
+        const freq = A * Math.pow(2, (midi - 69) / 12);
+        const idx = _ambAddNoteAt(E, key, tClick, freq);
+        if (idx != null && idx >= 0) _ambOpenNoteEditor(E, key, idx, cv);
+      });
+    }
+    // Add a note to a locked layer's loop AT a given time + pitch (vs _ambAddNote
+    // which appends after the last). Applies on the next iteration + persists.
+    function _ambAddNoteAt(E, key, offSec, freq) {
+      const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return null;
+      const notes = meta.list, oK = meta.offKey, dK = meta.durKey;
+      const ref = notes[notes.length - 1];
+      let off = Math.max(0, offSec || 0);
+      if (meta.P > 0.1) off = Math.min(off, Math.max(0, meta.P - 0.02));
+      const nn = { freq: (freq && freq > 0) ? freq : (ref ? ref.freq : 261.63), params: Object.assign({}, ref && ref.params) };
+      nn[oK] = off; nn[dK] = ref ? ref[dK] : 200;
+      notes.push(nn);
+      notes.sort((a, b) => (a[oK] || 0) - (b[oK] || 0));
+      _ambReemitLockedNext(E, key);
+      _ambPersistLock(E, key);
+      try { _ambUpdateNotesLive(E); } catch (e) {}
+      return notes.indexOf(nn);
     }
     // ===== Note-for-note unit editor (Phase 5 Part 2a) =================
     // Tap a note chip in a LOCKED Bed/Motif unit to open this popover and nudge
@@ -7403,6 +8761,9 @@
             // Reminder: how long ONE block (one When step) lasts — one step gates
             // one whole unit. Filled live by _ambSyncLayerUnits from the layer period.
             '<span class="ambient-when-blocklen" aria-label="Length of one block" title="How long one block lasts — each When step gates one whole unit"></span>' +
+            // Temp: while playing, on/off edits to blocks are TEMPORARY — after a
+            // block plays through it reverts to its pre-play state (live punch-ins).
+            '<button type="button" class="ambient-when-temp" aria-pressed="false" title="Temp — while playing, on/off edits to blocks are temporary: after a block plays through it reverts to its state from before play started">temp</button>' +
           '</div>' +
           '<div class="ambient-when-grid" id="' + stem + 'when" role="group" aria-label="When step pattern">' + _ambWhenCellsHtml(16) + '</div>' +
           '<div class="ambient-when-len" aria-label="Pattern length">' +
@@ -7759,6 +9120,7 @@
           _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') + gpe() +
         grp('Mix') +
           _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+          _ambTm('Area fade', p + 'areafade', 0, 4000, 50, s.areaFadeMs) +
           _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
           _ambSpreadCtrl('ambient-seq-' + id, s) +
           _ambModUi('seq-' + id) +
@@ -7860,7 +9222,7 @@
       if (ivInput) ivInput.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; if (sq.intervalMode !== 'manual') { sq.intervalMode = 'manual'; _ambSeqIntervalModeVis(E, id); } });
       bindInt('drift', 'drift'); _ambBindWhen(E, p, getSq, persist);
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));
-      bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent');
+      bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent'); bindMs('areafade', 'areaFadeMs');
       _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist, null);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t][k] = parseInt(e.value, 10) || 0; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); });
@@ -8050,6 +9412,7 @@
           _ambWhenCtrl(p) + gpe() +
         grp('Mix') +
           _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
+          _ambTm('Fade out', p + 'boundaryfade', 0, 8000, 50, s.boundaryFadeMs) +
           _ambSpreadCtrl('ambient-samp-' + id, s) +
           _ambModUi('samp-' + id) +
           _ambFxUi('samp-' + id) + gpe() +
@@ -8067,7 +9430,7 @@
       bindInt('attack', 'attack'); bindInt('decay', 'decay'); bindInt('sustain', 'sustain'); bindInt('release', 'release'); bindInt('fine', 'fine');
       bindInt('chop', 'chop'); bindStr('order', 'order');
       bindMs('interval', 'intervalMs'); bindMs('length', 'lengthMs');
-      bindInt('drift', 'drift'); _ambBindWhen(E, p, getL, persist); bindInt('level', 'level');
+      bindInt('drift', 'drift'); _ambBindWhen(E, p, getL, persist); bindInt('level', 'level'); bindMs('boundaryfade', 'boundaryFadeMs');
       _ambWireSpread(E, 'ambient-samp-' + id, getL, persist, sync);
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L) return; L.mod[t][k] = parseInt(e.value, 10) || 0; sync(); persist(); }); });
@@ -8173,33 +9536,33 @@
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       beat: { label: 'Beat', ctrls: [
         ['grp', 'Voice'], ['kit'], ['gen'], ['sl', 'attack', 'Attack', 0, 500, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 2000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).
       // Pitch/voice/prog/gate live PER SHAPE inside the wheel editor.
       shape: { label: 'Shape', ctrls: [
         ['grp', 'Voice'], ['shapes'],
         ['grp', 'Rhythm'], ['cond'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
@@ -8208,7 +9571,7 @@
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
@@ -8217,23 +9580,24 @@
         ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
-      // Run: a fixed RANDOM note run, `bars` bars long, looping; Vary re-rolls.
-      run: { label: 'Run', ctrls: [
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+      // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
+      // looping; Vary re-rolls; Len var spreads note lengths around Length.
+      run: { label: 'Riff', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
-        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'],
-        ['grp', 'Pitch'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
+        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
         ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
@@ -8242,7 +9606,7 @@
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
         ['grp', 'Rhythm'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['spread'], ['mod'], ['fx']] },
+        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
     // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.
@@ -8253,7 +9617,7 @@
       return !!_AMB_GROUP_DEFAULT_OPEN[name];
     }
     function _ambDefaultLayer(type, id) {
-      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, mod: _ambDefaultMod(), ..._ambDefaultFx() };
+      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, ..._AMB_ADSR_DEFAULTS.bed });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, ..._AMB_ADSR_DEFAULTS.motif });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, ..._AMB_ADSR_DEFAULTS.texture });
@@ -8283,7 +9647,7 @@
       // dialed up. A light rest % keeps the run from being wall-to-wall.
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
-        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, accent: 20, ..._AMB_ADSR_DEFAULTS.run,
+        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, ..._AMB_ADSR_DEFAULTS.run,
       });
       // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
       // 4 (C4) + full volume matches a default Shape node so they sound the same.
@@ -8323,6 +9687,9 @@
         if (k === 'notes') return _ambNotesButtonHtml(p);
         if (k === 'droneedit') return _ambDroneEditHtml(p);
         if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
+        // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
+        // → never free → no fader at all. Other types keep it (disabled live when synced).
+        if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'shape')) return '';
         if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
         if (k === 'cond') return _ambCondCtrl(lk);
         if (k === 'spread') return _ambSpreadCtrl(p, inst);
@@ -8449,7 +9816,7 @@
           else if (k === 'shapes') { _ambWireShapeBrowser(E, inst, p, get); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
-          else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); } }); } }
+          else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); try { _ambRefreshAreaFadeUI(E); } catch (e) {} } }); } }
           else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
           else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
@@ -9400,6 +10767,7 @@
       cfg.extras.forEach(inst => _ambWireInst(E, inst));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
+      try { _ambRefreshAreaFadeUI(E); } catch (e) {}       // grey out Area fade on capturable layers
     }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
@@ -9445,7 +10813,7 @@
       seq:     [['varyDepth','Amount',0,100],['intervalMs','Interval (ms)',200,16000],['lengthMs','Length (ms)',300,16000],['drift','Drift',0,99],['returnChance','Return %',0,100],['level','Level',0,100]],
       samp:    [['chop','Chop',1,16],['intervalMs','Interval (ms)',200,120000],['lengthMs','Length (ms)',80,120000],['drift','Drift',0,99],['level','Level',0,100]],
       bass:    [['register','Register',1,4],['bars','Bars',1,8],['pulses','Pulses',1,16],['steps','Steps',2,16],['rotate','Rotate',0,15],['lengthMs','Length (ms)',60,2000],['rhythmVar','Rhythm var',0,100],['pitchVar','Pitch var',0,100],['proximity','Proximity',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
-      run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
+      run:     [['register','Register',2,7],['range','Range',1,4],['transpose','Transpose',-24,24],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['vary','Vary',0,100],['restProb','Rests',0,100],['lenVary','Len var',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       pedal:   [['register','Register',1,7],['degree','Note',1,12],['bars','Bars',1,16],['density','Density',1,16],['lengthMs','Length (ms)',40,2000],['attack','Attack',0,2000],['decay','Decay',0,2000],['sustain','Sustain',0,100],['release','Release',0,4000],['vary','Vary',0,100],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
       drone:   [['degree','Note',1,12],['register','Register',1,6],['intervalMs','Unit (ms)',200,8000],['hold','Hold',1,16],['attack','Attack',0,8000],['release','Release',0,12000],['timeVary','Time vary',0,100],['pitchVary','Pitch vary',0,100],['level','Level',0,100]],
       arp:     [['randomness','Randomness',0,100],['intervalMs','Interval (ms)',40,2000],['octaves','Octaves',1,4],['register','Register',2,7],['lengthMs','Length (ms)',40,2000],['drift','Drift',0,99],['restProb','Rests',0,100],['accent','Accent',0,100],['level','Level',0,100]],
@@ -9502,6 +10870,9 @@
       r.b = Math.max(0, Math.min(100, Math.round(r.b * 100) / 100));
       if (!Number.isFinite(r.periodMs)) r.periodMs = 4000;
       r.periodMs = Math.max(50, r.periodMs | 0);
+      // Period can be synced to BARS (fractional) instead of free ms.
+      if (typeof r.syncBars !== 'boolean') r.syncBars = false;
+      if (!Number.isFinite(r.periodBars) || r.periodBars <= 0) r.periodBars = 4;
       if (['sine','triangle','saw','square','seq'].indexOf(r.wave) < 0) r.wave = 'sine';
       // Sequence-as-waveform fields (only meaningful when wave === 'seq').
       if (!Number.isFinite(r.seqRef)) r.seqRef = 0;
@@ -9552,7 +10923,7 @@
         return { min: spec[2], max: spec[3], set: function (v) {
           if (key === 'revSend') { obj.revSend = v; }
           else { const di = key.indexOf('.'); const grp = key.slice(0, di), sub = key.slice(di + 1); if (!obj[grp] || typeof obj[grp] !== 'object') obj[grp] = {}; obj[grp][sub] = v; }
-          try { _ambApplyLayerFx(head, obj); } catch (e) {}
+          if (_ambLiveApplyOK(_E)) { try { _ambApplyLayerFx(head, obj); } catch (e) {} }   // skip if editing a non-playing area
         } };
       }
       // Stereo: write `space`, and in Pan mode push the position to the live
@@ -9670,7 +11041,11 @@
       const eMs = Math.max(0, elapsedSec) * 1000;
       for (const r of cfg.ramps) {
         if (!r || !r.on || !Array.isArray(r.targets) || !r.targets.length) continue;
-        const period = Math.max(50, r.periodMs | 0);
+        let period;
+        if (r.syncBars && Number.isFinite(r.periodBars) && r.periodBars > 0) {
+          const _bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+          period = Math.max(50, r.periodBars * (60 / Math.max(20, _bpm)) * 4 * 1000);   // bars → ms
+        } else { period = Math.max(50, r.periodMs | 0); }
         const phase = (eMs % period) / period;
         let f;
         if (r.wave === 'seq') {
@@ -9759,7 +11134,7 @@
           '<span class="ambient-hint ambient-ramp-range" id="' + p + 'range"></span>' +
           '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" min="0" max="100" value="' + r.a + '"><span class="ambient-hint" id="' + p + 'a-u">%</span></label>' +
           '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" min="0" max="100" value="' + r.b + '"><span class="ambient-hint" id="' + p + 'b-u">%</span></label>' +
-          '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="50" step="50" value="' + r.periodMs + '"><span class="ambient-hint">ms</span></label>' +
+          '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="' + (r.syncBars ? '0.125' : '50') + '" step="' + (r.syncBars ? '0.25' : '50') + '" value="' + (r.syncBars ? (Number.isFinite(r.periodBars) ? r.periodBars : 4) : r.periodMs) + '"><button type="button" id="' + p + 'periodunit" class="ambient-ramp-unit" title="Toggle the ramp period between milliseconds and bars (synced to tempo; fractional allowed)">' + (r.syncBars ? 'bars' : 'ms') + '</button></label>' +
           '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
         '</div>' +
         seqRowHtml +
@@ -9875,7 +11250,11 @@
       const _readAB = (inp) => { const R = getR(); if (!R) return null; const u = _ambRampSingleUnit(R, E.getCfg()); const raw = parseFloat(inp.value); return u ? _ampRealToPct(Number.isFinite(raw) ? raw : u.min, u) : Math.max(0, Math.min(100, Number.isFinite(raw) ? raw : 0)); };
       const a = el('a'); if (a) a.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; const v = _readAB(a); if (v == null) return; R.a = v; persist(); _ambRampReadout(E, id); });
       const b = el('b'); if (b) b.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; const v = _readAB(b); if (v == null) return; R.b = v; persist(); _ambRampReadout(E, id); });
-      const per = el('period'); if (per) per.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; R.periodMs = Math.max(50, parseInt(per.value, 10) || 1000); persist(); });
+      const per = el('period'); if (per) per.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return;
+        if (R.syncBars) { const v = parseFloat(per.value); R.periodBars = (Number.isFinite(v) && v > 0) ? v : 4; }
+        else { R.periodMs = Math.max(50, parseInt(per.value, 10) || 1000); }
+        persist(); });
+      const perU = el('periodunit'); if (perU) perU.addEventListener('click', () => { _E = E; const R = getR(); if (!R) return; R.syncBars = !R.syncBars; persist(); _ambRenderRamps(E); });
       const wv = el('wave'); if (wv) wv.addEventListener('change', () => {
         _E = E; const R = getR(); if (!R) return;
         const v = wv.value || 'sine';
@@ -10035,7 +11414,18 @@
         const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[cfg.keyRoot | 0]) || '';
         const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(cfg.keyScale) : cfg.keyScale;
         hint('ambient-key-hint', cfg.keyOn ? (kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')) : 'off'); }
-      set('ambient-prog-rate', cfg.progRateMs); hint('ambient-prog-rate-v', _ambFmtMs(cfg.progRateMs));
+      { const p = (cfg.prog && typeof cfg.prog === 'object') ? cfg.prog : { on: false, chords: [] };
+        const pOn = document.getElementById(tr('ambient-prog-on'));
+        if (pOn) pOn.classList.toggle('active', !!p.on);
+        const pPick = document.getElementById(tr('ambient-prog-pick'));
+        if (pPick) pPick.textContent = (Array.isArray(p.chords) && p.chords.length) ? (p.name || 'Progression') : '— pick —';
+        const nCh = (Array.isArray(p.chords) ? p.chords.length : 0);
+        hint('ambient-prog-hint', p.on ? (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's')) : 'pick a progression') : 'off');
+        const pEdit = document.getElementById(tr('ambient-prog-edit'));
+        if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected
+        const bpcStr = cfg.barsPerChordStr || _ambFmtBpc(cfg.barsPerChord);
+        set('ambient-bars-per-chord', bpcStr);
+        hint('ambient-bars-per-chord-v', bpcStr + ' bar' + (cfg.barsPerChord === 1 ? '' : 's') + ' / chord'); }
       set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
       set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
       set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
@@ -10094,6 +11484,7 @@
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strumfid', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
+       set('ambient-bed-areafade', cfg.bed.areaFadeMs); hint('ambient-bed-areafade-v', _ambFmtMs(cfg.bed.areaFadeMs));
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
       set('ambient-motif-attack', cfg.motif.attack); set('ambient-motif-decay', cfg.motif.decay); set('ambient-motif-sustain', cfg.motif.sustain); set('ambient-motif-release', cfg.motif.release); set('ambient-motif-fine', cfg.motif.fine);
@@ -10110,6 +11501,7 @@
       set('ambient-motif-twist', cfg.motif.twist);
       set('ambient-motif-accent', cfg.motif.accent);
       set('ambient-motif-level', cfg.motif.level);
+       set('ambient-motif-areafade', cfg.motif.areaFadeMs); hint('ambient-motif-areafade-v', _ambFmtMs(cfg.motif.areaFadeMs));
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
       set('ambient-texture-attack', cfg.texture.attack); set('ambient-texture-decay', cfg.texture.decay); set('ambient-texture-sustain', cfg.texture.sustain); set('ambient-texture-release', cfg.texture.release); set('ambient-texture-fine', cfg.texture.fine);
@@ -10122,6 +11514,7 @@
       setWhen('ambient-texture', cfg.texture.when);
       set('ambient-texture-mutate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
+       set('ambient-texture-areafade', cfg.texture.areaFadeMs); hint('ambient-texture-areafade-v', _ambFmtMs(cfg.texture.areaFadeMs));
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
       set('ambient-beat-attack', cfg.beat.attack); set('ambient-beat-decay', cfg.beat.decay); set('ambient-beat-sustain', cfg.beat.sustain); set('ambient-beat-release', cfg.beat.release); set('ambient-beat-fine', cfg.beat.fine);
@@ -10139,6 +11532,7 @@
       setWhen('ambient-beat', cfg.beat.when);
       set('ambient-beat-rest', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
+       set('ambient-beat-areafade', cfg.beat.areaFadeMs); hint('ambient-beat-areafade-v', _ambFmtMs(cfg.beat.areaFadeMs));
       try { _ambBeatGenVis(E, 'ambient-beat-', cfg.beat); } catch (e) {}
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => { try { _ambWireUnitSync(E, 'ambient-' + layer + '-', () => cfg[layer], layer); } catch (e) {} });
       // Per-layer FX values.
@@ -10176,6 +11570,7 @@
       // Mirror every slider's just-synced value into its numeric readout
       // (programmatic setVal above doesn't fire 'input').
       try { _ambSyncSliderReadouts(document); } catch (e) {}
+      try { _ambRefreshAreaFadeUI(E); } catch (e) {}   // grey out Area fade on synced/bar-native layers
     }
     function _ambientInit(E) {
       if (E.inited) { _ambSyncControls(E); _ambStartViz(E); return; }
@@ -10196,6 +11591,8 @@
         ? CHROMATIC : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
       const keyOpts = _keyNames.map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('');
       let html =
+        // Area tab strip (master Mix Bloom only) — switch / add / duplicate / delete.
+        ((E === _masterEng) ? _ambAreaStripHtml() : '') +
         // Everything above the first layer (viz + global Bloom settings) lives in
         // one collapsible menu so the panel opens straight onto the layer stack.
         '<details class="ambient-master-menu">' +
@@ -10242,7 +11639,18 @@
           '<div class="ambient-nowplaying-head"><span class="ambient-mod-sub">Now Playing</span><span class="ambient-hint" id="ambient-nowplaying-empty">— stopped —</span></div>' +
           '<div class="ambient-nowplaying-list" id="ambient-nowplaying-list"></div>' +
         '</div>' +
-        tm('Prog rate', 'ambient-prog-rate', 500, 8000, 100, 4000) +
+        // Global progression (Phase 2) — chords every default-scale layer follows.
+        // Override a layer via its Notes button. Bars/chord is the bar-aligned rate.
+        (E.isLane ? '' :
+          '<div class="ambient-row ambient-prog">' +
+            '<button type="button" class="ambient-seg" id="ambient-prog-on" title="Global progression — every layer on the default scale follows these chords. Override per layer via its Notes button.">Prog</button>' +
+            '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+            '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
+            '<span class="ambient-hint" id="ambient-prog-hint">off</span>' +
+          '</div>' +
+          '<div class="ambient-ctrl"><label for="ambient-bars-per-chord">Bars / chord</label>' +
+          '<input type="text" id="ambient-bars-per-chord" class="ambient-bpc-input" placeholder="1, 1/2, 8/7…" value="1" title="How many bars each chord of the progression holds — a whole number or a fraction (1/2, 8/7, …)" />' +
+          '<span class="ambient-hint" id="ambient-bars-per-chord-v">1 bar / chord</span></div>') +
         tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +
         // Master Warmth (global FX) — same controls as the FX panel's Warmth
         // section, surfaced here above Reverb. GLOBAL: this is the master-chain
@@ -10343,6 +11751,7 @@
             sl('Fidelity', 'ambient-bed-strumfid', 0, 100, 0, 'in order → random') + gpe() +
           grp('Mix') +
             sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
+            tm('Area fade', 'ambient-bed-areafade', 0, 4000, 50, 250) +
             _ambSpreadCtrl('ambient-bed', null) +
             modUi('bed') +
             fxUi('bed') + gpe() +
@@ -10375,6 +11784,7 @@
             sl('Accent', 'ambient-motif-accent', 0, 100, 0, 'flat → dynamic') + gpe() +
           grp('Mix') +
             sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
+            tm('Area fade', 'ambient-motif-areafade', 0, 4000, 50, 250) +
             _ambSpreadCtrl('ambient-motif', null) +
             modUi('motif') +
             fxUi('motif') + gpe() +
@@ -10403,6 +11813,7 @@
             sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') + gpe() +
           grp('Mix') +
             sl('Level', 'ambient-texture-level', 0, 100, 70, 'soft → boost') +
+            tm('Area fade', 'ambient-texture-areafade', 0, 4000, 50, 250) +
             _ambSpreadCtrl('ambient-texture', null) +
             modUi('texture') +
             fxUi('texture') + gpe() +
@@ -10437,6 +11848,7 @@
             sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') + gpe() +
           grp('Mix') +
             sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
+            tm('Area fade', 'ambient-beat-areafade', 0, 4000, 50, 250) +
             _ambSpreadCtrl('ambient-beat', null) +
             modUi('beat') +
             fxUi('beat') + gpe() +
@@ -10473,6 +11885,7 @@
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
+      try { _ambWireAreaStrip(E); } catch (e) {}   // area tabs (master only)
       try { _ambRenderCaptureBank(); } catch (e) {}
 
       // Per-layer expand/collapse: the caret in each layer head folds that
@@ -10546,7 +11959,7 @@
         const band = sl.dataset.band, v = Math.max(-24, Math.min(24, parseInt(sl.value, 10) || 0));
         L.eq = L.eq || { low: 0, mid: 0, high: 0 }; L.eq[band] = v;
         const db = sl.parentNode && sl.parentNode.querySelector('.ambient-eq-db[data-band="' + band + '"]'); if (db) db.textContent = (v > 0 ? '+' : '') + v;
-        try { _ambApplyLayerFx(key, L); } catch (x) {}
+        if (_ambLiveApplyOK(E)) { try { _ambApplyLayerFx(key, L); } catch (x) {} }   // skip if editing a non-playing area
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
       try { _ambSyncEq(E); } catch (e) {}   // initial EQ slider values from cfg
@@ -10643,8 +12056,13 @@
           persist();
         });
       };
-      { const el = G('ambient-prog-rate'), vEl = G('ambient-prog-rate-v');
-        if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 4000; c.progRateMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
+      { const el = G('ambient-bars-per-chord'), vEl = G('ambient-bars-per-chord-v');
+        if (el) el.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c) return;
+          const f = _ambParseBpc(el.value);
+          if (f == null) { el.value = c.barsPerChordStr || _ambFmtBpc(c.barsPerChord); return; }   // invalid → revert
+          c.barsPerChord = f; c.barsPerChordStr = (el.value || '').trim();
+          if (vEl) vEl.textContent = c.barsPerChordStr + ' bar' + (f === 1 ? '' : 's') + ' / chord';
+          persist(); }); }
       { const el = G('ambient-freeze-len'), vEl = G('ambient-freeze-len-v');
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 10000; c.freezeLenMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       // Master Fade In / Out (mixer panel) — ms; applied on play / Finalize.
@@ -10747,6 +12165,7 @@
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strumfid', 'bed', 'strumFidelity');
       bind('ambient-bed-level', 'bed', 'level');
+      bindTime('ambient-bed-areafade', 'bed', 'areaFadeMs');
       bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
@@ -10760,6 +12179,7 @@
       bind('ambient-motif-twist', 'motif', 'twist');
       bind('ambient-motif-accent', 'motif', 'accent');
       bind('ambient-motif-level', 'motif', 'level');
+      bindTime('ambient-motif-areafade', 'motif', 'areaFadeMs');
       bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release'); bind('ambient-texture-fine', 'texture', 'fine');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');
@@ -10769,6 +12189,7 @@
       bind('ambient-texture-lenvary', 'texture', 'lenVary');
       bind('ambient-texture-mutate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
+      bindTime('ambient-texture-areafade', 'texture', 'areaFadeMs');
       bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release'); bind('ambient-beat-fine', 'beat', 'fine');
       bindTime('ambient-beat-interval', 'beat', 'intervalMs');
       bindTime('ambient-beat-length', 'beat', 'lengthMs');
@@ -10783,6 +12204,7 @@
       bind('ambient-beat-lenvary', 'beat', 'lenVary');
       bind('ambient-beat-rest', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');
+      bindTime('ambient-beat-areafade', 'beat', 'areaFadeMs');
       ['bed', 'motif', 'texture', 'beat'].forEach(layer =>
         _ambWireSpread(E, 'ambient-' + layer, () => { const c = cfg0(); return c ? c[layer] : null; }, persist, null));
       // Per-layer FX (reverb send / delay / distortion). Apply live when playing.
@@ -10878,6 +12300,23 @@
           });
         }
       }
+      // Global Progression (Configure) — toggle + chord picker.
+      { const pOn = G('ambient-prog-on');
+        if (pOn) pOn.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
+          cfg.prog.on = !cfg.prog.on;
+          if (cfg.prog.on && typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }   // Phase 2c
+          _ambSyncControls(E); persist();
+        });
+        const pPick = G('ambient-prog-pick');
+        if (pPick) pPick.addEventListener('click', () => {
+          _E = E; const r = pPick.getBoundingClientRect();
+          _ambOpenGlobalProgMenu(E, r.left, r.bottom);
+        });
+        const pEdit = G('ambient-prog-edit');
+        if (pEdit) pEdit.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E); } catch (e) {} });
+      }
 
       const addRampBtn = G('ambient-ramp-add');
       if (addRampBtn) addRampBtn.addEventListener('click', () => _ambAddRamp(E));
@@ -10900,7 +12339,7 @@
         // Bass: low euclidean phrase locked to BPM (extras-only).
         actions.push({ label: 'Bass', fn: () => _ambAddExtra(E, 'bass') });
         // Run: a fixed random note run that loops every N bars (extras-only).
-        actions.push({ label: 'Run', fn: () => _ambAddExtra(E, 'run') });
+        actions.push({ label: 'Riff', fn: () => _ambAddExtra(E, 'run') });
         // Pedal: a simple root-note pedal-point loop (extras-only).
         actions.push({ label: 'Pedal', fn: () => _ambAddExtra(E, 'pedal') });
         // Drone: holds a note/chord, re-struck every N units (extras-only).

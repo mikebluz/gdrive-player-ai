@@ -1461,6 +1461,7 @@
       panel.className = 'xport-menu';
       panel.id = 'xport-menu';
       panel.innerHTML =
+        '<div class="xport-sec xport-home-sec"><a class="home-bar" href="index.html" title="Back to mikeluz.com" onclick="return confirm(\'Leave Mercy Wizard and return to the homepage?\');">← Back to Mercy Wizard</a></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Edit</div><div class="xport-row" id="xport-edit-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Tempo</div><div class="xport-row" id="xport-tempo-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Volume</div><div class="xport-row" id="xport-vol-row"></div></div>' +
@@ -1485,6 +1486,8 @@
         panel.querySelector('#xport-midi-row').appendChild(midiBtn);
         midiBtn.addEventListener('click', () => setOpen(false));   // close the menu; the MIDI modal opens (wired in 22-midi.js)
       }
+      // Homepage link is now the FIRST section of panel.innerHTML above (hardcoded, so
+      // it's reliably the top item). The old .home-bar in .xport-sources is removed.
 
       const setOpen = (open) => {
         panel.classList.toggle('open', open);

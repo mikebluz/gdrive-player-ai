@@ -423,6 +423,9 @@
 
         let cleaned = false;
         const reg = {};
+        // Tag with the Bloom layer key + start time (like _registerVoiceAtStart) so an
+        // area transition can stop just this layer's looping voices via stopBloomVoicesBefore.
+        try { if (typeof window !== 'undefined' && window._ambCaptureSink) { reg._ak = window._ambEmitKey || null; reg._akAt = Number.isFinite(window._ambEmitAt) ? window._ambEmitAt : null; } } catch (e) {}
         _activePadVoices.add(reg);
         const cleanup = () => {
           if (cleaned) return; cleaned = true;
@@ -1987,6 +1990,41 @@
       try { if (v.source) v.source.stop(now + 0.03); } catch (e) {}
       setTimeout(() => _disposeSampleAdsrVoice(v), 60);
     }
+    // Fade a sample voice out STARTING at a boundary time (atSec): hold its current
+    // level until the boundary, then ramp to ~0 over fadeSec. Used to truncate a sample
+    // that overruns a unit/area boundary with a user-set fade (vs the abrupt fast kill).
+    function _fadeSampleVoiceFrom(v, atSec, fadeSec) {
+      if (!v || v._killed) return;
+      if (!(fadeSec > 0)) { _killSampleVoiceFast(v); return; }   // 0 → hard cut
+      v._killed = true;
+      if (v.registerTimer) { clearTimeout(v.registerTimer); v.registerTimer = null; }
+      _pendingSampleVoices.delete(v); _activeSampleVoices.delete(v);
+      if (v.disposeTimer) { clearTimeout(v.disposeTimer); v.disposeTimer = null; }
+      const now = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
+      const start = Math.max(now, atSec || now);
+      try {
+        if (v.outGain && v.outGain.gain && typeof v.outGain.gain.cancelScheduledValues === 'function') {
+          const g = v.outGain.gain;
+          g.cancelScheduledValues(now);
+          g.setValueAtTime(g.value, now);
+          g.setValueAtTime(g.value, start);
+          g.linearRampToValueAtTime(0.0001, start + fadeSec);
+        }
+      } catch (e) {}
+      try { if (v.source) v.source.stop(start + fadeSec + 0.03); } catch (e) {}
+      const ms = Math.max(0, (start + fadeSec - now) * 1000) + 80;
+      setTimeout(() => _disposeSampleAdsrVoice(v), ms);
+    }
+    // Fade every sample voice of `key` that started BEFORE the boundary `atSec` out over
+    // fadeSec from that boundary (removing them from the active sets so a follow-up
+    // stopBloomVoicesBefore won't also hard-kill them). fadeSec<=0 → plain stop.
+    function fadeBloomSampleVoicesFrom(key, atSec, fadeSec) {
+      if (!key) return;
+      if (!(fadeSec > 0)) { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, atSec); return; }
+      const hit = (v) => v && v._ak === key && (Number.isFinite(v._akAt) ? v._akAt < atSec : true);
+      Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) _fadeSampleVoiceFrom(v, atSec, fadeSec); });
+      Array.from(_activeSampleVoices).forEach(v => { if (hit(v)) _fadeSampleVoiceFrom(v, atSec, fadeSec); });
+    }
     // Immediately silence every SCHEDULED playback voice — synths (a ~30 ms
     // safeDisposeSynth fade) and per-note samples (a ~22 ms ramp). Both are
     // click-free, so "immediate" doesn't mean a hard cut/pop. Called by every
@@ -2005,6 +2043,28 @@
       const hit = (e) => e && e._ak === key && (fromAt == null || (Number.isFinite(e._akAt) && e._akAt >= fromAt));
       Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
       Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
+      // Sample / pad voices register as ACTIVE immediately even when scheduled ahead,
+      // so a voice scheduled to START at/after `fromAt` sits in the ACTIVE sets, not the
+      // pending ones. It hasn't sounded yet (future start), so cancel it too — else it
+      // begins after the boundary and bleeds into the next area (and piles up across
+      // transitions = "samples run over and get louder"). _akAt >= fromAt = not-yet-sounded.
+      for (let i = _activeVoices.length - 1; i >= 0; i--) { const e = _activeVoices[i]; if (hit(e)) { _activeVoices.splice(i, 1); try { _stealVoice(e); } catch (x) {} } }
+      Array.from(_activeSampleVoices).forEach(v => { if (hit(v)) { _activeSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
+      Array.from(_activePadVoices).forEach(r => { if (hit(r)) { _activePadVoices.delete(r); try { r.kill && r.kill(); } catch (x) {} } });
+    }
+    // Stop a Bloom layer's CURRENTLY-SOUNDING + pending voices whose start is BEFORE
+    // `beforeAt` (the OUTGOING area's voices — the incoming area's start at/after the
+    // boundary, so they're spared). Used at an area transition to GUARANTEE a departing
+    // layer goes silent, regardless of routing: the gate-fade only silences gate-routed
+    // voices, this also stops looping pad voices and anything that slipped the gate.
+    function stopBloomVoicesBefore(key, beforeAt) {
+      if (!key) return;
+      const hit = (e) => e && e._ak === key && (beforeAt == null || (Number.isFinite(e._akAt) && e._akAt < beforeAt));
+      Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
+      for (let i = _activeVoices.length - 1; i >= 0; i--) { const e = _activeVoices[i]; if (hit(e)) { _activeVoices.splice(i, 1); try { _stealVoice(e); } catch (x) {} } }
+      Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
+      Array.from(_activeSampleVoices).forEach(v => { if (hit(v)) { _activeSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
+      Array.from(_activePadVoices).forEach(r => { if (hit(r)) { _activePadVoices.delete(r); try { r.kill && r.kill(); } catch (x) {} } });
     }
     function silenceActiveVoices() {
       // Drain pending (scheduled-ahead, not-yet-registered) voices too — a stop

@@ -100,6 +100,38 @@
           { name: 'mode-relminor', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.bed.modeRot = 5; c.motif.modeRot = 5; }) },
           // Phase 4 — colour set (blue notes at 50%) inflecting bed + motif.
           { name: 'color-blue', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.bed.colors = ['blue']; c.bed.colorAmt = 50; c.motif.colors = ['blue']; c.motif.colorAmt = 50; }) },
+          // Prog rework 1b — a bass on a 3-chord progression (I–IV–V in C), 1 bar/chord.
+          // Locks the new bar-aligned, PER-ONSET chord resolution (chord follows the
+          // bars within the multi-bar bass loop). Record this baseline AFTER 1b lands.
+          { name: 'prog-bass', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('bass', 1);
+              L.notes = { type: 'prog', name: 'I-IV-V', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
+              ] };
+              c.extras = [L]; c.barsPerChord = 1;
+          }) },
+          // Phase 2 — GLOBAL progression: a DEFAULT-scale bass (notes scale:'') that
+          // INHERITS the global prog. Should produce the SAME stream as prog-bass
+          // above (inheritance ≡ an explicit prog source).
+          { name: 'prog-global', cfg: mk((c) => {
+              c.bed.on = false;
+              c.extras = [_ambDefaultLayer('bass', 1)];   // default notes {scale:''} → inherits
+              c.barsPerChord = 1;
+              c.prog = { on: true, name: 'I-IV-V', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
+              ] };
+          }) },
+          // Arp on a progression, 1 bar/chord — locks the bar-aligned chord (decoupled
+          // from the series cursor): it arpeggiates C-E-G in bar 1, F-A-C in bar 2, …
+          { name: 'prog-arp', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('arp', 1);
+              L.steps = [{ notes: { type: 'prog', name: 'I-IV-V', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
+              ] }, passes: 1, dir: 'up' }];
+              c.extras = [L]; c.barsPerChord = 1;
+          }) },
         ];
       }
 

@@ -66,8 +66,10 @@ document.addEventListener("DOMContentLoaded", () => {
       player = new MusicPlayer(driveAPI, blobCache);
       playlist = new PlaylistManager(player, userCache);
       // Exposed so the Bloops/Make side of the unified page can pause
-      // playback when the user switches away from the Listen view.
+      // playback when the user switches away from the Listen view, and
+      // lazy-load the track when the Listen view is opened.
       window.musicPlayer = player;
+      window.playlist = playlist;
 
       // Pre-set the UI from cached auth before gapi/GIS scripts load —
       // otherwise mobile users see the "Connect to Google Drive" header

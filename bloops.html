@@ -50,32 +50,30 @@
     }
   </script>
 
-  <div class="home-bar-row">
+  <!-- Floating, locked Settings header — just the ⚙ gear, top-right, on a
+       transparent background. The Settings popover (#xport-menu) is built by
+       initTransportMenu (16-grid-controls.js), which relocates Undo/Redo, the
+       metronome + BPM digits, master volume, groove, MIDI, and the homepage
+       link (below) into it. -->
+  <header class="float-header">
+    <button type="button" id="xport-menu-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings menu" title="Settings — Undo/Redo · Tempo · Volume · Groove · MIDI · Home"><span class="xport-gear" aria-hidden="true">⚙</span><span class="xport-label">Settings</span><span id="xport-bpm" hidden>120</span></button>
+  </header>
+  <!-- Source elements relocated into #xport-menu at init (and the hidden tempo
+       inputs every tempoSlider.value / tempoInput.value reference reads). They
+       live here, hidden, only until initTransportMenu moves them. -->
+  <div class="xport-sources" hidden>
     <div class="undo-redo-pair">
       <button id="undo-btn" type="button" title="Undo last action (Ctrl/Cmd+Z)" disabled>↶</button>
       <button id="redo-btn" type="button" title="Redo last undone action (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
     </div>
-    <a class="home-bar" href="index.html" title="Back to mikeluz.com">Mercy Wizard</a>
-    <div class="tempo-control">
-      <!-- Single combined dropdown — Tempo, Volume and Groove in one menu.
-           The trigger shows the current BPM at a glance. initTransportMenu
-           (16-grid-controls.js) relocates the metronome + BPM digits below,
-           plus the master-volume fader and the groove controls, into the
-           #xport-menu popover. The hidden slider/input stay in the DOM so
-           every existing tempoSlider.value / tempoInput.value reference keeps
-           working. -->
-      <button type="button" id="xport-menu-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings menu" title="Settings — Undo/Redo · Tempo · Volume · Groove · MIDI"><span class="xport-gear" aria-hidden="true">⚙</span><span id="xport-bpm" hidden>120</span></button>
-      <!-- 3-digit BPM picker — each digit opens a 0–9 picker. Relocated into
-           #xport-menu by initTransportMenu. -->
-      <button type="button" id="metronome-btn" title="Metronome — click toggles the count" aria-label="Toggle metronome click">●</button>
-      <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
-        <button type="button" class="bpm-digit" id="bpm-d-h" data-place="100" aria-label="BPM hundreds — press to pick a digit">1</button>
-        <button type="button" class="bpm-digit" id="bpm-d-t" data-place="10"  aria-label="BPM tens — press to pick a digit">2</button>
-        <button type="button" class="bpm-digit" id="bpm-d-o" data-place="1"   aria-label="BPM ones — press to pick a digit">0</button>
-      </div>
-      <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
-      <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
+    <button type="button" id="metronome-btn" title="Metronome — click toggles the count" aria-label="Toggle metronome click">●</button>
+    <div class="bpm-digits" id="bpm-digits" aria-label="BPM">
+      <button type="button" class="bpm-digit" id="bpm-d-h" data-place="100" aria-label="BPM hundreds — press to pick a digit">1</button>
+      <button type="button" class="bpm-digit" id="bpm-d-t" data-place="10"  aria-label="BPM tens — press to pick a digit">2</button>
+      <button type="button" class="bpm-digit" id="bpm-d-o" data-place="1"   aria-label="BPM ones — press to pick a digit">0</button>
     </div>
+    <input type="range" id="tempo-slider" min="0" max="999" value="120" step="1" hidden />
+    <input type="number" id="tempo-input" min="0" max="999" value="120" title="BPM" hidden />
   </div>
 
   <div class="bloops-loading-gate" id="bloops-loading-gate" role="status" aria-live="polite">

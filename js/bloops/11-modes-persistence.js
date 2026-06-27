@@ -916,8 +916,24 @@
         })),
         globalFx: { ...globalFx },
         // Master Bloom (Mix) config — global, not per-lane. Never persist playing.
+        // masterAmbient is the ACTIVE area (kept for backward-compat / old loaders);
+        // masterBloomAreas holds the full area list + orchestration. Snapshot the
+        // live tempo/groove into the active area first so per-area overrides persist.
         masterAmbient: (typeof masterAmbient !== 'undefined' && masterAmbient)
           ? JSON.parse(JSON.stringify({ ...masterAmbient, playing: false })) : null,
+        masterBloomAreas: (function () {
+          try {
+            if (typeof _ambSyncActiveAreaGlobals === 'function') _ambSyncActiveAreaGlobals();
+            if (typeof masterBloomAreas !== 'undefined' && masterBloomAreas && Array.isArray(masterBloomAreas.areas)) {
+              return JSON.parse(JSON.stringify({
+                areas: masterBloomAreas.areas.map(a => ({ ...a, playing: false })),
+                activeIdx: masterBloomAreas.activeIdx | 0,
+                orch: { ...(masterBloomAreas.orch || { mode: 'single', shuffle: false }) },
+              }));
+            }
+          } catch (e) {}
+          return null;
+        })(),
         // Master Shapes (Mix) — independent shape COPIES sent from lanes; global.
         masterShapes: (typeof masterShapes !== 'undefined' && Array.isArray(masterShapes))
           ? JSON.parse(JSON.stringify(masterShapes)) : [],
@@ -1181,7 +1197,9 @@
       // the project-load path (14-ui-menus-dnd.js).
       try { if (typeof _masterEng !== 'undefined' && typeof _ambStopGenerator === 'function') _ambStopGenerator(_masterEng); } catch (e) {}
       if (typeof masterAmbient !== 'undefined') masterAmbient = null;
-      try { if (typeof _masterEng !== 'undefined' && _masterEng.inited && typeof _ambSyncControls === 'function') _ambSyncControls(_masterEng); } catch (e) {}
+      if (typeof masterBloomAreas !== 'undefined') masterBloomAreas = null;   // drop areas → next getCfg() rebuilds a single default area
+      // Full panel rebuild (inited=false) so the area strip resets to one area.
+      try { if (typeof _masterEng !== 'undefined') { _masterEng.inited = false; if (typeof _ambientInit === 'function') _ambientInit(_masterEng); } } catch (e) {}
 
       // Master Shapes (Mix) collection.
       if (typeof masterShapes !== 'undefined') masterShapes = [];

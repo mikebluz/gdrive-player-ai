@@ -186,6 +186,7 @@
           <select id="g-source-sel" style="width:100%;padding:6px;background:#0a0a14;color:#cbd5e0;border:1px solid #2d2d3f;border-radius:6px;font-family:'Segoe UI',sans-serif;font-size:0.85rem;"></select>
           <div class="grain-record-row" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
             <button type="button" class="sm-wave" id="g-record">● Record</button>
+            <select id="g-rec-ch" class="sm-wave" title="Record the mic in stereo or mono" style="padding:6px;background:#0a0a14;color:#cbd5e0;border:1px solid #2d2d3f;border-radius:6px;font-family:'Segoe UI',sans-serif;font-size:0.85rem;"><option value="2">Stereo</option><option value="1">Mono</option></select>
           </div>
         </div>
         <div class="pr-param">
@@ -409,7 +410,14 @@
         try { await Tone.start(); } catch (e) {}
         let stream;
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Sampling wants RAW STEREO, not voice-call processing: request 2 channels and
+          // disable echo-cancel / noise-suppress / AGC (they degrade samples and often force
+          // mono). Fall back to plain audio if the device rejects the constraints.
+          const _chSel = document.getElementById('g-rec-ch');
+          const _wantCh = (_chSel && _chSel.value === '1') ? 1 : 2;   // user-chosen mono / stereo
+          const rawStereo = { channelCount: { ideal: _wantCh }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+          try { stream = await navigator.mediaDevices.getUserMedia({ audio: rawStereo }); }
+          catch (e2) { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
         } catch (e) {
           alert('Could not access microphone: ' + (e.message || e));
           return;
@@ -1679,7 +1687,7 @@
         // Defer the submenu to the next tick: showCtxMenu's click handler
         // runs dismissCtxMenu() right after fn(), which would otherwise
         // tear down the submenu we just opened.
-        actions.push({ label: 'Riff ▸', fn: () => setTimeout(() => showCtxMenu(x, y, riffActions), 0) });
+        actions.push({ label: 'Manipulate ▸', fn: () => setTimeout(() => showCtxMenu(x, y, riffActions), 0) });
       }
       // Lane view-resolution zoom — horizontal density of the step timeline
       // (global). Lives here now instead of the banner row.

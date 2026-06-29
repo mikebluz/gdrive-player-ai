@@ -1339,7 +1339,13 @@
         return;
       }
       try {
-        recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Raw stereo for sampling (2 channels, no echo-cancel / noise-suppress / AGC);
+        // fall back to plain audio if the device rejects the constraints.
+        const _recChEl = document.getElementById('rec-ch');
+        const _recCh = (_recChEl && _recChEl.value === '1') ? 1 : 2;   // user-chosen mono / stereo
+        const rawStereo = { channelCount: { ideal: _recCh }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+        try { recordingStream = await navigator.mediaDevices.getUserMedia({ audio: rawStereo }); }
+        catch (e2) { recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
       } catch (e) {
         alert('Microphone access was denied or unavailable.');
         return;

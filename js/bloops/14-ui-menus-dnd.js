@@ -1934,6 +1934,7 @@
         '<div class="sm-title">Capture sample</div>' +
         '<div class="cap-rec-row">' +
           '<button type="button" class="cap-rec-btn" id="cap-rec">● Record</button>' +
+          '<select id="cap-rec-ch" class="sm-wave" title="Record the mic in stereo or mono"><option value="2">Stereo</option><option value="1">Mono</option></select>' +
           '<span class="cap-status" id="cap-status">Press Record, make a sound, then Stop.</span>' +
         '</div>' +
         '<div class="cap-analysis" id="cap-analysis" style="display:none;">' +
@@ -1968,7 +1969,11 @@
 
       async function startRec() {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Raw stereo/mono per the toggle (no echo-cancel/AGC), with a plain-audio fallback.
+          const _ch = (modal.querySelector('#cap-rec-ch') && modal.querySelector('#cap-rec-ch').value === '1') ? 1 : 2;
+          const _raw = { channelCount: { ideal: _ch }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+          try { stream = await navigator.mediaDevices.getUserMedia({ audio: _raw }); }
+          catch (e2) { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
         } catch (e) { statusEl.textContent = 'Microphone permission denied.'; return; }
         const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
         const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
@@ -2269,15 +2274,27 @@
         ctx.clearRect(0, 0, W, H);
         const sx = startF * W, ex = endF * W;
         ctx.fillStyle = 'rgba(159,122,234,0.16)'; ctx.fillRect(sx, 0, ex - sx, H);
-        const data = buf.getChannelData(0);
-        const step = Math.max(1, Math.floor(data.length / W)), mid = H / 2;
-        ctx.strokeStyle = '#7fd6e8'; ctx.lineWidth = 1; ctx.beginPath();
-        for (let x = 0; x < W; x++) {
-          let min = 1, max = -1; const o = x * step;
-          for (let i = 0; i < step; i++) { const v = data[o + i] || 0; if (v < min) min = v; if (v > max) max = v; }
-          ctx.moveTo(x + 0.5, mid + min * mid); ctx.lineTo(x + 0.5, mid + max * mid);
+        // One horizontal lane per channel — mono = a single full-height lane (unchanged);
+        // stereo = L over R with a faint divider.
+        const nCh = Math.max(1, buf.numberOfChannels);
+        const laneH = H / nCh;
+        if (nCh > 1) {
+          ctx.strokeStyle = 'rgba(127,214,232,0.18)'; ctx.lineWidth = 1;
+          for (let ch = 1; ch < nCh; ch++) { ctx.beginPath(); ctx.moveTo(0, laneH * ch); ctx.lineTo(W, laneH * ch); ctx.stroke(); }
         }
-        ctx.stroke();
+        ctx.strokeStyle = '#7fd6e8'; ctx.lineWidth = 1;
+        for (let ch = 0; ch < nCh; ch++) {
+          const data = buf.getChannelData(ch);
+          const step = Math.max(1, Math.floor(data.length / W));
+          const mid = laneH * ch + laneH / 2, amp = laneH / 2;
+          ctx.beginPath();
+          for (let x = 0; x < W; x++) {
+            let min = 1, max = -1; const o = x * step;
+            for (let i = 0; i < step; i++) { const v = data[o + i] || 0; if (v < min) min = v; if (v > max) max = v; }
+            ctx.moveTo(x + 0.5, mid + min * amp); ctx.lineTo(x + 0.5, mid + max * amp);
+          }
+          ctx.stroke();
+        }
         ctx.strokeStyle = '#4fd1c5'; ctx.lineWidth = 2; ctx.beginPath();
         ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); ctx.stroke();
         fmtSel();
@@ -2523,15 +2540,26 @@
         if (!buf) return;
         const sx = startF * W, ex = endF * W;
         ctx.fillStyle = 'rgba(159,122,234,0.16)'; ctx.fillRect(sx, 0, ex - sx, H);
-        const data = buf.getChannelData(0);
-        const step = Math.max(1, Math.floor(data.length / W)), mid = H / 2;
-        ctx.strokeStyle = '#7fd6e8'; ctx.lineWidth = 1; ctx.beginPath();
-        for (let x = 0; x < W; x++) {
-          let min = 1, max = -1; const o = x * step;
-          for (let i = 0; i < step; i++) { const v = data[o + i] || 0; if (v < min) min = v; if (v > max) max = v; }
-          ctx.moveTo(x + 0.5, mid + min * mid); ctx.lineTo(x + 0.5, mid + max * mid);
+        // One horizontal lane per channel (mono = full height; stereo = L over R).
+        const nCh = Math.max(1, buf.numberOfChannels);
+        const laneH = H / nCh;
+        if (nCh > 1) {
+          ctx.strokeStyle = 'rgba(127,214,232,0.18)'; ctx.lineWidth = 1;
+          for (let ch = 1; ch < nCh; ch++) { ctx.beginPath(); ctx.moveTo(0, laneH * ch); ctx.lineTo(W, laneH * ch); ctx.stroke(); }
         }
-        ctx.stroke();
+        ctx.strokeStyle = '#7fd6e8'; ctx.lineWidth = 1;
+        for (let ch = 0; ch < nCh; ch++) {
+          const data = buf.getChannelData(ch);
+          const step = Math.max(1, Math.floor(data.length / W));
+          const mid = laneH * ch + laneH / 2, amp = laneH / 2;
+          ctx.beginPath();
+          for (let x = 0; x < W; x++) {
+            let min = 1, max = -1; const o = x * step;
+            for (let i = 0; i < step; i++) { const v = data[o + i] || 0; if (v < min) min = v; if (v > max) max = v; }
+            ctx.moveTo(x + 0.5, mid + min * amp); ctx.lineTo(x + 0.5, mid + max * amp);
+          }
+          ctx.stroke();
+        }
         ctx.strokeStyle = '#4fd1c5'; ctx.lineWidth = 2; ctx.beginPath();
         ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.moveTo(ex, 0); ctx.lineTo(ex, H); ctx.stroke();
         fmtSel();

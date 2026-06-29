@@ -65,7 +65,6 @@
         progRateMs: 4000,               // ms per chord (LEGACY — superseded by barsPerChord; removed in prog rework 1b)
         barsPerChord: 1,                // bars each chord of a Progression holds (bar-aligned chord clock)
         prog: { on: false, name: '', chords: [] },   // GLOBAL progression (Configure) — inherited by empty-scale layers when on
-        freezeLenMs: 10000,             // per-layer Freeze loop length (last N ms)
         fadeInMs: 0,                    // Master Fade In: ramp all audio up over N ms on play (0 = off)
         fadeOutMs: 0,                   // Master Fade Out: ramp all audio down over N ms from Finalize (0 = off)
         fadeShape: 'linear',            // Master fade curve: linear | exponential | logarithmic | s-curve (both in & out)
@@ -992,7 +991,6 @@
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
       else { cfg.prog.on = !!cfg.prog.on; if (!Array.isArray(cfg.prog.chords)) cfg.prog.chords = []; if (typeof cfg.prog.name !== 'string') cfg.prog.name = ''; }
-      if (!Number.isFinite(cfg.freezeLenMs)) cfg.freezeLenMs = d.freezeLenMs;
       if (!Number.isFinite(cfg.fadeInMs)) cfg.fadeInMs = d.fadeInMs;
       cfg.fadeInMs = Math.max(0, Math.min(30000, cfg.fadeInMs | 0));
       if (!Number.isFinite(cfg.fadeOutMs)) cfg.fadeOutMs = d.fadeOutMs;
@@ -1977,8 +1975,8 @@
             '<button type="button" class="pe-x" data-pe="rmchord" title="Remove this chord"' + (ed.chords.length <= 1 ? ' disabled' : '') + '>✕ chord</button>' +
           '</span></div>' +
         '<div class="pe-lenrow"><label>Chord length</label>' +
-          '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = the global Bars/chord." />' +
-          '<span class="pe-lenhint">bars — blank = global (' + esc(gbpcStr) + ')</span></div>' +
+          '<input type="text" id="pe-len" value="' + (ch.bars > 0 ? esc(_ambFmtBpc(ch.bars)) : '') + '" placeholder="' + esc(gbpcStr) + '" title="How long THIS chord lasts, in bars (1, 1/2, 8/7…). Blank = ' + esc(gbpcStr) + ' bar (default)." />' +
+          '<span class="pe-lenhint">bars — blank = ' + esc(gbpcStr) + ' (default)</span></div>' +
         '<div class="pe-notes">' + noteChips + '</div>' +
         '<div class="pe-qrow"><label>Set quality</label>' + qButtons + '</div>' +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
@@ -2894,16 +2892,23 @@
       if (!(rootFreq > 0)) return [];
       // Voice the chord tones above the in-key root; Spread lifts upper tones an
       // octave. Fit to Density (octave-double up if fewer tones than Density).
-      const tones = [];
+      // Per-chord-voice tones: voice i = chord-tone role i (root / 3rd / 5th / 7th …);
+      // bed.chordVoiceTones[i] overrides that voice's timbre (octave-doubles keep their
+      // role's tone). Carried as freqs._tones (parallel to the sorted freqs), which
+      // _ambEmitBed applies per voice. Null entries → the bed's own Tone (unchanged).
+      const cvt = Array.isArray(bed.chordVoiceTones) ? bed.chordVoiceTones : [];
+      const out = [];
       for (let i = 0; i < ivs.length; i++) {
         const oShift = (spread > 0 && i > 0 && rng() < (spread / 5)) ? 1 : 0;
-        tones.push(rootFreq * Math.pow(2, (ivs[i] + 12 * oShift) / 12));
+        out.push({ f: rootFreq * Math.pow(2, (ivs[i] + 12 * oShift) / 12), t: cvt[i] || null });
       }
-      let out = tones.slice();
       let g2 = 0;
-      while (out.length < want && tones.length && g2++ < 16) out.push(tones[out.length % tones.length] * 2);
-      if (out.length > want) out = out.slice(0, want);
-      return out.sort((a, b) => a - b);
+      while (out.length < want && ivs.length && g2++ < 16) { const s2 = out[out.length % ivs.length]; out.push({ f: s2.f * 2, t: s2.t }); }
+      if (out.length > want) out.length = want;
+      out.sort((a, b) => a.f - b.f);
+      const freqs = out.map(p => p.f);
+      if (out.some(p => p.t)) freqs._tones = out.map(p => p.t);
+      return freqs;
     }
     // Pad voice params. CRITICAL: attack + release stay INSIDE the note window
     // (lengthMs) — playNote's preReleaseDur = noteMs − release collapses to ~0
@@ -6315,13 +6320,6 @@
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
     // has at least one ramp. Reads the tick-cached cfg (no re-normalize).
-    // ---- "Always listening": rolling capture of the master output ----------
-    // A chain of short MediaRecorder segments (each a complete, decodable clip)
-    // keeps the most recent ~36s of whatever is playing. "Grab" stitches the
-    // last 30s of PCM into a WAV and registers it as a sample. Segmented (not
-    // one long recorder) so a bounded tail can actually be decoded; native
-    // MediaRecorder fan-out off masterLimiter adds no main-thread audio work.
-    const _AL = { on: false, rec: null, dest: null, segs: [], segMs: 4000, keepMs: 36000, busy: false };
     // The node to fan recordings off — the FINAL master node (post lookahead-
     // limiter + soft-clip) so a recording matches what's heard. Falls back to
     // the (now output-orphaned) Tone limiter only if the clipper is absent.
@@ -6332,84 +6330,9 @@
       if (typeof masterLimiter !== 'undefined' && masterLimiter) return masterLimiter;
       return null;
     }
-    function _alSupported() { return (typeof MediaRecorder !== 'undefined') && !!_ambMasterTapNode(); }
-    function _alStart() {
-      if (_AL.on || !_alSupported()) return false;
-      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return false; }
-      try { _AL.dest = ac.createMediaStreamDestination(); _AL.tap = _ambMasterTapNode(); _AL.tap.connect(_AL.dest); } catch (e) { return false; }
-      _AL.on = true; _AL.segs = [];
-      _alNextSeg();
-      return true;
-    }
-    function _alNextSeg() {
-      if (!_AL.on || !_AL.dest) return;
-      let rec; const chunks = [];
-      try {
-        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
-        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
-        rec = new MediaRecorder(_AL.dest.stream, mime ? { mimeType: mime } : undefined);
-      } catch (e) { _AL.on = false; return; }
-      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      rec.onstop = () => {
-        if (chunks.length) {
-          _AL.segs.push(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
-          const maxSegs = Math.ceil(_AL.keepMs / _AL.segMs) + 1;
-          while (_AL.segs.length > maxSegs) _AL.segs.shift();
-        }
-        if (_AL.on) _alNextSeg();
-      };
-      try { rec.start(); } catch (e) { _AL.on = false; return; }
-      _AL.rec = rec;
-      setTimeout(() => { try { rec.stop(); } catch (e) {} }, _AL.segMs);
-    }
-    function _alStop() {
-      _AL.on = false;
-      try { _AL.rec && _AL.rec.stop(); } catch (e) {}
-      try { if (_AL.dest && _AL.tap) _AL.tap.disconnect(_AL.dest); } catch (e) {}
-      _AL.dest = null; _AL.tap = null; _AL.segs = [];
-    }
-    // Decode a list of recorded segments and stitch the LAST `seconds` of PCM
-    // into one AudioBuffer (≤2ch). Shared by always-listen grab + layer freeze.
-    async function _segsToBuffer(ac, segs, seconds) {
-      const bufs = [];
-      for (const blob of segs) { try { bufs.push(await ac.decodeAudioData(await blob.arrayBuffer())); } catch (e) {} }
-      if (!bufs.length) return null;
-      const sr = bufs[0].sampleRate;
-      const ch = Math.min(2, bufs.reduce((m, b) => Math.max(m, b.numberOfChannels), 1));
-      const total = bufs.reduce((n, b) => n + b.length, 0);
-      const wantLen = Math.min(total, Math.floor(seconds * sr));
-      const startSkip = total - wantLen;
-      const out = ac.createBuffer(ch, wantLen, sr);
-      let srcPos = 0, dstPos = 0;
-      for (const b of bufs) {
-        const len = b.length;
-        const chans = []; for (let c = 0; c < ch; c++) chans.push(b.getChannelData(Math.min(c, b.numberOfChannels - 1)));
-        for (let i = 0; i < len; i++) {
-          if (srcPos + i >= startSkip) { for (let c = 0; c < ch; c++) out.getChannelData(c)[dstPos] = chans[c][i]; dstPos++; }
-        }
-        srcPos += len;
-      }
-      return out;
-    }
-    async function _alGrab(seconds) {
-      if (_AL.busy) return;
-      seconds = seconds || 30;
-      const segs = _AL.segs.slice();
-      if (!segs.length) { alert('Nothing buffered yet — turn on Listen and let it play a few seconds.'); return; }
-      _AL.busy = true;
-      try {
-        let ac; try { ac = Tone.getContext().rawContext; } catch (e) { throw new Error('No audio context'); }
-        const out = await _segsToBuffer(ac, segs, seconds);
-        if (!out) throw new Error('Could not decode buffered audio.');
-        const wantLen = out.length, sr = out.sampleRate;
-        const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(out) : null;
-        if (!wav) throw new Error('WAV encoder unavailable.');
-        let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); } catch (e) {}
-        const reg = (typeof registerSampleFromBlob === 'function') ? await registerSampleFromBlob(wav, 'listen-' + stamp) : null;
-        if (typeof showToast === 'function') showToast(reg ? ('Saved last ' + Math.round(wantLen / sr) + 's as sample “' + reg.name + '”') : 'Grab complete');
-      } catch (e) { alert('Grab failed: ' + ((e && e.message) || e)); }
-      finally { _AL.busy = false; }
-    }
+    // "Always Listening / Grab" (rolling master capture → retroactive sample) was removed —
+    // redundant with the Capture bank + Harvest. Restore from git or [[listen-grab-removed]].
+    // (_segsToBuffer went with it — its only caller was _alGrab.)
     // ---- Per-layer Freeze → loop (RETROACTIVE event capture) ----------------
     // The layer's generated notes (freq / params / step-div duration / time) are
     // ALWAYS streamed into a cheap rolling buffer (E.cap[key]) as it plays. A
@@ -9191,12 +9114,20 @@
         _ambModSeqRow('ambient-' + layer + '-mod-' + target) +
         _ambModPartRow('ambient-' + layer + '-mod-' + target) + '</div>';
     const _ambModUi = (layer) =>
-      '<details class="ambient-mod"><summary class="ambient-mod-head">Mod · VCA / VCO / VCF</summary>' +
+      '<details class="ambient-mod"><summary class="ambient-mod-head">Mod · VCA / Gate / VCO / VCF</summary>' +
         '<div class="ambient-ctrl"><label for="ambient-' + layer + '-mod-sync">Rate timing</label>' +
           '<select id="ambient-' + layer + '-mod-sync" class="ambient-select" title="Mod/LFO rate timing — Free = continuous Hz; Sync = locked to tempo divisions.">' +
             '<option value="free">Free (Hz)</option><option value="sync">Sync (tempo)</option>' +
           '</select><span class="ambient-hint">free / sync</span></div>' +
         _ambModTarget(layer, 'vca', 'VCA · amplitude', 'tremolo', 30) +
+        // Trance Gate — grouped with the VCA (both modulate gain): the VCA mod is a smooth
+        // continuous LFO; this is a programmable bar-synced on/off step pattern.
+        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Trance Gate</div>' +
+          _ambSl('On', 'ambient-' + layer + '-fx-tg-on', 0, 1, 0, 'off → on') +
+          _ambSl('Steps', 'ambient-' + layer + '-fx-tg-steps', 4, 32, 16, 'per bar') +
+          _ambSl('Depth', 'ambient-' + layer + '-fx-tg-depth', 0, 100, 100, 'dip → full cut') +
+          _ambSl('Edge', 'ambient-' + layer + '-fx-tg-edge', 0, 80, 6, 'sharp → soft') +
+          '<div class="ambient-ctrl ambient-slice-row"><label>Pattern</label><div class="ambient-slice-grid ambient-tg-grid" id="ambient-' + layer + '-fx-tg-grid"></div></div></div>' +
         _ambModTarget(layer, 'vco', 'VCO · pitch', 'vibrato', 20) +
         _ambModTarget(layer, 'vcf', 'VCF · cutoff', 'sweep', 15) + '</details>';
     // Trance-gate step cells (one toggle button per step; `on` class = passes).
@@ -9261,12 +9192,6 @@
         '<div class="ambient-mod-target"><div class="ambient-mod-sub">Distortion</div>' +
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
           _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Trance Gate</div>' +
-          _ambSl('On', 'ambient-' + layer + '-fx-tg-on', 0, 1, 0, 'off → on') +
-          _ambSl('Steps', 'ambient-' + layer + '-fx-tg-steps', 4, 32, 16, 'per bar') +
-          _ambSl('Depth', 'ambient-' + layer + '-fx-tg-depth', 0, 100, 100, 'dip → full cut') +
-          _ambSl('Edge', 'ambient-' + layer + '-fx-tg-edge', 0, 80, 6, 'sharp → soft') +
-          '<div class="ambient-ctrl ambient-slice-row"><label>Pattern</label><div class="ambient-slice-grid ambient-tg-grid" id="ambient-' + layer + '-fx-tg-grid"></div></div></div>' +
       '</details>' + _ambEqUi();
     // Per-layer 3-band EQ subsection (#1) — lives inside the Mix group (after FX).
     // The layer key is read from the closest .ambient-layer at interaction time, so
@@ -11997,10 +11922,7 @@
         hint('ambient-prog-hint', p.on ? (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's')) : 'pick a progression') : 'off');
         const pEdit = document.getElementById(tr('ambient-prog-edit'));
         if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected
-        const bpcN = Math.max(1, Math.min(10, Math.round(cfg.barsPerChord || 1)));   // dropdown shows whole bars 1–10
-        set('ambient-bars-per-chord', String(bpcN));
-        hint('ambient-bars-per-chord-v', bpcN + ' bar' + (bpcN === 1 ? '' : 's') + ' / chord'); }
-      set('ambient-freeze-len', cfg.freezeLenMs); hint('ambient-freeze-len-v', _ambFmtMs(cfg.freezeLenMs));
+      }
       set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
       set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
       set('ambient-master-fadeshape', cfg.fadeShape);
@@ -12190,12 +12112,6 @@
           (E.isLane ? '<button type="button" id="ambient-freeze-btn" class="ambient-regen" title="Print the generated output to a new editable lane">❄ Freeze→lane</button>' : '') +
           '<span class="ambient-seed" id="ambient-seed-val">#1</span>' +
         '</div>' +
-        (E.isLane ? '' :
-          '<div class="ambient-row ambient-listen-row">' +
-            '<button type="button" id="ambient-listen-btn" class="ambient-seg" title="Always listening: continuously buffer the last ~30s of everything playing">🎙 Listen</button>' +
-            '<button type="button" id="ambient-grab-btn" class="ambient-regen" title="Save the buffered last 30s as a sample">⤓ Grab 30s</button>' +
-            '<span class="ambient-hint" id="ambient-listen-hint">off</span>' +
-          '</div>') +
         // Queue mode — when on, a layer on/off click is deferred to that
         // layer's OWN next iteration boundary instead of applying immediately.
         '<div class="ambient-row ambient-queue">' +
@@ -12221,13 +12137,7 @@
             '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
             '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
             '<span class="ambient-hint" id="ambient-prog-hint">off</span>' +
-          '</div>' +
-          '<div class="ambient-ctrl"><label for="ambient-bars-per-chord">Bars / chord</label>' +
-          '<select id="ambient-bars-per-chord" class="ambient-select" title="How many bars each chord of the progression holds. For per-chord lengths (1/2, 8/7…), use the Edit popover.">' +
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => '<option value="' + n + '">' + n + '</option>').join('') +
-          '</select>' +
-          '<span class="ambient-hint" id="ambient-bars-per-chord-v">1 bar / chord</span></div>') +
-        tm('Freeze length', 'ambient-freeze-len', 1000, 30000, 500, 10000) +
+          '</div>') +
         // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
         // "Global FX" subsection (below the faders) — see _globalFxHtml.
         '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
@@ -12259,7 +12169,7 @@
           // faders (was in Configure). Ids unchanged so existing wiring still binds. Per-
           // block lane guards preserved (lanes show only Reverb). Inside the mixer so it
           // collapses with it.
-          '<div class="ambient-mixer-globalfx"><div class="ambient-mod-sub">Global FX</div>' +
+          '<details class="ambient-mod ambient-mixer-globalfx"><summary class="ambient-mod-head">Global FX</summary>' +
             (E.isLane ? '' :
               '<div class="ambient-warmth">' +
                 '<div class="ambient-warmth-head"><span class="ambient-mod-sub">Warmth</span>' +
@@ -12299,7 +12209,7 @@
               sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
               sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
             '</div>' +
-          '</div>' +
+          '</details>' +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
           grp('Voice') +
@@ -12322,7 +12232,13 @@
             // Chord-mode repeat structure (inert in Chaos): play a phrase of N
             // chords, repeat it M times, then a fresh phrase.
             sl('Repeat', 'ambient-bed-chordlen', 1, 16, 4, 'chords / phrase') +
-            sl('Times', 'ambient-bed-chordreps', 1, 16, 4, 'phrase repeats') + gpe() +
+            sl('Times', 'ambient-bed-chordreps', 1, 16, 4, 'phrase repeats') +
+            // Per-chord-voice tones (structured Chords/Monk modes): each chord position can
+            // carry its own timbre. '' = the bed's own Tone. Inert in Chaos (which uses the
+            // wrap-ensemble's per-degree tones instead).
+            '<div class="ambient-ctrl ambient-cvt-head"><label>Chord voices</label><span class="ambient-hint">per-voice tone · Chords/Monk</span></div>' +
+            [['0', 'Root'], ['1', '3rd'], ['2', '5th'], ['3', '7th'], ['4', '9th'], ['5', '11th']].map(p =>
+              '<div class="ambient-ctrl"><label for="ambient-bed-cvt-' + p[0] + '">' + p[1] + '</label><select id="ambient-bed-cvt-' + p[0] + '" class="ambient-select ambient-bed-cvt"></select></div>').join('') + gpe() +
           grp('Rhythm') +
             tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
             sl('Len var', 'ambient-bed-lenvary', 0, 100, 0, 'around Length') +
@@ -12645,14 +12561,8 @@
           persist();
         });
       };
-      { const el = G('ambient-bars-per-chord'), vEl = G('ambient-bars-per-chord-v');
-        if (el) el.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c) return;
-          const f = Math.max(1, Math.min(10, parseInt(el.value, 10) || 1));   // whole bars 1–10 (per-chord fractions live in the Edit popover)
-          c.barsPerChord = f; c.barsPerChordStr = String(f);
-          if (vEl) vEl.textContent = f + ' bar' + (f === 1 ? '' : 's') + ' / chord';
-          persist(); }); }
-      { const el = G('ambient-freeze-len'), vEl = G('ambient-freeze-len-v');
-        if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 10000; c.freezeLenMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
+      // (Global "Bars / chord" input removed — per-chord bars are set in the Prog Edit
+      // popover; barsPerChord stays as the internal fallback default of 1.)
       // Master Fade In / Out (mixer panel) — ms; applied on play / Finalize.
       { const el = G('ambient-master-fadein'), vEl = G('ambient-master-fadein-v');
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 0; c.fadeInMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
@@ -12756,6 +12666,19 @@
       bind('ambient-bed-chordlen', 'bed', 'chordPhraseLen');
       bind('ambient-bed-chordreps', 'bed', 'chordRepeats');
       { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; persist(); }); }
+      // Per-chord-voice tones (structured modes) — populate, load + bind the 6 voice selects.
+      ['0', '1', '2', '3', '4', '5'].forEach(i => {
+        const s = G('ambient-bed-cvt-' + i);
+        if (!s) return;
+        try { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: '— bed tone —' }); } catch (e) {}
+        { const c = cfg0(); if (c && c.bed && Array.isArray(c.bed.chordVoiceTones)) s.value = c.bed.chordVoiceTones[i] || ''; }
+        s.addEventListener('change', () => {
+          _E = E; const c = cfg0(); if (!c || !c.bed) return;
+          if (!Array.isArray(c.bed.chordVoiceTones)) c.bed.chordVoiceTones = [];
+          c.bed.chordVoiceTones[parseInt(i, 10)] = s.value || '';
+          persist();
+        });
+      });
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
       bindTime('ambient-bed-interval', 'bed', 'intervalMs');
       bindTime('ambient-bed-length', 'bed', 'lengthMs');
@@ -12978,18 +12901,6 @@
       });
       const resetBtn = G('ambient-reset-btn');
       if (resetBtn) resetBtn.addEventListener('click', () => { try { _ambResetInstance(E); } catch (e) { console.warn('Bloom reset failed', e); } });
-      // "Always listening" — master only; rolling capture of the master output.
-      if (!E.isLane) {
-        const listenBtn = G('ambient-listen-btn'), grabBtn = G('ambient-grab-btn'), lHint = G('ambient-listen-hint');
-        const syncAL = () => {
-          if (listenBtn) listenBtn.classList.toggle('active', _AL.on);
-          if (lHint) lHint.textContent = _AL.on ? 'buffering…' : 'off';
-          if (grabBtn) grabBtn.disabled = !_AL.on;
-        };
-        if (listenBtn) listenBtn.addEventListener('click', () => { if (_AL.on) _alStop(); else _alStart(); syncAL(); });
-        if (grabBtn) grabBtn.addEventListener('click', () => _alGrab(30));
-        syncAL();
-      }
       if (E.isLane) {
         const freezeBtn = G('ambient-freeze-btn');
         if (freezeBtn) freezeBtn.addEventListener('click', () => { try { _ambFreezeToLane(); } catch (e) { console.warn('Bloom freeze failed', e); } });

@@ -749,6 +749,11 @@
               }
             } else {
               const _sp = paramsWithBend(_withVel(_withBypass(_withSlice(step.params || step.sound || 'sine'))), step.bend);
+              // Portamento — glide this lane's pitch from the previous note (gated on the
+              // lane's portamento). The lane object tracks its own previous freq. Single-note
+              // steps only (chords share one prev and would interfere).
+              const _pLane = (typeof lanes !== 'undefined' && Array.isArray(lanes)) ? lanes[laneIdx] : null;
+              if (_pLane && _pLane.portamento > 0) { _sp.glideMs = _pLane.portamento; _sp.glideLayer = _pLane; }
               playNote(step.freq, _sp, dms, at, undefined, undefined, laneIdx);
               try { if (typeof midiEmitNote === 'function') midiEmitNote(step.freq, _sp, dms, at, laneIdx); } catch (e) {}
             }

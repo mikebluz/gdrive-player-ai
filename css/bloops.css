@@ -1343,8 +1343,8 @@
     /* Floating gear — transparent (no box/fill), just the wheel glyph, 50% larger. */
     #xport-menu-btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
-      width: 100%; height: auto; padding: 9px 14px;
-      border: 1px solid rgba(159,122,234,0.35); border-radius: 9px;
+      width: 100%; height: auto; padding: 11px 14px;
+      border: none; border-bottom: 1px solid rgba(159,122,234,0.35); border-radius: 0;
       background: rgba(159,122,234,0.10); color: #cbd5e0;
       font-family: 'Segoe UI', sans-serif; font-size: 0.92rem; font-weight: 600; letter-spacing: 0.3px;
       cursor: pointer; flex-shrink: 0; touch-action: manipulation;
@@ -2547,6 +2547,17 @@
       padding: 4px 12px 12px; border-top: 1px solid #23233a;
     }
     .ambient-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* Key controls — keep the Key button + Root/Scale selects + Transpose all on one row,
+       shrinking the selects/hint to fit rather than wrapping. */
+    .ambient-row.ambient-key { flex-wrap: nowrap; gap: 6px; }
+    .ambient-row.ambient-key .ambient-select { flex: 1 1 0; min-width: 0; }
+    .ambient-row.ambient-key .ambient-seg { flex: 0 0 auto; }
+    .ambient-row.ambient-key .ambient-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Prog controls — Prog button + Pick + Edit all on one row, same approach as Key. */
+    .ambient-row.ambient-prog { flex-wrap: nowrap; gap: 6px; }
+    .ambient-row.ambient-prog .ambient-prog-pick { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-row.ambient-prog .ambient-seg { flex: 0 0 auto; }
+    .ambient-row.ambient-prog .ambient-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-regen {
       padding: 8px 16px; border: 1px solid #2d2d3f; border-radius: 20px;
       background: transparent; color: #a0aec0; font-family: 'Segoe UI', sans-serif;
@@ -2823,7 +2834,7 @@
       width: 100%; height: 56px; display: block;
       background: #06060d; border: 1px solid #20203a; border-radius: 6px;
     }
-    .ambient-timing { gap: 8px; }
+    .ambient-timing { gap: 8px; }   /* segmented-button row layout (still used by the TTS "Freeze as" row in 18-text.js) */
     .ambient-seg {
       padding: 4px 14px; border: 1px solid #2d2d3f; border-radius: 14px;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
@@ -2891,6 +2902,11 @@
       display: flex; flex-direction: column; gap: 6px;
     }
     .ambient-mixer-head { display: flex; align-items: center; gap: 8px; }
+    /* Mixer title styled to match the Configure summary (purple, 700) + a faders glyph. */
+    .ambient-mixer-title { font: 700 0.9rem 'Segoe UI', sans-serif; color: #d6bcfa; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
+    /* Global FX subsection (Warmth/Width/Dynamics/Reverb) moved below the mixer faders. */
+    .ambient-mixer-globalfx { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(159,122,234,0.22); }
+    .ambient-mixer-globalfx > .ambient-mod-sub { margin-bottom: 6px; }
     /* Collapse caret on the RIGHT, matching the layer-header collapse buttons. */
     .ambient-mixer-toggle {
       margin-left: auto; flex: 0 0 auto;
@@ -2902,6 +2918,7 @@
     .ambient-mixer.collapsed .ambient-mixer-strip { display: none; }
     /* Master Fade In/Out controls under the mixer strip; hidden when collapsed. */
     .ambient-mixer.collapsed .ambient-mixer-fades { display: none; }
+    .ambient-mixer.collapsed .ambient-mixer-globalfx { display: none; }
     .ambient-mixer-fades { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 2px; margin-top: 4px; border-top: 1px solid #20202e; }
     .ambient-mixer-fades .ambient-mod-sub { margin: 2px 0; }
     .ambient-mixer-strip {
@@ -2995,6 +3012,23 @@
     .ambient-ctrl.ambient-mod-seqrow[hidden] { display: none; }
     .ambient-mod-seqrow > label { color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; font-weight: 700; }
     .ambient-mod-seqrow select { width: auto; }
+    /* Custom-shape harmonic sliders (H1..H4), shown when a mod target's Shape = custom. */
+    .ambient-ctrl.ambient-mod-partrow { display: flex; align-items: center; gap: 10px; }
+    .ambient-ctrl.ambient-mod-partrow[hidden] { display: none; }
+    .ambient-mod-partrow > label { color: #8a8aa8; font-family: 'Segoe UI', sans-serif; font-size: 0.72rem; font-weight: 700; flex: 0 0 auto; }
+    .ambient-mod-parts { display: flex; gap: 10px; flex: 1 1 auto; min-width: 0; }
+    .ambient-mod-part { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1 1 0; min-width: 0; }
+    .ambient-mod-part > span { font-size: 0.6rem; color: #7a7a9c; font-family: 'Segoe UI', sans-serif; }
+    .ambient-mod-partsl { width: 100%; }
+    .ambient-mod-prate { accent-color: #5e9ead; }
+    .ambient-mod-pratev { font-size: 0.56rem; color: #6f8f9c; font-family: 'Segoe UI', sans-serif; }
+    .ambient-mod-partrow > label > small { display: block; font-size: 0.56rem; font-weight: 400; color: #6b6b8a; }
+    /* Sample per-slice mute grid — one cell per slice, wraps to fit (no h-scroll). */
+    .ambient-ctrl.ambient-slice-row { align-items: flex-start; }
+    .ambient-slice-grid { display: flex; flex-wrap: wrap; gap: 3px; flex: 1 1 auto; min-width: 0; }
+    .ambient-slice-cell { flex: 0 0 auto; min-width: 20px; height: 22px; padding: 0 4px; border: 1px solid #2d2d3f; border-radius: 5px; background: transparent; color: #5a5a7a; font: 600 0.62rem 'Segoe UI', sans-serif; cursor: pointer; transition: all 0.12s ease; }
+    .ambient-slice-cell.on { border-color: #5e9ead; color: #9fe0ef; background: rgba(94,158,173,0.18); }
+    @media (hover: hover) { .ambient-slice-cell:hover { border-color: #9f7aea; color: #c9b8ef; } }
     .ambient-layer-head { display: flex; align-items: center; flex-wrap: wrap; position: relative; }
     /* Read-only live notes line — wraps to its own full-width row under the head
        buttons. Hidden by default; while the layer is active it's RESERVED (a
@@ -3058,6 +3092,7 @@
     .ambient-piano-toggle.active { color: #1a202c; background: #7fd6c4; border-color: #7fd6c4; }
     /* In the body controls row it reads as a pill, matching the Rename button. */
     .ambient-layer-topctrls .ambient-piano-toggle { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
+    .ambient-layer-topctrls .ambient-clone-btn { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
     /* Keyboard strip — relative box; white keys tile (float), black keys overlay
        (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
     /* font-size:0 + nowrap kills inline-block gaps/wrap; inline-block (not float)
@@ -3192,7 +3227,9 @@
       font-family: 'Segoe UI', sans-serif; font-size: 0.68rem; color: #6f6f92;
       pointer-events: none;
     }
-    .ambient-layer-unit:empty { display: none; }
+    /* Keep an empty unit readout (e.g. Sample layers) as a transparent flex spacer so
+       the head buttons stay right-justified, instead of collapsing it with display:none. */
+    .ambient-layer-unit:empty { margin-left: 0; }
     /* Unit "Match" row — set this layer's unit length to another's. */
     .ambient-umatch-btn {
       flex: 0 0 auto; padding: 4px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap;
@@ -9409,9 +9446,18 @@
        from the view-mode hide rules, so it shows in every view. */
     .float-header {
       position: static; z-index: 300;
-      background: transparent; padding: 8px 10px 0;
+      background: transparent; padding: 0;
+      display: flex; align-items: stretch;
     }
     .float-header > * { pointer-events: auto; }
+    /* Bloom elapsed-time readout — top-left, 25% width, left of the Settings gear. */
+    .bloom-hdr-elapsed {
+      flex: 0 0 25%; min-width: 0; display: flex; align-items: center; justify-content: center;
+      font: 700 clamp(0.7rem, 2.4vw, 0.95rem) 'Segoe UI', Tahoma, sans-serif; letter-spacing: 0.5px;
+      font-variant-numeric: tabular-nums; color: #7fd6e8; white-space: nowrap;
+      border-bottom: 1px solid rgba(159,122,234,0.35); background: rgba(159,122,234,0.06);
+    }
+    .float-header #xport-menu-btn { flex: 1 1 0; width: auto; min-width: 0; }
     /* Source elements pre-relocation (Undo/Redo, metronome, BPM digits, home
        link, hidden tempo inputs) — kept out of layout until the menu claims them. */
     .xport-sources { display: none; }

@@ -3,6 +3,24 @@
     // the keyboard. type strings of the form 'sample:<id>' route through these.
     const sampleSamplers = new Map();
 
+    // A cached, reversed copy of an AudioBuffer (for the Bloom sample "Reverse" toggle).
+    // Web Audio can't play a buffer backwards, so we mirror the samples once per buffer.
+    const _ambRevBufCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
+    function _reverseAudioBuf(buf) {
+      if (!buf) return buf;
+      if (_ambRevBufCache) { const c = _ambRevBufCache.get(buf); if (c) return c; }
+      try {
+        const ac = (typeof Tone !== 'undefined') ? Tone.getContext().rawContext : null; if (!ac) return buf;
+        const out = ac.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+          const s = buf.getChannelData(ch), d = out.getChannelData(ch);
+          for (let i = 0, n = buf.length; i < n; i++) d[i] = s[n - 1 - i];
+        }
+        if (_ambRevBufCache) _ambRevBufCache.set(buf, out);
+        return out;
+      } catch (e) { return buf; }
+    }
+
     // For drum-kit samples, snap any incoming pitch to the C2 row so each
     // pitch class triggers its native drum hit instead of pitch-shifting a
     // single sample across the keyboard. The kits' urls map covers C2-B2;
@@ -288,7 +306,9 @@
         // the NATIVE node after start (_applyVoiceLoop) — NOT via Tone's loop
         // setter / constructor option, which cancels the source's fade-in ramp and
         // leaves the voice silent (the bug that made Motif/Texture drop out).
-        source = new Tone.ToneBufferSource({ url: (_loopBuf ? _loopBuf.buffer : audioBuf), playbackRate }).connect(head);
+        let _srcBuf = _loopBuf ? _loopBuf.buffer : audioBuf;
+        if (opts && opts.reverse && !_loopBuf) _srcBuf = _reverseAudioBuf(audioBuf);   // play backwards (whole sample or slice)
+        source = new Tone.ToneBufferSource({ url: _srcBuf, playbackRate }).connect(head);
         // VCO automation: Bloom's per-layer pitch mod is a ±cents signal (it
         // drives a synth voice's `detune` directly). Tone.ToneBufferSource has
         // no connectable detune, so retarget it onto playbackRate — where pitch
@@ -317,8 +337,10 @@
       // sampleOffsetSec/sliceDurSec by × playbackRate here — the one place that
       // knows the rate. (The buffer consumed for an output-time slice scales with
       // playbackRate, so a transposed slice still covers the right window.)
-      const sliceOffset = (opts && Number.isFinite(opts.sampleOffsetSec)) ? Math.max(0, Math.min(audioBuf.duration, opts.sampleOffsetSec * playbackRate)) : 0;
+      let sliceOffset = (opts && Number.isFinite(opts.sampleOffsetSec)) ? Math.max(0, Math.min(audioBuf.duration, opts.sampleOffsetSec * playbackRate)) : 0;
       const sliceBufSec = (opts && Number.isFinite(opts.sliceDurSec)) ? Math.max(0.005, opts.sliceDurSec * playbackRate) : null;
+      // Reversed buffer: a forward window [o, o+d] maps to [D−o−d, D−o] in the mirror.
+      if (opts && opts.reverse && !_loopBuf) { const D = audioBuf.duration; sliceOffset = Math.max(0, D - sliceOffset - (sliceBufSec != null ? sliceBufSec : D)); }
       return { source, ampEnv, outGain, filter, panNode, detuneScale, sliceOffset, sliceBufSec, padLoop: _padLoop,
         loop: !!_loopBuf, loopStart: _loopBuf ? _loopBuf.loopStart : 0, loopEnd: _loopBuf ? _loopBuf.loopEnd : 0 };
     }
@@ -3071,9 +3093,20 @@
             && !Number.isFinite(params.filterCutoff);
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
             { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,
-              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec, loop: _wantLoop });
+              sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec, loop: _wantLoop, reverse: !!params.reverse });
           if (v) {
             const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+            // Portamento — glide the sample's playbackRate (= pitch) from the layer's previous
+            // note up to the target over glideMs. Gated; default off → byte-identical. (The slice
+            // window is computed at the target rate, so a brief glide may drift the slice slightly.)
+            if (params.glideMs > 0 && params.glideLayer && v.source && v.source.playbackRate) {
+              const tr = v.source.playbackRate.value, prev = params.glideLayer._glidePrevRate;
+              if (prev > 0 && tr > 0 && prev !== tr) {
+                const gl = Math.min(params.glideMs / 1000, Math.max(0.02, targetDur * 0.95));
+                try { v.source.playbackRate.setValueAtTime(prev, triggerAt); v.source.playbackRate.exponentialRampToValueAtTime(tr, triggerAt + gl); } catch (e) {}
+              }
+              params.glideLayer._glidePrevRate = tr;
+            }
             try {
               // Slice window when present (offset>0 or a bounded duration); else
               // the plain whole-buffer start — byte-identical to the prior path.
@@ -3524,6 +3557,18 @@
         }
         const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime))
           ? startTime : Tone.now();
+        // Portamento — glide each oscillator from the layer's previous note freq up to the
+        // target over glideMs. Gated on glideMs > 0 (set only by _ambApplyAdsr when the
+        // layer's Portamento > 0), so the default voice path is byte-identical. The previous
+        // freq is tracked per-layer on the layer object so each layer glides independently.
+        if (params.glideMs > 0 && typeof freq === 'number' && freq > 0 && params.glideLayer) {
+          const prev = params.glideLayer._glidePrev;
+          if (prev > 0 && prev !== freq) {
+            const gl = Math.min(params.glideMs / 1000, Math.max(0.02, targetDur * 0.95));
+            oscs.forEach(o => { try { if (o.frequency) { o.frequency.cancelScheduledValues(triggerAt); o.frequency.setValueAtTime(prev, triggerAt); o.frequency.exponentialRampToValueAtTime(freq, triggerAt + gl); } } catch (e) {} });
+          }
+          params.glideLayer._glidePrev = freq;
+        }
         ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
         oscs.forEach(o => { try { o.start(triggerAt); } catch (e) {} });
         const stopAt = triggerAt + preReleaseDur + (env.release || 0.5) + 0.05;
@@ -3615,6 +3660,18 @@
         } catch (e) {}
       }
       synth.triggerAttackRelease(freq, preReleaseDur, startTime, velocity);
+      // Portamento — glide the synth's base frequency from the layer's previous note up to
+      // the target over glideMs (gated; oscillator-path layers handle their own glide). Covers
+      // the .frequency synths (FM/AM/Duo/Mono/Membrane/Metal). Independent of the detune bend below.
+      if (params.glideMs > 0 && typeof freq === 'number' && freq > 0 && params.glideLayer && synth.frequency) {
+        const prev = params.glideLayer._glidePrev;
+        const at = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+        if (prev > 0 && prev !== freq) {
+          const gl = Math.min(params.glideMs / 1000, Math.max(0.02, targetDur * 0.95));
+          try { synth.frequency.cancelScheduledValues(at); synth.frequency.setValueAtTime(prev, at); synth.frequency.exponentialRampToValueAtTime(freq, at + gl); } catch (e) {}
+        }
+        params.glideLayer._glidePrev = freq;
+      }
 
       // Pitch bend: ramp the synth's detune from `detune` cents to
       // `detune + bend.semitones * 100` cents over the first

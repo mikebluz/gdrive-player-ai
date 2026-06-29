@@ -133,15 +133,21 @@ whether `playNote()` is called with a `laneIdx`, then converges on a single mast
   bypasses all of these sends; per-lane Bloom (`_laneEng`) rides the active lane's bus and
   inherits that lane's sends.
 - **Each Bloom layer chain ends in a dedicated DRY output GATE.** The per-layer mod chain is
-  `voices → vcf → [EQ3] → vca → gate → pan → [dist] → [delay] → bus`, with the layer's reverb
-  send tapped off the **vca (pre-gate)**. The `[EQ3]` is the per-layer 3-band EQ, spliced in
+  `voices → vcf → [EQ3] → vca → levelGain → tgGate → gate → pan → [dist] → [chorus] → [phaser] → [delay] → [autopan] → bus`, with the layer's reverb
+  send tapped off the **levelGain (pre-gate)**. `levelGain` is the layer's **Level** as a
+  continuous gain (`_ambLevelGain`: 0→silent, 70→unity, 100→×2) — Level lives here, not per-note,
+  so a ramp or fader sweeps the whole layer (held tails included) in real time. `tgGate` is the
+  **Trance Gate**: a bar-synced step pattern (driven by a dedicated Signal in `_ambScheduleTg`,
+  disposed on stop) that chops the layer; unity passthrough when off, and pre-gate so the reverb
+  wash (tapped off levelGain) fills the chopped gaps. The `[EQ3]` is the per-layer 3-band EQ, spliced in
   **lazily** only while a band ≠ 0 dB (an EQ3 is several always-on biquads; building one per
   layer at flat 0 dB drained dense stacks), and disposed when the layer returns to flat; an FFT
   `Analyser` taps the **vca** (so the band meters in Mix → EQ work whether or not the EQ is
   engaged). The `pan` is a per-layer `Panner`: in Spread mode it stays centred (per-voice pans
   fan the width); in Pan mode it holds the position so a **pan ramp** sweeps it smoothly. The
-  `[dist]` (oversampling scales down as more layers run distortion) and `[delay]` are likewise
-  inserted only at `mix > 0`. The `gate` is a plain `Gain(1)` that never has an LFO connected
+  `[dist]` (oversampling scales down as more layers run distortion), `[chorus]`, `[phaser]`,
+  `[delay]` (a `FeedbackDelay`, or a `PingPongDelay` when the layer's **Ping-Pong** toggle is on)
+  and `[autopan]` are likewise inserted only at `mix > 0`. The `gate` is a plain `Gain(1)` that never has an LFO connected
   (unlike `vca`, whose gain carries the VCA tremolo when its mod depth > 0). That lets Queue
   mode ramp the gate to 0 at an exact iteration boundary to silence the dry voices the
   look-ahead scheduler already committed past it — a clean, click-free STOP that a

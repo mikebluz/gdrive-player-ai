@@ -1243,7 +1243,7 @@
       bar.innerHTML = '';
 
       // Single menu trigger — labelled with the sequence name. Opens the saved-
-      // sequence action menu (Rename / Duplicate / Copy ×N to track / Send to
+      // sequence action menu (Rename / Duplicate / Send to
       // Bloom ▸ / Delete) — the same actions that used to be separate buttons
       // here, now collapsed into one menu (savedBlockActions).
       const btn = document.createElement('button');
@@ -1281,12 +1281,6 @@
           renderSavedSequences();
         } },
       ];
-      actions.push('hr');
-      // Single entry-point for adding to a track — opens the Copy ×N
-      // dialog where the user can pick a destination (existing track
-      // or new) and a count. The default is 1 copy so a plain "add
-      // this sequence to a track" is still one click → Add.
-      actions.push({ label: '⊕ Copy ×N to track…', fn: () => showCopySavedDialog(seqIndex) });
       actions.push('hr');
       // Send this sequence to the MASTER Bloom (in Mix), in one of 3 modes.
       // Deferred (setTimeout) so showCtxMenu's dismiss doesn't tear the submenu.
@@ -1332,80 +1326,6 @@
         renderSavedSequences();
       } });
       return actions;
-    }
-
-    // Open the "Copy ×N to track…" dialog from a saved-sequence long-press.
-    // Lets the user lay down a repeated section in one shot instead of
-    // dragging the same chip onto the track over and over.
-    function showCopySavedDialog(seqIndex) {
-      const seq = savedSequences[seqIndex];
-      if (!seq) return;
-      const overlay = document.createElement('div');
-      overlay.className = 'sm-overlay';
-      const modal = document.createElement('div');
-      modal.className = 'sm-modal';
-      const trackOptions = tracks.map((t, i) => `<option value="${i}">${t.name}</option>`).join('');
-      modal.innerHTML = `
-        <div class="sm-title">Copy "${seq.name}" to track</div>
-        <div class="sm-param">
-          <div class="sm-param-row">Iterations</div>
-          <div class="sm-stepper" style="display:flex;align-items:stretch;gap:6px;">
-            <button type="button" id="copy-n-dec" aria-label="Decrease" style="flex:0 0 36px;padding:0;background:#0a0a14;border:1px solid #2d2d3f;border-radius:6px;color:#cbd5e0;font-family:inherit;font-size:1.1rem;font-weight:700;cursor:pointer;">−</button>
-            <input type="number" id="copy-n" min="1" max="64" step="1" value="1" inputmode="numeric" style="flex:1 1 0;min-width:0;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;border-radius:6px;color:#e2e8f0;font-family:inherit;font-size:0.95rem;text-align:center;" />
-            <button type="button" id="copy-n-inc" aria-label="Increase" style="flex:0 0 36px;padding:0;background:#0a0a14;border:1px solid #2d2d3f;border-radius:6px;color:#cbd5e0;font-family:inherit;font-size:1.1rem;font-weight:700;cursor:pointer;">+</button>
-          </div>
-        </div>
-        <div class="sm-section-label">Destination</div>
-        <select id="copy-track" style="width:100%;padding:6px 10px;background:#0a0a14;border:1px solid #2d2d3f;color:#e2e8f0;border-radius:6px;font-family:inherit;font-size:0.85rem;margin-bottom:10px;">
-          <option value="new">— New track —</option>
-          ${trackOptions}
-        </select>
-        <div class="sm-footer">
-          <button type="button" class="sm-preview" id="copy-cancel">Cancel</button>
-          <button type="button" class="sm-apply" id="copy-apply">Add</button>
-        </div>
-      `;
-      overlay.appendChild(modal);
-      document.body.appendChild(overlay);
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-      const nInput = modal.querySelector('#copy-n');
-      const clampN = (v) => Math.max(1, Math.min(64, Math.floor(Number(v) || 0)));
-      const setN = (v) => { nInput.value = String(clampN(v)); };
-      // Free typing: re-clamp on blur so partial inputs (empty string,
-      // out-of-range) snap back to a valid integer when the user
-      // commits, without fighting them mid-edit.
-      nInput.addEventListener('blur', () => {
-        const v = parseInt(nInput.value, 10);
-        if (!Number.isFinite(v)) { nInput.value = '1'; return; }
-        nInput.value = String(clampN(v));
-      });
-      modal.querySelector('#copy-n-dec').addEventListener('click', () => {
-        setN(clampN(parseInt(nInput.value, 10)) - 1);
-      });
-      modal.querySelector('#copy-n-inc').addEventListener('click', () => {
-        setN(clampN(parseInt(nInput.value, 10)) + 1);
-      });
-
-      modal.querySelector('#copy-cancel').addEventListener('click', () => overlay.remove());
-      modal.querySelector('#copy-apply').addEventListener('click', async () => {
-        const n = Math.max(1, Math.min(64, parseInt(nInput.value, 10) || 1));
-        const dest = modal.querySelector('#copy-track').value;
-        let trackIdx;
-        if (dest === 'new') {
-          let opts;
-          if (seq && seq.type === 'audio') {
-            const ch = await detectAudioChannelCount(seq.audioDataUrl);
-            opts = { stereo: ch >= 2 };
-          }
-          trackIdx = addTrack(opts);
-        } else {
-          trackIdx = parseInt(dest, 10);
-          if (!Number.isFinite(trackIdx) || !tracks[trackIdx]) { overlay.remove(); return; }
-        }
-        for (let i = 0; i < n; i++) addSavedToTrack(trackIdx, seq);
-        overlay.remove();
-      });
     }
 
     // For each track item whose name matches one of `names`, swap it for a
@@ -4234,6 +4154,11 @@
           <summary>Step subdivision</summary>
           <div class="sm-fold-body">
             <div class="sm-waves" id="se-sub-row"></div>
+            <div class="sm-sub-custom">
+              <label for="se-sub-custom">Custom</label>
+              <input type="text" id="se-sub-custom" placeholder="e.g. 23/32" autocomplete="off" spellcheck="false" />
+              <span class="sm-val" id="se-sub-custom-v"></span>
+            </div>
           </div>
         </details>
         <details class="sm-fold">
@@ -4407,20 +4332,67 @@
         if (t) t.textContent = 'Edit ' + _selTargets.length + ' steps — only changed fields apply';
       }
 
-      // Subdivision picker
+      // Subdivision picker — 6 presets plus a Custom N/N field for finer/arbitrary
+      // fractions. A subdivision is a multiplier vs a quarter note (1 = 1/4, 0.5 =
+      // 1/8…), so an "M/N" note = 4*M/N — "1/8" → 0.5 (== the preset), "23/32" → 2.875.
       const subRow = modal.querySelector('#se-sub-row');
+      const subCustom = modal.querySelector('#se-sub-custom');
+      const subCustomV = modal.querySelector('#se-sub-custom-v');
       const SUBS = [[4,'1/1'],[2,'1/2'],[1,'1/4'],[0.5,'1/8'],[0.25,'1/16'],[0.125,'1/32']];
+      const _subGcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t; } return a || 1; };
+      const _isPresetSub = (v) => SUBS.some(([sv]) => Math.abs(sv - v) < 1e-9);
+      // multiplier → reduced "M/N" note label (mult/4 = fraction of a whole note).
+      const _subToFrac = (mult) => {
+        const frac = mult / 4;
+        for (let den = 1; den <= 256; den++) {
+          const num = Math.round(frac * den);
+          if (num > 0 && Math.abs(frac - num / den) < 1e-9) { const g = _subGcd(num, den); return (num / g) + '/' + (den / g); }
+        }
+        return null;
+      };
+      // "M/N" (or a bare "N" meaning "1/N") → multiplier, or null if invalid.
+      const _fracToSub = (s) => {
+        s = (s || '').trim(); if (!s) return null;
+        let M, N;
+        if (s.indexOf('/') >= 0) { const parts = s.split('/'); M = parseInt(parts[0], 10); N = parseInt(parts[1], 10); }
+        else { M = 1; N = parseInt(s, 10); }
+        if (!Number.isFinite(M) || !Number.isFinite(N) || M <= 0 || N <= 0) return null;
+        return 4 * M / N;
+      };
+      const _refreshSubActive = () => {
+        const btns = subRow.querySelectorAll('.sm-wave');
+        SUBS.forEach(([sv], i) => { if (btns[i]) btns[i].classList.toggle('active', Math.abs(sv - p.subdivision) < 1e-9); });
+      };
       SUBS.forEach(([v, lbl]) => {
         const btn = document.createElement('button');
         btn.className = 'sm-wave' + (v === p.subdivision ? ' active' : '');
         btn.textContent = lbl;
         btn.addEventListener('click', () => {
           p.subdivision = v; _touched.add('subdivision');
-          subRow.querySelectorAll('.sm-wave').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
+          _refreshSubActive();
+          if (subCustom) subCustom.value = '';
+          if (subCustomV) subCustomV.textContent = '';
         });
         subRow.appendChild(btn);
       });
+      if (subCustom) {
+        // Seed the field when the step already carries a non-preset subdivision.
+        if (!_isPresetSub(p.subdivision)) {
+          subCustom.value = _subToFrac(p.subdivision) || '';
+          if (subCustomV) subCustomV.textContent = '×' + (Math.round(p.subdivision * 1000) / 1000);
+        }
+        const commitSub = () => {
+          const raw = subCustom.value.trim();
+          if (!raw) { if (subCustomV) subCustomV.textContent = ''; return; }
+          const mult = _fracToSub(raw);
+          if (mult == null) { if (subCustomV) subCustomV.textContent = '✗ use M/N'; return; }
+          p.subdivision = mult; _touched.add('subdivision');
+          _refreshSubActive();
+          if (subCustomV) subCustomV.textContent = '×' + (Math.round(mult * 1000) / 1000);
+        };
+        subCustom.addEventListener('change', commitSub);
+        subCustom.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitSub(); } });
+      }
 
       // Length picker
       const lenRow = modal.querySelector('#se-len-row');

@@ -9352,6 +9352,16 @@
     .sm-fold-body .sm-waves { margin-bottom: 0; }
     .sm-fold-body .sm-param:last-child { margin-bottom: 0; }
     .sm-fold-body > .sm-section-label:first-child { margin-top: 0; }
+    /* Custom N/N subdivision input — finer than the preset buttons above it. */
+    .sm-sub-custom { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: #a8a8bd; }
+    .sm-sub-custom label { flex: 0 0 auto; }
+    .sm-sub-custom input {
+      flex: 0 0 90px; width: 90px; min-width: 0;
+      background: #14141f; border: 1px solid #2d2d3f; color: #e8e8f2;
+      border-radius: 8px; padding: 5px 8px; font-size: 12px; text-align: center;
+    }
+    .sm-sub-custom input:focus { outline: none; border-color: #5b5be0; }
+    .sm-sub-custom .sm-val { flex: 1 1 auto; color: #8a8aa0; }
 
     .sm-remove-step {
       padding: 6px 14px; border-radius: 18px;

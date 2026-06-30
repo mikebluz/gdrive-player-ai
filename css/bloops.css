@@ -190,6 +190,12 @@
        Save/Load/New need Drive. body.no-google = signed out. */
     body.no-google .project-bottom-bar #project-menu-btn,
     body.no-google .project-bottom-bar .project-name-label { display: none; }
+    /* On Grow / Harvest the bar sits in normal flow BELOW the view's content
+       (body is a flex column; the bar's source order is above #mix-view /
+       #harvest-view, so a high `order` moves it past them to the bottom). On
+       Seed it keeps its default order under the sequence bank. */
+    body.view-mix .project-bottom-bar,
+    body.view-harvest .project-bottom-bar { order: 100; }
 
     /* Master volume + Note Edit pill — moved into the Sounds panel.
        Lays them out on a single row that mirrors the .sounds-submenus
@@ -1429,6 +1435,15 @@
       box-shadow: 0 0 12px rgba(79, 209, 197, 0.45);
     }
     #metronome-btn.tick { transform: scale(1.18); }
+    /* BPM "Flash" toggle (Tempo row) — pill matching the menu controls. */
+    .xport-flash-btn {
+      padding: 5px 12px; border: 1px solid #2d2d3f; border-radius: 16px;
+      background: #050510; color: #a0aec0; cursor: pointer; flex-shrink: 0;
+      font: 600 0.78rem 'Segoe UI', sans-serif; letter-spacing: 0.3px;
+      transition: all 0.15s ease; touch-action: manipulation;
+    }
+    @media (hover: hover) { .xport-flash-btn:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    .xport-flash-btn.active { border-color: #9f7aea; color: #f5d0fe; background: rgba(159,122,234,0.20); box-shadow: 0 0 10px rgba(159,122,234,0.4); }
 
     /* On mobile, float the metronome button to the midpoint between
        "Mercy Wizard" (absolute-centered at 50%) and the BPM picker
@@ -2447,28 +2462,59 @@
     }
     .ambient-areas-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .ambient-areas-label { font-size: 0.7rem; color: #8a8aa8; letter-spacing: 0.04em; text-transform: uppercase; }
+    /* Orchestration mode row (Single/Sequence + Shuffle) — sits above the area
+       chips, with its own slightly lighter fill so it reads as a distinct band. */
+    .ambient-areas-orchrow {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 6px; border-radius: 8px; background: rgba(255, 255, 255, 0.04);
+      border: 1px solid #23233a;
+    }
+    /* Collapsible body (management + orchestration) — hidden when collapsed. */
+    .ambient-areas-body { display: flex; flex-direction: column; gap: 6px; }
+    .ambient-areas.collapsed .ambient-areas-body { display: none; }
+    /* Collapse/expand chevron in the header (far right). */
+    .ambient-areas-toggle {
+      flex: 0 0 auto; margin-left: auto; width: 36px; height: 36px; padding: 0;
+      border: 1px solid #2d2d3f; border-radius: 8px; background: transparent;
+      color: #9f7aea; cursor: pointer; font-size: 1.0rem; line-height: 1;
+      transition: transform 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-areas-toggle:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    .ambient-areas.collapsed .ambient-areas-toggle { transform: rotate(-90deg); }
     /* Orchestration row: Single/Sequence + Shuffle + active area's Plays × Bars. */
-    .ambient-orch { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ambient-orch {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 8px 10px; margin: 0; border: 1px solid #2d2d3f; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .ambient-areas-body .ambient-orch + .ambient-orch { margin-top: 2px; }
     .ambient-orch-mode, .ambient-orch-shuffle {
-      padding: 3px 10px; border: 1px solid #2d2d3f; border-radius: 7px;
-      background: #0a0a14; color: #b8b8d0; cursor: pointer; font: 600 0.72rem 'Segoe UI', sans-serif;
+      height: 36px; padding: 0 14px; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: #0a0a14; color: #b8b8d0; cursor: pointer; font: 600 1.0rem 'Segoe UI', sans-serif;
     }
     @media (hover: hover) { .ambient-orch-mode:hover, .ambient-orch-shuffle:hover:not(:disabled) { border-color: #9f7aea; color: #d6bcfa; } }
     .ambient-orch-mode.on { background: rgba(79,209,197,0.20); border-color: #4fd1c5; color: #b2f5ea; }
     .ambient-orch-shuffle.on { background: rgba(159,122,234,0.22); border-color: #9f7aea; color: #f5d0fe; }
     .ambient-orch-shuffle:disabled { opacity: 0.35; cursor: default; }
+    /* Clear all areas — danger action, pinned to the right of the top row. */
+    .ambient-orch-clear {
+      margin-left: auto; flex: 0 0 auto;
+      height: 36px; padding: 0 14px; border: 1px solid #5a2a33; border-radius: 7px;
+      background: #0a0a14; color: #fc8181; cursor: pointer; font: 600 1.0rem 'Segoe UI', sans-serif;
+    }
+    @media (hover: hover) { .ambient-orch-clear:hover { border-color: #e53e3e; color: #fed7d7; background: rgba(229,62,62,0.15); } }
     /* Stochastic Plays toggle (random 1..Plays each pass). */
     .ambient-orch-rand {
-      flex: 0 0 auto; width: 24px; height: 24px; padding: 0;
+      flex: 0 0 auto; width: 36px; height: 36px; padding: 0;
       border: 1px solid #2d2d3f; border-radius: 6px; background: #0a0a14;
-      color: #8a8aa8; cursor: pointer; font-size: 0.85rem; line-height: 1;
+      color: #8a8aa8; cursor: pointer; font-size: 1.0rem; line-height: 1;
     }
     @media (hover: hover) { .ambient-orch-rand:hover { border-color: #f6ad55; color: #fbd38d; } }
     .ambient-orch-rand.on { background: rgba(246,173,85,0.20); border-color: #f6ad55; color: #fbd38d; }
     /* Bar Lock toggle + its auto loop-length readout (replaces the Bars input when on). */
     .ambient-orch-lock {
-      flex: 0 0 auto; padding: 3px 9px; border: 1px solid #2d2d3f; border-radius: 7px;
-      background: #0a0a14; color: #b8b8d0; cursor: pointer; font: 600 0.72rem 'Segoe UI', sans-serif; white-space: nowrap;
+      flex: 0 0 auto; height: 36px; padding: 0 14px; border: 1px solid #2d2d3f; border-radius: 7px;
+      background: #0a0a14; color: #b8b8d0; cursor: pointer; font: 600 1.0rem 'Segoe UI', sans-serif; white-space: nowrap;
     }
     @media (hover: hover) { .ambient-orch-lock:hover { border-color: #4fd1c5; color: #b2f5ea; } }
     .ambient-orch-lock.on { background: rgba(79,209,197,0.20); border-color: #4fd1c5; color: #b2f5ea; }
@@ -2480,8 +2526,9 @@
     .ambient-orch-sep { flex: 1 1 auto; }
     .ambient-orch-lbl { font-size: 0.68rem; color: #8a8aa8; }
     .ambient-orch-plays, .ambient-orch-bars {
-      width: 3.2em; padding: 2px 4px; border: 1px solid #2d2d3f; border-radius: 6px;
-      background: #0a0a14; color: #d6bcfa; font: 600 0.72rem 'Segoe UI', sans-serif; text-align: center;
+      height: 36px; padding: 0 8px; border: 1px solid #2d2d3f; border-radius: 6px;
+      background: #0a0a14; color: #d6bcfa; font: 600 1.0rem 'Segoe UI', sans-serif;
+      cursor: pointer;
     }
     .ambient-orch-bar {
       font: 600 0.72rem 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
@@ -2509,19 +2556,20 @@
     /* Now-playing area during sequence orchestration: gentle teal pulse. */
     .ambient-area-chip.playing { border-color: #4fd1c5; box-shadow: 0 0 0 1px rgba(79,209,197,0.5); animation: amb-area-play 1.6s ease-in-out infinite; }
     @keyframes amb-area-play { 0%,100% { box-shadow: 0 0 0 1px rgba(79,209,197,0.35); } 50% { box-shadow: 0 0 8px rgba(79,209,197,0.7); } }
-    .ambient-areas-strip { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; flex: 1 1 auto; }
+    .ambient-areas-strip { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; flex: 0 1 auto; }
     .ambient-area-chip {
-      padding: 3px 10px; border: 1px solid #2d2d3f; border-radius: 7px;
+      height: 36px; padding: 0 14px; border: 1px solid #2d2d3f;
+      border-left: 3px solid var(--ac, #9f7aea); border-radius: 7px;
       background: #0a0a14; color: #b8b8d0; cursor: pointer;
-      font: 600 0.74rem 'Segoe UI', sans-serif; max-width: 14ch;
+      font: 600 1.0rem 'Segoe UI', sans-serif; max-width: 14ch;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    @media (hover: hover) { .ambient-area-chip:hover { border-color: #9f7aea; color: #d6bcfa; } }
-    .ambient-area-chip.on { background: rgba(159,122,234,0.22); border-color: #9f7aea; color: #f5d0fe; }
+    @media (hover: hover) { .ambient-area-chip:hover { border-color: var(--ac, #9f7aea); border-left-color: var(--ac, #9f7aea); color: #d6bcfa; } }
+    .ambient-area-chip.on { background: var(--ac-soft, rgba(159,122,234,0.22)); border-color: var(--ac, #9f7aea); color: #f5d0fe; }
     .ambient-area-btn {
-      flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+      flex: 0 0 auto; width: 36px; height: 36px; padding: 0;
       border: 1px solid #2d2d3f; border-radius: 7px; background: transparent;
-      color: #9f7aea; cursor: pointer; font-size: 0.85rem; line-height: 1;
+      color: #9f7aea; cursor: pointer; font-size: 1.0rem; line-height: 1;
     }
     @media (hover: hover) { .ambient-area-btn:hover:not(:disabled) { border-color: #9f7aea; color: #d6bcfa; } }
     .ambient-area-btn:disabled { opacity: 0.35; cursor: default; }
@@ -2772,9 +2820,38 @@
       text-overflow: ellipsis; white-space: nowrap;
     }
     @media (hover: hover) { .ambient-notes-btn:hover { border-color: #9f7aea; color: #ede9fe; } }
-    .amb-chord-modal .keep-sdiv-row { gap: 12px; }
-    .amb-chord-modal .keep-sdiv-name { flex: 0 0 80px; }
-    .amb-chord-modal .sm-select { flex: 1 1 auto; }
+    /* Chord picker modal — reuses the .keep-sdiv-* markup but those styles are
+       scoped to .keep-sdiv-modal, so re-style here to match the rest of the app
+       (mirrors the Keep step-div modal: centred title, label + select rows, a
+       blue Apply button). */
+    .amb-chord-modal .keep-sdiv-title {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.95rem; font-weight: 700;
+      color: #f0f4ff; text-align: center; margin-bottom: 14px;
+    }
+    .amb-chord-modal .keep-sdiv-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .amb-chord-modal .keep-sdiv-name {
+      flex: 0 0 80px; color: #cbd5e0;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.85rem; font-weight: 600;
+    }
+    .amb-chord-modal .sm-select {
+      flex: 1 1 auto; min-width: 0;
+      background: #0a0a14; color: #e2e8f0;
+      border: 1px solid #2d2d3f; border-radius: 7px;
+      padding: 6px 8px; font-family: 'Segoe UI', sans-serif; font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .amb-chord-modal .sm-select:focus { outline: none; border-color: #4299e1; }
+    .amb-chord-modal .keep-sdiv-actions {
+      display: flex; justify-content: flex-end; align-items: center; margin-top: 16px;
+    }
+    .amb-chord-modal .keep-sdiv-apply {
+      padding: 8px 20px;
+      border: 1px solid #4299e1; border-radius: 10px;
+      background: rgba(66,153,225,0.18); color: #ebf8ff;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.88rem; font-weight: 700;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .amb-chord-modal .keep-sdiv-apply:hover { background: rgba(66,153,225,0.30); border-color: #63b3ed; } }
     /* Mod block — an expandable <details> per layer (collapsed by default). */
     .ambient-mod {
       margin-top: 4px; border: 1px dashed #2d2d3f; border-radius: 6px;
@@ -2886,7 +2963,9 @@
        — Sent layers (Seq / Sample, created via "Send to Bloom") get a teal
          accent + tint. */
     .ambient-layer {
-      border-left: 3px solid rgba(159, 122, 234, 0.6);   /* generative = purple */
+      /* Generative layers take the ACTIVE area's accent (Area 1 = purple); sent
+         layers override to teal below. The var is set per-panel in JS. */
+      border-left: 3px solid var(--amb-area-accent-soft, rgba(159, 122, 234, 0.6));
     }
     .ambient-layer[data-seq-id],
     .ambient-layer[data-samp-id] {
@@ -3072,7 +3151,16 @@
     }
     /* Per-layer top-controls row (above Voice) — holds Rename, hidden when the
        layer is collapsed (covered by .ambient-layer.collapsed > *:not(head)). */
-    .ambient-layer-topctrls { display: flex; align-items: center; gap: 6px; padding: 5px 0 3px; }
+    .ambient-layer-topctrls { display: flex; align-items: center; gap: 6px; padding: 5px 0 3px; flex-wrap: nowrap; }
+    /* Dice — randomize all of this layer's params. Pill matching the other
+       icon buttons in this row. */
+    .ambient-layer-topctrls .ambient-dice-btn {
+      flex: 0 0 auto; width: auto; height: auto; margin: 0; padding: 3px 10px;
+      border: 1px solid #2d2d3f; border-radius: 7px; background: transparent;
+      color: #f6ad55; cursor: pointer; font: 600 0.72rem 'Segoe UI', sans-serif; line-height: 1;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .ambient-layer-topctrls .ambient-dice-btn:hover { border-color: #f6ad55; color: #fbd38d; background: rgba(246,173,85,0.12); } }
     .ambient-layer-topctrls .ambient-rename-btn {
       width: auto; height: auto; margin: 0; padding: 3px 10px; border-radius: 7px;
       font: 600 0.72rem 'Segoe UI', sans-serif;
@@ -3276,9 +3364,10 @@
     }
     /* Hover is NEUTRAL (not the on-accent) so an off layer never looks on. */
     .ambient-toggle:hover { border-color: #5a5a7a; color: #a8a8c8; }
-    /* On = clear purple fill + bright text, unmistakable vs off/hover. */
-    .ambient-toggle.on { border-color: #9f7aea; color: #ede9fe; background: rgba(159,122,234,0.30); }
-    .ambient-toggle.on:hover { border-color: #b794f4; background: rgba(159,122,234,0.40); }
+    /* On = clear area-accent fill + bright text, unmistakable vs off/hover.
+       Accent var is set per-panel from the active area (Area 1 = purple). */
+    .ambient-toggle.on { border-color: var(--amb-area-accent, #9f7aea); color: #ede9fe; background: var(--amb-area-accent-bg, rgba(159,122,234,0.30)); }
+    .ambient-toggle.on:hover { border-color: var(--amb-area-accent, #b794f4); background: var(--amb-area-accent-bg, rgba(159,122,234,0.40)); }
     /* Queue mode — a toggle whose on/off change is pending the next iteration
        boundary. Amber, pulsing, so it reads as "armed, not yet applied". */
     .ambient-toggle.queued {
@@ -3384,6 +3473,11 @@
        desktop — the max-width box sits in the middle when the pane is wider than
        it; on narrow viewports the auto margins collapse to 0 and it fills width. */
     .mix-bloom-section .ambient-inner { max-width: 520px; margin-inline: auto; }
+    /* The master Bloom panel doesn't need the tall fixed-footer reserve that lane
+       Bloom uses — on Grow the project bar follows it and the body's own
+       padding-bottom clears the fixed transport. Drop the reserve so there's no
+       empty gap between the panel's last content and the project bar. */
+    .mix-bloom-section .ambient-inner { padding-bottom: 8px; }
     /* Mix sub-tabs: Bloom (default) / Shapes — a justified tab strip centred over
        the (520px) content, each visible tab sharing the width equally, with a
        bottom-border active indicator. Hidden tabs (Mixdown) take no space. */
@@ -4584,6 +4678,9 @@
          callout — without it, holding a cell pops the native selection
          menu and pre-empts the JS long-press handler. */
       -webkit-touch-callout: none;
+      /* Kill the default translucent (bluish) tap highlight on touch — the
+         cell's own press feedback (brightness / outline) is the signal. */
+      -webkit-tap-highlight-color: transparent;
       position: relative;
       /* Tell the browser this element is for play gestures, not scroll —
          it commits to "play" without waiting for movement-direction
@@ -4591,6 +4688,61 @@
          fighting and stalling page scroll on mobile. */
       touch-action: none;
     }
+
+    /* ===== PIANO MODE =================================================
+       Piano mode is Grid mode with the SAME cells (identical press / sound /
+       Keep / step / playback / sound-editor logic) re-laid-out as a piano
+       keyboard. body.piano-mode keeps #grid visible (other modes hide it) and
+       this block restyles it. Naturals = white keys; accidentals (.is-sharp)
+       = black keys that nestle between the whites via zero net width. The
+       per-note inline cell backgrounds are overridden with !important. */
+    /* Exact keyboard: cells are ABSOLUTELY positioned by their pitch (no
+       overlap), so each key plays its own note and highlights stay contained.
+       --pk (per cell) = the white-key index; --pkn (on #grid) = total whites;
+       both set in rebuildGrid. White keys tile at --pk * --pkw; black keys
+       centre on the boundary at the same --pk, sit on top (z-index), and are
+       opaque so a pressed white key never bleeds onto them. */
+    body.piano-mode #grid {
+      position: relative; display: block;
+      grid-template-columns: none; overflow: visible;
+      height: 184px; padding: 0;
+      --pkw: calc(100% / var(--pkn, 7));   /* one white-key width */
+    }
+    body.piano-mode #grid .cell {
+      position: absolute; top: 0; margin: 0; box-sizing: border-box;
+      align-items: flex-end; justify-content: center; padding-bottom: 8px;
+    }
+    body.piano-mode #grid .cell.is-natural {
+      left: calc(var(--pk, 0) * var(--pkw)); width: var(--pkw); height: 168px; z-index: 1;
+      border: 1px solid #2b2b34; border-radius: 0 0 6px 6px;
+      background: linear-gradient(#fdfdff, #e7e7ef) !important;
+      color: #161628 !important;
+      box-shadow: inset 0 -4px 7px rgba(0,0,0,0.14);
+    }
+    body.piano-mode #grid .cell.is-sharp {
+      left: calc(var(--pk, 0) * var(--pkw) - var(--pkw) * 0.29);   /* centre on the boundary (half of 0.58 width) */
+      width: calc(var(--pkw) * 0.58); height: 104px; z-index: 3;
+      border: 1px solid #000; border-radius: 0 0 4px 4px;
+      background: linear-gradient(#43434f, #0a0a10) !important;
+      color: #e8e8f2 !important;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.55);
+    }
+    @media (hover: hover) {
+      body.piano-mode #grid .cell.is-natural:hover { background: linear-gradient(#ffffff, #dcdce8) !important; }
+      body.piano-mode #grid .cell.is-sharp:hover { background: linear-gradient(#55555f, #16161e) !important; }
+    }
+    /* Press / playback flash — contained to the single key (no bleeding outline;
+       each key is its own absolute box, blacks sit opaque on top). */
+    body.piano-mode #grid .cell.active-loop { outline: none; }
+    body.piano-mode #grid .cell.active-loop,
+    body.piano-mode #grid .cell.sustaining,
+    body.piano-mode #grid .cell.flash { filter: brightness(1.4); }
+    /* Show just the note name on each key; drop the Hz + tone clutter. */
+    body.piano-mode #grid .cell .cell-freq,
+    body.piano-mode #grid .cell .cell-tone { display: none; }
+    body.piano-mode #grid .cell > span { font: 700 0.62rem 'Segoe UI', sans-serif; pointer-events: none; }
+    body.piano-mode #grid .cell.is-sharp > span { font-size: 0.5rem; }
+    body.piano-mode #grid .cell-edit-carrot { top: 4px; }
 
     .cell-sound-select {
       position: absolute;
@@ -7006,6 +7158,28 @@
       transition: all 0.15s ease;
     }
     @media (hover: hover) { .clear-bank-row > #rec-btn:hover { border-color: #fc8181; color: #fc8181; } }
+    /* Stereo / Mono record-channel select — pill styled to match Record /
+       Clear bank (transparent outline pill) rather than the native control. */
+    .clear-bank-row > #rec-ch {
+      flex: 0 0 auto;
+      padding: 8px 28px 8px 16px;
+      border: 1px solid #2d2d3f;
+      border-radius: 20px;
+      background: transparent;
+      color: #a0aec0;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-appearance: none; appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M0 0l5 6 5-6z' fill='%23a0aec0'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      transition: all 0.15s ease;
+    }
+    .clear-bank-row > #rec-ch option { background: #11111c; color: #cbd5e0; }
+    @media (hover: hover) { .clear-bank-row > #rec-ch:hover { border-color: #4a5568; color: #cbd5e0; } }
+    .clear-bank-row > #rec-ch:focus { outline: none; border-color: #4a5568; }
     .clear-bank-row > #clear-bank-btn {
       flex: 1 1 0;
       width: auto;
@@ -7978,6 +8152,9 @@
       font-size: 0.8rem; color: #e2e8f0; margin-bottom: 4px; }
     .groove-val { font-size: 0.75rem; color: #a0aec0; }
     .groove-panel input[type=range] { width: 100%; }
+    /* Match the rest of the app's sliders — full width + purple accent (the
+       groove rows live in the Settings menu, which doesn't carry .groove-panel). */
+    .groove-row input[type=range] { width: 100%; accent-color: #9f7aea; }
     .groove-divs { display: flex; gap: 6px; }
     .gv-div-opt, .gv-acc-opt {
       flex: 1; padding: 6px 0; border-radius: 6px;
@@ -9460,14 +9637,32 @@
       display: flex; align-items: stretch;
     }
     .float-header > * { pointer-events: auto; }
-    /* Bloom elapsed-time readout — top-left, 25% width, left of the Settings gear. */
+    /* Elapsed-time + BPM readout — full-width header, doubles as the Settings
+       trigger (the standalone Settings button was removed). */
     .bloom-hdr-elapsed {
-      flex: 0 0 25%; min-width: 0; display: flex; align-items: center; justify-content: center;
-      font: 700 clamp(0.7rem, 2.4vw, 0.95rem) 'Segoe UI', Tahoma, sans-serif; letter-spacing: 0.5px;
+      flex: 1 1 0; width: 100%; min-width: 0;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      /* Fixed height so the +50% larger font doesn't grow the header. */
+      height: 40px; padding: 0 14px; cursor: pointer; touch-action: manipulation;
+      font: 700 clamp(1.05rem, 3.6vw, 1.425rem) 'Segoe UI', Tahoma, sans-serif; letter-spacing: 0.5px;
       font-variant-numeric: tabular-nums; color: #7fd6e8; white-space: nowrap;
-      border-bottom: 1px solid rgba(159,122,234,0.35); background: rgba(159,122,234,0.06);
+      border-bottom: 1px solid rgba(159,122,234,0.35); background: rgba(159,122,234,0.10);
+      transition: all 0.15s ease;
     }
-    .float-header #xport-menu-btn { flex: 1 1 0; width: auto; min-width: 0; }
+    @media (hover: hover) { .bloom-hdr-elapsed:hover { background: rgba(159,122,234,0.18); border-color: rgba(159,122,234,0.55); color: #81e6d9; } }
+    .bloom-hdr-elapsed.open { color: #81e6d9; border-color: rgba(79,209,197,0.55); }
+    .bloom-hdr-elapsed.open .xport-gear { transform: rotate(60deg); filter: drop-shadow(0 0 6px rgba(79,209,197,0.7)); }
+    @media (hover: hover) { .bloom-hdr-elapsed:hover .xport-gear { transform: rotate(30deg); } }
+    .bloom-hdr-elapsed.groove-on { color: #e9b3f3; }
+    /* BPM Flash — the whole header strobes once per beat (toggled by the header
+       rAF, locked to the BPM / playback). Snap on/off (no transition) and a bold,
+       high-contrast fill + glow so the pulse is unmistakable. */
+    .float-header.bloom-hdr-flash { background: #9f7aea; }
+    .float-header.bloom-hdr-flash .bloom-hdr-elapsed {
+      background: #b794f4; border-color: #ede9fe; color: #1a052e;
+      box-shadow: 0 0 18px 4px rgba(159,122,234,0.85); transition: none;
+    }
+    .float-header.bloom-hdr-flash .xport-gear { color: #1a052e; }
     /* Source elements pre-relocation (Undo/Redo, metronome, BPM digits, home
        link, hidden tempo inputs) — kept out of layout until the menu claims them. */
     .xport-sources { display: none; }
@@ -9894,7 +10089,11 @@
        all module-scoped JS, so swapping views never resets data. */
     #mix-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; }
     body.view-mix > #mix-view { display: block; }
-    body.view-mix > *:not(.float-header):not(.top-bar):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(script) {
+    /* Bloom subtab hugs its content (don't grow to fill the viewport) so there's
+       no empty gap between the Bloom panel and the project bar below it. The
+       Shapes / Mixdown subtabs keep flex:1. */
+    body.view-mix > #mix-view.mix-sub-bloom { flex: 0 0 auto; }
+    body.view-mix > *:not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }
@@ -9907,7 +10106,7 @@
     /* Harvest view — captured Blooms + Shapes bank. Same show/hide model as Mix. */
     #harvest-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 16px; }
     body.view-harvest > #harvest-view { display: block; }
-    body.view-harvest > *:not(.float-header):not(.top-bar):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(script) {
+    body.view-harvest > *:not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(script) {
       display: none !important;
     }
     body.view-harvest { overflow-y: auto; }

@@ -147,6 +147,8 @@
     // orchestration mode 'single' is byte-identical to the pre-areas behaviour
     // (the invariant harness pins this).
     let masterBloomAreas = null; // { areas:[cfg,...], activeIdx, orch:{ mode:'single'|'sequence', shuffle } }
+    // UI-only: whether the Areas section's orchestration body is expanded (default collapsed).
+    let _ambAreasExpanded = false;
     function _masterBloomState() {
       // Lazily wrap whatever masterAmbient is into area 0 (first run + migration
       // of pre-areas projects). Always re-syncs masterAmbient === active area.
@@ -172,6 +174,45 @@
     function _ambAreaLabel(cfg, i) {
       return (cfg && typeof cfg.name === 'string' && cfg.name.trim()) ? cfg.name.trim() : ('Area ' + ((i | 0) + 1));
     }
+    // Chip-face label: the "Areas" header supplies the word, so an unnamed area
+    // just shows its position number (1, 2, 3…); a user-named area shows its name.
+    function _ambAreaChipLabel(cfg, i) {
+      return (cfg && typeof cfg.name === 'string' && cfg.name.trim()) ? cfg.name.trim() : String((i | 0) + 1);
+    }
+    // Per-area accent palette — index 0 = the original purple (Area 1), then a
+    // distinct hue per additional area (cycled). Colours each area's chip and the
+    // active area's layer highlights so areas read apart at a glance.
+    const _AMB_AREA_HUES = ['#9f7aea', '#f6ad55', '#63b3ed', '#68d391', '#f687b3', '#4fd1c5', '#fc8181', '#f6e05e'];
+    function _ambHexRgba(hex, a) {
+      const h = String(hex).replace('#', '');
+      const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+    // <option> list 1..36 for the Plays / Bars dropdowns, marking `sel` selected.
+    function _ambNumOpts(sel, max) {
+      const n = max | 0 || 36; let out = '';
+      for (let v = 1; v <= n; v++) out += '<option value="' + v + '"' + (v === (sel | 0) ? ' selected' : '') + '>' + v + '</option>';
+      return out;
+    }
+    function _ambAreaColor(i) {
+      const len = _AMB_AREA_HUES.length;
+      const hex = _AMB_AREA_HUES[(((i | 0) % len) + len) % len];
+      return { accent: hex, soft: _ambHexRgba(hex, 0.22), border: _ambHexRgba(hex, 0.6), bg: _ambHexRgba(hex, 0.30) };
+    }
+    // Pick an area name not already taken. For the numeric "Area N" series we bump
+    // N until it's free (so "if Area 2 exists, the new one is Area 3"); for any
+    // other base we append " 2", " 3", … Always returns a unique label.
+    function _ambUniqueAreaName(s, base) {
+      const taken = new Set((s.areas || []).map((a, i) => _ambAreaLabel(a, i)));
+      if (base == null) {
+        let n = (s.areas ? s.areas.length : 0) + 1;
+        while (taken.has('Area ' + n)) n++;
+        return 'Area ' + n;
+      }
+      if (!taken.has(base)) return base;
+      let n = 2; while (taken.has(base + ' ' + n)) n++;
+      return base + ' ' + n;
+    }
     // Switch which area is active (= the one being edited / shown). Pointer swap
     // only here — applying a per-area BPM/groove + rebuilding the panel is wired
     // in the UI/orchestration phases. Returns the new active index.
@@ -188,10 +229,14 @@
       let clone;
       if (fromIdx != null && s.areas[fromIdx]) {
         clone = JSON.parse(JSON.stringify(s.areas[fromIdx]));
-        clone.name = _ambAreaLabel(s.areas[fromIdx], fromIdx) + ' copy';
+        const src = s.areas[fromIdx];
+        const srcName = (src && typeof src.name === 'string') ? src.name.trim() : '';
+        // Copy of a named area → "<name> copy" (deduped); copy of an unnamed area
+        // stays unnamed so it just shows its new position number.
+        clone.name = srcName ? _ambUniqueAreaName(s, srcName + ' copy') : '';
       } else {
         clone = _defaultAmbientConfig();
-        clone.name = 'Area ' + (s.areas.length + 1);
+        clone.name = '';   // unnamed → chip shows its position number (1, 2, 3…)
       }
       clone.playing = false;
       try { _normalizeAmbientCfg(clone); } catch (e) {}
@@ -212,6 +257,70 @@
     function _ambRenameArea(idx, name) {
       const s = _masterBloomState();
       if (s.areas[idx]) s.areas[idx].name = String(name == null ? '' : name).slice(0, 40);
+    }
+    // Delete EVERY area and start over with a single fresh (unnamed) area.
+    function _ambClearAreas() {
+      const s = _masterBloomState();
+      const fresh = _defaultAmbientConfig();
+      fresh.name = '';
+      fresh.playing = false;
+      try { _normalizeAmbientCfg(fresh); } catch (e) {}
+      s.areas = [fresh];
+      s.activeIdx = 0;
+      masterAmbient = fresh;
+      // Reset orchestration so the running engine can't reference a removed area.
+      try {
+        if (_masterEng) {
+          _masterEng._playIdx = 0; _masterEng._plotCount = 1;
+          _masterEng._orchActive = false; _masterEng._orchBag = null;
+        }
+      } catch (e) {}
+    }
+    // Randomize one layer's numeric params within their schema (slider/time)
+    // ranges. Structural fields (notes source, tone, kit, gen) stay at the type
+    // default so the result is always musically valid; only continuous settings
+    // move. `ri(a,b)` is an inclusive-integer random (Math.random — a user
+    // action, never the seeded generation RNG, so the note harness is untouched).
+    function _ambRandomizeLayerParams(L, type, ri) {
+      const sch = _AMB_LAYER_SCHEMA[type]; if (!sch || !L) return;
+      sch.ctrls.forEach(c => {
+        if (!Array.isArray(c)) return;
+        const kind = c[0], key = c[1];
+        if (kind === 'sl') {
+          const min = c[2] | 0, max = c[3] | 0;
+          if (key === 'level') { L.level = ri(55, 90); return; }       // keep audible
+          if (key === 'restProb') { L.restProb = ri(0, 50); return; }  // not mostly-silent
+          L[key] = ri(min, max);
+        } else if (kind === 'tm') {
+          if (key === 'areaFadeMs') return;                            // leave fade default
+          const min = c[2] | 0, max = c[3] | 0, step = (c[4] | 0) || 1;
+          L[key] = min + ri(0, Math.floor((max - min) / step)) * step;
+        }
+      });
+      L.space = ri(0, 70);   // a little stereo spread per layer
+    }
+    // Build a fresh area populated with N (2–5) random layers, each a random
+    // type (Shape excluded — it needs hand-built wheels). Only the POPULATION is
+    // randomized — every layer keeps its type's DEFAULT parameter values (per-
+    // layer params are randomized on demand via the dice button). The default
+    // primaries are switched off so the random extras are the content. Pure
+    // config — does not touch the engine RNG.
+    function _ambRandomizeArea(idx) {
+      const s = _masterBloomState();
+      const area = s.areas[idx]; if (!area) return;
+      const ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+      // Mark the default primaries ABSENT (not just off) so they don't render as
+      // deactivated cards — the random extras are the only layers shown.
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (area[k]) { area[k].present = false; area[k].on = false; } });
+      if (!Array.isArray(area.extras)) area.extras = [];
+      const TYPES = ['bed', 'motif', 'texture', 'beat', 'arp', 'bass', 'run', 'pedal', 'drone'];
+      const N = ri(2, 5);
+      let nid = area.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      for (let i = 0; i < N; i++) {
+        const type = TYPES[ri(0, TYPES.length - 1)];
+        area.extras.push(_ambDefaultLayer(type, nid++));   // default params
+      }
+      try { _normalizeAmbientCfg(area); } catch (e) {}
     }
     // ---- Per-area globals (BPM + groove) --------------------------------
     // Only the Seed page/grid is shared; an area also remembers its OWN tempo +
@@ -304,63 +413,98 @@
       // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
       // (can differ while you edit another area mid-play).
       const play = (_masterEng.timer && Number.isFinite(_masterEng._playIdx)) ? _masterEng._playIdx : -1;
-      const chips = s.areas.map((a, i) =>
-        '<button type="button" class="ambient-area-chip' + (i === s.activeIdx ? ' on' : '') + (i === play ? ' playing' : '') + '" data-aidx="' + i + '" title="Click to select / edit · double-click to rename">' +
-        _ambEscText(_ambAreaLabel(a, i)) + '</button>').join('');
-      return '<div class="ambient-areas">' +
-        '<div class="ambient-areas-row">' +
+      const chips = s.areas.map((a, i) => {
+        const c = _ambAreaColor(i);
+        return '<button type="button" class="ambient-area-chip' + (i === s.activeIdx ? ' on' : '') + (i === play ? ' playing' : '') +
+          '" data-aidx="' + i + '" style="--ac:' + c.accent + ';--ac-soft:' + c.soft + '" title="Click to select / edit · double-click to rename">' +
+          _ambEscText(_ambAreaChipLabel(a, i)) + '</button>';
+      }).join('');
+      return '<div class="ambient-areas' + (_ambAreasExpanded ? '' : ' collapsed') + '">' +
+        // Orchestration mode row (always visible, tinted) — Single vs Sequence +
+        // Shuffle + the "Areas" label.
+        '<div class="ambient-areas-orchrow">' +
+          '<button type="button" class="ambient-orch-mode' + (seq ? ' on' : '') + '" title="Single = play this area only. Sequence = play each area for Plays×Bars, then advance to the next.">' + (seq ? 'Sequence' : 'Single') + '</button>' +
+          '<button type="button" class="ambient-orch-shuffle' + (s.orch.shuffle ? ' on' : '') + '"' + (seq ? '' : ' disabled') + ' title="Randomize the area order each cycle">Shuffle</button>' +
           '<span class="ambient-areas-label">Areas</span>' +
+          '<button type="button" class="ambient-orch-clear" title="Delete ALL areas and start over with one empty area">Clear</button>' +
+        '</div>' +
+        // Header (always visible): area chips + add + collapse toggle (far right).
+        '<div class="ambient-areas-row">' +
           '<div class="ambient-areas-strip">' + chips + '</div>' +
           '<button type="button" class="ambient-area-btn ambient-area-add" title="Add a new area">+</button>' +
+          '<button type="button" class="ambient-areas-toggle" title="Show / hide area orchestration" aria-label="Show or hide area orchestration">▾</button>' +
+        '</div>' +
+        // Collapsible body — two rows: management (clone/rename/delete), then
+        // Plays × random + Bar Lock + Bars.
+        '<div class="ambient-areas-body">' +
+        '<div class="ambient-orch">' +
           '<button type="button" class="ambient-area-btn ambient-area-dup" title="Clone the current area">⧉</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-ren" title="Rename the current area">✎</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-del" title="Delete the current area"' + (s.areas.length <= 1 ? ' disabled' : '') + '>✕</button>' +
         '</div>' +
-        // Orchestration: Single vs Sequence (play each area Plays×Bars, then advance),
-        // Shuffle, and the active area's Plays × Bars.
+        // Plays × random + Bar Lock + Bars.
         '<div class="ambient-orch">' +
-          '<button type="button" class="ambient-orch-mode' + (seq ? ' on' : '') + '" title="Single = play this area only. Sequence = play each area for Plays×Bars, then advance to the next.">' + (seq ? 'Sequence' : 'Single') + '</button>' +
-          '<button type="button" class="ambient-orch-shuffle' + (s.orch.shuffle ? ' on' : '') + '"' + (seq ? '' : ' disabled') + ' title="Randomize the area order each cycle">Shuffle</button>' +
-          '<span class="ambient-orch-sep" aria-hidden="true"></span>' +
-          '<label class="ambient-orch-lbl">Plays</label>' +
-          '<input type="number" class="ambient-orch-plays" min="1" max="64" value="' + Math.max(1, (act.plays | 0) || 1) + '" title="How many times this area plays before advancing">' +
+          '<label class="ambient-orch-lbl">x</label>' +
+          '<select class="ambient-orch-plays" title="How many times this area plays before advancing">' + _ambNumOpts(Math.max(1, (act.plays | 0) || 1)) + '</select>' +
           // Stochastic: play a RANDOM number of times in [1, Plays] each entry.
           '<button type="button" class="ambient-orch-rand' + (act.playsRandom ? ' on' : '') + '" title="Stochastic — play this area a random number of times (1 to Plays) on each pass">⚄</button>' +
-          '<span class="ambient-orch-sep" aria-hidden="true"></span>' +
           // Bar Lock: capture the bar-rational layers over their combined loop and
           // repeat verbatim; free layers improvise live over it. When on, Bars is the
           // AUTO loop length (LCM); when off, a manual section length.
-          '<button type="button" class="ambient-orch-lock' + (act.barLock ? ' on' : '') + '" title="Bar Lock — capture this area’s bar-rational (synced / bar-native) layers over their combined loop and repeat it verbatim; free layers keep improvising live over it.">🔒 Lock</button>' +
+          '<button type="button" class="ambient-orch-lock' + (act.barLock ? ' on' : '') + '" title="Bar Lock — capture this area’s bar-rational (synced / bar-native) layers over their combined loop and repeat it verbatim; free layers keep improvising live over it.">🔒</button>' +
           '<label class="ambient-orch-lbl">Bars</label>' +
           (act.barLock
             ? '<span class="ambient-orch-loopbars" title="Auto loop length — the LCM of this area’s capturable layers (and the progression). Unit-Sync a layer to include it.">' + _ambEscText(lockLabel) + '</span>'
-            : '<input type="number" class="ambient-orch-bars" min="1" max="64" value="' + Math.max(1, (act.bars | 0) || 4) + '" title="Length of one play of the current area (bars)">') +
+            : '<select class="ambient-orch-bars" title="Length of one play of the current area (bars)">' + _ambNumOpts(Math.max(1, (act.bars | 0) || 4)) + '</select>') +
           // Live bar / play counter (during playback) — schedule areas by what you see here.
           '<span class="ambient-orch-bar" aria-live="polite" title="Current bar (and play) of the area — use this to set Plays × Bars"></span>' +
+        '</div>' +
         '</div>' +
       '</div>';
     }
     function _ambWireAreaStrip(E) {
       if (E !== _masterEng) return;   // master Mix Bloom only
       const host = document.getElementById(E.hostId); if (!host) return;
+      const areasBox = host.querySelector('.ambient-areas');
+      const toggle = host.querySelector('.ambient-areas-toggle');
+      if (toggle && areasBox) toggle.addEventListener('click', () => {
+        _ambAreasExpanded = !_ambAreasExpanded;
+        areasBox.classList.toggle('collapsed', !_ambAreasExpanded);
+      });
       host.querySelectorAll('.ambient-area-chip').forEach(chip => {
         chip.addEventListener('click', () => { _ambSwitchToArea(parseInt(chip.dataset.aidx, 10) || 0); });
         chip.addEventListener('dblclick', () => {
           const i = parseInt(chip.dataset.aidx, 10) || 0;
           if (typeof prompt !== 'function') return;
-          const nm = prompt('Area name:', _ambAreaLabel(_ambAreas()[i], i));
+          const cur = _ambAreas()[i]; const nm = prompt('Area name (blank = number):', (cur && cur.name) || '');
           if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
         });
       });
       const add = host.querySelector('.ambient-area-add');
-      if (add) add.addEventListener('click', () => { _ambSwitchToArea(_ambAddArea()); });
+      if (add) add.addEventListener('click', () => {
+        const addManual = () => {
+          const i = _ambAddArea();
+          // Empty area — drop the default primaries so it starts with no layers.
+          const a = _ambAreas()[i];
+          if (a) ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (a[k]) { a[k].present = false; a[k].on = false; } });
+          _ambSwitchToArea(i);
+        };
+        const addRandom = () => { const i = _ambAddArea(); try { _ambRandomizeArea(i); } catch (e) {} _ambSwitchToArea(i); };
+        if (typeof showCtxMenu !== 'function') { addManual(); return; }   // fallback
+        const r = add.getBoundingClientRect();
+        showCtxMenu(r.left, r.bottom + 4, [
+          { label: 'New area', disabled: true },
+          { label: 'Manual — empty area', fn: addManual },
+          { label: 'Random — random layers', fn: addRandom },
+        ]);
+      });
       const dup = host.querySelector('.ambient-area-dup');
       if (dup) dup.addEventListener('click', () => { _ambSwitchToArea(_ambAddArea(_ambActiveAreaIdx())); });
       const ren = host.querySelector('.ambient-area-ren');
       if (ren) ren.addEventListener('click', () => {
         const i = _ambActiveAreaIdx();
         if (typeof prompt !== 'function') return;
-        const nm = prompt('Area name:', _ambAreaLabel(_ambAreas()[i], i));
+        const cur = _ambAreas()[i]; const nm = prompt('Area name (blank = number):', (cur && cur.name) || '');
         if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
       });
       const del = host.querySelector('.ambient-area-del');
@@ -368,6 +512,14 @@
         if (_ambAreas().length <= 1) return;
         if (typeof confirm === 'function' && !confirm('Delete this area? This can’t be undone.')) return;
         _ambDeleteArea(_ambActiveAreaIdx());
+        _ambApplyAreaGlobals(masterAmbient);
+        _ambRebuildMaster();
+        try { persistWorkspace(); } catch (e) {}
+      });
+      const clr = host.querySelector('.ambient-orch-clear');
+      if (clr) clr.addEventListener('click', () => {
+        if (typeof confirm === 'function' && !confirm('Clear all areas? This deletes every area and starts over with one empty area. This can’t be undone.')) return;
+        _ambClearAreas();
         _ambApplyAreaGlobals(masterAmbient);
         _ambRebuildMaster();
         try { persistWorkspace(); } catch (e) {}
@@ -399,7 +551,7 @@
       const _viewIsPlaying = () => (_masterEng.timer && _masterEng._playIdx === _ambActiveAreaIdx());
       const playsI = host.querySelector('.ambient-orch-plays');
       if (playsI) playsI.addEventListener('change', () => {
-        const v = Math.max(1, Math.min(64, parseInt(playsI.value, 10) || 1)); playsI.value = String(v);
+        const v = Math.max(1, Math.min(36, parseInt(playsI.value, 10) || 1)); playsI.value = String(v);
         masterAmbient.plays = v;
         if (_viewIsPlaying()) { _masterEng._curPlays = _ambEffectivePlays(masterAmbient); _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays); }
         try { persistWorkspace(); } catch (e) {}
@@ -413,7 +565,7 @@
       });
       const barsI = host.querySelector('.ambient-orch-bars');
       if (barsI) barsI.addEventListener('change', () => {
-        const v = Math.max(1, Math.min(64, parseInt(barsI.value, 10) || 4)); barsI.value = String(v);
+        const v = Math.max(1, Math.min(36, parseInt(barsI.value, 10) || 4)); barsI.value = String(v);
         masterAmbient.bars = v;
         if (_viewIsPlaying()) _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays);
         try { persistWorkspace(); } catch (e) {}
@@ -7821,6 +7973,49 @@
       const p2 = (n) => (n < 10 ? '0' : '') + n;
       return p2(Math.floor(ms / 60000)) + ':' + p2(Math.floor((ms % 60000) / 1000)) + ':' + p2(Math.floor((ms % 1000) / 10));
     }
+    // The float-header readout (top of every view — Seed / Grow / Harvest). Shows
+    // the elapsed play time of whichever Bloom is sounding (master, else lane) +
+    // the current BPM. Driven by a single always-on rAF so it stays live on every
+    // view, not just while the master panel's viz loop runs.
+    let _ambFlashAnchorMs = 0, _ambFlashWasPlaying = false;
+    function _ambRenderHeader() {
+      const host = document.getElementById('bloom-hdr-elapsed'); if (!host) return;
+      const el = host.querySelector('.bloom-hdr-text') || host;
+      let ms = 0;
+      if (_masterEng && _masterEng.timer && _masterEng._playStartMs) ms = performance.now() - _masterEng._playStartMs;
+      else if (_laneEng && _laneEng.timer && _laneEng._playStartMs) ms = performance.now() - _laneEng._playStartMs;
+      const bpm = (typeof _ambBpm === 'function') ? _ambBpm() : 120;
+      el.textContent = _ambFmtElapsed(ms) + '  ·  ' + bpm + ' BPM';
+      // Optional BPM flash (Settings → Tempo → Flash). The whole header pulses
+      // once per beat, locked to the BPM and re-anchored on the rising edge of
+      // playback (= reset on Play), so it stays in step with whatever's playing.
+      const hdr = host.closest('.float-header');
+      if (hdr) {
+        const playing = !!((_masterEng && _masterEng.timer) || (_laneEng && _laneEng.timer)
+          || (function () { const pb = document.getElementById('play-btn'); return pb && pb.textContent === '⏹'; })());
+        if (playing && !_ambFlashWasPlaying) _ambFlashAnchorMs = performance.now();   // Play → re-anchor the flash grid
+        _ambFlashWasPlaying = playing;
+        // Flash whenever enabled (free-runs when stopped, locks to the bar on
+        // Play via the re-anchor above) so it's visibly working even before Play.
+        if (window._bloomHeaderFlash) {
+          const beatMs = 60000 / Math.max(20, bpm);
+          const phase = ((performance.now() - _ambFlashAnchorMs) % beatMs) / beatMs;
+          hdr.classList.toggle('bloom-hdr-flash', phase < 0.5);   // on for the first half of each beat
+        } else {
+          hdr.classList.remove('bloom-hdr-flash');
+        }
+      }
+    }
+    let _ambHdrTicking = false;
+    function _ambStartHeaderTicker() {
+      if (_ambHdrTicking) return; _ambHdrTicking = true;
+      const tick = () => { try { _ambRenderHeader(); } catch (e) {} requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }
+    if (typeof document !== 'undefined') {
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _ambStartHeaderTicker, { once: true });
+      else _ambStartHeaderTicker();
+    }
     // Live "which bar are we on" readout for the master Bloom — helps the user
     // pick Plays × Bars. In Sequence it shows bar/play within the current area;
     // in Single it's a running bar count from play start.
@@ -7885,9 +8080,8 @@
     }
     function _ambUpdatePlayheads(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
-      // Footer elapsed-time readout: counts up while playing, 0 when stopped.
-      // Elapsed readout now lives in the global float-header (top-left). Master only.
-      if (!E.isLane) { const elap = document.getElementById('bloom-hdr-elapsed'); if (elap) elap.textContent = _ambFmtElapsed((E.timer && E._playStartMs) ? (performance.now() - E._playStartMs) : 0); }
+      // Elapsed-time readout lives in the global float-header (top), driven by the
+      // always-on _ambStartHeaderTicker (live on Seed / Grow / Harvest) — not here.
       try { _ambUpdateBarIndicator(E); } catch (e) {}
       const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
       // Areas are fully separated: when the master is playing a DIFFERENT area than the
@@ -9254,10 +9448,11 @@
       // Voice group); hidden when the layer is collapsed. Holds Rename, the layer
       // Delete (moved out of the head, next to Rename), and the piano-visualizer
       // toggle (every non-Beat layer; also moved out of the head).
-      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer">✎ Rename</button>' +
-        (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕ Delete</button>' : '') +
-        '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉ Copy</button>' +
-        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹 Piano</button>' : '') +
+      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
+        (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
+        '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
+        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
+        (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
       '</div>' : '') +
       // Piano visualizer keyboard — in the body, below the controls row (built
       // lazily on first expand; lit by _ambUpdatePianos).
@@ -12389,6 +12584,16 @@
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
+      // Tint this panel's layer highlights with the ACTIVE area's accent (master
+      // only — lane/Shape Bloom have no areas, so they keep the CSS purple default).
+      try {
+        if (E === _masterEng) {
+          const c = _ambAreaColor(_ambActiveAreaIdx());
+          host.style.setProperty('--amb-area-accent', c.accent);
+          host.style.setProperty('--amb-area-accent-soft', c.border);
+          host.style.setProperty('--amb-area-accent-bg', c.bg);
+        }
+      } catch (e) {}
       try { _ambWireAreaStrip(E); } catch (e) {}   // area tabs (master only)
       try { _ambRenderCaptureBank(); } catch (e) {}
 
@@ -12433,6 +12638,24 @@
         // (note-edit chips are handled on pointerdown — see below)
         const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
         if (pb) { e.stopPropagation(); try { const h2 = document.getElementById(E.hostId); const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]'); if (pe) { _ambBuildPiano(pe); const open = pe.classList.toggle('open'); pb.classList.toggle('active', open); } } catch (err) { console.warn('Piano toggle failed', err); } return; }
+        const db = e.target && e.target.closest && e.target.closest('.ambient-dice-btn');
+        if (db) {
+          e.stopPropagation();
+          try {
+            const key = db.dataset.dkey;
+            const L = _ambLayerByKey(E, key);
+            if (L) {
+              const ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+              _ambRandomizeLayerParams(L, String(key).split(':')[0], ri);
+              if (typeof _ambSyncControls === 'function') _ambSyncControls(E);   // refresh sliders (rebuilds extras)
+              // Keep the diced card expanded — _ambSyncControls rebuilds extra cards collapsed.
+              try { const h3 = document.getElementById(E.hostId); const ph = h3 && h3.querySelector('[data-phkey="' + key + '"]'); const card = ph && ph.closest('.ambient-layer'); if (card) card.classList.remove('collapsed'); } catch (e2) {}
+              if (E.timer) { try { _ambSyncMods(); } catch (e2) {} }
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            }
+          } catch (err) { console.warn('Dice randomize failed', err); }
+          return;
+        }
         const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
         if (!fb) return;
         e.stopPropagation();

@@ -1090,13 +1090,14 @@
       autoPanFreq:        1,
       autoPanDepth:       100,
       autoPanOn:          true,
-      // Master Warmth stage — on by default at a tasteful amount so sounds are
-      // rounder out of the box. warmth = macro (tilt EQ + presence dip),
-      // warmthDrive = soft saturation, warmthCut = high-cut LPF (Hz).
+      // Master Warmth stage — OFF by default (its saturation was audibly
+      // distorting sounds). warmth = macro (tilt EQ + presence dip),
+      // warmthDrive = soft saturation, warmthCut = high-cut LPF (Hz). Turn it on
+      // in Settings → Warmth when you want the rounding/glue.
       warmth:             30,
       warmthDrive:        12,
       warmthCut:          16000,
-      warmthOn:           true,
+      warmthOn:           false,
       // Master DYNAMICS — the master-bus glue compressor + lookahead limiter +
       // soft-clip ceiling. Defaults match the tuned chain; exposed so the mix can
       // be made less compressed. *On=false bypasses that stage (made transparent,

@@ -1356,7 +1356,7 @@
         || (grooveAccentEvery > 0 && grooveAccentAmt > 0));
       // Groove now lives inside the combined Tempo/Volume/Groove menu; reflect
       // the active state on that trigger (the standalone groove-btn is gone).
-      const xb = document.getElementById('xport-menu-btn');
+      const xb = document.getElementById('bloom-hdr-elapsed');
       if (xb) xb.classList.toggle('groove-on', on);
       const p = _groovePanelEl;
       if (!p) return;
@@ -1455,7 +1455,9 @@
     // metronome and the master-volume fader into one menu (so their existing
     // wiring keeps working) and builds the groove controls alongside them.
     (function initTransportMenu() {
-      const btn = document.getElementById('xport-menu-btn');
+      // Trigger is the float-header elapsed/BPM readout (the standalone Settings
+      // button was removed — clicking the readout opens this menu).
+      const btn = document.getElementById('bloom-hdr-elapsed');
       if (!btn) return;
       const panel = document.createElement('div');
       panel.className = 'xport-menu';
@@ -1475,6 +1477,22 @@
       const tempoRow = panel.querySelector('#xport-tempo-row');
       if (metro)  tempoRow.appendChild(metro);
       if (digits) tempoRow.appendChild(digits);
+      // Flash toggle — pulse the float-header at the BPM, in time with playback.
+      // The header rAF (17-ambient.js) reads window._bloomHeaderFlash.
+      (function addFlashToggle() {
+        let on = false; try { on = localStorage.getItem('bloomHeaderFlash') === '1'; } catch (e) {}
+        window._bloomHeaderFlash = on;
+        const fb = document.createElement('button');
+        fb.type = 'button'; fb.id = 'bpm-flash-btn'; fb.className = 'xport-flash-btn';
+        fb.textContent = '✦ Flash'; fb.title = 'Flash the header once per beat, in time with playback';
+        fb.classList.toggle('active', on);
+        fb.addEventListener('click', () => {
+          window._bloomHeaderFlash = !window._bloomHeaderFlash;
+          fb.classList.toggle('active', !!window._bloomHeaderFlash);
+          try { localStorage.setItem('bloomHeaderFlash', window._bloomHeaderFlash ? '1' : '0'); } catch (e) {}
+        });
+        tempoRow.appendChild(fb);
+      })();
       const mvLabel = document.querySelector('#master-vol-panel .master-vol');
       if (mvLabel) panel.querySelector('#xport-vol-row').appendChild(mvLabel);
       _buildGrooveControls(panel.querySelector('#xport-groove-row'));

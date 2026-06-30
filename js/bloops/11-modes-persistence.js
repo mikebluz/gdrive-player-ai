@@ -842,6 +842,7 @@
             textMode: !!l.textMode,
             seqMode: !!l.seqMode,
             shapeMode: !!l.shapeMode,
+            pianoMode: !!l.pianoMode,
             shape: l.shape ? JSON.parse(JSON.stringify(l.shape)) : null,
             sentToMaster: !!l.sentToMaster,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
@@ -877,6 +878,7 @@
             textMode: !!l.textMode,
             seqMode: !!l.seqMode,
             shapeMode: !!l.shapeMode,
+            pianoMode: !!l.pianoMode,
             shape: l.shape ? JSON.parse(JSON.stringify(l.shape)) : null,
             sentToMaster: !!l.sentToMaster,
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
@@ -1752,6 +1754,7 @@
     let textMode = false;
     let seqMode = false;
     let shapeMode = false;
+    let pianoMode = false;
     let _fluidSynth = null;
     let _fluidActive = false;
     let _fluidPointerId = null;

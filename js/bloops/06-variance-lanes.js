@@ -902,6 +902,9 @@
         // Shape (radial wheel) mode + its config, built lazily by 21-shape.js.
         shapeMode: false,
         shape: null,
+        // Piano mode — Grid functionality with a piano-keyboard layout (no extra
+        // config; reuses the grid cells + steps). See body.piano-mode CSS.
+        pianoMode: false,
         // Whether this lane's shape is sent to the Mix "Master Shape" overview.
         sentToMaster: false,
       };
@@ -1392,6 +1395,7 @@
         text: src.text ? JSON.parse(JSON.stringify(src.text)) : null,
         seqMode: !!src.seqMode,
         shapeMode: !!src.shapeMode,
+        pianoMode: !!src.pianoMode,
         shape: src.shape ? JSON.parse(JSON.stringify(src.shape)) : null,
         sentToMaster: !!src.sentToMaster,
         // Active lane's live voice lives in the globals; capture those so the
@@ -1717,6 +1721,7 @@
       const wantText    = !!(lane && lane.textMode);
       const wantSeq     = !!(lane && lane.seqMode);
       const wantShape   = !!(lane && lane.shapeMode);
+      const wantPiano   = !!(lane && lane.pianoMode);
       const wasFluid   = fluidGridMode;
       const wasGame    = gameMode;
       const wasProg    = progMode;
@@ -1731,6 +1736,10 @@
       if (typeof textMode !== 'undefined') textMode = wantText;
       if (typeof seqMode !== 'undefined') seqMode = wantSeq;
       if (typeof shapeMode !== 'undefined') shapeMode = wantShape;
+      if (typeof pianoMode !== 'undefined') pianoMode = wantPiano;
+      // Piano = Grid functionality with a keyboard layout — it does NOT hide the
+      // grid (other modes do); the class only re-styles #grid into piano keys.
+      document.body.classList.toggle('piano-mode', wantPiano);
       document.body.classList.toggle('fluid-grid',  wantFluid);
       document.body.classList.toggle('game-mode',   wantGame);
       document.body.classList.toggle('prog-mode',   wantProg);
@@ -1746,12 +1755,13 @@
                         : wantAmbient ? 'Bloom'
                         : wantProg ? 'Key'
                         : wantGame ? 'Game'
+                        : wantPiano ? 'Piano'
                         : wantFluid ? 'Graph' : 'Grid';
       }
       // Reflect the active mode onto the banner-row mode dropdown.
       {
         const _mode = wantShape ? 'shape' : wantSeq ? 'seq' : wantText ? 'text' : wantAmbient ? 'bloom' : wantProg ? 'prog'
-                    : wantGame ? 'game' : wantFluid ? 'graph' : 'grid';
+                    : wantGame ? 'game' : wantPiano ? 'piano' : wantFluid ? 'graph' : 'grid';
         const sel = document.getElementById('mode-select');
         if (sel && sel.value !== _mode) sel.value = _mode;
         try { if (typeof window._syncModeBtns === 'function') window._syncModeBtns(); } catch (e) {}

@@ -56,8 +56,7 @@
        metronome + BPM digits, master volume, groove, MIDI, and the homepage
        link (below) into it. -->
   <header class="float-header">
-    <span id="bloom-hdr-elapsed" class="bloom-hdr-elapsed" title="Bloom elapsed play time (MM:SS:hundredths) — resets on Stop">00:00:00</span>
-    <button type="button" id="xport-menu-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings menu" title="Settings — Undo/Redo · Tempo · Volume · Groove · MIDI · Home"><span class="xport-gear" aria-hidden="true">⚙</span><span class="xport-label">Settings</span><span id="xport-bpm" hidden>120</span></button>
+    <span id="bloom-hdr-elapsed" class="bloom-hdr-elapsed" role="button" tabindex="0" aria-haspopup="dialog" aria-expanded="false" title="Elapsed play time + BPM — click for Settings (Undo/Redo · Tempo · Volume · Groove · MIDI · Home)"><span class="xport-gear" aria-hidden="true">⚙</span><span class="bloom-hdr-text">00:00:00</span></span>
   </header>
   <!-- Source elements relocated into #xport-menu at init (and the hidden tempo
        inputs every tempoSlider.value / tempoInput.value reference reads). They
@@ -340,6 +339,7 @@
                + <button>. -->
           <select class="mode-select" id="mode-select" title="Lane mode" aria-label="Lane mode" hidden aria-hidden="true" tabindex="-1">
             <option value="grid">Grid</option>
+            <option value="piano">Piano</option>
             <option value="graph">Graph</option>
             <option value="game">Game</option>
             <option value="prog">Key</option>
@@ -353,6 +353,7 @@
           <div class="grid-settings-panel mode-panel" id="mode-panel" role="menu" aria-label="Lane mode">
             <button type="button" class="mode-btn mode-settings-btn" id="mode-settings-btn" aria-haspopup="menu" title="Mode settings — scale, octaves, chords, key, pitch-bend, and per-mode options">⚙ Settings</button>
             <button type="button" class="mode-btn" data-mode="grid" role="menuitemradio" title="Grid — note grid sequencer">Grid</button>
+            <button type="button" class="mode-btn" data-mode="piano" role="menuitemradio" title="Piano — same as Grid, laid out as a piano keyboard">Piano</button>
             <button type="button" class="mode-btn" data-mode="graph" role="menuitemradio" title="Graph — XY pad">Graph</button>
             <button type="button" class="mode-btn" data-mode="game" role="menuitemradio" title="Game — live play">Game</button>
             <button type="button" class="mode-btn" data-mode="prog" role="menuitemradio" title="Key — chord progression builder">Key</button>

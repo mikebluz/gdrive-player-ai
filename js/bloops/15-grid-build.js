@@ -575,7 +575,9 @@
 
       notes.forEach((note, i) => {
         const cell = document.createElement('div');
-        cell.className = 'cell';
+        // Tag accidental vs natural so Piano mode (body.piano-mode) can lay the
+        // cells out as black / white keys. Inert in every other mode.
+        cell.className = 'cell ' + (/[#♯b♭]/.test(note.label) ? 'is-sharp' : 'is-natural');
         cell.innerHTML = `<button type="button" class="cell-edit-carrot" title="Open sound editor for ${note.label}" aria-label="Open sound editor">▾</button><span>${note.label}</span><span class="cell-freq">${Math.round(note.freq)} Hz</span><span class="cell-tone"></span>`;
         const editBtn = cell.querySelector('.cell-edit-carrot');
         if (editBtn) {
@@ -972,6 +974,20 @@
         grid.appendChild(cell);
         cells.push(cell);
       });
+      // Piano-mode layout coordinates: give each cell its absolute white-key
+      // index (--pk) and the grid the total white-key count (--pkn), so
+      // body.piano-mode CSS can place exact, non-overlapping keys (white keys
+      // tile by --pk; black keys centre on the boundary at the same --pk).
+      // Inert in every other mode (the vars are only read under body.piano-mode).
+      {
+        let _w = 0;
+        notes.forEach((nn, i) => {
+          if (!cells[i]) return;
+          cells[i].style.setProperty('--pk', String(_w));
+          if (!/[#♯b♭]/.test(nn.label)) _w++;   // advance only past white keys
+        });
+        grid.style.setProperty('--pkn', String(Math.max(1, _w)));
+      }
       applyPalette();
       applyScale();
       // Publish the grid's natural rendered height as a CSS variable

@@ -20,6 +20,32 @@
     function stepWidthPx(step) {
       return STEP_BASE_PX * stepLengthFactor(step);
     }
+    // ---- Subsequence extirpation -------------------------------------------
+    // The "subsequence" step (isSub + subSteps[]) is being removed: a run of
+    // notes is now just a series of INDIVIDUAL steps. These helpers expand any
+    // isSub step into its leaf steps (recursively), preserving order and each
+    // child's own duration/subdivision — which yields byte-identical playback
+    // timing because the scheduler already times every step by its own
+    // subdivision × duration and a subsequence's length is the sum of its
+    // children. Parent-level keyContext / wrap-tone are carried onto children
+    // that lack their own. Used at every step-creation funnel + on project load.
+    function _flattenSubStep(step) {
+      if (!step) return [];
+      if (step.isSub && Array.isArray(step.subSteps)) {
+        const kc = step.keyContext;
+        return step.subSteps.flatMap(_flattenSubStep).map(s => {
+          const o = { ...s };
+          if (kc && !o.keyContext) o.keyContext = kc;
+          return o;
+        });
+      }
+      return [step];
+    }
+    function _flattenStepList(steps) {
+      if (!Array.isArray(steps)) return steps;
+      if (!steps.some(s => s && s.isSub)) return steps;   // fast path: nothing to do
+      return steps.flatMap(_flattenSubStep);
+    }
     // Single-row lane timeline: chip width ∝ duration at a larger base than the
     // legacy STEP_BASE_PX so chips stay readable/tappable on the scrolling row.
     // A 1/4 note ≈ 70px, 1/8 ≈ 35px; floored so very short steps don't vanish.
@@ -200,6 +226,19 @@
     }
 
     function renderSequence(activeIndex = -1) {
+      // Subsequence extirpation — normalize any isSub step in the active
+      // sequence into individual steps. Done here (the funnel every edit calls)
+      // so the direct-to-sequence creators (grid Run mode, multi-select Wrap,
+      // Consolidate, etc.) all collapse to individual steps without editing each
+      // site. GUARDED to STOPPED only: the scheduler reads the live lane.steps
+      // array by reference, so mutating it mid-playback would desync the stream
+      // (the kept subStack fallback plays any transient isSub correctly anyway).
+      if (typeof sequenceTimer !== 'undefined' && sequenceTimer === null
+          && Array.isArray(sequence) && sequence.some(s => s && s.isSub)) {
+        const flat = _flattenStepList(sequence);
+        sequence.length = 0;
+        Array.prototype.push.apply(sequence, flat);
+      }
       // In Poly, ensure the active lane's `steps` always points at the
       // current `sequence` array. Anything that did `sequence = [new array]`
       // (Clear, Reverse, Shuffle, Random, Seed, etc.) would otherwise
@@ -2564,27 +2603,33 @@
     })();
 
     function addToSequence(step) {
-      const label = step?.chord ? 'Add chord' : (step?.freq == null ? 'Add rest' : ('Add ' + (step?.label || 'note')));
+      // Subsequence concept removed — a run is just individual steps. Flatten
+      // any isSub step into its leaf steps and add each in order (one snapshot
+      // for the whole group).
+      const steps = (step && step.isSub && Array.isArray(step.subSteps)) ? _flattenSubStep(step) : [step];
+      if (!steps.length) return;
+      const first = steps[0];
+      const label = (steps.length > 1) ? 'Add run'
+        : (first?.chord ? 'Add chord' : (first?.freq == null ? 'Add rest' : ('Add ' + (first?.label || 'note'))));
       snapshotForUndo(label);
-      // Stamp the live grid key onto this step before it lands in the
+      // Stamp the live grid key onto each step before it lands in the
       // sequence. Doesn't overwrite an existing keyContext — wraps
       // recalled from the bank carry their own (possibly rebased)
       // context, and saved sequences loaded from disk already have
       // theirs. Skipped entirely when chromatic is active.
-      if (step && !step.keyContext) {
-        const kc = _captureKeyContext();
-        if (kc) step.keyContext = kc;
-      }
-      if (insertionPoint !== null && insertionPoint >= 0 && insertionPoint <= sequence.length) {
-        sequence.splice(insertionPoint, 0, step);
-        // One-shot insert: drop the cursor after the first append so the
-        // green bar disappears and the row closes up. Users who want to
-        // insert several steps in a row can re-open Insert before/after
-        // from the step's context menu.
-        insertionPoint = null;
-      } else {
-        sequence.push(step);
-      }
+      const _insert = (insertionPoint !== null && insertionPoint >= 0 && insertionPoint <= sequence.length);
+      steps.forEach(s => {
+        if (s && !s.keyContext) {
+          const kc = _captureKeyContext();
+          if (kc) s.keyContext = kc;
+        }
+        if (_insert) { sequence.splice(insertionPoint, 0, s); insertionPoint++; }
+        else sequence.push(s);
+      });
+      // One-shot insert: drop the cursor after the group so the green bar
+      // disappears and the row closes up. Re-open Insert before/after from the
+      // step's context menu to add more.
+      if (_insert) insertionPoint = null;
       renderSequence();
       document.getElementById('save-btn').disabled = false;
       // Persist on every step add so multi-lane Poly edits aren't lost

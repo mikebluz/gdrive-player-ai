@@ -455,7 +455,7 @@
       activeLaneIdx = Number.isFinite(w.activeLaneIdx) ? w.activeLaneIdx : 0;
       lanes = Array.isArray(w.lanes) ? w.lanes.map((l, i) => ({
         name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
-        steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],
+        steps: Array.isArray(l?.steps) ? _flattenStepList(l.steps.map(cloneStep)) : [],   // flatten any legacy subsequence steps into individual steps
         muted: !!l?.muted,
         solo:  !!l?.solo,
         driftMs:        Number.isFinite(l?.driftMs)        ? l.driftMs        : 0,
@@ -466,6 +466,7 @@
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
         collapsed: !!l?.collapsed,
         fluidGridMode: !!l?.fluidGridMode,
+        pianoMode: !!l?.pianoMode,
         ambientMode: !!l?.ambientMode,
         ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
         textMode: !!l?.textMode,
@@ -482,7 +483,7 @@
       })) : [];
       _stashedLanes = Array.isArray(w.stashedLanes) ? w.stashedLanes.map((l, i) => ({
         name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
-        steps: Array.isArray(l?.steps) ? l.steps.map(cloneStep) : [],
+        steps: Array.isArray(l?.steps) ? _flattenStepList(l.steps.map(cloneStep)) : [],   // flatten any legacy subsequence steps into individual steps
         muted: !!l?.muted,
         solo:  !!l?.solo,
         driftMs:        Number.isFinite(l?.driftMs)        ? l.driftMs        : 0,
@@ -493,6 +494,7 @@
         slip:   Number.isFinite(l?.slip)   ? l.slip   : 0,
         collapsed: !!l?.collapsed,
         fluidGridMode: !!l?.fluidGridMode,
+        pianoMode: !!l?.pianoMode,
         ambientMode: !!l?.ambientMode,
         ambient: (l?.ambient && typeof l.ambient === 'object') ? JSON.parse(JSON.stringify({ ...l.ambient, playing: false })) : null,
         textMode: !!l?.textMode,
@@ -911,6 +913,9 @@
       const setActive = (which) => {
         tabs.forEach(t => t.classList.toggle('tab-active', t === which));
       };
+      // Remember the last view (Seed / Grow / Harvest) so a reload reopens it.
+      const VIEW_KEY = 'bloopsLastView';
+      const _persistView = (name) => { try { localStorage.setItem(VIEW_KEY, name); } catch (e) {} };
       // Update labels so the active tab reads cleanly and inactive tabs
       // hint at direction ("Listen →" on the right). The Seed tab always reads
       // just "Seed" (no arrow when on Grow/Listen).
@@ -952,6 +957,7 @@
         document.body.classList.remove('view-serialbox', 'view-mix', 'view-harvest', 'tracks-fullscreen');
         setActive(bloopsTab);
         updateLabels('make');
+        _persistView('make');
         _closeTransientUI();
         // Leaving Listen pauses any background music so the user isn't
         // hearing audio from a tab they can no longer see/control.
@@ -962,6 +968,7 @@
         document.body.classList.add('view-mix');
         setActive(mixTab);
         updateLabels('mix');
+        _persistView('mix');
         _closeTransientUI();
         try { window.musicPlayer?.pause(); } catch (e) {}
         // Build/refresh the master Bloom panel now that #mix-bloom-host is visible.
@@ -1002,6 +1009,7 @@
         document.body.classList.add('view-harvest');
         setActive(harvestTab);
         updateLabels('harvest');
+        _persistView('harvest');
         _closeTransientUI();
         try { window.musicPlayer?.pause(); } catch (e) {}
         // Captures render into every .ambient-capture-bank — fill Harvest's now.
@@ -1011,6 +1019,18 @@
       if (mixTab) mixTab.addEventListener('click', showMix);
       if (harvestTab) harvestTab.addEventListener('click', showHarvest);
       sbTab.addEventListener('click', showSerialbox);
+
+      // Reopen the last-used view on reload (Seed is the default boot state, so
+      // only Grow / Harvest need restoring). Deferred to DOMContentLoaded so the
+      // workspace snapshot + every module symbol is ready before the master
+      // Bloom / capture bank those views build is initialised.
+      const _restoreView = () => {
+        let v = null; try { v = localStorage.getItem(VIEW_KEY); } catch (e) {}
+        if (v === 'mix') showMix();
+        else if (v === 'harvest') showHarvest();
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _restoreView, { once: true });
+      else _restoreView();
 
       // Mix sub-tabs: Bloom (master generative, default) / Mixdown (tracks +
       // export). Toggles a class on #mix-view; CSS shows the matching pane.
@@ -3929,13 +3949,12 @@
     function _buildStepCtxActions(stepIndex) {
       const step = sequence[stepIndex];
       const actions = [];
+      // Subsequence concept removed — any legacy isSub step is flattened to
+      // individual steps on load, so the sub-edit editor + its actions are gone.
+      // (If an un-migrated isSub step ever appears, offer only Combine to chord
+      // so it can still be normalised.)
       if (step && step.isSub) {
-        actions.push({ label: 'Edit subsequence…', fn: () => enterSubEditMode(stepIndex) });
         actions.push({ label: 'Combine to chord', fn: () => _runStepCtxAction(stepIndex, 'Combine to chord', (i) => chordifyStep(i)) });
-        if (Array.isArray(step.subSteps) && step.subSteps.length > 1) {
-          actions.push({ label: 'Reverse', fn: () => _runStepCtxAction(stepIndex, 'Reverse subsequence', (i) => reverseSubseq(i)) });
-          actions.push({ label: 'Shuffle', fn: () => _runStepCtxAction(stepIndex, 'Shuffle subsequence', (i) => shuffleSubseq(i)) });
-        }
         actions.push('hr');
       } else {
         if (step && (step.chord || step.freq !== null)) {

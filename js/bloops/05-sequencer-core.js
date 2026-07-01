@@ -20,6 +20,32 @@
     function stepWidthPx(step) {
       return STEP_BASE_PX * stepLengthFactor(step);
     }
+    // ---- Bar grid (1 row = 1 bar) ------------------------------------------
+    // Lane chips render as a CSS grid (.lane-chips: repeat(32, 1fr)) where one
+    // row = one 4/4 bar = _BAR_SUBCELLS sub-cells, so the lane fits the strip
+    // width with no horizontal scroll. A step spans round(stepLengthFactor ×
+    // _BAR_SUBCELLS) cells; one whole note (factor 1) = a full bar/row. Steps
+    // that cross a bar line split into continuation segments. _barGridPlan walks
+    // one step from the current 1-based column cursor and returns its first-row
+    // span, the spans of any continuation segments (one per extra row), and the
+    // next column cursor.
+    const _BAR_SUBCELLS = 32;
+    function _barGridPlan(naturalSpan, startCol) {
+      const N = _BAR_SUBCELLS;
+      const capacity = N - (startCol - 1);
+      if (naturalSpan <= capacity) {
+        let nc = startCol + naturalSpan; if (nc > N) nc = 1;
+        return { firstSpan: naturalSpan, continuations: [], newCol: nc };
+      }
+      const continuations = []; let rem = naturalSpan - capacity;
+      while (rem > 0) { const seg = Math.min(N, rem); continuations.push(seg); rem -= seg; }
+      const last = continuations[continuations.length - 1];
+      const nc = (last === N) ? 1 : last + 1;
+      return { firstSpan: capacity, continuations, newCol: nc };
+    }
+    function _barGridSpan(step) {
+      return Math.max(1, Math.round(stepLengthFactor(step) * _BAR_SUBCELLS));
+    }
     // ---- Subsequence extirpation -------------------------------------------
     // The "subsequence" step (isSub + subSteps[]) is being removed: a run of
     // notes is now just a series of INDIVIDUAL steps. These helpers expand any
@@ -80,6 +106,9 @@
     // pinned to the content origin so bars line up with the chip boundaries.
     function _addLaneBars(chipsEl, totalPx) {
       if (!chipsEl) return;
+      // Bar grid: each ROW is already one bar, so the old vertical bar-line
+      // overlay (for the horizontal timeline) is no longer drawn.
+      { const old = chipsEl.querySelector(':scope > .lane-bars'); if (old) old.remove(); chipsEl._laneBars = null; return; }
       let bars = chipsEl.querySelector(':scope > .lane-bars');
       const basePx = _laneViewBasePx();
       if (!(totalPx > 4) || !(basePx > 0)) {        // truly empty lane
@@ -187,7 +216,7 @@
       // Filter out pendingChord preview chips (.chord-pending) — those
       // sit after the real sequence chips in the DOM but aren't part of
       // `sequence`, so any interval drawn between them would be bogus.
-      const chips = Array.from(display.querySelectorAll('.seq-step:not(.chord-pending)'));
+      const chips = Array.from(display.querySelectorAll('.seq-step:not(.chord-pending):not(.cont-segment)'));
       if (chips.length < 2) return;
       const dispRect = display.getBoundingClientRect();
       const ROW_TOL = 4; // px slop when deciding if two chips share a row
@@ -225,6 +254,189 @@
       }
     }
 
+    // Lane-step drag mode: 'reorder' (drag chips to rearrange — the default) or
+    // 'resize' (drag chips to change length). Toggled by #lane-drag-mode-btn.
+    // The two gestures conflict if both are live, so only ONE is bound per chip.
+    let _laneDragMode = (() => {
+      try { return localStorage.getItem('lane-drag-mode') === 'resize' ? 'resize' : 'reorder'; }
+      catch (e) { return 'reorder'; }
+    })();
+    function setLaneDragMode(mode) {
+      _laneDragMode = (mode === 'resize') ? 'resize' : 'reorder';
+      try { localStorage.setItem('lane-drag-mode', _laneDragMode); } catch (e) {}
+      const btn = document.getElementById('lane-drag-mode-btn');
+      if (btn) {
+        const resize = _laneDragMode === 'resize';
+        btn.textContent = resize ? '⇥ Resize' : '↔ Reorder';
+        btn.classList.toggle('active', resize);
+      }
+      try { renderSequence(); } catch (e) {}
+    }
+    // ---- Resize settings (persisted) ----
+    // _resizeIncr32 = snap increment in 1/32-units (= grid cells): 8=1/4, 4=1/8,
+    // 2=1/16, 1=1/32. _resizeBothEdges = allow dragging the LEFT edge too.
+    // _resizeKeepTotal = the adjacent step absorbs the change so the sequence's
+    // overall length stays constant (else only the dragged step changes and the
+    // sequence reflows). All settable from the lane ☰ menu.
+    let _resizeIncr32 = (() => { try { const v = parseInt(localStorage.getItem('resize-incr32'), 10); return [1, 2, 4, 8].includes(v) ? v : 2; } catch (e) { return 2; } })();
+    let _resizeBothEdges = (() => { try { return localStorage.getItem('resize-both-edges') === '1'; } catch (e) { return false; } })();
+    let _resizeKeepTotal = (() => { try { return localStorage.getItem('resize-keep-total') === '1'; } catch (e) { return false; } })();
+    function _setResizeIncr32(n) { _resizeIncr32 = [1, 2, 4, 8].includes(n) ? n : 2; try { localStorage.setItem('resize-incr32', String(_resizeIncr32)); } catch (e) {} }
+    function _setResizeBothEdges(b) { _resizeBothEdges = !!b; try { localStorage.setItem('resize-both-edges', b ? '1' : '0'); } catch (e) {} try { renderSequence(); } catch (e) {} }
+    function _setResizeKeepTotal(b) { _resizeKeepTotal = !!b; try { localStorage.setItem('resize-keep-total', b ? '1' : '0'); } catch (e) {} }
+    // Step length in 1/32-units (= bar-grid cells). _setStepLen32 writes a length
+    // back, keeping the step's subdivision when the length is a whole multiple of
+    // it (else falling to 1/32 so duration stays integer). _fmtLen32 renders a
+    // readable note value for the hover readout.
+    const _stepLen32 = (s) => Math.max(1, Math.round(stepLengthFactor(s) * _BAR_SUBCELLS));
+    function _setStepLen32(s, n) {
+      n = Math.max(1, Math.round(n));
+      const unit = ((s.subdivision != null ? s.subdivision : stepSubdivision) * 8);
+      if (unit > 0 && (n % unit) === 0) { s.duration = n / unit; }
+      else { s.subdivision = 0.125; s.duration = n; }
+    }
+    function _mkRestStep(n) { return { freq: null, label: '—', cellIndex: null, duration: Math.max(1, Math.round(n)), subdivision: 0.125 }; }
+    function _fmtLen32(n) {
+      const M = { 1: '1/32', 2: '1/16', 3: '1/16.', 4: '1/8', 6: '1/8.', 8: '1/4', 12: '1/4.', 16: '1/2', 24: '1/2.', 32: '1 bar' };
+      if (M[n]) return M[n];
+      if (n % 32 === 0) return (n / 32) + ' bars';
+      return n + '/32';
+    }
+    function _resizeReadoutEl() {
+      let el = document.getElementById('_resize-readout');
+      if (!el) { el = document.createElement('div'); el.id = '_resize-readout'; el.className = 'resize-readout'; document.body.appendChild(el); }
+      return el;
+    }
+    // Apply a resized length to `step` from the given edge. Right edge changes the
+    // boundary with the NEXT step; left edge the boundary with the PREVIOUS step.
+    // Keep-total (right edge) makes the next step absorb the change; left edge is
+    // inherently length-preserving (the previous step or a leading rest absorbs).
+    function _applyResize(step, edge, newLen) {
+      const i = sequence.indexOf(step); if (i < 0) return;
+      const incr = _resizeIncr32;
+      const cur = _stepLen32(step);
+      newLen = Math.max(incr, newLen);
+      if (edge === 'right') {
+        let d = newLen - cur;
+        const next = sequence[i + 1];
+        if (_resizeKeepTotal && next && !next.isSub) {
+          const nl = _stepLen32(next);
+          if (nl - d < incr) d = nl - incr;          // keep next ≥ one increment
+          _setStepLen32(step, cur + d);
+          _setStepLen32(next, nl - d);
+        } else {
+          _setStepLen32(step, newLen);                // sequence reflows
+        }
+      } else {
+        let d = cur - newLen;                          // >0 shrink from front, <0 grow
+        const prev = sequence[i - 1];
+        if (prev && !prev.isSub) {
+          const pl = _stepLen32(prev);
+          if (pl + d < incr) d = incr - pl;            // keep prev ≥ one increment
+          _setStepLen32(step, cur - d);
+          _setStepLen32(prev, pl + d);
+        } else if (d > 0) {
+          _setStepLen32(step, newLen);                 // no prev: a leading rest absorbs
+          sequence.splice(i, 0, _mkRestStep(d));
+        }
+      }
+    }
+    // Begin a handle-driven resize for `edge` ('right'|'left'). Pointer-captured
+    // (so the strip can't scroll), snaps to _resizeIncr32, shows a live size
+    // readout near the cursor, and commits with one undo entry on release.
+    function _startStepResize(chip, step, edge, e, handle) {
+      if (e.button != null && e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      const host = chip.closest('.lane-chips');
+      const cellPx = host ? Math.max(2, host.clientWidth / _BAR_SUBCELLS) : 12;
+      const startX = e.clientX;
+      const startLen = _stepLen32(step);
+      const incr = _resizeIncr32;
+      const snap = (v) => Math.max(incr, Math.round(v / incr) * incr);
+      const _clampSpan = (v) => Math.max(1, Math.min(_BAR_SUBCELLS, v));
+      let newLen = startLen;
+      chip.classList.add('resizing');
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      // Adjacent step that compensates when "keeps length" is on — found so it
+      // can resize LIVE alongside the dragged chip (right → next, left → prev).
+      let nbChip = null, nbStartLen = 0;
+      if (_resizeKeepTotal) {
+        const myIdx = sequence.indexOf(step);
+        const nIdx = (edge === 'right') ? myIdx + 1 : myIdx - 1;
+        const nStep = sequence[nIdx];
+        if (nStep && !nStep.isSub) {
+          const heads = host ? Array.from(host.querySelectorAll('.seq-step:not(.cont-segment):not(.chord-pending)')) : [];
+          nbChip = heads[nIdx] || null;
+          nbStartLen = _stepLen32(nStep);
+        }
+      }
+      const readout = _resizeReadoutEl();
+      const showReadout = (ev) => {
+        readout.textContent = _fmtLen32(newLen) + (nbChip ? '  ·  ⇄ ' + _fmtLen32(Math.max(incr, nbStartLen - (newLen - startLen))) : '');
+        readout.style.left = (ev.clientX + 12) + 'px';
+        readout.style.top  = (ev.clientY - 30) + 'px';
+        readout.classList.add('show');
+      };
+      const onMove = (ev) => {
+        const dCells = Math.round((ev.clientX - startX) / cellPx);
+        newLen = snap(edge === 'right' ? startLen + dCells : startLen - dCells);
+        // Clamp so a compensating neighbor never shrinks below one increment
+        // (mirrors _applyResize), keeping the live preview and the commit equal.
+        if (nbChip) {
+          const d = (edge === 'right') ? (newLen - startLen) : (startLen - newLen);
+          const maxD = nbStartLen - incr;          // neighbor can give up at most this much
+          if (d > maxD) newLen = (edge === 'right') ? (startLen + maxD) : (startLen - maxD);
+        }
+        if (edge === 'right' || nbChip) chip.style.gridColumn = 'span ' + _clampSpan(newLen);
+        if (nbChip) {
+          const d = (edge === 'right') ? (newLen - startLen) : (startLen - newLen);
+          // Right: next shrinks by d. Left: prev GROWS by d, which shoves the
+          // dragged chip rightward (a correct left-edge preview).
+          const nl = (edge === 'right') ? (nbStartLen - d) : (nbStartLen + d);
+          nbChip.style.gridColumn = 'span ' + _clampSpan(Math.max(incr, nl));
+        }
+        showReadout(ev);
+      };
+      const onUp = () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+        chip.classList.remove('resizing');
+        readout.classList.remove('show');
+        // Swallow the click that follows the handle release so it doesn't select.
+        const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+        chip.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => { try { chip.removeEventListener('click', swallow, true); } catch (_) {} }, 60);
+        if (newLen !== startLen) {
+          snapshotForUndo('Resize step');
+          _applyResize(step, edge, newLen);
+          renderSequence();
+          try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (_) {}
+          const sv = document.getElementById('save-btn'); if (sv) sv.disabled = sequence.length === 0;
+        } else {
+          renderSequence();
+        }
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+      showReadout(e);
+    }
+    // Resize mode: give a chip a right-edge handle (and a left-edge handle when
+    // _resizeBothEdges). Tapping the chip BODY still selects the step.
+    function _attachStepResize(chip, step) {
+      chip.classList.add('resize-target');
+      const addHandle = (cls, edge) => {
+        const h = document.createElement('span');
+        h.className = 'seq-resize-handle ' + cls;
+        h.addEventListener('pointerdown', (e) => _startStepResize(chip, step, edge, e, h));
+        chip.appendChild(h);
+      };
+      addHandle('seq-resize-r', 'right');
+      if (_resizeBothEdges) addHandle('seq-resize-l', 'left');
+    }
+
     function renderSequence(activeIndex = -1) {
       // Subsequence extirpation — normalize any isSub step in the active
       // sequence into individual steps. Done here (the funnel every edit calls)
@@ -239,6 +451,13 @@
         sequence.length = 0;
         Array.prototype.push.apply(sequence, flat);
       }
+      // Keep the add-lane-row's lane-menu button showing the active lane's name.
+      try {
+        const lmb = document.getElementById('lane-menu-btn');
+        if (lmb && typeof lanes !== 'undefined' && lanes[activeLaneIdx]) {
+          lmb.textContent = '☰ ' + lanes[activeLaneIdx].name;
+        }
+      } catch (e) {}
       // In Poly, ensure the active lane's `steps` always points at the
       // current `sequence` array. Anything that did `sequence = [new array]`
       // (Clear, Reverse, Shuffle, Random, Seed, etc.) would otherwise
@@ -367,77 +586,10 @@
             // differently from uniform-tone ones (pitch differences ignored).
             + (_laneToneMixed(lane) ? ' lane-tone-mixed' : '');
 
-          const ctrls = document.createElement('div');
-          ctrls.className = 'lane-controls';
-          // The active lane's note grid is showing when the voice editor is
-          // open. The collapse-toggle only appears when the grid is hidden;
-          // while the grid is up the row is just label (left) + hide (right).
-          const gridShowing = isActiveLane && _laneExpanderOpen;
-          if (!gridShowing) {
-            // Collapse-toggle button — sits to the LEFT of the status pill.
-            // ▾ when expanded (chips wrap to fill all rows visible);
-            // ▸ when collapsed (chips constrained to a single scrollable
-            // row). Per-lane state so each lane's display can be tuned
-            // independently.
-            const collapseBtn = document.createElement('button');
-            collapseBtn.type = 'button';
-            collapseBtn.className = 'lane-collapse-toggle';
-            collapseBtn.textContent = lane.collapsed ? '▸' : '▾';
-            if (!lane.collapsed) collapseBtn.classList.add('open');
-            collapseBtn.title = lane.collapsed
-              ? `Expand lane ${lane.name} — show every step at once`
-              : `Collapse lane ${lane.name} into a single scrollable row`;
-            collapseBtn.addEventListener('click', (e) => {
-              e.stopPropagation();
-              lane.collapsed = !lane.collapsed;
-              renderSequence();
-              if (typeof persistWorkspace === 'function') persistWorkspace();
-            });
-            ctrls.appendChild(collapseBtn);
-          }
-          // Single status-light button — shows the lane label and its
-          // mute state via background color. Click toggles mute, but
-          // ONLY when the lane is active. On non-active lanes the
-          // click bubbles to the lane-row handler which activates the
-          // lane (a second click then toggles).
-          const status = document.createElement('button');
-          status.type = 'button';
-          status.className = 'lane-status';
-          status.textContent = lane.name;
-          const stateName = lane.muted ? 'muted' : (lane.solo ? 'solo' : 'off');
-          status.dataset.state = stateName;
-          if (!isActiveLane) status.classList.add('inactive');
-          status.title = isActiveLane
-            ? `Lane ${lane.name} — open lane menu (grid / solo / mute / save / clear / riff).`
-            : `Lane ${lane.name} — click to focus (click again to open its menu).`;
-          // Click the label to focus the lane and open its menu. The menu only
-          // opens for the ALREADY-active lane — clicking a non-active lane just
-          // focuses it (a second click then opens the menu), so a stray tap on
-          // another lane's label can't pop a menu for a lane you're not on.
-          status.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (laneIdx !== activeLaneIdx) {
-              _laneExpanderOpen = true;
-              activateLane(laneIdx);
-              return;
-            }
-            if (typeof _showLaneMenu === 'function') _showLaneMenu(laneIdx, e.clientX, e.clientY);
-          });
-          // Right-click / long-press on the status button opens a
-          // "Copy voice from…" menu — lets the user clone any other
-          // lane's voice (cell sounds, scale, palette, root, octave,
-          // master tuning) onto this lane in one tap. The voice copy
-          // doesn't touch steps / mute / drift / pan / volume / slip,
-          // so the lane's rhythm and mix stay put.
-          status.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            _showCopyVoiceMenu(laneIdx, e.clientX, e.clientY);
-          });
-          // Label (status) pill — opens the lane menu on click. Grid
-          // show/hide now lives in that menu (the eye button was removed).
-          ctrls.appendChild(status);
-          row.appendChild(ctrls);
+          // Lane-controls removed — a lane row is now just its steps viewer.
+          // The active lane's name + menu live in the add-lane-row's ☰ Lane
+          // button (which carries Show/Hide grid + Collapse/Expand); lane
+          // switching is a click on a non-active lane's row (handler below).
 
           const chipsEl = document.createElement('div');
           chipsEl.className = 'lane-chips';
@@ -475,8 +627,11 @@
                 else if (isRest) label = '—';
                 else             label = step.label || '';
                 chip.textContent = label;
-                // Single-row timeline: proportional fixed width, no wrap/split.
-                chip.style.width = _pvLayout.widths[stepIdx] + 'px';
+                // Bar grid: span sub-cells; split across rows at bar lines.
+                const _pvPlan = _barGridPlan(_barGridSpan(step), _previewCol);
+                _previewCol = _pvPlan.newCol;
+                chip.style.gridColumn = 'span ' + _pvPlan.firstSpan;
+                if (_pvPlan.continuations.length > 0) chip.classList.add('cont-start');
                 {
                   const pc = stepColorPitchClass(step);
                   if (pc != null && chipPalette[pc]) {
@@ -493,31 +648,44 @@
                 chip.addEventListener('contextmenu', (e) => e.preventDefault());
                 chip.addEventListener('selectstart',  (e) => e.preventDefault());
                 chipsEl.appendChild(chip);
+                // Visual-only continuation segments for steps crossing bars.
+                _pvPlan.continuations.forEach((segSpan, idx) => {
+                  const cont = chip.cloneNode(true);
+                  cont.classList.remove('cont-start', 'active', 'selected');
+                  cont.classList.add(idx === _pvPlan.continuations.length - 1 ? 'cont-end' : 'cont-mid', 'cont-segment');
+                  cont.style.gridColumn = 'span ' + segSpan;
+                  cont.textContent = '';
+                  chipsEl.appendChild(cont);
+                });
               });
               _addLaneBars(chipsEl, _pvLayout.total);
             }
           }
 
           row.addEventListener('click', (e) => {
-            // Don't intercept clicks that land on the lane-status
-            // button (mute toggle), step chips inside the lane, or
-            // the lane-expander itself when it's been reparented
-            // into this row's neighborhood.
-            if (e.target.closest('.lane-status')) return;
-            if (e.target.closest('.seq-step')) return;
             if (e.target.closest('#lane-expander')) return;
             if (isActiveLane) {
-              // Grid show/hide is the dedicated 👁 button now — clicking the
-              // active lane row no longer toggles the voice editor.
+              // Active lane: its chips are interactive (select / resize /
+              // reorder) and the collapse toggle has its own handler — clicking
+              // the row background does nothing.
+              if (e.target.closest('.seq-step')) return;
               return;
             }
-            // Activating a different lane always shows its voice editor —
-            // that's the whole point of activating.
+            // Non-active lane: the status button is gone, so clicking ANYWHERE
+            // on the row — including its read-only preview chips — focuses the
+            // lane (the collapse toggle stops propagation, so it only collapses).
             _laneExpanderOpen = true;
             activateLane(laneIdx);
           });
 
           if (lane.collapsed) {
+            // A collapsed lane hides its chips, so (with the controls gone) it
+            // would be an empty box — give it a small name label so it stays
+            // identifiable + clickable in the menubar strip.
+            const mini = document.createElement('span');
+            mini.className = 'lane-mini-label';
+            mini.textContent = lane.name;
+            row.insertBefore(mini, row.firstChild);
             // Collapsed lanes route up to the menubar strip. One
             // strip holds every collapsed lane; expanded lanes still
             // render below in the editor in their original order.
@@ -715,11 +883,14 @@
         // how many chips fit per row, while individual chip widths stay
         // proportional to their step-div. Outside grid mode, pin width
         // directly via stepWidthPx.
-        // Single-row timeline: every step is one chip at a proportional fixed
-        // width — no grid spans, no row-boundary continuation splitting.
-        const _continuationPlan = null;
-        chip.style.gridColumn = '';
-        chip.style.width = _activeLayout.widths[i] + 'px';
+        // Bar grid: the chip spans a proportional number of sub-cells in its
+        // bar/row; a step crossing the bar line splits into continuation
+        // segments (rendered below). _wrapCurrentCol tracks the row cursor.
+        const _continuationPlan = _barGridPlan(_barGridSpan(step), _wrapCurrentCol);
+        _wrapCurrentCol = _continuationPlan.newCol;
+        chip.style.width = '';
+        chip.style.gridColumn = 'span ' + _continuationPlan.firstSpan;
+        if (_continuationPlan.continuations.length > 0) chip.classList.add('cont-start');
         if (isSelectedStep(step)) chip.classList.add('selected');
         // Variance markers — blinking outline while editing the pool,
         // a small ⟳ glyph (via CSS) for committed variance steps.
@@ -840,25 +1011,26 @@
             chip.style.background = tintHsl(c, 0.5);
             chip.style.color = c;
           } else if (isRestStep(step)) {
-            // Rests: color the outline + a light wash by step-div size
-            // so the user can read the rhythm at a glance and the dim
-            // "—" glyph sits inside a visible boundary. The fill stays
-            // low-alpha so a rest doesn't compete with note chips for
-            // attention; the border carries the colour signal.
-            const dur = step.duration || 1;
-            const sub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
-            const c = _stepDivColor(sub * dur, 60, 70);
-            if (c) {
-              chip.style.borderColor = c;
-              chip.style.background = tintHsl(c, 0.16);
-              chip.style.color = c;
-              chip.classList.add('rest-sized');
-            }
+            // Rests all share ONE colour (no per-step-div tint) so they read
+            // uniformly regardless of length. Low-alpha fill + the border carry
+            // the signal without competing with note chips.
+            const c = 'hsl(250, 14%, 62%)';
+            chip.style.borderColor = c;
+            chip.style.background = tintHsl(c, 0.16);
+            chip.style.color = c;
+            chip.classList.add('rest-sized');
           }
         }
         bindStepLongPress(chip, i);
-        bindStepDrag(chip, i);
-        bindStepDragTouch(chip, i);
+        // Reorder and resize drags conflict, so bind only ONE per the toggle.
+        // Resize mode applies to length-bearing chips (notes / chords / rests);
+        // seq-clips, subsequences and step-mode empty slots stay reorder-only.
+        if (_laneDragMode === 'resize' && !step._seqClip && !step.isSub && !treatAsEmptySlot) {
+          _attachStepResize(chip, step);
+        } else {
+          bindStepDrag(chip, i);
+          bindStepDragTouch(chip, i);
+        }
         // Cache the palette tint + step index on the chip so the
         // selected-step pan slider (below the BPM row) can re-tint
         // chips live without rebuilding the whole sequence DOM.
@@ -917,6 +1089,7 @@
             cont.classList.add('cont-segment');
             cont.style.gridColumn = `span ${segSpan}`;
             cont.textContent = ''; // visual segment only — no repeated label
+            cont.querySelectorAll('.seq-resize-handle').forEach(h => h.remove()); // segments aren't resizable
             cont.removeAttribute('id');
             // Continuation chips belong inside the same key-group
             // container as their head chip (if any) so the wrapper
@@ -954,7 +1127,7 @@
       }
 
       if (activeIndex >= 0) {
-        const chips = chipHost.querySelectorAll('.seq-step:not(.chord-pending)');
+        const chips = chipHost.querySelectorAll('.seq-step:not(.chord-pending):not(.cont-segment)');
         chips[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 

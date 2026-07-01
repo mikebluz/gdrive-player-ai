@@ -1939,6 +1939,9 @@
     // (and the inter-chip gap after it) over `durMs`, creating the cursor if
     // needed. `durMs` is the step's musical length; the rAF does the gliding.
     function _followChipInLane(scope, chip, durMs) {
+      // Bar grid: no horizontal scroll/cursor to sweep — playback feedback is
+      // the per-chip .active-loop highlight (added by flashCellByFreq).
+      return;
       if (!scope || !chip) return;
       try {
         let cur = scope._laneCursor;
@@ -2093,6 +2096,10 @@
     // child of .lane-chips, so it scrolls with the steps and stays glued to
     // its musical position — scroll away to edit and it simply moves off.
     function _positionCursorsAtTick(tick, doScroll) {
+      // Bar grid: lanes wrap (1 row = 1 bar) with no horizontal scroll, so the
+      // old sweeping horizontal cursor doesn't apply — playback is shown by the
+      // per-chip .active-loop highlight instead.
+      return;
       const display = document.getElementById('sequence-display');
       if (!display) return;
       const rows = display.querySelectorAll('.lane-row');
@@ -2777,6 +2784,36 @@
       renderSequence();
       if (typeof persistWorkspace === 'function') persistWorkspace();
     });
+
+    // Lane-step drag mode toggle: Reorder ↔ Resize (so the two drag gestures
+    // don't fight). setLaneDragMode (05-sequencer-core) flips it + re-renders.
+    (function initLaneDragModeBtn() {
+      const btn = document.getElementById('lane-drag-mode-btn');
+      if (!btn) return;
+      // Paint the label from persisted state WITHOUT rendering — the app does
+      // its first renderSequence later in init; calling it here (during script
+      // load) is premature and can schedule async work that touches not-yet-
+      // existing elements.
+      const resize = (typeof _laneDragMode !== 'undefined' && _laneDragMode === 'resize');
+      btn.textContent = resize ? '⇥ Resize' : '↔ Reorder';
+      btn.classList.toggle('active', resize);
+      btn.addEventListener('click', () => {
+        if (typeof setLaneDragMode === 'function') setLaneDragMode(_laneDragMode === 'resize' ? 'reorder' : 'resize');
+      });
+    })();
+
+    // Active-lane menu button (add-lane-row, left of Save) — opens the same
+    // per-lane menu as clicking the lane's label, for the active lane.
+    (function initLaneMenuBtn() {
+      const btn = document.getElementById('lane-menu-btn');
+      if (!btn) return;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof _showLaneMenu !== 'function') return;
+        const r = btn.getBoundingClientRect();
+        _showLaneMenu(activeLaneIdx, r.left, r.bottom + 4);
+      });
+    })();
 
     function resetUIToDefault() {
       stopSequence();

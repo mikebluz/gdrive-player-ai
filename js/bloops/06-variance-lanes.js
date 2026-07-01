@@ -1603,6 +1603,24 @@
             if (typeof _placeLaneExpander === 'function') _placeLaneExpander();
             persist();
           } },
+        // Collapse/Expand — the per-lane collapse toggle moved here when the
+        // lane-controls were removed (a lane row is now just its steps viewer).
+        { label: lane.collapsed ? 'Expand lane' : 'Collapse lane', fn: () => {
+            lane.collapsed = !lane.collapsed;
+            renderSequence();
+            persist();
+          } },
+        // Chip drag mode (the Free/Fixed-bar toggle is hidden) — Reorder drags
+        // chips to rearrange, Resize drags them to change length.
+        { label: 'Chip drag: ' + ((typeof _laneDragMode !== 'undefined' && _laneDragMode === 'resize') ? 'Resize' : 'Reorder'),
+          fn: () => { try { if (typeof setLaneDragMode === 'function') setLaneDragMode((typeof _laneDragMode !== 'undefined' && _laneDragMode === 'resize') ? 'reorder' : 'resize'); } catch (e) {} } },
+        // Resize behaviour (used in Chip drag: Resize mode).
+        { label: 'Resize grid: ' + ((typeof _fmtLen32 === 'function') ? _fmtLen32(_resizeIncr32) : '1/16'),
+          fn: () => { try { const order = [8, 4, 2, 1]; const idx = order.indexOf(_resizeIncr32); _setResizeIncr32(order[(idx + 1) % order.length]); } catch (e) {} } },
+        { label: 'Resize edges: ' + ((typeof _resizeBothEdges !== 'undefined' && _resizeBothEdges) ? 'Both' : 'Right only'),
+          fn: () => { try { _setResizeBothEdges(!_resizeBothEdges); } catch (e) {} } },
+        { label: 'Resize keeps length: ' + ((typeof _resizeKeepTotal !== 'undefined' && _resizeKeepTotal) ? 'On' : 'Off'),
+          fn: () => { try { _setResizeKeepTotal(!_resizeKeepTotal); } catch (e) {} } },
         { label: lane.solo ? 'Unsolo' : 'Solo', fn: () => { lane.solo = !lane.solo; renderSequence(); persist(); try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {} } },
         { label: lane.muted ? 'Unmute' : 'Mute', fn: () => { lane.muted = !lane.muted; renderSequence(); persist(); try { if (typeof updateLaneSumCompensation === 'function') updateLaneSumCompensation(); } catch (e) {} } },
         // Per-lane volume — drives the lane bus Volume node live (built lazily

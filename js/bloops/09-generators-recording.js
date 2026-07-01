@@ -1259,8 +1259,12 @@
     function showSavePopover() {
       const existing = activeSeqIndex !== null ? savedSequences[activeSeqIndex] : null;
       const canOverwrite = !!(existing && existing.type !== 'audio');
-      const defName = seqName(savedSequences.length);
+      // Auto-suggest a random adjective–noun–verb phrase (e.g. "Velvet Comet
+      // Drifts"); editable. Falls back to the letter name if the generator's
+      // unavailable.
+      const defName = (typeof _randAdjNounVerb === 'function') ? _randAdjNounVerb() : seqName(savedSequences.length);
       const escName = canOverwrite ? String(existing.name).replace(/[<>&"]/g, '') : '';
+      const escDef = defName.replace(/[<>&"]/g, '');
 
       const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
       const modal = document.createElement('div'); modal.className = 'sm-modal save-seq-modal';
@@ -1271,7 +1275,7 @@
             '<div class="save-seq-or">— or create a new one —</div>'
           : '') +
         '<label class="ee-field ee-name"><span>New sequence name</span>' +
-          '<input type="text" id="save-seq-name" placeholder="' + defName.replace(/"/g, '&quot;') + '"></label>' +
+          '<input type="text" id="save-seq-name" value="' + escDef.replace(/"/g, '&quot;') + '" placeholder="' + escDef.replace(/"/g, '&quot;') + '"></label>' +
         '<div class="se-wave-actions">' +
           '<button type="button" class="sm-wave save-seq-cancel">Cancel</button>' +
           '<button type="button" class="sm-apply save-seq-new">Save as new</button>' +
@@ -1281,7 +1285,7 @@
 
       const close = () => { try { overlay.remove(); } catch (e) {} };
       const nameInput = modal.querySelector('#save-seq-name');
-      setTimeout(() => { try { nameInput.focus(); } catch (e) {} }, 0);
+      setTimeout(() => { try { nameInput.focus(); nameInput.select(); } catch (e) {} }, 0);
       const doNew = () => { const n = nameInput.value; close(); saveAsNewSeq(n); };
       if (canOverwrite) {
         modal.querySelector('.save-seq-overwrite').addEventListener('click', () => { close(); saveOverwriteActiveSeq(); });

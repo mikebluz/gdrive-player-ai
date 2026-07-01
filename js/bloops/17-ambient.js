@@ -610,9 +610,13 @@
       if (!L || L.on === false || L.present === false) return false;
       if (L.unit && L.unit.mode === 'sync') return true;
       const type = String(key).split(':')[0];
-      if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'shape') return true;
-      if ((type === 'beat' || type === 'arp') && L.gen === 'euclid') return true;
-      return false;
+      // Bar-native GENERATORS are deterministic over their bar loop → capturable:
+      // euclid (bass, euclid Beat, euclid Arp), riff (Run), pedal. This replaces
+      // the old per-type name check and FIXES euclid Arp, which the previous code
+      // missed by testing `L.gen==='euclid'` (arp uses `L.euclid`) — see the design
+      // doc; now euclid Arp captures like euclid Beat, matching the scheduler.
+      const gen = _ambGeneratorOf(L, type);
+      return gen === 'euclid' || gen === 'riff' || gen === 'pedal';
     }
     // The area's Bar-Lock loop length in WHOLE bars: the smallest window in which
     // every capturable layer (and the global progression cycle) completes whole
@@ -1120,9 +1124,31 @@
       }
       return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
     }
+    // The Bloom "Shape" layer type was removed (the master Shapes section covers
+    // radial-wheel shapes). Existing shape layers are dropped on load; a single
+    // toast per session tells the user rather than silently discarding them.
+    let _ambShapeDropNoticed = false;
+    function _ambNoteShapeDrop() {
+      if (_ambShapeDropNoticed) return;
+      _ambShapeDropNoticed = true;
+      try { if (typeof showToast === 'function') showToast('Removed Bloom Shape layer(s) — use the Shapes section (Grow → Shapes).'); } catch (e) {}
+    }
+    // Bloom LAYER-SCHEMA version. Bump this ONLY when the *meaning/shape* of a
+    // saved layer changes and needs a one-time migration. Each area cfg carries
+    // its own `schemaVersion`; `_normalizeAmbientCfg` is the single migration
+    // chokepoint — gate a migration on `_fromVer < N`, then let the stamp at the
+    // end record the current version so the migration runs ONCE and is idempotent
+    // (re-normalizing an already-migrated cfg is a no-op). See CLAUDE.md
+    // "Layer-schema evolution rules". Legacy pre-versioned cfgs read as 0.
+    //   v1 — introduced versioning; Shape layer type dropped on load (see the
+    //        extras filter + `_ambNoteShapeDrop`).
+    const _AMB_SCHEMA_VERSION = 1;
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
+      // Incoming layer-schema version (0 = legacy/pre-versioned). Migrations below
+      // may gate on `_fromVer`; the stamp before `return` records the new version.
+      const _fromVer = Number.isFinite(cfg.schemaVersion) ? cfg.schemaVersion : 0;
       // Phase 1 → 2 migration: a flat config becomes the `bed` layer.
       if (!cfg.bed && Number.isFinite(cfg.density)) {
         cfg.bed = { on: true, density: cfg.density, register: cfg.register, spread: cfg.spread, evolveRate: cfg.evolveRate };
@@ -1253,7 +1279,11 @@
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       let maxXid = 0;
       cfg.extras.forEach(x => { if (x && Number.isFinite(x.id) && x.id > maxXid) maxXid = x.id; });
-      cfg.extras = cfg.extras.filter(x => x && typeof x === 'object' && _AMB_LAYER_SCHEMA[x.type]).map(x => {
+      cfg.extras = cfg.extras.filter(x => {
+        if (!x || typeof x !== 'object') return false;
+        if (x.type === 'shape') { _ambNoteShapeDrop(); return false; }   // Shape layer removed
+        return !!_AMB_LAYER_SCHEMA[x.type];
+      }).map(x => {
         if (!Number.isFinite(x.id)) x.id = ++maxXid;
         const d = _ambDefaultLayer(x.type, x.id);
         // Drone gained Density/Degree voicing. A pre-existing drone on a chord /
@@ -1270,12 +1300,7 @@
         _ambNormalizeModObj(x, _ambDefaultMod());
         _ambNormalizeFx(x);
         _ambNormalizeUnit(x);
-        if (x.type !== 'beat' && x.type !== 'shape' && x.type !== 'arp') _ambNormalizeNotes(x);
-        if (x.type === 'shape') {
-          if (!Array.isArray(x.shapes) || !x.shapes.length) x.shapes = (typeof _shapeDefault === 'function') ? [_shapeDefault()] : [];
-          if (typeof _shapeNormalize === 'function') x.shapes = x.shapes.map(s => _shapeNormalize(s));
-          x.sel = Math.max(0, Math.min(x.sel | 0, Math.max(0, x.shapes.length - 1)));
-        }
+        if (x.type !== 'beat' && x.type !== 'arp') _ambNormalizeNotes(x);
         if (x.type === 'arp') {
           if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
           const _DIRS = ['up', 'down', 'updown', 'downup', 'random'];
@@ -1320,7 +1345,70 @@
         ['bed', 'motif', 'texture', 'beat'].forEach(n => mig(cfg[n]));
         (cfg.extras || []).forEach(mig); (cfg.seqs || []).forEach(mig); (cfg.samples || []).forEach(mig);
         delete cfg.timing; }
+      // Stamp the current layer-schema version so version-gated migrations run
+      // once and re-normalizing is a no-op. (`_fromVer` above is the pre-migration
+      // value for any gated block.)
+      void _fromVer;
+      cfg.schemaVersion = _AMB_SCHEMA_VERSION;
       return cfg;
+    }
+    // ── Composable-layer derivation (Phase 2a) ─────────────────────────────
+    // A layer's musical ALGORITHM ("generator"), SOUND family ("voice"), and
+    // pitch-material KIND ("source") are DERIVED from its legacy `type` (+ the two
+    // live sub-mode flags: `beat.gen`, `arp.euclid`). These are pure read helpers
+    // — dispatch / period / capture logic can key off the abstraction instead of
+    // hard-coding type names, and every value equals the old type-based branch, so
+    // the note-generation harness is byte-identical. The generator is computed
+    // LIVE (not persisted) so a runtime sub-mode toggle (beat random↔euclid, arp
+    // series↔euclid) stays correct with no stale field. An explicit `L.generator`
+    // / `L.voice` (reserved for future Phase-3 "custom" layers with no driving
+    // `type`) wins when present.
+    // `type` is passed explicitly by callers that hold the key (primary layers
+    // bed/motif/texture/beat carry NO `.type` field — it lives in the cfg key);
+    // extras carry `L.type`, used as the fallback.
+    function _ambGeneratorOf(L, type) {
+      if (!L || typeof L !== 'object') return 'pad';
+      if (typeof L.generator === 'string' && L.generator) return L.generator;
+      const t = type || L.type;
+      switch (t) {
+        case 'bed':     return 'pad';
+        case 'motif':   return 'walk';
+        case 'texture': return 'mutate';
+        case 'beat':    return (L.gen === 'euclid') ? 'euclid' : 'random';
+        case 'arp':     return L.euclid ? 'euclid' : 'series';
+        case 'bass':    return 'euclid';    // mono euclidean line
+        case 'run':     return 'riff';      // "Riff" preset (internal type 'run')
+        case 'pedal':   return 'pedal';
+        case 'drone':   return 'held';
+        case 'seq':     return 'sequence';
+        case 'sample':  return 'sampleChop';
+        default:        return 'pad';
+      }
+    }
+    function _ambVoiceOf(L, type) {
+      if (!L || typeof L !== 'object') return 'synth';
+      if (typeof L.voice === 'string' && L.voice) return L.voice;
+      const t = type || L.type;
+      if (t === 'sample') return 'sample';   // buffer, pitch = varispeed
+      if (t === 'beat')   return 'kit';       // drum-piece weights, unpitched
+      return 'synth';                              // everything else is pitched
+    }
+    // Pitch-material kind for a synth voice: 'scale' | 'chord' | 'wrap' | 'prog' |
+    // 'degree' | 'none'. Mirrors how `_ambNotesOf` resolves a source (explicit
+    // wrap/chord/prog override, else the scale field, with '' inheriting a global
+    // progression when one is active). Non-synth voices have no note-source.
+    // Used for UI gating (Phase 3) — not on the note-generation hot path.
+    function _ambSourceKindOf(L, type, cfg) {
+      if (_ambVoiceOf(L, type) !== 'synth') return 'none';
+      if (!L || typeof L !== 'object') return 'scale';
+      if (L.wrap) return 'wrap';
+      if (L.prog && L.prog.on) return 'prog';
+      if ((type || L.type) === 'pedal') return 'degree';      // single scale degree phrase
+      if (typeof L.chord === 'string' && L.chord) return 'chord';
+      if (typeof L.scale === 'string' && L.scale) return 'scale';
+      // Empty scale inherits the global progression when one is active.
+      if (cfg && cfg.prog && cfg.prog.on) return 'prog';
+      return 'scale';
     }
     function _laneAmbientCfg() {
       const lane = (typeof lanes !== 'undefined') ? lanes[activeLaneIdx] : null;
@@ -3596,66 +3684,6 @@
       st.lastAt = tTo;
     }
 
-    // ================= SHAPE engine =================================
-    // A Shape layer holds N radial-sequencer wheels. Each wheel loops
-    // continuously, phase-anchored to a downbeat (E.shapePhase[key#i].startAt)
-    // and locked to the global BPM. Per tick we schedule every node occurrence
-    // whose absolute time falls in (lastAt, horizon] — using lastAt (not now) as
-    // the lower bound so the 1.2 s lookahead can't double-fire a node. Node
-    // pitch / chord / Set-variant / voice / duration come from the SAME 21-shape
-    // resolvers a normal Shape instance uses (_shapeResolveNodeEvent); only the
-    // final emit is the Bloom layer path so Level / pan-spread / mod / FX apply.
-    function _ambEmitShape(E, inst, key, now, horizon, lead, space, cfg) {
-      if (!E.shapePhase) E.shapePhase = {};
-      if (!inst || !Array.isArray(inst.shapes) || !inst.shapes.length) return;
-      if (typeof _shapeBarSec !== 'function' || typeof _shapeSortedEff !== 'function' || typeof _shapeResolveNodeEvent !== 'function') return;
-      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
-      inst.shapes.forEach((sh, si) => {
-        if (!sh || !Array.isArray(sh.nodes) || !sh.nodes.length) return;
-        const revSec = _shapeBarSec(sh);
-        if (!(revSec > 0.02)) return;
-        const skey = key + '#' + si;
-        let st = E.shapePhase[skey];
-        if (!st) st = E.shapePhase[skey] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
-        const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-        const tTo = horizon;
-        if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
-        let info; try { info = _shapeSortedEff(sh); } catch (e) { return; }
-        const sortedAngles = info.sortedAngles, idxOf = info.idxOf;
-        // Collect every due occurrence, then play in time order so Set-node
-        // cycles advance in the order they actually sound.
-        const due = [];
-        info.eff.forEach(e => {
-          const nd = e.nd; if (!nd || nd.muted) return;
-          const a = ((e.a % 1) + 1) % 1;
-          let kMin = Math.ceil((tFrom - st.startAt) / revSec - a);
-          const kMax = Math.floor((tTo - st.startAt) / revSec - a - 1e-9);
-          if (kMin < 0) kMin = 0;
-          let guard = 0;
-          for (let k = kMin; k <= kMax && guard < 64; k++, guard++) {
-            const at = st.startAt + (k + a) * revSec;
-            if (at >= tFrom && at < tTo) due.push({ nd, a, sortedIdx: idxOf.get(nd), at });
-          }
-        });
-        due.sort((p, q) => p.at - q.at);
-        let cap = 0;
-        for (const ev of due) {
-          if (cap++ > 96) break;
-          let res; try { res = _shapeResolveNodeEvent(sh, ev.nd, ev.a, sortedAngles, ev.sortedIdx); } catch (e) { continue; }
-          if (!res || !Array.isArray(res.voices) || !res.voices.length) continue;
-          const pans = (res.voices.length > 1) ? _ambLayerPans(inst, res.voices.length) : [_ambLayerPan(inst)];
-          res.voices.forEach((v, vi) => {
-            const params = Object.assign({}, v.params);
-            params.volume = _ambApplyLevel(params.volume != null ? params.volume : 100, inst.level);
-            params.pan = pans[vi % pans.length];
-            if (dmod) params._detuneMod = dmod;
-            try { playNote(v.freq, params, res.durMs, ev.at + vi * 0.012, dest, undefined, _E.laneIdx()); } catch (e) {}
-          });
-        }
-        st.lastAt = tTo;
-      });
-    }
-
     // ================= MOTIF engine =================================
     // motif random-walk position lives on the engine: _E.motifDeg
     function _ambMotifParams(lenMs, pan, tone) {
@@ -5596,14 +5624,6 @@
       if (type === 'drone') { const hold = Math.max(1, Math.min(64, (L.hold | 0) || 1)); return hold * Math.max(0.05, _ambEffIntervalSec(L)); }
       if (type === 'arp' && L && L.euclid) { const bars = Math.max(1, Math.min(8, (L.bars | 0) || 1)); return bars * (60 / _ambBpm()) * 4 + Math.max(0, (L.unitPadMs | 0)) / 1000; }
       if (type === 'arp') { const info = _ambArpSeriesInfo(L, cfg); return info.totalNotes * info.interval; }
-      if (type === 'shape') {
-        if (Array.isArray(L.shapes) && L.shapes.length && typeof _shapeBarSec === 'function') {
-          const i = Math.max(0, Math.min(L.shapes.length - 1, L.sel | 0));
-          const r = _shapeBarSec(L.shapes[i] || L.shapes[0]);
-          if (r > 0.02) return r;
-        }
-        return (60 / _ambBpm()) * 4;
-      }
       // Texture scans a 16-slot pattern, so ONE unit = 16 steps. Use the SAME
       // snapped step the engine advances by (_ambStepSecFor, not the raw
       // interval) so 16 steps EXACTLY equal the synced target — otherwise, in
@@ -5733,10 +5753,6 @@
           const pm = (type === 'bass') ? E.bassPhase : E.runPhase;
           const st = pm && pm[key];
           if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
-        } else if (type === 'shape') {
-          const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
-          const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
-          if (st && st.startAt != null) return st.startAt + Math.ceil((now + eps - st.startAt) / P) * P;
         }
       }
       const A = (E._t0 != null) ? E._t0 : now;          // off layer → engine grid
@@ -5770,11 +5786,7 @@
       let A = null;
       const euclidBeat = (type === 'beat' && L && L.gen === 'euclid');
       if (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || euclidBeat || euclidArp) { const pm = (type === 'bass') ? E.bassPhase : E.runPhase; const st = pm && pm[key]; if (st && st.startAt != null) A = st.startAt; }
-      else if (type === 'shape') {
-        const i = Math.max(0, Math.min((Array.isArray(L.shapes) ? L.shapes.length : 1) - 1, L.sel | 0));
-        const st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']);
-        if (st && st.startAt != null) A = st.startAt;
-      } else { const c = E.clocks && E.clocks[key]; if (c != null) A = c; }
+      else { const c = E.clocks && E.clocks[key]; if (c != null) A = c; }
       if (A == null) A = (E._t0 != null) ? E._t0 : now;
       return A + Math.ceil((now + eps - A) / P) * P;
     }
@@ -6362,19 +6374,6 @@
         for (const ex of cfg.extras) { try {
           if (!ex || !_AMB_LAYER_SCHEMA[ex.type]) continue;
           const key = ex.type + ':' + ex.id;
-          // Shape layers schedule continuously over the lookahead window (not on
-          // the interval grid stepLayer uses), so they get their own path —
-          // still honoring solo / freeze / wind-down / roll-capture.
-          if (ex.type === 'shape') {
-            if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.shapePhase) E.shapePhase = {}; (ex.shapes || []).forEach((_, i) => { E.shapePhase[key + '#' + i] = { startAt: t, lastAt: null }; }); });
-            if (!gate.run) continue;
-            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-            window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitShape(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-            continue;
-          }
           // Bass layers realize a multi-bar euclidean phrase over the lookahead
           // window (their own path, like Shape) so the seed phrase + per-cycle
           // variation stay locked to the BPM and re-read config at cycle edges.
@@ -7069,7 +7068,6 @@
           if (p && p.then) p.then(() => { if (!E.timer) return; try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; } });
         }
       } catch (e) {}
-      try { _ambShapeAnimEnsure(); } catch (e) {}   // spin any in-card Shape wheels
     }
     function _ambStopGenerator(E) {
       _E = E;
@@ -7096,9 +7094,6 @@
       if (cfg) cfg.playing = false;
       _ambRefreshPlayBtn(E);
       try { _ambUpdatePlayheads(E); } catch (e) {} // zero the bars when stopped
-      // Repaint shape wheels once as a clean static frame (no playhead) now that
-      // the rAF loop will stop — leaves them visible, not frozen mid-sweep.
-      try { _ambShapeAnimEnsure(); } catch (e) {}
       // Only hard-silence active voices when NO Bloom engine is still running —
       // otherwise stopping one engine would cut the other engine's ringing
       // voices. The stopped engine's long releases ring out meanwhile.
@@ -8133,12 +8128,11 @@
               cyc = Math.floor((now - st.startAt) / P);   // absolute When-cycle (= series-loop index)
               active = true;
             }
-          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || type === 'shape' || (type === 'arp' && layer.euclid) || (type === 'beat' && layer && layer.gen === 'euclid'))) {
+          } else if (on && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'drone' || (type === 'arp' && layer.euclid) || (type === 'beat' && layer && layer.gen === 'euclid'))) {
             // Windowed/phase-anchored layers track position in a phase clock, not
             // E.clocks — fill the bar across the unit/loop from that anchor.
             let st = null;
             if (type === 'bass') st = E.bassPhase && E.bassPhase[key];
-            else if (type === 'shape') { const i = Math.max(0, Math.min((Array.isArray(layer.shapes) ? layer.shapes.length : 1) - 1, layer.sel | 0)); st = E.shapePhase && (E.shapePhase[key + '#' + i] || E.shapePhase[key + '#0']); }
             else st = E.runPhase && E.runPhase[key];
             const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
             if (st && st.startAt != null && P > 0 && now >= st.startAt) {
@@ -10235,12 +10229,8 @@
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
         ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
-      // Shape: a generative layer holding N radial-sequencer wheels (js/bloops/21-shape.js).
-      // Pitch/voice/prog/gate live PER SHAPE inside the wheel editor.
-      shape: { label: 'Shape', ctrls: [
-        ['grp', 'Voice'], ['shapes'],
-        ['grp', 'Rhythm'], ['cond'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+      // (Shape layer type removed — the master Shapes section covers radial-wheel
+      // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
@@ -10300,10 +10290,7 @@
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, ..._AMB_ADSR_DEFAULTS.motif });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, ..._AMB_ADSR_DEFAULTS.texture });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ..._AMB_ADSR_DEFAULTS.beat });
-      // Shape layer: one wheel to start; the user adds more via the card browser.
-      // _shapeDefault() lives in 21-shape.js (loaded later) — safe to call here
-      // because _ambDefaultLayer only runs at add/normalize time, not file eval.
-      if (type === 'shape') return Object.assign(base, { shapes: (typeof _shapeDefault === 'function') ? [_shapeDefault()] : [], sel: 0 });
+      // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
       if (type === 'arp') return Object.assign(base, {
@@ -10367,13 +10354,12 @@
         if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
         // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
         // → never free → no fader at all. Other types keep it (disabled live when synced).
-        if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal' || type === 'shape')) return '';
+        if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal')) return '';
         if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
         if (k === 'cond') return _ambCondCtrl(lk);
         if (k === 'spread') return _ambSpreadCtrl(p, inst);
         if (k === 'mod') return _ambModUi(lk);
         if (k === 'fx') return _ambFxUi(lk);
-        if (k === 'shapes') return _ambShapeBrowserHtml(p, inst);
         if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
         if (k === 'arpdir') return _ambArpDirHtml(p, inst);
         if (k === 'unitmatch') return _ambUnitMatchHtml(p);
@@ -10415,26 +10401,6 @@
           '<button type="button" class="ambient-arp-add" id="' + p + '-arp-add" title="Add a scale / chord to the series">+ Add</button>' +
         '</div>' +
         '<div class="ambient-arp-list" id="' + p + '-arp-list"></div>' +
-      '</div>';
-    }
-    // Mini shapes browser inside a Shape layer card: the list of wheels plus
-    // add / edit controls. Rows are filled by _ambRenderShapeList on wire.
-    function _ambShapeBrowserHtml(p, inst) {
-      return '<div class="ambient-ctrl ambient-shape-browser">' +
-        '<div class="ambient-shape-stage">' +
-          '<canvas class="ambient-shape-overlay" id="' + p + '-overlay" title="All wheels in this layer, overlaid — click to edit the selected one"></canvas>' +
-          // Expandable wheel list, overlaid in the canvas's upper-right corner.
-          '<div class="ambient-shape-listwrap" id="' + p + '-listwrap">' +
-            '<button type="button" class="ambient-shape-listtoggle" id="' + p + '-list-toggle" title="Show / hide the wheel list">≡ Shapes</button>' +
-            '<div class="ambient-shape-list" id="' + p + '-shapes-list"></div>' +
-          '</div>' +
-          // Add / Edit — small buttons overlaid in the canvas's lower-left.
-          '<div class="ambient-shape-btns">' +
-            '<button type="button" class="ambient-shape-add" id="' + p + '-shape-add" title="Add a new wheel">+ Shape</button>' +
-            '<button type="button" class="ambient-shape-editbtn" id="' + p + '-shape-edit" title="Edit the selected wheel in the Shape editor">✎ Edit</button>' +
-            '<button type="button" class="ambient-shape-editbtn ambient-shape-toarp" id="' + p + '-shape-toarp" title="Convert this Shape layer into an Arp layer (keeps tone / level / FX)">→ Arp</button>' +
-          '</div>' +
-        '</div>' +
       '</div>';
     }
     function _ambWireInst(E, inst) {
@@ -10491,7 +10457,6 @@
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
-          else if (k === 'shapes') { _ambWireShapeBrowser(E, inst, p, get); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); try { _ambRefreshAreaFadeUI(E); } catch (e) {} } }); } }
@@ -10992,191 +10957,6 @@
         list.appendChild(row);
       });
     }
-    // ---- Shape layer: N-wheel browser + editor reuse -----------------------
-    // Tracks which Bloom shape (if any) currently owns the single #shape-pad
-    // editor. Shared by name with 21-shape.js so master-edit can evict it.
-    let _ambShapeEditRef = null;
-    // Live in-card overview: ONE canvas per Shape layer with all its wheels
-    // overlaid concentrically (auto-sized so every node fits). A single rAF
-    // redraws the visible ones, advancing each wheel's own bar phase while the
-    // engine plays and flashing nodes as the playhead crosses them.
-    const _ambShapeCanvases = new Set();
-    let _ambShapeRaf = 0, _ambShapeIO = null;
-    // Draw one overlay canvas's wheels a single time (static frame).
-    function _ambShapeDrawOne(cv) {
-      if (!cv || !cv.isConnected) return;
-      const m = cv._ambShape; if (!m) return;
-      try {
-        if (typeof _shapeRenderOverlay === 'function') {
-          _shapeRenderOverlay(cv, m.inst.shapes, { phaseOf: (i) => _ambShapePhaseOf(cv, i), selIdx: m.inst.sel });
-        }
-      } catch (e) {}
-    }
-    // Event-driven draw-when-visible: an IntersectionObserver paints each wheel
-    // ONCE when it scrolls/toggles into view (covers the Mix sub-view becoming
-    // active, the layer expanding, the page scrolling) — no perpetual idle
-    // redraw loop, which on a hardware GPU re-uploads the canvas every tick and
-    // makes the wheel visibly "dissolve" in instead of appearing at once.
-    function _ambShapeIOEnsure() {
-      if (_ambShapeIO || typeof IntersectionObserver === 'undefined') return;
-      _ambShapeIO = new IntersectionObserver((entries) => {
-        entries.forEach(e => { if (e.isIntersecting) _ambShapeDrawOne(e.target); });
-      }, { threshold: 0.01 });
-    }
-    function _ambShapeObserve(cv) { _ambShapeIOEnsure(); if (_ambShapeIO) { try { _ambShapeIO.observe(cv); } catch (e) {} } }
-    // Paint the current static frame now, and start the continuous rAF loop ONLY
-    // if some engine is playing (moving playheads). Called on render, on shape
-    // edits, and on play/stop.
-    function _ambShapeAnimEnsure() {
-      // While the full Shape editor is open it covers the layer cards, so there's
-      // no point redrawing their in-card wheels — skip them (cuts per-frame work
-      // and compositing behind the overlay). Resumed on editor close.
-      if (_ambShapeEditRef) return;
-      let anyPlaying = false;
-      _ambShapeCanvases.forEach(cv => {
-        if (!cv.isConnected) { _ambShapeCanvases.delete(cv); return; }
-        if (cv._ambShape && cv._ambShape.engine && cv._ambShape.engine.timer) anyPlaying = true;
-        if (cv.offsetParent || cv.clientWidth > 0) _ambShapeDrawOne(cv);
-      });
-      if (anyPlaying && !_ambShapeRaf) _ambShapeRaf = requestAnimationFrame(_ambShapeAnimTick);
-    }
-    // Per-shape current phase for one layer canvas; also flashes crossed nodes.
-    function _ambShapePhaseOf(cv, i) {
-      const m = cv._ambShape; if (!m) return 0;
-      const E = m.engine, sh = m.inst.shapes[i];
-      if (!sh || !Array.isArray(sh.nodes)) return 0;
-      const revSec = (typeof _shapeBarSec === 'function') ? _shapeBarSec(sh) : 0;
-      const st = (E && E.shapePhase) ? E.shapePhase[m.key + '#' + i] : null;
-      if (!(E && E.timer && st && st.startAt != null && revSec > 0 && typeof Tone !== 'undefined' && Tone.now)) return 0;
-      const ph = ((((Tone.now() - st.startAt) / revSec) % 1) + 1) % 1;
-      if (!cv._ambPrev) cv._ambPrev = [];
-      const prev = cv._ambPrev[i];
-      if (typeof prev === 'number') {
-        const rot = (sh.rotationDeg || 0) / 360;
-        sh.nodes.forEach(nd => {
-          if (nd.muted) return;
-          const a = (((nd.angleFrac + rot) % 1) + 1) % 1;
-          const crossed = (prev <= ph) ? (a > prev && a <= ph) : (a > prev || a <= ph);
-          if (crossed) nd._flash = performance.now();
-        });
-      }
-      cv._ambPrev[i] = ph;
-      return ph;
-    }
-    // Continuous redraw — runs ONLY while an engine is playing, to animate the
-    // moving playheads / node flashes. When nothing is playing the loop stops and
-    // the wheel is left as a single static frame (drawn by _ambShapeDrawOne via
-    // the IntersectionObserver / _ambShapeAnimEnsure) — no idle GPU churn.
-    function _ambShapeAnimTick() {
-      _ambShapeRaf = 0;
-      if (_ambShapeEditRef) return;   // editor open & covering the cards — stop redrawing them
-      let anyPlaying = false;
-      _ambShapeCanvases.forEach(cv => {
-        if (!cv.isConnected) { _ambShapeCanvases.delete(cv); return; }
-        if (!cv.offsetParent && !(cv.clientWidth > 0)) return;   // not visible — skip
-        if (cv._ambShape && cv._ambShape.engine && cv._ambShape.engine.timer) anyPlaying = true;
-        _ambShapeDrawOne(cv);
-      });
-      if (anyPlaying) _ambShapeRaf = requestAnimationFrame(_ambShapeAnimTick);
-    }
-    function _ambRenderShapeList(E, inst, p) {
-      const list = _ambGet(E, p + 'shapes-list'); if (!list) return;
-      _ambShapeCanvases.forEach(cv => { if (!cv.isConnected) _ambShapeCanvases.delete(cv); });
-      const shapes = Array.isArray(inst.shapes) ? inst.shapes : (inst.shapes = []);
-      if (inst.sel == null || inst.sel < 0 || inst.sel >= shapes.length) inst.sel = shapes.length ? 0 : -1;
-      const key = inst.type + ':' + inst.id;
-      // Overlay canvas — all wheels concentric; click opens the selected one.
-      const ov = _ambGet(E, p + 'overlay');
-      if (ov) {
-        ov._ambShape = { engine: E, inst, key };
-        if (!ov._ambBound) {
-          ov._ambBound = true;
-          ov.addEventListener('click', (e) => { e.stopPropagation(); if (inst.shapes && inst.shapes.length) _ambShapeEditOpen(E, inst); });
-        }
-        _ambShapeCanvases.add(ov);
-        _ambShapeObserve(ov);   // paint once when it scrolls/toggles into view
-        // Draw now (immediate) AND again after layout settles, so the wheel is
-        // there at first paint at the correct size — not progressively resolved.
-        _ambShapeDrawOne(ov);
-        requestAnimationFrame(() => requestAnimationFrame(() => _ambShapeDrawOne(ov)));
-      }
-      // Rows: colour swatch (matches the overlay ring) + name + edit + delete.
-      list.innerHTML = '';
-      shapes.forEach((sh, i) => {
-        const row = document.createElement('div');
-        row.className = 'ambient-shape-row' + (i === inst.sel ? ' sel' : '');
-        const sw = document.createElement('span'); sw.className = 'ambient-shape-swatch';
-        try { sw.style.background = (typeof _shapeOverlayColor === 'function') ? _shapeOverlayColor(i) : '#4fd1c5'; } catch (e) {}
-        const nc = (sh && Array.isArray(sh.nodes) && sh.nodes.length) || (sh && sh.nodeCount) || 0;
-        const pick = document.createElement('button');
-        pick.type = 'button'; pick.className = 'ambient-shape-pick';
-        pick.textContent = 'Wheel ' + (i + 1) + ' · ' + nc + ' node' + (nc === 1 ? '' : 's');
-        pick.addEventListener('click', () => { inst.sel = i; _ambRenderShapeList(E, inst, p); if (typeof persistWorkspace === 'function') persistWorkspace(); });
-        const ed = document.createElement('button');
-        ed.type = 'button'; ed.className = 'ambient-shape-editrow'; ed.textContent = '✎'; ed.title = 'Edit this wheel';
-        ed.addEventListener('click', (e) => { e.stopPropagation(); inst.sel = i; _ambShapeEditOpen(E, inst); });
-        const del = document.createElement('button');
-        del.type = 'button'; del.className = 'ambient-shape-del'; del.textContent = '✕'; del.title = 'Remove this wheel';
-        del.addEventListener('click', (e) => { e.stopPropagation(); _ambShapeRemove(E, inst, i, p); });
-        row.appendChild(sw); row.appendChild(pick); row.appendChild(ed); row.appendChild(del);
-        list.appendChild(row);
-      });
-      const tg = _ambGet(E, p + 'list-toggle');
-      if (tg) tg.textContent = '≡ Shapes (' + shapes.length + ')';
-      _ambShapeAnimEnsure();
-    }
-    function _ambWireShapeBrowser(E, inst, p, get) {
-      _ambRenderShapeList(E, inst, p);
-      const addB = _ambGet(E, p + 'shape-add');
-      if (addB) addB.addEventListener('click', () => _ambShapeAdd(E, get() || inst, p));
-      const edB = _ambGet(E, p + 'shape-edit');
-      if (edB) edB.addEventListener('click', () => _ambShapeEditOpen(E, get() || inst));
-      const arpB = _ambGet(E, p + 'shape-toarp');
-      if (arpB) arpB.addEventListener('click', () => {
-        const ok = (typeof confirm !== 'function') || confirm('Convert this Shape layer to an Arp layer? Its wheels are replaced by an Arp series (tone, level, pan, mod & FX are kept).');
-        if (ok) _ambConvertShapeToArp(E, get() || inst);
-      });
-      // Expandable overlaid list — toggle its open state.
-      const tg = _ambGet(E, p + 'list-toggle');
-      const wrap = _ambGet(E, p + 'listwrap');
-      if (tg && wrap) tg.addEventListener('click', (e) => { e.stopPropagation(); wrap.classList.toggle('open'); });
-    }
-    function _ambShapeAdd(E, inst, p) {
-      if (!inst || typeof _shapeDefault !== 'function') return;
-      if (!Array.isArray(inst.shapes)) inst.shapes = [];
-      inst.shapes.push(_shapeDefault());
-      inst.sel = inst.shapes.length - 1;
-      _ambRenderShapeList(E, inst, p);
-      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
-      if (typeof persistWorkspace === 'function') persistWorkspace();
-    }
-    // Convert a Shape layer in place into an Arp layer (same slot/id). The wheels
-    // are dropped (Shape and Arp have no shared pitch model), but the shared sonic
-    // attributes carry over so the layer keeps its place in the mix.
-    function _ambConvertShapeToArp(E, inst) {
-      _E = E;
-      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras) || !inst) return;
-      const idx = cfg.extras.findIndex(x => x && x.id === inst.id && x.type === inst.type);
-      if (idx < 0) return;
-      const old = cfg.extras[idx];
-      const oldKey = old.type + ':' + old.id;
-      // Close the wheel editor if it's open on this layer (frees #shape-pad).
-      try { if (_ambShapeEditRef && _ambShapeEditRef.id === old.id && _ambShapeEditRef.type === old.type) _ambShapeEditClose(); } catch (e) {}
-      // New Arp in the same slot, carrying the shared attributes that exist.
-      const arp = _ambDefaultLayer('arp', old.id);
-      ['on', 'present', 'level', 'accent', 'panMode', 'space', 'when', 'drift', 'tone'].forEach(k => { if (old[k] !== undefined) arp[k] = old[k]; });
-      try { if (old.mod) arp.mod = JSON.parse(JSON.stringify(old.mod)); } catch (e) {}
-      try { if (old.delay) arp.delay = JSON.parse(JSON.stringify(old.delay)); } catch (e) {}
-      try { if (old.dist) arp.dist = JSON.parse(JSON.stringify(old.dist)); } catch (e) {}
-      cfg.extras[idx] = arp;
-      // Tear down the old shape's mod chain + phase state (keyed by 'shape:id').
-      try { if (E.mod && E.mod[oldKey]) _ambTeardownMod(oldKey); } catch (e) {}
-      if (E.shapePhase) { const pre = oldKey + '#'; Object.keys(E.shapePhase).forEach(kk => { if (kk.indexOf(pre) === 0) delete E.shapePhase[kk]; }); }
-      _ambRenderExtras(E);
-      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
-      if (typeof persistWorkspace === 'function') persistWorkspace();
-      if (typeof showToast === 'function') showToast('Converted Shape → Arp.');
-    }
     // ---- Shape It: every Bloom layer → a master Shapes wheel ---------------
     // Convert a Seq layer's first unit (events {freqs,durMs,…}) into the step
     // shape _shapeSeqToShape expects ({freq|chord, duration, subdivision}).
@@ -11267,14 +11047,6 @@
     }
     function _ambLayerToShape(E, L, type, key) {
       if (!L) return null;
-      // Shape layer → its authored wheel verbatim (already a perfect shape).
-      if (type === 'shape') {
-        const ws = Array.isArray(L.shapes) ? L.shapes : [];
-        if (ws.length) {
-          const w = ws[Math.max(0, Math.min(L.sel | 0, ws.length - 1))];
-          if (w) return (typeof _shapeNormalize === 'function') ? _shapeNormalize(JSON.parse(JSON.stringify(w))) : JSON.parse(JSON.stringify(w));
-        }
-      }
       // Faithful path: bake the layer's real captured output if it has played.
       try {
         const ev = E && E.cap && key && E.cap[key];
@@ -11376,73 +11148,6 @@
         showToast(count ? ('Shaped ' + count + ' layer' + (count === 1 ? '' : 's') + ' → master Shapes') : 'No layers to shape');
       }
     }
-    function _ambShapeRemove(E, inst, i, p) {
-      if (!inst || !Array.isArray(inst.shapes) || i < 0 || i >= inst.shapes.length) return;
-      if (_ambShapeEditRef && _ambShapeEditRef.id === inst.id && _ambShapeEditRef.type === inst.type && _ambShapeEditRef.sel === i) _ambShapeEditClose();
-      inst.shapes.splice(i, 1);
-      if (!inst.shapes.length && typeof _shapeDefault === 'function') inst.shapes.push(_shapeDefault()); // keep ≥1
-      inst.sel = Math.max(0, Math.min(inst.sel | 0, inst.shapes.length - 1));
-      // Re-seed this layer's per-shape phase state so wheel indices stay aligned.
-      if (E.shapePhase) { const pre = inst.type + ':' + inst.id + '#'; Object.keys(E.shapePhase).forEach(k => { if (k.indexOf(pre) === 0) delete E.shapePhase[k]; }); }
-      _ambRenderShapeList(E, inst, p);
-      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
-      if (typeof persistWorkspace === 'function') persistWorkspace();
-    }
-    // Open the FULL Shape wheel editor on a Bloom layer's selected wheel by
-    // retargeting the shared editor (#shape-pad) — same mechanism master shapes
-    // use. bloomMode hides the lane/Send-coupled controls in the toolbar.
-    function _ambShapeEditOpen(E, inst) {
-      if (!inst || !Array.isArray(inst.shapes) || !inst.shapes.length) return;
-      // Single #shape-pad — evict any other editor first (master or bloom).
-      try { if (typeof _shapeMasterEditId !== 'undefined' && _shapeMasterEditId != null && typeof _shapeMasterEditClose === 'function') _shapeMasterEditClose(); } catch (e) {}
-      if (_ambShapeEditRef) { try { _ambShapeEditClose(); } catch (e) {} }
-      const sel = Math.max(0, Math.min(inst.sel | 0, inst.shapes.length - 1));
-      inst.sel = sel;
-      let sh = inst.shapes[sel];
-      if (typeof _shapeNormalize === 'function') sh = inst.shapes[sel] = _shapeNormalize(sh);
-      try { if (typeof _shapeSpinStop === 'function') _shapeSpinStop(); } catch (e) {}
-      try { _shapeEditTarget = { name: 'Bloom Shape ' + (sel + 1), shape: sh, shapeMode: true, bloomMode: true }; } catch (e) {}
-      const pad = document.getElementById('shape-pad');
-      const host = document.getElementById('ambient-shape-edithost');
-      const box = document.getElementById('ambient-shape-editbox') || host;
-      if (pad && host) {
-        try { if (!_shapePadHome) _shapePadHome = { parent: pad.parentNode, next: pad.nextSibling }; } catch (e) {}
-        box.appendChild(pad);
-        host.hidden = false;
-      }
-      const doneBtn = document.getElementById('ambient-shape-editdone');
-      if (doneBtn) doneBtn.onclick = function () { _ambShapeEditClose(); };
-      document.body.classList.add('ambient-shape-edit');
-      _ambShapeEditRef = { engine: E, type: inst.type, id: inst.id, sel: sel };
-      try { if (typeof _shapeInit === 'function') _shapeInit(); } catch (e) {}
-      requestAnimationFrame(() => { try { if (typeof _shapeBuildToolbar === 'function') _shapeBuildToolbar(); if (typeof _shapeResize === 'function') _shapeResize(); if (typeof _shapeDraw === 'function') _shapeDraw(); } catch (e) {} });
-    }
-    function _ambShapeEditClose() {
-      if (!_ambShapeEditRef) return;
-      const ref = _ambShapeEditRef; _ambShapeEditRef = null;
-      try { if (typeof _shapeSpinStop === 'function') _shapeSpinStop(); } catch (e) {}
-      const pad = document.getElementById('shape-pad');
-      try {
-        if (pad && _shapePadHome && _shapePadHome.parent) {
-          if (_shapePadHome.next && _shapePadHome.next.parentNode === _shapePadHome.parent) _shapePadHome.parent.insertBefore(pad, _shapePadHome.next);
-          else _shapePadHome.parent.appendChild(pad);
-        }
-        _shapePadHome = null;
-      } catch (e) {}
-      const host = document.getElementById('ambient-shape-edithost'); if (host) host.hidden = true;
-      document.body.classList.remove('ambient-shape-edit');
-      try { _shapeEditTarget = null; } catch (e) {}
-      if (typeof persistWorkspace === 'function') persistWorkspace();
-      try { if (typeof _shapeRetargetLane === 'function') _shapeRetargetLane(); } catch (e) {}
-      // Refresh the layer's wheel list (node counts may have changed) + mods.
-      try {
-        const c = ref.engine && ref.engine.getCfg && ref.engine.getCfg();
-        const L = (c && Array.isArray(c.extras)) ? c.extras.find(x => x.id === ref.id && x.type === ref.type) : null;
-        if (L) _ambRenderShapeList(ref.engine, L, 'ambient-' + ref.type + '-' + ref.id + '-');
-      } catch (e) {}
-      try { if (ref.engine && ref.engine.timer) _ambSyncMods(); } catch (e) {}
-      try { _ambShapeAnimEnsure(); } catch (e) {}   // resume in-card wheel previews
-    }
     function _ambRenderExtras(E) {
       const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
@@ -11469,9 +11174,6 @@
       const sch = _AMB_LAYER_SCHEMA[type];
       if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.extras[idx], (sch && sch.label) || type))) return;
       const key = type + ':' + id;
-      // If this layer's wheel is open in the shared Shape editor, close it first
-      // so #shape-pad returns home and _shapeEditTarget doesn't dangle.
-      if (type === 'shape' && _ambShapeEditRef && _ambShapeEditRef.id === id && _ambShapeEditRef.type === type) { try { _ambShapeEditClose(); } catch (e) {} }
       cfg.extras.splice(idx, 1);
       try { if (E.mod[key]) _ambTeardownMod(key); } catch (e) {}
       try { if (E.freeze) delete E.freeze[key]; } catch (e) {}
@@ -13082,7 +12784,7 @@
           return { label: LABELS[l] + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, l) : _ambAddExtra(E, l)) };
         });
         // Shape: a generative wheel layer (extras-only, no primary slot).
-        actions.push({ label: 'Shape', fn: () => _ambAddExtra(E, 'shape') });
+        // (Shape layer removed — use the master Shapes section in Grow.)
         // Arp: arpeggiates through a built series of scales/chords (extras-only).
         actions.push({ label: 'Arp', fn: () => _ambAddExtra(E, 'arp') });
         // Bass: low euclidean phrase locked to BPM (extras-only).

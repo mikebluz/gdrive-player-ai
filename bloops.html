@@ -688,6 +688,7 @@
   <!-- Add a new lane just below the current one (replaces the grid-rows
        dropdown for growing the lane stack). -->
   <div class="add-lane-row">
+    <button type="button" id="lane-menu-btn" title="Active lane — open its menu (grid / solo / mute / save / clear / riff)">☰ Lane</button>
     <button id="save-btn" disabled title="Save the whole workspace (all lanes) to the sequence bank">Save</button>
     <button type="button" id="add-lane-btn" title="Add a new lane below the current one" aria-label="Add a new lane">+ Lane</button>
   </div>
@@ -792,6 +793,7 @@
         </span>
       </label>
       <button id="step-mode-btn" type="button" title="Toggle between Free (append notes as you click) and Fixed (step-sequencer: pick a note from the grid, then click slots to toggle it on/off)">Free</button>
+      <button id="lane-drag-mode-btn" type="button" title="Lane-step drag mode: Reorder (drag chips to rearrange) or Resize (drag chips to change length)">↔ Reorder</button>
     </div>
   </div>
 

@@ -1181,8 +1181,19 @@
     /* Add-lane bar — a big "+" just below the lane/sequence area. */
     /* Save (left) + Add-lane (right), each half the row. */
     .add-lane-row { display: flex; gap: 10px; padding: 6px 18px; background: #050510; flex-shrink: 0; }
+    .add-lane-row > #lane-menu-btn,
     .add-lane-row > #save-btn,
     .add-lane-row > #add-lane-btn { flex: 1 1 0; min-width: 0; }
+    /* Active-lane menu button — left third of the row, green to set it apart
+       from Save (blue) and + Lane (dashed purple). */
+    .add-lane-row > #lane-menu-btn {
+      padding: 9px; border: 1px solid #2d8f6f; border-radius: 8px;
+      background: rgba(45,212,191,0.10); color: #7fe6cf;
+      font-family: 'Segoe UI', sans-serif; font-size: 1rem; font-weight: 700; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .add-lane-row > #lane-menu-btn:hover { border-color: #4fd1c5; color: #c6fff0; background: rgba(45,212,191,0.18); } }
     #add-lane-btn {
       width: auto; padding: 9px; border: 1px dashed #2d2d3f; border-radius: 8px;
       background: transparent; color: #6b6b8a; font-family: 'Segoe UI', sans-serif;
@@ -5003,7 +5014,7 @@
       padding: 2px 6px;
       border-radius: 8px;
       cursor: pointer;
-      min-height: 44px;
+      min-height: 55px;   /* lanes 25% taller (was 44px) */
       transition: background 0.12s ease;
     }
     /* Lane voice editor — the cell grid + Scale/Tone/FX/Spell pills.
@@ -5063,15 +5074,16 @@
       justify-content: stretch;
       gap: 4px;
       padding: 2px;
-      /* Holds (collapse, when grid hidden) + label + the grid show/hide eye.
-         Wide enough for all three without crushing the label. */
-      width: 92px;
-      min-width: 92px;
+      /* The lane label/status button was removed (it's now the add-lane-row's
+         ☰ Lane button) — these controls now hold just the collapse toggle, so
+         size to content instead of reserving the old label width. */
+      width: auto;
+      min-width: 0;
       /* Pin the controls to a single-row height and vertically center
          them inside the lane-row, so when the lane's chip area wraps
          into multiple rows (taller lane-row) the leftmost buttons stay
          the same size instead of stretching with the row. */
-      height: 40px;
+      height: 50px;   /* lanes 25% taller (was 40px) */
       align-self: center;
     }
     .lane-collapse-toggle,
@@ -5161,31 +5173,40 @@
     .lane-chips {
       flex: 1 1 auto;
       min-width: 0;
-      position: relative; /* containing block for the playback cursor */
-      display: flex;
-      flex-direction: row;
-      /* Single-row timeline: chips fill logically to the right at
-         proportional widths; the strip scrolls horizontally and
-         auto-follows the playhead during playback (CLAUDE.md §1 carve-out). */
-      flex-wrap: nowrap;
-      align-items: stretch;
-      gap: 4px;
-      overflow-x: auto;
+      position: relative;
+      /* BAR GRID: 1 row = 1 bar = 32 sub-cells, fitting the strip width (no
+         horizontal scroll). Chips span a proportional number of sub-cells and
+         wrap to a new row at each bar line; steps crossing a bar split into
+         continuation segments (.cont-*). (Replaces the old single-row scrolling
+         timeline — see CLAUDE.md §1.) */
+      display: grid;
+      grid-template-columns: repeat(32, 1fr);
+      grid-auto-rows: 48px;
+      align-content: start;
+      gap: 0;
+      overflow-x: hidden;
       overflow-y: hidden;
-      /* Momentum scrolling on iOS, and keep a sideways swipe from chaining
-         into page back-nav / vertical scroll — the strip owns the gesture. */
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior-x: contain;
       padding: 4px 6px;
       background: rgba(10, 10, 20, 0.55);
       border-radius: 6px;
-      scrollbar-width: thin;
-      scrollbar-color: #2d2d3f #0a0a14;
     }
-    /* Steps + key-group wrappers keep their natural (proportional) width and
-       never shrink, so the row extends and scrolls instead of squeezing. */
+    /* Beat hashmarks — subtle vertical gridlines denoting 1/4 (every 8 cells =
+       25%) and 1/8 (every 4 cells = 12.5%) note positions within each bar/row.
+       Overlaid on top (pointer-events:none); inset to match the strip padding so
+       the line %s line up with the 32-column grid. Per-row because each row is
+       exactly one bar wide. */
+    .lane-chips::after {
+      content: ''; position: absolute; inset: 4px 6px; pointer-events: none; z-index: 2;
+      background-image:
+        repeating-linear-gradient(to right, rgba(180,185,220,0.10) 0 1px, transparent 1px 12.5%),
+        repeating-linear-gradient(to right, rgba(180,185,220,0.22) 0 1px, transparent 1px 25%);
+    }
+    /* Grid items size by their grid-column span, not intrinsic width. */
     .lane-chips > .seq-step,
-    .lane-chips .seq-step { flex: 0 0 auto; }
+    .lane-chips .seq-step { width: auto; min-width: 0; }
+    /* Placeholder + in-progress chip span the whole bar row. */
+    .lane-chips > .seq-empty,
+    .lane-chips > .seq-step.chord-pending { grid-column: 1 / -1; }
     .lane-chips .key-group-container {
       display: flex; flex: 0 0 auto; flex-direction: row;
       align-items: stretch; gap: 4px;
@@ -5196,6 +5217,15 @@
     .lane-row.collapsed .lane-chips {
       display: none;
     }
+    /* Collapsed-lane name chip — the row's only visible content when minimized
+       (the lane-controls were removed). */
+    .lane-mini-label {
+      display: inline-flex; align-items: center;
+      padding: 4px 12px; border: 1px solid #2d2d3f; border-radius: 8px;
+      background: rgba(45, 45, 63, 0.4); color: #cbd5e0;
+      font: 700 0.8rem 'Segoe UI', sans-serif; white-space: nowrap; cursor: pointer;
+    }
+    .lane-row.active .lane-mini-label { border-color: #4299e1; color: #b3d4ff; }
     /* Consecutive collapsed lanes pack horizontally into a single
        strip (renderSequence groups them) so 3 minimized lanes read
        as one slim row instead of three full-width ones. */
@@ -5420,7 +5450,7 @@
 
     .seq-step {
       width: 80px;
-      height: 38px;
+      height: 48px;   /* lanes/steps 25% taller (was 38px) */
       border-radius: 8px;
       background: #1a1a2e;
       border: 1px solid #2d2d3f;
@@ -5447,6 +5477,35 @@
          get eaten whenever the user's thumb landed on a chip. */
       touch-action: pan-y;
     }
+    /* Resize mode (toggle): each chip gets edge handles — a right handle always,
+       a left handle when "Resize edges: Both". Dragging a handle changes the
+       step's length; touch-action:none so the drag resizes instead of scrolling
+       the lane strip. The chip body still selects on tap. */
+    .seq-resize-handle {
+      position: absolute; top: 0; height: 100%; width: 10px; z-index: 5;
+      cursor: ew-resize; touch-action: none;
+    }
+    .seq-resize-r { right: 0; }
+    .seq-resize-l { left: 0; }
+    .seq-resize-handle::after {
+      content: ''; position: absolute; top: 50%; transform: translateY(-50%);
+      width: 2px; height: 46%; border-radius: 1px; background: rgba(160,160,200,0.5);
+      transition: background 0.1s ease;
+    }
+    .seq-resize-r::after { right: 2px; }
+    .seq-resize-l::after { left: 2px; }
+    @media (hover: hover) { .seq-resize-handle:hover::after { background: #d6bcfa; } }
+    .seq-step.resizing .seq-resize-handle::after { background: #b794f4; height: 72%; }
+    /* Floating size readout shown while dragging a resize handle. */
+    .resize-readout {
+      position: fixed; z-index: 9999; pointer-events: none;
+      padding: 2px 9px; border-radius: 7px;
+      background: #14142a; border: 1px solid #9f7aea; color: #e9d8fb;
+      font: 700 0.78rem 'Segoe UI', sans-serif; white-space: nowrap;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+      opacity: 0; transition: opacity 0.08s ease;
+    }
+    .resize-readout.show { opacity: 1; }
     /* When a chip strip contains key-group containers, bump its top
        padding so the floating "C Major" label that sits above each
        container's top edge has room to render without clipping into
@@ -6805,6 +6864,19 @@
       border-color: #81e6d9;
       color: #b2f5ea;
       box-shadow: 0 0 12px rgba(79, 209, 197, 0.4);
+    }
+    /* Lane-step drag-mode toggle (Reorder ↔ Resize) — purple to distinguish it
+       from the teal Free/Fixed button beside it. */
+    #lane-drag-mode-btn {
+      padding: 3px 16px; border: 1px solid #9f7aea; border-radius: 14px;
+      background: transparent; color: #c9b8ef;
+      font: 700 0.85rem 'Segoe UI', sans-serif; letter-spacing: 0.5px;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    #lane-drag-mode-btn:hover { border-color: #b794f4; color: #e9d8fb; }
+    #lane-drag-mode-btn.active {
+      background: rgba(159, 122, 234, 0.20); border-color: #b794f4; color: #f5d0fe;
+      box-shadow: 0 0 12px rgba(159, 122, 234, 0.4);
     }
     .btn-group--step .step-multi-toggle {
       display: inline-flex;

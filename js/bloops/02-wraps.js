@@ -393,6 +393,15 @@
       const n = _WRAP_NOUN[Math.floor(Math.random() * _WRAP_NOUN.length)];
       return a + ' ' + n;
     }
+    // Adjective–noun–verb phrase (e.g. "Velvet Comet Drifts") for auto-suggesting
+    // a saved-sequence name. Reuses the wrap adj/noun lists + present-tense verbs.
+    const _WRAP_VERB = ['Drifts', 'Soars', 'Glides', 'Burns', 'Rises', 'Falls', 'Echoes', 'Wanders',
+      'Shimmers', 'Hums', 'Pulses', 'Breaks', 'Calls', 'Dreams', 'Bends', 'Floats',
+      'Sparks', 'Fades', 'Turns', 'Climbs', 'Sways', 'Glows', 'Roams', 'Sings'];
+    function _randAdjNounVerb() {
+      const v = _WRAP_VERB[Math.floor(Math.random() * _WRAP_VERB.length)];
+      return _randAdjNoun() + ' ' + v;
+    }
 
     // Next unused single-letter name in A, B, C, … AA, AB, …
     // Mirrors seqName but skips any name already in the bank so deletes

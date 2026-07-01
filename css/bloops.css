@@ -3192,6 +3192,14 @@
     /* In the body controls row it reads as a pill, matching the Rename button. */
     .ambient-layer-topctrls .ambient-piano-toggle { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
     .ambient-layer-topctrls .ambient-clone-btn { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
+    /* Enlarged (~31% over original) + rounded. Row wraps so the bigger pills
+       never overflow (no horizontal scroll). */
+    .ambient-layer-topctrls { gap: 8px; flex-wrap: wrap; }
+    .ambient-layer-topctrls .ambient-dice-btn,
+    .ambient-layer-topctrls .ambient-rename-btn,
+    .ambient-layer-topctrls .ambient-seq-del,
+    .ambient-layer-topctrls .ambient-piano-toggle,
+    .ambient-layer-topctrls .ambient-clone-btn { padding: 4px 14px; font-size: 0.95rem; border-radius: 7px; }
     /* Keyboard strip — relative box; white keys tile (float), black keys overlay
        (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
     /* font-size:0 + nowrap kills inline-block gaps/wrap; inline-block (not float)
@@ -3405,18 +3413,18 @@
     .ambient-layer.collapsed > *:not(.ambient-layer-head):not(.ambient-compose) { display: none; }
     /* Composable-layer readout: Voice · Note-source · Generator, shown on the
        card header (collapsed or not) as a compact derived summary. */
-    .ambient-compose { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 2px 2px 5px; margin: -2px 0 2px; }
+    .ambient-compose { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 2px 6px; margin: -2px 0 2px; }
     .ambient-compose-tag {
-      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; color: #9aa3c4;
+      font: 600 0.81rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; color: #9aa3c4;
       background: rgba(159, 122, 234, 0.12); border: 1px solid rgba(159, 122, 234, 0.28);
-      border-radius: 5px; padding: 1px 6px; line-height: 1.5; text-transform: uppercase;
+      border-radius: 5px; padding: 2px 8px; line-height: 1.5; text-transform: uppercase;
     }
-    .ambient-compose-dot { color: #4a4a63; font-size: 0.62rem; line-height: 1; }
+    .ambient-compose-dot { color: #4a4a63; font-size: 0.81rem; line-height: 1; }
     /* Generator tag is an interactive swap picker — a chip-styled <select>. */
     .ambient-compose-sel {
-      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
+      font: 600 0.81rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
       color: #cbb6f5; background: rgba(159, 122, 234, 0.18); border: 1px solid rgba(159, 122, 234, 0.45);
-      border-radius: 5px; padding: 1px 4px; line-height: 1.5; cursor: pointer;
+      border-radius: 5px; padding: 2px 5px; line-height: 1.5; cursor: pointer;
       -webkit-appearance: none; appearance: none;
     }
     .ambient-compose-sel:hover { background: rgba(159, 122, 234, 0.30); }

@@ -9393,7 +9393,7 @@
       return confirm('Delete layer “' + (name || 'this layer') + '”? This can’t be undone.');
     }
     const _ambEscText = (s) => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-    const _ambHead = (label, onId, delId, freezeKey) =>
+    const _ambHead = (label, onId, delId, freezeKey, afterHead) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
       // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
       // unit/loop length and the formula that produces it, so you know what to tweak.
@@ -9407,6 +9407,9 @@
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
       '</div>' +
+      // Optional block placed right after the head div (e.g. the composition
+      // readout) — before the notes line + top-controls row so it sits on top.
+      (afterHead || '') +
       // Live notes line / piano roll — a direct child of .ambient-layer (NOT the
       // head), so the collapse rule (.ambient-layer.collapsed > *:not(head)) hides
       // it when the layer is collapsed; it only shows when the body is expanded.
@@ -10418,7 +10421,7 @@
       // Every layer (Shape included) starts collapsed — just its header — so a
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
-      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey) + _ambComposeReadoutHtml(inst);
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst));
       // Controls render into collapsible group sections (['grp', name] markers
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.

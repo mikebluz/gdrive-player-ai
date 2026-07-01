@@ -10325,9 +10325,13 @@
       const v = _ambVoiceOf(inst, inst.type);
       if (v === 'kit') return [['random', 'Random', 'beat', 'randombeat'], ['euclid', 'Euclid', 'beat', 'euclidbeat']];
       if (v !== 'synth') return [];
+      // 'Pattern' folds the old Riff + Mutate generators into one — they're the
+      // same "play a fixed pattern loop", distinguished by a VARIATION MODE
+      // (re-roll → run, evolve → texture; see the pattern-mode chip). Picking
+      // Pattern defaults to run (re-roll).
       return [
-        ['pad', 'Pad', 'bed', null], ['walk', 'Walk', 'motif', null], ['mutate', 'Mutate', 'texture', null],
-        ['euclid', 'Euclid', 'bass', null], ['riff', 'Riff', 'run', null], ['pedal', 'Pedal', 'pedal', null],
+        ['pad', 'Pad', 'bed', null], ['walk', 'Walk', 'motif', null],
+        ['euclid', 'Euclid', 'bass', null], ['pattern', 'Pattern', 'run', null], ['pedal', 'Pedal', 'pedal', null],
         ['held', 'Held', 'drone', null], ['series', 'Series', 'arp', 'seriesarp'], ['euclidpoly', 'Euclid poly', 'arp', 'euclidarp'],
       ];
     }
@@ -10337,7 +10341,9 @@
       const t = inst.type;
       if (t === 'beat') return (inst.gen === 'euclid') ? 'euclid' : 'random';
       if (t === 'arp')  return inst.euclid ? 'euclidpoly' : 'series';
-      return { bed: 'pad', motif: 'walk', texture: 'mutate', bass: 'euclid', run: 'riff', pedal: 'pedal', drone: 'held' }[t] || 'pad';
+      // run + texture both map to the folded 'Pattern' generator (they differ by
+      // variation mode: run = re-roll, texture = evolve — see the pattern-mode chip).
+      return { bed: 'pad', motif: 'walk', texture: 'pattern', bass: 'euclid', run: 'pattern', pedal: 'pedal', drone: 'held' }[t] || 'pad';
     }
     function _ambComposeReadoutHtml(inst) {
       const t = inst.type;
@@ -10356,7 +10362,15 @@
       } else {
         bits.push(tag(_AMB_GEN_LBL[gen] || gen));
       }
-      return '<div class="ambient-compose" title="Voice · Note-source · Generator">' +
+      // Pattern generator (run/texture) carries a VARIATION MODE chip — re-roll
+      // (run) swaps the whole phrase, evolve (texture) mutates it gradually. This
+      // is where the old standalone "Mutate" generator now lives.
+      if (t === 'run' || t === 'texture') {
+        const mid = 'ambient-' + inst.type + '-' + inst.id + '-patmode', mcur = (t === 'texture') ? 'evolve' : 'reroll';
+        bits.push('<select id="' + mid + '" class="ambient-compose-sel" title="Variation mode — Re-roll swaps the whole phrase; Evolve mutates it gradually">' +
+          [['reroll', 'Re-roll'], ['evolve', 'Evolve']].map(m => '<option value="' + m[0] + '"' + (m[0] === mcur ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>');
+      }
+      return '<div class="ambient-compose" title="Voice · Note-source · Generator · (variation mode)">' +
         bits.join('<span class="ambient-compose-dot">·</span>') + '</div>';
     }
     // Convert a layer to a different GENERATOR by rebuilding it as the target preset
@@ -10519,6 +10533,13 @@
         if (gsw.value === _ambCurrentGenKey(L)) return;
         const o = _ambGenSwapOptions(L).find(x => x[0] === gsw.value);
         if (o) _ambSwapGenerator(E, L, o[2], o[3]);
+      });
+      // Pattern variation-mode chip: re-roll (run) ↔ evolve (texture).
+      const pmode = el('patmode');
+      if (pmode) pmode.addEventListener('change', () => {
+        _E = E; const L = get(); if (!L) return;
+        const target = (pmode.value === 'evolve') ? 'texture' : 'run';
+        if (target !== L.type) _ambSwapGenerator(E, L, target, null);
       });
       sch.ctrls.forEach(c => {
         const k = c[0];

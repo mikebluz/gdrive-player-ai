@@ -147,3 +147,31 @@ Goal: introduce the composition abstraction; **presets == today exactly**; zero 
 3. **Unlock order** — voice+source first, generator later. *(assumed yes)*
 4. **Labeling** — matched‑preset name when config == defaults, else "Custom (from X)." *(assumed yes)*
 5. **`sequence`/keyMaster** — preserve keyMaster + unit/return variation as generator‑specific options. *(assumed yes)*
+
+## 10. Model v2 — the **Seed** axis + variation modes (adopted 2026‑07)
+
+A refinement that de‑kludges Seq/Sample and folds Mutate. The model becomes:
+
+```
+Layer = Voice × Seed × Generator × Timing × Variation × Mix/FX
+                 └─ Random → (Note-source: scale/chord/wrap/prog/degree)
+```
+
+- **Seed** = the raw MATERIAL a generator works from:
+  - **Random** — procedurally generated; parameterized by a **Note‑source** (the pitch pool). = today's generative layers.
+  - **Sequence** — an authored phrase from the Seed page. = today's Seq layer.
+  - **Sample** — an audio buffer. = today's Sample layer.
+  - **Capture** — a grabbed live phrase. *(future)*
+- **Note‑source stops being a top‑level axis** — it's a *parameter of `Seed=Random`* (meaningless for Sequence/Sample). This is why it felt awkward on those types.
+- **Seq and Sample stop being special "types"** — they're layers with `Seed=Sequence` / `Seed=Sample`. Major de‑kludge.
+- **Compatibility:** `Seed=Sample` ⇒ `Voice=sample` (bound — decision 6) + chop‑family generator; `Seed=Sequence` ⇒ synth/kit + replay generator; `Seed=Random` ⇒ any generator + a note‑source.
+- **Readout:** the middle chip is **Seed** (Random shows its note‑source name; Sequence shows "Seq"; Sample shows "Sample"): `Synth · Scale · Euclid`, `Synth · Seq · Replay`, `Sample · — · Chop`.
+
+**Variation modes — Mutate folds here.** A pattern generator's Variation carries a **mode**: `static / re‑roll / evolve` (+ per‑note jitter). **Riff = re‑roll, Mutate = evolve** — same "play a fixed pattern loop" idea, different variation strategy. So Mutate is **not** a standalone generator; it's the *evolve* mode. `evolve` should also become available on Euclid/Series patterns (Phase 4).
+
+**Rollout of v2:**
+- **10a (done in Phase 3 UI):** picker folds Riff+Mutate into one **Pattern** generator + a **variation‑mode chip** {Re‑roll → `run`, Evolve → `texture`}. The two EMITTERS stay distinct for now (harness‑green — no audio change); this is the *model/UI* fold.
+- **10b (Phase 4):** truly unify the `run`/`texture` emitters into one pattern generator whose `mode` param does re‑roll vs evolve over one shared phrase representation (a reviewed baseline bump). Then `texture` type is retired to a preset.
+- **10c (Phase 4):** Seq/Sample → Seed types (biggest change; own phase).
+
+6. **Sample Voice binding** — `Seed=Sample` forces `Voice=sample` for now; a fully independent Voice×Seed (sample slices re‑pitching a synth, a Sequence driving a sample) is a **follow‑up**. *(decided)*

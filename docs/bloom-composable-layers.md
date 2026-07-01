@@ -175,3 +175,15 @@ Layer = Voice × Seed × Generator × Timing × Variation × Mix/FX
 - **10c (Phase 4):** Seq/Sample → Seed types (biggest change; own phase).
 
 6. **Sample Voice binding** — `Seed=Sample` forces `Voice=sample` for now; a fully independent Voice×Seed (sample slices re‑pitching a synth, a Sequence driving a sample) is a **follow‑up**. *(decided)*
+
+## 11. Execution status + remaining plan (2026‑07)
+
+**Done (branch `bloops-next`):** Phase 0/2 complete; Phase 3 axis pickers (Voice·Source·Generator + Riff Re‑roll/Evolve); **Phase 4 euclid DECOMPOSITION** — `_ambEmitEuclidCore` (shared onset engine) + `_ambEmitEuclid` (voice‑selected render), true Voice swap (no template switch, rhythm preserved), Kit Drum picker on all beat/kit layers, kit‑card hides pitch controls. All harness‑green.
+
+**Remaining — three tracks, roughly increasing risk:**
+
+- **A. Spread the decomposition** to the other generators (walk/pad/held/series/riff) the same way (onset/note core + voice render). Mostly synth‑only (drums need a rhythmic generator), so lower marginal value than euclid; each is a harness‑gated slice.
+- **B. Sample voice on a rhythmic layer (contained Sample unlock).** Add a `voice:'sample'` render branch to `_ambEmitEuclid` (+ the random beat): each onset triggers a chosen `sample:<id>` (one‑shot, like a drum but a custom buffer), with a sample picker in the card. Does NOT merge the `cfg.samples` subsystem — just lets an existing euclid/beat layer *use* a sample as its voice. Harness‑safe (euclid/beat defaults carry no sample voice). This gives the disabled "Sample" option real meaning for the common case.
+- **C. Seq/Sample → Seed types (§10c, the full de‑kludge).** Fold `cfg.seqs` + `cfg.samples` into the general layer model as `seed:'sequence'|'sample'`. BIG: touches `_normalizeAmbientCfg` migration, save/load (existing projects have `cfg.seqs`/`cfg.samples`), the three separate card renderers, and the `samp:`/`seq:` keying. NOT ear/harness‑verifiable end‑to‑end → needs staged execution with real project load/save tests, additive‑only migration, and a rollback‑safe schemaVersion bump. Do LAST, deliberately.
+
+Recommended order: **B** (contained, high‑value, unlocks Sample for the common case) → **A** (breadth) → **C** (the deep merge, planned as its own project with load/save regression testing).

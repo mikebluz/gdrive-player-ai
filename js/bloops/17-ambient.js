@@ -10316,15 +10316,87 @@
       random: 'Random', series: 'Series', riff: 'Riff', pedal: 'Pedal', held: 'Held',
       sequence: 'Sequence', sampleChop: 'Sample chop' };
     const _AMB_SRC_LBL = { scale: 'Scale', chord: 'Chord', wrap: 'Wrap', prog: 'Prog', degree: 'Degree', none: '' };
+    // Generators a layer can SWAP to, by voice. Each = [genKey, label, targetType,
+    // subMode]. Swapping converts the layer's PRESET in place (see _ambSwapGenerator)
+    // — synth layers reach the 9 synth generators; a kit (Beat) toggles random↔euclid;
+    // a sample has one generator (no picker). generator 'euclid' fans to bass/beat/arp
+    // by voice, so the options are voice-scoped (not a raw generator list).
+    function _ambGenSwapOptions(inst) {
+      const v = _ambVoiceOf(inst, inst.type);
+      if (v === 'kit') return [['random', 'Random', 'beat', 'randombeat'], ['euclid', 'Euclid', 'beat', 'euclidbeat']];
+      if (v !== 'synth') return [];
+      return [
+        ['pad', 'Pad', 'bed', null], ['walk', 'Walk', 'motif', null], ['mutate', 'Mutate', 'texture', null],
+        ['euclid', 'Euclid', 'bass', null], ['riff', 'Riff', 'run', null], ['pedal', 'Pedal', 'pedal', null],
+        ['held', 'Held', 'drone', null], ['series', 'Series', 'arp', 'seriesarp'], ['euclidpoly', 'Euclid poly', 'arp', 'euclidarp'],
+      ];
+    }
+    // The option key matching a layer's CURRENT generator (to mark the selected
+    // <option>). Mirrors the (type, sub-mode) → genKey map in _ambGenSwapOptions.
+    function _ambCurrentGenKey(inst) {
+      const t = inst.type;
+      if (t === 'beat') return (inst.gen === 'euclid') ? 'euclid' : 'random';
+      if (t === 'arp')  return inst.euclid ? 'euclidpoly' : 'series';
+      return { bed: 'pad', motif: 'walk', texture: 'mutate', bass: 'euclid', run: 'riff', pedal: 'pedal', drone: 'held' }[t] || 'pad';
+    }
     function _ambComposeReadoutHtml(inst) {
       const t = inst.type;
       const voice = _ambVoiceOf(inst, t), gen = _ambGeneratorOf(inst, t), src = _ambSourceKindOf(inst, t);
-      const parts = [_AMB_VOICE_LBL[voice] || voice];
-      if (src && src !== 'none') parts.push(_AMB_SRC_LBL[src] || src);
-      parts.push(_AMB_GEN_LBL[gen] || gen);
-      return '<div class="ambient-compose" aria-hidden="true" title="Voice · Note-source · Generator">' +
-        parts.map(t2 => '<span class="ambient-compose-tag">' + t2 + '</span>').join('<span class="ambient-compose-dot">·</span>') +
-        '</div>';
+      const tag = (txt) => '<span class="ambient-compose-tag">' + txt + '</span>';
+      const bits = [tag(_AMB_VOICE_LBL[voice] || voice)];
+      if (src && src !== 'none') bits.push(tag(_AMB_SRC_LBL[src] || src));
+      // Generator is an interactive SWAP picker (converts the layer's preset in
+      // place, keeping its sound + source + mix); a single-generator voice (sample)
+      // falls back to a static tag.
+      const opts = _ambGenSwapOptions(inst);
+      if (opts.length > 1) {
+        const cur = _ambCurrentGenKey(inst), gid = 'ambient-' + inst.type + '-' + inst.id + '-genswap';
+        bits.push('<select id="' + gid + '" class="ambient-compose-sel" title="Generator — swaps how this layer sequences (keeps its sound + source)">' +
+          opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>');
+      } else {
+        bits.push(tag(_AMB_GEN_LBL[gen] || gen));
+      }
+      return '<div class="ambient-compose" title="Voice · Note-source · Generator">' +
+        bits.join('<span class="ambient-compose-dot">·</span>') + '</div>';
+    }
+    // Convert a layer to a different GENERATOR by rebuilding it as the target preset
+    // type and carrying over the tuned SOUND (voice/ADSR), SOURCE (notes), and
+    // MIX/FX — only the rhythm/pitch generator changes. The result is a standard
+    // layer of the target type, so dispatch/emitters/harness are all unchanged.
+    function _ambSwapGenerator(E, inst, targetType, sub) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras)) return;
+      if (!_AMB_LAYER_SCHEMA[targetType]) return;
+      const idx = cfg.extras.findIndex(x => x.id === inst.id && x.type === inst.type);
+      if (idx < 0) return;
+      const oldKey = inst.type + ':' + inst.id;
+      const def = _ambDefaultLayer(targetType, inst.id);
+      // Cross-generator params kept (sound + source + mix + mod + unit-sync + state);
+      // everything else takes the new type's defaults.
+      const CARRY = ['on', 'present', 'name', 'groupsOpen', 'tone', 'notes',
+        'attack', 'decay', 'sustain', 'release', 'fine', 'portamento',
+        'level', 'panMode', 'space', 'drift', 'when', 'areaFadeMs', 'mod', 'unit'];
+      CARRY.forEach(k => { if (inst[k] !== undefined) def[k] = inst[k]; });
+      try { Object.keys(_ambDefaultFx()).forEach(k => { if (inst[k] !== undefined) def[k] = inst[k]; }); } catch (e) {}
+      def.type = targetType;
+      if (sub === 'euclidbeat') def.gen = 'euclid';
+      else if (sub === 'randombeat') def.gen = 'random';
+      else if (sub === 'euclidarp') def.euclid = true;
+      else if (sub === 'seriesarp') def.euclid = false;
+      // The key changes with the type → tear down the OLD key's live engine state
+      // (mirrors _ambDeleteExtra) so a fresh chain builds for the new key.
+      try { if (E.mod && E.mod[oldKey]) _ambTeardownMod(oldKey); } catch (e) {}
+      try { if (E.freeze) delete E.freeze[oldKey]; } catch (e) {}
+      ['seqState', 'arpState', 'runPhase', 'bassPhase', 'clocks'].forEach(s => { if (E[s]) delete E[s][oldKey]; });
+      cfg.extras[idx] = def;
+      _ambRenderExtras(E);
+      // Keep the swapped card expanded so the user can keep tuning the new generator.
+      try {
+        const wrap = _ambGet(E, 'ambient-extra-layers');
+        const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + targetType + ':' + inst.id + '"]');
+        if (card) card.classList.remove('collapsed');
+      } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
@@ -10439,6 +10511,15 @@
       // Reset sections → forget remembered folds, re-render to default state.
       const rstB = el('grp-reset');
       if (rstB) rstB.addEventListener('click', () => { const L = get(); if (L) { delete L.groupsOpen; persist(); } _ambRenderExtras(E); });
+      // Generator SWAP picker (composition readout) — converts the layer's preset
+      // in place, keeping its sound/source/mix. No-op if the same generator is picked.
+      const gsw = el('genswap');
+      if (gsw) gsw.addEventListener('change', () => {
+        _E = E; const L = get(); if (!L) return;
+        if (gsw.value === _ambCurrentGenKey(L)) return;
+        const o = _ambGenSwapOptions(L).find(x => x[0] === gsw.value);
+        if (o) _ambSwapGenerator(E, L, o[2], o[3]);
+      });
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {

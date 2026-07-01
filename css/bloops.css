@@ -3412,6 +3412,15 @@
       border-radius: 5px; padding: 1px 6px; line-height: 1.5; text-transform: uppercase;
     }
     .ambient-compose-dot { color: #4a4a63; font-size: 0.62rem; line-height: 1; }
+    /* Generator tag is an interactive swap picker — a chip-styled <select>. */
+    .ambient-compose-sel {
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
+      color: #cbb6f5; background: rgba(159, 122, 234, 0.18); border: 1px solid rgba(159, 122, 234, 0.45);
+      border-radius: 5px; padding: 1px 4px; line-height: 1.5; cursor: pointer;
+      -webkit-appearance: none; appearance: none;
+    }
+    .ambient-compose-sel:hover { background: rgba(159, 122, 234, 0.30); }
+    .ambient-compose-sel:focus { outline: none; border-color: rgba(159, 122, 234, 0.8); }
     /* ---- Collapsible parameter groups (Voice / Pitch / Rhythm / …) ------- */
     .ambient-grp { margin: 6px 0 0; border-top: 1px solid #1c1c2e; }
     .ambient-grp:first-of-type { border-top: none; margin-top: 2px; }

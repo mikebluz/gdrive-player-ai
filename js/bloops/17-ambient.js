@@ -4404,7 +4404,9 @@
     function _ambEmitBeat(at, beat, space, key) {
       key = key || 'beat';
       if (_ambRand() * 100 < Math.max(0, Math.min(100, beat.restProb | 0))) return;
-      const pc = _ambPickDrumPc();
+      // An explicit single drum (`beat.drum`) else the native random pick. A beat
+      // with no `drum` field → _ambPickDrumPc() (harness byte-identical).
+      const pc = (beat.drum != null) ? (beat.drum | 0) : _ambPickDrumPc();
       const midi = 36 + pc; // C2 = 36
       let f;
       try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { return; }
@@ -10474,6 +10476,25 @@
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // Kit-voice params (Phase 4): a euclid layer rendered with a Kit voice needs a
+    // DRUM control that its type schema doesn't carry (esp. a Bass voice-swapped to
+    // Kit). 'Varied' = the native random-per-hit (inst.drum = null); else a single
+    // fixed drum (its pc). Injected into the card only when the voice derives to kit.
+    function _ambDrumPickHtml(inst, p, includeVoices) {
+      const cur = (inst.drum == null) ? '' : String(inst.drum | 0);
+      const opts = [['', 'Varied']].concat(Object.keys(_AMB_DRUM_NAMES).map(k => [k, _AMB_DRUM_NAMES[k]]));
+      // Voices only for a swapped layer (Bass→Kit) that lacks it; a native Beat
+      // already carries euclidVoices in its schema (avoid a duplicate control).
+      const voicesRow = includeVoices
+        ? '<div class="ambient-ctrl"><label for="' + p + '-drumvoices">Voices</label><input type="range" id="' + p + '-drumvoices" class="ambient-range" min="1" max="4" value="' + Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1)) + '"><span class="ambient-hint">polyphony (Varied only)</span></div>'
+        : '';
+      return '<div class="ambient-grp open" data-grp="Kit"><button type="button" class="ambient-grp-head" data-grp="Kit">Kit<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">' +
+        '<div class="ambient-ctrl"><label for="' + p + '-drumpick">Drum</label><select id="' + p + '-drumpick" class="ambient-select">' +
+        opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+        '</select><span class="ambient-hint">Varied = full kit</span></div>' +
+        voicesRow +
+        '</div></div>';
+    }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
@@ -10481,6 +10502,11 @@
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
       let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey, _ambComposeReadoutHtml(inst));
+      // Kit-voice DRUM params for any layer whose voice derives to kit (a native
+      // Beat — euclid or random — or a Bass voice-swapped to Kit) — the type schema
+      // carries no single-drum control. Voices row only for a swapped layer that
+      // lacks euclidVoices (a native Beat has it in its Rhythm group).
+      if (_ambVoiceOf(inst, type) === 'kit') html += _ambDrumPickHtml(inst, p, type !== 'beat');
       // Controls render into collapsible group sections (['grp', name] markers
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.
@@ -10655,6 +10681,13 @@
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
         if (typeof persistWorkspace === 'function') persistWorkspace();
       });
+      // Kit-voice DRUM controls (present only when the card injected them). The
+      // emitter reads inst.drum / inst.euclidVoices live, so the change lands on the
+      // next iteration — no re-anchor needed.
+      const dpk = el('drumpick');
+      if (dpk) dpk.addEventListener('change', () => { _E = E; const L = get(); if (!L) return; L.drum = (dpk.value === '') ? null : (dpk.value | 0); persist(); });
+      const dvc = el('drumvoices');
+      if (dvc) dvc.addEventListener('input', () => { _E = E; const L = get(); if (!L) return; L.euclidVoices = Math.max(1, Math.min(4, dvc.value | 0)); persist(); });
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {
@@ -12123,6 +12156,7 @@
        set('ambient-texture-areafade', cfg.texture.areaFadeMs); hint('ambient-texture-areafade-v', _ambFmtMs(cfg.texture.areaFadeMs));
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
+      set('ambient-beat-drumpick', cfg.beat.drum == null ? '' : String(cfg.beat.drum | 0));
       set('ambient-beat-attack', cfg.beat.attack); set('ambient-beat-decay', cfg.beat.decay); set('ambient-beat-sustain', cfg.beat.sustain); set('ambient-beat-release', cfg.beat.release); set('ambient-beat-fine', cfg.beat.fine);
       set('ambient-beat-gen', cfg.beat.gen || 'random');
       set('ambient-beat-rate', cfg.beat.rate || '');
@@ -12433,6 +12467,9 @@
           grp('Voice') +
             '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
               '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
+            '<div class="ambient-ctrl"><label for="ambient-beat-drumpick">Drum</label><select id="ambient-beat-drumpick" class="ambient-select">' +
+              [['', 'Varied']].concat(Object.keys(_AMB_DRUM_NAMES).map(k => [k, _AMB_DRUM_NAMES[k]])).map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+              '</select><span class="ambient-hint">Varied = full kit</span></div>' +
             _ambGenSel('ambient-beat-') +
             sl('Attack', 'ambient-beat-attack', 0, 500, 1, 'ms') +
             sl('Decay', 'ambient-beat-decay', 0, 2000, 60, 'ms') +
@@ -12660,6 +12697,12 @@
           persist();
         });
       }
+      const beatDrumSel = G('ambient-beat-drumpick');
+      if (beatDrumSel) beatDrumSel.addEventListener('change', () => {
+        _E = E; const cfg = cfg0(); if (!cfg) return;
+        cfg.beat.drum = (beatDrumSel.value === '') ? null : (beatDrumSel.value | 0);
+        persist();
+      });
       const beatRateSel = G('ambient-beat-rate');
       if (beatRateSel) beatRateSel.addEventListener('change', () => {
         _E = E; const cfg = cfg0(); if (!cfg) return;

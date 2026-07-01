@@ -204,3 +204,15 @@ Recommended order: **B** (contained, high‑value, unlocks Sample for the common
 - **C3 — retire the duplicates (cleanup, last).** Only after C2 is proven across many real projects: remove the separate dispatch loops + card builders + the legacy arrays. schemaVersion bump; one‑way from here.
 
 Execute strictly in order; each stage is its own commit + your load/save sign‑off before the next.
+
+## 13. Primary→extras unification plan
+
+The 4 built‑ins (bed/motif/texture/beat) render from a **hardcoded template** (~12240+) with 50‑73 fixed‑id controls each, wired individually (`set(...)` + change handlers), and dispatched by 5 explicit `stepLayer`/`windowLayer` lines. Extras render from `_AMB_LAYER_SCHEMA` + generic `ctrlHtml`/wiring. The split forces every layer change twice (readout, drum picker, etc.). Persistence: the built‑ins live on the area cfg as `cfg.bed/motif/texture/beat`, JSON‑spread into the `masterBloomAreas` snapshot — so migrating them touches **save/load**.
+
+**Key finding:** the extras schemas DON'T cover everything the templates do (e.g. bed's Chords mode / Repeat / Times / per‑chord‑voice tones / Choke are template‑only). So the gap must close first.
+
+- **P0 — close the schema gap (SAFE, additive, no save/load).** Audit each primary template vs its extras schema; add the missing controls (+ generic `ctrlHtml`/wire handlers, incl. the complex per‑chord‑voice tones) so an EXTRAS bed/motif/texture/beat is as capable as a primary one. Valuable on its own (full‑featured added layers). Verify: add each as an extra, confirm every control present + working. Harness‑neutral.
+- **P1 — migrate primary→extras on load (additive, save/load‑gated).** In `_normalizeAmbientCfg`, gated on schemaVersion, COPY `cfg.bed/motif/texture/beat` into `cfg.extras` (stable ids), KEEPING the cfg fields (additive). Render from extras; template hidden. Heavy load/save regression (existing projects, undo, Drive).
+- **P2 — retire the template + dispatch + wiring (cleanup, last).** After P1 proven: delete the hardcoded template, the 5 dispatch lines, the ~264 `set()`/wire sites, `_ambAddLayer`/`_ambRemoveLayer` (present‑flag), and the `cfg.bed…` fields. schemaVersion bump; one‑way.
+
+Start with **P0** (safe, self‑contained, improves added layers regardless of whether P1/P2 ever land).

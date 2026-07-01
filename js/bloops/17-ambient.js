@@ -1410,6 +1410,41 @@
       if (cfg && cfg.prog && cfg.prog.on) return 'prog';
       return 'scale';
     }
+    // Emit DESCRIPTOR — resolves an extras layer to HOW the tick schedules it:
+    //   mode:'window' → phase-anchored multi-bar phrase (bass/run/pedal/drone/
+    //     euclid Arp/series Arp/euclid Beat); `store` = the E[...] anchor map,
+    //     `init(t)` seeds a fresh anchor (defaults to {startAt,lastAt}); `emit`
+    //     is called `emit(E, ex, key, now, hz, lead, space, cfg)`.
+    //   mode:'step'   → free stepped interval (bed/motif/texture/random Beat);
+    //     `gm`/`ms` are the runLayer guard-max / min-cushion; `emit` is called
+    //     `emit(at, ex, space, key)`.
+    // Keyed by type + live sub-mode (`arp.euclid`, `beat.gen`) TODAY, so dispatch
+    // is byte-identical; this is the single seam a Phase-3 custom layer will
+    // resolve from {generator, voice} instead of a type name (note that generator
+    // 'euclid' fans out to THREE emitters here — bass/beat/arp — so the emitter is
+    // a (generator × voice) choice, which is exactly what this table encodes).
+    // Returns null for layers with bespoke tick loops (seq, sample) — they never
+    // appear in cfg.extras, but the router treats null as the old beat fallthrough.
+    function _ambEmitDescriptor(L, type) {
+      const t = type || (L && L.type);
+      switch (t) {
+        case 'bass':    return { mode: 'window', store: 'bassPhase', emit: _ambEmitBass };
+        case 'run':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitRun };
+        case 'pedal':   return { mode: 'window', store: 'runPhase',  emit: _ambEmitPedal };
+        case 'drone':   return { mode: 'window', store: 'runPhase',  emit: _ambEmitDrone };
+        case 'arp':     return (L && L.euclid)
+          ? { mode: 'window', store: 'runPhase', emit: _ambEmitArpEuclid }
+          : { mode: 'window', store: 'arpState', emit: _ambEmitArpWindow,
+              init: (tt) => ({ entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: tt, lastAt: null }) };
+        case 'beat':    return (L && L.gen === 'euclid')
+          ? { mode: 'window', store: 'runPhase', emit: _ambEmitBeatEuclid }
+          : { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
+        case 'bed':     return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBed };
+        case 'motif':   return { mode: 'step', gm: 16, ms: 0.04, emit: _ambEmitMotif };
+        case 'texture': return { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitTexture };
+        default:        return null;
+      }
+    }
     function _laneAmbientCfg() {
       const lane = (typeof lanes !== 'undefined') ? lanes[activeLaneIdx] : null;
       if (!lane) return null;
@@ -6374,93 +6409,34 @@
         for (const ex of cfg.extras) { try {
           if (!ex || !_AMB_LAYER_SCHEMA[ex.type]) continue;
           const key = ex.type + ':' + ex.id;
-          // Bass layers realize a multi-bar euclidean phrase over the lookahead
-          // window (their own path, like Shape) so the seed phrase + per-cycle
-          // variation stay locked to the BPM and re-read config at cycle edges.
-          if (ex.type === 'bass') {
+          // Phase-anchored (windowed) vs free (stepped) is resolved from the
+          // layer's emit DESCRIPTOR — one uniform gate/freeze/capture path for
+          // every extras type (bass/run/pedal/drone/arp/euclid-Beat windowed;
+          // bed/motif/texture/random-Beat stepped). Byte-identical to the old
+          // per-type if-chain; see _ambEmitDescriptor for the type→emitter table
+          // (windowed = a multi-bar phrase realized over the lookahead so the seed
+          // phrase + per-cycle variation stay BPM-locked and re-read at cycle edges).
+          const desc = _ambEmitDescriptor(ex, ex.type);
+          if (desc && desc.mode === 'window') {
             if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.bassPhase) E.bassPhase = {}; E.bassPhase[key] = { startAt: t, lastAt: null }; });
+            const gate = _qGate(key, !!ex.on, (t) => {
+              if (!E[desc.store]) E[desc.store] = {};
+              E[desc.store][key] = desc.init ? desc.init(t) : { startAt: t, lastAt: null };
+            });
             if (!gate.run) continue;
             if (_ambFreezeGate(E, key, now, gate.hz)) continue;
             window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitBass(E, ex, key, now, gate.hz, lead, space, cfg); }
+            try { desc.emit(E, ex, key, now, gate.hz, lead, space, cfg); }
             catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
             continue;
           }
-          // Run layers: a fixed random note-run that loops every `bars` bars,
-          // mutated by Vary. Windowed/phase-anchored like Bass.
-          if (ex.type === 'run') {
-            if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
-            if (!gate.run) continue;
-            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-            window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitRun(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-            continue;
-          }
-          // Pedal layers: a simple root-note loop. Windowed/phase-anchored too.
-          if (ex.type === 'pedal') {
-            if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
-            if (!gate.run) continue;
-            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-            window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitPedal(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-            continue;
-          }
-          // Drone layers: hold a note/chord, re-struck every `hold` units.
-          // Windowed/phase-anchored like Pedal.
-          if (ex.type === 'drone') {
-            if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
-            if (!gate.run) continue;
-            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-            window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitDrone(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-            continue;
-          }
-          // Arp layers: windowed + phase-anchored (no drift) with per-loop When.
-          if (ex.type === 'arp') {
-            if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            if (ex.euclid) {   // polyphonic euclidean Arp — windowed, phase-anchored like Beat-euclid
-              const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
-              if (!gate.run) continue;
-              if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-              window._ambCaptureSink = _ambCapSink(E, key);
-              try { _ambEmitArpEuclid(E, ex, key, now, gate.hz, lead, space, cfg); }
-              catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-              continue;
-            }
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.arpState) E.arpState = {}; E.arpState[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: t, lastAt: null }; });
-            if (!gate.run) continue;
-            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-            window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitArpWindow(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-            continue;
-          }
-          // Euclidean Beat extra: windowed phrase like the primary beat.
-          if (ex.type === 'beat' && ex.gen === 'euclid') {
-            if (ex.present === false || _muted(ex) || E.windingDown) continue;
-            const gate = _qGate(key, !!ex.on, (t) => { if (!E.runPhase) E.runPhase = {}; E.runPhase[key] = { startAt: t, lastAt: null }; });
-            if (!gate.run) continue;
-            if (_ambFreezeGate(E, key, now, gate.hz)) continue;
-            window._ambCaptureSink = _ambCapSink(E, key);
-            try { _ambEmitBeatEuclid(E, ex, key, now, gate.hz, lead, space, cfg); }
-            catch (e) { _ambLogTickErr(e); } finally { window._ambCaptureSink = null; _ambPruneCap(E, key, now); }
-            continue;
-          }
-          const gm = ex.type === 'bed' ? 8 : 16;
-          const ms = ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03);
-          stepLayer(key, ex, gm, ms, (at) => {
-            if (ex.type === 'bed') _ambEmitBed(at, ex, space, key);
-            else if (ex.type === 'motif') _ambEmitMotif(at, ex, space, key);
-            else if (ex.type === 'texture') _ambEmitTexture(at, ex, space, key);
-            else _ambEmitBeat(at, ex, space, key);
-          });
+          // Stepped (free) layers — bed/motif/texture/random Beat; runLayer gates
+          // present/on/frozen internally. A null desc (only seq/sample, which never
+          // reach cfg.extras) falls back to the old beat default, unchanged.
+          const gm = desc ? desc.gm : (ex.type === 'bed' ? 8 : 16);
+          const ms = desc ? desc.ms : (ex.type === 'bed' ? 0.05 : (ex.type === 'motif' ? 0.04 : 0.03));
+          const stepEmit = desc ? desc.emit : _ambEmitBeat;
+          stepLayer(key, ex, gm, ms, (at) => stepEmit(at, ex, space, key));
         } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       }
       // Queue mode: a layer toggle landed on its boundary this tick → persist.

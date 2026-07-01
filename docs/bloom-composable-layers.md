@@ -187,3 +187,20 @@ Layer = Voice × Seed × Generator × Timing × Variation × Mix/FX
 - **C. Seq/Sample → Seed types (§10c, the full de‑kludge).** Fold `cfg.seqs` + `cfg.samples` into the general layer model as `seed:'sequence'|'sample'`. BIG: touches `_normalizeAmbientCfg` migration, save/load (existing projects have `cfg.seqs`/`cfg.samples`), the three separate card renderers, and the `samp:`/`seq:` keying. NOT ear/harness‑verifiable end‑to‑end → needs staged execution with real project load/save tests, additive‑only migration, and a rollback‑safe schemaVersion bump. Do LAST, deliberately.
 
 Recommended order: **B** (contained, high‑value, unlocks Sample for the common case) → **A** (breadth) → **C** (the deep merge, planned as its own project with load/save regression testing).
+
+**Status update:** B done (Sample voice on euclid + random beat), A done for the rhythmic generators (random beat kit/sample), Seed framing + `_ambSeedOf` + Seq/Sample readouts done. Only **C** remains.
+
+## 12. Track C migration plan (Seq/Sample → Seed layers)
+
+**The risk:** this rewrites how `cfg.seqs` / `cfg.samples` are stored, so it touches **save/load of existing projects** — NOT harness‑ or ear‑verifiable. Surface: `_normalizeSeqLayer`/`_normalizeSampleLayer` + defaults; two dispatch loops in `_ambTick` (seqs ~L6365, samples); the two card builders; ~34 `seq:`/`samp:` keying sites; and per‑area persistence (the area cfg is JSON‑spread into the `masterBloomAreas` snapshot, so any field on the cfg persists automatically — no save‑code change needed).
+
+**Invariant:** additive‑only; keep `cfg.seqs`/`cfg.samples` intact until the final cleanup, so an older build still loads a new project and a bad step is revertible by not advancing `schemaVersion`. `_normalizeAmbientCfg` is the ONLY migration site.
+
+**Per‑stage user verification (harness can't cover this):** load a project containing Seq + Sample layers → they render + play identically; **save → reload → stable**; undo/redo intact; Drive load intact.
+
+- **C0 — Seed field (safe, additive).** Stamp `seed` on every layer in normalize (generative → `'random'`; seq/sample keep their identity). schemaVersion bump. No dispatch/UI behavior change. *Ship + load/save test alone.*
+- **C1 — seed‑aware GENERAL layer (additive capability).** Let an `extras` layer carry `seed:'sequence'|'sample'` (+ its `units`/`sampleId`) and dispatch via a seed‑aware emit that reuses the EXISTING seq/sample emitters. New layers can be a sequence/sample source; legacy `cfg.seqs`/`cfg.samples` still live in their arrays + render via their existing path. **Two paths coexist** — no data moved yet.
+- **C2 — migrate legacy arrays → extras (THE risky step).** In `_normalizeAmbientCfg`, gated on `_fromVer < N`, COPY each `cfg.seqs`/`cfg.samples` entry into `cfg.extras` as a seed‑typed layer, **keeping the old arrays too** (additive). New build reads the migrated extras; old build still reads the arrays. Migrated layers keep `seq:`/`samp:` keys to avoid touching the 34 keying sites. *Heavy load/save regression here.*
+- **C3 — retire the duplicates (cleanup, last).** Only after C2 is proven across many real projects: remove the separate dispatch loops + card builders + the legacy arrays. schemaVersion bump; one‑way from here.
+
+Execute strictly in order; each stage is its own commit + your load/save sign‑off before the next.

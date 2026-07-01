@@ -10583,6 +10583,37 @@
         '<div class="ambient-ctrl"><label for="' + p + '-samplepitch">Pitch</label><input type="range" id="' + p + '-samplepitch" class="ambient-range" min="-24" max="24" value="' + Math.max(-24, Math.min(24, inst.samplePitch | 0)) + '"><span class="ambient-hint">± semitones</span></div>' +
         '</div></div>';
     }
+    // Shared control-HTML for a schema token — used by BOTH the extras card
+    // (_ambInstCardHtml, p='ambient-<type>-<id>', lk='<type>-<id>') and the primary
+    // card (_ambPrimaryCardBody, p='ambient-<type>', lk='<type>'). The single source
+    // of a control's markup, so a schema change renders identically everywhere.
+    function _ambCtrlHtml(c, p, lk, inst, type) {
+      const k = c[0];
+      if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
+      if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
+      if (k === 'gen') return _ambGenSel(p + '-');
+      if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
+      if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
+      if (k === 'rate') return _ambRateSel(p + '-rate');
+      if (k === 'notes') return _ambNotesButtonHtml(p);
+      if (k === 'droneedit') return _ambDroneEditHtml(p);
+      if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
+      if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
+      if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
+      // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
+      // → never free → no fader at all. Other types keep it (disabled live when synced).
+      if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal')) return '';
+      if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
+      if (k === 'cond') return _ambCondCtrl(lk);
+      if (k === 'spread') return _ambSpreadCtrl(p, inst);
+      if (k === 'mod') return _ambModUi(lk);
+      if (k === 'fx') return _ambFxUi(lk);
+      if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
+      if (k === 'arpdir') return _ambArpDirHtml(p, inst);
+      if (k === 'unitmatch') return _ambUnitMatchHtml(p);
+      if (k === 'unitsync') return _ambUnitSyncHtml(p);
+      return '';
+    }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
@@ -10600,33 +10631,7 @@
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.
       let grpOpen = false;        // is a group <div> currently open?
-      const ctrlHtml = (c) => {
-        const k = c[0];
-        if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
-        if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
-        if (k === 'gen') return _ambGenSel(p + '-');
-        if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
-        if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
-        if (k === 'rate') return _ambRateSel(p + '-rate');
-        if (k === 'notes') return _ambNotesButtonHtml(p);
-        if (k === 'droneedit') return _ambDroneEditHtml(p);
-        if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
-        if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
-        if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
-        // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
-        // → never free → no fader at all. Other types keep it (disabled live when synced).
-        if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal')) return '';
-        if (k === 'tm') return _ambTm(c[2], p + '-' + c[1], c[3], c[4], c[5], inst[c[1]]);
-        if (k === 'cond') return _ambCondCtrl(lk);
-        if (k === 'spread') return _ambSpreadCtrl(p, inst);
-        if (k === 'mod') return _ambModUi(lk);
-        if (k === 'fx') return _ambFxUi(lk);
-        if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
-        if (k === 'arpdir') return _ambArpDirHtml(p, inst);
-        if (k === 'unitmatch') return _ambUnitMatchHtml(p);
-        if (k === 'unitsync') return _ambUnitSyncHtml(p);
-        return '';
-      };
+      const ctrlHtml = (c) => _ambCtrlHtml(c, p, lk, inst, type);
       // A Kit or Sample voice has no scale/pitch material: hide the synth instrument
       // (`tone`) and the whole Pitch group (notes/register/proximity), so the card
       // shows only what that render uses.

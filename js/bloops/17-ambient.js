@@ -9667,7 +9667,7 @@
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
-        _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id) +
+        _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id, _ambComposeReadonlyHtml(['Synth', 'Sequence'], 'Voice · Seed (an authored sequence)')) +
         grp('Voice') +
           '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambSl('Attack', p + 'attack', 0, 4000, s.attack, 'ms') +
@@ -10004,7 +10004,7 @@
       const _lenMax = _durMs > 0 ? Math.max(120, _durMs) : Math.max(16000, s.lengthMs | 0);          // Length capped at sample length
       const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
-        _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id) +
+        _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id, _ambComposeReadonlyHtml(['Sample', 'Chop'], 'Voice · Generator (buffer chopper)')) +
         grp('Voice') +
           '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint ambient-samp-srcname" id="' + p + 'srcname" style="margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nm + '</span></div>' +
           '<div class="ambient-ctrl ambient-samp-srcbtns">' +
@@ -10555,6 +10555,22 @@
       try { return (typeof getAllSoundOptions === 'function' ? getAllSoundOptions() : []).filter(o => o && typeof o.value === 'string' && o.value.indexOf('sample:') === 0); } catch (e) { return []; }
     }
     function _ambHasSampleInsts() { return _ambSampleInstOpts().length > 0; }
+    // SEED axis (Model v2, §10): the MATERIAL a layer draws from. Generative layers
+    // = 'random' (from a note-source); Seq layers = 'sequence'; Sample layers =
+    // 'sample'. Read-only derivation for now (the framing); the Seq/Sample subsystem
+    // merge (§10c) is a later, save-load-gated phase.
+    function _ambSeedOf(inst) {
+      const t = inst && inst.type;
+      if (t === 'seq') return 'sequence';
+      if (t === 'sample' || t === 'samp') return 'sample';
+      return 'random';
+    }
+    // A static (read-only) composition readout from label parts — used on cards
+    // that aren't convertible extras (primary layers, Seq, Sample).
+    function _ambComposeReadonlyHtml(parts, title) {
+      return '<div class="ambient-compose" title="' + (title || 'Voice · Seed · Generator') + '">' +
+        parts.map(t => '<span class="ambient-compose-tag">' + t + '</span>').join('<span class="ambient-compose-dot">·</span>') + '</div>';
+    }
     // Sample-voice params: a chosen sample triggered one-shot per onset + a ±semitone
     // trigger-pitch offset. Injected only when the voice derives to 'sample'.
     function _ambSamplePickHtml(inst, p) {

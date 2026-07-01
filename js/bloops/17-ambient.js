@@ -10348,12 +10348,45 @@
       // variation mode: run = re-roll, texture = evolve — see the pattern-mode chip).
       return { bed: 'pad', motif: 'walk', texture: 'pattern', bass: 'euclid', run: 'pattern', pedal: 'pedal', drone: 'held' }[t] || 'pad';
     }
+    // A layer has a single, editable note-source (a "Notes" control) — so its
+    // Source chip can open the shared source menu. Arp (per-step series) and the
+    // sourceless voices (kit/sample) are excluded.
+    function _ambSourceEditable(t) {
+      return t === 'bed' || t === 'motif' || t === 'texture' || t === 'bass' || t === 'run' || t === 'pedal' || t === 'drone';
+    }
+    // READ-ONLY composition readout for the built-in PRIMARY layers (bed/motif/
+    // texture/beat). They're fixed slots — not convertible like extras — so the
+    // chips are static (the source is still editable via the Pitch-group Notes
+    // control). Uses the same labels + fold (run/texture → "Pattern" + mode) as the
+    // extras readout so both read consistently. `L` = the live cfg layer.
+    function _ambComposePrimaryHtml(type, L) {
+      L = L || {};
+      const voice = _ambVoiceOf(L, type), src = _ambSourceKindOf(L, type), gen = _ambGeneratorOf(L, type);
+      const tag = (t2) => '<span class="ambient-compose-tag">' + t2 + '</span>';
+      const bits = [tag(_AMB_VOICE_LBL[voice] || voice)];
+      if (src && src !== 'none') bits.push(tag(_AMB_SRC_LBL[src] || src));
+      if (gen === 'riff' || gen === 'mutate') { bits.push(tag('Pattern')); bits.push(tag(gen === 'mutate' ? 'Evolve' : 'Re-roll')); }
+      else bits.push(tag(_AMB_GEN_LBL[gen] || gen));
+      return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
+        bits.join('<span class="ambient-compose-dot">·</span>') + '</div>';
+    }
     function _ambComposeReadoutHtml(inst) {
       const t = inst.type;
       const voice = _ambVoiceOf(inst, t), gen = _ambGeneratorOf(inst, t), src = _ambSourceKindOf(inst, t);
       const tag = (txt) => '<span class="ambient-compose-tag">' + txt + '</span>';
       const bits = [tag(_AMB_VOICE_LBL[voice] || voice)];
-      if (src && src !== 'none') bits.push(tag(_AMB_SRC_LBL[src] || src));
+      // Source chip: a button that opens the shared note-source menu (scale/chord/
+      // wrap/prog) for editable-source layers; a static tag otherwise (arp shows
+      // its Series, pedal its Degree).
+      if (src && src !== 'none') {
+        const slbl = (t === 'arp') ? 'Series' : (_AMB_SRC_LBL[src] || src);
+        if (_ambSourceEditable(t)) {
+          const sid = 'ambient-' + inst.type + '-' + inst.id + '-srcswap';
+          bits.push('<button type="button" id="' + sid + '" class="ambient-compose-sel" title="Note-source — the pitch material this layer draws from (click to change)">' + slbl + '</button>');
+        } else {
+          bits.push(tag(slbl));
+        }
+      }
       // Generator is an interactive SWAP picker (converts the layer's preset in
       // place, keeping its sound + source + mix); a single-generator voice (sample)
       // falls back to a static tag.
@@ -10543,6 +10576,19 @@
         _E = E; const L = get(); if (!L) return;
         const target = (pmode.value === 'evolve') ? 'texture' : 'run';
         if (target !== L.type) _ambSwapGenerator(E, L, target, null);
+      });
+      // Note-source chip → the shared source menu (scale/chord/wrap/prog). Reuses
+      // the tested _ambOpenNotesMenu (sets L.notes + syncs + persists); afterChange
+      // just refreshes the chip + the Pitch-group Notes button, so the card stays
+      // expanded (no re-render).
+      const ssw = el('srcswap');
+      if (ssw) ssw.addEventListener('click', () => {
+        _E = E; const r = ssw.getBoundingClientRect();
+        _ambOpenNotesMenu(E, get, r.left, r.bottom + 4, () => {
+          const L = get(); if (!L) return;
+          ssw.textContent = (L.type === 'arp') ? 'Series' : (_AMB_SRC_LBL[_ambSourceKindOf(L, L.type)] || 'Scale');
+          const nb = el('notes'); if (nb) nb.textContent = _ambNotesLabel(_ambNotesOf(L));
+        });
       });
       sch.ctrls.forEach(c => {
         const k = c[0];
@@ -12209,7 +12255,7 @@
             '</div>' +
           '</details>' +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed', _ambComposePrimaryHtml('bed', _cfg0.bed)) +
           grp('Voice') +
             '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
             sl('Attack', 'ambient-bed-attack', 0, 8000, 2000, 'ms') +
@@ -12254,7 +12300,7 @@
             modUi('bed') +
             fxUi('bed') + gpe() +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif', _ambComposePrimaryHtml('motif', _cfg0.motif)) +
           grp('Voice') +
             '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
             sl('Attack', 'ambient-motif-attack', 0, 2000, 100, 'ms') +
@@ -12288,7 +12334,7 @@
             modUi('motif') +
             fxUi('motif') + gpe() +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture', _ambComposePrimaryHtml('texture', _cfg0.texture)) +
           grp('Voice') +
             '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
             sl('Attack', 'ambient-texture-attack', 0, 2000, 40, 'ms') +
@@ -12318,7 +12364,7 @@
             modUi('texture') +
             fxUi('texture') + gpe() +
         '</div>' +
-        '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat') +
+        '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat', _ambComposePrimaryHtml('beat', _cfg0.beat)) +
           grp('Voice') +
             '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
               '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +

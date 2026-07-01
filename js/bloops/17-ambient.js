@@ -10536,9 +10536,17 @@
         if (k === 'unitsync') return _ambUnitSyncHtml(p);
         return '';
       };
+      // A Kit voice has no pitch material: hide the synth instrument (`tone`) and
+      // the whole Pitch group (notes/register/proximity). Keeps the card focused on
+      // what the drum render actually uses.
+      const kitVoice = _ambVoiceOf(inst, type) === 'kit';
+      let skipGroup = false;
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
           if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
+          grpOpen = false;
+          if (kitVoice && c[1] === 'Pitch') { skipGroup = true; return; }
+          skipGroup = false;
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
             '<button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name +
@@ -10546,6 +10554,8 @@
             '<div class="ambient-grp-body">';
           grpOpen = true;
         } else {
+          if (skipGroup) return;
+          if (kitVoice && c[0] === 'tone') return;
           html += ctrlHtml(c);
         }
       });

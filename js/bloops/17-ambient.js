@@ -4441,6 +4441,18 @@
     function _ambEmitBeat(at, beat, space, key) {
       key = key || 'beat';
       if (_ambRand() * 100 < Math.max(0, Math.min(100, beat.restProb | 0))) return;
+      // Sample voice: trigger the chosen sample one-shot per hit instead of a drum
+      // (a random sample sequencer). A beat with no voice field derives to 'kit'
+      // → the drum render below (harness byte-identical).
+      if (_ambVoiceOf(beat, 'beat') === 'sample') {
+        const slenMs = Math.max(60, beat.lengthMs | 0);
+        let sf; try { sf = Tone.Frequency(60 + (beat.samplePitch | 0), 'midi').toFrequency(); } catch (e) { sf = 261.63; }
+        const sbp = _ambApplyAdsr(_ambBassParams(slenMs, _ambLayerPan(beat), beat.sampleId || ''), beat);
+        sbp.volume = _ambApplyLevel(sbp.volume, beat.level);
+        const sdm = _ambLayerDetuneMod(key); if (sdm) sbp._detuneMod = sdm;
+        try { playNote(sf, sbp, _ambVaryLen(slenMs, beat.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+        return;
+      }
       // An explicit single drum (`beat.drum`) else the native random pick. A beat
       // with no `drum` field → _ambPickDrumPc() (harness byte-identical).
       const pc = (beat.drum != null) ? (beat.drum | 0) : _ambPickDrumPc();
@@ -10428,9 +10440,12 @@
       // Euclid layers (Bass / euclid Beat) share one onset engine, so they can
       // TRUE-swap Synth↔Kit (same rhythm, different sound). Other layers can't yet,
       // so their non-current voice is disabled. Sample awaits the Seed rework.
-      const vswap = (t === 'bass') || (t === 'beat' && inst.gen === 'euclid');
+      // Which voices this layer can render: synth (a pitched walk) only on euclid
+      // layers; kit + sample on any bass/beat (euclid OR random beat).
+      const canSynth = (t === 'bass') || (t === 'beat' && inst.gen === 'euclid');
+      const canRhythm = (t === 'bass') || (t === 'beat');
       const hasSamples = _ambHasSampleInsts();
-      const vopts = [['synth', 'Synth', !(vswap || voice === 'synth')], ['kit', 'Kit', !(vswap || voice === 'kit')], ['sample', 'Sample', !((vswap && hasSamples) || voice === 'sample')]];
+      const vopts = [['synth', 'Synth', !(canSynth || voice === 'synth')], ['kit', 'Kit', !(canRhythm || voice === 'kit')], ['sample', 'Sample', !((canRhythm && hasSamples) || voice === 'sample')]];
       const bits = ['<select id="' + vid + '" class="ambient-compose-sel" title="Voice — the sound family (Synth = pitched, Kit = drums). Sample comes with the Seed rework.">' +
         vopts.map(o => '<option value="' + o[0] + '"' + (o[0] === voice ? ' selected' : '') + (o[2] ? ' disabled' : '') + '>' + o[1] + '</option>').join('') + '</select>'];
       // Source chip: a button that opens the shared note-source menu (scale/chord/
@@ -10721,8 +10736,10 @@
         // and the onsets — the shared euclid emitter renders by voice, so the
         // rhythm is preserved exactly (no template switch). Default the target
         // voice's params if absent.
-        const swappable = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid');
+        const swappable = (L.type === 'bass') || (L.type === 'beat');
         if (!swappable || (vsw.value !== 'kit' && vsw.value !== 'synth' && vsw.value !== 'sample')) { vsw.value = cur; return; }
+        // Synth (pitched walk) only exists on euclid layers; a random Beat can't be synth.
+        if (vsw.value === 'synth' && !((L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid'))) { vsw.value = cur; return; }
         L.voice = vsw.value;
         if (vsw.value === 'kit') {
           if (!L.kit) L.kit = 'tr808';

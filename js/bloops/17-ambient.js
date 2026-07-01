@@ -10306,13 +10306,33 @@
       });
       return base;
     }
+    // Composable-layer READOUT (Phase 3 scaffold): a compact "Voice · Source ·
+    // Generator" line under the card header, derived from the Phase-2a helpers.
+    // Read-only for now — it surfaces the composition the layer already IS, and is
+    // the anchor the coming voice/source/generator swap pickers will replace. Pure
+    // display (no audio, no state), so it's harness-neutral.
+    const _AMB_VOICE_LBL = { synth: 'Synth', kit: 'Kit', sample: 'Sample' };
+    const _AMB_GEN_LBL = { pad: 'Pad', walk: 'Walk', mutate: 'Mutate', euclid: 'Euclid',
+      random: 'Random', series: 'Series', riff: 'Riff', pedal: 'Pedal', held: 'Held',
+      sequence: 'Sequence', sampleChop: 'Sample chop' };
+    const _AMB_SRC_LBL = { scale: 'Scale', chord: 'Chord', wrap: 'Wrap', prog: 'Prog', degree: 'Degree', none: '' };
+    function _ambComposeReadoutHtml(inst) {
+      const t = inst.type;
+      const voice = _ambVoiceOf(inst, t), gen = _ambGeneratorOf(inst, t), src = _ambSourceKindOf(inst, t);
+      const parts = [_AMB_VOICE_LBL[voice] || voice];
+      if (src && src !== 'none') parts.push(_AMB_SRC_LBL[src] || src);
+      parts.push(_AMB_GEN_LBL[gen] || gen);
+      return '<div class="ambient-compose" aria-hidden="true" title="Voice · Note-source · Generator">' +
+        parts.map(t2 => '<span class="ambient-compose-tag">' + t2 + '</span>').join('<span class="ambient-compose-dot">·</span>') +
+        '</div>';
+    }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
       // Every layer (Shape included) starts collapsed — just its header — so a
       // fresh Bloom panel stays compact and you expand only what you're tuning.
       const _collapsed = ' collapsed';
-      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey);
+      let html = '<div class="ambient-layer' + _collapsed + '" data-inst="' + fkey + '">' + _ambHead(_ambLayerLabel(inst, sch.label), p + '-on', p + '-del', fkey) + _ambComposeReadoutHtml(inst);
       // Controls render into collapsible group sections (['grp', name] markers
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.

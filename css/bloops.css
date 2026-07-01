@@ -3402,7 +3402,16 @@
     .ambient-collapse::before { content: '▾'; display: inline-block; font-size: 0.8rem; transition: transform 0.12s ease; }
     .ambient-layer.collapsed .ambient-collapse::before { transform: rotate(-90deg); }
     /* Collapsed: hide everything in the layer except its head row. */
-    .ambient-layer.collapsed > *:not(.ambient-layer-head) { display: none; }
+    .ambient-layer.collapsed > *:not(.ambient-layer-head):not(.ambient-compose) { display: none; }
+    /* Composable-layer readout: Voice · Note-source · Generator, shown on the
+       card header (collapsed or not) as a compact derived summary. */
+    .ambient-compose { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 2px 2px 5px; margin: -2px 0 2px; }
+    .ambient-compose-tag {
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; color: #9aa3c4;
+      background: rgba(159, 122, 234, 0.12); border: 1px solid rgba(159, 122, 234, 0.28);
+      border-radius: 5px; padding: 1px 6px; line-height: 1.5; text-transform: uppercase;
+    }
+    .ambient-compose-dot { color: #4a4a63; font-size: 0.62rem; line-height: 1; }
     /* ---- Collapsible parameter groups (Voice / Pitch / Rhythm / …) ------- */
     .ambient-grp { margin: 6px 0 0; border-top: 1px solid #1c1c2e; }
     .ambient-grp:first-of-type { border-top: none; margin-top: 2px; }

@@ -3421,9 +3421,61 @@
       } finally { _ambProgStepOverride = null; }
       st.lastAt = tTo;
     }
-    // Bass = the euclid core rendered with a PITCHED voice: each hit is a proximity-
-    // constrained scale-degree walk (anchored to the root, resets per cycle).
-    function _ambEmitBass(E, inst, key, now, horizon, lead, space, cfg) {
+    // Voice-aware EUCLID emitter (Phase 4 Step 3): ONE onset engine, renderer
+    // chosen by the layer's voice. Synth → a proximity-constrained scale-degree
+    // walk (anchored to the root, resets per cycle); Kit → V interlocking drum
+    // voices. Because the onset SELECTION (pattern + rhythmVar + restProb draws) is
+    // identical either way, a Voice swap keeps the SAME onsets and only changes the
+    // sound — no template switch. `phaseStore` is the layer's phase-anchor map
+    // (bassPhase for a Bass-typed layer, runPhase for a Beat-typed one) so the
+    // type-keyed When-cursor / boundary logic still finds its anchor.
+    function _ambEmitEuclid(E, inst, key, now, horizon, lead, space, cfg, phaseStore, dfltType) {
+      // dfltType supplies the type-derived voice when the layer carries no explicit
+      // `voice` field AND no `.type` (the PRIMARY beat is `cfg.beat` with type in the
+      // key, not a field) — without it a primary Beat would derive to 'synth'.
+      if (_ambVoiceOf(inst, dfltType) === 'kit') {
+        const lenMs  = Math.max(60, inst.lengthMs | 0);
+        const pan    = _ambLayerPan(inst);
+        const V = Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
+        const VDRUM = [0, 2, 4, 3];
+        _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
+          const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
+          for (let v = 0; v < V && ctx.cap < 256; v++) {
+            const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, inst.euclidRegen | 0);
+            const vpan = (V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40)));
+            for (let bar = 0; bar < bars; bar++) {
+              for (let slot = 0; slot < steps; slot++) {
+                let hit = vpat[slot] === 1;
+                if (rVar > 0) {
+                  if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
+                  else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
+                }
+                if (!hit) continue;
+                if (restP > 0 && rnd() * 100 < restP) continue;
+                const at = cStart + (bar * steps + slot) * slotSec;
+                if (at < tFrom || at >= tTo) continue;
+                // Drum pitch: an explicit single drum (`inst.drum`, e.g. a Bass
+                // voice-swapped to Kit → one consistent drum on its mono rhythm),
+                // else the native Beat behaviour (random per hit at V=1, fixed
+                // per-voice drum when polyphonic). A native Beat has no `drum`
+                // field → unchanged (harness byte-identical).
+                const pc = (inst.drum != null) ? (inst.drum | 0) : ((V === 1) ? _ambPickDrumPc() : VDRUM[v]);
+                let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
+                const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, vpan), inst);
+                bp.volume = _ambApplyLevel(bp.volume, inst.level);
+                if (dmod) bp._detuneMod = dmod;
+                _ambKeyTime = at;
+                try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
+                ctx.cap++;
+                if (ctx.cap >= 256) break;
+              }
+              if (ctx.cap >= 256) break;
+            }
+          }
+        });
+        return;
+      }
+      // Synth (pitched) render.
       const lenMs  = Math.max(40, inst.lengthMs | 0);
       const pVar   = Math.max(0, Math.min(100, inst.pitchVar | 0));
       const proximity = Math.max(0, Math.min(100, inst.proximity | 0));
@@ -3432,7 +3484,7 @@
       const src    = _ambNotesOf(inst);
       const N      = Math.max(1, _ambScaleIntervals(src).length);
       const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per phrase cycle
-      _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, 'bassPhase', (ctx) => {
+      _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
         const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
         const pat = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
@@ -3479,6 +3531,10 @@
           if (ctx.cap >= 256) break;
         }
       });
+    }
+    // Bass-typed euclid layer → the voice-aware emitter, anchored in bassPhase.
+    function _ambEmitBass(E, inst, key, now, horizon, lead, space, cfg) {
+      _ambEmitEuclid(E, inst, key, now, horizon, lead, space, cfg, 'bassPhase', 'bass');
     }
 
     // ================= RUN engine ===================================
@@ -4407,44 +4463,11 @@
     // status bar / unit length span the bars, not a single hit). Each euclidean
     // pulse fires a drum from the layer's kit (random drum per hit, like the
     // simple Beat). `when` applies per phrase cycle.
-    // Beat euclid = the euclid core rendered with a DRUM voice: V interlocking
-    // voices over the same grid, each a distinct drum, weaving. V === 1 (default)
-    // keeps the single pattern + random-per-hit drum (harness byte-identical).
+    // Beat-typed euclid layer → the voice-aware emitter, anchored in runPhase.
+    // (A Beat renders drums because its voice derives to 'kit'; set voice='synth'
+    // and it renders the pitched walk on the SAME onsets.)
     function _ambEmitBeatEuclid(E, inst, key, now, horizon, lead, space, cfg) {
-      const lenMs  = Math.max(60, inst.lengthMs | 0);
-      const pan    = _ambLayerPan(inst);
-      const V = Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
-      const VDRUM = [0, 2, 4, 3];
-      _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, 'runPhase', (ctx) => {
-        const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
-        for (let v = 0; v < V && ctx.cap < 256; v++) {
-          const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, inst.euclidRegen | 0);
-          const vpan = (V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40)));
-          for (let bar = 0; bar < bars; bar++) {
-            for (let slot = 0; slot < steps; slot++) {
-              let hit = vpat[slot] === 1;
-              if (rVar > 0) {
-                if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
-                else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
-              }
-              if (!hit) continue;
-              if (restP > 0 && rnd() * 100 < restP) continue;
-              const at = cStart + (bar * steps + slot) * slotSec;
-              if (at < tFrom || at >= tTo) continue;
-              const pc = (V === 1) ? _ambPickDrumPc() : VDRUM[v];
-              let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
-              const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, vpan), inst);
-              bp.volume = _ambApplyLevel(bp.volume, inst.level);
-              if (dmod) bp._detuneMod = dmod;
-              _ambKeyTime = at;
-              try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
-              ctx.cap++;
-              if (ctx.cap >= 256) break;
-            }
-            if (ctx.cap >= 256) break;
-          }
-        }
-      });
+      _ambEmitEuclid(E, inst, key, now, horizon, lead, space, cfg, 'runPhase', 'beat');
     }
 
     // ================= SEQ engine ===================================
@@ -10363,7 +10386,11 @@
       // in-place conversion. Sample is disabled until the Seed rework (samples are
       // a separate subsystem; Sample binds Voice).
       const vid = 'ambient-' + inst.type + '-' + inst.id + '-voiceswap';
-      const vopts = [['synth', 'Synth', false], ['kit', 'Kit', false], ['sample', 'Sample', true]];
+      // Euclid layers (Bass / euclid Beat) share one onset engine, so they can
+      // TRUE-swap Synth↔Kit (same rhythm, different sound). Other layers can't yet,
+      // so their non-current voice is disabled. Sample awaits the Seed rework.
+      const vswap = (t === 'bass') || (t === 'beat' && inst.gen === 'euclid');
+      const vopts = [['synth', 'Synth', !(vswap || voice === 'synth')], ['kit', 'Kit', !(vswap || voice === 'kit')], ['sample', 'Sample', true]];
       const bits = ['<select id="' + vid + '" class="ambient-compose-sel" title="Voice — the sound family (Synth = pitched, Kit = drums). Sample comes with the Seed rework.">' +
         vopts.map(o => '<option value="' + o[0] + '"' + (o[0] === voice ? ' selected' : '') + (o[2] ? ' disabled' : '') + '>' + o[1] + '</option>').join('') + '</select>'];
       // Source chip: a button that opens the shared note-source menu (scale/chord/
@@ -10594,14 +10621,39 @@
       const vsw = el('voiceswap');
       if (vsw) vsw.addEventListener('change', () => {
         _E = E; const L = get(); if (!L) return;
-        const cur = _ambVoiceOf(L, L.type);
+        const cur = _ambVoiceOf(L);
         if (vsw.value === cur || vsw.value === 'sample') { vsw.value = cur; return; }
-        // Carry the euclid rhythm params so the pattern is PRESERVED across the
-        // voice change (only the sound family changes) — Bass ⇄ euclid Beat share
-        // pulses/steps/rotate/bars.
-        const RHY = ['pulses', 'steps', 'rotate', 'bars', 'euclidVoices', 'lengthMs', 'restProb', 'rhythmVar', 'accent'];
-        if (vsw.value === 'kit') _ambSwapGenerator(E, L, 'beat', _ambGeneratorOf(L, L.type) === 'euclid' ? 'euclidbeat' : 'randombeat', RHY);
-        else _ambSwapGenerator(E, L, 'bass', null, RHY);
+        // TRUE voice swap for euclid layers: flip the `voice` field, keep the TYPE
+        // and the onsets — the shared euclid emitter renders by voice, so the
+        // rhythm is preserved exactly (no template switch). Default the target
+        // voice's params if absent.
+        const swappable = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid');
+        if (!swappable || (vsw.value !== 'kit' && vsw.value !== 'synth')) { vsw.value = cur; return; }
+        L.voice = vsw.value;
+        if (vsw.value === 'kit') {
+          if (!L.kit) L.kit = 'tr808';
+          // One consistent drum on the layer's own (mono) rhythm — faithful to the
+          // pitched voice it came from, not a randomised full kit. (0 = kick.)
+          if (L.drum == null) L.drum = 0;
+          L.euclidVoices = 1;   // mono timing to match a pitched line
+        }
+        if (vsw.value === 'synth') {
+          if (!L.notes || typeof L.notes !== 'object') L.notes = { type: 'scale', scale: '' };
+          delete L.drum;   // back to a pitched voice — drop the single-drum pin
+        }
+        const key = L.type + ':' + L.id, store = (L.type === 'bass') ? 'bassPhase' : 'runPhase';
+        // Re-anchor so the new voice takes over promptly: drop scheduled-ahead
+        // old-voice hits (currently-sounding ones ring out) + reset lastAt so the
+        // next tick re-emits the SAME onsets with the new voice.
+        try {
+          const t0 = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, t0);
+          const st = E[store] && E[store][key]; if (st) st.lastAt = t0;
+        } catch (e) {}
+        _ambRenderExtras(E);
+        try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + key + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
+        if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+        if (typeof persistWorkspace === 'function') persistWorkspace();
       });
       sch.ctrls.forEach(c => {
         const k = c[0];

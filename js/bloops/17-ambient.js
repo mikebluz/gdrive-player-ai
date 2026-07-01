@@ -10614,6 +10614,30 @@
       if (k === 'unitsync') return _ambUnitSyncHtml(p);
       return '';
     }
+    // Render a PRIMARY (built-in) layer's card body from the schema — the same
+    // control markup as an extras card, but with the primary id scheme
+    // (p='ambient-<type>', no instance id) so the existing primary wiring binds it.
+    // Replaces the per-layer hardcoded template so a schema change draws on the
+    // built-ins too. Render-only: no data/dispatch/save-load change.
+    function _ambPrimaryCardBody(type, inst) {
+      const sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
+      const p = 'ambient-' + type, lk = type; inst = inst || {};
+      let html = '', grpOpen = false;
+      sch.ctrls.forEach(c => {
+        if (c[0] === 'grp') {
+          if (grpOpen) html += '</div></div>';
+          const name = c[1], open = _ambGroupOpen(inst, name);
+          html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
+            '<button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name +
+            '<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">';
+          grpOpen = true;
+        } else {
+          html += _ambCtrlHtml(c, p, lk, inst, type);
+        }
+      });
+      if (grpOpen) html += '</div></div>';
+      return html;
+    }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
@@ -12267,13 +12291,13 @@
       { const _nb = document.getElementById(tr('ambient-texture-notes')); if (_nb) _nb.textContent = _ambNotesLabel(_ambNotesOf(cfg.texture)); }
       set('ambient-texture-register', cfg.texture.register);
       set('ambient-texture-fill', cfg.texture.fill);
-      set('ambient-texture-interval', cfg.texture.intervalMs); hint('ambient-texture-interval-v', _ambFmtMs(cfg.texture.intervalMs));
-      set('ambient-texture-length', cfg.texture.lengthMs);     hint('ambient-texture-length-v', _ambFmtMs(cfg.texture.lengthMs));
-      set('ambient-texture-drift', cfg.texture.drift); set('ambient-texture-lenvary', cfg.texture.lenVary | 0);
+      set('ambient-texture-intervalMs', cfg.texture.intervalMs); hint('ambient-texture-intervalMs-v', _ambFmtMs(cfg.texture.intervalMs));
+      set('ambient-texture-lengthMs', cfg.texture.lengthMs);     hint('ambient-texture-lengthMs-v', _ambFmtMs(cfg.texture.lengthMs));
+      set('ambient-texture-drift', cfg.texture.drift); set('ambient-texture-lenVary', cfg.texture.lenVary | 0);
       setWhen('ambient-texture', cfg.texture.when);
-      set('ambient-texture-mutate', cfg.texture.mutateRate);
+      set('ambient-texture-mutateRate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
-       set('ambient-texture-areafade', cfg.texture.areaFadeMs); hint('ambient-texture-areafade-v', _ambFmtMs(cfg.texture.areaFadeMs));
+       set('ambient-texture-areaFadeMs', cfg.texture.areaFadeMs); hint('ambient-texture-areaFadeMs-v', _ambFmtMs(cfg.texture.areaFadeMs));
       chk('ambient-beat-on', cfg.beat.on);
       set('ambient-beat-kit', cfg.beat.kit);
       set('ambient-beat-drumpick', cfg.beat.drum == null ? '' : String(cfg.beat.drum | 0));
@@ -12554,34 +12578,7 @@
             fxUi('motif') + gpe() +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture', _ambComposePrimaryHtml('texture', _cfg0.texture)) +
-          grp('Voice') +
-            '<div class="ambient-ctrl"><label for="ambient-texture-tone">Tone</label><select id="ambient-texture-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-            sl('Attack', 'ambient-texture-attack', 0, 2000, 40, 'ms') +
-            sl('Decay', 'ambient-texture-decay', 0, 2000, 80, 'ms') +
-            sl('Sustain', 'ambient-texture-sustain', 0, 100, 0, '%') +
-            sl('Release', 'ambient-texture-release', 0, 4000, 240, 'ms') +
-            sl('Fine', 'ambient-texture-fine', -100, 100, 0, 'cents') +
-            sl('Portamento', 'ambient-texture-porta', 0, 2000, 0, 'ms glide between notes') + gpe() +
-          grp('Pitch') +
-            _ambNotesButtonHtml('ambient-texture') +
-            sl('Register', 'ambient-texture-register', 3, 7, 6, 'octave') + gpe() +
-          grp('Unit') +
-            tm('Interval', 'ambient-texture-interval', 80, 2000, 10, 450) +
-            _ambUnitSyncHtml('ambient-texture') + gpe() +
-          grp('Rhythm') +
-            sl('Fill', 'ambient-texture-fill', 0, 100, 35, 'sparse→busy') +
-            tm('Length', 'ambient-texture-length', 60, 2000, 10, 300) +
-            sl('Len var', 'ambient-texture-lenvary', 0, 100, 0, 'around Length') +
-            sl('Drift', 'ambient-texture-drift', 0, 99, 0, 'phase offset') +
-            condCtrl('texture') + gpe() +
-          grp('Variation') +
-            sl('Mutate', 'ambient-texture-mutate', 0, 100, 40, 'slow→fast') + gpe() +
-          grp('Mix') +
-            sl('Level', 'ambient-texture-level', 0, 100, 70, 'soft → boost') +
-            tm('Area fade', 'ambient-texture-areafade', 0, 4000, 50, 250) +
-            _ambSpreadCtrl('ambient-texture', null) +
-            modUi('texture') +
-            fxUi('texture') + gpe() +
+          _ambPrimaryCardBody('texture', _cfg0.texture) +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat', _ambComposePrimaryHtml('beat', _cfg0.beat)) +
           grp('Voice') +
@@ -13003,16 +13000,19 @@
       bind('ambient-motif-accent', 'motif', 'accent');
       bind('ambient-motif-level', 'motif', 'level');
       bindTime('ambient-motif-areafade', 'motif', 'areaFadeMs');
-      bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release'); bind('ambient-texture-fine', 'texture', 'fine'); bind('ambient-texture-porta', 'texture', 'portamento');
+      bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release'); bind('ambient-texture-fine', 'texture', 'fine'); bind('ambient-texture-portamento', 'texture', 'portamento');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');
-      bindTime('ambient-texture-interval', 'texture', 'intervalMs');
-      bindTime('ambient-texture-length', 'texture', 'lengthMs');
+      bindTime('ambient-texture-intervalMs', 'texture', 'intervalMs');
+      bindTime('ambient-texture-lengthMs', 'texture', 'lengthMs');
       bind('ambient-texture-drift', 'texture', 'drift');
-      bind('ambient-texture-lenvary', 'texture', 'lenVary');
-      bind('ambient-texture-mutate', 'texture', 'mutateRate');
+      bind('ambient-texture-lenVary', 'texture', 'lenVary');
+      bind('ambient-texture-mutateRate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
-      bindTime('ambient-texture-areafade', 'texture', 'areaFadeMs');
+      bindTime('ambient-texture-areaFadeMs', 'texture', 'areaFadeMs');
+      // Rate (free/sync) — the schema carries it for texture; the old hardcoded
+      // template didn't, so wire it now that the card renders from the schema.
+      { const rs = G('ambient-texture-rate'); if (rs) { const _tc = cfg0(); rs.value = (_tc && _tc.texture && _tc.texture.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.texture) return; c.texture.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-texture', c.texture); } catch (e) {} persist(); }); } }
       bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release'); bind('ambient-beat-fine', 'beat', 'fine'); bind('ambient-beat-porta', 'beat', 'portamento');
       bindTime('ambient-beat-interval', 'beat', 'intervalMs');
       bindTime('ambient-beat-length', 'beat', 'lengthMs');

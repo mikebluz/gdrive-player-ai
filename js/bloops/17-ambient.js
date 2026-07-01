@@ -3433,7 +3433,8 @@
       // dfltType supplies the type-derived voice when the layer carries no explicit
       // `voice` field AND no `.type` (the PRIMARY beat is `cfg.beat` with type in the
       // key, not a field) — without it a primary Beat would derive to 'synth'.
-      if (_ambVoiceOf(inst, dfltType) === 'kit') {
+      const _euVoice = _ambVoiceOf(inst, dfltType);
+      if (_euVoice === 'kit') {
         const lenMs  = Math.max(60, inst.lengthMs | 0);
         const pan    = _ambLayerPan(inst);
         const V = Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
@@ -3471,6 +3472,42 @@
               }
               if (ctx.cap >= 256) break;
             }
+          }
+        });
+        return;
+      }
+      // Sample render: each onset triggers a chosen sample (inst.sampleId) ONE-SHOT
+      // at a fixed pitch (like a drum but a custom buffer) — no scale walk. The hit
+      // selection (rVar/restP draws) matches the other voices, so a swap keeps the
+      // onsets. inst.samplePitch = ± semitone trigger offset (default C4).
+      if (_euVoice === 'sample') {
+        const lenMs = Math.max(60, inst.lengthMs | 0);
+        const pan   = _ambLayerPan(inst);
+        const tone  = inst.sampleId || '';
+        let f; try { f = Tone.Frequency(60 + (inst.samplePitch | 0), 'midi').toFrequency(); } catch (e) { f = 261.63; }
+        _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
+          const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
+          const pat = euclideanPattern(pulses, steps, rotate);
+          for (let bar = 0; bar < bars; bar++) {
+            for (let slot = 0; slot < steps; slot++) {
+              let hit = pat[slot] === 1;
+              if (rVar > 0) {
+                if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }
+                else      { if (rnd() * 100 < rVar * 0.22) hit = true; }
+              }
+              if (!hit) continue;
+              if (restP > 0 && rnd() * 100 < restP) continue;
+              const at = cStart + (bar * steps + slot) * slotSec;
+              if (at < tFrom || at >= tTo) continue;
+              const bp = _ambApplyAdsr(_ambBassParams(lenMs, pan, tone), inst);
+              bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
+              if (dmod) bp._detuneMod = dmod;
+              _ambKeyTime = at;
+              try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              ctx.cap++;
+              if (ctx.cap >= 256) break;
+            }
+            if (ctx.cap >= 256) break;
           }
         });
         return;
@@ -10392,7 +10429,8 @@
       // TRUE-swap Synth↔Kit (same rhythm, different sound). Other layers can't yet,
       // so their non-current voice is disabled. Sample awaits the Seed rework.
       const vswap = (t === 'bass') || (t === 'beat' && inst.gen === 'euclid');
-      const vopts = [['synth', 'Synth', !(vswap || voice === 'synth')], ['kit', 'Kit', !(vswap || voice === 'kit')], ['sample', 'Sample', true]];
+      const hasSamples = _ambHasSampleInsts();
+      const vopts = [['synth', 'Synth', !(vswap || voice === 'synth')], ['kit', 'Kit', !(vswap || voice === 'kit')], ['sample', 'Sample', !((vswap && hasSamples) || voice === 'sample')]];
       const bits = ['<select id="' + vid + '" class="ambient-compose-sel" title="Voice — the sound family (Synth = pitched, Kit = drums). Sample comes with the Seed rework.">' +
         vopts.map(o => '<option value="' + o[0] + '"' + (o[0] === voice ? ' selected' : '') + (o[2] ? ' disabled' : '') + '>' + o[1] + '</option>').join('') + '</select>'];
       // Source chip: a button that opens the shared note-source menu (scale/chord/
@@ -10495,6 +10533,25 @@
         voicesRow +
         '</div></div>';
     }
+    // Sample-instrument catalog (the 'sample:<id>' entries of the shared sound
+    // list) — the choices for a Sample-voice layer, and the gate for offering the
+    // Sample voice at all (empty ⇒ no samples loaded ⇒ option stays disabled).
+    function _ambSampleInstOpts() {
+      try { return (typeof getAllSoundOptions === 'function' ? getAllSoundOptions() : []).filter(o => o && typeof o.value === 'string' && o.value.indexOf('sample:') === 0); } catch (e) { return []; }
+    }
+    function _ambHasSampleInsts() { return _ambSampleInstOpts().length > 0; }
+    // Sample-voice params: a chosen sample triggered one-shot per onset + a ±semitone
+    // trigger-pitch offset. Injected only when the voice derives to 'sample'.
+    function _ambSamplePickHtml(inst, p) {
+      const opts = _ambSampleInstOpts();
+      const cur = inst.sampleId || (opts[0] && opts[0].value) || '';
+      return '<div class="ambient-grp open" data-grp="Sample"><button type="button" class="ambient-grp-head" data-grp="Sample">Sample<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">' +
+        '<div class="ambient-ctrl"><label for="' + p + '-samplepick">Sample</label><select id="' + p + '-samplepick" class="ambient-select">' +
+        (opts.length ? opts.map(o => '<option value="' + o.value + '"' + (o.value === cur ? ' selected' : '') + '>' + o.label + '</option>').join('') : '<option value="">(no samples)</option>') +
+        '</select><span class="ambient-hint">one-shot per hit</span></div>' +
+        '<div class="ambient-ctrl"><label for="' + p + '-samplepitch">Pitch</label><input type="range" id="' + p + '-samplepitch" class="ambient-range" min="-24" max="24" value="' + Math.max(-24, Math.min(24, inst.samplePitch | 0)) + '"><span class="ambient-hint">± semitones</span></div>' +
+        '</div></div>';
+    }
     function _ambInstCardHtml(inst) {
       const type = inst.type, sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const lk = type + '-' + inst.id, p = 'ambient-' + lk, fkey = type + ':' + inst.id;
@@ -10507,6 +10564,7 @@
       // carries no single-drum control. Voices row only for a swapped layer that
       // lacks euclidVoices (a native Beat has it in its Rhythm group).
       if (_ambVoiceOf(inst, type) === 'kit') html += _ambDrumPickHtml(inst, p, type !== 'beat');
+      else if (_ambVoiceOf(inst, type) === 'sample') html += _ambSamplePickHtml(inst, p);
       // Controls render into collapsible group sections (['grp', name] markers
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.
@@ -10536,10 +10594,10 @@
         if (k === 'unitsync') return _ambUnitSyncHtml(p);
         return '';
       };
-      // A Kit voice has no pitch material: hide the synth instrument (`tone`) and
-      // the whole Pitch group (notes/register/proximity). Keeps the card focused on
-      // what the drum render actually uses.
-      const kitVoice = _ambVoiceOf(inst, type) === 'kit';
+      // A Kit or Sample voice has no scale/pitch material: hide the synth instrument
+      // (`tone`) and the whole Pitch group (notes/register/proximity), so the card
+      // shows only what that render uses.
+      const kitVoice = ['kit', 'sample'].indexOf(_ambVoiceOf(inst, type)) >= 0;
       let skipGroup = false;
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
@@ -10658,13 +10716,13 @@
       if (vsw) vsw.addEventListener('change', () => {
         _E = E; const L = get(); if (!L) return;
         const cur = _ambVoiceOf(L);
-        if (vsw.value === cur || vsw.value === 'sample') { vsw.value = cur; return; }
+        if (vsw.value === cur) { vsw.value = cur; return; }
         // TRUE voice swap for euclid layers: flip the `voice` field, keep the TYPE
         // and the onsets — the shared euclid emitter renders by voice, so the
         // rhythm is preserved exactly (no template switch). Default the target
         // voice's params if absent.
         const swappable = (L.type === 'bass') || (L.type === 'beat' && L.gen === 'euclid');
-        if (!swappable || (vsw.value !== 'kit' && vsw.value !== 'synth')) { vsw.value = cur; return; }
+        if (!swappable || (vsw.value !== 'kit' && vsw.value !== 'synth' && vsw.value !== 'sample')) { vsw.value = cur; return; }
         L.voice = vsw.value;
         if (vsw.value === 'kit') {
           if (!L.kit) L.kit = 'tr808';
@@ -10676,6 +10734,11 @@
         if (vsw.value === 'synth') {
           if (!L.notes || typeof L.notes !== 'object') L.notes = { type: 'scale', scale: '' };
           delete L.drum;   // back to a pitched voice — drop the single-drum pin
+        }
+        if (vsw.value === 'sample') {
+          const so = _ambSampleInstOpts();
+          if (!L.sampleId) L.sampleId = (so[0] && so[0].value) || '';
+          delete L.drum;
         }
         const key = L.type + ':' + L.id, store = (L.type === 'bass') ? 'bassPhase' : 'runPhase';
         // Re-anchor so the new voice takes over promptly: drop scheduled-ahead
@@ -10698,6 +10761,11 @@
       if (dpk) dpk.addEventListener('change', () => { _E = E; const L = get(); if (!L) return; L.drum = (dpk.value === '') ? null : (dpk.value | 0); persist(); });
       const dvc = el('drumvoices');
       if (dvc) dvc.addEventListener('input', () => { _E = E; const L = get(); if (!L) return; L.euclidVoices = Math.max(1, Math.min(4, dvc.value | 0)); persist(); });
+      // Sample-voice controls (present only when the card injected them).
+      const spk = el('samplepick');
+      if (spk) spk.addEventListener('change', () => { _E = E; const L = get(); if (!L) return; L.sampleId = spk.value; persist(); });
+      const spp = el('samplepitch');
+      if (spp) spp.addEventListener('input', () => { _E = E; const L = get(); if (!L) return; L.samplePitch = Math.max(-24, Math.min(24, spp.value | 0)); persist(); });
       sch.ctrls.forEach(c => {
         const k = c[0];
         try {

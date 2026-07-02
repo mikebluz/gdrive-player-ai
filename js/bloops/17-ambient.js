@@ -5160,8 +5160,13 @@
         // OPEN panels via _ambUpdateEqMeters).
         const vcf = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.7 });
         vcf.connect(vca);
-        let eqAnalyser = null;
-        try { eqAnalyser = new Tone.Analyser('fft', 64); vca.connect(eqAnalyser); } catch (e) { eqAnalyser = null; }
+        // The per-layer FFT analyser (EQ band meters) is now created LAZILY by
+        // _ambUpdateEqMeters, only when THIS layer's EQ panel is actually open. An
+        // AnalyserNode buffers the incoming signal every render quantum, so one per
+        // layer is always-on audio-thread work for meters you're usually not looking
+        // at — 7 of them measurably taxes a dense stack. Same lazy rationale as the
+        // per-layer EQ3 above (built only when a band ≠ 0).
+        const eqAnalyser = null;
         const revSend = new Tone.Gain(0);
         levelGain.connect(revSend);   // reverb scales with level (still pre-gate, so tails ring through a gate mute)
         const rev = _ambEnsureReverb();
@@ -9027,7 +9032,12 @@
       const panels = host.querySelectorAll('details.ambient-eq[open]'); if (!panels.length) return;
       panels.forEach(d => {
         const key = _ambKeyOfCard(d.closest('.ambient-layer')); if (!key) return;
-        const e = E.mod && E.mod[key], an = e && e.eqAnalyser; if (!an) return;
+        const e = E.mod && E.mod[key]; if (!e || !e.vca) return;
+        // Lazy: this panel is open, so the layer needs its analyser now. Tap the VCA
+        // (a sink — doesn't alter the signal path); it stays until the layer is torn
+        // down. Layers whose EQ panel is never opened never pay for one.
+        let an = e.eqAnalyser;
+        if (!an) { try { an = e.eqAnalyser = new Tone.Analyser('fft', 64); e.vca.connect(an); } catch (x) { return; } }
         let data; try { data = an.getValue(); } catch (x) { return; }
         const n = data && data.length; if (!n) return;
         const loEnd = Math.max(1, Math.floor(n * 0.12)), midEnd = Math.max(loEnd + 1, Math.floor(n * 0.5));

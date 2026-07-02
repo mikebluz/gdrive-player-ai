@@ -1683,7 +1683,14 @@
     // KILL SWITCH: set to false to bypass the pool entirely (back to the
     // pre-pool behavior — fresh synth per note). Live debug toggle.
     const VOICE_POOL_ENABLED = true;
-    const VOICE_POOL_MAX_PER_PRESET = 8;
+    // Max idle synths kept per preset. Raised 8→32: a dense Bloom project can hold
+    // well over 8 simultaneous voices of ONE preset (e.g. bed chord + motif burst +
+    // riff all on FM), and every voice past the cap falls back to a fresh
+    // `new Tone.FMSynth` (~several ms) — a build burst that starved Tone's scheduler
+    // and cut audio out (see bloom-dense-project-perf). Idle pooled synths are
+    // DISCONNECTED (no audio-thread cost) and the pool fills lazily, so a higher cap
+    // is just a bit more retained memory in exchange for far fewer live constructions.
+    const VOICE_POOL_MAX_PER_PRESET = 32;
     const voicePools = new Map(); // preset key → { idle: [Tone synth] }
     function _ensurePool(key) {
       let p = voicePools.get(key);

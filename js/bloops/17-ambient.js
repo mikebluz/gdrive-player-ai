@@ -6926,7 +6926,16 @@
       let st = null;
       if (type === 'bass') st = E.bassPhase && E.bassPhase[key];
       else if (type === 'run' || type === 'pedal' || type === 'drone' || type === 'beat') st = E.runPhase && E.runPhase[key];
-      else if (type === 'arp') st = E.arpState && E.arpState[key];
+      else if (type === 'arp') {
+        // The SERIES arp anchors in E.arpState; the EUCLID arp (arp.euclid) anchors
+        // in E.runPhase (like Bass/Beat-euclid). Resume whichever store is live — else
+        // a thawed euclid arp regenerates over the flushed loop tail (doubled = loud).
+        const ap = E.arpState && E.arpState[key];
+        const rp = E.runPhase && E.runPhase[key];
+        if (ap && ap.startAt != null) ap.lastAt = tA;
+        if (rp && rp.startAt != null) rp.lastAt = tA;
+        return;
+      }
       if (st && st.startAt != null) st.lastAt = tA;
     }
     // Per-tick freeze gate. Returns true if the caller should SKIP generation

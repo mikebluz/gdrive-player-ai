@@ -405,11 +405,22 @@
       const s = _masterBloomState();
       const seq = (s.orch.mode === 'sequence');
       const act = s.areas[s.activeIdx] || {};
-      // Bar Lock: the auto loop length (LCM of capturable layers) for the readout.
-      const lockBars = act.barLock ? _ambAreaLoopBars(_masterEng, act) : 0;
-      const lockLabel = !act.barLock ? '' : (lockBars > 0
-        ? (lockBars + ' bar' + (lockBars === 1 ? '' : 's') + ' loop' + (lockBars > 64 ? ' ⚠' : '') + ' (auto)')
-        : 'no locked layers — Sync some');
+      // The NATURAL seamless unit (LCM of capturable layers) — shown as a readout
+      // beside the Bars picker AT ALL TIMES (locked or not), so the user can set Bars
+      // to it (or a multiple) BEFORE locking. When locked, the lock LOOP LENGTH is the
+      // user's Bars (a hard override); this readout flags a Bars value that doesn't tile
+      // the unit (⚠ = would cut a layer mid-cycle when locked).
+      const unitBars = _ambAreaLoopBars(_masterEng, act);
+      const _ub = Math.max(1, (act.bars | 0) || 4);
+      const _clean = unitBars > 0 && (_ub % unitBars === 0);
+      const unitLabel = unitBars > 0
+        ? ('◈ ' + unitBars + '-bar unit' + (_clean ? '' : ' ⚠'))
+        : '◈ no synced layers';
+      const unitTip = unitBars > 0
+        ? ('Natural seamless unit = ' + unitBars + ' bar' + (unitBars === 1 ? '' : 's') + ' (the LCM of this area’s capturable layers). Set Bars to it (or a multiple) for a seamless Bar-Lock loop. ' + (_clean
+            ? ('Bars ' + _ub + ' = ×' + (_ub / unitBars) + ' — tiles cleanly.')
+            : ('Bars ' + _ub + ' is NOT a multiple → locking would cut a layer mid-cycle (possible seam).')))
+        : 'No capturable (synced / bar-native) layers — Unit-Sync a layer so Bar Lock has something to loop.';
       // `.on` = viewed/edited area; `.playing` = the area the engine is sounding
       // (can differ while you edit another area mid-play).
       const play = (_masterEng.timer && Number.isFinite(_masterEng._playIdx)) ? _masterEng._playIdx : -1;
@@ -453,9 +464,8 @@
           // AUTO loop length (LCM); when off, a manual section length.
           '<button type="button" class="ambient-orch-lock' + (act.barLock ? ' on' : '') + '" title="Bar Lock — capture this area’s bar-rational (synced / bar-native) layers over their combined loop and repeat it verbatim; free layers keep improvising live over it.">🔒</button>' +
           '<label class="ambient-orch-lbl">Bars</label>' +
-          (act.barLock
-            ? '<span class="ambient-orch-loopbars" title="Auto loop length — the LCM of this area’s capturable layers (and the progression). Unit-Sync a layer to include it.">' + _ambEscText(lockLabel) + '</span>'
-            : '<select class="ambient-orch-bars" title="Length of one play of the current area (bars)">' + _ambNumOpts(Math.max(1, (act.bars | 0) || 4)) + '</select>') +
+          '<select class="ambient-orch-bars" title="Length of one play — and, when 🔒 Bar Lock is on, the loop length (a hard override of the natural unit shown beside it)">' + _ambNumOpts(Math.max(1, (act.bars | 0) || 4)) + '</select>' +
+          '<span class="ambient-orch-unit' + (_clean || unitBars <= 0 ? '' : ' warn') + '" title="' + _ambEscText(unitTip) + '">' + _ambEscText(unitLabel) + '</span>' +
           // Live bar / play counter (during playback) — schedule areas by what you see here.
           '<span class="ambient-orch-bar" aria-live="polite" title="Current bar (and play) of the area — use this to set Plays × Bars"></span>' +
         '</div>' +
@@ -567,8 +577,14 @@
       if (barsI) barsI.addEventListener('change', () => {
         const v = Math.max(1, Math.min(36, parseInt(barsI.value, 10) || 4)); barsI.value = String(v);
         masterAmbient.bars = v;
-        if (_viewIsPlaying()) _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays);
+        if (_viewIsPlaying()) {
+          // When locked, Bars IS the loop length — re-arm so the new length is captured
+          // at the next boundary (clear without resume = the old loop stops cleanly).
+          if (masterAmbient.barLock) { try { _ambBarLockClear(_masterEng, false); } catch (e) {} _masterEng._barLockArmed = false; }
+          _masterEng._orchDurSec = _ambAreaDurSec(_ambPlayCfg(_masterEng), _masterEng._curPlays);
+        }
         try { persistWorkspace(); } catch (e) {}
+        try { _ambRebuildMaster(); } catch (e) {}   // refresh the natural-unit readout + ⚠ flag (depends on Bars, shown locked or not)
       });
       const lockB = host.querySelector('.ambient-orch-lock');
       if (lockB) lockB.addEventListener('click', () => {
@@ -594,11 +610,9 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const bars  = Math.max(1, cfg.bars | 0);
       const plays = Number.isFinite(playsOverride) ? Math.max(1, playsOverride | 0) : Math.max(1, cfg.plays | 0);
-      // Bar Lock: the area's loop is the auto LCM of its capturable layers, not the
-      // manual `bars`. (No-capturable → 0 → fall back to manual bars.)
-      const loopBars = cfg.barLock ? _ambAreaLoopBars((typeof _masterEng !== 'undefined' ? _masterEng : null), cfg) : 0;
-      const useBars = (loopBars > 0) ? loopBars : bars;
-      return Math.max(0.25, useBars * plays * barSec);
+      // Bar Lock now HONORS the manual `bars` (a hard override of the natural unit),
+      // so one play = `bars` bars whether locked or not.
+      return Math.max(0.25, bars * plays * barSec);
     }
     function _ambGcd(a, b) { a = Math.abs(a | 0); b = Math.abs(b | 0); while (b) { const t = a % b; a = b; b = t; } return a || 1; }
     function _ambLcm(a, b) { a = Math.abs(a | 0); b = Math.abs(b | 0); if (!a || !b) return a || b || 1; return (a / _ambGcd(a, b)) * b; }
@@ -6820,8 +6834,11 @@
       if (E !== _masterEng || E._barLockArmed) return;
       const cfg = E._cfg; if (!cfg || !cfg.barLock) return;
       E._barLockArmed = true;   // attempt once
-      const loopBars = _ambAreaLoopBars(E, cfg);
-      if (!(loopBars > 0)) return;   // nothing capturable → everything stays live
+      if (!(_ambAreaLoopBars(E, cfg) > 0)) return;   // natural unit 0 = nothing capturable → everything stays live
+      // The lock LOOP length is the user's Bars (a hard override); the LCM is only the
+      // advisory "natural unit" readout. A Bars value that isn't a multiple can cut a
+      // layer mid-cycle (flagged with ⚠ in the UI) — the user's explicit choice.
+      const loopBars = Math.max(1, (cfg.bars | 0) || 4);
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const loopSec = loopBars * barSec;

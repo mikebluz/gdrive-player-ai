@@ -2534,6 +2534,12 @@
       color: #b2f5ea; white-space: nowrap; padding: 2px 6px;
       border: 1px solid rgba(79,209,197,0.30); border-radius: 6px; background: rgba(79,209,197,0.08);
     }
+    .ambient-orch-unit {
+      font: 600 0.66rem 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+      color: #8a8aa8; white-space: nowrap; padding: 2px 6px; cursor: help;
+      border: 1px solid rgba(138,138,168,0.30); border-radius: 6px; background: rgba(138,138,168,0.06);
+    }
+    .ambient-orch-unit.warn { color: #f6ad55; border-color: rgba(246,173,85,0.40); background: rgba(246,173,85,0.10); }
     .ambient-orch-sep { flex: 1 1 auto; }
     .ambient-orch-lbl { font-size: 0.68rem; color: #8a8aa8; }
     .ambient-orch-plays, .ambient-orch-bars {

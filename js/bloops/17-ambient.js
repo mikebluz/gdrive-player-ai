@@ -390,7 +390,21 @@
     // differ from the viewed/edited area = getCfg()). Lane/Shape: just getCfg().
     function _ambPlayCfg(E) {
       if (E === _masterEng && Number.isFinite(E._playIdx)) {
-        try { const s = _masterBloomState(); const a = s.areas[E._playIdx]; if (a) return _normalizeAmbientCfg(a); } catch (e) {}
+        try {
+          const s = _masterBloomState(); const a = s.areas[E._playIdx];
+          if (a) {
+            // Normalize ONCE per area, not every tick. _normalizeAmbientCfg is
+            // O(layer count) — it rebuilds a full default cfg via _defaultAmbientConfig()
+            // and re-normalizes every layer's mod/fx/unit/spread — and _ambTick calls this
+            // ~7×/s. Re-running it each tick is the layer-count-scaling cost that blows the
+            // tick's budget on dense stacks (main-thread starvation → audio underruns/cutout).
+            // Normalize stamps schemaVersion + mutates in place, so an already-current area
+            // is a pure no-op → skip it. A stale/raw area (version ≠ current) still gets
+            // normalized here, so this stays self-correcting + safe.
+            if (a.schemaVersion !== _AMB_SCHEMA_VERSION) _normalizeAmbientCfg(a);
+            return a;
+          }
+        } catch (e) {}
       }
       return E.getCfg();
     }

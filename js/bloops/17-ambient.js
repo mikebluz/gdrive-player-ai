@@ -9483,6 +9483,7 @@
       (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
         (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
         '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
+        '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
         (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
         (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
       '</div>' : '') +
@@ -11605,6 +11606,49 @@
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // ---- Custom layer PRESETS (user-saved compositions, global via localStorage) ----
+    // A preset = { name, type, cfg } where cfg is a deep copy of a composed layer.
+    // Saved presets appear in the Add-layer menu, so a composition becomes a
+    // reusable "layer type" across projects.
+    function _ambLoadLayerPresets() {
+      try { const s = localStorage.getItem('bloomLayerPresets'); const a = s ? JSON.parse(s) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; }
+    }
+    function _ambSaveLayerPresets(list) {
+      try { localStorage.setItem('bloomLayerPresets', JSON.stringify(list || [])); } catch (e) {}
+    }
+    function _ambSaveLayerAsPreset(E, key) {
+      _E = E; const L = _ambLayerByKey(E, key), type = String(key).split(':')[0];
+      if (!L || !_AMB_LAYER_SCHEMA[type]) { try { if (typeof showToast === 'function') showToast('Only Bloom layers can be saved as presets.'); } catch (e) {} return; }
+      const dflt = (L.name && String(L.name).trim()) || (type.charAt(0).toUpperCase() + type.slice(1));
+      let name = null; try { name = prompt('Save this layer as a preset — name:', dflt); } catch (e) {}
+      if (name == null) return;   // cancelled
+      name = String(name).trim() || dflt;
+      let copy = {}; try { copy = JSON.parse(JSON.stringify(L)); } catch (e) {}
+      delete copy.id; delete copy.present;
+      const list = _ambLoadLayerPresets();
+      list.push({ name: name, type: type, cfg: copy });
+      _ambSaveLayerPresets(list);
+      try { if (typeof showToast === 'function') showToast('Saved preset “' + name + '”'); } catch (e) {}
+    }
+    // Add a saved preset as a new extras layer (deep-copy its cfg onto a fresh id).
+    function _ambAddPreset(E, preset) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !preset || !_AMB_LAYER_SCHEMA[preset.type]) return;
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      let copy = {}; try { copy = JSON.parse(JSON.stringify(preset.cfg || {})); } catch (e) {}
+      const L = Object.assign(_ambDefaultLayer(preset.type, newId), copy, { id: newId, type: preset.type, present: true, on: true });
+      cfg.extras.push(L);
+      _ambRenderExtras(E);
+      try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + preset.type + ':' + newId + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    function _ambDeleteLayerPreset(idx) {
+      const list = _ambLoadLayerPresets();
+      if (idx < 0 || idx >= list.length) return;
+      const nm = list[idx].name; list.splice(idx, 1); _ambSaveLayerPresets(list);
+      try { if (typeof showToast === 'function') showToast('Deleted preset “' + nm + '”'); } catch (e) {}
+    }
     function _ambDeleteExtra(E, type, id) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras)) return;
       const idx = cfg.extras.findIndex(x => x.id === id && x.type === type);
@@ -12639,6 +12683,8 @@
         if (rb) { e.stopPropagation(); try { _ambRenameLayer(E, rb); } catch (err) { console.warn('Rename failed', err); } return; }
         const cb = e.target && e.target.closest && e.target.closest('.ambient-clone-btn');
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
+        const pb0 = e.target && e.target.closest && e.target.closest('.ambient-savepreset-btn');
+        if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
         const fl = e.target && e.target.closest && e.target.closest('.ambient-freezelock-btn');
@@ -13125,6 +13171,22 @@
         actions.push({ label: 'Sample — from Drive…', fn: () => {
           if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((sid) => _ambAddSampleLayerWith(E, sid));
         } });
+        // User-saved presets (from the ★ Save‑as‑preset button) — reusable across
+        // projects. Clicking adds; a "Remove a preset…" sub-menu deletes.
+        const _presets = _ambLoadLayerPresets();
+        if (_presets.length) {
+          actions.push('hr', { label: 'Your presets', disabled: true });
+          _presets.forEach((pr) => actions.push({ label: '✦ ' + pr.name, fn: () => _ambAddPreset(E, pr) }));
+          actions.push({ label: '✕ Remove a preset…', danger: true, fn: () => {
+            // Defer past the current menu's own dismiss (showCtxMenu runs a.fn()
+            // THEN dismissCtxMenu(), which would close the sub-menu we open here).
+            setTimeout(() => {
+              const del = _ambLoadLayerPresets().map((p, i) => ({ label: p.name, danger: true, fn: () => _ambDeleteLayerPreset(i) }));
+              const r2 = addLayerBtn.getBoundingClientRect();
+              if (typeof showCtxMenu === 'function') showCtxMenu(r2.left, r2.bottom + 4, del);
+            }, 0);
+          } });
+        }
         const r = addLayerBtn.getBoundingClientRect();
         if (typeof showCtxMenu === 'function') showCtxMenu(r.left, r.bottom + 4, actions);
         else _ambAddExtra(E, 'bed');

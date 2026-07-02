@@ -3191,7 +3191,7 @@
     .ambient-piano-toggle.active { color: #1a202c; background: #7fd6c4; border-color: #7fd6c4; }
     /* In the body controls row it reads as a pill, matching the Rename button. */
     .ambient-layer-topctrls .ambient-piano-toggle { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
-    .ambient-layer-topctrls .ambient-clone-btn { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
+    .ambient-layer-topctrls .ambient-clone-btn, .ambient-layer-topctrls .ambient-savepreset-btn { width: auto; height: auto; margin: 0; padding: 3px 10px; font: 600 0.72rem 'Segoe UI', sans-serif; }
     /* Enlarged (~31% over original) + rounded. Row wraps so the bigger pills
        never overflow (no horizontal scroll). */
     .ambient-layer-topctrls { gap: 8px; flex-wrap: wrap; }
@@ -3199,7 +3199,7 @@
     .ambient-layer-topctrls .ambient-rename-btn,
     .ambient-layer-topctrls .ambient-seq-del,
     .ambient-layer-topctrls .ambient-piano-toggle,
-    .ambient-layer-topctrls .ambient-clone-btn { padding: 4px 14px; font-size: 0.95rem; border-radius: 7px; }
+    .ambient-layer-topctrls .ambient-clone-btn, .ambient-layer-topctrls .ambient-savepreset-btn { padding: 4px 14px; font-size: 0.95rem; border-radius: 7px; }
     /* Keyboard strip — relative box; white keys tile (float), black keys overlay
        (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
     /* font-size:0 + nowrap kills inline-block gaps/wrap; inline-block (not float)
@@ -3317,13 +3317,14 @@
     }
     @media (hover: hover) { .ambient-rename-btn:hover { border-color: #9f7aea; color: #d6bcfa; } }
     /* Per-layer Clone ⧉ button — first of the right-hand cluster, just left of Solo. */
-    .ambient-clone-btn {
+    .ambient-clone-btn, .ambient-savepreset-btn {
       flex: 0 0 auto; width: 24px; height: 24px; padding: 0;
       border: 1px solid #2d2d3f; border-radius: 7px;
       background: transparent; color: #6b6b8a; cursor: pointer;
       font-size: 0.82rem; line-height: 1; transition: all 0.15s ease;
     }
     @media (hover: hover) { .ambient-clone-btn:hover { border-color: #9f7aea; color: #d6bcfa; } }
+    @media (hover: hover) { .ambient-savepreset-btn:hover { border-color: #f6e05e; color: #faf089; } }
     /* The toggle's label text lives in a span so rename can swap it live. */
     .ambient-layer-name { pointer-events: none; }
     /* Live unit-length readout (right of the rename button). Takes the middle

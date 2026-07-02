@@ -6341,7 +6341,7 @@
       // BPM-locked phrase over the lookahead (e.g. the Euclidean Beat). Anchors a
       // phase clock in E[anchorStore] and honors solo / freeze / queue / capture.
       const windowLayer = (key, lc, anchorStore, emit) => {
-        if (!lc) return;
+        if (!lc || lc.present === false) return;   // deleted layer (present=false) → silent, like runLayer
         if (_muted(lc)) return;
         const gate = _qGate(key, !!lc.on, (t) => { if (!E[anchorStore]) E[anchorStore] = {}; E[anchorStore][key] = { startAt: t, lastAt: null }; });
         if (!gate.run) return;
@@ -10614,6 +10614,16 @@
       if (k === 'unitsync') return _ambUnitSyncHtml(p);
       return '';
     }
+    // Bed per-chord-voice tone selects (structured Chords/Monk modes) — a bed-only
+    // control the schema doesn't carry. Injected into the primary Bed card; ids
+    // 'ambient-bed-cvt-0..5' match the existing primary cvt wiring.
+    function _ambBedCvtHtml(p) {
+      return '<div class="ambient-grp" data-grp="Chord voices"><button type="button" class="ambient-grp-head" data-grp="Chord voices">Chord voices<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">' +
+        '<div class="ambient-ctrl ambient-cvt-head"><label>Per-voice tone</label><span class="ambient-hint">Chords / Monk</span></div>' +
+        [['0', 'Root'], ['1', '3rd'], ['2', '5th'], ['3', '7th'], ['4', '9th'], ['5', '11th']].map(v =>
+          '<div class="ambient-ctrl"><label for="' + p + '-cvt-' + v[0] + '">' + v[1] + '</label><select id="' + p + '-cvt-' + v[0] + '" class="ambient-select ambient-bed-cvt"></select></div>').join('') +
+        '</div></div>';
+    }
     // Render a PRIMARY (built-in) layer's card body from the schema — the same
     // control markup as an extras card, but with the primary id scheme
     // (p='ambient-<type>', no instance id) so the existing primary wiring binds it.
@@ -10640,6 +10650,8 @@
         }
       });
       if (grpOpen) html += '</div></div>';
+      // Bed-only: the per-chord-voice tone selects (not in the schema).
+      if (type === 'bed') html += _ambBedCvtHtml(p);
       return html;
     }
     function _ambInstCardHtml(inst) {
@@ -12259,19 +12271,19 @@
       set('ambient-bed-density', cfg.bed.density);
       set('ambient-bed-chordmode', cfg.bed.chordMode || 'chaos');
       set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
-      set('ambient-bed-chordlen', (cfg.bed.chordPhraseLen | 0) || 4);
-      set('ambient-bed-chordreps', (cfg.bed.chordRepeats | 0) || 4);
+      set('ambient-bed-chordPhraseLen', (cfg.bed.chordPhraseLen | 0) || 4);
+      set('ambient-bed-chordRepeats', (cfg.bed.chordRepeats | 0) || 4);
       set('ambient-bed-register', cfg.bed.register);
       set('ambient-bed-spread', cfg.bed.spread);
-      set('ambient-bed-interval', cfg.bed.intervalMs); hint('ambient-bed-interval-v', _ambFmtMs(cfg.bed.intervalMs));
-      set('ambient-bed-length', cfg.bed.lengthMs);     hint('ambient-bed-length-v', _ambFmtMs(cfg.bed.lengthMs));
-      set('ambient-bed-drift', cfg.bed.drift); set('ambient-bed-lenvary', cfg.bed.lenVary | 0);
+      set('ambient-bed-intervalMs', cfg.bed.intervalMs); hint('ambient-bed-intervalMs-v', _ambFmtMs(cfg.bed.intervalMs));
+      set('ambient-bed-lengthMs', cfg.bed.lengthMs);     hint('ambient-bed-lengthMs-v', _ambFmtMs(cfg.bed.lengthMs));
+      set('ambient-bed-drift', cfg.bed.drift); set('ambient-bed-lenVary', cfg.bed.lenVary | 0);
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-strum', cfg.bed.strum);
-      set('ambient-bed-strumfid', cfg.bed.strumFidelity);
+      set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
-       set('ambient-bed-areafade', cfg.bed.areaFadeMs); hint('ambient-bed-areafade-v', _ambFmtMs(cfg.bed.areaFadeMs));
+       set('ambient-bed-areaFadeMs', cfg.bed.areaFadeMs); hint('ambient-bed-areaFadeMs-v', _ambFmtMs(cfg.bed.areaFadeMs));
       chk('ambient-motif-on', cfg.motif.on);
       set('ambient-motif-tone', cfg.motif.tone);
       set('ambient-motif-attack', cfg.motif.attack); set('ambient-motif-decay', cfg.motif.decay); set('ambient-motif-sustain', cfg.motif.sustain); set('ambient-motif-release', cfg.motif.release); set('ambient-motif-fine', cfg.motif.fine);
@@ -12503,49 +12515,7 @@
           '</details>' +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('bed', 'Bed'), 'ambient-bed-on', 'ambient-bed-del', 'bed', _ambComposePrimaryHtml('bed', _cfg0.bed)) +
-          grp('Voice') +
-            '<div class="ambient-ctrl"><label for="ambient-bed-tone">Tone</label><select id="ambient-bed-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-            sl('Attack', 'ambient-bed-attack', 0, 8000, 2000, 'ms') +
-            sl('Decay', 'ambient-bed-decay', 0, 4000, 200, 'ms') +
-            sl('Sustain', 'ambient-bed-sustain', 0, 100, 85, '%') +
-            sl('Release', 'ambient-bed-release', 0, 12000, 3650, 'ms') +
-            sl('Fine', 'ambient-bed-fine', -100, 100, 0, 'cents') +
-            sl('Portamento', 'ambient-bed-porta', 0, 2000, 0, 'ms glide between notes') + gpe() +
-          grp('Pitch') +
-            _ambNotesButtonHtml('ambient-bed') +
-            '<div class="ambient-ctrl"><label for="ambient-bed-chordmode">Chords</label><select id="ambient-bed-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>' +
-            sl('Density', 'ambient-bed-density', 1, 8, 4, 'voices') +
-            sl('Register', 'ambient-bed-register', 2, 6, 4, 'octave') +
-            sl('Spread', 'ambient-bed-spread', 0, 3, 2, '± oct') + gpe() +
-          grp('Unit') +
-            tm('Interval', 'ambient-bed-interval', 200, 12000, 50, 4750) +
-            _ambUnitSyncHtml('ambient-bed') +
-            // Chord-mode repeat structure (inert in Chaos): play a phrase of N
-            // chords, repeat it M times, then a fresh phrase.
-            sl('Repeat', 'ambient-bed-chordlen', 1, 16, 4, 'chords / phrase') +
-            sl('Times', 'ambient-bed-chordreps', 1, 16, 4, 'phrase repeats') +
-            // Per-chord-voice tones (structured Chords/Monk modes): each chord position can
-            // carry its own timbre. '' = the bed's own Tone. Inert in Chaos (which uses the
-            // wrap-ensemble's per-degree tones instead).
-            '<div class="ambient-ctrl ambient-cvt-head"><label>Chord voices</label><span class="ambient-hint">per-voice tone · Chords/Monk</span></div>' +
-            [['0', 'Root'], ['1', '3rd'], ['2', '5th'], ['3', '7th'], ['4', '9th'], ['5', '11th']].map(p =>
-              '<div class="ambient-ctrl"><label for="ambient-bed-cvt-' + p[0] + '">' + p[1] + '</label><select id="ambient-bed-cvt-' + p[0] + '" class="ambient-select ambient-bed-cvt"></select></div>').join('') + gpe() +
-          grp('Rhythm') +
-            tm('Length', 'ambient-bed-length', 300, 16000, 100, 6650) +
-            sl('Len var', 'ambient-bed-lenvary', 0, 100, 0, 'around Length') +
-            sl('Drift', 'ambient-bed-drift', 0, 99, 0, 'phase offset') +
-            '<div class="ambient-ctrl"><label for="ambient-bed-choke">Choke</label><select id="ambient-bed-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>' +
-            condCtrl('bed') + gpe() +
-          grp('Variation') +
-            sl('Motion', 'ambient-bed-motion', 0, 100, 30, 'detune') +
-            sl('Strum', 'ambient-bed-strum', 0, 100, 0, 'chord → arp') +
-            sl('Fidelity', 'ambient-bed-strumfid', 0, 100, 0, 'in order → random') + gpe() +
-          grp('Mix') +
-            sl('Level', 'ambient-bed-level', 0, 100, 70, 'soft → boost') +
-            tm('Area fade', 'ambient-bed-areafade', 0, 4000, 50, 250) +
-            _ambSpreadCtrl('ambient-bed', null) +
-            modUi('bed') +
-            fxUi('bed') + gpe() +
+          _ambPrimaryCardBody('bed', _cfg0.bed) +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif', _ambComposePrimaryHtml('motif', _cfg0.motif)) +
           _ambPrimaryCardBody('motif', _cfg0.motif) +
@@ -12893,12 +12863,12 @@
           applyDyn();
         });
       }
-      bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release'); bind('ambient-bed-fine', 'bed', 'fine'); bind('ambient-bed-porta', 'bed', 'portamento');
+      bind('ambient-bed-attack', 'bed', 'attack'); bind('ambient-bed-decay', 'bed', 'decay'); bind('ambient-bed-sustain', 'bed', 'sustain'); bind('ambient-bed-release', 'bed', 'release'); bind('ambient-bed-fine', 'bed', 'fine'); bind('ambient-bed-portamento', 'bed', 'portamento');
       bind('ambient-bed-density', 'bed', 'density');
       bind('ambient-bed-register', 'bed', 'register');
       bind('ambient-bed-spread', 'bed', 'spread');
-      bind('ambient-bed-chordlen', 'bed', 'chordPhraseLen');
-      bind('ambient-bed-chordreps', 'bed', 'chordRepeats');
+      bind('ambient-bed-chordPhraseLen', 'bed', 'chordPhraseLen');
+      bind('ambient-bed-chordRepeats', 'bed', 'chordRepeats');
       { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; cfg.bed.choke = (cfg.bed.chordMode !== 'chaos'); const ck = G('ambient-bed-choke'); if (ck) ck.value = cfg.bed.choke ? '1' : '0'; persist(); }); }
       // Per-chord-voice tones (structured modes) — populate, load + bind the 6 voice selects.
       ['0', '1', '2', '3', '4', '5'].forEach(i => {
@@ -12914,15 +12884,17 @@
         });
       });
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
-      bindTime('ambient-bed-interval', 'bed', 'intervalMs');
-      bindTime('ambient-bed-length', 'bed', 'lengthMs');
+      bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
+      bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');
       bind('ambient-bed-drift', 'bed', 'drift');
-      bind('ambient-bed-lenvary', 'bed', 'lenVary');
+      bind('ambient-bed-lenVary', 'bed', 'lenVary');
       bind('ambient-bed-motion', 'bed', 'motion');
       bind('ambient-bed-strum', 'bed', 'strum');
-      bind('ambient-bed-strumfid', 'bed', 'strumFidelity');
+      bind('ambient-bed-strumFidelity', 'bed', 'strumFidelity');
       bind('ambient-bed-level', 'bed', 'level');
-      bindTime('ambient-bed-areafade', 'bed', 'areaFadeMs');
+      bindTime('ambient-bed-areaFadeMs', 'bed', 'areaFadeMs');
+      // Rate (schema carries it; old bed template didn't).
+      { const rs = G('ambient-bed-rate'); if (rs) { const _bc = cfg0(); rs.value = (_bc && _bc.bed && _bc.bed.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; c.bed.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-bed', c.bed); } catch (e) {} persist(); }); } }
       bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-portamento', 'motif', 'portamento');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');

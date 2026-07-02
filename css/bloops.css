@@ -3421,6 +3421,16 @@
       border-radius: 5px; padding: 2px 8px; line-height: 1.5; text-transform: uppercase;
     }
     .ambient-compose-dot { color: #4a4a63; font-size: 0.81rem; line-height: 1; }
+    /* Sample record button + recording overlay. */
+    .ambient-srcbtn-rec { color: #fc8181 !important; }
+    .amb-rec-overlay { position: fixed; inset: 0; z-index: 100000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); }
+    .amb-rec-box { display: flex; align-items: center; gap: 12px; background: #1a1a24; border: 1px solid #3a3a4f; border-radius: 12px; padding: 16px 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    .amb-rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #fc5151; animation: amb-rec-blink 1s steps(2) infinite; }
+    @keyframes amb-rec-blink { 50% { opacity: 0.25; } }
+    .amb-rec-label { color: #e2e8f0; font: 600 0.9rem 'Segoe UI', sans-serif; }
+    .amb-rec-time { color: #9aa3c4; font: 600 0.9rem 'Segoe UI', monospace; min-width: 3ch; }
+    .amb-rec-stop { border: 1px solid #fc5151; border-radius: 8px; background: rgba(252,81,81,0.15); color: #feb2b2; cursor: pointer; font: 600 0.85rem 'Segoe UI', sans-serif; padding: 6px 14px; }
+    .amb-rec-stop:hover { background: rgba(252,81,81,0.28); }
     /* Generator tag is an interactive swap picker — a chip-styled <select>. */
     .ambient-compose-sel {
       font: 600 0.81rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; text-transform: uppercase;

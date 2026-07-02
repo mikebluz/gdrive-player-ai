@@ -9997,7 +9997,7 @@
     function _ambSampleLayerHtml(s, i) {
       const id = s.id, p = 'ambient-samp-' + id + '-';
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
-      const nm = String(s.name || s.sampleId || 'sample').replace(/[<>&"]/g, '');
+      const nm = String(s.name || s.sampleId || '(no sample — import below)').replace(/[<>&"]/g, '');
       // Interval/Length ceiling = the loaded sample's length (dynamic). Fallback (buffer
       // not decoded yet) keeps the current value un-clamped; _ambSyncSampleMax fixes it on load.
       const _durMs = _ambSampleDurMs(s.sampleId);
@@ -10011,6 +10011,7 @@
           '<div class="ambient-ctrl ambient-samp-srcbtns">' +
             '<button type="button" class="ambient-srcbtn" id="' + p + 'import" title="Replace this layer’s sample with an audio file">+ Import…</button>' +
             '<button type="button" class="ambient-srcbtn" id="' + p + 'drive" title="Replace this layer’s sample with audio from a Google Drive folder">☁ Drive…</button>' +
+            '<button type="button" class="ambient-srcbtn ambient-srcbtn-rec" id="' + p + 'rec" title="Record this layer’s sample from the microphone">● Record</button>' +
             '<button type="button" class="ambient-srcbtn" id="' + p + 'edit" title="Trim / reverse this layer’s sample (saves as a new sample)">✂ Edit…</button>' +
           '</div>' +
           _ambSl('Attack', p + 'attack', 0, 2000, s.attack, 'ms') +
@@ -10114,6 +10115,8 @@
       if (impB) impB.addEventListener('click', () => { if (typeof triggerImportSample === 'function') triggerImportSample((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
       const drvB = el('drive');
       if (drvB) drvB.addEventListener('click', () => { if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
+      const recB = el('rec');
+      if (recB) recB.addEventListener('click', () => { if (typeof triggerRecordSample === 'function') triggerRecordSample((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
       const edtB = el('edit');
       if (edtB) edtB.addEventListener('click', () => {
         const L = getL(); if (!L) return;
@@ -10213,6 +10216,24 @@
         if (last) { last.classList.remove('collapsed'); last.scrollIntoView({ block: 'nearest' }); }
       } catch (e) {}
       if (typeof showToast === 'function') showToast('Added sample layer.');
+    }
+    // Add an EMPTY sample layer (no source yet) — the user imports from file or
+    // Drive using the card's own Import buttons. One "Sample" add-menu entry that
+    // creates the layer first, rather than forcing an import up front.
+    function _ambAddSampleLayer(E) {
+      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+      if (!Array.isArray(cfg.samples)) cfg.samples = [];
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Add Bloom sample layer');
+      const newId = cfg.samples.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      cfg.samples.push(_defaultSampleLayer(newId));   // sampleId '' — import in the card
+      try { _ambRenderSampleLayers(E); } catch (e) {}
+      try {
+        const wrap = _ambGet(E, 'ambient-sample-layers');
+        const last = wrap && wrap.querySelector('.ambient-layer[data-samp-id]:last-child');
+        if (last) { last.classList.remove('collapsed'); last.scrollIntoView({ block: 'nearest' }); }
+      } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     // Set / replace an existing Sample layer's source from an imported sample id,
     // updating the Source name in place (no full re-render → the layer stays open).
@@ -13163,14 +13184,9 @@
         actions.push({ label: 'Pedal', fn: () => _ambAddExtra(E, 'pedal') });
         // Drone: holds a note/chord, re-struck every N units (extras-only).
         actions.push({ label: 'Drone', fn: () => _ambAddExtra(E, 'drone') });
-        // Sample layers: import an audio file (local or from a Google Drive
-        // folder) and drop it in as a new Sample layer in one step.
-        actions.push({ label: 'Sample — from file…', fn: () => {
-          if (typeof triggerImportSample === 'function') triggerImportSample((sid) => _ambAddSampleLayerWith(E, sid));
-        } });
-        actions.push({ label: 'Sample — from Drive…', fn: () => {
-          if (typeof triggerImportSampleFromDrive === 'function') triggerImportSampleFromDrive((sid) => _ambAddSampleLayerWith(E, sid));
-        } });
+        // Sample: one entry that adds an empty Sample layer; the user imports its
+        // source (file or Drive) with the Import buttons in the layer card.
+        actions.push({ label: 'Sample', fn: () => _ambAddSampleLayer(E) });
         // User-saved presets (from the ★ Save‑as‑preset button) — reusable across
         // projects. Clicking adds; a "Remove a preset…" sub-menu deletes.
         const _presets = _ambLoadLayerPresets();

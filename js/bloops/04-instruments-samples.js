@@ -1431,6 +1431,46 @@
       input.click();
     }
 
+    // Record a sample from the mic → register it as a sample:<id> and call back.
+    // Shows a minimal recording overlay with a Stop button.
+    async function triggerRecordSample(onLoaded) {
+      if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Recording is not supported in this browser.'); return;
+      }
+      try { await Tone.start(); } catch (e) {}
+      let stream;
+      try {
+        const raw = { channelCount: { ideal: 2 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: raw }); }
+        catch (e2) { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      } catch (e) { alert('Could not access microphone: ' + (e.message || e)); return; }
+      const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+      const mimeType = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const chunks = [];
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      const ov = document.createElement('div');
+      ov.className = 'amb-rec-overlay';
+      ov.innerHTML = '<div class="amb-rec-box"><span class="amb-rec-dot"></span><span class="amb-rec-label">Recording…</span><span class="amb-rec-time">0:00</span><button type="button" class="amb-rec-stop">■ Stop</button></div>';
+      document.body.appendChild(ov);
+      // Body-attached overlays get force-hidden by view-mode CSS (body.<mode> > *:not(...) { display:none !important });
+      // beat it with an inline !important (the documented pattern for this codebase).
+      ov.style.setProperty('display', 'flex', 'important');
+      const t0 = Date.now();
+      const timer = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); const el = ov.querySelector('.amb-rec-time'); if (el) el.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, 250);
+      const cleanup = () => { clearInterval(timer); try { stream.getTracks().forEach(t => t.stop()); } catch (e) {} try { ov.remove(); } catch (e) {} };
+      recorder.onstop = async () => {
+        if (chunks.length === 0) { cleanup(); return; }
+        try {
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          const { id, name } = await registerSampleFromBlob(blob, 'Recording');
+          cleanup();
+          if (typeof onLoaded === 'function') onLoaded(id, name);
+        } catch (e) { console.warn('Record sample failed', e); cleanup(); alert('Could not save the recording.'); }
+      };
+      ov.querySelector('.amb-rec-stop').addEventListener('click', () => { try { recorder.stop(); } catch (e) { cleanup(); } });
+      try { recorder.start(); } catch (e) { cleanup(); alert('Recorder start failed: ' + (e.message || e)); }
+    }
     // Remembered between opens so re-importing from the same Drive folder is one tap.
     let _lastDriveSampleFolder = 'bloops/samples';
     // List the audio files directly inside a Drive folder (paged), keeping

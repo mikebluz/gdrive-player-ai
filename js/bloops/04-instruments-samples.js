@@ -1905,6 +1905,34 @@
     })();
     const VOICE_CAP = _IS_IOS_LIKE ? 16 : 24;
     const _activeVoices = []; // FIFO; oldest at index 0
+    // DSP weight of a voice in "plain synth" units — the cap below is a RENDER
+    // budget, not a headcount. 24 plain voices measured free, but 24 design
+    // voices (per-voice filter = two biquads + param signals, plus a mod rig)
+    // ran the audio render thread at ~1.3× real time → glitches/dropout on
+    // dense projects (bloom-dense-project-perf). Weighting keeps a plain
+    // project's behavior byte-identical (cost 1 each = the old count cap)
+    // while design-heavy stacks settle at the concurrency the render thread
+    // can actually carry, shedding the most-decayed tails first as always.
+    function _voiceDspCost(params, oscD) {
+      let c = 1;
+      try {
+        if (params) {
+          if (params.filter && params.filter.on) c += 1;
+          if (Array.isArray(params.modMatrix) && params.modMatrix.length) c += 0.5;
+        }
+        if (oscD) {
+          if (oscD.sub > 0) c += 0.5;
+          if (oscD.ring > 0) c += 0.5;
+          if (oscD.unison > 1) c += 0.15 * (oscD.unison - 1);
+        }
+      } catch (e) {}
+      return c;
+    }
+    function _activeVoiceCost() {
+      let s = 0;
+      for (let i = 0; i < _activeVoices.length; i++) s += _activeVoices[i].dspCost || 1;
+      return s;
+    }
     // Pick which voice to shed when over the cap. Stealing the OLDEST voice
     // unconditionally chops the long-sustaining FOUNDATION (bed / drone / pedal
     // pads start earliest, so they're always at index 0) every time a rapid short
@@ -1941,7 +1969,9 @@
       // which silently kills the entire render except the last 24
       // voices. Bypass the cap when an offline render is in flight.
       if (_offlineSamplerOverride) return;
-      while (_activeVoices.length > VOICE_CAP) {
+      // Budgeted by DSP cost, not headcount (see _voiceDspCost) — plain voices
+      // cost 1 so simple projects keep the exact old count behavior.
+      while (_activeVoiceCost() > VOICE_CAP && _activeVoices.length > 1) {
         const idx = _pickVoiceVictim();
         const victim = _activeVoices.splice(idx, 1)[0];
         if (!victim) break;
@@ -3927,7 +3957,7 @@
       const synthLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
-      const voiceEntry = { synth, effectNodes, pooledPreset, disposeTimer: null, registerTimer: null };
+      const voiceEntry = { synth, effectNodes, pooledPreset, dspCost: _voiceDspCost(params, _sdOscD), disposeTimer: null, registerTimer: null };
       // When this voice enters its release tail (Tone-context time) + how long
       // that release lasts — drives release-aware voice stealing
       // (_pickVoiceVictim): a sustaining pad isn't chopped by a rapid short layer,

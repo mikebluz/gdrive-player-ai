@@ -289,6 +289,67 @@
       return Array.isArray(params && params.modMatrix)
         && params.modMatrix.some(r => r.dest === 'amp' && r.amount);
     }
+    // Evaluate a mod source as a plain JS function of time (seconds since voice
+    // start) — used for FILTER destinations, where a connected signal (or any
+    // continuously-ramping automation) makes Chrome recompute biquad
+    // coefficients at audio rate: 24 design voices with one LFO→cutoff each
+    // dropped the audio clock to ~0.82× real time (the dense-project cut-out),
+    // while STEPPED/held automation on the same param measured free. Returns
+    // null when the source is unavailable/off.
+    function _sdModSrcFn(id, params, ctx) {
+      const vel = (ctx && ctx.velocity != null) ? ctx.velocity : 1;
+      const dur = Math.max(0.02, (ctx && ctx.dur) || 0.3);
+      const lfos = Array.isArray(params.lfos) ? params.lfos : [];
+      const macros = Array.isArray(params.macros) ? params.macros : [];
+      if (id === 'lfo1' || id === 'lfo2') {
+        const lf = lfos[id === 'lfo1' ? 0 : 1];
+        if (!lf || !lf.on) return null;
+        const rate = Math.max(0.01, lf.rateHz || 1);
+        const shape = lf.shape || 'sine';
+        if (shape === 'smooth' || shape === 'sharp') {
+          // Stochastic: precompute random control points once per voice
+          // (fresh values at the LFO rate, like the Signal-stepped version).
+          const step = 1 / Math.max(0.05, lf.rateHz || 1);
+          const count = Math.min(240, Math.ceil((dur + 2.5) / step)) + 1;
+          const pts = [];
+          for (let k = 0; k <= count; k++) pts.push(Math.random() * 2 - 1);
+          return (t) => {
+            const x = Math.max(0, t / step), i = Math.min(count - 1, Math.floor(x));
+            if (shape === 'sharp') return pts[i];
+            const fr = Math.min(1, x - i);
+            return pts[i] + (pts[Math.min(count, i + 1)] - pts[i]) * fr;
+          };
+        }
+        return (t) => {
+          const ph = (t * rate) % 1;
+          if (shape === 'triangle') return ph < 0.5 ? (ph * 4 - 1) : (3 - ph * 4);
+          if (shape === 'sawtooth') return ph * 2 - 1;
+          if (shape === 'square') return ph < 0.5 ? 1 : -1;
+          return Math.sin(ph * 2 * Math.PI);
+        };
+      }
+      if (id === 'env2') {
+        const e = params.env2;
+        if (!e || !e.on) return null;
+        const a = Math.max(0.001, (e.attack || 0) / 1000), d = Math.max(0.001, (e.decay || 0) / 1000);
+        const s = Math.max(0, Math.min(1, (e.sustain || 0) / 100)), r = Math.max(0.001, (e.release || 0) / 1000);
+        return (t) => {
+          if (t <= 0) return 0;
+          if (t < a) return t / a;
+          if (t < a + d) return 1 - (1 - s) * ((t - a) / d);
+          if (t < dur) return s;
+          return Math.max(0, s * (1 - (t - dur) / r));
+        };
+      }
+      if (id === 'vel') return () => vel;
+      if (id.indexOf('macro') === 0) {
+        const m = macros[parseInt(id.slice(5), 10) - 1];
+        const v = m ? Math.max(0, Math.min(1, (m.value || 0) / 100)) : 0;
+        return () => v;
+      }
+      return null;
+    }
+
     function _sdBuildModRig(params, refs, ctx) {
       const matrix = (params && Array.isArray(params.modMatrix)) ? params.modMatrix.filter(r => r && r.amount) : [];
       if (!matrix.length || typeof Tone === 'undefined') return [];
@@ -299,6 +360,66 @@
       const nodes = [];
       const lfos = Array.isArray(params.lfos) ? params.lfos : [];
       const macros = Array.isArray(params.macros) ? params.macros : [];
+
+      // ---- FILTER destinations (cutoff / reso): scheduled control-rate curve.
+      // Never connect a modulator into a biquad param — that forces per-SAMPLE
+      // filter-coefficient recompute in Chrome and overran the render thread on
+      // dense design layers. Instead sample env+mods in JS every ~30 ms and
+      // schedule the COMBINED curve directly on the param with short 5 ms
+      // glides (flat between points → k-rate almost always; the glide avoids
+      // step zipper). Pre-summing is required because param automation can't
+      // sum two schedules — this takes over the filter-env ramps too
+      // (_sdFilterEnvShape is the same math _sdBuildVoiceFilter schedules).
+      // Held presses (dur > 30 s: unbounded hold) keep the connected-LFO path
+      // below — a single live voice is affordable.
+      const cutRoutes = refs.filter ? matrix.filter(r => r.dest === 'cutoff') : [];
+      const resRoutes = refs.filter ? matrix.filter(r => r.dest === 'reso') : [];
+      const schedFilterMod = (dur <= 30) && (cutRoutes.length || resRoutes.length);
+      if (schedFilterMod) {
+        const clampHz = (v) => Math.max(20, Math.min(20000, v));
+        const f = params.filter || {};
+        const baseHz = clampHz(Number.isFinite(f.cutoff) ? f.cutoff : 12000);
+        const baseQ = Math.max(0.1, Math.min(20, Number.isFinite(f.q) ? f.q : 0.7));
+        const envShape = _sdFilterEnvShape(params, ctx, clampHz);
+        const span = Math.max(dur, envShape ? envShape.end : 0) + 2.5;
+        // 45 ms control points with 5 ms glides ≈ 11% of quanta carrying ramp
+        // content — the k-rate/a-rate sweet spot measured for biquad params.
+        const step = Math.max(0.045, span / 400);
+        const routeFns = (routes) => routes
+          .map((r) => ({ scale: (r.amount / 100) * (SD_DEST_RANGE[r.dest] || 1), fn: _sdModSrcFn(r.src, params, ctx) }))
+          .filter((r) => r.fn);
+        // Hold the previous value until 5 ms before each control point, then
+        // glide to the new one: flat between points (k-rate quanta), no zipper.
+        const scheduleCurve = (param, valueAt, clamp) => {
+          try {
+            param.cancelScheduledValues(now);
+            let prev = clamp(valueAt(0));
+            param.setValueAtTime(prev, now);
+            for (let t = step; t <= span; t += step) {
+              const v = clamp(valueAt(t));
+              param.setValueAtTime(prev, now + t - 0.005);
+              param.linearRampToValueAtTime(v, now + t);
+              prev = v;
+            }
+          } catch (e) {}
+        };
+        if (cutRoutes.length) {
+          const fns = routeFns(cutRoutes);
+          scheduleCurve(refs.filter.frequency, (t) => {
+            let v = envShape ? envShape.valueAt(t) : baseHz;
+            for (const m of fns) v += m.scale * m.fn(t);
+            return v;
+          }, clampHz);
+        }
+        if (resRoutes.length) {
+          const fns = routeFns(resRoutes);
+          scheduleCurve(refs.filter.Q, (t) => {
+            let v = baseQ;
+            for (const m of fns) v += m.scale * m.fn(t);
+            return v;
+          }, (v) => Math.max(0.05, Math.min(30, v)));
+        }
+      }
       // Lazily create each referenced source node, cached by id.
       const srcCache = {};
       const makeSource = (id) => {
@@ -324,6 +445,48 @@
                     if (lf.shape === 'sharp') sig.setValueAtTime(r, t);
                     else sig.linearRampToValueAtTime(r, t);
                   } catch (e) {}
+                }
+              } else if (dur <= 30) {
+                // Deterministic LFO shapes for SEQUENCED notes: scheduled
+                // control-rate automation on a Signal, same pattern as the
+                // stochastic shapes above. A per-voice Tone.LFO is an audio-
+                // rate oscillator + waveshaper + scaling stage; 24 design
+                // voices × 2 LFOs measurably overran the render thread (audio
+                // clock fell to ~0.57× real time = the dense-project cut-out;
+                // see bloom-dense-project-perf). A ConstantSource ramping
+                // through precomputed points renders ~free and sums into the
+                // destination param identically. Held grid presses (dur 3600)
+                // keep the true LFO below — one live voice, unbounded hold.
+                node = new Tone.Signal(0);
+                const rate = Math.max(0.01, lf.rateHz || 1);
+                const period = 1 / rate;
+                const span = dur + 2.5;                       // cover the release tail
+                const sig = node;
+                const shape = lf.shape || 'sine';
+                if (shape === 'square') {
+                  // Alternate ±1 at half-period steps; floor the step so very
+                  // long/fast combos degrade in resolution, not coverage.
+                  const step = Math.max(period / 2, span / 512);
+                  const count = Math.ceil(span / step);
+                  for (let k = 0; k <= count; k++) {
+                    try { sig.setValueAtTime((k % 2 === 0) ? 1 : -1, now + k * step); } catch (e) {}
+                  }
+                } else {
+                  // sine / triangle / sawtooth: piecewise-linear samples of one
+                  // cycle, repeated. 16 points/cycle is audibly smooth for a
+                  // control signal; the step floor caps total events at ~512.
+                  const step = Math.max(period / 16, span / 512);
+                  const count = Math.ceil(span / step);
+                  const val = (t) => {
+                    const ph = (t * rate) % 1;                // 0..1, phase 0 at voice start (like LFO.start(now))
+                    if (shape === 'triangle') return ph < 0.5 ? (ph * 4 - 1) : (3 - ph * 4);
+                    if (shape === 'sawtooth') return ph * 2 - 1;
+                    return Math.sin(ph * 2 * Math.PI);        // sine (and fallback)
+                  };
+                  try { sig.setValueAtTime(val(0), now); } catch (e) {}
+                  for (let k = 1; k <= count; k++) {
+                    try { sig.linearRampToValueAtTime(val(k * step), now + k * step); } catch (e) {}
+                  }
                 }
               } else {
                 node = new Tone.LFO({ frequency: Math.max(0.01, lf.rateHz || 1), min: -1, max: 1, type: lf.shape || 'sine' });
@@ -357,6 +520,10 @@
         return null;
       };
       matrix.forEach(r => {
+        // cutoff/reso already applied above as a scheduled curve — connecting
+        // a source node into a biquad param would both double-modulate and
+        // reintroduce the per-sample coefficient cost.
+        if (schedFilterMod && (r.dest === 'cutoff' || r.dest === 'reso')) return;
         const src = makeSource(r.src);
         const param = destParam(r.dest);
         if (!src || !param) return;
@@ -368,6 +535,37 @@
         } catch (e) {}
       });
       return nodes;
+    }
+
+    // Piecewise-linear value of the filter envelope over time (seconds since
+    // voice start) — the SAME curve _sdBuildVoiceFilter schedules as ramps.
+    // Shared so the mod rig's combined cutoff curve (env + LFOs, pre-summed)
+    // can't drift from the ramp-scheduled envelope. null when filterEnv is off.
+    function _sdFilterEnvShape(params, ctx, clampHz) {
+      const f = params && params.filter;
+      const fe = params && params.filterEnv;
+      if (!f || !fe || !fe.on) return null;
+      const vel = (ctx && ctx.velocity != null) ? ctx.velocity : 1;
+      const dur = Math.max(0.02, (ctx && ctx.dur) || 0.3);
+      const base = clampHz(Number.isFinite(f.cutoff) ? f.cutoff : 12000);
+      const oct = ((fe.amount || 0) / 100) * 5 + ((fe.vel || 0) / 100) * 5 * vel;
+      const peakHz = clampHz(base * Math.pow(2, oct));
+      const susHz  = clampHz(base * Math.pow(2, oct * Math.max(0, Math.min(1, (fe.sustain || 0) / 100))));
+      const a = Math.max(0.001, (fe.attack  || 0) / 1000);
+      const d = Math.max(0.001, (fe.decay   || 0) / 1000);
+      const r = Math.max(0.001, (fe.release || 0) / 1000);
+      const relT = Math.max(a + d, dur);
+      return {
+        base, peakHz, susHz, a, d, r, relT, end: relT + r,
+        valueAt: (t) => {
+          if (t <= 0) return base;
+          if (t < a) return base + (peakHz - base) * (t / a);
+          if (t < a + d) return peakHz + (susHz - peakHz) * ((t - a) / d);
+          if (t < relT) return susHz;
+          if (t < relT + r) return susHz + (base - susHz) * ((t - relT) / r);
+          return base;
+        },
+      };
     }
 
     // ---- Audio: per-voice multimode filter + filter envelope ---------------
@@ -394,23 +592,18 @@
           const now = (ctx && typeof ctx.startTime === 'number')
             ? ctx.startTime
             : ((typeof Tone.now === 'function') ? Tone.now() : 0);
-          const vel = (ctx && ctx.velocity != null) ? ctx.velocity : 1;
-          // amount/-vel in "octaves": ±5 oct full-scale.
-          const oct = ((fe.amount || 0) / 100) * 5 + ((fe.vel || 0) / 100) * 5 * vel;
-          const peakHz = clampHz(base * Math.pow(2, oct));
-          const susHz  = clampHz(base * Math.pow(2, oct * Math.max(0, Math.min(1, (fe.sustain || 0) / 100))));
-          const a = Math.max(0.001, (fe.attack  || 0) / 1000);
-          const d = Math.max(0.001, (fe.decay   || 0) / 1000);
-          const r = Math.max(0.001, (fe.release || 0) / 1000);
-          const dur = Math.max(0.02, (ctx && ctx.dur) || 0.3);
+          // Envelope curve math lives in _sdFilterEnvShape (amount/vel in
+          // "octaves", ±5 oct full-scale) — shared with the mod rig's combined
+          // cutoff curve so the two can never drift.
+          const sh = _sdFilterEnvShape(params, ctx, clampHz);
           const p = filt.frequency;
           p.cancelScheduledValues(now);
-          p.setValueAtTime(base, now);
-          p.linearRampToValueAtTime(peakHz, now + a);
-          p.linearRampToValueAtTime(susHz, now + a + d);
-          const relAt = now + Math.max(a + d, dur);
-          p.setValueAtTime(susHz, relAt);
-          p.linearRampToValueAtTime(base, relAt + r);
+          p.setValueAtTime(sh.base, now);
+          p.linearRampToValueAtTime(sh.peakHz, now + sh.a);
+          p.linearRampToValueAtTime(sh.susHz, now + sh.a + sh.d);
+          const relAt = now + sh.relT;
+          p.setValueAtTime(sh.susHz, relAt);
+          p.linearRampToValueAtTime(sh.base, relAt + sh.r);
         } catch (e) {}
       }
       return filt;

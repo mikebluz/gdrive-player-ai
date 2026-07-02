@@ -1359,6 +1359,17 @@
         ['bed', 'motif', 'texture', 'beat'].forEach(n => mig(cfg[n]));
         (cfg.extras || []).forEach(mig); (cfg.seqs || []).forEach(mig); (cfg.samples || []).forEach(mig);
         delete cfg.timing; }
+      // Seed axis (Track C, C0): stamp an explicit `seed` on every layer — the
+      // initial "unit" a layer's generator draws from. Random = today's generative
+      // note-source; Sequence = a Seq layer's phrase; Sample = a Sample layer's buffer.
+      // Idempotent + additive: only sets it when absent, so a manually seed-typed layer
+      // (Track C, C1+) is preserved and re-normalizing is a no-op. Nothing reads it yet
+      // (dispatch still keys off `type`), so this is behaviorally invisible + harness-neutral.
+      { const stampSeed = (L, s) => { if (L && typeof L === 'object' && typeof L.seed !== 'string') L.seed = s; };
+        ['bed', 'motif', 'texture', 'beat'].forEach(n => stampSeed(cfg[n], 'random'));
+        (cfg.extras || []).forEach(x => stampSeed(x, 'random'));
+        (cfg.seqs || []).forEach(s => stampSeed(s, 'sequence'));
+        (cfg.samples || []).forEach(s => stampSeed(s, 'sample')); }
       // Stamp the current layer-schema version so version-gated migrations run
       // once and re-normalizing is a no-op. (`_fromVer` above is the pre-migration
       // value for any gated block.)

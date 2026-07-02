@@ -2122,6 +2122,9 @@
     function fadeBloomSampleVoicesFrom(key, atSec, fadeSec) {
       if (!key) return;
       if (!(fadeSec > 0)) { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, atSec); return; }
+      // Queued-but-unbuilt voices that would start before the boundary: they're
+      // being faded OUT anyway — drop them instead of building into the fade.
+      _vqPurge(key, (at) => at < atSec);
       const hit = (v) => v && v._ak === key && (Number.isFinite(v._akAt) ? v._akAt < atSec : true);
       Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) _fadeSampleVoiceFrom(v, atSec, fadeSec); });
       Array.from(_activeSampleVoices).forEach(v => { if (hit(v)) _fadeSampleVoiceFrom(v, atSec, fadeSec); });
@@ -2141,6 +2144,8 @@
     // iteration. Untagged voices (no start time) are kept when thresholding.
     function cancelBloomFutureVoices(key, fromAt) {
       if (!key) return;
+      // Not-yet-BUILT voices sitting in the deferred construction queue.
+      _vqPurge(key, (at) => fromAt == null || at >= fromAt);
       const hit = (e) => e && e._ak === key && (fromAt == null || (Number.isFinite(e._akAt) && e._akAt >= fromAt));
       Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
       Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
@@ -2160,6 +2165,8 @@
     // voices, this also stops looping pad voices and anything that slipped the gate.
     function stopBloomVoicesBefore(key, beforeAt) {
       if (!key) return;
+      // Not-yet-BUILT voices sitting in the deferred construction queue.
+      _vqPurge(key, (at) => beforeAt == null || at < beforeAt);
       const hit = (e) => e && e._ak === key && (beforeAt == null || (Number.isFinite(e._akAt) && e._akAt < beforeAt));
       Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
       for (let i = _activeVoices.length - 1; i >= 0; i--) { const e = _activeVoices[i]; if (hit(e)) { _activeVoices.splice(i, 1); try { _stealVoice(e); } catch (x) {} } }
@@ -2171,6 +2178,7 @@
       // Drain pending (scheduled-ahead, not-yet-registered) voices too — a stop
       // must cancel notes the Bloom phrase dispatched for the near future, or
       // they'd register at their start time and ring on after the user stopped.
+      _vqClear(); // queued-but-unbuilt voices go first (they'd build after the stop)
       const pendVictims = Array.from(_pendingVoices);
       _pendingVoices.clear();
       pendVictims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
@@ -2857,6 +2865,98 @@
       };
     }
 
+    // ---- Deferred voice-construction queue ---------------------------------
+    // Bloom schedules voices 0.3–1.4 s ahead (_ambTick's lead/horizon) but used
+    // to BUILD every voice synchronously inside the emitting tick — one dense
+    // chord/burst of design voices (each a multi-node build) could eat
+    // 80–500 ms of main thread in a single tick, starving Tone's scheduler →
+    // audio cut to silence while the meters kept flashing (the
+    // bloom-dense-project-perf cut-out; per-voice pooling alone wasn't enough
+    // because even a pooled FM voice costs ~2.7 ms to wire + trigger).
+    // playNote now enqueues far-enough-future voices and builds them in small
+    // time-sliced batches, earliest start first, across the lookahead window:
+    // notes still SOUND at their exact scheduled time — only the construction
+    // work moves. Interactive paths (grid/lane presses, ~25 ms lead) and
+    // offline export are untouched. Unlike the reverted per-tick emit budget,
+    // nothing is musically deferred or reordered (strict start-time order,
+    // layer-agnostic FIFO), so there is no fairness trap; worst-case overload
+    // degrades to a voice building slightly late (Tone clamps to now) instead
+    // of the transport starving. The invariant harness stubs playNote, so it
+    // is unaffected.
+    // KILL SWITCH: set false to build every voice synchronously (old behavior).
+    const VOICE_BUILD_QUEUE_ENABLED = true;
+    const _VQ_DEFER_MIN_SEC = 0.25;   // defer only with at least this much lead (Bloom min lead is 0.3)
+    const _VQ_SLICE_MS = 10;          // max build time per pump slice
+    const _VQ_URGENT_SLICE_MS = 30;   // slice cap for onset-imminent entries — bounded, so even a
+                                      // backlog burst can't starve the scheduler; leftovers build
+                                      // next pump (a hair late, Tone clamps) instead of freezing it
+    const _VQ_PUMP_MS = 16;           // gap between slices
+    const _VQ_URGENT_SEC = 0.30;      // this close to onset → use the urgent slice budget
+    const _voiceBuildQueue = [];
+    let _vqTimer = null;
+    function _vqShouldDefer(startTime) {
+      if (!VOICE_BUILD_QUEUE_ENABLED) return false;
+      if (_offlineSamplerOverride) return false;
+      if (typeof startTime !== 'number' || !Number.isFinite(startTime)) return false;
+      try { return (startTime - Tone.now()) > _VQ_DEFER_MIN_SEC; } catch (e) { return false; }
+    }
+    function _vqEnqueue(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {
+      const w = (typeof window !== 'undefined') ? window : null;
+      _voiceBuildQueue.push({
+        freq, params, durationMs, at: startTime, destination, trackIdx, laneIdx,
+        // Voice _ak/_akAt tagging is TEMPORAL — registration reads these
+        // globals, set around the emitting Bloom layer. Capture them now and
+        // restore them around the deferred build so tagging (and with it
+        // cancelBloomFutureVoices / stopBloomVoicesBefore) works identically.
+        sink: w ? w._ambCaptureSink : null,
+        ak: w ? w._ambEmitKey : null,
+        akAt: w ? w._ambEmitAt : null,
+      });
+      if (!_vqTimer) _vqTimer = setTimeout(_vqPump, 0);
+    }
+    function _vqPump() {
+      _vqTimer = null;
+      _voiceBuildQueue.sort((a, b) => a.at - b.at);
+      const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+      while (_voiceBuildQueue.length) {
+        const e = _voiceBuildQueue[0];
+        let urgent = true;
+        try { urgent = (e.at - Tone.now()) < _VQ_URGENT_SEC; } catch (x) {}
+        const spent = (typeof performance !== 'undefined') ? (performance.now() - t0) : 0;
+        if (spent > (urgent ? _VQ_URGENT_SLICE_MS : _VQ_SLICE_MS)) break;
+        _voiceBuildQueue.shift();
+        _vqBuild(e);
+      }
+      if (_voiceBuildQueue.length && !_vqTimer) _vqTimer = setTimeout(_vqPump, _VQ_PUMP_MS);
+    }
+    function _vqBuild(e) {
+      const w = (typeof window !== 'undefined') ? window : null;
+      let pSink, pKey, pAt;
+      if (w) {
+        pSink = w._ambCaptureSink; pKey = w._ambEmitKey; pAt = w._ambEmitAt;
+        w._ambCaptureSink = e.sink; w._ambEmitKey = e.ak; w._ambEmitAt = e.akAt;
+      }
+      try { _playNoteNow(e.freq, e.params, e.durationMs, e.at, e.destination, e.trackIdx, e.laneIdx); }
+      catch (err) { try { console.warn('deferred voice build failed', err); } catch (x) {} }
+      finally {
+        if (w) { w._ambCaptureSink = pSink; w._ambEmitKey = pKey; w._ambEmitAt = pAt; }
+      }
+    }
+    // Drop queued (not-yet-built) voices for a Bloom layer cancel/stop — the
+    // queue is one more place a scheduled-ahead voice can live, so every path
+    // that sweeps _pendingVoices must sweep this too or cancelled notes would
+    // still build and sound.
+    function _vqPurge(key, predicate) {
+      for (let i = _voiceBuildQueue.length - 1; i >= 0; i--) {
+        const e = _voiceBuildQueue[i];
+        if (e.ak === key && predicate(e.at)) _voiceBuildQueue.splice(i, 1);
+      }
+    }
+    function _vqClear() {
+      _voiceBuildQueue.length = 0;
+      if (_vqTimer) { clearTimeout(_vqTimer); _vqTimer = null; }
+    }
+
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       if (typeof params === 'string') params = { type: params };
       // "User" Design patches: resolve to the patch's stored voice (base
@@ -2902,6 +3002,26 @@
         }
       } catch (e) {}
 
+      // Deferred construction: far-enough-future voices (all Bloom-scheduled
+      // notes — min lead 0.3 s) are built in time-sliced batches near their
+      // start instead of synchronously in the emitting tick — see the voice
+      // build queue above. Near/interactive notes fall through and build now.
+      // This sits AFTER the capture-sink tee (capture must see notes at emit
+      // time) and the cold-start guard (its startTime shift is near-now and
+      // must not defer).
+      if (_vqShouldDefer(startTime)) {
+        _vqEnqueue(freq, params, durationMs, startTime, destination, trackIdx, laneIdx);
+        return;
+      }
+      return _playNoteNow(freq, params, durationMs, startTime, destination, trackIdx, laneIdx);
+    }
+
+    // The construction/scheduling body of playNote — everything below runs
+    // either synchronously (near/interactive notes) or from the deferred
+    // voice-build queue (Bloom's scheduled-ahead notes), with the emit-tag
+    // globals restored around deferred builds.
+    function _playNoteNow(freq, params, durationMs, startTime, destination, trackIdx, laneIdx) {
+      if (params == null) params = {};
       if (typeof params === 'string') params = { type: params };
       const {
         type    = 'sine',

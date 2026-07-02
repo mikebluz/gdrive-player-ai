@@ -10661,6 +10661,11 @@
     // 'sample'. Read-only derivation for now (the framing); the Seq/Sample subsystem
     // merge (§10c) is a later, save-load-gated phase.
     function _ambSeedOf(inst) {
+      // Single source of truth for a layer's SEED axis (Track C): prefer the
+      // persisted seedKind stamped by _normalizeAmbientCfg (C0); fall back to
+      // deriving from type for any object not yet normalized. 'random' = a
+      // generative note-source, 'sequence' = a Seq phrase, 'sample' = a buffer.
+      if (inst && typeof inst.seedKind === 'string') return inst.seedKind;
       const t = inst && inst.type;
       if (t === 'seq') return 'sequence';
       if (t === 'sample' || t === 'samp') return 'sample';

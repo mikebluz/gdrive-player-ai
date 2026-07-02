@@ -11588,6 +11588,23 @@
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // Add a CUSTOM layer — a neutral composable starting point (Synth · Scale ·
+    // Euclid; euclid is the fully voice/generator-swappable generator), named
+    // "Custom" and auto-expanded so the user composes it via the chips. Internally
+    // it's a standard 'bass'-type layer; the interactive Voice/Source/Generator
+    // pickers do the rest.
+    function _ambAddCustom(E) {
+      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      const L = _ambDefaultLayer('bass', newId);
+      L.name = 'Custom';
+      cfg.extras.push(L);
+      _ambRenderExtras(E);
+      try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="bass:' + newId + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     function _ambDeleteExtra(E, type, id) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.extras)) return;
       const idx = cfg.extras.findIndex(x => x.id === id && x.type === type);
@@ -13079,11 +13096,14 @@
       if (addLayerBtn) addLayerBtn.addEventListener('click', () => {
         _E = E; const cfg = cfg0(); if (!cfg) return;
         const LABELS = { bed: 'Bed', motif: 'Motif', texture: 'Texture', beat: 'Beat' };
+        // Custom: a neutral composable layer (compose Voice/Source/Generator from
+        // the card chips). Presets below are named starting points.
+        const actions = [{ label: '✦ Custom — compose your own', fn: () => _ambAddCustom(E) }, 'hr'];
         // Always offer all four types. Picking one activates the absent primary,
         // or — if the primary is already present — adds another instance.
-        const actions = ['bed', 'motif', 'texture', 'beat'].map(l => {
+        ['bed', 'motif', 'texture', 'beat'].forEach(l => {
           const primaryAbsent = !!(cfg[l] && cfg[l].present === false);
-          return { label: LABELS[l] + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, l) : _ambAddExtra(E, l)) };
+          actions.push({ label: LABELS[l] + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, l) : _ambAddExtra(E, l)) });
         });
         // Shape: a generative wheel layer (extras-only, no primary slot).
         // (Shape layer removed — use the master Shapes section in Grow.)

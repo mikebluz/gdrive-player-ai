@@ -1359,13 +1359,15 @@
         ['bed', 'motif', 'texture', 'beat'].forEach(n => mig(cfg[n]));
         (cfg.extras || []).forEach(mig); (cfg.seqs || []).forEach(mig); (cfg.samples || []).forEach(mig);
         delete cfg.timing; }
-      // Seed axis (Track C, C0): stamp an explicit `seed` on every layer — the
+      // Seed axis (Track C, C0): stamp an explicit `seedKind` on every layer — the
       // initial "unit" a layer's generator draws from. Random = today's generative
       // note-source; Sequence = a Seq layer's phrase; Sample = a Sample layer's buffer.
+      // NOTE: the field is `seedKind`, NOT `seed` — a Seq layer already uses `seed` for
+      // its distilled phrase data (`seq.seed.events`); overwriting that silences the layer.
       // Idempotent + additive: only sets it when absent, so a manually seed-typed layer
       // (Track C, C1+) is preserved and re-normalizing is a no-op. Nothing reads it yet
       // (dispatch still keys off `type`), so this is behaviorally invisible + harness-neutral.
-      { const stampSeed = (L, s) => { if (L && typeof L === 'object' && typeof L.seed !== 'string') L.seed = s; };
+      { const stampSeed = (L, s) => { if (L && typeof L === 'object' && typeof L.seedKind !== 'string') L.seedKind = s; };
         ['bed', 'motif', 'texture', 'beat'].forEach(n => stampSeed(cfg[n], 'random'));
         (cfg.extras || []).forEach(x => stampSeed(x, 'random'));
         (cfg.seqs || []).forEach(s => stampSeed(s, 'sequence'));

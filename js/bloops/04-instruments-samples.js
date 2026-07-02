@@ -1700,7 +1700,16 @@
     function _acquirePooledSynth(key, factory) {
       const v = _ensurePool(key).idle.pop();
       if (v) return v;
-      try { return factory(); }
+      try {
+        const s = factory();
+        // Stamp the pool key so release sites route the synth back to the
+        // SAME bucket it was acquired from. The playNote release used to pass
+        // the raw preset type, which mismatched the 'basic:*' (and now the
+        // signature-keyed) buckets — released synths parked in a bucket that
+        // acquisition never read, so those presets never actually reused.
+        if (s) s._poolKey = key;
+        return s;
+      }
       catch (e) { console.warn('voice factory failed', key, e); return null; }
     }
     function _releasePooledSynth(key, synth) {
@@ -1749,7 +1758,12 @@
     // when the preset isn't pooled. Each preset gets its own pool key so
     // the only per-trigger work is setting envelope/detune for the note —
     // modulation/filter/oscillator config is reused across acquisitions.
-    function _buildPooledSynthForPreset(preset, env) {
+    // `oscD` (resolved _sdOscDesign, may be null) lets Design patches pool:
+    // FM/AM timbre (harmonicity/modIndex) is a per-acquisition param set on
+    // the shared body; unison designs get their own signature-keyed bucket
+    // because a FatOscillator rebuilds its sources when `count` changes, so
+    // different unison configs must not share one pooled synth.
+    function _buildPooledSynthForPreset(preset, env, oscD) {
       switch (preset) {
         case 'bell': {
           const s = _acquirePooledSynth('bell', () => new Tone.FMSynth());
@@ -1765,8 +1779,8 @@
         case 'fm': {
           const s = _acquirePooledSynth('fm', () => new Tone.FMSynth());
           if (!s) return null;
-          s.harmonicity.value = 3;
-          s.modulationIndex.value = 10;
+          s.harmonicity.value = (oscD && oscD.harmonicity != null) ? oscD.harmonicity : 3;
+          s.modulationIndex.value = (oscD && oscD.modIndex != null) ? oscD.modIndex : 10;
           s.oscillator.type = 'sine';
           s.modulation.type = 'square';
           s.envelope.set(env);
@@ -1787,7 +1801,7 @@
         case 'am': {
           const s = _acquirePooledSynth('am', () => new Tone.AMSynth());
           if (!s) return null;
-          s.harmonicity.value = 2;
+          s.harmonicity.value = (oscD && oscD.harmonicity != null) ? oscD.harmonicity : 2;
           s.oscillator.type = 'sine';
           s.modulation.type = 'square';
           s.envelope.set(env);
@@ -1828,11 +1842,29 @@
         case 'sawtooth':
         case 'pulse':
         case 'fat': {
-          const s = _acquirePooledSynth('basic:' + preset, () => new Tone.Synth());
+          // Resolve the oscillator config FIRST so unison designs land in
+          // their own bucket (the key bakes count/spread in). Mirrors the
+          // fresh-construction fallback branches in playNote/startSustainedNote
+          // so a patch sounds identical pooled or not.
+          let oscOpts, key = 'basic:' + preset;
+          if (preset === 'fat') {
+            const count = (oscD && oscD.unison > 1) ? oscD.unison : 3;
+            const spread = oscD ? oscD.spread : 30;
+            oscOpts = { type: 'fatsawtooth', count, spread };
+            key = 'basic:fat:u' + count + ':s' + spread;
+          } else if (preset === 'pulse') {
+            oscOpts = { type: 'pulse', width: 0.4 };
+          } else if (oscD && oscD.unison > 1) {
+            oscOpts = { type: 'fat' + preset, count: oscD.unison, spread: oscD.spread };
+            key = 'basic:' + preset + ':u' + oscD.unison + ':s' + oscD.spread;
+          } else {
+            oscOpts = { type: preset };
+          }
+          const s = _acquirePooledSynth(key, () => new Tone.Synth({ oscillator: oscOpts }));
           if (!s) return null;
-          if (preset === 'fat')        s.oscillator.set({ type: 'fatsawtooth', count: 3, spread: 30 });
-          else if (preset === 'pulse') s.oscillator.set({ type: 'pulse', width: 0.4 });
-          else                          s.oscillator.type = preset;
+          // Same-signature values on reacquire — cheap no-op sets (FatOscillator
+          // only rebuilds when count CHANGES, and the key pins it).
+          s.oscillator.set(oscOpts);
           s.envelope.set(env);
           return s;
         }
@@ -2562,18 +2594,16 @@
         }
       }
       let pooledPresetKey = null;
-      // Skip the pool for osc-design voices (unison / sub / ring) — they need a
-      // freshly-built oscillator, exactly as playNote gates its pool.
+      // Skip the pool only for ring-mod voices — exactly as playNote gates its
+      // pool. FM/AM timbre and unison designs are handled by the pooled builder
+      // (per-acquisition params / signature-keyed buckets).
       if (VOICE_POOL_ENABLED && !_sdFreshVoice && _isPooledPreset(type)) {
-        const s = _buildPooledSynthForPreset(type, env);
+        const s = _buildPooledSynthForPreset(type, env, _sdOscD);
         if (s) {
           try {
             s.connect(chainHead);
             synth = s;
-            pooledPresetKey = (type === 'sine' || type === 'square' || type === 'triangle'
-                              || type === 'sawtooth' || type === 'pulse' || type === 'fat')
-              ? 'basic:' + type
-              : type;
+            pooledPresetKey = s._poolKey || type;
           } catch (e) {
             synth = null;
             pooledPresetKey = null;
@@ -3362,9 +3392,13 @@
       let pooledPreset = null;
       const _sdFreshVoice = (typeof _sdOscNeedsFreshVoice === 'function') && _sdOscNeedsFreshVoice(_sdOscD, type);
       if (VOICE_POOL_ENABLED && !_offlineSamplerOverride && !_sdFreshVoice && _isPooledPreset(type)) {
-        synth = _buildPooledSynthForPreset(type, env);
+        synth = _buildPooledSynthForPreset(type, env, _sdOscD);
         if (synth) {
-          pooledPreset = type;
+          // The stamped acquisition key, NOT the raw type: basic presets pool
+          // under 'basic:<type>' (and unison designs under a signature key),
+          // so releasing under `type` parked them in a bucket acquisition
+          // never read — those presets silently never reused.
+          pooledPreset = synth._poolKey || type;
           try {
             synth.connect(chainHead);
             // A reacquired pooled synth is wired up now but won't be retriggered

@@ -6928,12 +6928,22 @@
       else if (type === 'run' || type === 'pedal' || type === 'drone' || type === 'beat') st = E.runPhase && E.runPhase[key];
       else if (type === 'arp') {
         // The SERIES arp anchors in E.arpState; the EUCLID arp (arp.euclid) anchors
-        // in E.runPhase (like Bass/Beat-euclid). Resume whichever store is live — else
-        // a thawed euclid arp regenerates over the flushed loop tail (doubled = loud).
-        const ap = E.arpState && E.arpState[key];
-        const rp = E.runPhase && E.runPhase[key];
-        if (ap && ap.startAt != null) ap.lastAt = tA;
-        if (rp && rp.startAt != null) rp.lastAt = tA;
+        // in E.runPhase (like Bass/Beat-euclid). Re-anchor lastAt to the thaw boundary
+        // tA so live generation resumes AT tA — else its tFrom falls back to `now` and
+        // it re-emits cycles over the still-playing captured tail (doubled arp, from the
+        // unlock until the next boundary). For the euclid arp, CREATE the runPhase entry
+        // if the locked run left it absent (else the emit rebuilds it with lastAt=null →
+        // tFrom=now → the overlap); startAt=tA re-anchors the pattern to the boundary.
+        const L = (typeof _ambLayerByKey === 'function') ? _ambLayerByKey(E, key) : null;
+        if (L && L.euclid) {
+          if (!E.runPhase) E.runPhase = {};
+          const rp = E.runPhase[key];
+          if (rp && rp.startAt != null) rp.lastAt = tA;
+          else E.runPhase[key] = { startAt: tA, lastAt: tA };
+        } else {
+          const ap = E.arpState && E.arpState[key];
+          if (ap && ap.startAt != null) ap.lastAt = tA;
+        }
         return;
       }
       if (st && st.startAt != null) st.lastAt = tA;

@@ -3444,7 +3444,7 @@
       let st = E[phaseStore][key];
       if (!st) st = E[phaseStore][key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = horizon;
+      const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
       const cTo   = Math.floor((tTo - st.startAt) / loopSec);
@@ -3674,7 +3674,7 @@
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = horizon;
+      const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
@@ -3756,7 +3756,7 @@
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = horizon;
+      const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
       const isProg = (_ambAsNotes(src).type === 'prog');
@@ -3835,7 +3835,7 @@
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = horizon;
+      const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
       const isProg = (n.type === 'prog');   // per-layer: one chord per drone cycle
@@ -4223,7 +4223,7 @@
       const interval = Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) * sc;
       if (!(interval > 0.001)) return;
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = horizon;
+      const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
       let cap = 0;
       while (cap < 512) {
@@ -4312,7 +4312,7 @@
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, arp, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
-      const tTo = horizon;
+      const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / loopSec));
       const cTo = Math.floor((tTo - st.startAt) / loopSec);
@@ -6223,6 +6223,25 @@
         if (t - _ambTickErrAt > 2000) { _ambTickErrAt = t; console.error('[Bloom] scheduling error (layer skipped):', e); }
       } catch (_) {}
     }
+    // Per-tick main-thread budget for the WINDOWED emitters (euclid/bass/run/pedal/
+    // drone/arp), which schedule a whole cycle-window of voices in one internal call
+    // — a single dense cycle (e.g. a euclid beat with several voices × bars = ~40 drum
+    // hits) can blow the tick past ~22ms and starve Tone's ~25ms scheduler → the
+    // dense-project cut-out. FIX (correct, unlike the earlier break-the-loop attempt
+    // that starved late layers): once the tick is over budget, CAP the scheduling
+    // horizon to now+0.6 for the rest of the tick — imminent voices always schedule
+    // (nothing starves, nothing plays late), far ones resume next tick via lastAt, so
+    // one heavy cycle spreads across ticks. Applied ONLY to windowed emitters, which
+    // use SEEDED per-cycle RNG (deferring can't change note choice) — and off during
+    // silent capture — so the invariant battery is byte-identical.
+    const _AMB_TICK_BUDGET_MS = 22;
+    const _AMB_DEFER_HORIZON = 0.6;
+    let _ambTickBudgetAt = 0, _ambTickBudgetOn = false;
+    function _ambBudgetHorizon(now, horizon) {
+      if (!_ambTickBudgetOn || typeof performance === 'undefined' || performance.now() <= _ambTickBudgetAt) return horizon;
+      const cap = now + _AMB_DEFER_HORIZON;
+      return cap < horizon ? cap : horizon;
+    }
     function _ambTick(E) {
       _E = E;
       if (!E.guard()) { _ambStopGenerator(E); return; }
@@ -6249,6 +6268,10 @@
         else if (!E._everRan) return;
       } catch (e) {}
       const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+      // Arm the per-tick windowed-emitter horizon budget (see _ambBudgetHorizon). Off
+      // during silent/dry capture so the note battery is byte-identical.
+      _ambTickBudgetOn = (typeof performance !== 'undefined') && !(typeof window !== 'undefined' && window._ambSilentCapture);
+      _ambTickBudgetAt = (_ambTickBudgetOn ? performance.now() : 0) + _AMB_TICK_BUDGET_MS;
       if (E._t0 == null) E._t0 = now;   // engine grid anchor (queued-START alignment)
       // AREAS orchestration: once this area has played its plays×bars, advance to
       // the next area via a SEAMLESS handoff (no dip) — the outgoing area's tails

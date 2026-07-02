@@ -10623,6 +10623,10 @@
       const sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const p = 'ambient-' + type, lk = type; inst = inst || {};
       let html = '', grpOpen = false;
+      // Kit-voice drum picker (the schema carries no single-drum control) —
+      // mirrors the extras card injection. For a Beat, no Voices row (its schema
+      // already has euclidVoices).
+      if (_ambVoiceOf(inst, type) === 'kit') html += _ambDrumPickHtml(inst, p, type !== 'beat');
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
           if (grpOpen) html += '</div></div>';
@@ -12304,19 +12308,19 @@
       set('ambient-beat-attack', cfg.beat.attack); set('ambient-beat-decay', cfg.beat.decay); set('ambient-beat-sustain', cfg.beat.sustain); set('ambient-beat-release', cfg.beat.release); set('ambient-beat-fine', cfg.beat.fine);
       set('ambient-beat-gen', cfg.beat.gen || 'random');
       set('ambient-beat-rate', cfg.beat.rate || '');
-      set('ambient-beat-interval', cfg.beat.intervalMs); hint('ambient-beat-interval-v', _ambFmtMs(cfg.beat.intervalMs));
+      set('ambient-beat-intervalMs', cfg.beat.intervalMs); hint('ambient-beat-intervalMs-v', _ambFmtMs(cfg.beat.intervalMs));
       set('ambient-beat-bars', cfg.beat.bars);
       set('ambient-beat-pulses', cfg.beat.pulses);
       set('ambient-beat-steps', cfg.beat.steps);
       set('ambient-beat-rotate', cfg.beat.rotate);
-      set('ambient-beat-voices', (cfg.beat.euclidVoices | 0) || 1);
-      set('ambient-beat-length', cfg.beat.lengthMs);     hint('ambient-beat-length-v', _ambFmtMs(cfg.beat.lengthMs));
+      set('ambient-beat-euclidVoices', (cfg.beat.euclidVoices | 0) || 1);
+      set('ambient-beat-lengthMs', cfg.beat.lengthMs);     hint('ambient-beat-lengthMs-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-rhythmVar', cfg.beat.rhythmVar);
-      set('ambient-beat-drift', cfg.beat.drift); set('ambient-beat-lenvary', cfg.beat.lenVary | 0);
+      set('ambient-beat-drift', cfg.beat.drift); set('ambient-beat-lenVary', cfg.beat.lenVary | 0);
       setWhen('ambient-beat', cfg.beat.when);
-      set('ambient-beat-rest', cfg.beat.restProb);
+      set('ambient-beat-restProb', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
-       set('ambient-beat-areafade', cfg.beat.areaFadeMs); hint('ambient-beat-areafade-v', _ambFmtMs(cfg.beat.areaFadeMs));
+       set('ambient-beat-areaFadeMs', cfg.beat.areaFadeMs); hint('ambient-beat-areaFadeMs-v', _ambFmtMs(cfg.beat.areaFadeMs));
       try { _ambBeatGenVis(E, 'ambient-beat-', cfg.beat); } catch (e) {}
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => { try { _ambWireUnitSync(E, 'ambient-' + layer + '-', () => cfg[layer], layer); } catch (e) {} });
       // Per-layer FX values.
@@ -12550,43 +12554,7 @@
           _ambPrimaryCardBody('texture', _cfg0.texture) +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('beat', 'Beat'), 'ambient-beat-on', 'ambient-beat-del', 'beat', _ambComposePrimaryHtml('beat', _cfg0.beat)) +
-          grp('Voice') +
-            '<div class="ambient-ctrl"><label for="ambient-beat-kit">Kit</label>' +
-              '<select id="ambient-beat-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>' +
-            '<div class="ambient-ctrl"><label for="ambient-beat-drumpick">Drum</label><select id="ambient-beat-drumpick" class="ambient-select">' +
-              [['', 'Varied']].concat(Object.keys(_AMB_DRUM_NAMES).map(k => [k, _AMB_DRUM_NAMES[k]])).map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
-              '</select><span class="ambient-hint">Varied = full kit</span></div>' +
-            _ambGenSel('ambient-beat-') +
-            sl('Attack', 'ambient-beat-attack', 0, 500, 1, 'ms') +
-            sl('Decay', 'ambient-beat-decay', 0, 2000, 60, 'ms') +
-            sl('Sustain', 'ambient-beat-sustain', 0, 100, 70, '%') +
-            sl('Release', 'ambient-beat-release', 0, 2000, 120, 'ms') +
-            sl('Fine', 'ambient-beat-fine', -100, 100, 0, 'cents') +
-            sl('Portamento', 'ambient-beat-porta', 0, 2000, 0, 'ms glide between notes') + gpe() +
-          grp('Unit') +
-            _ambRateSel('ambient-beat-rate') +
-            tm('Interval', 'ambient-beat-interval', 80, 2000, 10, 500) +
-            _ambUnitSyncHtml('ambient-beat') + gpe() +
-          grp('Rhythm') +
-            sl('Phrase', 'ambient-beat-bars', 1, 8, 1, 'bars (euclid)') +
-            sl('Pulses', 'ambient-beat-pulses', 1, 16, 4, 'euclid hits / bar') +
-            sl('Steps', 'ambient-beat-steps', 2, 16, 8, 'euclid steps / bar') +
-            sl('Rotate', 'ambient-beat-rotate', 0, 15, 0, 'euclid offset') +
-            sl('Voices', 'ambient-beat-voices', 1, 4, 1, 'polyphonic euclid') +
-            '<div class="ambient-ctrl"><label for="ambient-beat-euclidregen">Pattern</label><button type="button" id="ambient-beat-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>' +
-            tm('Length', 'ambient-beat-length', 60, 2000, 10, 200) +
-            sl('Len var', 'ambient-beat-lenvary', 0, 100, 0, 'around Length') +
-            sl('Drift', 'ambient-beat-drift', 0, 99, 0, 'phase offset') +
-            condCtrl('beat') + gpe() +
-          grp('Variation') +
-            sl('Rhythm var', 'ambient-beat-rhythmVar', 0, 100, 0, 'stochastic') +
-            sl('Rests', 'ambient-beat-rest', 0, 100, 25, '%') + gpe() +
-          grp('Mix') +
-            sl('Level', 'ambient-beat-level', 0, 100, 70, 'soft → boost') +
-            tm('Area fade', 'ambient-beat-areafade', 0, 4000, 50, 250) +
-            _ambSpreadCtrl('ambient-beat', null) +
-            modUi('beat') +
-            fxUi('beat') + gpe() +
+          _ambPrimaryCardBody('beat', _cfg0.beat) +
         '</div>' +
         // Extra generative instances render here (below the built-in Bed/Motif/
         // Texture/Beat block above). The Add button follows so it always sits at
@@ -12984,21 +12952,21 @@
       // Rate (free/sync) — the schema carries it for texture; the old hardcoded
       // template didn't, so wire it now that the card renders from the schema.
       { const rs = G('ambient-texture-rate'); if (rs) { const _tc = cfg0(); rs.value = (_tc && _tc.texture && _tc.texture.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.texture) return; c.texture.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-texture', c.texture); } catch (e) {} persist(); }); } }
-      bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release'); bind('ambient-beat-fine', 'beat', 'fine'); bind('ambient-beat-porta', 'beat', 'portamento');
-      bindTime('ambient-beat-interval', 'beat', 'intervalMs');
-      bindTime('ambient-beat-length', 'beat', 'lengthMs');
+      bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release'); bind('ambient-beat-fine', 'beat', 'fine'); bind('ambient-beat-portamento', 'beat', 'portamento');
+      bindTime('ambient-beat-intervalMs', 'beat', 'intervalMs');
+      bindTime('ambient-beat-lengthMs', 'beat', 'lengthMs');
       bind('ambient-beat-bars', 'beat', 'bars');
       bind('ambient-beat-pulses', 'beat', 'pulses');
       bind('ambient-beat-steps', 'beat', 'steps');
       bind('ambient-beat-rotate', 'beat', 'rotate');
-      bind('ambient-beat-voices', 'beat', 'euclidVoices');
+      bind('ambient-beat-euclidVoices', 'beat', 'euclidVoices');
       { const rb = G('ambient-beat-euclidregen'); if (rb) rb.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, 'beat'); }); }
       bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
       bind('ambient-beat-drift', 'beat', 'drift');
-      bind('ambient-beat-lenvary', 'beat', 'lenVary');
-      bind('ambient-beat-rest', 'beat', 'restProb');
+      bind('ambient-beat-lenVary', 'beat', 'lenVary');
+      bind('ambient-beat-restProb', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');
-      bindTime('ambient-beat-areafade', 'beat', 'areaFadeMs');
+      bindTime('ambient-beat-areaFadeMs', 'beat', 'areaFadeMs');
       ['bed', 'motif', 'texture', 'beat'].forEach(layer =>
         _ambWireSpread(E, 'ambient-' + layer, () => { const c = cfg0(); return c ? c[layer] : null; }, persist, null));
       // Per-layer FX (reverb send / delay / distortion). Apply live when playing.

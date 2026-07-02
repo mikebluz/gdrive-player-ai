@@ -3477,14 +3477,26 @@
       const _euVoice = _ambVoiceOf(inst, dfltType);
       if (_euVoice === 'kit') {
         const lenMs  = Math.max(60, inst.lengthMs | 0);
-        const pan    = _ambLayerPan(inst);
+        const pan    = _ambLayerPan(inst);   // keep the shared-RNG draw (harness/music parity) even when the LFO drives spread
         const V = Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
         const VDRUM = [0, 2, 4, 3];
+        // PERF: spread via the layer's SINGLE shared panner (an LFO on e.pan), NOT a
+        // Tone.Panner (+ makeup gain) PER drum hit — a busy euclid beat with spread made
+        // 1-2 extra nodes for every hit, the bulk of the cycle-burst that starved the
+        // scheduler (dense-project cut-out). Engaged only when space>0 & not Pan mode;
+        // then hits pass vpan=0 so playNote skips the per-hit panner. At space:0 (the
+        // harness default → V=1, pan=0) nothing changes — byte-identical. Reuses the
+        // arp's proven shared-panner LFO helper (keyed by layer, so no collision).
+        const _sp = _ambLayerSpace(inst);
+        const _spreadLfo = _sp > 0 && inst.panMode !== 'pan';
+        const _me = (E.mod && E.mod[key]) || (_E && _E.mod && _E.mod[key]) || null;
+        const _barSec = (60 / _ambBpm()) * 4 * _ambLayerScale(E, key, inst, cfg);
+        _ambArpSpreadLfo(E, key, _me, (inst.panMode === 'pan') ? 0 : _sp, _barSec);
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
             const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, inst.euclidRegen | 0);
-            const vpan = (V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40)));
+            const vpan = _spreadLfo ? 0 : ((V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40))));
             for (let bar = 0; bar < bars; bar++) {
               for (let slot = 0; slot < steps; slot++) {
                 let hit = vpat[slot] === 1;

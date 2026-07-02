@@ -12275,16 +12275,16 @@
       set('ambient-motif-register', cfg.motif.register);
       set('ambient-motif-range', cfg.motif.range);
       set('ambient-motif-proximity', cfg.motif.proximity);
-      set('ambient-motif-interval', cfg.motif.intervalMs); hint('ambient-motif-interval-v', _ambFmtMs(cfg.motif.intervalMs));
-      set('ambient-motif-length', cfg.motif.lengthMs);     hint('ambient-motif-length-v', _ambFmtMs(cfg.motif.lengthMs));
-      set('ambient-motif-drift', cfg.motif.drift); set('ambient-motif-lenvary', cfg.motif.lenVary | 0);
-      set('ambient-motif-pvary', cfg.motif.phraseVary | 0);
+      set('ambient-motif-intervalMs', cfg.motif.intervalMs); hint('ambient-motif-intervalMs-v', _ambFmtMs(cfg.motif.intervalMs));
+      set('ambient-motif-lengthMs', cfg.motif.lengthMs);     hint('ambient-motif-lengthMs-v', _ambFmtMs(cfg.motif.lengthMs));
+      set('ambient-motif-drift', cfg.motif.drift); set('ambient-motif-lenVary', cfg.motif.lenVary | 0);
+      set('ambient-motif-phraseVary', cfg.motif.phraseVary | 0);
       setWhen('ambient-motif', cfg.motif.when);
-      set('ambient-motif-rest', cfg.motif.restProb);
+      set('ambient-motif-restProb', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
       set('ambient-motif-accent', cfg.motif.accent);
       set('ambient-motif-level', cfg.motif.level);
-       set('ambient-motif-areafade', cfg.motif.areaFadeMs); hint('ambient-motif-areafade-v', _ambFmtMs(cfg.motif.areaFadeMs));
+       set('ambient-motif-areaFadeMs', cfg.motif.areaFadeMs); hint('ambient-motif-areaFadeMs-v', _ambFmtMs(cfg.motif.areaFadeMs));
       chk('ambient-texture-on', cfg.texture.on);
       set('ambient-texture-tone', cfg.texture.tone);
       set('ambient-texture-attack', cfg.texture.attack); set('ambient-texture-decay', cfg.texture.decay); set('ambient-texture-sustain', cfg.texture.sustain); set('ambient-texture-release', cfg.texture.release); set('ambient-texture-fine', cfg.texture.fine);
@@ -12544,38 +12544,7 @@
             fxUi('bed') + gpe() +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('motif', 'Motif'), 'ambient-motif-on', 'ambient-motif-del', 'motif', _ambComposePrimaryHtml('motif', _cfg0.motif)) +
-          grp('Voice') +
-            '<div class="ambient-ctrl"><label for="ambient-motif-tone">Tone</label><select id="ambient-motif-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
-            sl('Attack', 'ambient-motif-attack', 0, 2000, 100, 'ms') +
-            sl('Decay', 'ambient-motif-decay', 0, 2000, 120, 'ms') +
-            sl('Sustain', 'ambient-motif-sustain', 0, 100, 70, '%') +
-            sl('Release', 'ambient-motif-release', 0, 4000, 500, 'ms') +
-            sl('Fine', 'ambient-motif-fine', -100, 100, 0, 'cents') +
-            sl('Portamento', 'ambient-motif-porta', 0, 2000, 0, 'ms glide between notes') + gpe() +
-          grp('Pitch') +
-            _ambNotesButtonHtml('ambient-motif') +
-            sl('Register', 'ambient-motif-register', 2, 7, 5, 'octave') +
-            sl('Range', 'ambient-motif-range', 1, 4, 2, '± oct') +
-            sl('Proximity', 'ambient-motif-proximity', 0, 100, 35, 'adjacent → leaps') + gpe() +
-          grp('Unit') +
-            tm('Interval', 'ambient-motif-interval', 100, 4000, 20, 1200) +
-            _ambUnitSyncHtml('ambient-motif') + gpe() +
-          grp('Rhythm') +
-            tm('Length', 'ambient-motif-length', 80, 4000, 20, 1000) +
-            sl('Len var', 'ambient-motif-lenvary', 0, 100, 0, 'around Length') +
-            sl('Drift', 'ambient-motif-drift', 0, 99, 0, 'phase offset') +
-            sl('Start', 'ambient-motif-pvary', 0, 100, 0, 'on the 1 → anywhere') +
-            condCtrl('motif') + gpe() +
-          grp('Variation') +
-            sl('Rests', 'ambient-motif-rest', 0, 100, 30, '%') +
-            sl('Twist', 'ambient-motif-twist', 0, 100, 0, 'steady → bursts') +
-            sl('Accent', 'ambient-motif-accent', 0, 100, 0, 'flat → dynamic') + gpe() +
-          grp('Mix') +
-            sl('Level', 'ambient-motif-level', 0, 100, 70, 'soft → boost') +
-            tm('Area fade', 'ambient-motif-areafade', 0, 4000, 50, 250) +
-            _ambSpreadCtrl('ambient-motif', null) +
-            modUi('motif') +
-            fxUi('motif') + gpe() +
+          _ambPrimaryCardBody('motif', _cfg0.motif) +
         '</div>' +
         '<div class="ambient-layer collapsed">' + head(_plabel('texture', 'Texture'), 'ambient-texture-on', 'ambient-texture-del', 'texture', _ambComposePrimaryHtml('texture', _cfg0.texture)) +
           _ambPrimaryCardBody('texture', _cfg0.texture) +
@@ -12986,20 +12955,22 @@
       bind('ambient-bed-strumfid', 'bed', 'strumFidelity');
       bind('ambient-bed-level', 'bed', 'level');
       bindTime('ambient-bed-areafade', 'bed', 'areaFadeMs');
-      bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-porta', 'motif', 'portamento');
+      bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-portamento', 'motif', 'portamento');
       bind('ambient-motif-register', 'motif', 'register');
       bind('ambient-motif-range', 'motif', 'range');
       bind('ambient-motif-proximity', 'motif', 'proximity');
-      bindTime('ambient-motif-interval', 'motif', 'intervalMs');
-      bindTime('ambient-motif-length', 'motif', 'lengthMs');
+      bindTime('ambient-motif-intervalMs', 'motif', 'intervalMs');
+      bindTime('ambient-motif-lengthMs', 'motif', 'lengthMs');
       bind('ambient-motif-drift', 'motif', 'drift');
-      bind('ambient-motif-lenvary', 'motif', 'lenVary');
-      bind('ambient-motif-pvary', 'motif', 'phraseVary');
-      bind('ambient-motif-rest', 'motif', 'restProb');
+      bind('ambient-motif-lenVary', 'motif', 'lenVary');
+      bind('ambient-motif-phraseVary', 'motif', 'phraseVary');
+      bind('ambient-motif-restProb', 'motif', 'restProb');
       bind('ambient-motif-twist', 'motif', 'twist');
       bind('ambient-motif-accent', 'motif', 'accent');
       bind('ambient-motif-level', 'motif', 'level');
-      bindTime('ambient-motif-areafade', 'motif', 'areaFadeMs');
+      bindTime('ambient-motif-areaFadeMs', 'motif', 'areaFadeMs');
+      // Rate (schema carries it; old template didn't).
+      { const rs = G('ambient-motif-rate'); if (rs) { const _mc = cfg0(); rs.value = (_mc && _mc.motif && _mc.motif.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.motif) return; c.motif.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-motif', c.motif); } catch (e) {} persist(); }); } }
       bind('ambient-texture-attack', 'texture', 'attack'); bind('ambient-texture-decay', 'texture', 'decay'); bind('ambient-texture-sustain', 'texture', 'sustain'); bind('ambient-texture-release', 'texture', 'release'); bind('ambient-texture-fine', 'texture', 'fine'); bind('ambient-texture-portamento', 'texture', 'portamento');
       bind('ambient-texture-register', 'texture', 'register');
       bind('ambient-texture-fill', 'texture', 'fill');

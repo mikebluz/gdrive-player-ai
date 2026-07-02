@@ -10239,80 +10239,96 @@
     // Layer params are grouped into collapsible sections (Voice / Pitch / Rhythm /
     // Variation / Mix) via ['grp', name] markers — see _ambInstCardHtml. Voice +
     // Mix open by default; fold state is remembered per layer (inst.groupsOpen).
+    // Shared control fragments — every layer's schema is Voice + Source + a
+    // generator-specific block + Timing + Mix. Factoring the invariant blocks out
+    // keeps them single-source (a new shared control lands once, not in 9 schemas)
+    // and mirrors the engine's Voice × Source × Generator × Timing × Mix model.
+    // The Mix group is byte-identical across every layer (Area fade is hidden at
+    // render for bar-native types via _ambCtrlHtml, not omitted here).
+    const _AMB_MIX = [['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']];
+    // Shared Voice group — same controls everywhere, only the voice token(s)
+    // (tone / kit+gen) and the ADSR ranges vary, passed per layer.
+    function _ambVoiceCtrls(voiceToks, atkMax, decMax, relMax) {
+      return [['grp', 'Voice']].concat(voiceToks, [
+        ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
+        ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
+        ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+      ]);
+    }
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'decay', 'Decay', 0, 4000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 12000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Pitch'], ['notes'], ['chordmode'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'],
         ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
-        ['grp', 'Voice'], ['kit'], ['gen'], ['sl', 'attack', 'Attack', 0, 500, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 2000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['kit'], ['gen']], 500, 2000, 2000),
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 2000, 'ms'], ['sl', 'decay', 'Decay', 0, 2000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 4000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
         ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
         ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
-        ['grp', 'Voice'], ['tone'], ['sl', 'attack', 'Attack', 0, 8000, 'ms'], ['sl', 'decay', 'Decay', 0, 4000, 'ms'], ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, 12000, 'ms'], ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Pitch'], ['notes'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
         ['grp', 'Rhythm'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
-        ['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']] },
+        ..._AMB_MIX] },
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
     // inst.groupsOpen ({ groupName: bool }); Reset clears it back to these.

@@ -1,3 +1,21 @@
+    // ---- Weak-device audio fallback (persisted, applied before ANY Tone use)
+    // Set by the Bloom health watchdog when the adaptive voice budget bottoms
+    // out and the render clock STILL can't keep real time — i.e. the machine's
+    // render budget sits below this app's fixed graph cost at the default
+    // 'interactive' output latency. A 'playback'-hint context uses larger
+    // device buffers, amortizing the same DSP over far fewer callbacks
+    // (several × more headroom) for ~30-60 ms extra output latency —
+    // inaudible for scheduled/generative playback, minor for live presses.
+    // Takes effect on load because a context can't change latency in place.
+    // Revert: localStorage.removeItem('bloopsAudioLatency') + reload.
+    try {
+      if (localStorage.getItem('bloopsAudioLatency') === 'playback'
+          && typeof Tone !== 'undefined' && typeof Tone.setContext === 'function' && Tone.Context) {
+        Tone.setContext(new Tone.Context({ latencyHint: 'playback' }));
+        console.info('[bloops] playback-latency audio mode (weak-device fallback) — remove localStorage "bloopsAudioLatency" to revert');
+      }
+    } catch (e) {}
+
     const CHROMATIC = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     let rootIdx = 0;       // 0 = C — pitch class of the grid's lowest cell
     let baseOctave = 4;    // octave number of the root note

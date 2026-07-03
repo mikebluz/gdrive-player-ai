@@ -7214,10 +7214,10 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'osc-leak-fix-2';
+    const BLOOPS_PERF_BUILD = 'playback-fallback-1';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
     let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
-    let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99;
+    let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99, _ambHealthFloorN = 0;
     function _ambHealthProbe(node) {
       try {
         const a = Tone.getContext().rawContext.createAnalyser();
@@ -7322,6 +7322,22 @@
                 if (wall - _ambHealthShedAt > 5000) {
                   _ambHealthShedAt = wall;
                   console.info('[bloom-health] render behind (ctRate ' + snap.ctRate + ') — voice budget → ' + b);
+                }
+                // Budget at the floor and STILL behind: the machine's render
+                // budget is below the app's FIXED graph cost at 'interactive'
+                // output latency — no amount of voice-shedding can help.
+                // Persist the playback-latency fallback (applied on next load,
+                // 01-core-state) — larger device buffers, several × more DSP
+                // headroom, ~30-60 ms extra output latency.
+                if (b <= 8 && ++_ambHealthFloorN >= 6) {
+                  _ambHealthFloorN = -9999;   // once per session
+                  try {
+                    if (localStorage.getItem('bloopsAudioLatency') !== 'playback') {
+                      localStorage.setItem('bloopsAudioLatency', 'playback');
+                      console.warn('[bloom-health] render can\'t keep real time even at minimum voices — enabling playback-latency audio mode. RELOAD the page to apply.');
+                      try { if (typeof showToast === 'function') showToast('Audio optimized for this device — reload the page to apply'); } catch (x) {}
+                    }
+                  } catch (x) {}
                 }
               } else if (ctRate > 0.985) {
                 _ambHealthGoodN++;

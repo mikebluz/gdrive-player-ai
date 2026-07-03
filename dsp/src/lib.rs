@@ -35,10 +35,12 @@
 
 #![allow(static_mut_refs)]
 
+mod strip;
+
 const MAX_VOICES: usize = 256;
-const SLOTS: usize = 16;
-const BLOCK: usize = 128;
-const TAU: f32 = core::f32::consts::TAU;
+pub(crate) const SLOTS: usize = 16;
+pub(crate) const BLOCK: usize = 128;
+pub(crate) const TAU: f32 = core::f32::consts::TAU;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Stage {
@@ -141,9 +143,9 @@ const VOICE0: Voice = Voice {
 };
 
 static mut VOICES: [Voice; MAX_VOICES] = [VOICE0; MAX_VOICES];
-static mut OUT: [[[f32; BLOCK]; 2]; SLOTS] = [[[0.0; BLOCK]; 2]; SLOTS];
-static mut SR: f32 = 44100.0;
-static mut DT: f32 = 1.0 / 44100.0;
+pub(crate) static mut OUT: [[[f32; BLOCK]; 2]; SLOTS] = [[[0.0; BLOCK]; 2]; SLOTS];
+pub(crate) static mut SR: f32 = 44100.0;
+pub(crate) static mut DT: f32 = 1.0 / 44100.0;
 static mut LAST_T: f64 = -1.0;
 
 // ---- Design-voice parameter STAGING buffer --------------------------------
@@ -166,11 +168,11 @@ static mut LAST_T: f64 = -1.0;
 //                   dest (0 pitch/1 cutoff/2 reso/3 amp/4 pan), amount -1..1
 static mut NOTE_CURSOR: usize = 0; // voice index used by the last note()
 const PARAMS_LEN: usize = 64;
-static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
+pub(crate) static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 4;
+const CORE_REV: u32 = 5;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {
@@ -266,6 +268,7 @@ pub extern "C" fn init(sample_rate: f32) {
             }
         }
     }
+    strip::reset_all();
 }
 
 #[no_mangle]
@@ -702,7 +705,7 @@ fn wave_sample(wave: u32, ph: f32, dt: f32) -> f32 {
 
 /// Stateless per-voice random in [-1,1] for smooth/sharp LFOs.
 #[inline(always)]
-fn hash_rand(seed: u32, k: u32) -> f32 {
+pub(crate) fn hash_rand(seed: u32, k: u32) -> f32 {
     let mut x = seed ^ k.wrapping_mul(2654435761);
     x ^= x << 13;
     x ^= x >> 17;
@@ -1174,4 +1177,7 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
             }
         }
     }
+    // Phase 2: per-slot layer strips + FX (no-op for disabled strips, so
+    // Phase-1 output — and the existing golden baseline — is untouched).
+    strip::process_strips(t_block, frames);
 }

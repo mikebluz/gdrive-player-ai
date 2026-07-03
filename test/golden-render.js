@@ -37,7 +37,11 @@ function makeCore() {
 
 // Render one section: events = [{at, do: (wasm)=>...}], each fired before the
 // block containing `at`. Returns hash + sanity stats over slots 0-3.
-function renderSection(wasm, seconds, events) {
+// sec.feed = {slot, freq, amp} writes a sine into the strip INPUT bus each
+// block (the worklet-input path); sec.send additionally hashes the reverb
+// send bus (send_ptr) so send-tap regressions are caught.
+function renderSection(wasm, sec) {
+  const { s: seconds, ev: events, feed, send } = sec;
   wasm.init(SR);
   const evs = [...events].sort((a, b) => a.at - b.at);
   const hash = crypto.createHash('sha256');
@@ -46,10 +50,26 @@ function renderSection(wasm, seconds, events) {
   for (let f = 0; f < frames; f += BLOCK) {
     const t = f / SR;
     while (ei < evs.length && evs[ei].at <= t) { evs[ei].do(wasm); ei++; }
+    if (feed) {
+      for (let ch = 0; ch < 2; ch++) {
+        const iv = new Float32Array(wasm.memory.buffer, wasm.in_ptr(feed.slot, ch), BLOCK);
+        for (let i = 0; i < BLOCK; i++) iv[i] = Math.sin(2 * Math.PI * feed.freq * (t + i / SR)) * feed.amp;
+      }
+    }
     wasm.process(t, BLOCK);
     for (let slot = 0; slot < HASH_SLOTS; slot++) {
       for (let ch = 0; ch < 2; ch++) {
         const v = new Float32Array(wasm.memory.buffer, wasm.out_ptr(slot, ch), BLOCK);
+        hash.update(Buffer.from(v.buffer, v.byteOffset, v.byteLength));
+        for (let i = 0; i < BLOCK; i++) {
+          const x = v[i];
+          if (x !== x) nan++; else { sumsq += x * x; n++; }
+        }
+      }
+    }
+    if (send) {
+      for (let ch = 0; ch < 2; ch++) {
+        const v = new Float32Array(wasm.memory.buffer, wasm.send_ptr(ch), BLOCK);
         hash.update(Buffer.from(v.buffer, v.byteOffset, v.byteLength));
         for (let i = 0; i < BLOCK; i++) {
           const x = v[i];
@@ -90,6 +110,11 @@ const D = (at, kind, dp, opts = {}) => ({
 // dp fragment: mod-matrix flag + lfo1 {shape,rate} + one route lfo1→dest.
 const lfo1Route = (shape, rate, dest, amount) =>
   ({ 0: 32, 18: shape, 19: rate, 30: 1, 31: 0, 32: dest, 33: amount });
+
+// Strip command event: fires wasm[fn](...args) at `at`.
+const S = (at, fn, ...args) => ({ at, do: (w) => w[fn](...args) });
+// Enable strip 0 (and optionally others) at t=0.
+const EN = (...slots) => slots.map((sl) => S(0, 'strip_enable', sl, 1));
 
 // ---- the script ------------------------------------------------------------
 // Section values are fixed forever — edit ONLY when deliberately changing
@@ -162,12 +187,65 @@ const SECTIONS = {
   // 300 overlapping notes force voice stealing (MAX_VOICES=256)
   'life-steal': { s: 1.6, ev: Array.from({ length: 300 }, (_, i) =>
     N(i * 0.004, 0, { f: 100 + (i % 40) * 10, dur: 0.8, vel: 0.3, slot: i % 4 })) },
+  // ==== Phase 2: per-slot strips + FX ====
+  // worklet-input mixing: no notes, a fed sine through the enabled strip's vcf
+  'strip-input-passthrough': { s: 0.8, feed: { slot: 0, freq: 220, amp: 0.5 }, ev: EN(0) },
+  // level + scheduled gate ramps (down at 0.4 over 0.1 s, back up at 0.8)
+  'strip-level-gate': { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }),
+    S(0, 'strip_setv', 0, 1, 0.5),
+    S(0.35, 'strip_rampv', 0, 0, 0.4, -1e6, 0.0, 0.1),
+    S(0.75, 'strip_rampv', 0, 0, 0.8, -1e6, 1.0, 0.1)] },
+  // strip panner stereo law (hard-ish left)
+  'strip-pan': { s: 1.0, ev: [...EN(0), N(0, 0), S(0, 'strip_setv', 0, 3, -0.7)] },
+  // pan LFO (the arp-spread rig) SUMS with base pan
+  'strip-pan-mod': { s: 1.4, ev: [...EN(0), N(0, 0, { dur: 1.2 }), S(0, 'strip_mod', 0, 2, 0, 1.5, -0.8, 0.8, 0)] },
+  // vca mod: sine dip (range [-0.6, 0] on base 1) and sharp (S&H) determinism
+  'strip-vca-lfo':   { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 1, dur: 1.2 }), S(0, 'strip_mod', 0, 0, 0, 4, -0.6, 0, 0)] },
+  'strip-vca-sharp': { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 1, dur: 1.2 }), S(0, 'strip_mod', 0, 0, 5, 6, -0.8, 0, 0)] },
+  // vcf mod: LFO carries the absolute cutoff (floor..20000)
+  'strip-vcf-lfo': { s: 1.6, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.4 }), S(0, 'strip_mod', 0, 1, 0, 2, 300, 20000, 0)] },
+  // vcf mod from a 64-point staged curve (the 'seq'/'custom' shapes)
+  'strip-vcf-curve': { s: 1.6, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.4 }), {
+    at: 0, do: (w) => {
+      const pv = new Float32Array(w.memory.buffer, w.params_ptr(), 64);
+      for (let i = 0; i < 64; i++) pv[i] = (i % 16) / 15; // rising 16-step staircase ×4
+      w.strip_mod(0, 1, 6, 1.25, 400, 8000, 1);
+    },
+  }] },
+  // EQ3 bands −12/+6/−6 dB on noise (broadband makes crossovers visible)
+  'strip-eq': { s: 1.2, ev: [...EN(0), N(0, 8, { p0: 0, dur: 1.0 }), S(0, 'strip_eq', 0, -12, 6, -6)] },
+  // trance gate: 8 steps/bar, pattern 10110101, full depth, 6 ms edges
+  'strip-tg': { s: 1.6, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.4 }),
+    S(0, 'strip_tg', 0, 1, 8, 0b10110101, 0, 1.0, 0.006, 0.0, 1.0)] },
+  // reverb send tap (post-level, pre-gate) — hashes the SEND bus too
+  'strip-revsend': { s: 1.2, send: true, ev: [...EN(0), N(0, 0, { dur: 0.8 }),
+    S(0, 'strip_setv', 0, 2, 0.6), S(0, 'strip_setv', 0, 1, 0.8)] },
+  // FX, one at a time on a saw
+  'strip-fx-dist':     { s: 1.2, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.0 }), S(0, 'strip_dist', 0, 1, 0.6, 0.8)] },
+  'strip-fx-chorus':   { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }), S(0, 'strip_chorus', 0, 1, 0.7, 0.7, 1.5)] },
+  'strip-fx-phaser':   { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 2, dur: 1.2 }), S(0, 'strip_phaser', 0, 1, 0.8, 3, 0.9)] },
+  'strip-fx-delay':    { s: 1.6, ev: [...EN(0), N(0, 0, { dur: 0.15 }), S(0, 'strip_delay', 0, 1, 0, 0.5, 0.25, 0.4)] },
+  'strip-fx-pingpong': { s: 1.6, ev: [...EN(0), N(0, 0, { dur: 0.15 }), S(0, 'strip_delay', 0, 1, 1, 0.5, 0.25, 0.4)] },
+  'strip-fx-autopan':  { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 1, dur: 1.2 }), S(0, 'strip_autopan', 0, 1, 1.0, 1.0, 2)] },
+  // everything at once across two slots, input feed + send hashed
+  'strip-kitchen-sink': { s: 2.0, send: true, feed: { slot: 1, freq: 330, amp: 0.3 }, ev: [
+    ...EN(0, 1),
+    N(0, 13, { p0: 2, dur: 1.6 }), N(0.2, 2, { f: 65, dur: 1.2, slot: 1 }),
+    S(0, 'strip_setv', 0, 1, 0.7), S(0, 'strip_setv', 0, 2, 0.4),
+    S(0, 'strip_mod', 0, 1, 0, 1.5, 500, 12000, 0),
+    S(0, 'strip_eq', 0, 4, -3, 2),
+    S(0, 'strip_tg', 0, 1, 16, 0b1011010110110101, 0, 0.8, 0.004, 0.0, 2.0),
+    S(0, 'strip_dist', 0, 1, 0.3, 0.5), S(0, 'strip_delay', 0, 1, 1, 0.35, 0.3, 0.45),
+    S(0, 'strip_setv', 1, 3, 0.5), S(0, 'strip_mod', 1, 0, 1, 3, -0.5, 0, 0),
+    S(0, 'strip_chorus', 1, 1, 0.6, 0.6, 2), S(0, 'strip_autopan', 1, 1, 0.7, 0.8, 1.2),
+    S(1.2, 'strip_rampv', 0, 0, 1.25, -1e6, 0.0, 0.3),
+  ] },
 };
 
 // ---- run --------------------------------------------------------------------
 function renderAll(wasm) {
   const out = {};
-  for (const [name, sec] of Object.entries(SECTIONS)) out[name] = renderSection(wasm, sec.s, sec.ev);
+  for (const [name, sec] of Object.entries(SECTIONS)) out[name] = renderSection(wasm, sec);
   return out;
 }
 

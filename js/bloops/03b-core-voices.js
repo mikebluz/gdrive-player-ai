@@ -11,14 +11,15 @@
     // engine, sounding notes finish where they started. Persisted in
     // localStorage 'bloopsCoreVoices'.
     //
-    // Phase-1 scope: plain 'sine' and 'fm' Bloom notes (no Design features, no
-    // glide, no per-note FX). See _coreVoices.eligible.
+    // Core-supported kinds (each spectrally calibrated against recorded Tone
+    // output): sine, fm, bass, bell, xylo, am, pad — plain Bloom notes only
+    // (no Design features, no glide, no per-note FX). See _coreVoices.eligible.
     const _coreVoices = (() => {
       const SLOTS = 16;
       let node = null, ready = false, initing = false, failed = false;
       const slotByKey = new Map();   // layer key -> slot index
       const destBySlot = new Array(SLOTS).fill(null);
-      const KINDS = { sine: 0, fm: 1, bass: 2 };
+      const KINDS = { sine: 0, fm: 1, bass: 2, bell: 3, xylo: 4, am: 5, pad: 6 };
 
       function enabled() {
         try { return localStorage.getItem('bloopsCoreVoices') === '1'; } catch (e) { return false; }

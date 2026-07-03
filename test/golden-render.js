@@ -227,6 +227,11 @@ const SECTIONS = {
   'strip-fx-delay':    { s: 1.6, ev: [...EN(0), N(0, 0, { dur: 0.15 }), S(0, 'strip_delay', 0, 1, 0, 0.5, 0.25, 0.4)] },
   'strip-fx-pingpong': { s: 1.6, ev: [...EN(0), N(0, 0, { dur: 0.15 }), S(0, 'strip_delay', 0, 1, 1, 0.5, 0.25, 0.4)] },
   'strip-fx-autopan':  { s: 1.4, ev: [...EN(0), N(0, 13, { p0: 1, dur: 1.2 }), S(0, 'strip_autopan', 0, 1, 1.0, 1.0, 2)] },
+  // live stereo width: two hard-panned voices (real side content), width
+  // ramped 1 → 0.15 mid-note (the spread fader's real-time morph)
+  'strip-width': { s: 1.4, ev: [...EN(0),
+    N(0, 0, { pan: -0.8, dur: 1.2 }), N(0, 0, { f: 330, pan: 0.8, dur: 1.2 }),
+    S(0.5, 'strip_rampv', 0, 4, 0.55, -1e6, 0.15, 0.2)] },
   // everything at once across two slots, input feed + send hashed
   'strip-kitchen-sink': { s: 2.0, send: true, feed: { slot: 1, freq: 330, amp: 0.3 }, ev: [
     ...EN(0, 1),

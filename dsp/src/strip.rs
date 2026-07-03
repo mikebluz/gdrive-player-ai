@@ -196,6 +196,11 @@ pub(crate) struct Strip {
     rev: Ramp,
     pan: Ramp,
     pan_mod: SMod,
+    // stereo WIDTH (side-gain multiplier, live-morphable): in spread mode the
+    // host emits the voice fan at FULL width and drives this to space/100, so
+    // the fader reshapes SOUNDING voices in real time; pan mode drives it to
+    // 0 (the node panner's point-source behaviour).
+    width: Ramp,
     // trance gate (stateless bar-anchored step pattern)
     tg_on: bool,
     tg_steps: u32,
@@ -248,6 +253,7 @@ pub(crate) const STRIP0: Strip = Strip {
     rev: Ramp::at(0.0),
     pan: Ramp::at(0.0),
     pan_mod: SMOD0,
+    width: Ramp::at(1.0),
     tg_on: false,
     tg_steps: 16,
     tg_pat: 0,
@@ -620,13 +626,17 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                 let pv1 = (st.pan.value(te)
                     + if st.pan_mod.shape >= 0 { smod_val(&st.pan_mod, te, seed ^ 0xabcd) } else { 0.0 })
                 .clamp(-1.0, 1.0);
+                let w0 = st.width.value(tc).clamp(0.0, 2.0);
+                let w1 = st.width.value(te).clamp(0.0, 2.0);
                 let mut k = 0.0f32;
                 for i in i0..i0 + n {
                     let f = k * inv;
                     k += 1.0;
                     let p = pv0 + (pv1 - pv0) * f;
                     let x = (p + 1.0) * 0.25 * PI;
-                    let gs = core::f32::consts::FRAC_1_SQRT_2 * (p.abs() * FRAC_PI_2).cos();
+                    let gs = core::f32::consts::FRAC_1_SQRT_2
+                        * (p.abs() * FRAC_PI_2).cos()
+                        * (w0 + (w1 - w0) * f);
                     let l = OUT[slot][0][i];
                     let r = OUT[slot][1][i];
                     let m = 0.5 * (l + r);
@@ -699,6 +709,7 @@ pub extern "C" fn strip_setv(slot: u32, which: u32, v: f32) {
             0 => &mut st.gate,
             1 => &mut st.level,
             2 => &mut st.rev,
+            4 => &mut st.width,
             _ => &mut st.pan,
         };
         *r = Ramp::at(v);
@@ -715,6 +726,7 @@ pub extern "C" fn strip_rampv(slot: u32, which: u32, t: f64, from: f32, target: 
             0 => &mut st.gate,
             1 => &mut st.level,
             2 => &mut st.rev,
+            4 => &mut st.width,
             _ => &mut st.pan,
         };
         let v0 = if from < -1.0e5 { r.value(t) } else { from };

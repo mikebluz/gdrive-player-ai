@@ -2576,18 +2576,29 @@
     // In PAN mode the per-layer Panner node holds the position (so a pan ramp can
     // sweep it smoothly), so each voice is centred here; in SPREAD mode the voices
     // fan across the width.
+    // CORE STRIPS: the layer's stereo WIDTH lives on the strip (a live-
+    // morphable side-gain, see _ambApplyLayerPan) — so in spread mode voices
+    // are emitted at FULL width and the strip scales the side to space/100.
+    // The fader then reshapes SOUNDING voices in real time, not just future
+    // emits. space 0 keeps the centred emission (byte-parity at the default;
+    // a 0→N drag reaches full effect at the next emit). Node strips keep the
+    // as-configured fan (their panner collapses width regardless).
+    function _ambStripWidthLive(layer) {
+      return !!(layer && layer.panMode !== 'pan' && _ambLayerSpace(layer) > 0
+        && typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled());
+    }
     function _ambLayerPans(layer, n) {
       const val = _ambLayerSpace(layer);
       if (layer && layer.panMode === 'pan') {
         const out = []; for (let i = 0; i < n; i++) out.push(0); return out;
       }
-      return _ambSpacePans(n, Math.max(0, Math.min(100, val)));
+      return _ambSpacePans(n, _ambStripWidthLive(layer) ? 100 : Math.max(0, Math.min(100, val)));
     }
     // Single pan for a one-shot event (motif note, texture/beat hit).
     function _ambLayerPan(layer) {
       const val = _ambLayerSpace(layer);
-      if (layer && layer.panMode === 'pan') return 0;   // position is on the layer Panner
-      return Math.round((_ambRand() * 2 - 1) * Math.max(0, Math.min(100, val)));
+      if (layer && layer.panMode === 'pan') return 0;   // position is on the layer Panner (no rand draw — RNG parity)
+      return Math.round((_ambRand() * 2 - 1) * (_ambStripWidthLive(layer) ? 100 : Math.max(0, Math.min(100, val))));
     }
 
     // ---- Timing helpers ------------------------------------------------
@@ -5473,6 +5484,17 @@
       const pos = (lc && lc.panMode === 'pan' && Number.isFinite(lc.space))
         ? Math.max(-1, Math.min(1, (lc.space | 0) / 100)) : 0;
       try { e.pan.pan.value = pos; } catch (x) {}
+      // CORE STRIPS: live stereo WIDTH — spread mode scales the full-width
+      // emitted fan to space/100 (short ramp = click-free morph of SOUNDING
+      // voices); pan mode collapses to the node panner's point source.
+      if (e.core) {
+        const w = (lc && lc.panMode !== 'pan' && Number.isFinite(lc.space))
+          ? Math.max(0, Math.min(1, (lc.space | 0) / 100)) : 0;
+        try {
+          const tn = Tone.getContext().rawContext.currentTime;
+          e.core.cmd('strip_rampv', e.core.slot, 4, tn, -1e6, w, 0.05);
+        } catch (x) {}
+      }
     }
     function _ambTeardownMod(layer) {
       const e = _E.mod[layer];

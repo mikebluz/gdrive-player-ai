@@ -7214,7 +7214,7 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'playback-fallback-1';
+    const BLOOPS_PERF_BUILD = 'playback-fallback-2';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
     let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
     let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99, _ambHealthFloorN = 0;
@@ -7237,8 +7237,15 @@
       }
       return { rms: Math.round(Math.sqrt(sum / _ambHealthBuf.length) * 1e5) / 1e5, nan };
     }
-    // Post-mortem: walk every playing layer's chain output for ~250 ms each and
-    // report where signal exists vs where it's dead/NaN.
+    // Post-mortem: read every playing layer's chain output and report where
+    // signal exists vs where it's dead/NaN. Probes are CACHED per layer key,
+    // created once and never detached: an earlier version attached a fresh
+    // analyser per layer per sweep and relied on node.disconnect(analyser) —
+    // which silently fails on Tone-wrapped nodes, so every sweep leaked 7
+    // permanently-capturing AnalyserNodes and the DIAGNOSTIC ITSELF spiraled
+    // a struggling machine further down (measured on-device: progressive
+    // degradation tracking the sweep cadence).
+    const _ambHealthLayerProbes = {};
     async function _ambHealthSweepLayers() {
       const out = {};
       try {
@@ -7249,10 +7256,15 @@
           const e = mod[k];
           const node = e && (e.pan || e.gate || e.vca);
           if (!node) { out[k] = 'no-node'; continue; }
-          const a = _ambHealthProbe(node);
+          let a = _ambHealthLayerProbes[k];
+          if (!a || a._srcNode !== node) {   // chain rebuilt → node changed → new probe
+            a = _ambHealthProbe(node);
+            if (a) a._srcNode = node;
+            _ambHealthLayerProbes[k] = a;
+          }
+          if (!a) { out[k] = 'no-probe'; continue; }
           await new Promise((r) => setTimeout(r, 250));
           out[k] = _ambHealthRead(a);
-          try { node.disconnect(a); } catch (x) {}
         }
       } catch (e) { out._err = String(e); }
       return out;
@@ -7355,15 +7367,19 @@
           const outDead = sig.out && sig.out.rms < 1e-4;
           _ambHealthSilentN = (voicesLive && outDead) ? _ambHealthSilentN + 1 : 0;
           const engineSick = ctRate < 0.9 || raw.state !== 'running' || snap.q > 80;
-          if ((anyNan || _ambHealthSilentN >= 2 || engineSick) && wall - _ambHealthWarnAt > 15000) {
+          if ((anyNan || _ambHealthSilentN >= 2 || engineSick) && wall - _ambHealthWarnAt > 30000) {
             _ambHealthWarnAt = wall;
             const why = anyNan ? 'NaN-IN-CHAIN' : (_ambHealthSilentN >= 2 ? 'OUTPUT-DEAD-VOICES-LIVE' : 'ENGINE-DEGRADED');
             console.warn('[bloom-health] ' + why + ' ' + JSON.stringify(snap));
             const recent = window.__bloomHealthLog.slice(-6, -1);
             console.warn('[bloom-health] recent: ' + JSON.stringify(recent.map((r) => ({ t: r.t, ctRate: r.ctRate, out: r.sig && r.sig.out, bloom: r.sig && r.sig.bloom }))));
-            _ambHealthSweepLayers().then((layers) => {
-              console.warn('[bloom-health] layer sweep: ' + JSON.stringify(layers));
-            });
+            // Sweep only for signal-path mysteries (NaN / dead output) — a
+            // plain render-behind state doesn't need per-layer localization.
+            if (anyNan || _ambHealthSilentN >= 2) {
+              _ambHealthSweepLayers().then((layers) => {
+                console.warn('[bloom-health] layer sweep: ' + JSON.stringify(layers));
+              });
+            }
           }
         } catch (e) {}
       }, 500);

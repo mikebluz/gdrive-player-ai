@@ -9,10 +9,14 @@
     // Takes effect on load because a context can't change latency in place.
     // Revert: localStorage.removeItem('bloopsAudioLatency') + reload.
     try {
-      if (localStorage.getItem('bloopsAudioLatency') === 'playback'
+      const _audioLat = localStorage.getItem('bloopsAudioLatency');
+      if ((_audioLat === 'playback' || _audioLat === 'max')
           && typeof Tone !== 'undefined' && typeof Tone.setContext === 'function' && Tone.Context) {
-        Tone.setContext(new Tone.Context({ latencyHint: 'playback' }));
-        console.info('[bloops] playback-latency audio mode (weak-device fallback) — remove localStorage "bloopsAudioLatency" to revert');
+        // 'playback' ≈ 23 ms device buffers; 'max' (0.12 s hint) rides through
+        // the ~30-50 ms transient system stalls that still glitch a weak
+        // machine at 'playback' size. Escalated by the health watchdog.
+        Tone.setContext(new Tone.Context({ latencyHint: _audioLat === 'max' ? 0.12 : 'playback' }));
+        console.info('[bloops] ' + _audioLat + '-latency audio mode (weak-device fallback) — remove localStorage "bloopsAudioLatency" to revert');
       }
     } catch (e) {}
 

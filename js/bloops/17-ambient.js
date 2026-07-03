@@ -7214,10 +7214,10 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'playback-fallback-2';
+    const BLOOPS_PERF_BUILD = 'stall-tolerant-1';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
     let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
-    let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99, _ambHealthFloorN = 0;
+    let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99, _ambHealthFloorN = 0, _ambHealthBadN = 0;
     function _ambHealthProbe(node) {
       try {
         const a = Tone.getContext().rawContext.createAnalyser();
@@ -7329,29 +7329,40 @@
             if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25) {
               if (ctRate < 0.97) {
                 _ambHealthGoodN = 0;
-                _ambHealthCeil = Math.max(8, Math.min(_ambHealthCeil, Math.floor(snap.cost * 0.85)));
-                const b = _setVoiceBudget(Math.min(_getVoiceBudget(), Math.max(8, snap.cost * 0.7)));
-                if (wall - _ambHealthShedAt > 5000) {
-                  _ambHealthShedAt = wall;
-                  console.info('[bloom-health] render behind (ctRate ' + snap.ctRate + ') — voice budget → ' + b);
-                }
-                // Budget at the floor and STILL behind: the machine's render
-                // budget is below the app's FIXED graph cost at 'interactive'
-                // output latency — no amount of voice-shedding can help.
-                // Persist the playback-latency fallback (applied on next load,
-                // 01-core-state) — larger device buffers, several × more DSP
-                // headroom, ~30-60 ms extra output latency.
-                if (b <= 8 && ++_ambHealthFloorN >= 6) {
-                  _ambHealthFloorN = -9999;   // once per session
-                  try {
-                    if (localStorage.getItem('bloopsAudioLatency') !== 'playback') {
-                      localStorage.setItem('bloopsAudioLatency', 'playback');
-                      console.warn('[bloom-health] render can\'t keep real time even at minimum voices — enabling playback-latency audio mode. RELOAD the page to apply.');
-                      try { if (typeof showToast === 'function') showToast('Audio optimized for this device — reload the page to apply'); } catch (x) {}
-                    }
-                  } catch (x) {}
+                _ambHealthBadN++;
+                // Debounce: an ISOLATED bad sample is a transient system stall
+                // (GC, power management) — shedding voices can't prevent a
+                // stall that already happened, it just thins the music. Only a
+                // SUSTAINED deficit (2 consecutive) or a severe one (<0.90)
+                // sheds.
+                if (ctRate < 0.90 || _ambHealthBadN >= 2) {
+                  _ambHealthCeil = Math.max(8, Math.min(_ambHealthCeil, Math.floor(snap.cost * 0.85)));
+                  const b = _setVoiceBudget(Math.min(_getVoiceBudget(), Math.max(8, snap.cost * 0.7)));
+                  if (wall - _ambHealthShedAt > 5000) {
+                    _ambHealthShedAt = wall;
+                    console.info('[bloom-health] render behind (ctRate ' + snap.ctRate + ') — voice budget → ' + b);
+                  }
+                  // Budget at the floor and STILL a sustained deficit: the
+                  // machine can't carry the app's FIXED graph at the current
+                  // output latency — escalate the persisted latency tier
+                  // (interactive → playback → max; applied on next load,
+                  // 01-core-state). Bigger device buffers give more headroom
+                  // per callback, and 'max' rides through transient stalls.
+                  if (b <= 8 && ++_ambHealthFloorN >= 6) {
+                    _ambHealthFloorN = -9999;   // once per session
+                    try {
+                      const cur = localStorage.getItem('bloopsAudioLatency');
+                      const next = (cur === 'playback' || cur === 'max') ? 'max' : 'playback';
+                      if (cur !== next) {
+                        localStorage.setItem('bloopsAudioLatency', next);
+                        console.warn('[bloom-health] render can\'t keep real time even at minimum voices — enabling ' + next + '-latency audio mode. RELOAD the page to apply.');
+                        try { if (typeof showToast === 'function') showToast('Audio optimized for this device — reload the page to apply'); } catch (x) {}
+                      }
+                    } catch (x) {}
+                  }
                 }
               } else if (ctRate > 0.985) {
+                _ambHealthBadN = 0;
                 _ambHealthGoodN++;
                 if (_ambHealthGoodN % 6 === 0 && _getVoiceBudget() < _ambHealthCeil) _setVoiceBudget(_getVoiceBudget() + 1);
                 if (_ambHealthGoodN % 60 === 0 && _ambHealthCeil < 99) _ambHealthCeil++;

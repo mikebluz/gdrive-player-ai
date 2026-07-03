@@ -7214,10 +7214,11 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'stall-tolerant-1';
+    const BLOOPS_PERF_BUILD = 'start-grace-1';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
     let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
     let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99, _ambHealthFloorN = 0, _ambHealthBadN = 0;
+    let _ambHealthGraceUntil = 0;
     function _ambHealthProbe(node) {
       try {
         const a = Tone.getContext().rawContext.createAnalyser();
@@ -7270,6 +7271,20 @@
       return out;
     }
     function _ambHealthStart() {
+      // PLAY-START GRACE: the play click does heavy synchronous chain building
+      // (hundreds of ms) whose graph mutations stall the render thread — a
+      // startup TRANSIENT, not real overload. Without a grace period the
+      // budget shed to its floor at EVERY play (measured on-device: 'render
+      // behind → 8' right at press), culling synth voices while sample layers
+      // played on — heard as "one layer starts, the band kicks in seconds
+      // later". Ignore render-health for the first 3 s of each play, and
+      // start each play optimistically rather than at last session's floor.
+      _ambHealthGraceUntil = performance.now() + 3000;
+      _ambHealthBadN = 0;
+      try {
+        if (typeof _setVoiceBudget === 'function' && typeof _getVoiceBudget === 'function'
+            && _getVoiceBudget() < 14) _setVoiceBudget(14);
+      } catch (e) {}
       if (_ambHealthTimer) return;
       try { console.info('[bloom] perf build ' + BLOOPS_PERF_BUILD + ' — adaptive voice budget on'); } catch (e) {}
       try {
@@ -7326,7 +7341,8 @@
           // one unit per ~30 s of sustained health so a transient cause
           // (thermal spike, another app) doesn't pin it down forever.
           try {
-            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25) {
+            const _inGrace = wall < _ambHealthGraceUntil;
+            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25 && !_inGrace) {
               if (ctRate < 0.97) {
                 _ambHealthGoodN = 0;
                 _ambHealthBadN++;
@@ -7378,7 +7394,8 @@
           const outDead = sig.out && sig.out.rms < 1e-4;
           _ambHealthSilentN = (voicesLive && outDead) ? _ambHealthSilentN + 1 : 0;
           const engineSick = ctRate < 0.9 || raw.state !== 'running' || snap.q > 80;
-          if ((anyNan || _ambHealthSilentN >= 2 || engineSick) && wall - _ambHealthWarnAt > 30000) {
+          if ((anyNan || _ambHealthSilentN >= 2 || engineSick) && wall - _ambHealthWarnAt > 30000
+              && wall >= _ambHealthGraceUntil) {
             _ambHealthWarnAt = wall;
             const why = anyNan ? 'NaN-IN-CHAIN' : (_ambHealthSilentN >= 2 ? 'OUTPUT-DEAD-VOICES-LIVE' : 'ENGINE-DEGRADED');
             console.warn('[bloom-health] ' + why + ' ' + JSON.stringify(snap));

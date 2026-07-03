@@ -15,6 +15,16 @@
 //!   4 xylo   Tone.FMSynth  h7    i4   sine mod, modEnv .001/.2/0/.2,  FIXED amp .001/.5/0/.3
 //!   5 am     Tone.AMSynth  h2         square mod, modEnv .5/0/1/.5,   note ADSR
 //!   6 pad    Tone.AMSynth  h1.5       sine mod,  modEnv 1/.5/.5/2,    FIXED amp 1.2/.5/.7/2.5
+//!   7 duo    Tone.DuoSynth: sine@f + saw@1.5f, each through a MonoSynth-
+//!            default LP (Q6 -12dB, filterEnv .6/.2/.5/2 base200 oct3),
+//!            5 Hz vibrato, note ADSR
+//!   8 noise  Tone.NoiseSynth, p0 = color (0 white, 1 pink, 2 brown), note ADSR
+//!   9 kick   Tone.MembraneSynth: sine, freq sweeps 10f→f exp over 50 ms,
+//!            FIXED amp .001/.4/.01/1.4
+//!  10 metal  Tone.MetalSynth-ish: square-FM h5.1 i32 → highpass 4 kHz,
+//!            FIXED amp .001/1.4/0/.2
+//!  11 pluck  Tone.PluckSynth: Karplus-Strong, dampening 4 kHz, resonance .7
+//!  12 wavetable  legacy default stack: sine 1.0 + saw 0.5 + tri 0.3, note ADSR
 //!
 //! Every kind's depth/resonance is CALIBRATED against recorded Tone output
 //! (see CAL / BASS_Q and the voice-ab harness) — matching the sound projects
@@ -70,6 +80,9 @@ struct Voice {
     fc_b: [f32; 3],
     fc_a: [f32; 2],
     fc_n: u32,
+    p0: f32,   // generic per-kind param (noise color, …)
+    aux0: u32, // per-kind int state (PRNG, pluck buffer index)
+    aux1: u32, // per-kind int state (pluck delay length / write pos)
 }
 
 const VOICE0: Voice = Voice {
@@ -80,6 +93,7 @@ const VOICE0: Voice = Voice {
     me_a: 0.001, me_d: 0.001, me_s: 1.0, me_r: 0.1,
     ph_c: 0.0, ph_m: 0.0, kmax: 1,
     fs: [0.0; 8], fc_b: [0.0; 3], fc_a: [0.0; 2], fc_n: 0,
+    p0: 0.0, aux0: 1, aux1: 0,
 };
 
 static mut VOICES: [Voice; MAX_VOICES] = [VOICE0; MAX_VOICES];
@@ -91,25 +105,29 @@ static mut DT: f32 = 1.0 / 44100.0;
 // voice-ab harness. Index = kind. fm's 0.25 was swept 2026-07-03 (every
 // partial within 1 dB of Tone). Others start at fm's value (same Multiply
 // topology) and get their own sweep before ear-testing.
-// Swept values (voice-ab, 2026-07-03): fm 0.25, bell 0.25, xylo 0.3,
-// am 0.3, pad 0.3 — each matches its recorded Tone spectrum within ~1-2 dB
-// relative to the fundamental.
-static mut CAL: [f32; 8] = [1.0, 0.25, 1.0, 0.25, 0.3, 0.3, 0.3, 1.0];
-// Per-kind OUTPUT GAIN: Tone's ModulationSynth family (FM/AM) runs quieter
-// per voice than a bare oscillator×envelope. 0.32 swept with the CORRECTED
-// pan law (unity at center, like the node engine's no-panner shortcut):
-// bell/am/pad recorded envelopes match Tone within ~1 dB at 0.32.
-// sine (Tone.Synth) and bass (MonoSynth) measured ~unity.
-static mut GAIN: [f32; 8] = [1.0, 0.32, 1.0, 0.32, 0.32, 0.32, 0.32, 1.0];
+// Swept values (voice-ab/voice2-ab, 2026-07-03): fm 0.25, bell 0.25,
+// xylo 0.3, am 0.3, pad 0.3, duo 1.6 (static-cutoff scaler: 2500·1.6 =
+// 4 kHz matched the recorded rolloff within 1 dB/partial) — each vs its
+// recorded Tone spectrum. Indices 8+ unused-by-depth kinds default 1.
+static mut CAL: [f32; 16] = [1.0, 0.25, 1.0, 0.25, 0.3, 0.3, 0.3, 1.6,
+                             1.0, 1.0, 0.25, 1.0, 1.0, 1.0, 1.0, 1.0];
+// Per-kind OUTPUT GAIN, swept against recorded Tone levels (corrected pan
+// law): FM/AM family 0.32; duo 1.9; noise 0.5 (pink/brown carry an extra
+// 0.82 colour factor in-render); kick 0.85; metal 0.5 (NO Tone reference —
+// MetalSynth records silent even when triggered per its own signature, and
+// the app's playNote mistriggers it too, so the core version is tuned to
+// be musical rather than matched); pluck 1.0; wavetable 1.4.
+static mut GAIN: [f32; 16] = [1.0, 0.32, 1.0, 0.32, 0.32, 0.32, 0.32, 1.9,
+                              0.5, 0.85, 0.5, 1.0, 1.4, 1.0, 1.0, 1.0];
 
 #[no_mangle]
 pub extern "C" fn set_kind_cal(kind: u32, k: f32) {
-    unsafe { CAL[(kind as usize).min(7)] = k.clamp(0.01, 4.0) }
+    unsafe { CAL[(kind as usize).min(15)] = k.clamp(0.01, 4.0) }
 }
 
 #[no_mangle]
 pub extern "C" fn set_kind_gain(kind: u32, g: f32) {
-    unsafe { GAIN[(kind as usize).min(7)] = g.clamp(0.05, 4.0) }
+    unsafe { GAIN[(kind as usize).min(15)] = g.clamp(0.05, 4.0) }
 }
 
 // Back-compat alias used by the fm harness.
@@ -174,13 +192,35 @@ fn alloc_voice() -> usize {
     }
 }
 
+// ---- pluck (Karplus-Strong) delay-line pool --------------------------------
+const PLUCK_BUFS: usize = 32;
+const PLUCK_LEN: usize = 2048;
+static mut PLUCK: [[f32; PLUCK_LEN]; PLUCK_BUFS] = [[0.0; PLUCK_LEN]; PLUCK_BUFS];
+static mut PLUCK_OWNER: [i32; PLUCK_BUFS] = [-1; PLUCK_BUFS];
+
+#[inline(always)]
+fn xorshift(state: &mut u32) -> f32 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+}
+
 #[no_mangle]
 pub extern "C" fn note(
     slot: u32, kind: u32, freq: f32, vel: f32, pan: f32, t_start: f64, dur: f32,
-    a: f32, d: f32, s: f32, r: f32, detune: f32,
+    a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32,
 ) {
     unsafe {
         let i = alloc_voice();
+        // free a pluck buffer this voice may have owned in a past life
+        for o in PLUCK_OWNER.iter_mut() {
+            if *o == i as i32 {
+                *o = -1;
+            }
+        }
         let v = &mut VOICES[i];
         let f = freq * exp2f(detune / 1200.0);
         // Pan law matches the node engine exactly: at pan 0 playNote creates
@@ -196,8 +236,8 @@ pub extern "C" fn note(
             (ang.cos(), ang.sin())
         };
         let vel = vel.clamp(0.0, 1.0);
-        let cal = CAL[(kind as usize).min(7)];
-        let out_gain = GAIN[(kind as usize).min(7)];
+        let cal = CAL[(kind as usize).min(15)];
+        let out_gain = GAIN[(kind as usize).min(15)];
         // per-kind synth params (see the header table)
         let (harm, idx, mod_sine, me, amp_fixed): (f32, f32, bool, [f32; 4], Option<[f32; 4]>) =
             match kind {
@@ -206,6 +246,8 @@ pub extern "C" fn note(
                 4 => (7.0, 4.0 * cal * vel, true, [0.001, 0.2, 0.0, 0.2], Some([0.001, 0.5, 0.0, 0.3])),
                 5 => (2.0, cal * vel, false, [0.5, 0.001, 1.0, 0.5], None),
                 6 => (1.5, cal * vel, true, [1.0, 0.5, 0.5, 2.0], Some([1.2, 0.5, 0.7, 2.5])),
+                9 => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], Some([0.001, 0.4, 0.01, 1.4])),
+                10 => (5.1, 32.0 * cal * vel, false, [0.001, 0.001, 1.0, 0.1], Some([0.001, 1.4, 0.0, 0.2])),
                 _ => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], None),
             };
         let (aa, dd, ss, rr) = match amp_fixed {
@@ -243,7 +285,33 @@ pub extern "C" fn note(
             fc_b: [0.0; 3],
             fc_a: [0.0; 2],
             fc_n: 0,
+            p0,
+            aux0: (i as u32).wrapping_mul(2654435761).wrapping_add(1) | 1, // PRNG seed
+            aux1: 0,
         };
+        // pluck: claim a delay buffer and load the noise burst
+        if kind == 11 {
+            let mut slot_b = usize::MAX;
+            for (bi, o) in PLUCK_OWNER.iter().enumerate() {
+                if *o < 0 {
+                    slot_b = bi;
+                    break;
+                }
+            }
+            if slot_b == usize::MAX {
+                slot_b = i % PLUCK_BUFS; // steal deterministically
+            }
+            PLUCK_OWNER[slot_b] = i as i32;
+            let n = ((SR / v.freq.max(20.0)) as usize).clamp(2, PLUCK_LEN);
+            let mut seed = v.aux0;
+            for k in 0..n {
+                PLUCK[slot_b][k] = xorshift(&mut seed);
+            }
+            v.aux0 = slot_b as u32; // repurpose: buffer index
+            v.aux1 = n as u32;      // delay length; fs[1] = write pos cursor
+            v.fs[0] = 0.0;          // damping filter state
+            v.fs[1] = 0.0;          // read/write position
+        }
     }
 }
 
@@ -334,6 +402,11 @@ fn poly_blep(t: f32, dt: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+#[inline(always)]
+fn saw_blep(ph: f32, dt: f32) -> f32 {
+    (2.0 * ph - 1.0) - poly_blep(ph, dt)
 }
 
 #[inline(always)]
@@ -517,6 +590,119 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         v.fs[5] = v.fs[4]; v.fs[4] = y1;
                         v.fs[7] = v.fs[6]; v.fs[6] = y2;
                         y2
+                    }
+                    7 => {
+                        // duo: sine@f + polyBLEP saw@1.5f through a STATIC,
+                        // mostly-open LP (measured: Tone DuoSynth's default
+                        // filter env barely moves — spectrum shows a gentle
+                        // rolloff, not a 565 Hz knee), shared 5 Hz vibrato.
+                        // Cutoff = 2500·CAL[7] (calibrated vs recorded rolloff).
+                        if v.fc_n == 0 {
+                            let fc = 2500.0 * CAL[7];
+                            let (b, a) = lp_coeffs(fc, 1.0, SR);
+                            v.fc_b = b;
+                            v.fc_a = a;
+                            v.fc_n = 4096;
+                        }
+                        v.fc_n -= 1;
+                        let vib = 1.0 + 0.3 * 0.03 * (tn * 5.0 * TAU).sin(); // ±~0.9% (vibratoAmount .3)
+                        v.ph_c += inc_c * vib;
+                        v.ph_m += inc_c * 1.5 * vib;
+                        if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                        if v.ph_m >= 1.0 { v.ph_m -= 1.0; }
+                        let x0 = (v.ph_c * TAU).sin();
+                        let x1 = saw_blep(v.ph_m, inc_c * 1.5);
+                        // one LP section per sub-voice (rolloff -12)
+                        let y0 = v.fc_b[0] * x0 + v.fc_b[1] * v.fs[0] + v.fc_b[2] * v.fs[1]
+                            - v.fc_a[0] * v.fs[2] - v.fc_a[1] * v.fs[3];
+                        v.fs[1] = v.fs[0]; v.fs[0] = x0;
+                        v.fs[3] = v.fs[2]; v.fs[2] = y0;
+                        let y1 = v.fc_b[0] * x1 + v.fc_b[1] * v.fs[4] + v.fc_b[2] * v.fs[5]
+                            - v.fc_a[0] * v.fs[6] - v.fc_a[1] * v.fs[7];
+                        v.fs[5] = v.fs[4]; v.fs[4] = x1;
+                        v.fs[7] = v.fs[6]; v.fs[6] = y1;
+                        (y0 + y1) * 0.5
+                    }
+                    8 => {
+                        // noise: p0 = 0 white / 1 pink (Kellet) / 2 brown
+                        let w = xorshift(&mut v.aux0);
+                        if v.p0 < 0.5 {
+                            w
+                        } else if v.p0 < 1.5 {
+                            v.fs[0] = 0.99765 * v.fs[0] + w * 0.0990460;
+                            v.fs[1] = 0.96300 * v.fs[1] + w * 0.2965164;
+                            v.fs[2] = 0.57000 * v.fs[2] + w * 1.0526913;
+                            // 0.82: measured Tone pink/white level ratio
+                            (v.fs[0] + v.fs[1] + v.fs[2] + w * 0.1848) * 0.2 * 0.82
+                        } else {
+                            v.fs[0] = (v.fs[0] + 0.02 * w) / 1.02;
+                            v.fs[0] * 3.5 * 0.82
+                        }
+                    }
+                    9 => {
+                        // kick (MembraneSynth): sine, freq 10f→f exp over 50 ms
+                        let sweep = if tn < 0.05 {
+                            10.0 * (0.1f32).powf(tn / 0.05)
+                        } else {
+                            1.0
+                        };
+                        v.ph_c += inc_c * sweep;
+                        if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                        (v.ph_c * TAU).sin()
+                    }
+                    10 => {
+                        // metal: square-FM (h5.1, idx from table) → HP 4 kHz
+                        if v.fc_n == 0 {
+                            let fc = 4000.0f32.clamp(10.0, SR * 0.45);
+                            let w0 = TAU * fc / SR;
+                            let (sw, cw) = (w0.sin(), w0.cos());
+                            let alpha = sw / (2.0 * 1.0);
+                            let a0 = 1.0 + alpha;
+                            v.fc_b = [(1.0 + cw) * 0.5 / a0, -(1.0 + cw) / a0, (1.0 + cw) * 0.5 / a0];
+                            v.fc_a = [(-2.0 * cw) / a0, (1.0 - alpha) / a0];
+                            v.fc_n = 4096; // static filter
+                        }
+                        v.fc_n -= 1;
+                        let m = square_additive(v.ph_m, v.kmax);
+                        let inst_inc = inc_c * (1.0 + v.idx * me * m);
+                        v.ph_c += inst_inc;
+                        v.ph_m += inc_m;
+                        if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                        if v.ph_c < 0.0 { v.ph_c += 1.0; }
+                        if v.ph_m >= 1.0 { v.ph_m -= 1.0; }
+                        let x = square_blep2(v.ph_c, inst_inc.abs().max(1e-6));
+                        let y = v.fc_b[0] * x + v.fc_b[1] * v.fs[0] + v.fc_b[2] * v.fs[1]
+                            - v.fc_a[0] * v.fs[2] - v.fc_a[1] * v.fs[3];
+                        v.fs[1] = v.fs[0]; v.fs[0] = x;
+                        v.fs[3] = v.fs[2]; v.fs[2] = y;
+                        y
+                    }
+                    11 => {
+                        // pluck (Karplus-Strong)
+                        let bi = (v.aux0 as usize) % PLUCK_BUFS;
+                        let n = (v.aux1 as usize).clamp(2, PLUCK_LEN);
+                        let pos = v.fs[1] as usize % n;
+                        let nxt = (pos + 1) % n;
+                        let out_s = PLUCK[bi][pos];
+                        // damped average; resonance 0.7 is PER-CYCLE feedback
+                        // in Tone's PluckSynth (measured: the string decays in
+                        // ~10 cycles — a short pluck tick, not a long ring).
+                        let alpha = (TAU * 4000.0 / SR).min(1.0);
+                        v.fs[0] += alpha * (0.5 * (PLUCK[bi][pos] + PLUCK[bi][nxt]) - v.fs[0]);
+                        // resonance is applied once per pass through the
+                        // write head = once per string CYCLE (Tone comb).
+                        PLUCK[bi][pos] = v.fs[0] * 0.7;
+                        v.fs[1] = nxt as f32;
+                        out_s
+                    }
+                    12 => {
+                        // wavetable (legacy default): sine 1.0 + saw 0.5 + tri 0.3
+                        v.ph_c += inc_c;
+                        if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                        let sine = (v.ph_c * TAU).sin();
+                        let saw = saw_blep(v.ph_c, inc_c);
+                        let tri = 1.0 - 4.0 * (v.ph_c - 0.5).abs(); // naive triangle
+                        sine + saw * 0.5 + tri * 0.3
                     }
                     _ => {
                         // sine

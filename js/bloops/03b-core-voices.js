@@ -19,7 +19,17 @@
       let node = null, ready = false, initing = false, failed = false;
       const slotByKey = new Map();   // layer key -> slot index
       const destBySlot = new Array(SLOTS).fill(null);
-      const KINDS = { sine: 0, fm: 1, bass: 2, bell: 3, xylo: 4, am: 5, pad: 6 };
+      const KINDS = { sine: 0, fm: 1, bass: 2, bell: 3, xylo: 4, am: 5, pad: 6,
+                      duo: 7, kick: 9, metal: 10, pluck: 11, wavetable: 12 };
+      // 'noise' / 'noise:white|pink|brown' → kind 8 + color param
+      function kindFor(type) {
+        if (typeof type !== 'string') return null;
+        if (type.indexOf('noise') === 0) {
+          const c = type.indexOf(':') >= 0 ? type.split(':')[1] : 'white';
+          return { kind: 8, p0: c === 'brown' ? 2 : (c === 'pink' ? 1 : 0) };
+        }
+        return (type in KINDS) ? { kind: KINDS[type], p0: 0 } : null;
+      }
 
       function enabled() {
         try { return localStorage.getItem('bloopsCoreVoices') === '1'; } catch (e) { return false; }
@@ -73,7 +83,8 @@
           || p.phaser || p.autoFilter || p.pingPong || p.autoPan || p.fxOverrideGlobal || p.bend);
       }
       function eligible(type, p) {
-        if (!(type in KINDS)) return false;
+        if (!kindFor(type)) return false;
+        if (type === 'wavetable' && (p.wtPosition != null || p.wavetableMix)) return false; // design wavetable → node engine
         if (p.filter && p.filter.on) return false;
         if (p.filterEnv && p.filterEnv.on) return false;
         if (Array.isArray(p.modMatrix) && p.modMatrix.length) return false;
@@ -88,8 +99,9 @@
         if (!ready) { init(); return false; }  // warm up; fall back meanwhile
         const slot = slotFor(key, dest);
         if (slot < 0) return false;
+        const kf = kindFor(o.type);
         node.port.postMessage({
-          cmd: 'note', slot, kind: KINDS[o.type], freq: o.freq, vel: o.vel,
+          cmd: 'note', slot, kind: kf.kind, p0: kf.p0, freq: o.freq, vel: o.vel,
           pan: Math.max(-1, Math.min(1, (o.pan || 0) / 100)),
           t: o.t, dur: o.dur, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
         });

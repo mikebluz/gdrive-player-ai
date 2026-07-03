@@ -1682,7 +1682,21 @@
     //
     // KILL SWITCH: set to false to bypass the pool entirely (back to the
     // pre-pool behavior — fresh synth per note). Live debug toggle.
-    const VOICE_POOL_ENABLED = true;
+    //
+    // DISABLED (2026-07-03, the dense-project cut-out root cause): POOLED
+    // REUSE LEAKS ONE RUNNING NATIVE OscillatorNode PER NOTE. Tone's
+    // retrigger bookkeeping cannot reliably stop the previous note's native
+    // oscillator when a synth body is retriggered (a scheduled native source
+    // stop can't be cancelled, so restarts orphan still-running nodes; a
+    // stop() at pool-release doesn't help — measured 1-2 leaked oscillators
+    // per pooled note, ~25/s on a dense FM project, render thread drowned in
+    // ~12 s). Fresh-synth-per-note + safeDisposeSynth measured ZERO leaks.
+    // The pool's reason to exist (construction cost inside the emitting
+    // tick) is solved by the deferred voice-build queue, which spreads
+    // builds across the 0.3-1.4 s scheduling lookahead. If re-enabling is
+    // ever considered, the oscillator-leak test must pass first
+    // (retrigger a pooled preset N times, count OscillatorNode instances).
+    const VOICE_POOL_ENABLED = false;
     // Max idle synths kept per preset. Raised 8→32: a dense Bloom project can hold
     // well over 8 simultaneous voices of ONE preset (e.g. bed chord + motif burst +
     // riff all on FM), and every voice past the cap falls back to a fresh
@@ -1722,6 +1736,19 @@
       // reset produces no output. (safeReleaseSynth has ramped to -80 dB, so
       // the disconnect itself lands at near-silence.)
       try { synth.disconnect(); } catch (e) {}
+      // STOP the synth's source oscillators while parked. A started-never-
+      // stopped native OscillatorNode keeps rendering (and is GC-protected)
+      // even when disconnected — and Tone's retrigger bookkeeping does NOT
+      // reliably stop the previous note's native oscillator on pooled reuse,
+      // so every reacquired note leaked one RUNNING oscillator: measured
+      // ~25 leaked oscillators/second on a dense FM project, audio-clock
+      // degradation in lockstep, cut-out at ~12 s (THE original dense-project
+      // cut-out root cause). Tone oscillators restart cleanly from stopped
+      // (each start() makes a fresh native node), so the next triggerAttack
+      // is unaffected. The synth is disconnected and ramped to -80 dB here,
+      // so the stop is silent.
+      try { if (synth.oscillator && typeof synth.oscillator.stop === 'function') synth.oscillator.stop(); } catch (e) {}
+      try { if (synth.modulation && typeof synth.modulation.stop === 'function') synth.modulation.stop(); } catch (e) {}
       try {
         if (synth.volume) { synth.volume.cancelScheduledValues(0); synth.volume.value = 0; }
         if (synth.detune) { synth.detune.cancelScheduledValues(0); synth.detune.value = 0; }
@@ -2940,11 +2967,11 @@
     // KILL SWITCH: set false to build every voice synchronously (old behavior).
     const VOICE_BUILD_QUEUE_ENABLED = true;
     const _VQ_DEFER_MIN_SEC = 0.25;   // defer only with at least this much lead (Bloom min lead is 0.3)
-    const _VQ_SLICE_MS = 10;          // max build time per pump slice
+    const _VQ_SLICE_MS = 12;          // max build time per pump slice
     const _VQ_URGENT_SLICE_MS = 30;   // slice cap for onset-imminent entries — bounded, so even a
                                       // backlog burst can't starve the scheduler; leftovers build
                                       // next pump (a hair late, Tone clamps) instead of freezing it
-    const _VQ_PUMP_MS = 16;           // gap between slices
+    const _VQ_PUMP_MS = 12;           // gap between slices
     const _VQ_URGENT_SEC = 0.30;      // this close to onset → use the urgent slice budget
     const _voiceBuildQueue = [];
     let _vqTimer = null;

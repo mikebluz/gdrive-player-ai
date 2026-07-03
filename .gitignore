@@ -4,3 +4,4 @@ deploy.env
 js/config.js
 .DS_Store
 **/.DS_Store
+spike/dsp/target/

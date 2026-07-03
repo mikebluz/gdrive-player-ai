@@ -17,9 +17,9 @@
 //! - native lowpass/highpass biquads take Q in DECIBELS (RBJ q = 10^(Q/20));
 //!   allpass takes dimensionless Q. The strip vcf is Tone.Filter(20000, Q .7),
 //!   EQ3's crossovers are single biquads at 400/2500 Hz with Q=1 (dB).
-//! - a DelayNode inside a feedback cycle is clamped to ≥128 samples by the
-//!   render quantum (chorus + both delays live in cycles; ping-pong's
-//!   pre-delay does not).
+//! - a DelayNode inside a feedback cycle keeps its TRUE delay (even
+//!   sub-quantum); the render-quantum penalty lands on the FEEDBACK edge,
+//!   which delivers one-quantum-old data (measured — see the QUANTUM note).
 //! - Distortion: y = (3+k)·x·(20π/180)/(π+k|x|), k = amount·100, input
 //!   clamped to ±1, 0 inside |x|<0.001.
 //! - Chorus: L/R delays (3.5 ms) LFO-modulated ±3.5·depth ms, LFO phases
@@ -286,6 +286,17 @@ pub(crate) static mut SEND: [[f32; BLOCK]; 2] = [[0.0; BLOCK]; 2];
 static mut DLINE: [[[f32; DELAY_LEN]; 2]; SLOTS] = [[[0.0; DELAY_LEN]; 2]; SLOTS];
 static mut DPRE: [[f32; DELAY_LEN]; SLOTS] = [[0.0; DELAY_LEN]; SLOTS];
 static mut CBUF: [[[f32; CH_LEN]; 2]; SLOTS] = [[[0.0; CH_LEN]; 2]; SLOTS];
+// One-quantum-old wet history for the FEEDBACK edges (see QUANTUM note):
+// the cycle-breaking delay lands on the feedback path, not the delay itself.
+const QUANT: usize = 128;
+static mut CFB: [[[f32; QUANT]; 2]; SLOTS] = [[[0.0; QUANT]; 2]; SLOTS]; // chorus
+static mut DFB: [[[f32; QUANT]; 2]; SLOTS] = [[[0.0; QUANT]; 2]; SLOTS]; // delay/pingpong
+// QUANTUM note (measured, chorus-probe + comb spectra): Chrome does NOT
+// clamp a cycle-member DelayNode's delayTime — the first-pass wet keeps its
+// true (even sub-quantum) delay; the cycle is broken by the FEEDBACK edge
+// delivering one-render-quantum-OLD data. A blanket max(d, 128/sr) clamp
+// killed the low half of the chorus sweep (node comb notches at ~1.6 ms
+// stayed; core's vanished).
 
 pub(crate) fn reset_all() {
     unsafe {
@@ -316,6 +327,14 @@ fn reset_slot(slot: usize) {
         }
         for f in DPRE[slot].iter_mut() {
             *f = 0.0;
+        }
+        for ch in 0..2 {
+            for f in CFB[slot][ch].iter_mut() {
+                *f = 0.0;
+            }
+            for f in DFB[slot][ch].iter_mut() {
+                *f = 0.0;
+            }
         }
     }
 }
@@ -372,7 +391,6 @@ fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
     let (cd, cw) = xfade(st.cho_wet);
     let dt0 = 0.0035f32;
     let dev = dt0 * st.cho_depth.clamp(0.0, 1.0);
-    let min_d = 128.0 / sr; // in a feedback cycle → quantum clamp
     let fb = 0.15f32;
     let mut i0 = 0;
     while i0 < frames {
@@ -380,11 +398,12 @@ fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
         let tc = t + i0 as f64 * unsafe { DT } as f64;
         let ph = tc * st.cho_rate as f64;
         let s = ((ph - ph.floor()) as f32 * TAU).sin();
-        // L phase 0°, R phase 180° (spread 180)
-        let d_l = ((dt0 + dev * s).max(0.0)).max(min_d) * sr;
-        let d_r = ((dt0 - dev * s).max(0.0)).max(min_d) * sr;
+        // L phase 0°, R phase 180° (spread 180); TRUE delay, ≥1 sample
+        let d_l = ((dt0 + dev * s) * sr).max(1.0);
+        let d_r = ((dt0 - dev * s) * sr).max(1.0);
         for i in i0..i0 + n {
             let w = st.cho_w;
+            let q = w % QUANT;
             for (ch, d) in [d_l, d_r].iter().enumerate() {
                 let rp = w as f32 - d + CH_LEN as f32;
                 let ri = rp as usize;
@@ -395,7 +414,9 @@ fn fx_chorus(slot: usize, st: &mut Strip, t: f64, frames: usize) {
                 let wet = b0 + (b1 - b0) * fr;
                 let x = unsafe { OUT[slot][ch][i] };
                 unsafe {
-                    CBUF[slot][ch][w] = x + fb * wet;
+                    let fb_old = CFB[slot][ch][q]; // wet from one quantum ago
+                    CFB[slot][ch][q] = wet;
+                    CBUF[slot][ch][w] = x + fb * fb_old;
                     OUT[slot][ch][i] = x * cd + wet * cw;
                 }
             }
@@ -438,28 +459,35 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
     let sr = unsafe { SR };
     let (cd, cw) = xfade(st.dly_wet);
     let fb = st.dly_fb.clamp(0.0, 0.95);
-    let d_raw = (st.dly_t.max(0.001) * sr) as usize;
-    let d_main = d_raw.max(128).min(DELAY_LEN - 1); // feedback cycle → quantum clamp
-    let d_pre = d_raw.max(1).min(DELAY_LEN - 1); // pre-delay is outside the cycle
+    // TRUE delay on every read; the feedback edge is one quantum old (see
+    // the QUANTUM note) — so echo k lands at k·d + (k−1)·128 samples.
+    let d = ((st.dly_t.max(0.001) * sr) as usize).clamp(1, DELAY_LEN - 1);
     for i in 0..frames {
         let w = st.dly_w;
+        let q = w % QUANT;
         let rd = |line: &[f32; DELAY_LEN], d: usize| line[(w + DELAY_LEN - d) % DELAY_LEN];
         unsafe {
             if st.dly_ping {
-                let l_out = rd(&DLINE[slot][0], d_main);
-                let r_out = rd(&DLINE[slot][1], d_main);
-                let pre_out = rd(&DPRE[slot], d_pre);
+                let l_out = rd(&DLINE[slot][0], d);
+                let r_out = rd(&DLINE[slot][1], d);
+                let pre_out = rd(&DPRE[slot], d);
                 let (in_l, in_r) = (OUT[slot][0][i], OUT[slot][1][i]);
-                DLINE[slot][0][w] = in_l + fb * r_out;
-                DLINE[slot][1][w] = pre_out + fb * l_out;
+                let (l_old, r_old) = (DFB[slot][0][q], DFB[slot][1][q]);
+                DFB[slot][0][q] = l_out;
+                DFB[slot][1][q] = r_out;
+                // cross feedback: L out → R delay input, R out → L delay input
+                DLINE[slot][0][w] = in_l + fb * r_old;
+                DLINE[slot][1][w] = pre_out + fb * l_old;
                 DPRE[slot][w] = in_r;
                 OUT[slot][0][i] = in_l * cd + l_out * cw;
                 OUT[slot][1][i] = in_r * cd + r_out * cw;
             } else {
                 for ch in 0..2 {
-                    let out = rd(&DLINE[slot][ch], d_main);
+                    let out = rd(&DLINE[slot][ch], d);
                     let x = OUT[slot][ch][i];
-                    DLINE[slot][ch][w] = x + fb * out;
+                    let old = DFB[slot][ch][q];
+                    DFB[slot][ch][q] = out;
+                    DLINE[slot][ch][w] = x + fb * old;
                     OUT[slot][ch][i] = x * cd + out * cw;
                 }
             }
@@ -548,8 +576,15 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                     }
                 }
                 // ---- gains: vca·level, send tap, tg·gate (lerped per chunk) -
-                let vca0 = 1.0 + if st.vca_mod.shape >= 0 { smod_val(&st.vca_mod, tc, seed) } else { 0.0 };
-                let vca1 = 1.0 + if st.vca_mod.shape >= 0 { smod_val(&st.vca_mod, te, seed) } else { 0.0 };
+                // vca mod: Tone.LFO.connect uses connectSignal, which ZEROES
+                // the gain param — so the node's real gain is the LFO value
+                // ALONE, range [-depth, 0] (an inverted tremolo that passes
+                // through silence each cycle, level scaled by depth). The
+                // "base 1 + dip" story in 17-ambient's comment never matched
+                // runtime (measured: node med 0.30×, p10 ~0 at depth 70).
+                // Parity beats intent — projects were tuned on this sound.
+                let vca0 = if st.vca_mod.shape >= 0 { smod_val(&st.vca_mod, tc, seed) } else { 1.0 };
+                let vca1 = if st.vca_mod.shape >= 0 { smod_val(&st.vca_mod, te, seed) } else { 1.0 };
                 let lv0 = st.level.value(tc);
                 let lv1 = st.level.value(te);
                 let rv0 = st.rev.value(tc);
@@ -766,6 +801,9 @@ pub extern "C" fn strip_chorus(slot: u32, on: u32, wet: f32, depth: f32, rate: f
                 for f in CBUF[s][ch].iter_mut() {
                     *f = 0.0;
                 }
+                for f in CFB[s][ch].iter_mut() {
+                    *f = 0.0;
+                }
             }
             st.cho_w = 0;
         }
@@ -800,6 +838,9 @@ pub extern "C" fn strip_delay(slot: u32, on: u32, ping: u32, wet: f32, time_s: f
             // fresh lines on engage or feedback-topology flip (node disposes+rebuilds)
             for ch in 0..2 {
                 for f in DLINE[s][ch].iter_mut() {
+                    *f = 0.0;
+                }
+                for f in DFB[s][ch].iter_mut() {
                     *f = 0.0;
                 }
             }

@@ -5034,7 +5034,7 @@
           node.start();
         }
         src.node = node;
-        if (target === 'vca') { e.vca.gain.value = 1; node.connect(e.vca.gain); }            // base = full; LFO offset dips it
+        if (target === 'vca') { e.vca.gain.value = 1; node.connect(e.vca.gain); }            // NOTE: LFO.connect uses connectSignal, which ZEROES the param — the actual gain is the LFO value ALONE, range [-depth, 0] (inverted tremolo through silence; the value=1 here is dead). The core strip replicates the MEASURED behaviour.
         else if (target === 'vcf') { e.vcf.frequency.value = 0; node.connect(e.vcf.frequency); }  // base 0; LFO carries the ABSOLUTE positive cutoff (freq can't go negative)
         // vco: connected to voices at emit via _ambLayerDetuneMod.
       } catch (x) { try { node && node.dispose(); } catch (y) {} return null; }

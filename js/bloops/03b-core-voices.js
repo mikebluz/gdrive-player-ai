@@ -312,6 +312,9 @@
           if (!DESIGN_OK[kf.kind]) return false;
           // wtpos mod routes need the wavetable crossfade rig — node engine
           if (Array.isArray(p.modMatrix) && p.modMatrix.some((r) => r && r.dest === 'wtpos' && r.amount)) return false;
+          // sequence-as-waveform LFOs (shape 'seq') have no core mapping —
+          // the design-voice LFO shapes are 0-5; keep those notes node-side
+          if (Array.isArray(p.lfos) && p.lfos.some((l) => l && l.on && l.shape === 'seq')) return false;
         }
         if (p.glideMs > 0) return false;
         if (p._detuneMod) return false;

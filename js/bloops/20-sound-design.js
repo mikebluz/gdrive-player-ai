@@ -307,6 +307,15 @@
         if (!lf || !lf.on) return null;
         const rate = Math.max(0.01, lf.rateHz || 1);
         const shape = lf.shape || 'sine';
+        if (shape === 'seq') {
+          // Sequence-as-waveform: sample a saved sequence's contour (pitch /
+          // velocity / gate — Bloom's _seqRefCurve/_seqCurveAt) as the LFO
+          // cycle, one full pass per LFO period, mapped 0..1 → bipolar.
+          const curve = (typeof _seqRefCurve === 'function') ? _seqRefCurve(lf) : null;
+          if (!curve) return null;
+          const interp = (lf.seqInterp === 'smooth') ? 'smooth' : 'step';
+          return (t) => _seqCurveAt(curve, (t * rate) % 1, interp) * 2 - 1;
+        }
         if (shape === 'smooth' || shape === 'sharp') {
           // Stochastic: precompute random control points once per voice
           // (fresh values at the LFO rate, like the Signal-stepped version).
@@ -430,7 +439,29 @@
           if (id === 'lfo1' || id === 'lfo2') {
             const lf = lfos[id === 'lfo1' ? 0 : 1];
             if (lf && lf.on) {
-              if (lf.shape === 'smooth' || lf.shape === 'sharp') {
+              if (lf.shape === 'seq') {
+                // Sequence-as-waveform (live/held voice): schedule the curve
+                // onto a Signal, same pattern as the deterministic shapes.
+                const curve = (typeof _seqRefCurve === 'function') ? _seqRefCurve(lf) : null;
+                if (curve) {
+                  node = new Tone.Signal(0);
+                  const rate = Math.max(0.01, lf.rateHz || 1);
+                  const period = 1 / rate;
+                  const span = Math.min(dur + 2.5, 300);        // held presses: cover 5 min
+                  const step = Math.max(period / 32, span / 2048);
+                  const count = Math.ceil(span / step);
+                  const interp = (lf.seqInterp === 'smooth') ? 'smooth' : 'step';
+                  const sig = node;
+                  try { sig.setValueAtTime(_seqCurveAt(curve, 0, interp) * 2 - 1, now); } catch (e) {}
+                  for (let k = 1; k <= count; k++) {
+                    const v = _seqCurveAt(curve, (k * step * rate) % 1, interp) * 2 - 1;
+                    try {
+                      if (interp === 'smooth') sig.linearRampToValueAtTime(v, now + k * step);
+                      else sig.setValueAtTime(v, now + k * step);
+                    } catch (e) {}
+                  }
+                }
+              } else if (lf.shape === 'smooth' || lf.shape === 'sharp') {
                 // Stochastic LFOs: a Signal stepped to fresh random values at
                 // the LFO rate — 'sharp' jumps (sample & hold), 'smooth' ramps.
                 node = new Tone.Signal(0);
@@ -930,14 +961,62 @@
         const sec = _sdSection(nm, { toggle: { on: !!lf.on, onChange: (on) => lf.on = on } });
         const sw = document.createElement('div'); sw.className = 'sd-select-wrap';
         sw.innerHTML = '<label>Shape</label><select class="sd-select"></select>';
+        const shapeSel = sw.querySelector('select');
         [['sine', 'Sine'], ['triangle', 'Triangle'], ['sawtooth', 'Sawtooth'], ['square', 'Square'], ['smooth', 'Smooth (rand)'], ['sharp', 'Sharp (S&H)']].forEach(([s, lab]) => {
           const op = document.createElement('option'); op.value = s;
           op.textContent = lab;
-          if (lf.shape === s) op.selected = true; sw.querySelector('select').appendChild(op);
+          if (lf.shape === s) op.selected = true; shapeSel.appendChild(op);
         });
-        sw.querySelector('select').addEventListener('change', (e) => lf.shape = e.target.value);
+        // Saved sequences as waveforms (mirrors Bloom's mod-shape dropdown):
+        // pick one and its pitch/velocity/gate contour becomes the LFO cycle.
+        {
+          const seqs = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
+          const og = document.createElement('optgroup'); og.label = 'Sequence';
+          seqs.forEach((s, si) => {
+            if (!s || s.type === 'audio' || !Array.isArray(s.steps) || !s.steps.length) return;
+            const op = document.createElement('option'); op.value = 'seq:' + si;
+            op.textContent = s.name || ('Seq ' + (si + 1));
+            og.appendChild(op);
+          });
+          if (og.children.length) shapeSel.appendChild(og);
+          if (lf.shape === 'seq') shapeSel.value = 'seq:' + (lf.seqRef | 0);
+        }
         sec._row.appendChild(sw);
         sec._row.appendChild(_sdMakeKnob({ label: 'Rate', min: 0.05, max: 30, value: lf.rateHz, log: true, defaultValue: i ? 0.5 : 5, format: (v) => (v < 1 ? (Math.round(v * 100) / 100) : (Math.round(v * 10) / 10)) + ' Hz', onChange: (v) => lf.rateHz = v }));
+        // Read/Curve/Rest sub-row, shown while a sequence shape is selected.
+        const seqRow = document.createElement('div');
+        seqRow.className = 'sd-select-wrap';
+        seqRow.hidden = lf.shape !== 'seq';
+        const mkSel = (label, key, opts, dflt) => {
+          const w = document.createElement('span');
+          w.innerHTML = '<label>' + label + '</label><select class="sd-select"></select>';
+          const el = w.querySelector('select');
+          opts.forEach(([v, lab]) => {
+            const op = document.createElement('option'); op.value = v; op.textContent = lab;
+            if ((lf[key] || dflt) === v) op.selected = true;
+            el.appendChild(op);
+          });
+          el.addEventListener('change', (e2) => { lf[key] = e2.target.value; delete lf._seqKey; });
+          return w;
+        };
+        seqRow.appendChild(mkSel('Read', 'seqSource', [['velocity', 'Velocity'], ['pitch', 'Pitch'], ['gate', 'Gate']], 'velocity'));
+        seqRow.appendChild(mkSel('Curve', 'seqInterp', [['step', 'Step'], ['smooth', 'Smooth']], 'step'));
+        seqRow.appendChild(mkSel('Rest', 'seqRest', [['zero', 'Zero'], ['hold', 'Hold']], 'zero'));
+        shapeSel.addEventListener('change', (e) => {
+          const v = e.target.value;
+          if (v.indexOf('seq:') === 0) {
+            lf.shape = 'seq';
+            lf.seqRef = parseInt(v.slice(4), 10) || 0;
+            if (['pitch', 'velocity', 'gate'].indexOf(lf.seqSource) < 0) lf.seqSource = 'velocity';
+            if (['step', 'smooth'].indexOf(lf.seqInterp) < 0) lf.seqInterp = 'step';
+            if (['zero', 'hold'].indexOf(lf.seqRest) < 0) lf.seqRest = 'zero';
+            delete lf._seqKey;   // invalidate the cached curve
+          } else {
+            lf.shape = v;
+          }
+          seqRow.hidden = lf.shape !== 'seq';
+        });
+        sec._row.appendChild(seqRow);
         panes.appendChild(sec);
       });
 

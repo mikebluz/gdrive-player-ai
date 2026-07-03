@@ -82,6 +82,28 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
           }
           this.wasm[d.fn](...(d.a || []));
         }
+      } else if (d.cmd === 'sample') {
+        // load PCM into the core's sample heap. sample_load may GROW wasm
+        // memory, which DETACHES every existing view — refresh afterwards.
+        const ptr = this.wasm.sample_load(d.id, d.ch, d.len, d.sr);
+        if (ptr) {
+          for (let c = 0; c < d.ch; c++) {
+            new Float32Array(this.wasm.memory.buffer, ptr + c * d.len * 4, d.len).set(d.chans[c]);
+          }
+          this.refreshViews();
+          this.paramsView = null;
+        } else {
+          this.port.postMessage({ error: 'sample_load OOM (id ' + d.id + ')' });
+        }
+      } else if (d.cmd === 'snote') {
+        if (!this.paramsView || this.paramsView.buffer !== this.wasm.memory.buffer) {
+          this.paramsView = new Float32Array(this.wasm.memory.buffer, this.wasm.params_ptr(), 64);
+        }
+        this.paramsView.fill(0);
+        this.paramsView.set(d.sp.length > 64 ? d.sp.slice(0, 64) : d.sp);
+        this.wasm.snote(d.slot, d.t, d.dur, d.tag || 0);
+      } else if (d.cmd === 'srateTag') {
+        this.wasm.srate_tag(d.tag, d.mult, d.ramp || 0.02);
       } else if (d.cmd === 'cancelFrom') {
         this.wasm.cancel_from(d.slot, d.t);
       } else if (d.cmd === 'stopBefore') {

@@ -229,6 +229,62 @@
         slotByKey.set(newKey, s);
       }
       function stripFor(key) { return stripByKey.get(key) || null; }
+      // ---- Phase 3: sample voices ----------------------------------------
+      // PCM buffers transfer to the core ONCE (keyed by the app's buffer key,
+      // e.g. 'pianoC4#60' or '...#loop'); voices then play by id. The core
+      // table holds 96 ids — beyond that, new buffers fall back to the node
+      // path (typical projects use far fewer).
+      const sampleIdByKey = new Map();
+      let sampleIdSeq = 0;
+      let sTagSeq = 1 << 20;   // sample tags live above holdOn's tag range
+      function _ensureSample(bufKey, audioBuf) {
+        let id = sampleIdByKey.get(bufKey);
+        if (id != null) return id;
+        if (sampleIdSeq >= 96 || !audioBuf || !audioBuf.length) return -1;
+        const ch = Math.min(2, audioBuf.numberOfChannels || 1);
+        const chans = [];
+        try {
+          // copy — transferring the live channel data would detach the app's buffer
+          for (let c = 0; c < ch; c++) chans.push(audioBuf.getChannelData(c).slice());
+        } catch (e) { return -1; }
+        id = sampleIdSeq++;
+        sampleIdByKey.set(bufKey, id);
+        try {
+          node.port.postMessage(
+            { cmd: 'sample', id, ch, len: audioBuf.length, sr: audioBuf.sampleRate, chans },
+            chans.map((a) => a.buffer),
+          );
+        } catch (e) { sampleIdByKey.delete(bufKey); return -1; }
+        return id;
+      }
+      // Play a sample voice in the core. o carries FINAL values (the caller —
+      // 04's sample path — owns the node-parity math: rate incl. tuneCents,
+      // per-channel gains incl. norm/boost/vel/pan+makeup, env floors, slice
+      // window in BUFFER seconds, loop window). Returns a truthy tag when
+      // taken; 0 → node path.
+      function sampleNoteOn(key, dest, o) {
+        if (!stripsEnabled() || failed) return 0;
+        if (!ready) { init(); return 0; }
+        if (!_running()) return 0;
+        const slot = slotFor(key, dest);
+        if (slot == null || slot < 0) return 0;
+        const id = _ensureSample(o.bufKey, o.buf);
+        if (id < 0) return 0;
+        const tag = o.glide ? ++sTagSeq : 0;
+        const sp = new Float32Array(15);
+        sp[0] = id; sp[1] = o.rate; sp[2] = o.gl; sp[3] = o.gr;
+        sp[4] = o.a; sp[5] = o.d; sp[6] = o.s; sp[7] = o.r;
+        sp[8] = o.off || 0; sp[9] = (o.len != null) ? o.len : -1;
+        sp[10] = (o.loop ? 1 : 0) | (o.reverse ? 2 : 0);
+        sp[11] = o.loopA || 0; sp[12] = o.loopB || 0;
+        sp[13] = (o.cutoff != null) ? o.cutoff : -1; sp[14] = o.fq || 0.7;
+        node.port.postMessage({ cmd: 'snote', slot, t: _tNow(o.t), dur: o.dur, tag, sp });
+        // sample portamento: start at the previous rate, glide to the target
+        if (o.glide && o.glide.mult > 0) {
+          node.port.postMessage({ cmd: 'srateTag', tag, mult: o.glide.mult, ramp: o.glide.ramp });
+        }
+        return tag || 1;
+      }
       // Route the summed reverb-send bus (output 16) into the shared reverb.
       // Old reverbs dispose their own input connections, so this is additive.
       function connectSend(dest) {
@@ -378,7 +434,7 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
-      return { enabled, stripsEnabled, eligible, noteOn, holdOn, cancelFrom, stopBefore, stopAll, init, designParams,
+      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, cancelFrom, stopBefore, stopAll, init, designParams,
                stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node };
     })();
     // Live A/B toggles from the console.

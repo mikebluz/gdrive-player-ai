@@ -210,8 +210,10 @@
     // signal "fall back to the shared sampler's attack/release path": during
     // offline export (the offline render keeps the simple path), when the
     // buffers aren't reachable, or on any construction failure.
-    function _buildSampleAdsrVoice(sampler, id, tunedFreq, env, dest, opts) {
-      if (_offlineSamplerOverride) return null;
+    // Resolve the nearest mapped buffer + playbackRate for a sample note —
+    // shared by the node voice builder below and the core sample path
+    // (Phase 3), so both play the identical buffer at the identical rate.
+    function _resolveSampleVoice(sampler, id, tunedFreq) {
       if (!sampler || !sampler._buffers || typeof sampler._buffers.get !== 'function'
           || typeof sampler._buffers.has !== 'function') return null;
       const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
@@ -241,6 +243,14 @@
       // Baked-in fine tune (cents) from sample capture — pulls the buffer into
       // tune relative to its mapped root so the keyboard tracks chromatically.
       if (info && Number.isFinite(info.tuneCents) && info.tuneCents) playbackRate *= Math.pow(2, -info.tuneCents / 1200);
+      return { info, sampleMidi, audioBuf, playbackRate };
+    }
+    function _buildSampleAdsrVoice(sampler, id, tunedFreq, env, dest, opts) {
+      if (_offlineSamplerOverride) return null;
+      const _rs = _resolveSampleVoice(sampler, id, tunedFreq);
+      if (!_rs) return null;
+      const info = _rs.info, sampleMidi = _rs.sampleMidi, audioBuf = _rs.audioBuf;
+      let playbackRate = _rs.playbackRate;
       let source = null, ampEnv = null, outGain = null, filter = null, panNode = null, panMakeupNode = null, detuneScale = null, _padLoop = false, _loopBuf = null;
       try {
         const boost = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
@@ -3439,6 +3449,77 @@
           const _wantLoop = !!params.loop
             && !Number.isFinite(params.sampleOffsetSec) && !Number.isFinite(params.sliceDurSec)
             && !Number.isFinite(params.filterCutoff);
+          // ---- WASM core sample voice (Phase 3) --------------------------
+          // Under core strips, sample notes render in the DSP core: the PCM
+          // transfers once, the voice plays in the layer's slot with the
+          // node path's exact resolution/rate/gain math (shared helpers).
+          // Falls through to the node voice on any miss: strips off, core
+          // cold, detune-mod LFO (needs a node connection), offline export,
+          // buffer table full.
+          if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled()
+              && !params._detuneMod && !_offlineSamplerOverride && !fxOverrideGlobal) {
+            const _sid = type.slice(7);
+            const _rs = _resolveSampleVoice(sampler, _sid, tunedFreq);
+            if (_rs) {
+              const _slicing = Number.isFinite(params.sliceDurSec)
+                || (Number.isFinite(params.sampleOffsetSec) && params.sampleOffsetSec > 0);
+              // seamless loop buffer (same cache the node voice uses)
+              let _buf = _rs.audioBuf, _bufKey = _sid + '#' + _rs.sampleMidi;
+              let _loop = false, _loopA = 0, _loopB = 0;
+              if (_wantLoop) {
+                const _lp = _getSeamlessLoop(_bufKey, _rs.audioBuf, _rs.info);
+                if (_lp) { _buf = _lp.buffer; _bufKey += '#loop'; _loopA = _lp.loopStart; _loopB = _lp.loopEnd; }
+                _loop = true;
+              }
+              // final gains: norm · boost · velocity · per-voice pan law
+              // (mono Panner + equal-power makeup — the node path's exact law)
+              const _base = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20)
+                * _sampleNormGain(_rs.info, _rs.sampleMidi, _rs.audioBuf) * velocity;
+              const _pn = Math.max(-1, Math.min(1, (pan || 0) / 100));
+              let _gl = _base, _gr = _base;
+              if (Math.abs(_pn) > 0.001) {
+                const _ang = (_pn + 1) * 0.25 * Math.PI, _mk = _panMakeup(_pn);
+                _gl = _base * Math.cos(_ang) * _mk;
+                _gr = _base * Math.sin(_ang) * _mk;
+              }
+              // sample portamento: start at the layer's previous rate, glide up
+              let _glide = null;
+              if (params.glideMs > 0 && params.glideLayer) {
+                const _prev = params.glideLayer._glidePrevRate;
+                if (_prev > 0 && _rs.playbackRate > 0 && _prev !== _rs.playbackRate) {
+                  _glide = { mult: _rs.playbackRate / _prev,
+                             ramp: Math.min(params.glideMs / 1000, Math.max(0.02, targetDur * 0.95)) };
+                }
+                params.glideLayer._glidePrevRate = _rs.playbackRate;
+              }
+              const _took = _coreVoices.sampleNoteOn(
+                (typeof window !== 'undefined' && window._ambEmitKey)
+                  || (Number.isFinite(laneIdx) ? 'lane:' + laneIdx : 'live'),
+                sampleDest, {
+                  bufKey: _bufKey, buf: _buf,
+                  rate: _glide ? _rs.playbackRate / _glide.mult : _rs.playbackRate,
+                  gl: _gl, gr: _gr,
+                  // env floors mirror the node builder (slice edges get fades)
+                  a: _slicing ? Math.max(0.006, env.attack) : Math.max(0, env.attack),
+                  d: Math.max(0, env.decay),
+                  s: Math.max(0, Math.min(1, env.sustain)),
+                  r: _slicing ? Math.max(0.006, Math.max(0.01, env.release)) : Math.max(0.01, env.release),
+                  // slice window in BUFFER seconds (offset/len × rate — the
+                  // node start() convention)
+                  off: Number.isFinite(params.sampleOffsetSec) ? Math.max(0, params.sampleOffsetSec * _rs.playbackRate) : 0,
+                  len: Number.isFinite(params.sliceDurSec) ? Math.max(0.005, params.sliceDurSec * _rs.playbackRate) : -1,
+                  loop: _loop, loopA: _loopA, loopB: _loopB,
+                  reverse: !!params.reverse,
+                  cutoff: (Number.isFinite(params.filterCutoff) && params.filterCutoff < 18000)
+                    ? Math.max(40, params.filterCutoff) : -1,
+                  fq: Number.isFinite(params.filterQ) ? Math.max(0, params.filterQ) : 0.7,
+                  t: (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : 0,
+                  dur: preReleaseDur,
+                  glide: _glide,
+                });
+              if (_took) return;
+            }
+          }
           const v = _buildSampleAdsrVoice(sampler, type.slice(7), tunedFreq, env, sampleDest,
             { filterCutoff: params.filterCutoff, filterQ: params.filterQ, detuneMod: params._detuneMod, pan,
               sampleOffsetSec: params.sampleOffsetSec, sliceDurSec: params.sliceDurSec, loop: _wantLoop, reverse: !!params.reverse });

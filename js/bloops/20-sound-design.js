@@ -76,7 +76,8 @@
       } catch (e) {}
     }
     function _sdSaveUserPatches() {
-      try { localStorage.setItem(SD_LS_KEY, JSON.stringify(Array.from(userPatches.values()))); } catch (e) {}
+      // factory presets are code-defined (re-registered every load) — never persist
+      try { localStorage.setItem(SD_LS_KEY, JSON.stringify(Array.from(userPatches.values()).filter(p => !p.factory))); } catch (e) {}
     }
     function _sdCreateUserPatch(name, baseType, params) {
       const id = String(++_sdUserSeq);
@@ -1155,3 +1156,70 @@
 
     // Init: load saved patches at startup.
     _sdLoadUserPatches();
+    // ---- Factory Tone Presets ------------------------------------------------
+    // Named, code-defined Design patches — one per design feature, so every
+    // block of the sound engine (filter, filter env, LFO matrix, unison, sub,
+    // ring, FM overrides) has a ready-made audition tone in the pickers.
+    // Re-registered on every load (factory definitions always win); excluded
+    // from localStorage persistence; deleting one just brings it back on reload.
+    (function _sdRegisterFactoryPresets() {
+      const mk = (id, name, baseType, mod) => {
+        const params = _sdNewPatchParams(baseType);
+        (function merge(dst, src) {
+          Object.keys(src).forEach((k) => {
+            if (src[k] && typeof src[k] === 'object' && !Array.isArray(src[k]) && dst[k] && typeof dst[k] === 'object') merge(dst[k], src[k]);
+            else dst[k] = src[k];
+          });
+        })(params, mod || {});
+        userPatches.set(id, { id, name, baseType, params, factory: true });
+      };
+      mk('f-sweep', 'Sweep Saw', 'sawtooth', {
+        attack: 15, decay: 150, sustain: 70, release: 400,
+        filter: { on: true, type: 'lowpass', cutoff: 800, q: 4 },
+        filterEnv: { on: true, amount: 60, attack: 5, decay: 300, sustain: 30, release: 300 },
+      });
+      mk('f-wobble', 'Wobble Saw', 'sawtooth', {
+        attack: 15, decay: 150, sustain: 70, release: 400,
+        filter: { on: true, type: 'lowpass', cutoff: 900, q: 3 },
+        lfos: [{ on: true, shape: 'sine', rateHz: 2.5 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 50 }],
+      });
+      mk('f-drift', 'Drift Saw', 'sawtooth', {
+        attack: 30, decay: 200, sustain: 65, release: 600,
+        filter: { on: true, type: 'lowpass', cutoff: 1200, q: 2 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 1.5 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 45 }],
+      });
+      mk('f-super', 'Supersaw', 'sawtooth', {
+        attack: 20, decay: 150, sustain: 75, release: 500,
+        osc: { unison: 6, spread: 40 },
+      });
+      mk('f-deep', 'Deep Square', 'square', {
+        attack: 10, decay: 180, sustain: 70, release: 350,
+        osc: { sub: 70, subShape: 'sine' },
+      });
+      mk('f-ring', 'Ring Bell', 'sine', {
+        attack: 5, decay: 400, sustain: 30, release: 800,
+        osc: { ring: 50, ringRatio: 2.5 },
+      });
+      mk('f-vibra', 'Vibra Sine', 'sine', {
+        attack: 40, decay: 150, sustain: 80, release: 500,
+        lfos: [{ on: true, shape: 'sine', rateHz: 5.5 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'pitch', amount: 15 }],
+      });
+      mk('f-trem', 'Tremolo Tri', 'triangle', {
+        attack: 25, decay: 150, sustain: 75, release: 450,
+        lfos: [{ on: false, shape: 'sine', rateHz: 5 }, { on: true, shape: 'sine', rateHz: 4 }],
+        modMatrix: [{ src: 'lfo2', dest: 'amp', amount: 60 }],
+      });
+      mk('f-swell', 'Swell Filter', 'sawtooth', {
+        attack: 200, decay: 200, sustain: 80, release: 700,
+        filter: { on: true, type: 'lowpass', cutoff: 400, q: 2 },
+        env2: { on: true, attack: 800, decay: 400, sustain: 60, release: 600 },
+        modMatrix: [{ src: 'env2', dest: 'cutoff', amount: 70 }],
+      });
+      mk('f-fmbright', 'FM Bright', 'fm', {
+        attack: 10, decay: 200, sustain: 65, release: 450,
+        osc: { harmonicity: 5, modIndex: 14 },
+      });
+    })();

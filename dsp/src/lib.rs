@@ -69,6 +69,18 @@ static mut VOICES: [Voice; MAX_VOICES] = [VOICE0; MAX_VOICES];
 static mut OUT: [[[f32; BLOCK]; 2]; SLOTS] = [[[0.0; BLOCK]; 2]; SLOTS];
 static mut SR: f32 = 44100.0;
 static mut DT: f32 = 1.0 / 44100.0;
+// FM depth calibration: scales the effective modulation index. Calibrated
+// empirically against a recorded Tone.FMSynth spectrum (same note, same
+// params): at 0.25 every measured partial matches Tone within 1 dB relative
+// to the fundamental (fm-ab sweep, 2026-07-03). The factor folds in Tone's
+// PeriodicWave normalization and Multiply-node scaling — matching the sound
+// projects were built on matters more than deriving it analytically.
+static mut FM_CAL: f32 = 0.25;
+
+#[no_mangle]
+pub extern "C" fn set_fm_cal(k: f32) {
+    unsafe { FM_CAL = k.clamp(0.05, 4.0) }
+}
 
 #[no_mangle]
 pub extern "C" fn init(sample_rate: f32) {
@@ -311,8 +323,11 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         me *= (1.0 - tr / FM_MOD_REL).max(0.0);
                     }
                     let m = square_additive(v.ph_m, v.kmax);
-                    // Tone semantics: f_inst = f · (1 + index·modEnv·m)
-                    let inst_inc = inc_c * (1.0 + FM_INDEX * me * m);
+                    // Tone semantics: f_inst = f·(1 + index·modEnv·mod). Tone
+                    // triggers the MODULATOR's envelope with the note velocity
+                    // too, so depth scales with vel; FM_CAL matches the overall
+                    // depth to the measured Tone spectrum.
+                    let inst_inc = inc_c * (1.0 + FM_INDEX * FM_CAL * v.vel * me * m);
                     v.ph_c += inst_inc;
                     v.ph_m += inc_m;
                     if v.ph_c >= 1.0 { v.ph_c -= 1.0; }

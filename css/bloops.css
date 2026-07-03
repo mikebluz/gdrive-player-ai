@@ -2656,6 +2656,10 @@
     .ambient-footer-capture:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(244, 183, 64, 0.7); }
     .ambient-footer-capture.recording { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); }
     .ambient-footer-capture:disabled { opacity: 0.7; cursor: default; }
+    /* 🎙 Listen lit state + the Grab bars picker (revived Listen/Grab) */
+    .ambient-footer-capture.ambient-listening { color: #ff5c6c; border-color: #ff5c6c; box-shadow: 0 0 16px rgba(255, 92, 108, 0.7); animation: ambient-listen-pulse 2.2s ease-in-out infinite; }
+    @keyframes ambient-listen-pulse { 50% { box-shadow: 0 0 6px rgba(255, 92, 108, 0.35); } }
+    .ambient-grab-bars { max-width: 84px; align-self: center; }
     /* Shape It: a smaller round button to the LEFT of Capture, purple to match
        the Shapes accent. Sends every Bloom layer to master Shapes. */
     .ambient-footer-shapeit {

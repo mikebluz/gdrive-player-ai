@@ -6804,9 +6804,118 @@
       if (typeof masterLimiter !== 'undefined' && masterLimiter) return masterLimiter;
       return null;
     }
-    // "Always Listening / Grab" (rolling master capture → retroactive sample) was removed —
-    // redundant with the Capture bank + Harvest. Restore from git or [[listen-grab-removed]].
-    // (_segsToBuffer went with it — its only caller was _alGrab.)
+    // ---- Always Listening / Grab last N bars (REVIVED, bar-aligned) ---------
+    // 🎙 Listen keeps a rolling ~36 s buffer of the MASTER mix (segmented 4 s
+    // MediaRecorder clips off _ambMasterTapNode — native fan-out, no audio-
+    // thread work). ⤓ Grab flushes the in-progress segment and saves the last
+    // N BARS, trimmed so the take ENDS on the last completed bar boundary
+    // (the playing engine's _playStartAt anchor at the Bloom bpm) — a
+    // loop-ready sample, registered like any import. This is the retroactive
+    // "save what just played" the Capture bank can't do (zero pre-arm).
+    const _AL = { on: false, rec: null, dest: null, segs: [], segMs: 4000, keepMs: 36000, busy: false };
+    function _alSupported() { return (typeof MediaRecorder !== 'undefined') && !!_ambMasterTapNode(); }
+    function _alStart() {
+      if (_AL.on || !_alSupported()) return false;
+      let ac; try { ac = Tone.getContext().rawContext; } catch (e) { return false; }
+      const tap = _ambMasterTapNode();
+      try { _AL.dest = ac.createMediaStreamDestination(); tap.connect(_AL.dest); } catch (e) { return false; }
+      _AL.on = true; _AL.segs = [];
+      _alNextSeg();
+      return true;
+    }
+    function _alNextSeg() {
+      if (!_AL.on || !_AL.dest) return;
+      let rec; const chunks = [];
+      try {
+        const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+        const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+        rec = new MediaRecorder(_AL.dest.stream, mime ? { mimeType: mime } : undefined);
+      } catch (e) { _AL.on = false; return; }
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        if (chunks.length) {
+          _AL.segs.push(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+          const maxSegs = Math.ceil(_AL.keepMs / _AL.segMs) + 1;
+          while (_AL.segs.length > maxSegs) _AL.segs.shift();
+        }
+        if (_AL.on) _alNextSeg();
+      };
+      try { rec.start(); } catch (e) { _AL.on = false; return; }
+      _AL.rec = rec;
+      const _r = rec;
+      setTimeout(() => { try { _r.stop(); } catch (e) {} }, _AL.segMs);
+    }
+    function _alStop() {
+      _AL.on = false;
+      try { _AL.rec && _AL.rec.stop(); } catch (e) {}
+      try { const tap = _ambMasterTapNode(); if (_AL.dest && tap) tap.disconnect(_AL.dest); } catch (e) {}
+      _AL.dest = null; _AL.segs = [];
+    }
+    // Decode recorded segments and stitch a PCM window: the `seconds` that end
+    // `endTrimSec` before the recording's end (endTrim = time past the last
+    // completed bar boundary, so the take ends ON the bar).
+    async function _segsToBuffer(ac, segs, seconds, endTrimSec) {
+      const bufs = [];
+      for (const blob of segs) { try { bufs.push(await ac.decodeAudioData(await blob.arrayBuffer())); } catch (e) {} }
+      if (!bufs.length) return null;
+      const sr = bufs[0].sampleRate;
+      const ch = Math.min(2, bufs.reduce((m, b) => Math.max(m, b.numberOfChannels), 1));
+      const total = bufs.reduce((n, b) => n + b.length, 0);
+      const trim = Math.max(0, Math.floor((endTrimSec || 0) * sr));
+      const usable = Math.max(0, total - trim);
+      const wantLen = Math.min(usable, Math.floor(seconds * sr));
+      if (wantLen < sr * 0.05) return null;
+      const startSkip = usable - wantLen;
+      const out = ac.createBuffer(ch, wantLen, sr);
+      let srcPos = 0, dstPos = 0;
+      for (const b of bufs) {
+        const len = b.length;
+        const chans = []; for (let c = 0; c < ch; c++) chans.push(b.getChannelData(Math.min(c, b.numberOfChannels - 1)));
+        for (let i = 0; i < len; i++) {
+          const g = srcPos + i;
+          if (g >= startSkip && dstPos < wantLen) { for (let c = 0; c < ch; c++) out.getChannelData(c)[dstPos] = chans[c][i]; dstPos++; }
+        }
+        srcPos += len;
+      }
+      return out;
+    }
+    async function _alGrabBars(nBars) {
+      if (_AL.busy) return;
+      nBars = Math.max(1, nBars | 0);
+      if (!_AL.on || !_AL.segs.length && !_AL.rec) { if (typeof showToast === 'function') showToast('Nothing buffered — turn on 🎙 Listen first.'); return; }
+      _AL.busy = true;
+      try {
+        let ac; try { ac = Tone.getContext().rawContext; } catch (e) { throw new Error('No audio context'); }
+        // bar grid from the PLAYING engine (else: plain N bars at global bpm)
+        const E = (typeof _masterEng !== 'undefined' && _masterEng && _masterEng.timer) ? _masterEng
+          : ((typeof _laneEng !== 'undefined' && _laneEng && _laneEng.timer) ? _laneEng : null);
+        const cfg = E && (E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null));
+        const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+        const barSec = (60 / Math.max(20, bpm)) * 4;
+        // FLUSH the in-progress segment so the buffer ends "now", then trim
+        // back to the last completed bar boundary.
+        const flushCtx = ac.currentTime;
+        const before = _AL.segs.length;
+        try { _AL.rec && _AL.rec.stop(); } catch (e) {}
+        await new Promise((res) => {
+          const t0 = performance.now();
+          const iv = setInterval(() => { if (_AL.segs.length > before || performance.now() - t0 > 1500) { clearInterval(iv); res(); } }, 40);
+        });
+        let endTrim = 0;
+        const anchor = (E && Number.isFinite(E._playStartAt)) ? E._playStartAt : null;
+        if (anchor != null && flushCtx > anchor) {
+          endTrim = Math.max(0, flushCtx - (anchor + Math.floor((flushCtx - anchor) / barSec) * barSec));
+        }
+        const out = await _segsToBuffer(ac, _AL.segs.slice(), nBars * barSec, endTrim);
+        if (!out) throw new Error('Not enough buffered audio yet.');
+        const wav = (typeof audioBufferToWav === 'function') ? audioBufferToWav(out) : null;
+        if (!wav) throw new Error('WAV encoder unavailable.');
+        let stamp = 'take'; try { stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(5, 19); } catch (e) {}
+        const reg = (typeof registerSampleFromBlob === 'function') ? await registerSampleFromBlob(wav, 'grab-' + nBars + 'bar-' + stamp) : null;
+        if (typeof showToast === 'function') showToast(reg ? ('Saved last ' + nBars + ' bar' + (nBars === 1 ? '' : 's') + ' as “' + reg.name + '”') : 'Grab complete');
+      } catch (e) { if (typeof showToast === 'function') showToast('Grab failed: ' + ((e && e.message) || e)); }
+      finally { _AL.busy = false; }
+    }
     // ---- Per-layer Freeze → loop (RETROACTIVE event capture) ----------------
     // The layer's generated notes (freq / params / step-div duration / time) are
     // ALWAYS streamed into a cheap rolling buffer (E.cap[key]) as it plays. A
@@ -13214,6 +13323,12 @@
           // Shape It (master only) — turn every Bloom layer into its own master
           // Shapes wheel. Sits to the left of Capture.
           (!E.isLane ? '<button type="button" id="ambient-shapeit-btn" class="ambient-footer-shapeit" title="Shape It — send every layer to master Shapes as its own wheel">⬡</button>' : '') +
+          // 🎙 Listen / Grab (master only): rolling capture of the master mix →
+          // retroactively save the last N bars as a loop-ready sample.
+          (!E.isLane ? '<button type="button" id="ambient-listen-btn" class="ambient-footer-capture" title="Listen — keep a rolling ~36s buffer of everything playing (for Grab)">🎙</button>' +
+            '<select id="ambient-grab-bars" class="ambient-select ambient-grab-bars" title="How many bars Grab saves" hidden>' +
+              [1, 2, 4, 8].map(n => '<option value="' + n + '"' + (n === 4 ? ' selected' : '') + '>' + n + ' bar' + (n === 1 ? '' : 's') + '</option>').join('') + '</select>' +
+            '<button type="button" id="ambient-grab-btn" class="ambient-footer-capture" title="Grab — save the last N bars of what just played (bar-aligned, loop-ready)" hidden>⤓🎙</button>' : '') +
           '<button type="button" id="ambient-export-btn" class="ambient-footer-capture" title="Record Bloom into the capture bank — pick a length or record live">⤓</button>' +
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
@@ -13800,6 +13915,20 @@
       if (!E.isLane) {
         const shapeitBtn = G('ambient-shapeit-btn');
         if (shapeitBtn) shapeitBtn.addEventListener('click', () => { try { _ambShapeItAll(E); } catch (e) { console.warn('Shape It failed', e); } });
+        // 🎙 Listen / ⤓ Grab N bars (global master-mix capture)
+        const listenBtn = G('ambient-listen-btn'), grabBtn = G('ambient-grab-btn'), grabBars = G('ambient-grab-bars');
+        const syncAL = () => {
+          if (listenBtn) listenBtn.classList.toggle('ambient-listening', _AL.on);
+          if (grabBtn) grabBtn.hidden = !_AL.on;
+          if (grabBars) grabBars.hidden = !_AL.on;
+        };
+        if (listenBtn) listenBtn.addEventListener('click', () => {
+          if (_AL.on) _alStop();
+          else if (!_alStart() && typeof showToast === 'function') showToast('Listen unavailable (recording not supported here).');
+          syncAL();
+        });
+        if (grabBtn) grabBtn.addEventListener('click', () => { _alGrabBars(parseInt(grabBars && grabBars.value, 10) || 4); });
+        syncAL();
       }
 
       E.inited = true;

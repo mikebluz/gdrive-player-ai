@@ -5,3 +5,4 @@ js/config.js
 .DS_Store
 **/.DS_Store
 spike/dsp/target/
+dsp/target/

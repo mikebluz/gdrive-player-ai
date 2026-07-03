@@ -2222,6 +2222,7 @@
       // Queued-but-unbuilt voices that would start before the boundary: they're
       // being faded OUT anyway — drop them instead of building into the fade.
       _vqPurge(key, (at) => at < atSec);
+      try { if (typeof _coreVoices !== 'undefined') _coreVoices.stopBefore(key, atSec); } catch (e) {}
       const hit = (v) => v && v._ak === key && (Number.isFinite(v._akAt) ? v._akAt < atSec : true);
       Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) _fadeSampleVoiceFrom(v, atSec, fadeSec); });
       Array.from(_activeSampleVoices).forEach(v => { if (hit(v)) _fadeSampleVoiceFrom(v, atSec, fadeSec); });
@@ -2243,6 +2244,8 @@
       if (!key) return;
       // Not-yet-BUILT voices sitting in the deferred construction queue.
       _vqPurge(key, (at) => fromAt == null || at >= fromAt);
+      // Core-engine voices scheduled for this layer.
+      try { if (typeof _coreVoices !== 'undefined') _coreVoices.cancelFrom(key, fromAt); } catch (e) {}
       const hit = (e) => e && e._ak === key && (fromAt == null || (Number.isFinite(e._akAt) && e._akAt >= fromAt));
       Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
       Array.from(_pendingSampleVoices).forEach(v => { if (hit(v)) { _pendingSampleVoices.delete(v); try { _killSampleVoiceFast(v); } catch (x) {} } });
@@ -2264,6 +2267,8 @@
       if (!key) return;
       // Not-yet-BUILT voices sitting in the deferred construction queue.
       _vqPurge(key, (at) => beforeAt == null || at < beforeAt);
+      // Core-engine voices sounding/queued for this layer before the boundary.
+      try { if (typeof _coreVoices !== 'undefined') _coreVoices.stopBefore(key, beforeAt); } catch (e) {}
       const hit = (e) => e && e._ak === key && (beforeAt == null || (Number.isFinite(e._akAt) && e._akAt < beforeAt));
       Array.from(_pendingVoices).forEach(e => { if (hit(e)) { _pendingVoices.delete(e); try { _stealVoice(e); } catch (x) {} } });
       for (let i = _activeVoices.length - 1; i >= 0; i--) { const e = _activeVoices[i]; if (hit(e)) { _activeVoices.splice(i, 1); try { _stealVoice(e); } catch (x) {} } }
@@ -2276,6 +2281,7 @@
       // must cancel notes the Bloom phrase dispatched for the near future, or
       // they'd register at their start time and ring on after the user stopped.
       _vqClear(); // queued-but-unbuilt voices go first (they'd build after the stop)
+      try { if (typeof _coreVoices !== 'undefined') _coreVoices.stopAll(); } catch (e) {}
       const pendVictims = Array.from(_pendingVoices);
       _pendingVoices.clear();
       pendVictims.forEach(v => { try { _stealVoice(v); } catch (e) {} });
@@ -3190,6 +3196,26 @@
       // count over long loops and contributed to "audio gets weird the
       // longer it loops" CPU pressure.
       const disposeMs = (preReleaseDur + rel + 0.1) * 1000;
+
+      // ---- WASM core voice engine (Phase 1) ------------------------------
+      // Eligible Bloom-layer notes render in the bloops-dsp worklet instead of
+      // building WebAudio nodes: the core's slot output is already wired into
+      // this layer's chain, so strips/FX/mix behave identically. Gated on the
+      // opt-in flag, a Bloom emit context (the temporal _ambEmitKey tag — the
+      // deferred build queue restores it), a scheduled start, and a plain
+      // sine/fm note (see _coreVoices.eligible). Everything else falls through
+      // to the node engine below, including while the core warms up.
+      if (typeof _coreVoices !== 'undefined' && _coreVoices.enabled()
+          && typeof startTime === 'number' && Number.isFinite(startTime)
+          && destination
+          && typeof window !== 'undefined' && window._ambEmitKey
+          && _coreVoices.eligible(type, params)) {
+        const _took = _coreVoices.noteOn(window._ambEmitKey, destination, {
+          type, freq, vel: velocity, pan, t: startTime, dur: preReleaseDur,
+          a: atk, d: dec, s: sus, r: rel, detune,
+        });
+        if (_took) return;
+      }
 
       // Light up the corresponding cell in the note grid for the duration
       // of the note. Skipped during offline rendering (offline context's

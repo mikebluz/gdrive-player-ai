@@ -17,7 +17,7 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
           this.refreshViews();
           for (const ev of this.pending) this.dispatch(ev);
           this.pending = [];
-          this.port.postMessage({ ready: true });
+          this.port.postMessage({ ready: true, rev: this.wasm.core_rev ? this.wasm.core_rev() : 0 });
         }).catch((err) => this.port.postMessage({ error: String(err) }));
         return;
       }
@@ -37,7 +37,17 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
   dispatch(d) {
     try {
       if (d.cmd === 'note') {
-        this.wasm.note(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0);
+        if (d.dp) {
+          // design params: stage into wasm memory, then note_ex
+          if (!this.paramsView || this.paramsView.buffer !== this.wasm.memory.buffer) {
+            this.paramsView = new Float32Array(this.wasm.memory.buffer, this.wasm.params_ptr(), 64);
+          }
+          this.paramsView.fill(0);
+          this.paramsView.set(d.dp.length > 64 ? d.dp.slice(0, 64) : d.dp);
+          this.wasm.note_ex(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0);
+        } else {
+          this.wasm.note(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0);
+        }
       } else if (d.cmd === 'cancelFrom') {
         this.wasm.cancel_from(d.slot, d.t);
       } else if (d.cmd === 'stopBefore') {

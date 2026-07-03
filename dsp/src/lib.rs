@@ -80,9 +80,40 @@ struct Voice {
     fc_b: [f32; 3],
     fc_a: [f32; 2],
     fc_n: u32,
-    p0: f32,   // generic per-kind param (noise color, …)
+    p0: f32,   // generic per-kind param (noise color, wave id, …)
     aux0: u32, // per-kind int state (PRNG, pluck buffer index)
     aux1: u32, // per-kind int state (pluck delay length / write pos)
+    // ---- design-voice state ----
+    d_flags: u32,
+    d_ftype: u32,
+    d_fcut: f32,
+    d_fq: f32,
+    d_foct: f32, // precomputed fenv octaves (amount + vel·velocity)
+    d_fa: f32, d_fd: f32, d_fs: f32, d_fr: f32,
+    d_uni: u32,
+    d_spread: f32,
+    d_sub: f32,
+    d_subsq: bool,
+    d_ring: f32,
+    d_ringratio: f32,
+    d_lshape: [i32; 2],
+    d_lrate: [f32; 2],
+    d_e2: [f32; 4],
+    d_macro: [f32; 4],
+    d_nroutes: u32,
+    d_routes: [[f32; 3]; MAX_ROUTES],
+    // control-rate mod values (updated every 16 frames)
+    m_pitch: f32, // frequency multiplier
+    m_amp: f32,
+    m_pan: f32,
+    m_n: u32,
+    // design filter (2 sections) + unison/sub/ring phases
+    g_s: [f32; 8],
+    g_b: [f32; 3],
+    g_a: [f32; 2],
+    uni_ph: [f32; MAX_UNI],
+    sub_ph: f32,
+    ring_ph: f32,
 }
 
 const VOICE0: Voice = Voice {
@@ -94,6 +125,15 @@ const VOICE0: Voice = Voice {
     ph_c: 0.0, ph_m: 0.0, kmax: 1,
     fs: [0.0; 8], fc_b: [0.0; 3], fc_a: [0.0; 2], fc_n: 0,
     p0: 0.0, aux0: 1, aux1: 0,
+    d_flags: 0, d_ftype: 0, d_fcut: 12000.0, d_fq: 0.7, d_foct: 0.0,
+    d_fa: 0.001, d_fd: 0.001, d_fs: 1.0, d_fr: 0.1,
+    d_uni: 1, d_spread: 20.0, d_sub: 0.0, d_subsq: false,
+    d_ring: 0.0, d_ringratio: 1.0,
+    d_lshape: [-1; 2], d_lrate: [1.0; 2], d_e2: [-1.0, 0.001, 1.0, 0.1],
+    d_macro: [0.0; 4], d_nroutes: 0, d_routes: [[0.0; 3]; MAX_ROUTES],
+    m_pitch: 1.0, m_amp: 1.0, m_pan: 0.0, m_n: 0,
+    g_s: [0.0; 8], g_b: [0.0; 3], g_a: [0.0; 2],
+    uni_ph: [0.0; MAX_UNI], sub_ph: 0.0, ring_ph: 0.0,
 };
 
 static mut VOICES: [Voice; MAX_VOICES] = [VOICE0; MAX_VOICES];
@@ -101,6 +141,51 @@ static mut OUT: [[[f32; BLOCK]; 2]; SLOTS] = [[[0.0; BLOCK]; 2]; SLOTS];
 static mut SR: f32 = 44100.0;
 static mut DT: f32 = 1.0 / 44100.0;
 static mut LAST_T: f64 = -1.0;
+
+// ---- Design-voice parameter STAGING buffer --------------------------------
+// The host writes one note's design params here, then calls note_ex(); the
+// port serializes messages so staging→note is atomic. Layout (f32 slots):
+//   0  flags: 1 filter | 2 filterEnv | 4 sub | 8 ring | 16 unison | 32 modmatrix
+//   1  filter type (0 lp / 1 hp / 2 bp)     2 cutoff Hz        3 Q
+//   4  fenv amount (-100..100)              5 fenv vel (0..100)
+//   6..9  fenv a/d/s/r (s, s, 0..1, s)
+//   10 unison count (2..7)                  11 spread cents
+//   12 sub level 0..1                       13 sub shape (0 sine / 1 square)
+//   14 ring level 0..1                      15 ring ratio
+//   16 harmonicity override (-1 none)       17 modIndex override (-1 none)
+//   18 lfo1 shape (0 sine/1 tri/2 saw/3 sq/4 smooth/5 sharp, -1 off)
+//   19 lfo1 rate Hz                         20 lfo2 shape    21 lfo2 rate
+//   22..25 env2 a/d/s/r (-1 a = off)
+//   26..29 macro1..4 (0..1)
+//   30 route count N (max 8)
+//   31.. routes ×3: src (0 lfo1/1 lfo2/2 env2/3 vel/4..7 macro1-4),
+//                   dest (0 pitch/1 cutoff/2 reso/3 amp/4 pan), amount -1..1
+static mut NOTE_CURSOR: usize = 0; // voice index used by the last note()
+const PARAMS_LEN: usize = 64;
+static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
+
+// Bumped on every DSP change — surfaced in the worklet-ready log so a stale
+// cached .wasm is immediately visible.
+const CORE_REV: u32 = 3;
+
+#[no_mangle]
+pub extern "C" fn core_rev() -> u32 {
+    CORE_REV
+}
+
+#[no_mangle]
+pub extern "C" fn params_ptr() -> *mut f32 {
+    unsafe { PARAMS.as_mut_ptr() }
+}
+
+const MAX_ROUTES: usize = 8;
+const MAX_UNI: usize = 7;
+// Full-scale mod ranges (match 20-sound-design SD_DEST_RANGE):
+// pitch 1200 cents, cutoff 4000 Hz, reso 8 Q, amp 0.9, pan 1.
+const DEST_RANGE: [f32; 5] = [1200.0, 4000.0, 8.0, 0.9, 1.0];
+// Per-section Q mapping for the -24dB design filter — derived from the bass
+// calibration (preset Q4 → measured per-section 1.6 = ×0.4).
+const DESIGN_Q_SCALE: f32 = 0.4;
 
 // Per-kind depth calibration, tuned against recorded Tone spectra with the
 // voice-ab harness. Index = kind. fm's 0.25 was swept 2026-07-03 (every
@@ -216,6 +301,7 @@ pub extern "C" fn note(
 ) {
     unsafe {
         let i = alloc_voice();
+        NOTE_CURSOR = i;
         // free a pluck buffer this voice may have owned in a past life
         for o in PLUCK_OWNER.iter_mut() {
             if *o == i as i32 {
@@ -254,7 +340,11 @@ pub extern "C" fn note(
                 // transparent env (sustain 1, 1 s release past the note gate)
                 // lets the string ring naturally instead of chopping it at the
                 // note duration ("pluck sounds abbreviated").
-                11 => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], Some([0.003, 0.001, 1.0, 1.0])),
+                // release 3.0: the exponential amp release attenuates ~7x
+                // faster early-on than Tone's post-gate resonance ramp (1 s,
+                // linear-ish) — at 3.0 the two track for low, long-ringing
+                // strings (the audible case; mid/high strings die first).
+                11 => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], Some([0.003, 0.001, 1.0, 3.0])),
                 10 => (5.1, 32.0 * cal * vel, false, [0.001, 0.001, 1.0, 0.1], Some([0.001, 1.4, 0.0, 0.2])),
                 _ => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], None),
             };
@@ -296,6 +386,7 @@ pub extern "C" fn note(
             p0,
             aux0: (i as u32).wrapping_mul(2654435761).wrapping_add(1) | 1, // PRNG seed
             aux1: 0,
+            ..VOICE0 // design fields default off; note_ex fills them after
         };
         // pluck: claim a delay buffer and load the noise burst
         if kind == 11 {
@@ -331,6 +422,61 @@ pub extern "C" fn note(
             v.aux1 = n as u32;      // delay length; fs[1] = write pos cursor
             v.fs[0] = 0.0;          // damping filter state
             v.fs[1] = 0.0;          // read/write position
+        }
+    }
+}
+
+/// note() plus design params from the staging buffer (see PARAMS layout).
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn note_ex(
+    slot: u32, kind: u32, freq: f32, vel: f32, pan: f32, t_start: f64, dur: f32,
+    a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32,
+) {
+    unsafe {
+        let idx_before = NOTE_CURSOR;
+        note(slot, kind, freq, vel, pan, t_start, dur, a, d, s, r, detune, p0);
+        let i = idx_before; // note() stored the voice index here
+        let v = &mut VOICES[i];
+        let q = &PARAMS;
+        let flags = q[0] as u32;
+        v.d_flags = flags;
+        if flags & 1 != 0 {
+            v.d_ftype = q[1] as u32;
+            v.d_fcut = q[2].clamp(20.0, 20000.0);
+            v.d_fq = q[3].clamp(0.1, 20.0);
+        }
+        if flags & 2 != 0 {
+            // fenv octaves: amount/100·5 + vel-part/100·5·velocity (node math)
+            v.d_foct = (q[4] / 100.0) * 5.0 + (q[5] / 100.0) * 5.0 * v.vel;
+            v.d_fa = q[6].max(0.001);
+            v.d_fd = q[7].max(0.001);
+            v.d_fs = q[8].clamp(0.0, 1.0);
+            v.d_fr = q[9].max(0.001);
+        }
+        if flags & 16 != 0 {
+            v.d_uni = (q[10] as u32).clamp(2, MAX_UNI as u32);
+            v.d_spread = q[11].clamp(0.0, 100.0);
+        }
+        if flags & 4 != 0 {
+            v.d_sub = q[12].clamp(0.0, 1.0);
+            v.d_subsq = q[13] > 0.5;
+        }
+        if flags & 8 != 0 {
+            v.d_ring = q[14].clamp(0.0, 1.0);
+            v.d_ringratio = q[15].clamp(0.25, 8.0);
+        }
+        if q[16] >= 0.0 { v.harm = q[16]; }
+        if q[17] >= 0.0 { v.idx = q[17] * CAL[(kind as usize).min(15)] * v.vel; }
+        if flags & 32 != 0 {
+            v.d_lshape = [q[18] as i32, q[20] as i32];
+            v.d_lrate = [q[19].max(0.01), q[21].max(0.01)];
+            v.d_e2 = [q[22], q[23].max(0.001), q[24].clamp(0.0, 1.0), q[25].max(0.001)];
+            v.d_macro = [q[26], q[27], q[28], q[29]];
+            v.d_nroutes = (q[30] as u32).min(MAX_ROUTES as u32);
+            for k in 0..v.d_nroutes as usize {
+                v.d_routes[k] = [q[31 + k * 3], q[32 + k * 3], q[33 + k * 3]];
+            }
         }
     }
 }
@@ -459,6 +605,73 @@ fn bass_fenv(tn: f32, released: bool, tr: f32) -> f32 {
     }
 }
 
+/// RBJ biquad coefficients (0 lp / 1 hp / 2 bp), normalized by a0.
+#[inline(always)]
+fn biquad_coeffs(ftype: u32, fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
+    let fc = fc.clamp(10.0, sr * 0.45);
+    let w0 = TAU * fc / sr;
+    let (sw, cw) = (w0.sin(), w0.cos());
+    let alpha = sw / (2.0 * q.max(0.05));
+    let a0 = 1.0 + alpha;
+    let b = match ftype {
+        1 => [(1.0 + cw) * 0.5 / a0, -(1.0 + cw) / a0, (1.0 + cw) * 0.5 / a0],
+        2 => [alpha / a0, 0.0, -alpha / a0],
+        _ => [(1.0 - cw) * 0.5 / a0, (1.0 - cw) / a0, (1.0 - cw) * 0.5 / a0],
+    };
+    (b, [(-2.0 * cw) / a0, (1.0 - alpha) / a0])
+}
+
+/// One basic-wave sample: 0 square, 1 triangle, 2 sawtooth, 3 pulse(0.4), 4 sine.
+#[inline(always)]
+fn wave_sample(wave: u32, ph: f32, dt: f32) -> f32 {
+    match wave {
+        0 => square_blep2(ph, dt),
+        1 => 1.0 - 4.0 * (ph - 0.5).abs(),
+        2 => saw_blep(ph, dt),
+        3 => {
+            // pulse width 0.4 via two-blep rectangle
+            let w = 0.4;
+            let base = if ph < w { 1.0 } else { -1.0 };
+            let ph2 = if ph < w { ph + (1.0 - w) } else { ph - w };
+            base + poly_blep(ph, dt) - poly_blep(ph2, dt)
+        }
+        _ => (ph * TAU).sin(),
+    }
+}
+
+/// Stateless per-voice random in [-1,1] for smooth/sharp LFOs.
+#[inline(always)]
+fn hash_rand(seed: u32, k: u32) -> f32 {
+    let mut x = seed ^ k.wrapping_mul(2654435761);
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+}
+
+/// Design LFO value at tn: shapes 0 sine/1 tri/2 saw/3 square/4 smooth/5 sharp.
+#[inline(always)]
+fn lfo_val(shape: i32, rate: f32, tn: f32, seed: u32) -> f32 {
+    if shape < 0 {
+        return 0.0;
+    }
+    let x = tn * rate;
+    let ph = x - x.floor();
+    match shape {
+        0 => (ph * TAU).sin(),
+        1 => 1.0 - 4.0 * (ph - 0.5).abs(),
+        2 => ph * 2.0 - 1.0,
+        3 => if ph < 0.5 { 1.0 } else { -1.0 },
+        4 => {
+            let k = x.floor() as u32;
+            let a = hash_rand(seed, k);
+            let b = hash_rand(seed, k.wrapping_add(1));
+            a + (b - a) * ph
+        }
+        _ => hash_rand(seed, x.floor() as u32),
+    }
+}
+
 /// RBJ lowpass coefficients, normalized by a0.
 #[inline(always)]
 fn lp_coeffs(fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
@@ -558,6 +771,54 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 };
                 v.env = env;
                 let amp = env * v.vel;
+                // ---- design control-rate update (every 16 frames) ---------
+                if v.d_flags & (1 | 2 | 32) != 0 {
+                    if v.m_n == 0 {
+                        let mut m = [0f32; 5]; // pitch cents, cut Hz, res Q, amp, pan
+                        for k in 0..v.d_nroutes as usize {
+                            let ro = v.d_routes[k];
+                            let srcv = match ro[0] as u32 {
+                                0 => lfo_val(v.d_lshape[0], v.d_lrate[0], tn, v.aux0),
+                                1 => lfo_val(v.d_lshape[1], v.d_lrate[1], tn, v.aux0 ^ 0x9e3779b9),
+                                2 => {
+                                    if v.d_e2[0] < 0.0 { 0.0 } else {
+                                        let held = adsr_held(tn, v.d_e2[0], v.d_e2[1], v.d_e2[2]);
+                                        if v.stage == Stage::Released {
+                                            let tr = (t - v.t_rel) as f32;
+                                            held * (-6.9 * (tr / v.d_e2[3]).min(1.0)).exp()
+                                        } else { held }
+                                    }
+                                }
+                                3 => v.vel,
+                                x => v.d_macro[((x.saturating_sub(4)) as usize).min(3)],
+                            };
+                            let dj = (ro[1] as usize).min(4);
+                            m[dj] += ro[2] * DEST_RANGE[dj] * srcv;
+                        }
+                        v.m_pitch = exp2f(m[0] / 1200.0);
+                        v.m_amp = (1.0 + m[3]).max(0.0);
+                        v.m_pan = m[4].clamp(-1.0, 1.0);
+                        if v.d_flags & 1 != 0 {
+                            // cutoff: filter-env base·2^(oct·env) + mod Hz —
+                            // same anchor points as the node's _sdFilterEnvShape
+                            let base = if v.d_flags & 2 != 0 {
+                                let held = adsr_held(tn, v.d_fa, v.d_fd, v.d_fs);
+                                let e = if v.stage == Stage::Released {
+                                    let tr = (t - v.t_rel) as f32;
+                                    held * (-6.9 * (tr / v.d_fr).min(1.0)).exp()
+                                } else { held };
+                                v.d_fcut * exp2f(v.d_foct * e)
+                            } else { v.d_fcut };
+                            let fc = (base + m[1]).clamp(20.0, 20000.0);
+                            let q = ((v.d_fq + m[2]) * DESIGN_Q_SCALE).clamp(0.3, 12.0);
+                            let (b, a) = biquad_coeffs(v.d_ftype, fc, q, SR);
+                            v.g_b = b;
+                            v.g_a = a;
+                        }
+                        v.m_n = 16;
+                    }
+                    v.m_n -= 1;
+                }
                 // ---- modulation envelope (FM/AM kinds) --------------------
                 let me = if v.kind == 0 || v.kind == 2 {
                     0.0
@@ -745,15 +1006,103 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         let tri = 1.0 - 4.0 * (v.ph_c - 0.5).abs(); // naive triangle
                         sine + saw * 0.5 + tri * 0.3
                     }
+                    13 => {
+                        // basic wave (p0: 0 sq/1 tri/2 saw/3 pulse/4 fat) with
+                        // optional unison (design). fat = saw ×3 spread 30 by
+                        // default; unison overrides count/spread.
+                        let wave = if v.p0 >= 3.5 { 2 } else { v.p0 as u32 };
+                        let (n_uni, spread) = if v.d_flags & 16 != 0 {
+                            (v.d_uni as usize, v.d_spread)
+                        } else if v.p0 >= 3.5 {
+                            (3usize, 30.0f32)
+                        } else {
+                            (1usize, 0.0f32)
+                        };
+                        if n_uni <= 1 {
+                            v.ph_c += inc_c * v.m_pitch;
+                            if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                            wave_sample(wave, v.ph_c, inc_c)
+                        } else {
+                            let mut acc = 0.0f32;
+                            let norm = 1.4 / n_uni as f32; // calibrated: 1/n was 3 dB quiet, 1/sqrt(n) 7 dB hot vs recorded Tone fat
+                            for u in 0..n_uni {
+                                // spread cents distributed evenly across ±spread/2
+                                let frac = if n_uni > 1 { u as f32 / (n_uni - 1) as f32 - 0.5 } else { 0.0 };
+                                let det = exp2f(frac * spread / 1200.0);
+                                let inc = inc_c * det * v.m_pitch;
+                                v.uni_ph[u] += inc;
+                                if v.uni_ph[u] >= 1.0 { v.uni_ph[u] -= 1.0; }
+                                acc += wave_sample(wave, v.uni_ph[u], inc);
+                            }
+                            acc * norm
+                        }
+                    }
                     _ => {
-                        // sine
-                        v.ph_c += inc_c;
-                        if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
-                        (v.ph_c * TAU).sin()
+                        // sine (with optional unison)
+                        if v.d_flags & 16 != 0 && v.d_uni > 1 {
+                            let n_uni = v.d_uni as usize;
+                            let mut acc = 0.0f32;
+                            let norm = 1.4 / n_uni as f32; // calibrated: 1/n was 3 dB quiet, 1/sqrt(n) 7 dB hot vs recorded Tone fat
+                            for u in 0..n_uni {
+                                let frac = u as f32 / (n_uni - 1) as f32 - 0.5;
+                                let det = exp2f(frac * v.d_spread / 1200.0);
+                                let inc = inc_c * det * v.m_pitch;
+                                v.uni_ph[u] += inc;
+                                if v.uni_ph[u] >= 1.0 { v.uni_ph[u] -= 1.0; }
+                                acc += (v.uni_ph[u] * TAU).sin();
+                            }
+                            acc * norm
+                        } else {
+                            v.ph_c += inc_c * v.m_pitch;
+                            if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                            (v.ph_c * TAU).sin()
+                        }
                     }
                 };
-                out[0][f] += sample * amp * v.gain_l;
-                out[1][f] += sample * amp * v.gain_r;
+                // ---- design chain: sub → ring → amp-mod → filter ----------
+                // (matches the node engine's insertion order; pan-mod applies
+                // at the output stage below via m_pan.)
+                let sample = if v.d_flags != 0 || v.d_nroutes > 0 {
+                    let mut sd = sample;
+                    if v.d_flags & 4 != 0 && v.d_sub > 0.0 {
+                        v.sub_ph += inc_c * 0.5;
+                        if v.sub_ph >= 1.0 { v.sub_ph -= 1.0; }
+                        let sub = if v.d_subsq { square_blep2(v.sub_ph, inc_c * 0.5) } else { (v.sub_ph * TAU).sin() };
+                        sd += sub * v.d_sub * v.vel;
+                    }
+                    if v.d_flags & 8 != 0 && v.d_ring > 0.0 {
+                        v.ring_ph += inc_c * v.d_ringratio;
+                        if v.ring_ph >= 1.0 { v.ring_ph -= 1.0; }
+                        sd *= 1.0 + v.d_ring * (v.ring_ph * TAU).sin();
+                    }
+                    sd *= v.m_amp;
+                    if v.d_flags & 1 != 0 {
+                        let y1 = v.g_b[0] * sd + v.g_b[1] * v.g_s[0] + v.g_b[2] * v.g_s[1]
+                            - v.g_a[0] * v.g_s[2] - v.g_a[1] * v.g_s[3];
+                        v.g_s[1] = v.g_s[0]; v.g_s[0] = sd;
+                        v.g_s[3] = v.g_s[2]; v.g_s[2] = y1;
+                        let y2 = v.g_b[0] * y1 + v.g_b[1] * v.g_s[4] + v.g_b[2] * v.g_s[5]
+                            - v.g_a[0] * v.g_s[6] - v.g_a[1] * v.g_s[7];
+                        v.g_s[5] = v.g_s[4]; v.g_s[4] = y1;
+                        v.g_s[7] = v.g_s[6]; v.g_s[6] = y2;
+                        y2
+                    } else {
+                        sd
+                    }
+                } else {
+                    sample
+                };
+                // pan-mod: recompute output gains at control rate via m_pan
+                let (gl, gr) = if v.m_pan != 0.0 {
+                    let pn = v.m_pan.clamp(-1.0, 1.0);
+                    let ang = (pn + 1.0) * 0.25 * core::f32::consts::PI;
+                    (ang.cos() * core::f32::consts::SQRT_2 * v.gain_l.max(v.gain_r),
+                     ang.sin() * core::f32::consts::SQRT_2 * v.gain_l.max(v.gain_r))
+                } else {
+                    (v.gain_l, v.gain_r)
+                };
+                out[0][f] += sample * amp * gl;
+                out[1][f] += sample * amp * gr;
                 t += dt as f64;
             }
         }

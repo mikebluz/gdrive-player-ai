@@ -3213,6 +3213,7 @@
         const _took = _coreVoices.noteOn(window._ambEmitKey, destination, {
           type, freq, vel: velocity, pan, t: startTime, dur: preReleaseDur,
           a: atk, d: dec, s: sus, r: rel, detune,
+          dp: _coreVoices.designParams(params),
         });
         if (_took) return;
       }

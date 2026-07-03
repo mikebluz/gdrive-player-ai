@@ -58,5 +58,17 @@
  "strip-fx-pingpong": "fb1d6a6808b7f4d5",
  "strip-fx-autopan": "82ebab64c80bc8e4",
  "strip-width": "208aebef274d8766",
+ "samp-basic": "82d6aa30d5b1e7ba",
+ "samp-rate": "b14bcdecb74ae767",
+ "samp-srconv": "ddc042a55fafdf2c",
+ "samp-stereo": "8a69e4a699430c7b",
+ "samp-slice": "452bb7db57243d59",
+ "samp-reverse": "2b6a2bf479df6f3c",
+ "samp-loop-hold": "6bf9aeee4af3ef6e",
+ "samp-adsr-filter": "6afc0d118bfb6616",
+ "samp-bend-glide": "e62b20e6fd53088c",
+ "samp-lifecycle": "31bd9cac56cd8b60",
+ "samp-steal": "d8c69a9500e8b6b0",
+ "samp-through-strip": "28883ccb5e0ad0f2",
  "strip-kitchen-sink": "cd9dd71a0af265c8"
 }

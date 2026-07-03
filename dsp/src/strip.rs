@@ -120,7 +120,7 @@ fn smod_val(m: &SMod, t: f64, seed: u32) -> f32 {
 // ---- native-spec biquads ----------------------------------------------------
 // WebAudio lowpass/highpass: Q in dB → RBJ q = 10^(Q/20). Frequency clamped
 // to (0, nyquist). DF2-transposed state [s1, s2] per channel.
-fn nat_lp(fc: f32, q_db: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
+pub(crate) fn nat_lp(fc: f32, q_db: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
     let fc = fc.clamp(1.0, sr * 0.499);
     let w0 = TAU * fc / sr;
     let (sw, cw) = (w0.sin(), w0.cos());
@@ -158,7 +158,7 @@ fn nat_ap(fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
 }
 
 #[inline(always)]
-fn df2t(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
+pub(crate) fn df2t(x: f32, b: &[f32; 3], a: &[f32; 2], s: &mut [f32; 2]) -> f32 {
     let y = b[0] * x + s[0];
     s[0] = b[1] * x - a[0] * y + s[1];
     s[1] = b[2] * x - a[1] * y;

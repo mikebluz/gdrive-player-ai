@@ -35,6 +35,7 @@
 
 #![allow(static_mut_refs)]
 
+mod sample;
 mod strip;
 
 const MAX_VOICES: usize = 256;
@@ -172,7 +173,7 @@ pub(crate) static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 5;
+const CORE_REV: u32 = 6;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {
@@ -269,6 +270,7 @@ pub extern "C" fn init(sample_rate: f32) {
         }
     }
     strip::reset_all();
+    sample::reset_all();
 }
 
 #[no_mangle]
@@ -511,6 +513,7 @@ pub extern "C" fn release_tag(tag: u32, r: f32) {
     if tag == 0 {
         return;
     }
+    sample::release_tag(tag, r);
     unsafe {
         for v in VOICES.iter_mut() {
             if v.tag != tag {
@@ -533,6 +536,7 @@ pub extern "C" fn release_tag(tag: u32, r: f32) {
 /// Live pitch bend for a held note (Radial Tone slide): cents, slewed.
 #[no_mangle]
 pub extern "C" fn bend_tag(tag: u32, cents: f32) {
+    sample::bend_tag(tag, cents);
     if tag == 0 {
         return;
     }
@@ -547,6 +551,7 @@ pub extern "C" fn bend_tag(tag: u32, cents: f32) {
 
 #[no_mangle]
 pub extern "C" fn cancel_from(slot: u32, t: f64) {
+    sample::cancel_from((slot as usize) % SLOTS, t);
     unsafe {
         let s = (slot as usize) % SLOTS;
         for v in VOICES.iter_mut() {
@@ -559,6 +564,7 @@ pub extern "C" fn cancel_from(slot: u32, t: f64) {
 
 #[no_mangle]
 pub extern "C" fn stop_before(slot: u32, t: f64) {
+    sample::stop_before((slot as usize) % SLOTS, t);
     unsafe {
         let s = (slot as usize) % SLOTS;
         for v in VOICES.iter_mut() {
@@ -581,6 +587,7 @@ pub extern "C" fn stop_before(slot: u32, t: f64) {
 
 #[no_mangle]
 pub extern "C" fn stop_all() {
+    sample::stop_all();
     unsafe {
         for v in VOICES.iter_mut() {
             match v.stage {
@@ -767,6 +774,7 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                     v.stage = Stage::Free;
                 }
             }
+            sample::free_released();
         }
         LAST_T = t_block;
         for slot in OUT.iter_mut() {
@@ -1177,6 +1185,8 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
             }
         }
     }
+    // Phase 3: sample voices render into the same slot buses.
+    sample::process(t_block, frames as usize);
     // Phase 2: per-slot layer strips + FX (no-op for disabled strips, so
     // Phase-1 output — and the existing golden baseline — is untouched).
     strip::process_strips(t_block, frames);

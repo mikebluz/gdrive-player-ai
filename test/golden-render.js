@@ -116,6 +116,44 @@ const S = (at, fn, ...args) => ({ at, do: (w) => w[fn](...args) });
 // Enable strip 0 (and optionally others) at t=0.
 const EN = (...slots) => slots.map((sl) => S(0, 'strip_enable', sl, 1));
 
+// ---- Phase 3: sample-engine helpers ----------------------------------------
+// Load a deterministic synthetic buffer into sample id (ch=1|2). gen(i, ch)
+// returns the PCM sample. NOTE: sample_load may GROW wasm memory — create
+// views after the call, never cache across it.
+const LOAD = (at, id, ch, len, sr, gen) => ({
+  at,
+  do: (w) => {
+    const ptr = w.sample_load(id, ch, len, sr);
+    if (!ptr) throw new Error('sample_load OOM');
+    for (let c = 0; c < ch; c++) {
+      const v = new Float32Array(w.memory.buffer, ptr + c * len * 4, len);
+      for (let i = 0; i < len; i++) v[i] = gen(i, c);
+    }
+  },
+});
+// Start a sample voice: stages PARAMS (see sample.rs layout) then snote().
+const SN = (at, o = {}) => ({
+  at,
+  do: (w) => {
+    const q = new Float32Array(w.memory.buffer, w.params_ptr(), 64);
+    q.fill(0);
+    q[0] = o.id ?? 40; q[1] = o.rate ?? 1; q[2] = o.gl ?? 0.7; q[3] = o.gr ?? 0.7;
+    q[4] = o.a ?? 0.005; q[5] = o.d ?? 0; q[6] = o.s ?? 1; q[7] = o.r ?? 0.05;
+    q[8] = o.off ?? 0; q[9] = o.len ?? -1;
+    q[10] = (o.loop ? 1 : 0) | (o.reverse ? 2 : 0);
+    q[11] = o.loopA ?? 0; q[12] = o.loopB ?? 0;
+    q[13] = o.cutoff ?? -1; q[14] = o.fq ?? 0.7;
+    w.snote(o.slot ?? 0, o.start ?? (at + 0.05), o.dur ?? 0.5, o.tag ?? 0);
+  },
+});
+// a click-free deterministic test tone: two inharmonic partials + fade edges
+const TONE_GEN = (sr) => (i, c) => {
+  const t = i / sr;
+  const env = Math.min(1, i / 200, (sr - i) / 200);
+  return env * (Math.sin(2 * Math.PI * (c ? 331 : 220) * t) * 0.5
+    + Math.sin(2 * Math.PI * (c ? 1123 : 887) * t) * 0.25);
+};
+
 // ---- the script ------------------------------------------------------------
 // Section values are fixed forever — edit ONLY when deliberately changing
 // coverage, and re-baseline in the same commit.
@@ -232,6 +270,44 @@ const SECTIONS = {
   'strip-width': { s: 1.4, ev: [...EN(0),
     N(0, 0, { pan: -0.8, dur: 1.2 }), N(0, 0, { f: 330, pan: 0.8, dur: 1.2 }),
     S(0.5, 'strip_rampv', 0, 4, 0.55, -1e6, 0.15, 0.2)] },
+  // ==== Phase 3: sample engine ====
+  // (buffer id 40 = 0.5 s mono tone @44.1k; id 41 = stereo; id 42 = 22.05k)
+  'samp-basic': { s: 1.0, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, dur: 0.4 })] },
+  'samp-rate': { s: 1.4, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, rate: 0.5, dur: 0.6 }), SN(0.6, { id: 40, rate: 2.0, dur: 0.3, slot: 1 })] },
+  // buffer at 22.05k must resample 2:1 through the sr ratio
+  'samp-srconv': { s: 1.0, ev: [LOAD(0, 42, 1, 11025, 22050, TONE_GEN(22050)),
+    SN(0, { id: 42, dur: 0.4 })] },
+  'samp-stereo': { s: 1.0, ev: [LOAD(0, 41, 2, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 41, dur: 0.4, gl: 0.8, gr: 0.5 })] },
+  'samp-slice': { s: 1.0, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, off: 0.2, len: 0.1, dur: 0.4, a: 0.006, r: 0.05 })] },
+  'samp-reverse': { s: 1.0, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, reverse: true, off: 0.1, len: 0.25, dur: 0.4 })] },
+  'samp-loop-hold': { s: 1.6, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, loop: true, loopA: 0.1, loopB: 0.3, dur: -1, tag: 9 }),
+    { at: 1.1, do: (w) => w.release_tag(9, 0.2) }] },
+  'samp-adsr-filter': { s: 1.2, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, a: 0.05, d: 0.2, s: 0.4, r: 0.2, dur: 0.7, cutoff: 800, fq: 0.7 })] },
+  'samp-bend-glide': { s: 1.6, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, loop: true, dur: -1, tag: 5 }),
+    { at: 0.4, do: (w) => w.bend_tag(5, 300) },
+    { at: 0.8, do: (w) => w.srate_tag(5, 1.5, 0.3) },
+    { at: 1.2, do: (w) => w.release_tag(5, 0.15) }] },
+  'samp-lifecycle': { s: 1.2, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    SN(0, { id: 40, dur: 1.0 }), SN(0, { id: 40, start: 0.7, dur: 0.3, slot: 1 }),
+    { at: 0.2, do: (w) => w.cancel_from(1, 0.5) },
+    { at: 0.45, do: (w) => w.stop_before(0, 0.4) }] },
+  // 80 overlapping voices force sample-voice stealing (MAX_SVOICES=64)
+  'samp-steal': { s: 1.2, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)),
+    ...Array.from({ length: 80 }, (_, i) => SN(i * 0.008, { id: 40, dur: 0.8, gl: 0.1, gr: 0.1, slot: i % 4 }))] },
+  // sample voice through a full strip (level, tg, delay) — the layer case
+  'samp-through-strip': { s: 1.6, ev: [LOAD(0, 40, 1, 22050, 44100, TONE_GEN(44100)), ...EN(0),
+    S(0, 'strip_setv', 0, 1, 0.8),
+    S(0, 'strip_tg', 0, 1, 8, 0b10110101, 0, 1.0, 0.005, 0.0, 1.0),
+    S(0, 'strip_delay', 0, 1, 0, 0.4, 0.3, 0.4),
+    SN(0, { id: 40, dur: 0.5 })] },
   // everything at once across two slots, input feed + send hashed
   'strip-kitchen-sink': { s: 2.0, send: true, feed: { slot: 1, freq: 330, amp: 0.3 }, ev: [
     ...EN(0, 1),

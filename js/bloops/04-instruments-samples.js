@@ -1970,10 +1970,26 @@
     // recovers one unit at a time while healthy. Session-persistent so each
     // play starts from what the machine proved it can carry.
     const _VOICE_BUDGET_MIN = 8;
-    let _voiceBudgetDyn = VOICE_CAP;
+    // Start from the ceiling this machine LEARNED last session (localStorage)
+    // so the first minute of play doesn't re-discover it via audible dropouts.
+    let _voiceBudgetDyn = (() => {
+      try {
+        const v = parseInt(localStorage.getItem('bloopsVoiceBudget'), 10);
+        if (Number.isFinite(v)) return Math.max(_VOICE_BUDGET_MIN, Math.min(VOICE_CAP, v));
+      } catch (e) {}
+      return VOICE_CAP;
+    })();
+    let _voiceBudgetSavedAt = 0;
     function _getVoiceBudget() { return _voiceBudgetDyn; }
     function _setVoiceBudget(u) {
       _voiceBudgetDyn = Math.max(_VOICE_BUDGET_MIN, Math.min(VOICE_CAP, Math.round(u)));
+      try {
+        const now = (typeof performance !== 'undefined') ? performance.now() : 0;
+        if (now - _voiceBudgetSavedAt > 5000) {
+          _voiceBudgetSavedAt = now;
+          localStorage.setItem('bloopsVoiceBudget', String(_voiceBudgetDyn));
+        }
+      } catch (e) {}
       if (_offlineSamplerOverride) return _voiceBudgetDyn;
       while (_activeVoiceCost() > _voiceBudgetDyn && _activeVoices.length > 1) {
         const idx = _pickVoiceVictim();

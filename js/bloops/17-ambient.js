@@ -7214,10 +7214,10 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'osc-leak-fix-1';
+    const BLOOPS_PERF_BUILD = 'osc-leak-fix-2';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
     let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
-    let _ambHealthGoodN = 0, _ambHealthShedAt = 0;
+    let _ambHealthGoodN = 0, _ambHealthShedAt = 0, _ambHealthCeil = 99;
     function _ambHealthProbe(node) {
       try {
         const a = Tone.getContext().rawContext.createAnalyser();
@@ -7307,19 +7307,26 @@
           // ctRate < 1 on real hardware = the render thread is producing fewer
           // frames than the device consumes → the output plays GAPS (the
           // glitch-then-cut-out). Shed the most-decayed voice tails until the
-          // clock keeps up; while healthy, recover the budget one unit at a
-          // time. Hysteresis (0.95 shed / 0.985 recover ×3) prevents flapping.
+          // clock keeps up; while healthy, recover slowly — but never past the
+          // LEARNED CEILING (85% of the cost that last proved too heavy), or
+          // the budget creeps back over the limit and causes a dropout every
+          // ~10 s (shed→recover→shed oscillation). The ceiling is forgiven
+          // one unit per ~30 s of sustained health so a transient cause
+          // (thermal spike, another app) doesn't pin it down forever.
           try {
-            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.5) {
-              if (ctRate < 0.95) {
+            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25) {
+              if (ctRate < 0.97) {
                 _ambHealthGoodN = 0;
+                _ambHealthCeil = Math.max(8, Math.min(_ambHealthCeil, Math.floor(snap.cost * 0.85)));
                 const b = _setVoiceBudget(Math.min(_getVoiceBudget(), Math.max(8, snap.cost * 0.7)));
                 if (wall - _ambHealthShedAt > 5000) {
                   _ambHealthShedAt = wall;
                   console.info('[bloom-health] render behind (ctRate ' + snap.ctRate + ') — voice budget → ' + b);
                 }
               } else if (ctRate > 0.985) {
-                if (++_ambHealthGoodN >= 3) { _ambHealthGoodN = 0; _setVoiceBudget(_getVoiceBudget() + 1); }
+                _ambHealthGoodN++;
+                if (_ambHealthGoodN % 6 === 0 && _getVoiceBudget() < _ambHealthCeil) _setVoiceBudget(_getVoiceBudget() + 1);
+                if (_ambHealthGoodN % 60 === 0 && _ambHealthCeil < 99) _ambHealthCeil++;
               } else {
                 _ambHealthGoodN = 0;
               }
@@ -7343,7 +7350,7 @@
             });
           }
         } catch (e) {}
-      }, 1000);
+      }, 500);
     }
     function _ambHealthStop() {
       // Keep running while ANY Bloom engine still plays.

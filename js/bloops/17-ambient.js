@@ -6326,7 +6326,17 @@
       // jank margin on the outgoing cut, which would otherwise start the new area early
       // = synced layers sounding in the outgoing area = "overflow"). Only binds while
       // E._emitFloor is in the future; cleared right after the advance's tick.
-      const horizon = now + 1.4, lead = Math.max(now + 0.3, (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
+      let lead = Math.max(now + 0.3, (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
+      if (E._firstTickLead) {
+        // First scheduling tick of this play: anchor to the PRESS, not to the
+        // post-build clock. If the build ate the margin, fall back to a tiny
+        // lead — the core engine makes near-instant scheduling safe (a core
+        // note is one message; the few node-engine sample voices build in ms).
+        E._firstTickLead = false;
+        lead = Math.max(now + 0.06, (Number.isFinite(E._pressAt) ? E._pressAt : 0) + 0.15,
+          (Number.isFinite(E._emitFloor) && E._emitFloor > now) ? E._emitFloor : 0);
+      }
+      const horizon = now + 1.4;
       // Bar Lock: pin the loop grid to the layers' first-onset lead, once per play,
       // so every (re)lock snaps to the same phase (stays in sync with live layers).
       if (E === _masterEng && E._barGridAnchor == null) E._barGridAnchor = lead;
@@ -7159,6 +7169,13 @@
       _E = E;
       const cfg = E.getCfg();
       if (!cfg) return;
+      // Press-anchored first onsets: capture the press time BEFORE the heavy
+      // synchronous work below (chain building can take 100s of ms on slower
+      // machines). The FIRST tick schedules against this anchor with a small
+      // lead, so music starts essentially on the press instead of press +
+      // build + 0.3 s. Steady-state ticks keep the protective 0.3 s lead.
+      E._pressAt = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      E._firstTickLead = true;
       try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
       if (E.timer) return;
       _ambResetClocks(E);

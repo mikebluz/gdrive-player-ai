@@ -7469,11 +7469,21 @@
         const mod = (E && E.mod) || {};
         for (const k of Object.keys(mod)) {
           const e = mod[k];
-          const node = e && (e.pan || e.gate || e.vca);
+          // CORE STRIPS: no node chain — probe the worklet slot output instead
+          // (post-strip, the same point the old probe effectively read).
+          const node = e && (e.core || e.pan || e.gate || e.vca);
           if (!node) { out[k] = 'no-node'; continue; }
           let a = _ambHealthLayerProbes[k];
           if (!a || a._srcNode !== node) {   // chain rebuilt → node changed → new probe
-            a = _ambHealthProbe(node);
+            if (e.core) {
+              try {
+                a = Tone.getContext().rawContext.createAnalyser();
+                a.fftSize = 2048;
+                e.core.tap(a);
+              } catch (x) { a = null; }
+            } else {
+              a = _ambHealthProbe(node);
+            }
             if (a) a._srcNode = node;
             _ambHealthLayerProbes[k] = a;
           }

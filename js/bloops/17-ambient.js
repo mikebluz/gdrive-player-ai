@@ -8493,13 +8493,18 @@
           } else if (on && type === 'seq') {
             // Seq fills across the actual UNIT length (auto-mode phrases are spaced
             // by the unit's natural length, not the Interval knob), so the bar can't
-            // reset mid-loop. E.clocks[key] is the NEXT phrase start (future).
+            // reset mid-loop. E.clocks[key] is the NEXT phrase start (future);
+            // iters[key] counts seq cycles. Continuous unit index at `now`; <0 =
+            // before the FIRST phrase (the scheduling lead), so stay EMPTY instead
+            // of rendering ~full ("near the end of a phantom previous unit") right
+            // after Play — the same guard the texture/generic branches already
+            // have; seq was the last branch missing it.
             const next = E.clocks && E.clocks[key];
+            const idx = E.iters && E.iters[key];
             const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
-            if (typeof next === 'number' && next > now && P > 0.001) {
-              const x = (next - now) / P;
-              prog = ((Math.ceil(x) - x) % 1 + 1) % 1;
-              active = true;
+            if (typeof next === 'number' && Number.isFinite(idx) && next > now && P > 0.001) {
+              const pos = idx - (next - now) / P;
+              if (pos >= 0) { prog = ((pos % 1) + 1) % 1; active = true; }
             }
           } else if (on && type === 'texture') {
             // Texture's UNIT is its 16-slot pattern, so the bar fills over the

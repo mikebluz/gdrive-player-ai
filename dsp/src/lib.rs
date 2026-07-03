@@ -55,13 +55,14 @@ struct Voice {
     // oscillators
     ph_c: f32,
     ph_m: f32,
+    kmax: u32, // modulator partial count (band-limit at Nyquist)
 }
 
 const VOICE0: Voice = Voice {
     stage: Stage::Free, slot: 0, kind: 0, freq: 440.0, vel: 1.0,
     gain_l: 0.707, gain_r: 0.707, t_start: 0.0, t_rel: 0.0,
     a: 0.01, d: 0.1, s: 0.5, r: 0.1, env: 0.0, rel_from: 0.0,
-    ph_c: 0.0, ph_m: 0.0,
+    ph_c: 0.0, ph_m: 0.0, kmax: 1,
 };
 
 static mut VOICES: [Voice; MAX_VOICES] = [VOICE0; MAX_VOICES];
@@ -139,6 +140,13 @@ pub extern "C" fn note(
             rel_from: 0.0,
             ph_c: 0.0,
             ph_m: 0.0,
+            // band-limit the square modulator at Nyquist (odd partials only);
+            // cap the sum for CPU sanity — 21 partials ≈ what matters audibly.
+            kmax: {
+                let fm = f * FM_HARMONICITY;
+                let nyq = SR * 0.5;
+                if fm <= 0.0 { 1 } else { ((nyq / fm) as u32).clamp(1, 21) | 1 }
+            },
         };
     }
 }
@@ -172,7 +180,7 @@ pub extern "C" fn stop_before(slot: u32, t: f64) {
                     v.stage = Stage::Released;
                     v.rel_from = v.env;
                     v.r = v.r.min(0.05); // fast, click-free
-                    v.t_rel = -1.0;      // release "began in the past" marker unused; env math below uses rel_from
+                    v.t_rel = 0.0;       // sentinel: release anchors at the next processed block
                 }
                 _ => {}
             }
@@ -191,6 +199,7 @@ pub extern "C" fn stop_all() {
                     v.rel_from = v.env;
                     v.r = 0.03;
                     v.stage = Stage::Released;
+                    v.t_rel = 0.0; // sentinel: anchor at the next processed block
                 }
                 Stage::Free => {}
             }
@@ -209,29 +218,20 @@ fn exp2f(x: f32) -> f32 {
     (x * core::f32::consts::LN_2).exp()
 }
 
-/// PolyBLEP-smoothed square for the FM modulator (band-limited enough that
-/// the modulator doesn't alias harshly; Tone uses a band-limited square).
+/// Band-limited square via additive odd partials — matches how WebAudio's
+/// native 'square' OscillatorNode (Tone's modulator) is built (Fourier
+/// series, band-limited at Nyquist). kmax is chosen per voice from the
+/// modulator frequency. (An earlier polyBLEP attempt had edge artifacts that
+/// FM index 10 amplified into frequency chirps — audibly "harsh noise".)
 #[inline(always)]
-fn square_blep(ph: f32, inc: f32) -> f32 {
-    let mut s = if ph < 0.5 { 1.0 } else { -1.0 };
-    // discontinuities at 0 and 0.5
-    let t = ph;
-    if t < inc {
-        let x = t / inc;
-        s -= x + x - x * x - 1.0;
-    } else if t > 1.0 - inc {
-        let x = (t - 1.0) / inc;
-        s -= x * x + x + x + 1.0;
+fn square_additive(ph: f32, kmax: u32) -> f32 {
+    let mut s = 0.0f32;
+    let mut k = 1u32;
+    while k <= kmax {
+        s += ((k as f32) * ph * TAU).sin() / (k as f32);
+        k += 2;
     }
-    let t2 = if ph < 0.5 { ph + 0.5 } else { ph - 0.5 };
-    if t2 < inc {
-        let x = t2 / inc;
-        s += x + x - x * x - 1.0;
-    } else if t2 > 1.0 - inc {
-        let x = (t2 - 1.0) / inc;
-        s += x * x + x + x + 1.0;
-    }
-    s
+    s * (4.0 / core::f32::consts::PI)
 }
 
 #[no_mangle]
@@ -257,6 +257,11 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 }
                 v.stage = Stage::Playing;
             }
+            // A force-released voice (stop_before / stop_all) anchors its
+            // release at the first block processed after the stop.
+            if v.stage == Stage::Released && v.t_rel <= 0.0 {
+                v.t_rel = t_block;
+            }
             let out = &mut OUT[v.slot];
             let inc_c = v.freq * dt;
             let inc_m = v.freq * FM_HARMONICITY * dt;
@@ -268,6 +273,9 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 }
                 // ---- amplitude envelope --------------------------------
                 let tn = (t - v.t_start) as f32; // time since note start
+                // Curves match Tone's envelope defaults: linear attack,
+                // EXPONENTIAL decay toward sustain, EXPONENTIAL release
+                // (with a short linear tail to land exactly at 0).
                 let env = if v.stage == Stage::Released || t >= v.t_rel {
                     if v.stage != Stage::Released {
                         v.stage = Stage::Released;
@@ -279,13 +287,14 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         v.stage = Stage::Free;
                         break;
                     }
-                    // exponential-ish release
-                    v.rel_from * (1.0 - tr / v.r) * (1.0 - tr / v.r)
+                    let x = tr / v.r;
+                    let e = v.rel_from * (-6.9 * x).exp(); // ~0.1% at end
+                    if x > 0.95 { e * (1.0 - x) * 20.0 } else { e }
                 } else if tn < v.a {
                     tn / v.a
                 } else if tn < v.a + v.d {
                     let x = (tn - v.a) / v.d;
-                    1.0 - (1.0 - v.s) * (x * (2.0 - x)) // smooth decay to sustain
+                    v.s + (1.0 - v.s) * (-4.6 * x).exp() // ~1% of gap at end
                 } else {
                     v.s
                 };
@@ -293,10 +302,15 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 let amp = env * v.vel;
                 // ---- oscillator ----------------------------------------
                 let sample = if v.kind == 1 {
-                    // FM: modulation envelope A0.5 S1 R0.5 (like Tone's fm preset)
-                    let me = if tn < FM_MOD_ATK { tn / FM_MOD_ATK } else { 1.0 };
-                    let _ = FM_MOD_REL; // release tracks amp release; fine for phase 1
-                    let m = square_blep(v.ph_m, inc_m);
+                    // FM: modulation envelope A0.5 S1 R0.5 (Tone's fm preset) —
+                    // the index fades in over 0.5 s AND mellows out over the
+                    // release tail, which is a big part of the preset's sound.
+                    let mut me = if tn < FM_MOD_ATK { tn / FM_MOD_ATK } else { 1.0 };
+                    if v.stage == Stage::Released {
+                        let tr = (t - v.t_rel) as f32;
+                        me *= (1.0 - tr / FM_MOD_REL).max(0.0);
+                    }
+                    let m = square_additive(v.ph_m, v.kmax);
                     // Tone semantics: f_inst = f · (1 + index·modEnv·m)
                     let inst_inc = inc_c * (1.0 + FM_INDEX * me * m);
                     v.ph_c += inst_inc;

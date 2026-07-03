@@ -52,6 +52,16 @@
           };
           const bytes = await (await fetch('js/bloops/core/bloops-dsp.wasm')).arrayBuffer();
           node.port.postMessage({ wasmBytes: bytes }, [bytes]);
+          // Keep-pull sink: a permanent zero-gain path to the destination so
+          // the graph ALWAYS renders this node. Without it, tearing down the
+          // layer chains between plays disconnects every output — Chrome
+          // stops pulling, voices freeze mid-release, and their fade tails
+          // replayed as a ghost blip at the NEXT play's first note.
+          try {
+            const keep = new Tone.Gain(0);
+            Tone.connect(node, keep, 0, 0);
+            keep.toDestination();
+          } catch (e) {}
         } catch (e) {
           failed = true;
           try { console.warn('[bloops-core] init failed — node engine only:', e); } catch (x) {}
@@ -118,7 +128,7 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
-      return { enabled, eligible, noteOn, cancelFrom, stopBefore, stopAll, init };
+      return { enabled, eligible, noteOn, cancelFrom, stopBefore, stopAll, init, _node: () => node };
     })();
     // Live A/B toggle from the console.
     try {

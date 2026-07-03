@@ -100,6 +100,7 @@ static mut VOICES: [Voice; MAX_VOICES] = [VOICE0; MAX_VOICES];
 static mut OUT: [[[f32; BLOCK]; 2]; SLOTS] = [[[0.0; BLOCK]; 2]; SLOTS];
 static mut SR: f32 = 44100.0;
 static mut DT: f32 = 1.0 / 44100.0;
+static mut LAST_T: f64 = -1.0;
 
 // Per-kind depth calibration, tuned against recorded Tone spectra with the
 // voice-ab harness. Index = kind. fm's 0.25 was swept 2026-07-03 (every
@@ -457,6 +458,21 @@ fn lp_coeffs(fc: f32, q: f32, sr: f32) -> ([f32; 3], [f32; 2]) {
 pub extern "C" fn process(t_block: f64, frames: u32) {
     let frames = (frames as usize).min(BLOCK);
     unsafe {
+        // RENDER-GAP GUARD: when every worklet output is disconnected (layer
+        // chains torn down between plays) the graph stops pulling this node
+        // and process() isn't called — voices mid-release FREEZE. On resume,
+        // their fade tails would replay as a ghost blip of the PREVIOUS play
+        // (measured on the user's project: last-play riff/motif tails at the
+        // next press). After any gap, those fades are long past due — free
+        // them silently instead of resuming them.
+        if LAST_T >= 0.0 && t_block - LAST_T > 0.25 {
+            for v in VOICES.iter_mut() {
+                if v.stage == Stage::Released {
+                    v.stage = Stage::Free;
+                }
+            }
+        }
+        LAST_T = t_block;
         for slot in OUT.iter_mut() {
             for ch in slot.iter_mut() {
                 for f in ch.iter_mut().take(frames) {

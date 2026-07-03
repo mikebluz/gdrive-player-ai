@@ -70,6 +70,13 @@ Bloom is moving toward a **composable-layers** model (a layer = Voice × Note-so
 
 **NEVER run `./deploy.sh` unless the user explicitly asks for it in that message** (e.g. "deploy", "push it live", "ship it"). Committing and pushing to git is fine when the user asks; deploying to the live GoDaddy site is a separate, explicit step. Do not deploy as an automatic follow-up to a code change, a commit, or a push. When work is ready, say so and let the user request the deploy.
 
+## The WASM audio engine (bloops-dsp)
+
+Bloom voices, layer strips/FX, and sample playback render in a Rust→WASM core (`dsp/`, built by `dsp/build.sh` → `js/bloops/core/bloops-dsp.wasm`) inside ONE AudioWorklet (`js/bloops/core/voice-processor.js`, bridged by `js/bloops/03b-core-voices.js`). **Default ON** — `window.bloopsCore(false)` / `window.bloopsCoreStrips(false)` are the kill switches (persisted localStorage `'0'`); the Tone node engine remains the automatic fallback (cold start, ineligible notes, slot exhaustion, pads/held notes, offline export). Rules:
+- **Any DSP change must keep `node test/golden-render.js` green** (72 bit-exact sections); an intentional audio change re-baselines with `--update` IN THE SAME COMMIT. `dsp/build.sh` runs the gate after every build.
+- **Calibrate against RECORDED node output, never derive from Tone internals** (proven wrong repeatedly — see the engine memory file). Known engine truths: native lowpass/highpass biquad Q is in dB; `Tone.LFO/Signal.connect` ZEROES the destination param; cycle-member DelayNodes keep true delay with the quantum penalty on the feedback edge; `Tone.Panner` is channelCount 1 (mono-downmix — why the core strip's width-preserving pan law exists).
+- The worklet must always stay pulled (keep-pull sink on output 16) and `init()` must reset ALL core globals (golden determinism).
+
 ## Commands
 
 ```bash

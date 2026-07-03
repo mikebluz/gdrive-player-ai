@@ -44,13 +44,17 @@
         return (type in KINDS) ? { kind: KINDS[type], p0: 0 } : null;
       }
 
+      // DEFAULT ON (since the Phase 2+3 ear-test soak): unset = enabled;
+      // window.bloopsCore(false) / bloopsCoreStrips(false) are the kill
+      // switches (persisted '0'). The node engine remains the automatic
+      // fallback for cold starts, ineligible notes, and slot exhaustion.
       function enabled() {
-        try { return localStorage.getItem('bloopsCoreVoices') === '1'; } catch (e) { return false; }
+        try { return localStorage.getItem('bloopsCoreVoices') !== '0'; } catch (e) { return false; }
       }
       // Phase 2 sub-flag: run the layer strip (vcf/eq/vca/level/tg/gate/pan)
       // and FX inside the core, slot outputs wired straight to the bus.
       function stripsEnabled() {
-        try { return enabled() && localStorage.getItem('bloopsCoreStrips') === '1'; } catch (e) { return false; }
+        try { return enabled() && localStorage.getItem('bloopsCoreStrips') !== '0'; } catch (e) { return false; }
       }
       async function init() {
         if (initing || ready || failed) return;
@@ -450,4 +454,10 @@
         if (on) _coreVoices.init();
         console.info('[bloops-core] core STRIPS ' + (on ? 'ON' : 'OFF') + ' (layers rebuild on next play/edit)');
       };
+    } catch (e) {}
+    // Warm the worklet at load (default-on): addModule + the wasm fetch run
+    // fine on the still-suspended context, so the FIRST play can acquire
+    // core strips instead of falling back to the node engine for one play.
+    try {
+      if (_coreVoices.enabled()) setTimeout(() => { try { _coreVoices.init(); } catch (e) {} }, 250);
     } catch (e) {}

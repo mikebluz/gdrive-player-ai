@@ -44,9 +44,9 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
           }
           this.paramsView.fill(0);
           this.paramsView.set(d.dp.length > 64 ? d.dp.slice(0, 64) : d.dp);
-          this.wasm.note_ex(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0);
+          this.wasm.note_ex(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0, d.tag || 0);
         } else {
-          this.wasm.note(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0);
+          this.wasm.note(d.slot, d.kind, d.freq, d.vel, d.pan, d.t, d.dur, d.a, d.dcy, d.s, d.r, d.detune, d.p0 || 0, d.tag || 0);
         }
       } else if (d.cmd === 'cancelFrom') {
         this.wasm.cancel_from(d.slot, d.t);
@@ -60,6 +60,10 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
         if (this.wasm.set_kind_gain) this.wasm.set_kind_gain(d.kind, d.k);
       } else if (d.cmd === 'bassq') {
         if (this.wasm.set_bass_q) this.wasm.set_bass_q(d.q);
+      } else if (d.cmd === 'releaseTag') {
+        this.wasm.release_tag(d.tag, d.r || 0);
+      } else if (d.cmd === 'bendTag') {
+        this.wasm.bend_tag(d.tag, d.cents || 0);
       } else if (d.cmd === 'stopAll') {
         this.wasm.stop_all();
       } else if (d.cmd === 'stats') {

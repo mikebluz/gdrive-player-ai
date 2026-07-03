@@ -2546,6 +2546,24 @@
       }
 
       const finalDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
+
+      // ---- WASM core held note (Phase 1 final piece) ----------------------
+      // Eligible grid/wrap press-and-hold voices render in the core: dur -1
+      // holds until release_tag; setDetune drives a slewed pitch bend (the
+      // Radial Tone slide). Falls through to the node path when ineligible
+      // or while the core warms up. Same eligibility as playNote, so a press
+      // and its sequenced playback always land in the SAME engine.
+      if (typeof _coreVoices !== 'undefined' && _coreVoices.enabled()
+          && !fxOverrideGlobal && _coreVoices.eligible(type, params)) {
+        const _h = _coreVoices.holdOn('live', globalSendTap, {
+          type, freq, vel: velocity, pan,
+          t: (_coldStartAt != null) ? _coldStartAt : 0,
+          a: atk, d: dec, s: sus, r: rel, detune,
+          dp: _coreVoices.designParams(params),
+        });
+        if (_h) return _h;
+      }
+
       // Per-note effect chain — mirrors the chain playNote builds for
       // sequence playback so a sustained press hears the same reverb,
       // delay, chorus, etc. the cell's params already specify. Built
@@ -3206,12 +3224,21 @@
       // sine/fm note (see _coreVoices.eligible). Everything else falls through
       // to the node engine below, including while the core warms up.
       if (typeof _coreVoices !== 'undefined' && _coreVoices.enabled()
-          && typeof startTime === 'number' && Number.isFinite(startTime)
-          && destination
-          && typeof window !== 'undefined' && window._ambEmitKey
           && _coreVoices.eligible(type, params)) {
-        const _took = _coreVoices.noteOn(window._ambEmitKey, destination, {
-          type, freq, vel: velocity, pan, t: startTime, dur: preReleaseDur,
+        // Slot key: Bloom layer (emit tag), else the lane, else the shared
+        // live bus — grid/lane notes route to the core too now, keeping the
+        // "playback sounds identical to a press" invariant in ONE engine.
+        const _ck = (typeof window !== 'undefined' && window._ambEmitKey)
+          || (Number.isFinite(laneIdx) ? 'lane:' + laneIdx : 'live');
+        const _cdest = destination
+          || ((Number.isFinite(laneIdx) && lanes[laneIdx]) ? getLaneBus(laneIdx) : null)
+          || globalSendTap;
+        const _took = _coreVoices.noteOn(_ck, _cdest, {
+          type, freq, vel: velocity, pan,
+          // startTime null = an immediate one-shot: t 0 starts on the next
+          // rendered block (≤ ~3 ms — tighter than building a node voice).
+          t: (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : 0,
+          dur: preReleaseDur,
           a: atk, d: dec, s: sus, r: rel, detune,
           dp: _coreVoices.designParams(params),
         });

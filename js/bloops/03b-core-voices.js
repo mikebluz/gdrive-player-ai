@@ -177,20 +177,57 @@
         dp[0] = flags;
         return dp;
       }
+      function _running() {
+        try { return Tone.getContext().rawContext.state === 'running'; } catch (e) { return false; }
+      }
+      // Immediate notes must carry the REAL context time as t_start — the
+      // core derives envelope time from (now - t_start), so t=0 would mean
+      // "started at the beginning of time" (envelope long expired).
+      function _tNow(t) {
+        if (typeof t === 'number' && t > 0) return t;
+        try { return Tone.getContext().rawContext.currentTime; } catch (e) { return 0; }
+      }
       // Returns true when the note was taken by the core.
       function noteOn(key, dest, o) {
         if (!enabled() || failed) return false;
         if (!ready) { init(); return false; }  // warm up; fall back meanwhile
+        if (!_running()) return false;         // cold start → node engine handles the resume dance
         const slot = slotFor(key, dest);
         if (slot < 0) return false;
         const kf = kindFor(o.type);
         node.port.postMessage({
           cmd: 'note', slot, kind: kf.kind, p0: kf.p0, freq: o.freq, vel: o.vel,
           pan: Math.max(-1, Math.min(1, (o.pan || 0) / 100)),
-          t: o.t, dur: o.dur, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
-          dp: o.dp || null,
+          t: _tNow(o.t), dur: o.dur, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
+          dp: o.dp || null, tag: o.tag || 0,
         });
         return true;
+      }
+      // Held note (grid press-and-hold): returns a handle {release, setDetune}
+      // compatible with startSustainedNote's contract, or null → node engine.
+      let tagSeq = 0;
+      function holdOn(key, dest, o) {
+        if (!enabled() || failed || !ready || !_running()) { if (!ready && enabled()) init(); return null; }
+        const slot = slotFor(key, dest);
+        if (slot < 0) return null;
+        const kf = kindFor(o.type);
+        const tag = ++tagSeq;
+        node.port.postMessage({
+          cmd: 'note', slot, kind: kf.kind, p0: kf.p0, freq: o.freq, vel: o.vel,
+          pan: Math.max(-1, Math.min(1, (o.pan || 0) / 100)),
+          t: _tNow(o.t), dur: -1, a: o.a, dcy: o.d, s: o.s, r: o.r, detune: o.detune || 0,
+          dp: o.dp || null, tag,
+        });
+        let released = false;
+        return {
+          release: () => {
+            if (released) return; released = true;
+            node.port.postMessage({ cmd: 'releaseTag', tag, r: o.r });
+          },
+          setDetune: (cents) => {
+            node.port.postMessage({ cmd: 'bendTag', tag, cents: cents || 0 });
+          },
+        };
       }
       function cancelFrom(key, t) {
         const slot = slotByKey.get(key);
@@ -203,7 +240,7 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
-      return { enabled, eligible, noteOn, cancelFrom, stopBefore, stopAll, init, designParams, _node: () => node };
+      return { enabled, eligible, noteOn, holdOn, cancelFrom, stopBefore, stopAll, init, designParams, _node: () => node };
     })();
     // Live A/B toggle from the console.
     try {

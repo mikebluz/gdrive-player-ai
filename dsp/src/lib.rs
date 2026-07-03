@@ -107,6 +107,9 @@ struct Voice {
     m_amp: f32,
     m_pan: f32,
     m_n: u32,
+    tag: u32,     // host handle for held notes (0 = none)
+    bend: f32,    // live pitch-bend multiplier (slewed toward bend_t)
+    bend_t: f32,
     // design filter (2 sections) + unison/sub/ring phases
     g_s: [f32; 8],
     g_b: [f32; 3],
@@ -132,6 +135,7 @@ const VOICE0: Voice = Voice {
     d_lshape: [-1; 2], d_lrate: [1.0; 2], d_e2: [-1.0, 0.001, 1.0, 0.1],
     d_macro: [0.0; 4], d_nroutes: 0, d_routes: [[0.0; 3]; MAX_ROUTES],
     m_pitch: 1.0, m_amp: 1.0, m_pan: 0.0, m_n: 0,
+    tag: 0, bend: 1.0, bend_t: 1.0,
     g_s: [0.0; 8], g_b: [0.0; 3], g_a: [0.0; 2],
     uni_ph: [0.0; MAX_UNI], sub_ph: 0.0, ring_ph: 0.0,
 };
@@ -297,7 +301,7 @@ fn xorshift(state: &mut u32) -> f32 {
 #[no_mangle]
 pub extern "C" fn note(
     slot: u32, kind: u32, freq: f32, vel: f32, pan: f32, t_start: f64, dur: f32,
-    a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32,
+    a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32, tag: u32,
 ) {
     unsafe {
         let i = alloc_voice();
@@ -361,7 +365,8 @@ pub extern "C" fn note(
             gain_l: gl * out_gain,
             gain_r: gr * out_gain,
             t_start,
-            t_rel: t_start + dur.max(0.02) as f64,
+            // dur < 0 = HOLD until release_tag (live press-and-hold)
+            t_rel: if dur < 0.0 { 1.0e15 } else { t_start + dur.max(0.02) as f64 },
             a: aa.max(0.001),
             d: dd.max(0.001),
             s: ss.clamp(0.0, 1.0),
@@ -386,6 +391,7 @@ pub extern "C" fn note(
             p0,
             aux0: (i as u32).wrapping_mul(2654435761).wrapping_add(1) | 1, // PRNG seed
             aux1: 0,
+            tag,
             ..VOICE0 // design fields default off; note_ex fills them after
         };
         // pluck: claim a delay buffer and load the noise burst
@@ -431,11 +437,11 @@ pub extern "C" fn note(
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn note_ex(
     slot: u32, kind: u32, freq: f32, vel: f32, pan: f32, t_start: f64, dur: f32,
-    a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32,
+    a: f32, d: f32, s: f32, r: f32, detune: f32, p0: f32, tag: u32,
 ) {
     unsafe {
         let idx_before = NOTE_CURSOR;
-        note(slot, kind, freq, vel, pan, t_start, dur, a, d, s, r, detune, p0);
+        note(slot, kind, freq, vel, pan, t_start, dur, a, d, s, r, detune, p0, tag);
         let i = idx_before; // note() stored the voice index here
         let v = &mut VOICES[i];
         let q = &PARAMS;
@@ -476,6 +482,47 @@ pub extern "C" fn note_ex(
             v.d_nroutes = (q[30] as u32).min(MAX_ROUTES as u32);
             for k in 0..v.d_nroutes as usize {
                 v.d_routes[k] = [q[31 + k * 3], q[32 + k * 3], q[33 + k * 3]];
+            }
+        }
+    }
+}
+
+/// Release a held note (grid press-up). r overrides the release seconds
+/// (<=0 keeps the voice's own).
+#[no_mangle]
+pub extern "C" fn release_tag(tag: u32, r: f32) {
+    if tag == 0 {
+        return;
+    }
+    unsafe {
+        for v in VOICES.iter_mut() {
+            if v.tag != tag {
+                continue;
+            }
+            match v.stage {
+                Stage::Scheduled => v.stage = Stage::Free,
+                Stage::Playing => {
+                    if r > 0.0 { v.r = r; }
+                    v.stage = Stage::Released;
+                    v.rel_from = v.env;
+                    v.t_rel = 0.0; // anchor at the next processed block
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Live pitch bend for a held note (Radial Tone slide): cents, slewed.
+#[no_mangle]
+pub extern "C" fn bend_tag(tag: u32, cents: f32) {
+    if tag == 0 {
+        return;
+    }
+    unsafe {
+        for v in VOICES.iter_mut() {
+            if v.tag == tag && v.stage != Stage::Free {
+                v.bend_t = exp2f(cents.clamp(-4800.0, 4800.0) / 1200.0);
             }
         }
     }
@@ -728,10 +775,10 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 v.t_rel = t_block;
             }
             let out = &mut OUT[v.slot];
-            let inc_c = v.freq * dt;
-            let inc_m = v.freq * v.harm * dt;
             let mut t = t_block;
             for f in 0..frames {
+                let inc_c = v.freq * dt * v.bend;
+                let inc_m = v.freq * v.harm * dt * v.bend;
                 if t < v.t_start {
                     t += dt as f64;
                     continue;
@@ -771,7 +818,12 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                 };
                 v.env = env;
                 let amp = env * v.vel;
-                // ---- design control-rate update (every 16 frames) ---------
+                // ---- control-rate update (every 16 frames): bend slew + mods
+                if v.m_n == 0 {
+                    if (v.bend - v.bend_t).abs() > 1.0e-6 {
+                        v.bend += 0.35 * (v.bend_t - v.bend);
+                    }
+                }
                 if v.d_flags & (1 | 2 | 32) != 0 {
                     if v.m_n == 0 {
                         let mut m = [0f32; 5]; // pitch cents, cut Hz, res Q, amp, pan
@@ -817,8 +869,9 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         }
                         v.m_n = 16;
                     }
-                    v.m_n -= 1;
                 }
+                if v.m_n == 0 { v.m_n = 16; }
+                v.m_n -= 1;
                 // ---- modulation envelope (FM/AM kinds) --------------------
                 let me = if v.kind == 0 || v.kind == 2 {
                     0.0

@@ -18,7 +18,7 @@
       let node = null, ready = false, initing = false, failed = false;
       const slotByKey = new Map();   // layer key -> slot index
       const destBySlot = new Array(SLOTS).fill(null);
-      const KINDS = { sine: 0, fm: 1 };
+      const KINDS = { sine: 0, fm: 1, bass: 2 };
 
       function enabled() {
         try { return localStorage.getItem('bloopsCoreVoices') === '1'; } catch (e) { return false; }

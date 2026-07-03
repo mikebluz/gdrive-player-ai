@@ -170,7 +170,7 @@ static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 3;
+const CORE_REV: u32 = 4;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {
@@ -250,6 +250,20 @@ pub extern "C" fn init(sample_rate: f32) {
         DT = 1.0 / sample_rate;
         for v in VOICES.iter_mut() {
             *v = VOICE0;
+        }
+        // Full reset of ALL engine globals — init() is the golden-render
+        // test's section boundary, so every run must be bit-deterministic.
+        LAST_T = -1.0;
+        NOTE_CURSOR = 0;
+        for o in PLUCK_OWNER.iter_mut() {
+            *o = -1;
+        }
+        for b in OUT.iter_mut() {
+            for c in b.iter_mut() {
+                for f in c.iter_mut() {
+                    *f = 0.0;
+                }
+            }
         }
     }
 }

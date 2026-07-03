@@ -2399,9 +2399,7 @@
       if (typeof params.type === 'string' && params.type.indexOf('user:') === 0) {
         const _up = (typeof _resolveUserPatch === 'function') ? _resolveUserPatch(params.type) : null;
         if (_up) {
-          const keep = {};
-          ['bend', 'pan'].forEach(k => { if (params[k] != null) keep[k] = params[k]; });
-          params = Object.assign({}, _up.params, { type: _up.baseType }, keep);
+          params = _sdMergeUserPatch(_up, params);   // patch voice + caller-owned per-note fields
         } else {
           params = Object.assign({}, params, { type: 'sawtooth' }); // patch gone → audible fallback
         }
@@ -3088,6 +3086,30 @@
       if (_vqTimer) { clearTimeout(_vqTimer); _vqTimer = null; }
     }
 
+    // Merge a resolved User Design patch with the CALLER's per-note params
+    // (used by playNote AND startSustainedNote). The patch owns the VOICE —
+    // base type, osc/filter/design blocks, its amp envelope; the caller owns
+    // the per-note/performance fields below. The old merge kept only
+    // bend+pan, so a Bloom layer playing a designed patch lost its accents/
+    // level (volume — the engine's loudness channel; velocity derives from
+    // it), vibrato LFO (_detuneMod), portamento and step FX.
+    // volume MULTIPLIES (both are 0..100 percentages); detune SUMS (cents).
+    const _SD_CALLER_KEYS = ['bend', 'pan', '_detuneMod', 'glideMs', 'glideLayer',
+      'reverb', 'delay', 'distortion', 'chorus', 'phaser', 'vibrato', 'tremolo',
+      'autoFilter', 'pingPong', 'autoPan', 'fxOverrideGlobal',
+      'sampleOffsetSec', 'sliceDurSec', 'loop', 'reverse', 'filterCutoff', 'filterQ'];
+    function _sdMergeUserPatch(up, params) {
+      const merged = Object.assign({}, up.params, { type: up.baseType });
+      _SD_CALLER_KEYS.forEach((k) => { if (params[k] != null) merged[k] = params[k]; });
+      if (params.volume != null) {
+        merged.volume = (up.params && up.params.volume != null)
+          ? Math.max(0, Math.min(100, Math.round(up.params.volume * params.volume / 100)))
+          : params.volume;
+      }
+      if (params.detune != null) merged.detune = ((up.params && up.params.detune) || 0) + params.detune;
+      return merged;
+    }
+
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       if (typeof params === 'string') params = { type: params };
       // "User" Design patches: resolve to the patch's stored voice (base
@@ -3098,9 +3120,7 @@
       if (typeof params.type === 'string' && params.type.indexOf('user:') === 0) {
         const _up = (typeof _resolveUserPatch === 'function') ? _resolveUserPatch(params.type) : null;
         if (_up) {
-          const keep = {};
-          ['bend', 'pan'].forEach(k => { if (params[k] != null) keep[k] = params[k]; });
-          params = Object.assign({}, _up.params, { type: _up.baseType }, keep);
+          params = _sdMergeUserPatch(_up, params);   // patch voice + caller-owned per-note fields
         } else {
           params = Object.assign({}, params, { type: 'sawtooth' }); // patch gone → audible fallback
         }

@@ -21,22 +21,20 @@
     // ============================================================
     // DEFERRED TO-DOs (tabled — revisit on request, e.g. "any ToDos?")
     // ============================================================
-    // 1. LFO 'seq' shape (sequence-as-waveform) — EASIEST.
-    //    Use a saved sequence's pitch/velocity/gate contour as the LFO curve,
-    //    looping at the LFO rate. Reuse Bloom's _seqToCurve / _seqCurveAt
-    //    (17-ambient.js). Work: (a) per-LFO picker UI (which sequence + source
-    //    + interp) shown when shape==='seq'; (b) at play, build the curve and
-    //    drive a Signal to follow it — same scheduling as the smooth/sharp
-    //    sources in _sdBuildModRig. ~a focused session; engine is mostly reuse.
-    // 2. Granular position as a LIVE mod destination — MEDIUM.
+    // 1. LFO 'seq' shape — DONE (2026-07-03): Sequence optgroup in each
+    //    LFO's Shape menu + Read/Curve/Rest sub-row; engine samples
+    //    _seqRefCurve/_seqCurveAt (scheduled rig = time fn; live/held =
+    //    Signal schedule). Core-ineligible (falls to the node engine).
+    // 2. Granular position as a LIVE mod destination — MEDIUM (still open).
     //    Tone.GrainPlayer exposes no modulatable read-position param (set only
     //    at .start()), so live position-scan needs a hand-rolled grain
     //    scheduler (windowed BufferSources spawned at the grain rate, each
     //    offset from a position Signal) — which would also unlock jitter /
-    //    spray / freeze / per-grain env. CHEAP PARTIAL available now: wire the
-    //    mod rig into the grain branch for pitch/rate (GrainPlayer.detune /
-    //    playbackRate ARE modulatable) — live granular pitch/speed without the
-    //    rewrite.
+    //    spray / freeze / per-grain env. CHEAP PARTIAL DONE (2026-07-03):
+    //    _sdGrainModHook samples pitch mod routes at control rate and writes
+    //    GrainPlayer.detune (a per-grain property, not an AudioParam) — live
+    //    granular vibrato/sweeps in both voice paths. Rate mod skipped (would
+    //    need a grain-only dest in the matrix UI).
     // 3. Hard-sync — HARDEST (two routes).
     //    Route A (true): an AudioWorklet custom oscillator (reset slave phase
     //    on master wrap + PolyBLEP anti-aliasing); separate voice path, loaded
@@ -567,6 +565,34 @@
         } catch (e) {}
       });
       return nodes;
+    }
+
+    // Granular PITCH as a live mod destination (the cheap partial of deferred
+    // to-do #2). Tone.GrainPlayer's detune is a plain per-grain property (not
+    // an AudioParam), so connected signals can't drive it — instead sample the
+    // mod-source time functions at control rate and write it; every new grain
+    // picks up the current value. Full position-scan modulation still needs
+    // the hand-rolled grain scheduler (deferred).
+    function _sdGrainModHook(player, params, ctx) {
+      const matrix = (params && Array.isArray(params.modMatrix))
+        ? params.modMatrix.filter(r => r && r.amount && r.dest === 'pitch') : [];
+      if (!matrix.length || typeof Tone === 'undefined') return null;
+      const routes = matrix
+        .map(r => ({ scale: (r.amount / 100) * (SD_DEST_RANGE.pitch || 1200), fn: _sdModSrcFn(r.src, params, ctx) }))
+        .filter(r => r.fn);
+      if (!routes.length) return null;
+      const baseDet = Number.isFinite(player.detune) ? player.detune : 0;
+      const t0 = (ctx && typeof ctx.startTime === 'number') ? ctx.startTime : Tone.now();
+      const iv = setInterval(() => {
+        try {
+          const t = Tone.now() - t0;
+          if (t < 0) return;
+          let det = baseDet;
+          for (const r of routes) det += r.scale * r.fn(t);
+          player.detune = det;
+        } catch (e) {}
+      }, 45);
+      return { dispose: () => clearInterval(iv) };
     }
 
     // Piecewise-linear value of the filter envelope over time (seconds since

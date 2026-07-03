@@ -2479,9 +2479,13 @@
           } else {
             setTimeout(fire, 50);
           }
+          // live granular PITCH mod for the held press (unbounded hold)
+          const _gm = (typeof _sdGrainModHook === 'function')
+            ? _sdGrainModHook(player, params, { startTime: triggerAt, dur: 3600, velocity }) : null;
           let released = false;
           return { release: () => {
             if (released) return; released = true;
+            try { _gm && _gm.dispose(); } catch (e) {}
             try { player.stop(); } catch (e) {}
             setTimeout(() => { try { player.dispose(); } catch (e) {} }, 500);
           }};
@@ -3383,9 +3387,12 @@
             if (Array.isArray(_offlineVoiceRefs)) _offlineVoiceRefs.push(player);
             return;
           }
+          // live granular PITCH mod (Design mod-matrix pitch routes → detune)
+          const _gm = (typeof _sdGrainModHook === 'function')
+            ? _sdGrainModHook(player, params, { startTime: triggerAt, dur, velocity }) : null;
           const grainLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
             ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
-          setTimeout(() => { try { player.dispose(); } catch (e) {} },
+          setTimeout(() => { try { _gm && _gm.dispose(); } catch (e) {} try { player.dispose(); } catch (e) {} },
             grainLeadMs + (dur + 0.5) * 1000);
           return;
         }

@@ -248,6 +248,13 @@ pub extern "C" fn note(
                 5 => (2.0, cal * vel, false, [0.5, 0.001, 1.0, 0.5], None),
                 6 => (1.5, cal * vel, true, [1.0, 0.5, 0.5, 2.0], Some([1.2, 0.5, 0.7, 2.5])),
                 9 => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], Some([0.001, 0.4, 0.01, 1.4])),
+                // pluck: NO shaping amp envelope — the Karplus-Strong string IS
+                // the envelope (Tone.PluckSynth has none; its triggerRelease
+                // just ramps the string's resonance down over ~1 s). A fixed
+                // transparent env (sustain 1, 1 s release past the note gate)
+                // lets the string ring naturally instead of chopping it at the
+                // note duration ("pluck sounds abbreviated").
+                11 => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], Some([0.003, 0.001, 1.0, 1.0])),
                 10 => (5.1, 32.0 * cal * vel, false, [0.001, 0.001, 1.0, 0.1], Some([0.001, 1.4, 0.0, 0.2])),
                 _ => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], None),
             };
@@ -305,8 +312,20 @@ pub extern "C" fn note(
             PLUCK_OWNER[slot_b] = i as i32;
             let n = ((SR / v.freq.max(20.0)) as usize).clamp(2, PLUCK_LEN);
             let mut seed = v.aux0;
+            // PINK noise burst (Kellet filter) — Tone.PluckSynth excites with
+            // pink, not white; white measured a ~3x-hot, brighter attack.
+            let (mut p0, mut p1, mut p2) = (0.0f32, 0.0f32, 0.0f32);
             for k in 0..n {
-                PLUCK[slot_b][k] = xorshift(&mut seed);
+                let w = xorshift(&mut seed);
+                p0 = 0.99765 * p0 + w * 0.0990460;
+                p1 = 0.96300 * p1 + w * 0.2965164;
+                p2 = 0.57000 * p2 + w * 1.0526913;
+                // Ramped fill: Tone's noise feeds the comb gradually through
+                // the damping filter, so the first output pass is soft — an
+                // instantly-full buffer gave a ~3x-hot attack click. The 0.9
+                // level lands the decay tail on the recorded Tone curve.
+                PLUCK[slot_b][k] = (p0 + p1 + p2 + w * 0.1848) * 0.2
+                    * ((k + 1) as f32 / n as f32) * 0.9;
             }
             v.aux0 = slot_b as u32; // repurpose: buffer index
             v.aux1 = n as u32;      // delay length; fs[1] = write pos cursor
@@ -699,15 +718,21 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         let n = (v.aux1 as usize).clamp(2, PLUCK_LEN);
                         let pos = v.fs[1] as usize % n;
                         let nxt = (pos + 1) % n;
-                        let out_s = PLUCK[bi][pos];
                         // damped average; resonance 0.7 is PER-CYCLE feedback
                         // in Tone's PluckSynth (measured: the string decays in
                         // ~10 cycles — a short pluck tick, not a long ring).
                         let alpha = (TAU * 4000.0 / SR).min(1.0);
                         v.fs[0] += alpha * (0.5 * (PLUCK[bi][pos] + PLUCK[bi][nxt]) - v.fs[0]);
+                        // OUTPUT the FILTERED signal (lowpass-comb topology):
+                        // emitting the raw buffer made the first noise pass a
+                        // ~6x-hot click vs Tone (measured 0.40 vs 0.063 rms).
+                        let out_s = v.fs[0];
                         // resonance is applied once per pass through the
                         // write head = once per string CYCLE (Tone comb).
-                        PLUCK[bi][pos] = v.fs[0] * 0.7;
+                        // 0.73 (not the preset's 0.7): the damping average
+                        // adds its own per-cycle loss — measured effective
+                        // decay matched Tone's recorded 0.69/cycle at 0.73.
+                        PLUCK[bi][pos] = v.fs[0] * 0.73;
                         v.fs[1] = nxt as f32;
                         out_s
                     }

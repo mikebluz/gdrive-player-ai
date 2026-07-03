@@ -95,11 +95,12 @@ static mut DT: f32 = 1.0 / 44100.0;
 // am 0.3, pad 0.3 — each matches its recorded Tone spectrum within ~1-2 dB
 // relative to the fundamental.
 static mut CAL: [f32; 8] = [1.0, 0.25, 1.0, 0.25, 0.3, 0.3, 0.3, 1.0];
-// Per-kind OUTPUT GAIN: Tone's ModulationSynth family (FM/AM) runs ~7.5 dB
-// quieter per voice than a bare oscillator×envelope — measured from recorded
-// single-note envelopes (bell peak 0.139 vs core 0.333 at equal velocity).
+// Per-kind OUTPUT GAIN: Tone's ModulationSynth family (FM/AM) runs quieter
+// per voice than a bare oscillator×envelope. 0.32 swept with the CORRECTED
+// pan law (unity at center, like the node engine's no-panner shortcut):
+// bell/am/pad recorded envelopes match Tone within ~1 dB at 0.32.
 // sine (Tone.Synth) and bass (MonoSynth) measured ~unity.
-static mut GAIN: [f32; 8] = [1.0, 0.45, 1.0, 0.42, 0.42, 0.42, 0.45, 1.0];
+static mut GAIN: [f32; 8] = [1.0, 0.32, 1.0, 0.32, 0.32, 0.32, 0.32, 1.0];
 
 #[no_mangle]
 pub extern "C" fn set_kind_cal(kind: u32, k: f32) {
@@ -182,7 +183,18 @@ pub extern "C" fn note(
         let i = alloc_voice();
         let v = &mut VOICES[i];
         let f = freq * exp2f(detune / 1200.0);
-        let ang = (pan.clamp(-1.0, 1.0) + 1.0) * 0.25 * TAU / 2.0;
+        // Pan law matches the node engine exactly: at pan 0 playNote creates
+        // NO panner — the mono voice upmixes at unity into both channels —
+        // and only a non-zero pan goes through a StereoPannerNode
+        // (L=cos, R=sin equal-power). Splitting equal-power at center was
+        // -3 dB per channel vs the old engine in the mix.
+        let p = pan.clamp(-1.0, 1.0);
+        let (gl, gr) = if p.abs() < 0.005 {
+            (1.0, 1.0)
+        } else {
+            let ang = (p + 1.0) * 0.25 * core::f32::consts::PI;
+            (ang.cos(), ang.sin())
+        };
         let vel = vel.clamp(0.0, 1.0);
         let cal = CAL[(kind as usize).min(7)];
         let out_gain = GAIN[(kind as usize).min(7)];
@@ -206,8 +218,8 @@ pub extern "C" fn note(
             kind,
             freq: f,
             vel,
-            gain_l: ang.cos() * out_gain,
-            gain_r: ang.sin() * out_gain,
+            gain_l: gl * out_gain,
+            gain_r: gr * out_gain,
             t_start,
             t_rel: t_start + dur.max(0.02) as f64,
             a: aa.max(0.001),

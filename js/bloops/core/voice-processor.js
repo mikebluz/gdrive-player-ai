@@ -46,6 +46,8 @@ class BloopsVoiceProcessor extends AudioWorkletProcessor {
         if (this.wasm.set_fm_cal) this.wasm.set_fm_cal(d.k);
       } else if (d.cmd === 'kindcal') {
         if (this.wasm.set_kind_cal) this.wasm.set_kind_cal(d.kind, d.k);
+      } else if (d.cmd === 'kindgain') {
+        if (this.wasm.set_kind_gain) this.wasm.set_kind_gain(d.kind, d.k);
       } else if (d.cmd === 'bassq') {
         if (this.wasm.set_bass_q) this.wasm.set_bass_q(d.q);
       } else if (d.cmd === 'stopAll') {

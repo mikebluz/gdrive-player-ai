@@ -775,6 +775,10 @@
       if (!e) return;
       const depKey = key + '#dep' + (E._depSeq = (E._depSeq | 0) + 1);
       E.mod[depKey] = e; delete E.mod[key];
+      // CORE STRIPS: move the slot to the departed key so the gate fade and
+      // voice stops below hit the OLD slot while the incoming area's fresh
+      // build acquires a new one under the real key.
+      if (e.core) { try { _coreVoices.stripRekey(key, depKey); } catch (ex) {} }
       const fadeSec = Math.max(0.005, (fadeMs | 0) / 1000);
       // Sample Fade Out: a sample overrunning the boundary fades from `at` over its own
       // boundaryFadeMs (scheduled NOW so the ramp lands on the future boundary), instead
@@ -798,6 +802,9 @@
       const afterMs = Math.max(0, (at - now0) * 1000) + Math.max(fadeMs | 0, sampFadeMs | 0) + 60;
       setTimeout(() => {
         try { if (typeof stopBloomVoicesBefore === 'function') stopBloomVoicesBefore(key, at); } catch (ex) {}
+        // core voices were dispatched under the ORIGINAL key, whose slot now
+        // belongs to depKey after the rekey — stop them there explicitly
+        if (e.core) { try { _coreVoices.stopBefore(depKey, at); } catch (ex) {} }
         try { _E = E; if (E.mod[depKey]) _ambTeardownMod(depKey); } catch (ex) {}
       }, afterMs);
     }
@@ -4246,6 +4253,20 @@
     // reads as spread. `sp` 0 / Pan mode → disengage and recentre.
     function _ambArpSpreadLfo(E, key, me, sp, barSec) {
       if (typeof Tone === 'undefined') return;
+      // CORE STRIPS: drive the strip's pan mod (SUMS with the base pan, like
+      // the node LFO on e.pan.pan) — one config command, no LFO node.
+      if (me && me.core) {
+        const amp0 = Math.max(0, Math.min(1, sp / 100));
+        const freq0 = Math.max(0.05, 2 / Math.max(0.25, barSec));
+        const sig = sp > 0 ? (amp0.toFixed(3) + '/' + freq0.toFixed(3)) : 'off';
+        if (me._panLfoSig === sig) return;
+        me._panLfoSig = sig;
+        try {
+          if (sp > 0) me.core.cmd('strip_mod', me.core.slot, 2, 0, freq0, -amp0, amp0, 0);
+          else { me.core.cmd('strip_mod', me.core.slot, 2, -1, 1, 0, 0, 0); me.pan.pan.value = 0; }
+        } catch (e) {}
+        return;
+      }
       E.arpLfo = E.arpLfo || {};
       const cur = E.arpLfo[key];
       const want = sp > 0 && me && me.pan && me.pan.pan;
@@ -5019,10 +5040,64 @@
       } catch (x) { try { node && node.dispose(); } catch (y) {} return null; }
       return src;
     }
+    // CORE STRIPS: translate a vca/vcf layer mod into the in-core strip mod.
+    // Shapes map 1:1 (sine/tri/saw/square/smooth/sharp); 'rampdown' = saw with
+    // min/max swapped; 'seq'/'custom' are sampled to a 64-point period curve
+    // (same 0..1 → min..max mapping the node schedulers use). vco stays on the
+    // node path — it connects per-voice at emit. Dedup by signature so the
+    // per-sync calls don't spam the port.
+    const _AMB_CORE_SHAPE = { sine: 0, triangle: 1, sawtooth: 2, square: 3, smooth: 4, sharp: 5 };
+    function _ambSyncTargetCore(e, layer, target, cfg, t, depth) {
+      const ti = target === 'vca' ? 0 : 1;
+      if (depth <= 0) {
+        if (e.src[target]) {
+          e.src[target] = null;
+          e.core.cmd('strip_mod', e.core.slot, ti, -1, 1, 0, 0, 0);
+        }
+        return;
+      }
+      const shape = (t.shape === 'seq' || _AMB_MOD_SHAPES.indexOf(t.shape) >= 0) ? t.shape : 'sine';
+      const hz = _ambModRateHz(t.rate, cfg, cfg[layer].mod && cfg[layer].mod.sync);
+      const range = _ambTargetRange(target, depth);
+      let [mn, mx] = range;
+      let sig = shape + '/' + hz.toFixed(4) + '/' + mn + '/' + mx;
+      if (shape === 'seq' || shape === 'custom') {
+        // sample one period into 64 points (0..1), stepped or smooth
+        const curve = new Float32Array(64);
+        let smooth = 1;
+        if (shape === 'seq') {
+          const ref = _seqRefCurve(t || {});
+          smooth = (t.seqInterp === 'smooth') ? 1 : 0;
+          for (let i = 0; i < 64; i++) curve[i] = _seqCurveAt(ref, i / 64, smooth ? 'smooth' : 'step');
+        } else {
+          const parts = _ambModPartials(t), rates = _ambModPartialRates(t);
+          const norm = Math.max(1, parts.reduce((s, a) => s + Math.abs(a || 0), 0));
+          for (let i = 0; i < 64; i++) {
+            let w = 0;
+            for (let k = 0; k < parts.length; k++) w += (parts[k] || 0) * Math.sin(2 * Math.PI * (rates[k] || (k + 1)) * (i / 64));
+            curve[i] = 0.5 + 0.5 * Math.max(-1, Math.min(1, w / norm));
+          }
+        }
+        sig += '/c:' + Array.from(curve, (v) => Math.round(v * 100)).join(',');
+        if (e.src[target] && e.src[target].sig === sig) return;
+        e.src[target] = { core: true, sig };
+        e.core.curve('strip_mod', [e.core.slot, ti, 6, hz, mn, mx, smooth], curve);
+        return;
+      }
+      let cs = _AMB_CORE_SHAPE[shape];
+      if (shape === 'rampdown') { cs = 2; const sw = mn; mn = mx; mx = sw; }
+      if (e.src[target] && e.src[target].sig === sig) return;
+      e.src[target] = { core: true, sig };
+      e.core.cmd('strip_mod', e.core.slot, ti, cs, hz, mn, mx, 0);
+    }
     // Reconcile one target's source against the config (build / update / drop).
     function _ambSyncTarget(e, layer, target, cfg) {
       const t = (cfg[layer].mod && cfg[layer].mod[target]) || {};
       const depth = t.depth | 0;
+      if (e.core && (target === 'vca' || target === 'vcf')) {
+        _ambSyncTargetCore(e, layer, target, cfg, t, depth);
+        return;
+      }
       const existing = e.src[target];
       if (depth <= 0) {
         if (existing) { _ambDisposeSrc(existing); e.src[target] = null; _ambResetTargetParam(e, target); }
@@ -5083,6 +5158,14 @@
           _E.reverb = new Tone.Freeverb({ roomSize: 0.8, dampening: 2500, wet: 1 }).connect(_E.busNode());
           _E._revConv = false;
         }
+        // CORE STRIPS: route the worklet's summed reverb-send bus (output 16)
+        // into this reverb. Master engine only — the send bus is global, so a
+        // lane Bloom's strip sends also land here (documented limitation).
+        try {
+          if (_E === _masterEng && typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()) {
+            _coreVoices.connectSend(_E.reverb);
+          }
+        } catch (e) {}
       } catch (e) { _E.reverb = null; }
       _ambApplyReverb();
       return _E.reverb;
@@ -5137,6 +5220,36 @@
       if (typeof Tone === 'undefined') return;
       try {
         const out = _E.busNode();
+        // CORE STRIPS (Phase 2): the whole strip + FX runs inside the DSP
+        // core — slot output goes straight to the bus, node voices/samples
+        // feed the worklet input, and every param write lands as a port
+        // command. e mirrors the node-strip shape: gate/levelGain/revSend/pan
+        // carry PARAM SHIMS (value/cancel/set/linearRamp → strip_setv/rampv)
+        // so the ~10 existing writer functions work unchanged; vcf/vca/tg/FX
+        // writers branch on e.core instead. Falls through to the node strip
+        // when strips are off, the engine isn't ready, or slots run out.
+        if (typeof _coreVoices !== 'undefined' && _coreVoices.stripAcquire) {
+          const h = _coreVoices.stripAcquire(layer, out);
+          if (h) {
+            // ensure the shared reverb exists — its builder wires the
+            // worklet's send bus (output 16) into it for core strips
+            try { _ambEnsureReverb(); } catch (x) {}
+            const e = {
+              core: h, input: h.input,
+              vcf: null, eq: null, eqAnalyser: null, vca: null,
+              levelGain: { gain: h.param(1, 1) },
+              tgGate: null, tgSig: null,
+              gate: { gain: h.param(0, 1) },
+              pan: { pan: h.param(3, 0) },
+              dist: null, delay: null, chorus: null, phaser: null, autopan: null,
+              revSend: { gain: h.param(2, 0) },
+              src: { vca: null, vco: null, vcf: null },
+            };
+            _E.mod[layer] = e;
+            _ambUpdateMod(layer, cfg);
+            return;
+          }
+        }
         // Dedicated DRY output GATE (no LFO ever connected) so Queue-mode STOP
         // can ramp it to 0 at an exact boundary, silencing the dry voices already
         // committed to the look-ahead. The reverb send taps the VCA (PRE-gate) so
@@ -5201,6 +5314,26 @@
       const wantChorus = (cho.mix | 0) > 0;
       const wantPhaser = (pha.mix | 0) > 0;
       const wantAutopan = (apan.mix | 0) > 0;
+      // CORE STRIPS: FX run inside the core — push configs (rate/depth maps
+      // match the node builders below exactly), no node churn at all.
+      if (e.core) {
+        const sl = e.core.slot, c01 = (v) => Math.max(0, Math.min(1, (v | 0) / 100));
+        try {
+          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), c01(dst.mix));
+          e.core.cmd('strip_chorus', sl, wantChorus ? 1 : 0, c01(cho.mix), c01(cho.depth),
+            0.1 + Math.max(0, Math.min(100, cho.rate | 0)) / 100 * 4.9);
+          e.core.cmd('strip_phaser', sl, wantPhaser ? 1 : 0, c01(pha.mix),
+            1 + Math.max(0, Math.min(100, pha.depth | 0)) / 100 * 4,
+            0.1 + Math.max(0, Math.min(100, pha.rate | 0)) / 100 * 3.9);
+          e.core.cmd('strip_delay', sl, wantDelay ? 1 : 0, wantPing ? 1 : 0, c01(dly.mix),
+            Math.max(0.001, (dly.timeMs | 0) / 1000), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)));
+          e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, c01(apan.mix), c01(apan.depth),
+            0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
+          e.revSend.gain.value = c01(lc.revSend);
+        } catch (x) {}
+        try { _ambApplyEq(layer, lc); } catch (x) {}
+        return;
+      }
       try {
         if (wantDelay !== !!e.delay || wantDist !== !!e.dist || wantChorus !== !!e.chorus || wantPhaser !== !!e.phaser || wantAutopan !== !!e.autopan || (wantDelay && !!e.delay && e.delayPing !== wantPing)) {
           // delay node type flipped (feedback ↔ ping-pong) — drop the old one so the right type is rebuilt
@@ -5300,6 +5433,10 @@
       const cl = (v) => Math.max(-24, Math.min(24, (v | 0)));
       const lo = eqv ? cl(eqv.low) : 0, mi = eqv ? cl(eqv.mid) : 0, hi = eqv ? cl(eqv.high) : 0;
       const wantEq = (lo !== 0 || mi !== 0 || hi !== 0);
+      if (e.core) {   // CORE STRIPS: the EQ3 lives in the core (lazy there too)
+        try { e.core.cmd('strip_eq', e.core.slot, lo, mi, hi); } catch (x) {}
+        return;
+      }
       try {
         if (wantEq && !e.eq) {                         // engage: vcf → eq → vca
           const eq = new Tone.EQ3(lo, mi, hi);
@@ -5340,6 +5477,14 @@
     function _ambTeardownMod(layer) {
       const e = _E.mod[layer];
       if (!e) return;
+      if (e.core) {   // CORE STRIPS: release the slot (disables + resets the strip)
+        try { _ambArpLfoTeardown(_E, layer); } catch (x) {}
+        if (e.src && e.src.vco) _ambDisposeSrc(e.src.vco);   // vco mod stays a node LFO (per-voice connect)
+        try { e.eqAnalyser && e.eqAnalyser.dispose(); } catch (x) {}
+        try { _coreVoices.stripRelease(e.core.key); } catch (x) {}
+        delete _E.mod[layer];
+        return;
+      }
       try { _ambArpLfoTeardown(_E, layer); } catch (x) {}   // dispose the spread LFO before its target panner
       ['vca', 'vco', 'vcf'].forEach(tg => { if (e.src && e.src[tg]) _ambDisposeSrc(e.src[tg]); });
       try { e.vcf && e.vcf.dispose(); } catch (x) {}
@@ -6077,7 +6222,37 @@
     // = steps per bar; each on-step passes (gain 1), each off-step cuts to (1 − depth). The
     // grid is anchored to play start (E._playStartAt) at the cfg tempo so it locks to the bar.
     function _ambScheduleTg(E, layer, e, now, horizon) {
-      if (!e || !e.tgGate || typeof Tone === 'undefined') return;
+      if (!e || typeof Tone === 'undefined') return;
+      // CORE STRIPS: the gate pattern runs inside the core (stateless,
+      // anchored) — send ONE config command when it changes, no scheduling.
+      if (e.core) {
+        const L0 = _ambLayerByKey(E, layer);
+        const tg0 = L0 && L0.tg;
+        const on = !!(tg0 && tg0.on && Array.isArray(tg0.pattern) && tg0.pattern.length);
+        let sig = 'off', args = null;
+        if (on) {
+          const cfg0 = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : null);
+          const bpm0 = (cfg0 && Number.isFinite(cfg0.bpm) && cfg0.bpm > 0) ? cfg0.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+          const barSec0 = (60 / Math.max(20, bpm0)) * 4;
+          const steps0 = Math.max(2, Math.min(64, (tg0.steps | 0) || 16));
+          const anchor0 = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now);
+          let lo = 0, hi = 0;
+          for (let i = 0; i < steps0 && i < 64; i++) {
+            if (tg0.pattern[i]) { if (i < 32) lo |= (1 << i); else hi |= (1 << (i - 32)); }
+          }
+          const depth0 = Math.max(0, Math.min(100, tg0.depth | 0)) / 100;
+          const edge0 = Math.max(0, Math.min(80, tg0.edge | 0)) / 1000;
+          args = [e.core.slot, 1, steps0, lo >>> 0, hi >>> 0, depth0, edge0, anchor0, barSec0];
+          sig = args.join('/');
+        }
+        if (e._tgCoreSig !== sig) {
+          e._tgCoreSig = sig;
+          if (on) e.core.cmd('strip_tg', ...args);
+          else e.core.cmd('strip_tg', e.core.slot, 0, 16, 0, 0, 1, 0.006, 0, 2);
+        }
+        return;
+      }
+      if (!e.tgGate) return;
       const L = _ambLayerByKey(E, layer);
       const tg = L && L.tg;
       if (!tg || !tg.on || !Array.isArray(tg.pattern) || !tg.pattern.length) {
@@ -9301,12 +9476,18 @@
       const panels = host.querySelectorAll('details.ambient-eq[open]'); if (!panels.length) return;
       panels.forEach(d => {
         const key = _ambKeyOfCard(d.closest('.ambient-layer')); if (!key) return;
-        const e = E.mod && E.mod[key]; if (!e || !e.vca) return;
+        const e = E.mod && E.mod[key]; if (!e || (!e.vca && !e.core)) return;
         // Lazy: this panel is open, so the layer needs its analyser now. Tap the VCA
         // (a sink — doesn't alter the signal path); it stays until the layer is torn
         // down. Layers whose EQ panel is never opened never pay for one.
+        // CORE STRIPS: no node VCA — tap the slot output instead (post-strip).
         let an = e.eqAnalyser;
-        if (!an) { try { an = e.eqAnalyser = new Tone.Analyser('fft', 64); e.vca.connect(an); } catch (x) { return; } }
+        if (!an) {
+          try {
+            an = e.eqAnalyser = new Tone.Analyser('fft', 64);
+            if (e.core) e.core.tap(an); else e.vca.connect(an);
+          } catch (x) { return; }
+        }
         let data; try { data = an.getValue(); } catch (x) { return; }
         const n = data && data.length; if (!n) return;
         const loEnd = Math.max(1, Math.floor(n * 0.12)), midEnd = Math.max(loEnd + 1, Math.floor(n * 0.5));

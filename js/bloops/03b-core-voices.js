@@ -17,8 +17,13 @@
     const _coreVoices = (() => {
       const SLOTS = 16;
       let node = null, ready = false, initing = false, failed = false;
-      const slotByKey = new Map();   // layer key -> slot index
+      const slotByKey = new Map();   // layer key -> slot index (voices + strips share it)
       const destBySlot = new Array(SLOTS).fill(null);
+      // Phase 2: in-core layer strips. key -> handle {slot, input, cmd, ...}.
+      // Only meaningful when BOTH flags are on; strips release their slots on
+      // layer teardown (Phase-1 voice-only slots are never released).
+      const stripByKey = new Map();
+      const freeSlots = [];
       const KINDS = { sine: 0, fm: 1, bass: 2, bell: 3, xylo: 4, am: 5, pad: 6,
                       duo: 7, kick: 9, metal: 10, pluck: 11, wavetable: 12 };
       // basic waves render as kind 13 with a wave id param
@@ -42,16 +47,25 @@
       function enabled() {
         try { return localStorage.getItem('bloopsCoreVoices') === '1'; } catch (e) { return false; }
       }
+      // Phase 2 sub-flag: run the layer strip (vcf/eq/vca/level/tg/gate/pan)
+      // and FX inside the core, slot outputs wired straight to the bus.
+      function stripsEnabled() {
+        try { return enabled() && localStorage.getItem('bloopsCoreStrips') === '1'; } catch (e) { return false; }
+      }
       async function init() {
         if (initing || ready || failed) return;
         initing = true;
         try {
           const ctx = Tone.getContext();
           await ctx.rawContext.audioWorklet.addModule('js/bloops/core/voice-processor.js?v=DEPLOYVER');
+          // 16 inputs = per-slot strip inputs (node-rendered voices/samples
+          // under Phase-2 strips); 17th output = the summed reverb-send bus.
           node = ctx.createAudioWorkletNode('bloops-voice-processor', {
-            numberOfInputs: 0,
-            numberOfOutputs: SLOTS,
-            outputChannelCount: new Array(SLOTS).fill(2),
+            numberOfInputs: SLOTS,
+            numberOfOutputs: SLOTS + 1,
+            outputChannelCount: new Array(SLOTS + 1).fill(2),
+            channelCount: 2,
+            channelCountMode: 'clamped-max',
           });
           node.port.onmessage = (e) => {
             const d = e.data || {};
@@ -67,9 +81,12 @@
           // layer chains between plays disconnects every output — Chrome
           // stops pulling, voices freeze mid-release, and their fade tails
           // replayed as a ghost blip at the NEXT play's first note.
+          // It hangs off the SEND output (16), which nothing ever calls
+          // node.disconnect(16) on — slot outputs get disconnected on
+          // reconnect/release, which would silently drop a slot-0 sink.
           try {
             const keep = new Tone.Gain(0);
-            Tone.connect(node, keep, 0, 0);
+            Tone.connect(node, keep, SLOTS, 0);
             keep.toDestination();
           } catch (e) {}
         } catch (e) {
@@ -79,14 +96,24 @@
           initing = false;
         }
       }
+      function allocSlot() {
+        if (freeSlots.length) return freeSlots.pop();
+        if (slotByKey.size >= SLOTS) return -1;
+        const used = new Set(slotByKey.values());
+        for (let i = 0; i < SLOTS; i++) if (!used.has(i)) return i;
+        return -1;
+      }
       // A layer's chain input can be REBUILT (teardown/rebuild recreates the
       // node) — reconnect the slot when the destination object changes.
       function slotFor(key, dest) {
+        // strip-managed key: the slot output is already wired to the bus and
+        // must NOT be re-routed to the note's dest (that's the strip input).
+        if (stripByKey.has(key)) return slotByKey.get(key);
         if (!dest) return -1;
         let slot = slotByKey.get(key);
         if (slot == null) {
-          if (slotByKey.size >= SLOTS) return -1;   // out of slots → fallback engine
-          slot = slotByKey.size;
+          slot = allocSlot();
+          if (slot < 0) return -1;   // out of slots → fallback engine
           slotByKey.set(key, slot);
         }
         if (destBySlot[slot] !== dest) {
@@ -95,6 +122,117 @@
           destBySlot[slot] = dest;
         }
         return slot;
+      }
+      // ---- Phase 2: strip lifecycle -------------------------------------
+      const _post = (m) => { try { node.port.postMessage(m); } catch (e) {} };
+      // A WebAudio-param shim over one strip value (0 gate / 1 level /
+      // 2 revSend / 3 pan): mirrors value/cancel/set/ramp onto strip_setv /
+      // strip_rampv and tracks the segment locally so `.value` reads work.
+      // Covers every param write-site in 17-ambient without branching them.
+      function makeShimParam(slot, which, init) {
+        const seg = { t0: 0, v0: init, t1: 0, v1: init };
+        let anchor = null;
+        const now = () => { try { return Tone.getContext().rawContext.currentTime; } catch (e) { return 0; } };
+        const evalAt = (t) => (t <= seg.t0 || seg.t1 <= seg.t0) ? (t >= seg.t1 ? seg.v1 : seg.v0)
+          : t >= seg.t1 ? seg.v1
+          : seg.v0 + (seg.v1 - seg.v0) * ((t - seg.t0) / (seg.t1 - seg.t0));
+        const p = {
+          get value() { return evalAt(now()); },
+          set value(v) {
+            anchor = null; seg.t0 = seg.t1 = 0; seg.v0 = seg.v1 = v;
+            _post({ cmd: 'strip', fn: 'strip_setv', a: [slot, which, v] });
+          },
+          cancelScheduledValues() { anchor = null; return p; },
+          setValueAtTime(v, t) {
+            anchor = { t: t || now(), v };
+            // a lone set must still land core-side; a following linearRamp
+            // just overwrites this degenerate segment
+            seg.t0 = anchor.t; seg.v0 = v; seg.t1 = anchor.t; seg.v1 = v;
+            _post({ cmd: 'strip', fn: 'strip_rampv', a: [slot, which, anchor.t, v, v, 0.005] });
+            return p;
+          },
+          linearRampToValueAtTime(v1, t1) {
+            const a = anchor || { t: now(), v: evalAt(now()) };
+            anchor = null;
+            seg.t0 = a.t; seg.v0 = a.v; seg.t1 = Math.max(t1, a.t + 0.005); seg.v1 = v1;
+            _post({ cmd: 'strip', fn: 'strip_rampv', a: [slot, which, a.t, a.v, v1, Math.max(0.005, t1 - a.t)] });
+            return p;
+          },
+          rampTo(v, dur) {
+            const t = now();
+            p.setValueAtTime(evalAt(t), t);
+            return p.linearRampToValueAtTime(v, t + Math.max(0.005, dur || 0.03));
+          },
+        };
+        return p;
+      }
+      // Acquire an in-core strip for a layer: slot output → the Bloom bus,
+      // a feeder Gain → the worklet input (node-rendered voices/samples).
+      // Returns null when strips are off / engine not ready / out of slots —
+      // caller falls back to the node strip.
+      function stripAcquire(key, bus) {
+        if (!stripsEnabled() || failed || !bus) return null;
+        if (!ready) { init(); return null; }
+        if (!_running()) return null;
+        const have = stripByKey.get(key);
+        if (have) {
+          if (destBySlot[have.slot] !== bus) {
+            try { node.disconnect(have.slot); } catch (e) {}
+            try { Tone.connect(node, bus, have.slot, 0); } catch (e) {}
+            destBySlot[have.slot] = bus;
+          }
+          return have;
+        }
+        const slot = allocSlot();
+        if (slot < 0) return null;
+        try { node.disconnect(slot); } catch (e) {}
+        try { Tone.connect(node, bus, slot, 0); } catch (e) { return null; }
+        destBySlot[slot] = bus;
+        slotByKey.set(key, slot);
+        const input = new Tone.Gain(1);
+        try { Tone.connect(input, node, 0, slot); } catch (e) {}
+        _post({ cmd: 'strip', fn: 'strip_reset', a: [slot] });
+        _post({ cmd: 'strip', fn: 'strip_enable', a: [slot, 1] });
+        const h = {
+          key, slot, input,
+          cmd: (fn, ...a) => _post({ cmd: 'strip', fn, a }),
+          curve: (fn, a, curve) => _post({ cmd: 'strip', fn, a, curve }),
+          param: (which, init0) => makeShimParam(slot, which, init0),
+          tap: (an) => { try { Tone.connect(node, an, slot, 0); } catch (e) {} },
+        };
+        stripByKey.set(key, h);
+        return h;
+      }
+      function stripRelease(key) {
+        const h = stripByKey.get(key);
+        if (!h) return;
+        stripByKey.delete(key);
+        _post({ cmd: 'strip', fn: 'strip_enable', a: [h.slot, 0] });
+        try { h.input.dispose(); } catch (e) {}
+        try { node.disconnect(h.slot); } catch (e) {}
+        destBySlot[h.slot] = null;
+        slotByKey.delete(key);
+        freeSlots.push(h.slot);
+      }
+      // Area-transition departure: the fading chain moves to a temp key while
+      // the layer key rebuilds fresh — the slot follows the DEPARTED key so
+      // its gate fade + voice stops hit the old slot, and the fresh build
+      // acquires a new one.
+      function stripRekey(oldKey, newKey) {
+        const h = stripByKey.get(oldKey);
+        if (!h) return;
+        stripByKey.delete(oldKey);
+        stripByKey.set(newKey, h);
+        h.key = newKey;
+        const s = slotByKey.get(oldKey);
+        slotByKey.delete(oldKey);
+        slotByKey.set(newKey, s);
+      }
+      function stripFor(key) { return stripByKey.get(key) || null; }
+      // Route the summed reverb-send bus (output 16) into the shared reverb.
+      // Old reverbs dispose their own input connections, so this is additive.
+      function connectSend(dest) {
+        try { Tone.connect(node, dest, SLOTS, 0); } catch (e) {}
       }
       // Cheap per-note FX check: any engaged per-note effect keeps the note on
       // the old engine (Bloom layer notes carry none by default).
@@ -240,14 +378,20 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
-      return { enabled, eligible, noteOn, holdOn, cancelFrom, stopBefore, stopAll, init, designParams, _node: () => node };
+      return { enabled, stripsEnabled, eligible, noteOn, holdOn, cancelFrom, stopBefore, stopAll, init, designParams,
+               stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node };
     })();
-    // Live A/B toggle from the console.
+    // Live A/B toggles from the console.
     try {
       window.bloopsCore = (on) => {
         try { localStorage.setItem('bloopsCoreVoices', on ? '1' : '0'); } catch (e) {}
         if (on) _coreVoices.init();
         else _coreVoices.stopAll();
         console.info('[bloops-core] core voices ' + (on ? 'ON' : 'OFF') + ' (new notes route accordingly)');
+      };
+      window.bloopsCoreStrips = (on) => {
+        try { localStorage.setItem('bloopsCoreStrips', on ? '1' : '0'); } catch (e) {}
+        if (on) _coreVoices.init();
+        console.info('[bloops-core] core STRIPS ' + (on ? 'ON' : 'OFF') + ' (layers rebuild on next play/edit)');
       };
     } catch (e) {}

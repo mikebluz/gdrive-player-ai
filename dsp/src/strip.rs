@@ -567,30 +567,29 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                         OUT[slot][ch][i] = pre * (cut0 + (cut1 - cut0) * f);
                     }
                 }
-                // ---- pan (StereoPannerNode stereo law; mod SUMS with base) --
+                // ---- pan: Tone.Panner is built channelCount 1 (explicit) — it
+                // MONO-DOWNMIXES the layer, then applies the mono equal-power
+                // law. At pan 0 that's 0.707 per channel (the level the whole
+                // mix was calibrated around — measured: the node strip sits
+                // exactly √2 below a stereo-passthrough pan), and upstream
+                // per-voice stereo width collapses here, matching the
+                // documented node behaviour ("per-note pan doesn't survive to
+                // the bus"). Mod SUMS with the base pan (LFO on e.pan.pan).
                 let pv0 = (st.pan.value(tc)
                     + if st.pan_mod.shape >= 0 { smod_val(&st.pan_mod, tc, seed ^ 0xabcd) } else { 0.0 })
                 .clamp(-1.0, 1.0);
                 let pv1 = (st.pan.value(te)
                     + if st.pan_mod.shape >= 0 { smod_val(&st.pan_mod, te, seed ^ 0xabcd) } else { 0.0 })
                 .clamp(-1.0, 1.0);
-                if pv0.abs() > 1.0e-6 || pv1.abs() > 1.0e-6 {
-                    let mut k = 0.0f32;
-                    for i in i0..i0 + n {
-                        let f = k * inv;
-                        k += 1.0;
-                        let p = pv0 + (pv1 - pv0) * f;
-                        let x = if p <= 0.0 { p + 1.0 } else { p } * FRAC_PI_2;
-                        let (gl, gr) = (x.cos(), x.sin());
-                        let (l, r) = (OUT[slot][0][i], OUT[slot][1][i]);
-                        if p <= 0.0 {
-                            OUT[slot][0][i] = l + r * gl;
-                            OUT[slot][1][i] = r * gr;
-                        } else {
-                            OUT[slot][0][i] = l * gl;
-                            OUT[slot][1][i] = r + l * gr;
-                        }
-                    }
+                let mut k = 0.0f32;
+                for i in i0..i0 + n {
+                    let f = k * inv;
+                    k += 1.0;
+                    let p = pv0 + (pv1 - pv0) * f;
+                    let x = (p + 1.0) * 0.25 * PI;
+                    let m = 0.5 * (OUT[slot][0][i] + OUT[slot][1][i]);
+                    OUT[slot][0][i] = m * x.cos();
+                    OUT[slot][1][i] = m * x.sin();
                 }
                 i0 += n;
             }

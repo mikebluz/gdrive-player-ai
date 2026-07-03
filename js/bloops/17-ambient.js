@@ -7189,6 +7189,7 @@
       // on a suspended/frozen clock, and no artificial start delay.
       try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; }
       E.timer = setInterval(() => { try { _ambInGeneration = true; _ambTick(E); } catch (e) { _ambLogTickErr(e); } finally { _ambInGeneration = false; } }, 150);
+      try { _ambHealthStart(); } catch (e) {}
       // The finer ramp clock only runs while ramps exist (started lazily) so a
       // ramp-free Bloom doesn't burn a 40 Hz main-thread timer that competes
       // with audio scheduling.
@@ -7207,9 +7208,59 @@
         }
       } catch (e) {}
     }
+    // ---- Playback health watchdog (diagnostic only, no audio-path work) ----
+    // Samples render-thread health every 2 s while a Bloom engine plays and
+    // console.warns ONE compact [bloom-health] line (throttled) when degraded:
+    // audio clock running slow (render overload), context not running, or the
+    // voice build queue backing up. Pasting that line is enough to diagnose a
+    // cut-out report; the build tag proves WHICH code the browser is running.
+    const BLOOPS_PERF_BUILD = 'e8fee5c';
+    let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
+    function _ambHealthStart() {
+      if (_ambHealthTimer) return;
+      try { console.info('[bloom] perf build ' + BLOOPS_PERF_BUILD + ' — health watchdog on'); } catch (e) {}
+      try {
+        _ambHealthLastCt = Tone.getContext().rawContext.currentTime;
+        _ambHealthLastWall = performance.now();
+      } catch (e) {}
+      window.__bloomHealthLog = window.__bloomHealthLog || [];
+      _ambHealthTimer = setInterval(() => {
+        try {
+          const raw = Tone.getContext().rawContext;
+          const wall = performance.now();
+          const dt = (wall - _ambHealthLastWall) / 1000;
+          const ctRate = dt > 0 ? (raw.currentTime - _ambHealthLastCt) / dt : 1;
+          _ambHealthLastCt = raw.currentTime; _ambHealthLastWall = wall;
+          const snap = {
+            build: BLOOPS_PERF_BUILD,
+            ctRate: Math.round(ctRate * 1000) / 1000,
+            state: raw.state,
+            act: (typeof _activeVoices !== 'undefined') ? _activeVoices.length : -1,
+            cost: (typeof _activeVoiceCost === 'function') ? Math.round(_activeVoiceCost() * 10) / 10 : -1,
+            q: (typeof _voiceBuildQueue !== 'undefined') ? _voiceBuildQueue.length : -1,
+            pend: (typeof _pendingVoices !== 'undefined') ? _pendingVoices.size : -1,
+            samp: (typeof _activeSampleVoices !== 'undefined') ? _activeSampleVoices.size : -1,
+          };
+          window.__bloomHealthLog.push(snap);
+          if (window.__bloomHealthLog.length > 60) window.__bloomHealthLog.shift();
+          const degraded = ctRate < 0.9 || raw.state !== 'running' || snap.q > 80;
+          if (degraded && wall - _ambHealthWarnAt > 10000) {
+            _ambHealthWarnAt = wall;
+            console.warn('[bloom-health] DEGRADED ' + JSON.stringify(snap));
+          }
+        } catch (e) {}
+      }, 2000);
+    }
+    function _ambHealthStop() {
+      // Keep running while ANY Bloom engine still plays.
+      try { if (_laneEng.timer || _masterEng.timer || _shapeBloomEng.timer) return; } catch (e) {}
+      if (_ambHealthTimer) { clearInterval(_ambHealthTimer); _ambHealthTimer = null; }
+    }
+
     function _ambStopGenerator(E) {
       _E = E;
       if (E.timer) { clearInterval(E.timer); E.timer = null; }
+      try { _ambHealthStop(); } catch (e) {}
       if (E.rampTimer) { clearInterval(E.rampTimer); E.rampTimer = null; }
       // AREAS: end any sequencing and restore the bloom output gain (a stop mid
       // area-switch dip must not leave it at 0). Clear the now-playing highlight.

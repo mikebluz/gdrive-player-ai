@@ -602,14 +602,18 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                         OUT[slot][ch][i] = pre * (cut0 + (cut1 - cut0) * f);
                     }
                 }
-                // ---- pan: Tone.Panner is built channelCount 1 (explicit) — it
-                // MONO-DOWNMIXES the layer, then applies the mono equal-power
-                // law. At pan 0 that's 0.707 per channel (the level the whole
-                // mix was calibrated around — measured: the node strip sits
-                // exactly √2 below a stereo-passthrough pan), and upstream
-                // per-voice stereo width collapses here, matching the
-                // documented node behaviour ("per-note pan doesn't survive to
-                // the bus"). Mod SUMS with the base pan (LFO on e.pan.pan).
+                // ---- pan: WIDTH-PRESERVING version of the node panner law.
+                // The node's Tone.Panner is channelCount 1: it mono-downmixes
+                // and applies the mono equal-power law — 0.707/ch at pan 0,
+                // which the whole mix was calibrated around, but it COLLAPSES
+                // per-voice stereo spread (measured width 0.000 — the old
+                // "per-note pan doesn't survive to the bus" defect). Here the
+                // MID component gets the exact node law (mono content stays
+                // bit-identical at every pan), while the SIDE component passes
+                // at 0.707, scaled down as |p|→1 (a hard-panned layer is a
+                // point source, like the node). A deliberate improvement the
+                // node engine can't have without re-levelling the whole mix:
+                // spread actually spreads under core strips.
                 let pv0 = (st.pan.value(tc)
                     + if st.pan_mod.shape >= 0 { smod_val(&st.pan_mod, tc, seed ^ 0xabcd) } else { 0.0 })
                 .clamp(-1.0, 1.0);
@@ -622,9 +626,13 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                     k += 1.0;
                     let p = pv0 + (pv1 - pv0) * f;
                     let x = (p + 1.0) * 0.25 * PI;
-                    let m = 0.5 * (OUT[slot][0][i] + OUT[slot][1][i]);
-                    OUT[slot][0][i] = m * x.cos();
-                    OUT[slot][1][i] = m * x.sin();
+                    let gs = core::f32::consts::FRAC_1_SQRT_2 * (p.abs() * FRAC_PI_2).cos();
+                    let l = OUT[slot][0][i];
+                    let r = OUT[slot][1][i];
+                    let m = 0.5 * (l + r);
+                    let s = 0.5 * (l - r);
+                    OUT[slot][0][i] = m * x.cos() + s * gs;
+                    OUT[slot][1][i] = m * x.sin() - s * gs;
                 }
                 i0 += n;
             }

@@ -10332,7 +10332,8 @@
       bindInt('drift', 'drift'); _ambBindWhen(E, p, getSq, persist);
       bindStr('return', 'returnMode', () => _ambSeqReturnVis(E, id));
       bindInt('returnN', 'returnN'); bindInt('returnChance', 'returnChance'); bindInt('level', 'level'); bindInt('accent', 'accent'); bindMs('areafade', 'areaFadeMs');
-      _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist, null);
+      _ambWireSpread(E, 'ambient-seq-' + id, getSq, persist,
+        () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } });   // live Pan-mode drags (same gap as the primaries)
       ['vca', 'vco', 'vcf'].forEach(t => {
         ['depth', 'rate'].forEach(k => { const e = el('mod-' + t + '-' + k); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq.mod[t][k] = parseInt(e.value, 10) || 0; if (E.timer) { try { _ambSyncMods(); } catch (x) {} } persist(); }); });
         _ambWireModTarget(E, el, getSq, t, () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } });
@@ -13567,8 +13568,12 @@
       bind('ambient-beat-restProb', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');
       bindTime('ambient-beat-areaFadeMs', 'beat', 'areaFadeMs');
+      // sync while playing so Pan-mode drags land on the layer panner LIVE —
+      // with sync null the position only applied at the next rebuild (the
+      // "bed pan does nothing" report; extras always passed a sync).
       ['bed', 'motif', 'texture', 'beat'].forEach(layer =>
-        _ambWireSpread(E, 'ambient-' + layer, () => { const c = cfg0(); return c ? c[layer] : null; }, persist, null));
+        _ambWireSpread(E, 'ambient-' + layer, () => { const c = cfg0(); return c ? c[layer] : null; }, persist,
+          () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } }));
       // Per-layer FX (reverb send / delay / distortion). Apply live when playing.
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const fxBind = (suf, setter) => {

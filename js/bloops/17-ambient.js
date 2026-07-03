@@ -7214,15 +7214,66 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'e8fee5c';
+    const BLOOPS_PERF_BUILD = 'signal-trace-1';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
+    let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
+    function _ambHealthProbe(node) {
+      try {
+        const a = Tone.getContext().rawContext.createAnalyser();
+        a.fftSize = 2048;
+        node.connect(a);
+        return a;
+      } catch (e) { return null; }
+    }
+    function _ambHealthRead(a) {
+      if (!a) return null;
+      if (!_ambHealthBuf) _ambHealthBuf = new Float32Array(2048);
+      a.getFloatTimeDomainData(_ambHealthBuf);
+      let sum = 0, nan = 0;
+      for (let i = 0; i < _ambHealthBuf.length; i++) {
+        const v = _ambHealthBuf[i];
+        if (v !== v) nan++; else sum += v * v;
+      }
+      return { rms: Math.round(Math.sqrt(sum / _ambHealthBuf.length) * 1e5) / 1e5, nan };
+    }
+    // Post-mortem: walk every playing layer's chain output for ~250 ms each and
+    // report where signal exists vs where it's dead/NaN.
+    async function _ambHealthSweepLayers() {
+      const out = {};
+      try {
+        const E = _masterEng && _masterEng.timer ? _masterEng
+          : (_laneEng && _laneEng.timer ? _laneEng : _masterEng);
+        const mod = (E && E.mod) || {};
+        for (const k of Object.keys(mod)) {
+          const e = mod[k];
+          const node = e && (e.pan || e.gate || e.vca);
+          if (!node) { out[k] = 'no-node'; continue; }
+          const a = _ambHealthProbe(node);
+          await new Promise((r) => setTimeout(r, 250));
+          out[k] = _ambHealthRead(a);
+          try { node.disconnect(a); } catch (x) {}
+        }
+      } catch (e) { out._err = String(e); }
+      return out;
+    }
     function _ambHealthStart() {
       if (_ambHealthTimer) return;
-      try { console.info('[bloom] perf build ' + BLOOPS_PERF_BUILD + ' — health watchdog on'); } catch (e) {}
+      try { console.info('[bloom] perf build ' + BLOOPS_PERF_BUILD + ' — signal-trace watchdog on'); } catch (e) {}
       try {
         _ambHealthLastCt = Tone.getContext().rawContext.currentTime;
         _ambHealthLastWall = performance.now();
       } catch (e) {}
+      // Signal probes bracketing the master chain: bloom mix output → master
+      // input (pre-worklet) → post-worklet+clipper → final output. Comparing
+      // rms/NaN across them names the stage where audio dies.
+      if (!_ambHealthProbes) {
+        _ambHealthProbes = {};
+        try { if (typeof _bloomMasterGain !== 'undefined' && _bloomMasterGain) _ambHealthProbes.bloom = _ambHealthProbe(_bloomMasterGain); } catch (e) {}
+        try { if (typeof masterVolume !== 'undefined') _ambHealthProbes.preWk = _ambHealthProbe(masterVolume); } catch (e) {}
+        try { if (typeof masterClipper !== 'undefined') _ambHealthProbes.postWk = _ambHealthProbe(masterClipper); } catch (e) {}
+        try { if (typeof masterFade !== 'undefined') _ambHealthProbes.out = _ambHealthProbe(masterFade); } catch (e) {}
+      }
+      _ambHealthSilentN = 0;
       window.__bloomHealthLog = window.__bloomHealthLog || [];
       _ambHealthTimer = setInterval(() => {
         try {
@@ -7233,6 +7284,7 @@
           _ambHealthLastCt = raw.currentTime; _ambHealthLastWall = wall;
           const snap = {
             build: BLOOPS_PERF_BUILD,
+            t: Math.round(wall / 100) / 10,
             ctRate: Math.round(ctRate * 1000) / 1000,
             state: raw.state,
             act: (typeof _activeVoices !== 'undefined') ? _activeVoices.length : -1,
@@ -7240,16 +7292,34 @@
             q: (typeof _voiceBuildQueue !== 'undefined') ? _voiceBuildQueue.length : -1,
             pend: (typeof _pendingVoices !== 'undefined') ? _pendingVoices.size : -1,
             samp: (typeof _activeSampleVoices !== 'undefined') ? _activeSampleVoices.size : -1,
+            pad: (typeof _activePadVoices !== 'undefined') ? _activePadVoices.size : -1,
+            sig: {
+              bloom: _ambHealthRead(_ambHealthProbes.bloom),
+              preWk: _ambHealthRead(_ambHealthProbes.preWk),
+              postWk: _ambHealthRead(_ambHealthProbes.postWk),
+              out: _ambHealthRead(_ambHealthProbes.out),
+            },
           };
           window.__bloomHealthLog.push(snap);
-          if (window.__bloomHealthLog.length > 60) window.__bloomHealthLog.shift();
-          const degraded = ctRate < 0.9 || raw.state !== 'running' || snap.q > 80;
-          if (degraded && wall - _ambHealthWarnAt > 10000) {
+          if (window.__bloomHealthLog.length > 120) window.__bloomHealthLog.shift();
+          const sig = snap.sig;
+          const anyNan = ['bloom', 'preWk', 'postWk', 'out'].some((k) => sig[k] && sig[k].nan > 0);
+          const voicesLive = snap.act > 0 || snap.samp > 0 || snap.pad > 0;
+          const outDead = sig.out && sig.out.rms < 1e-4;
+          _ambHealthSilentN = (voicesLive && outDead) ? _ambHealthSilentN + 1 : 0;
+          const engineSick = ctRate < 0.9 || raw.state !== 'running' || snap.q > 80;
+          if ((anyNan || _ambHealthSilentN >= 2 || engineSick) && wall - _ambHealthWarnAt > 15000) {
             _ambHealthWarnAt = wall;
-            console.warn('[bloom-health] DEGRADED ' + JSON.stringify(snap));
+            const why = anyNan ? 'NaN-IN-CHAIN' : (_ambHealthSilentN >= 2 ? 'OUTPUT-DEAD-VOICES-LIVE' : 'ENGINE-DEGRADED');
+            console.warn('[bloom-health] ' + why + ' ' + JSON.stringify(snap));
+            const recent = window.__bloomHealthLog.slice(-6, -1);
+            console.warn('[bloom-health] recent: ' + JSON.stringify(recent.map((r) => ({ t: r.t, ctRate: r.ctRate, out: r.sig && r.sig.out, bloom: r.sig && r.sig.bloom }))));
+            _ambHealthSweepLayers().then((layers) => {
+              console.warn('[bloom-health] layer sweep: ' + JSON.stringify(layers));
+            });
           }
         } catch (e) {}
-      }, 2000);
+      }, 1000);
     }
     function _ambHealthStop() {
       // Keep running while ANY Bloom engine still plays.

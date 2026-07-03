@@ -47,7 +47,7 @@
         initing = true;
         try {
           const ctx = Tone.getContext();
-          await ctx.rawContext.audioWorklet.addModule('js/bloops/core/voice-processor.js');
+          await ctx.rawContext.audioWorklet.addModule('js/bloops/core/voice-processor.js?v=DEPLOYVER');
           node = ctx.createAudioWorkletNode('bloops-voice-processor', {
             numberOfInputs: 0,
             numberOfOutputs: SLOTS,
@@ -60,7 +60,7 @@
           };
           // cache: 'no-cache' revalidates the .wasm with the server on every
           // load — a stale cached core silently reintroduces fixed DSP bugs.
-          const bytes = await (await fetch('js/bloops/core/bloops-dsp.wasm', { cache: 'no-cache' })).arrayBuffer();
+          const bytes = await (await fetch('js/bloops/core/bloops-dsp.wasm?v=DEPLOYVER', { cache: 'no-cache' })).arrayBuffer();
           node.port.postMessage({ wasmBytes: bytes }, [bytes]);
           // Keep-pull sink: a permanent zero-gain path to the destination so
           // the graph ALWAYS renders this node. Without it, tearing down the

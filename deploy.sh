@@ -86,7 +86,9 @@ cp -r index.html bloops.html player.html artwork.html game.html css js banner.jp
 # -----------------------------------------------
 DEPLOY_VER=$(date +%Y%m%d%H%M%S)
 echo "🏷️  Cache-busting asset URLs with v=$DEPLOY_VER"
-for f in index.html bloops.html player.html artwork.html game.html; do
+# JS files that fetch versioned assets themselves (worklet module + wasm URLs
+# in the core-voices bridge) carry the same ?v=DEPLOYVER token as the HTML.
+for f in index.html bloops.html player.html artwork.html game.html js/bloops/03b-core-voices.js; do
   if [[ -f "$STAGE_DIR/$f" ]]; then
     sed "s/?v=DEPLOYVER/?v=$DEPLOY_VER/g" "$STAGE_DIR/$f" > "$STAGE_DIR/$f.tmp" && mv "$STAGE_DIR/$f.tmp" "$STAGE_DIR/$f"
   fi

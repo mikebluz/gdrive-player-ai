@@ -7214,9 +7214,10 @@
     // audio clock running slow (render overload), context not running, or the
     // voice build queue backing up. Pasting that line is enough to diagnose a
     // cut-out report; the build tag proves WHICH code the browser is running.
-    const BLOOPS_PERF_BUILD = 'signal-trace-1';
+    const BLOOPS_PERF_BUILD = 'adaptive-budget-1';
     let _ambHealthTimer = null, _ambHealthLastCt = 0, _ambHealthLastWall = 0, _ambHealthWarnAt = 0;
     let _ambHealthProbes = null, _ambHealthBuf = null, _ambHealthSilentN = 0;
+    let _ambHealthGoodN = 0, _ambHealthShedAt = 0;
     function _ambHealthProbe(node) {
       try {
         const a = Tone.getContext().rawContext.createAnalyser();
@@ -7258,7 +7259,7 @@
     }
     function _ambHealthStart() {
       if (_ambHealthTimer) return;
-      try { console.info('[bloom] perf build ' + BLOOPS_PERF_BUILD + ' — signal-trace watchdog on'); } catch (e) {}
+      try { console.info('[bloom] perf build ' + BLOOPS_PERF_BUILD + ' — adaptive voice budget on'); } catch (e) {}
       try {
         _ambHealthLastCt = Tone.getContext().rawContext.currentTime;
         _ambHealthLastWall = performance.now();
@@ -7302,6 +7303,29 @@
           };
           window.__bloomHealthLog.push(snap);
           if (window.__bloomHealthLog.length > 120) window.__bloomHealthLog.shift();
+          // ---- Adaptive DSP budget feedback --------------------------------
+          // ctRate < 1 on real hardware = the render thread is producing fewer
+          // frames than the device consumes → the output plays GAPS (the
+          // glitch-then-cut-out). Shed the most-decayed voice tails until the
+          // clock keeps up; while healthy, recover the budget one unit at a
+          // time. Hysteresis (0.95 shed / 0.985 recover ×3) prevents flapping.
+          try {
+            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.5) {
+              if (ctRate < 0.95) {
+                _ambHealthGoodN = 0;
+                const b = _setVoiceBudget(Math.min(_getVoiceBudget(), Math.max(8, snap.cost * 0.7)));
+                if (wall - _ambHealthShedAt > 5000) {
+                  _ambHealthShedAt = wall;
+                  console.info('[bloom-health] render behind (ctRate ' + snap.ctRate + ') — voice budget → ' + b);
+                }
+              } else if (ctRate > 0.985) {
+                if (++_ambHealthGoodN >= 3) { _ambHealthGoodN = 0; _setVoiceBudget(_getVoiceBudget() + 1); }
+              } else {
+                _ambHealthGoodN = 0;
+              }
+              snap.budget = _getVoiceBudget();
+            }
+          } catch (e) {}
           const sig = snap.sig;
           const anyNan = ['bloom', 'preWk', 'postWk', 'out'].some((k) => sig[k] && sig[k].nan > 0);
           const voicesLive = snap.act > 0 || snap.samp > 0 || snap.pad > 0;

@@ -1933,6 +1933,29 @@
       for (let i = 0; i < _activeVoices.length; i++) s += _activeVoices[i].dspCost || 1;
       return s;
     }
+    // ---- Adaptive DSP budget -----------------------------------------------
+    // VOICE_CAP is the static ceiling, but the actual render budget varies per
+    // MACHINE (an older/loaded Mac audibly underruns below the cap: measured on
+    // a real cut-out — audio clock at 0.86× wall clock with only ~19 plain
+    // voices, i.e. the device was playing 14% gaps). The Bloom health watchdog
+    // measures the audio-clock rate every second and calls _setVoiceBudget to
+    // shed the most-decayed tails when the render thread falls behind, then
+    // recovers one unit at a time while healthy. Session-persistent so each
+    // play starts from what the machine proved it can carry.
+    const _VOICE_BUDGET_MIN = 8;
+    let _voiceBudgetDyn = VOICE_CAP;
+    function _getVoiceBudget() { return _voiceBudgetDyn; }
+    function _setVoiceBudget(u) {
+      _voiceBudgetDyn = Math.max(_VOICE_BUDGET_MIN, Math.min(VOICE_CAP, Math.round(u)));
+      if (_offlineSamplerOverride) return _voiceBudgetDyn;
+      while (_activeVoiceCost() > _voiceBudgetDyn && _activeVoices.length > 1) {
+        const idx = _pickVoiceVictim();
+        const victim = _activeVoices.splice(idx, 1)[0];
+        if (!victim) break;
+        _stealVoice(victim);
+      }
+      return _voiceBudgetDyn;
+    }
     // Pick which voice to shed when over the cap. Stealing the OLDEST voice
     // unconditionally chops the long-sustaining FOUNDATION (bed / drone / pedal
     // pads start earliest, so they're always at index 0) every time a rapid short
@@ -1970,8 +1993,9 @@
       // voices. Bypass the cap when an offline render is in flight.
       if (_offlineSamplerOverride) return;
       // Budgeted by DSP cost, not headcount (see _voiceDspCost) — plain voices
-      // cost 1 so simple projects keep the exact old count behavior.
-      while (_activeVoiceCost() > VOICE_CAP && _activeVoices.length > 1) {
+      // cost 1 so simple projects keep the exact old behavior at the full cap.
+      // The budget itself adapts to measured render health (_setVoiceBudget).
+      while (_activeVoiceCost() > _voiceBudgetDyn && _activeVoices.length > 1) {
         const idx = _pickVoiceVictim();
         const victim = _activeVoices.splice(idx, 1)[0];
         if (!victim) break;

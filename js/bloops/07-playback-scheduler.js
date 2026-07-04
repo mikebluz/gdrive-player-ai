@@ -1104,7 +1104,20 @@
     function _barPlayheadFrame() {
       if (sequenceTimer === null) { _stopBarPlayhead(); return; }
       const strips = document.querySelectorAll('.lane-chips[data-lane-idx]');
-      const elapsed = Math.max(0, rawAudioNow() - _playBaseTime);
+      // Perceived time, not render time: the audio clock reads when a sample
+      // is RENDERED; it reaches the ears baseLatency + outputLatency later
+      // (device buffers / Bluetooth — the same offset scheduleVisual applies
+      // to the chip flashes). Without it the cursor led the ear and notes
+      // read as "late". lookAhead is NOT subtracted — _playBaseTime is a
+      // Tone.now() anchor that already includes it, same as the notes'
+      // schedule times, so it cancels.
+      let outLag = 0;
+      try {
+        const raw = Tone.context.rawContext || Tone.context;
+        outLag = (Number.isFinite(raw.baseLatency) ? raw.baseLatency : 0)
+               + (Number.isFinite(raw.outputLatency) ? raw.outputLatency : 0);
+      } catch (e) {}
+      const elapsed = Math.max(0, rawAudioNow() - outLag - _playBaseTime);
       strips.forEach((strip) => {
         const laneIdx = parseInt(strip.dataset.laneIdx, 10);
         const loopSec = _barPlayheadLoopSecFor(Number.isFinite(laneIdx) ? laneIdx : undefined);

@@ -10780,8 +10780,11 @@
       transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
     }
     #bar-rest-btn {
-      margin-right: 6px;
       border: 2px solid var(--rest-color);
+      /* Join BAR | PLACE into one segment like PERF | KEEP: flat inner
+         edges, BAR yields its right border so the seam is a single line. */
+      border-right: none;
+      border-top-right-radius: 0; border-bottom-right-radius: 0;
       color: #e9d8fd;
       box-shadow: 0 0 12px rgba(216, 180, 254, 0.14);
     }
@@ -10790,6 +10793,7 @@
     #place-btn {
       grid-column: 2 / -1;
       border: 2px solid #4fd1c5;
+      border-top-left-radius: 0; border-bottom-left-radius: 0;
       color: #b2f5ea;
       box-shadow: 0 0 12px rgba(79, 209, 197, 0.14);
     }
@@ -10851,6 +10855,13 @@
       gap: 6px; padding: 8px 0 2px; flex-wrap: wrap;
     }
     .place-size-row[hidden] { display: none !important; }
+    /* Place is on but nothing armed yet — slow-flash the note grid to cue
+       "pick a note next". Class managed by _placeUpdateGridFlash(). */
+    #grid.place-pick-flash { animation: place-pick-pulse 1.6s ease-in-out infinite; }
+    @keyframes place-pick-pulse {
+      0%, 100% { filter: brightness(1); }
+      50%      { filter: brightness(1.5); }
+    }
     .place-size-label { font: 700 0.68rem 'Segoe UI', sans-serif; color: #4fd1c5; letter-spacing: 1px; text-transform: uppercase; margin-right: 2px; }
     .place-size-chip {
       background: #000; border: 1px solid #234e4a; border-radius: 8px;

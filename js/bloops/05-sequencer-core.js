@@ -766,6 +766,7 @@
         // Active lane is empty, but the other lanes' preview strips were just
         // rebuilt — restore their scroll so they don't snap to 0.
         _restorePrevLaneScroll();
+      _placeUpdateGridFlash();
         // Keep the always-on cursor drawn on the other lanes (no scroll —
         // idle redraw leaves any manual side-scroll untouched).
         if (sequenceTimer === null && typeof _positionCursorsAtTick === 'function') {
@@ -1225,6 +1226,7 @@
       // activeIndex scroll-into-view below can then still override the ACTIVE
       // lane when a note was just appended (the strip should follow the new tail).
       _restorePrevLaneScroll();
+      _placeUpdateGridFlash();
 
       // Show in-progress chord as a dashed pending chip
       // Pending-Wrap preview chip — only shown while Keep is on so the
@@ -2255,6 +2257,13 @@
         g.classList.toggle('ph-hot-end', hot && (p === pos32 + span - 1 || p % 32 === 31));
       });
     }
+    // Slow-flash the note grid while Place is on but nothing is armed and
+    // no fallback template exists — the cue that the next tap picks a note.
+    function _placeUpdateGridFlash() {
+      const g = document.getElementById('grid');
+      if (!g) return;
+      g.classList.toggle('place-pick-flash', placeMode && !_placeArmedTemplate());
+    }
     function _placeArmedTemplate() {
       if (stepModeArmed) return stepModeArmed;
       for (let i = sequence.length - 1; i >= 0; i--) {
@@ -2331,10 +2340,12 @@
       cells.forEach((cell, idx) => {
         cell.classList.toggle('step-mode-armed', step && idx === step.cellIndex);
       });
+      _placeUpdateGridFlash();
     }
     function clearStepModeArm() {
       stepModeArmed = null;
       cells.forEach(c => c.classList.remove('step-mode-armed'));
+      _placeUpdateGridFlash();
     }
 
     // ---- Fixed-mode sequential editing ----

@@ -835,6 +835,7 @@
         pb.classList.toggle('active', placeMode);
         if (sizeRow) sizeRow.hidden = !placeMode;
         try { renderSequence(); } catch (e) {}
+        try { _placeUpdateGridFlash(); } catch (e) {}
         if (placeMode && typeof showToast === 'function') showToast('Place: tap a grid note to arm it, then click the strip');
       });
       if (sizeRow) sizeRow.addEventListener('click', (e) => {

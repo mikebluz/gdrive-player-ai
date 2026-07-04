@@ -3253,25 +3253,43 @@
       };
       const mkRest = (n) => ({ freq: null, label: '—', cellIndex: null, duration: Math.max(1, Math.round(n)), subdivision: 0.125 });
       const simple = (s) => s && !s.isSub; // notes / chords / rests resize cleanly; subs don't
-      const prev = sequence[i - 1] || null;
-      const next = sequence[i + 1] || null;
-      if (dir > 0) { // later
-        if (!next) { _toast('Nudge: nothing after this step to borrow from.'); return false; }
-        if (!simple(next) || (prev && !simple(prev))) { _toast('Nudge: an adjacent subsequence can’t be resized.'); return false; }
-        if (len32(next) - dUnits < 1) { _toast('Nudge: not enough room after the step.'); return false; }
-        snapshotForUndo('Nudge ▶');
-        setLen32(next, len32(next) - dUnits);
-        if (prev) setLen32(prev, len32(prev) + dUnits);
-        else sequence.splice(i, 0, mkRest(dUnits)); // first step: push right with a leading rest
-      } else { // earlier
-        if (!prev) { _toast('Nudge: nothing before this step to borrow from.'); return false; }
-        if (!simple(prev) || (next && !simple(next))) { _toast('Nudge: an adjacent subsequence can’t be resized.'); return false; }
-        if (len32(prev) - dUnits < 1) { _toast('Nudge: not enough room before the step.'); return false; }
-        snapshotForUndo('Nudge ◀');
-        setLen32(prev, len32(prev) - dUnits);
-        if (next) setLen32(next, len32(next) + dUnits);
-        else sequence.splice(i + 1, 0, mkRest(dUnits)); // last step: trailing rest absorbs the shift
+      // Borrow dUnits from the neighbours on the side the step moves TOWARD.
+      // Consecutive RESTS form a pool that can be consumed ENTIRELY (Place-mode
+      // fills produce runs of small rests — 'R:8 R:4 note' must nudge through
+      // them); a NOTE at the pool's far end shrinks but keeps ≥1 cell.
+      const stepDir = dir > 0 ? 1 : -1;
+      const startIdx = i + stepDir;
+      if (startIdx < 0 || startIdx >= sequence.length) {
+        _toast('Nudge: nothing ' + (dir > 0 ? 'after' : 'before') + ' this step to borrow from.');
+        return false;
       }
+      let need = dUnits; const plan = [];
+      for (let j = startIdx; need > 0 && j >= 0 && j < sequence.length; j += stepDir) {
+        const s = sequence[j];
+        if (!simple(s)) { _toast('Nudge: an adjacent subsequence can’t be resized.'); return false; }
+        const L = len32(s);
+        if (typeof isRestStep === 'function' && isRestStep(s)) {
+          const take = Math.min(L, need);
+          plan.push({ idx: j, take, remove: take === L });
+          need -= take;
+          continue;
+        }
+        const give = Math.min(L - 1, need);
+        if (give > 0) { plan.push({ idx: j, take: give, remove: false }); need -= give; }
+        break;   // a note bounds the pool
+      }
+      if (need > 0) { _toast('Nudge: not enough room ' + (dir > 0 ? 'after' : 'before') + ' the step.'); return false; }
+      snapshotForUndo(dir > 0 ? 'Nudge ▶' : 'Nudge ◀');
+      plan.sort((a, b) => b.idx - a.idx).forEach(p => {
+        if (p.remove) sequence.splice(p.idx, 1);
+        else setLen32(sequence[p.idx], len32(sequence[p.idx]) - p.take);
+      });
+      // Grow the OPPOSITE side by the same amount (zero-sum). A missing or
+      // unresizable (subsequence) neighbour gets a fresh rest instead.
+      const ni = sequence.indexOf(stepRef);
+      const op = sequence[ni - stepDir] || null;
+      if (op && simple(op)) setLen32(op, len32(op) + dUnits);
+      else sequence.splice(stepDir > 0 ? ni : ni + 1, 0, mkRest(dUnits));
       renderSequence();
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return true;

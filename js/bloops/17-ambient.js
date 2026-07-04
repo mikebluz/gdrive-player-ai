@@ -7118,6 +7118,25 @@
       const layer = _ambLayerByKey(E, key); if (!layer) return;
       layer.solo = !layer.solo;
       _ambSoloSyncAll(E);
+      // Make the change AUDIBLE NOW: Bloom schedules ~1.4 s ahead and long
+      // layers carry multi-second notes/tails, so a mid-play solo otherwise
+      // takes seconds to be heard — it read as "the button does nothing".
+      // Cancel the not-yet-started voices of every layer the NEW solo state
+      // mutes (sounding notes ring out naturally); unmuted layers resume on
+      // the next tick's window.
+      try {
+        if (E.timer && typeof cancelBloomFutureVoices === 'function') {
+          const cfg = E.getCfg();
+          if (_ambComputeAnySolo(cfg)) {
+            const nowT = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+            const cut = (L, k) => { if (L && !L.solo) { try { cancelBloomFutureVoices(k, nowT); } catch (e) {} } };
+            ['bed', 'motif', 'texture', 'beat'].forEach(n => cut(cfg[n], n));
+            (cfg.extras || []).forEach(x => { if (x && x.type !== 'seq' && x.type !== 'samp') cut(x, x.type + ':' + x.id); });
+            _ambSeqList(cfg).forEach(s => cut(s, 'seq:' + s.id));
+            _ambSampleList(cfg).forEach(s => cut(s, 'samp:' + s.id));
+          }
+        }
+      } catch (e) {}
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     // Duplicate a layer with all its settings. A primary (bed/motif/texture/beat)

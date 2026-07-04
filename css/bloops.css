@@ -3173,6 +3173,32 @@
     .ambient-roll-revert:hover { color: #ffe4a8; border-color: rgba(255, 212, 121, 0.7); }
     .ambient-roll-bar [hidden] { display: none !important; }
     .ambient-roll-pager[hidden], .ambient-roll-revert[hidden] { display: none !important; }
+    /* Vertical roll (layers with a piano): time flows DOWN inside a scrolling
+       wrapper; the canvas grows with the loop. Pitch columns use the piano-key
+       geometry, and the keyboard sits directly below as the pitch legend. */
+    .ambient-roll-scroll {
+      max-height: 190px; overflow-y: auto; overflow-x: hidden;
+      border: 1px solid rgba(255, 212, 121, 0.45); border-bottom: none;
+      border-radius: 4px 4px 0 0; background: #0c0c14;
+    }
+    .ambient-np-vroll {
+      display: block; width: 100%; height: auto;
+      border: none; border-radius: 0; background: transparent;
+      box-shadow: none;
+    }
+    /* Keyboard butts the roll when both are open (shared pitch columns). */
+    .ambient-notes-live.reserved + .ambient-piano.open {
+      margin-top: 0;
+      border: 1px solid rgba(255, 212, 121, 0.45); border-top: none;
+      border-radius: 0 0 4px 4px; box-sizing: border-box;
+    }
+    /* Note editor DOCKED above the roll (vertical-roll layers): static, full
+       width, compact — replaces the floating popover there. */
+    .ambient-note-editor.docked {
+      position: static; width: 100%; min-width: 0; box-sizing: border-box;
+      margin: 2px 0 4px; box-shadow: none; border-radius: 8px;
+    }
+    .ambient-note-editor.docked .ane-hint { display: none; }   /* the keys sit right below */
     /* Y-axis: simultaneous notes of a unit stack vertically (top = highest). */
     .ambient-np-col { display: inline-flex; flex-direction: column; vertical-align: top; }
     .ambient-np-col > span { display: block; }

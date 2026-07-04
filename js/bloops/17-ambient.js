@@ -9106,8 +9106,12 @@
         // with a fixed-width pitch-name gutter on the LEFT — names line up with
         // their event blocks; drawn each frame by _ambDrawRolls); else empty.
         // Editable-roll skeleton (lock or seed): a header bar (unit pager +
-        // revert) above the canvas. Rebuilt only on mode change; the dynamic
+        // revert), the docked note-editor slot, then the canvas. Layers WITH a
+        // piano get the VERTICAL roll inside a scrolling wrapper (pitch columns
+        // on the key geometry, keyboard directly below); Beat (no keyboard)
+        // keeps the horizontal roll. Rebuilt only on mode change; the dynamic
         // bits (pager label / revert visibility / tag) refresh every pass.
+        const _hasPiano = String(key).split(':')[0] !== 'beat';
         const _rollSkeleton = () =>
           '<div class="ambient-roll-bar">' +
             '<span class="ambient-roll-tag"></span>' +
@@ -9117,16 +9121,26 @@
               '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-next" data-rkey="' + key + '" title="Next unit">▶</span>' +
             '</span>' +
             '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-revert" data-rkey="' + key + '" hidden title="Discard the edited phrase — back to live generation">↺ Original</span>' +
-          '</div><canvas class="ambient-np-roll ambient-np-lockroll"></canvas>';
+          '</div>' +
+          (_hasPiano
+            ? '<div class="ambient-roll-editor-slot"></div><div class="ambient-roll-scroll"><canvas class="ambient-np-roll ambient-np-lockroll ambient-np-vroll"></canvas></div>'
+            : '<canvas class="ambient-np-roll ambient-np-lockroll"></canvas>');
+        // The shared note editor may be DOCKED inside this line — rescue it to
+        // <body> before any innerHTML wipe destroys it (it's a singleton with
+        // document-level listeners).
+        const _rescueEditor = () => {
+          const ed = el.querySelector('#ambient-note-editor');
+          if (ed) { try { ed.classList.remove('docked', 'open'); ed.style.removeProperty('display'); document.body.appendChild(ed); } catch (e) {} }
+        };
         if (lockEd) {
           // Locked → editable piano-roll (click a block to edit, empty to add).
-          if (el._mode !== 'lockroll') { el.innerHTML = _rollSkeleton(); el._mode = 'lockroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
+          if (el._mode !== 'lockroll') { _rescueEditor(); el.innerHTML = _rollSkeleton(); el._mode = 'lockroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
         } else if (seedPv) {
           // Seed preview → same roll, promoted to a lock by the first edit.
-          if (el._mode !== 'seedroll') { el.innerHTML = _rollSkeleton(); el._mode = 'seedroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
+          if (el._mode !== 'seedroll') { _rescueEditor(); el.innerHTML = _rollSkeleton(); el._mode = 'seedroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
         } else if (layerOn) {
-          if (el._mode !== 'roll') { el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
-        } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
+          if (el._mode !== 'roll') { _rescueEditor(); el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
+        } else if (el._mode !== 'off') { _rescueEditor(); el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
         // Roll-bar refresh + a direct draw while stopped (the viz rAF drives
         // redraws during playback; edits/toggles call this function directly).
         if (el._mode === 'lockroll' || el._mode === 'seedroll') {
@@ -9242,6 +9256,10 @@
     // popover (pitch/timing/velocity/delete); click empty → add a note there.
     // Source notes come through _ambLockMeta so it works for every layer's store.
     function _ambDrawLockedRoll(cv, E, key, now) {
+      // Layers with a piano use the VERTICAL roll (pitch on the key geometry,
+      // time scrolling downward); the horizontal draw below remains for Beat
+      // (no keyboard).
+      if (cv.classList.contains('ambient-np-vroll')) return _ambDrawVRoll(cv, E, key, now);
       const w = cv.clientWidth | 0, h = cv.clientHeight | 0;
       if (!w || !h) return;
       if (cv.width !== w) cv.width = w; if (cv.height !== h) cv.height = h;
@@ -9306,6 +9324,11 @@
       if (cv._lockWired) return; cv._lockWired = true;
       cv.addEventListener('pointerdown', (ev) => {
         ev.preventDefault();
+        // Capture coordinates FIRST: promoting a seed preview rebuilds the
+        // notes line (this canvas is detached mid-handler, and a detached
+        // getBoundingClientRect reads 0,0 — the click coords would be junk).
+        const rect = cv.getBoundingClientRect();
+        const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
         // A seed preview promotes to a real lock on the FIRST touch, so the
         // click below edits the standard locked store (same t/freq values —
         // hit-testing is unaffected by the promotion).
@@ -9314,8 +9337,35 @@
           try { _ambUpdateNotesLive(E); } catch (e) {}
         }
         const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return;
-        const rect = cv.getBoundingClientRect();
-        const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+        // Vertical roll: y → time within the viewed unit, x → key (geometry
+        // cached by the draw). Hit a block → edit; empty → add at that key/time.
+        if (cv.classList.contains('ambient-np-vroll')) {
+          const g = cv._geom || _ambPianoKeyGeom(cv.clientWidth || 1);
+          const Pv = (cv._P > 0) ? cv._P : (meta.P || 1);
+          const W0v = cv._W0 || 0;
+          const hv = cv._vh || cv.clientHeight || 1;
+          const tClick = W0v + (y / hv) * Pv;
+          const Av = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+          let hitIdx = -1, hitDx = 1e9;
+          for (let i = 0; i < meta.list.length; i++) {
+            const n = meta.list[i]; if (!(n && n.freq > 0)) continue;
+            const off = n[meta.offKey] || 0, dur = Math.max(0.05, (n[meta.durKey] || 100) / 1000);
+            if (off + dur < W0v || off > W0v + Pv) continue;
+            const y0 = ((off - W0v) / Pv) * hv, y1 = ((off + dur - W0v) / Pv) * hv;
+            if (y < y0 - 5 || y > y1 + 5) continue;
+            let m = Math.round(69 + 12 * Math.log2(n.freq / Av));
+            m = Math.max(g.LO, Math.min(g.HI, m));
+            const dx = Math.abs((g.centers[m] || 0) - x);
+            if (dx < hitDx) { hitDx = dx; hitIdx = i; }
+          }
+          if (hitIdx >= 0 && hitDx < 15) { _ambOpenNoteEditor(E, key, hitIdx, cv); return; }
+          const midi = g.midiAtX(x);
+          if (midi == null) return;
+          const freq = Av * Math.pow(2, (midi - 69) / 12);
+          const idx = _ambAddNoteAt(E, key, tClick, freq);
+          if (idx != null && idx >= 0) _ambOpenNoteEditor(E, key, idx, cv);
+          return;
+        }
         const w = cv.clientWidth, h = cv.clientHeight;
         const LBL = cv._LBL || 40, P = (cv._P > 0) ? cv._P : (meta.P || 1);
         const W0 = cv._W0 || 0;
@@ -9732,14 +9782,38 @@
     function _ambOpenNoteEditor(E, key, index, anchorEl) {
       _ambNoteEd = { E: E, key: key, index: index };
       _ambNoteEdOpenedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
-      _ambNoteEditorEl();
+      const el = _ambNoteEditorEl();
       _ambNoteEdRefresh();
-      if (_ambNoteEd) _ambPositionNoteEditor(anchorEl || _ambNoteChipEl(E, key, index));
+      if (!_ambNoteEd) return;
+      // Vertical rolls DOCK the editor above the roll (into the notes line's
+      // editor slot) so the controls sit over the canvas + keyboard instead of
+      // floating; other anchors keep the floating popover.
+      const line = (anchorEl && anchorEl.closest) ? anchorEl.closest('.ambient-notes-live') : null;
+      const slot = line && line.querySelector('.ambient-roll-editor-slot');
+      if (slot) {
+        if (el.parentNode !== slot) slot.appendChild(el);
+        el.classList.add('docked', 'open');
+        el.style.left = ''; el.style.top = ''; el.style.visibility = '';
+        el.style.setProperty('display', 'block', 'important');
+      } else {
+        if (el.classList.contains('docked')) {
+          el.classList.remove('docked');
+          try { document.body.appendChild(el); } catch (e) {}
+        }
+        _ambPositionNoteEditor(anchorEl || _ambNoteChipEl(E, key, index));
+      }
     }
     function _ambCloseNoteEditor() {
       _ambNoteEd = null;
       const el = document.getElementById('ambient-note-editor');
-      if (el) { el.classList.remove('open'); el.style.removeProperty('display'); el.style.visibility = ''; }
+      if (el) {
+        const wasDocked = el.classList.contains('docked');
+        el.classList.remove('open', 'docked');
+        el.style.removeProperty('display'); el.style.visibility = '';
+        // Return the singleton to <body> so the floating (fixed) mode keeps
+        // working for the next non-docked open.
+        if (wasDocked && el.parentNode !== document.body) { try { document.body.appendChild(el); } catch (e) {} }
+      }
     }
     // Make a just-edited locked layer take effect on the NEXT iteration. The
     // engine schedules ~1.4 s ahead, so the next iteration's voices were already
@@ -9893,6 +9967,108 @@
         else wi++;
       }
       el.innerHTML = html;
+    }
+    // Key geometry shared by the keyboard AND the vertical roll — the same
+    // layout math as _ambBuildPiano (in px over a given width) so roll columns
+    // land exactly on their keys.
+    function _ambPianoKeyGeom(w) {
+      const LO = 36, HI = 84;
+      const black = (m) => { const p = ((m % 12) + 12) % 12; return p === 1 || p === 3 || p === 6 || p === 8 || p === 10; };
+      const whites = [];
+      for (let m = LO; m <= HI; m++) if (!black(m)) whites.push(m);
+      const wW = w / whites.length;
+      const keys = [], centers = {};
+      let wi = 0;
+      for (let m = LO; m <= HI; m++) {
+        if (black(m)) {
+          const x0 = wi * wW - wW * 0.32, bw = wW * 0.64;
+          keys.push({ m: m, x0: x0, x1: x0 + bw, black: true });
+          centers[m] = x0 + bw / 2;
+        } else {
+          keys.push({ m: m, x0: wi * wW, x1: (wi + 1) * wW, black: false });
+          centers[m] = (wi + 0.5) * wW;
+          wi++;
+        }
+      }
+      // x → midi: black keys first (they overlap the whites), else the white cell.
+      const midiAtX = (x) => {
+        for (const k of keys) if (k.black && x >= k.x0 && x <= k.x1) return k.m;
+        for (const k of keys) if (!k.black && x >= k.x0 && x < k.x1) return k.m;
+        return null;
+      };
+      return { LO: LO, HI: HI, wW: wW, keys: keys, centers: centers, midiAtX: midiAtX };
+    }
+    // Vertical editable roll (layers WITH a piano): PITCH runs across on the
+    // piano-key geometry (each block sits on its key, the keyboard directly
+    // below is the pitch legend), TIME flows DOWNWARD and the canvas grows
+    // with the loop — the .ambient-roll-scroll wrapper scrolls vertically.
+    const _AMB_VROLL_PXS = 44;   // px per second of loop time
+    function _ambDrawVRoll(cv, E, key, now) {
+      const scroll = cv.parentElement;
+      const w = ((scroll && scroll.clientWidth) || cv.clientWidth) | 0;
+      if (!w) return;
+      const meta = _ambRollMeta(E, key); if (!meta || !meta.list.length) return;
+      const fullP = meta.P > 0.05 ? meta.P : 1;
+      const units = _ambRollUnits(E, key, meta);
+      const uSec = fullP / units;
+      const uIdx = Math.max(0, Math.min(units - 1, cv._unitIdx | 0));
+      cv._unitIdx = uIdx; cv._units = units;
+      const W0 = uIdx * uSec, P = uSec;
+      const h = Math.max(120, Math.round(P * _AMB_VROLL_PXS));
+      if (cv.width !== w) cv.width = w;
+      if (cv.height !== h) { cv.height = h; cv.style.height = h + 'px'; }
+      const ctx = cv.getContext('2d'); if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      const g = _ambPianoKeyGeom(w);
+      cv._geom = g; cv._P = P; cv._W0 = W0; cv._vh = h;
+      // Column guides: a dark stripe under each black-key lane + white boundaries.
+      ctx.fillStyle = 'rgba(255,255,255,0.028)';
+      for (const k of g.keys) if (k.black) ctx.fillRect(k.x0, 0, k.x1 - k.x0, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+      ctx.beginPath();
+      for (const k of g.keys) if (!k.black) { ctx.moveTo(k.x0 + 0.5, 0); ctx.lineTo(k.x0 + 0.5, h); }
+      ctx.stroke();
+      // Beat gridlines (horizontal).
+      const cfg = E._cfg || (typeof E.getCfg === 'function' ? E.getCfg() : null);
+      const beat = 60 / ((cfg && cfg.bpm > 0) ? cfg.bpm : 120);
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.beginPath();
+      for (let t = Math.ceil(W0 / beat) * beat; t < W0 + P; t += beat) {
+        const y = ((t - W0) / P) * h;
+        ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5);
+      }
+      ctx.stroke();
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      // Playhead (horizontal) while the loop phase is inside this unit window.
+      let anchor = null; try { const fs = E.freeze && E.freeze[key]; if (fs && Number.isFinite(fs.anchor) && fs.anchor > 0) anchor = fs.anchor; } catch (e) {}
+      if (anchor != null && fullP > 0) {
+        const ph = (((now - anchor) % fullP) + fullP) % fullP;
+        if (ph >= W0 && ph < W0 + P) {
+          const y = ((ph - W0) / P) * h;
+          ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); ctx.stroke();
+        }
+      }
+      const isSeed = meta.kind === 'seed';
+      const edIdx = (_ambNoteEd && _ambNoteEd.E === E && _ambNoteEd.key === key) ? _ambNoteEd.index : -1;
+      const oK = meta.offKey, dK = meta.durKey;
+      for (let i = 0; i < meta.list.length; i++) {
+        const n = meta.list[i]; if (!(n && n.freq > 0)) continue;
+        const off = n[oK] || 0, dur = Math.max(0.05, (n[dK] || 100) / 1000);
+        if (off + dur < W0 || off > W0 + P) continue;
+        let m = Math.round(69 + 12 * Math.log2(n.freq / A));
+        const clamped = (m < g.LO || m > g.HI);   // off the keyboard → edge key, dimmer
+        m = Math.max(g.LO, Math.min(g.HI, m));
+        const kx = g.centers[m];
+        const kk = g.keys.find(q => q.m === m);
+        const bw = kk ? Math.max(4, (kk.x1 - kk.x0) * (kk.black ? 0.9 : 0.62)) : 8;
+        const y0 = Math.max(0, ((off - W0) / P) * h);
+        const y1 = Math.min(h, ((off + dur - W0) / P) * h);
+        const vol = (n.params && Number.isFinite(n.params.volume)) ? Math.max(0, Math.min(1, n.params.volume / 100)) : 0.8;
+        ctx.fillStyle = (i === edIdx) ? 'rgba(255,209,102,0.95)'
+          : isSeed ? 'rgba(159,180,214,' + ((clamped ? 0.25 : 0.35) + 0.45 * vol).toFixed(2) + ')'
+          : 'rgba(127,214,196,' + ((clamped ? 0.25 : 0.35) + 0.55 * vol).toFixed(2) + ')';
+        ctx.fillRect(kx - bw / 2, y0, bw, Math.max(4, y1 - y0));
+      }
     }
     // Light each expanded piano's keys for the notes its layer is sounding at
     // `now` (audible clock). Intensity fades over the note's duration. Only open
@@ -10458,6 +10634,10 @@
       // holds focusable note-edit chips, and focus inside an aria-hidden subtree
       // is blocked by the browser.
       (freezeKey ? '<span class="ambient-notes-live" data-nkey="' + freezeKey + '"></span>' : '') +
+      // Piano visualizer keyboard — DIRECTLY below the notes line so the
+      // vertical roll's pitch columns line up with the keys (the roll draws
+      // with the same key geometry; see _ambPianoKeyGeom).
+      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '') +
       // Per-layer controls row — sits at the top of the expanded body (above the
       // Voice group); hidden when the layer is collapsed. Holds Rename, the layer
       // Delete (moved out of the head, next to Rename), and the piano-visualizer
@@ -10468,10 +10648,9 @@
         '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
         (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
         (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
-      '</div>' : '') +
-      // Piano visualizer keyboard — in the body, below the controls row (built
-      // lazily on first expand; lit by _ambUpdatePianos).
-      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '');
+      '</div>' : '');
+      // (Piano keyboard moved ABOVE — right after the notes line — so the
+      // vertical roll sits directly on the keys.)
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
     const _ambGet = (E, id) => document.getElementById(_ambTrId(E, id));

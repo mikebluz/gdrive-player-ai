@@ -933,6 +933,23 @@
         // dblclick → duplicate handler can run cleanly without us
         // throwing a duplicate select/deselect into the mix.
         const performSingleClick = (ev) => {
+          // Place mode: a rest chip is a SPLIT target — drop the armed note at
+          // the clicked cell inside it (position from the click's x within the
+          // chip's span; continuation rows aren't clickable, head row only).
+          if (placeMode && !step.isSub && isRestStep(step)) {
+            let cellIn = 0;
+            try {
+              const rect = ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect ? ev.currentTarget.getBoundingClientRect() : null;
+              const l32 = Math.max(1, Math.round(stepLengthFactor(step) * 32));
+              if (rect && rect.width > 0 && ev && Number.isFinite(ev.clientX)) {
+                cellIn = Math.max(0, Math.min(l32 - 1, Math.floor((ev.clientX - rect.left) / rect.width * Math.min(l32, 32))));
+              }
+            } catch (e) {}
+            let s32 = 0;
+            for (let k = 0; k < i; k++) s32 += (sequence[k] && sequence[k]._wrapEditing) ? 0 : Math.max(0, Math.round(stepLengthFactor(sequence[k]) * 32));
+            _placeInsideRest(i, s32 + cellIn);
+            return;
+          }
           // While a variance edit is active, clicking the blinking
           // chip itself finalizes the edit and locks in whatever
           // alternates the user added. Clicking other chips falls
@@ -1136,6 +1153,24 @@
       });
       if (insertionPoint != null && insertionPoint >= sequence.length) {
         chipHost.appendChild(makeInsertCursor());
+      }
+      // Place mode: GHOST cells — clickable empty space from the sequence end
+      // to the end of its bar row, plus one whole empty bar beyond, so a note
+      // can land at any future position (gaps auto-fill with rests).
+      if (placeMode && chipHost && chipHost.classList && chipHost.classList.contains('lane-chips')) {
+        const end32 = _seqEnd32();
+        const rowFill = (32 - (_wrapCurrentCol - 1)) % 32;
+        const ghostCount = rowFill + 32;
+        for (let g = 0; g < ghostCount; g++) {
+          const gh = document.createElement('button');
+          gh.type = 'button';
+          gh.className = 'place-ghost';
+          gh.style.gridColumn = 'span 1';
+          gh.title = 'Place the armed note here';
+          const pos = end32 + g;
+          gh.addEventListener('click', () => _placeArmedAt32(pos));
+          chipHost.appendChild(gh);
+        }
       }
 
       // Restore the pre-render horizontal scroll on every lane strip first, so
@@ -2131,6 +2166,76 @@
     // chip clicks toggle that note in/out.
     let stepMode = false;
     let stepModeArmed = null; // a step template prepped by the last grid click
+    // ---- Place mode (paint notes anywhere on the bar grid) ----------------
+    // With ✎ PLACE on, the active lane's strip grows clickable GHOST cells
+    // (to the end of the current bar + one empty bar beyond) and rest chips
+    // become split targets: clicking drops the ARMED note (tap a grid note to
+    // arm — same template step mode uses) at that exact bar/cell, auto-filling
+    // any gap with musically-clean rests. Linear building is untouched.
+    let placeMode = false;
+    const _REST_FILL_SIZES = [[32, 4], [8, 1], [4, 0.5], [2, 0.25], [1, 0.125]];
+    function _restFill32(gap) {
+      const out = [];
+      let g = Math.max(0, Math.round(gap));
+      for (const [cells32, sub] of _REST_FILL_SIZES) {
+        while (g >= cells32) { out.push({ freq: null, label: '—', cellIndex: null, duration: 1, subdivision: sub }); g -= cells32; }
+      }
+      return out;
+    }
+    function _seqEnd32() {
+      return sequence.reduce((a, s) => a + ((s && s._wrapEditing) ? 0 : Math.max(0, Math.round(stepLengthFactor(s) * 32))), 0);
+    }
+    function _placeArmedTemplate() {
+      if (stepModeArmed) return stepModeArmed;
+      for (let i = sequence.length - 1; i >= 0; i--) {
+        const s = sequence[i];
+        if (s && !s.isSub && !s.chord && s.freq != null && !s._wrapEditing) return s;
+      }
+      return null;
+    }
+    function _placeNoteStep(tpl, len32) {
+      const sub = (len32 != null) ? (len32 / 8) : stepSubdivision;
+      return { freq: tpl.freq, label: tpl.label,
+               cellIndex: (tpl.cellIndex != null) ? tpl.cellIndex : null,
+               sound: tpl.sound, params: { ...(tpl.params || {}) },
+               duration: 1, subdivision: sub };
+    }
+    function _placeArmedAt32(pos32) {
+      const tpl = _placeArmedTemplate();
+      if (!tpl) { if (typeof showToast === 'function') showToast('Tap a grid note first to arm it'); return; }
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Place note');
+      const end32 = _seqEnd32();
+      const gap = pos32 - end32;
+      if (gap < 0) return;   // ghosts only exist beyond the end
+      _restFill32(gap).forEach(r => sequence.push(r));
+      sequence.push(_placeNoteStep(tpl));
+      renderSequence();
+      const sv = document.getElementById('save-btn'); if (sv) sv.disabled = sequence.length === 0;
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // Split rest step i so the armed note lands at absolute cell pos32; the
+    // note shrinks if the remaining rest space is shorter than the Step Div.
+    function _placeInsideRest(i, pos32) {
+      const tpl = _placeArmedTemplate();
+      if (!tpl) { if (typeof showToast === 'function') showToast('Tap a grid note first to arm it'); return; }
+      const step = sequence[i]; if (!step) return;
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Place note');
+      let start32 = 0;
+      for (let k = 0; k < i; k++) start32 += (sequence[k] && sequence[k]._wrapEditing) ? 0 : Math.max(0, Math.round(stepLengthFactor(sequence[k]) * 32));
+      const len32 = Math.max(1, Math.round(stepLengthFactor(step) * 32));
+      const inner = Math.max(0, Math.min(len32 - 1, pos32 - start32));
+      const want = Math.max(1, Math.round(stepSubdivision * 8));
+      const span = Math.min(want, len32 - inner);
+      const repl = [
+        ..._restFill32(inner),
+        _placeNoteStep(tpl, span === want ? null : span),
+        ..._restFill32(len32 - inner - span),
+      ];
+      sequence.splice(i, 1, ...repl);
+      renderSequence();
+      const sv = document.getElementById('save-btn'); if (sv) sv.disabled = sequence.length === 0;
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     function effectiveGridCols() {
       return Math.max(1, gridColumns | 0);
     }

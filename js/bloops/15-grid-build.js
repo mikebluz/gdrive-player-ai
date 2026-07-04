@@ -908,9 +908,9 @@
           // click handler only runs the workspace-mutation work.
           cell.classList.add('flash');
           setTimeout(() => cell.classList.remove('flash'), 80);
-          if (stepMode) {
-            // In step-sequencer mode the grid arms the current note instead
-            // of appending. Empty/filled chip clicks then toggle this note.
+          if (stepMode || (typeof placeMode !== 'undefined' && placeMode)) {
+            // In step-sequencer mode (and ✎ Place mode) the grid ARMS the
+            // current note instead of appending. Chip/ghost clicks then place it.
             armStepModeNote({
               freq: notes[i].freq,
               label: notes[i].label,

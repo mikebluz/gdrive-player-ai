@@ -10760,6 +10760,24 @@
       padding: 3px 6px;
     }
     .step-roll-seq[hidden] { display: none !important; }
+
+    /* ---- ✎ Place mode ---- */
+    .kwr-extra {
+      background: #1a1a2c; border: 1px solid #2d2d3f; color: #a0aec0;
+      border-radius: 7px; cursor: pointer; padding: 6px 10px;
+      font: 700 0.72rem 'Segoe UI', sans-serif; letter-spacing: 0.04em;
+    }
+    .kwr-extra:hover { border-color: #4a5568; color: #e2e8f0; }
+    .kwr-extra.active { background: #7fd6c4; border-color: #7fd6c4; color: #1a202c; }
+    .kwr-extra.flash { background: #2d2d44; }
+    /* Ghost cells: clickable empty strip space while Place mode is on. */
+    .lane-chips > .place-ghost {
+      width: auto; min-width: 0; height: 100%;
+      background: rgba(127, 214, 196, 0.04);
+      border: 1px dashed rgba(127, 214, 196, 0.22);
+      border-radius: 3px; cursor: copy; padding: 0;
+    }
+    .lane-chips > .place-ghost:hover { background: rgba(127, 214, 196, 0.18); border-style: solid; }
     /* 🎧 RAW audition (tone pickers + sample manager): tuned buffer straight
        to the hardware — no envelope/boost/FX/master chain. */
     .sm-wave-raw, #sample-bank-mgr .sbm-raw {

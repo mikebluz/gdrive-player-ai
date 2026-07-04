@@ -826,6 +826,26 @@
       });
     });
 
+    // ---- ✎ PLACE toggle + ⤸ BAR rest -------------------------------------
+    (function bindPlaceButtons() {
+      const pb = document.getElementById('place-btn');
+      if (pb) pb.addEventListener('click', () => {
+        placeMode = !placeMode;
+        pb.classList.toggle('active', placeMode);
+        try { renderSequence(); } catch (e) {}
+        if (placeMode && typeof showToast === 'function') showToast('Place: tap a grid note to arm it, then click the strip');
+      });
+      const bb = document.getElementById('bar-rest-btn');
+      if (bb) bb.addEventListener('click', () => {
+        bb.classList.add('flash');
+        setTimeout(() => bb.classList.remove('flash'), 80);
+        if (typeof snapshotForUndo === 'function') snapshotForUndo('Rest to bar');
+        const end32 = _seqEnd32();
+        const gap = ((32 - (end32 % 32)) % 32) || 32;   // full empty bar when already on a boundary
+        _restFill32(gap).forEach(r => addToSequence(r));
+      });
+    })();
+
     // ---- Lock button (left of BPM) ----
     // Click toggles keepMode. While a wrap is active, press-and-hold
     // opens a small menu with "Shift tonic" — cycles through the wrap's

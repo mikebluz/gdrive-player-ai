@@ -888,8 +888,10 @@
           if (gridMode !== 'sequencer') return;
           // Keep off: Spell-mode click event also bails out here. The
           // sustained-tap audio from pointerdown still played; this
-          // gate just prevents the workspace mutation.
-          if (!keepMode) return;
+          // gate just prevents the workspace mutation. ✎ Place mode passes
+          // through — its cell click only ARMS (no mutation), and gating it
+          // on Keep made PLACE look completely dead at the default Keep-off.
+          if (!keepMode && !(typeof placeMode !== 'undefined' && placeMode)) return;
           // Wrap template — pointerdown already auditioned the form
           // and (with Keep on) appended a transposed copy. Bail so
           // we don't also tack on a single-note step here.

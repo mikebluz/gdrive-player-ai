@@ -730,7 +730,24 @@
 
       const isEmpty = sequence.length === 0 && pendingChord.length === 0;
       if (isEmpty) {
-        chipHost.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
+        // Place mode must work on an EMPTY lane too (this early-return used to
+        // skip the ghost rendering entirely, so ✎ PLACE appeared dead on a
+        // fresh lane): show one bar of ghost cells instead of the hint text.
+        if (placeMode && chipHost && chipHost.classList && chipHost.classList.contains('lane-chips')) {
+          chipHost.innerHTML = '';
+          for (let g = 0; g < 32; g++) {
+            const gh = document.createElement('button');
+            gh.type = 'button';
+            gh.className = 'place-ghost';
+            gh.style.gridColumn = 'span 1';
+            gh.title = 'Place the armed note here';
+            const pos = g;
+            gh.addEventListener('click', () => _placeArmedAt32(pos));
+            chipHost.appendChild(gh);
+          }
+        } else {
+          chipHost.innerHTML = '<span class="seq-empty">Click notes or REST to build a sequence…</span>';
+        }
         const revBtn = document.getElementById('reverse-btn');
         if (revBtn) revBtn.disabled = true;
         const shuffBtn = document.getElementById('shuffle-btn');

@@ -9611,10 +9611,16 @@
             params: { type: (params && params.type) || '', volume: params ? params.volume : undefined, pan: params ? params.pan : undefined } });
         };
         if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = true;
+        // Wall-clock budget: a dense project on a slow (mobile) device can
+        // spend 50 ms+ per tick — unbounded, the pre-roll froze the UI for
+        // seconds. Bail at the budget and show whatever was captured (the
+        // loop must stay synchronous: it stubs globals, so it can't yield).
         const DT = 0.15, MAXT = 400, horizon = P * 2 + 4;
+        const _budgetEnd = ((typeof performance !== 'undefined') ? performance.now() : 0) + 300;
         for (let i = 0; i < MAXT && clock < horizon; i++) {
           try { _ambTick(E2); } catch (e) {}
           clock += DT;
+          if (typeof performance !== 'undefined' && performance.now() > _budgetEnd) break;
         }
       } finally {
         if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = false;
@@ -13970,7 +13976,24 @@
         if (fl) { e.stopPropagation(); try { const L = _ambLayerByKey(E, fl.dataset.flkey); if (L) { L.freezeLock = !L.freezeLock; fl.classList.toggle('active', !!L.freezeLock); if (typeof persistWorkspace === 'function') persistWorkspace(); } } catch (err) { console.warn('Lock toggle failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
         const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
-        if (pb) { e.stopPropagation(); try { const h2 = document.getElementById(E.hostId); const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]'); if (pe) { _ambBuildPiano(pe); const open = pe.classList.toggle('open'); pb.classList.toggle('active', open); _ambUpdateNotesLive(E); } } catch (err) { console.warn('Piano toggle failed', err); } return; }
+        if (pb) {
+          e.stopPropagation();
+          try {
+            const h2 = document.getElementById(E.hostId);
+            const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]');
+            if (pe) {
+              _ambBuildPiano(pe);
+              const open = pe.classList.toggle('open');
+              pb.classList.toggle('active', open);
+              // Defer the notes-line refresh a frame: opening the piano can
+              // trigger the seed-phrase render (a synchronous engine pre-roll),
+              // which on a slow device would freeze the tap — the keys must
+              // paint first so the press visibly lands.
+              setTimeout(() => { try { _ambUpdateNotesLive(E); } catch (e2) {} }, 30);
+            }
+          } catch (err) { console.warn('Piano toggle failed', err); }
+          return;
+        }
         // Roll header: unit pager (multi-unit frozen loops) + "↺ Original".
         const rpg = e.target && e.target.closest && e.target.closest('.ambient-roll-prev, .ambient-roll-next');
         if (rpg) {

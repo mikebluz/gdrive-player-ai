@@ -464,6 +464,15 @@
       { name: 'Mokongo', k: 11, n: 12, rot: 1,  grp: 3, hint: 'Mokongo — Aka Pygmies' },
       { name: 'Aka 24',  k: 11, n: 24, rot: 23, grp: 3, hint: 'Aka Pygmies upper-leg drum' },
       { name: 'Sangha',  k: 13, n: 24, rot: 9,  grp: 3, hint: 'Aka Pygmies of the upper Sangha' },
+      // Clave / bell timelines (grp 4) — the famous NON-Euclidean patterns
+      // (Toussaint's distinguished timelines minus Bossa, which IS Euclidean
+      // and lives in the world row). These set the hit PATTERN directly.
+      { name: 'Son 3-2',  pat: 'x..x..x...x.x...', grp: 4, hint: 'Son clave, 3-2 (Cuba)' },
+      { name: 'Son 2-3',  pat: '..x.x...x..x..x.', grp: 4, hint: 'Son clave, 2-3 (Cuba)' },
+      { name: 'Rumba',    pat: 'x..x...x..x.x...', grp: 4, hint: 'Rumba clave, 3-2 (Cuba)' },
+      { name: 'Shiko',    pat: 'x...x.x...x.x...', grp: 4, hint: 'Shiko timeline (West Africa)' },
+      { name: 'Gahu',     pat: 'x..x..x...x...x.', grp: 4, hint: 'Gahu bell (Ewe, Ghana)' },
+      { name: 'Soukous',  pat: 'x..x..x...xx....', grp: 4, hint: 'Soukous timeline (Congo)' },
     ];
     function showEuclidDialog() {
       const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes) && notes.length)
@@ -593,6 +602,11 @@
         '<div class="euc-presets" id="euc-presets-3">' +
           _EUC_PRESETS.map((pz, i) => (pz.grp !== 3) ? '' :
             '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
+        '</div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Presets — clave / bell (non-Euclidean)</div>' +
+        '<div class="euc-presets" id="euc-presets-4">' +
+          _EUC_PRESETS.map((pz, i) => (pz.grp !== 4) ? '' :
+            '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — ' + pz.pat + '">' + pz.name + '<small>' + (pz.pat.match(/x/g) || []).length + ',' + pz.pat.length + '</small></button>').join('') +
         '</div>' +
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +
         '<div class="euc-strip" id="euc-strip"></div>' +
@@ -940,16 +954,46 @@
       // Preset chips — set Hits/Steps/Rotate (+ Length = Steps) and re-seed;
       // the matching chip highlights whenever the current values equal one.
       const refreshPresetHi = () => {
+        const liveHits = state.steps.map(s => (s && s.hit) ? 'x' : '.').join('');
         modal.querySelectorAll('.euc-preset-chip').forEach(btn => {
           const pz = _EUC_PRESETS[parseInt(btn.dataset.pi, 10)];
-          btn.classList.toggle('active', !!pz && state.k === pz.k && state.n === pz.n && state.rot === pz.rot);
+          if (!pz) { btn.classList.remove('active'); return; }
+          btn.classList.toggle('active', pz.pat
+            ? liveHits === pz.pat
+            : (state.k === pz.k && state.n === pz.n && state.rot === pz.rot));
         });
       };
       modal.addEventListener('click', (e) => {
         const btn = e.target.closest('.euc-preset-chip'); if (!btn) return;
         const pz = _EUC_PRESETS[parseInt(btn.dataset.pi, 10)]; if (!pz) return;
-        state.n = pz.n; state.k = pz.k; state.rot = pz.rot; state.length = pz.n;
-        seed(); refreshTopVals(); renderStrip(); renderEditor(); refreshPresetHi();
+        if (pz.pat) {
+          // NON-Euclidean timeline: seed with the right slot count, then
+          // overwrite the hit placement with the exact pattern (newly-made
+          // hits get the same defaults as the editor's Make Note ●).
+          const pat = pz.pat;
+          state.n = pat.length; state.length = pat.length;
+          state.k = (pat.match(/x/g) || []).length; state.rot = 0;
+          seed();
+          let hits = 0;
+          state.steps.forEach((s, i) => {
+            const want = pat[i] === 'x';
+            if (want) {
+              s.hit = true;
+              if (!Array.isArray(s.noteIdxs) || !s.noteIdxs.length) s.noteIdxs = [0];
+              if (!s.noteMode) s.noteMode = 'notes';
+              if (state.contentMode === 'wraps' && state.wrapSteps.length && !Number.isFinite(s.wrapIdx)) {
+                s.wrapIdx = hits % state.wrapSteps.length;
+              }
+              hits++;
+            } else {
+              s.hit = false;
+            }
+          });
+        } else {
+          state.n = pz.n; state.k = pz.k; state.rot = pz.rot; state.length = pz.n;
+          seed();
+        }
+        refreshTopVals(); renderStrip(); renderEditor(); refreshPresetHi();
       });
       { const _rtv = refreshTopVals;
         // Keep the highlight in sync with every top-value refresh (typing,

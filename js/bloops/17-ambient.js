@@ -11046,6 +11046,16 @@
             '<span class="amb-sec-reps"><button type="button" data-rep="-1">−</button><b>' + ((u.reps | 0) || 1) + '×</b><button type="button" data-rep="1">+</button></span>' +
             '<span class="amb-sec-move"><button type="button" data-mv="-1"' + (i === 0 ? ' disabled' : '') + '>▲</button><button type="button" data-mv="1"' + (i === units.length - 1 ? ' disabled' : '') + '>▼</button></span>' +
             '<button type="button" class="amb-sec-del" data-del="1" title="Remove section">✕</button>' +
+            // Loop size + time-stretch: ×½/×2 halve/double the phrase; ±1b
+            // snaps to a whole bar count (at the unit's own bpm). Notes scale
+            // proportionally; the layer's Interval refits after every change.
+            '<span class="amb-sec-len">' +
+              '<button type="button" data-str="0.5" title="Half length — plays twice as fast">×½</button>' +
+              '<button type="button" data-bar="-1" title="One bar shorter (stretch to fit)">−1b</button>' +
+              '<b>' + _ambUnitSizeLabel(u) + '</b>' +
+              '<button type="button" data-bar="1" title="One bar longer (stretch to fit)">+1b</button>' +
+              '<button type="button" data-str="2" title="Double length — plays half speed">×2</button>' +
+            '</span>' +
           '</div>';
         });
         if (!units.length) h += '<div class="ambient-cap-empty">No sections — send a saved sequence here with “Append → Seq”.</div>';
@@ -11082,6 +11092,25 @@
             resetState(); persist(); render();
             if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
           });
+          const applyStretch = (f) => {
+            const sq2 = getSq(); const u2 = sq2 && sq2.units[i]; if (!u2 || !(f > 0)) return;
+            if (Math.abs(f - 1) < 0.01) return;
+            if (f < 1 && _unitTotalMs(u2) * f < 200) return;   // don't shrink into nothing
+            _ambStretchUnit(u2, f);
+            try { _ambFitSeqInterval(sq2); } catch (e) {}
+            resetState(); persist(); render();
+            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          };
+          row.querySelectorAll('[data-str]').forEach(b => b.addEventListener('click', () => applyStretch(parseFloat(b.dataset.str))));
+          row.querySelectorAll('[data-bar]').forEach(b => b.addEventListener('click', () => {
+            const sq2 = getSq(); const u2 = sq2 && sq2.units[i]; if (!u2) return;
+            const cur = _ambUnitBars(u2); if (!(cur > 0)) return;
+            // ±1 whole bar: from a fractional length the first press snaps to
+            // the nearest whole bar in that direction.
+            const d = parseInt(b.dataset.bar, 10);
+            const target = Math.max(1, Math.round(cur) + d);
+            applyStretch(target / cur);
+          }));
         });
         const ok = modal.querySelector('.amb-sec-ok'); if (ok) ok.addEventListener('click', close);
       };
@@ -13739,6 +13768,25 @@
     function _unitTotalMs(unit) {
       if (!unit || !Array.isArray(unit.events)) return 0;
       return unit.events.reduce((s, e) => s + Math.max(0, e.durMs | 0), 0);
+    }
+    // Time-stretch a unit's phrase: every event's durMs scales by f, so the
+    // loop gets proportionally longer/shorter (notes keep their relative feel).
+    function _ambStretchUnit(u, f) {
+      if (!u || !Array.isArray(u.events) || !(f > 0)) return;
+      u.events.forEach(e => { e.durMs = Math.max(20, Math.round(Math.max(0, e.durMs | 0) * f)); });
+    }
+    // A unit's length in BARS at its own saved bpm (4/4 bar).
+    function _ambUnitBars(u) {
+      const bpm = Math.max(20, ((u && u.bpm) | 0) || 120);
+      return _unitTotalMs(u) / ((60 / bpm) * 4 * 1000);
+    }
+    // "4 bars · 8.0s" — the loop size a unit produces.
+    function _ambUnitSizeLabel(u) {
+      const ms = _unitTotalMs(u);
+      const bars = _ambUnitBars(u);
+      const near = Math.abs(bars - Math.round(bars)) < 0.05;
+      const bLab = near ? String(Math.round(bars)) : bars.toFixed(1);
+      return bLab + ' bar' + ((near && Math.round(bars) === 1) ? '' : 's') + ' · ' + (ms / 1000).toFixed(1) + 's';
     }
     // Size a seq layer's Interval (and Length) to its phrase so the loop fires
     // exactly when the previous pass ends — no silence gaps, no overlap-cut.

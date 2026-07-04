@@ -2963,6 +2963,10 @@
       border-radius: 6px; padding: 2px 9px; font-size: 0.8rem; cursor: pointer; }
     .amb-sec-row button:disabled { opacity: 0.35; cursor: default; }
     .amb-sec-del { margin-left: auto; color: #e06c75 !important; }
+    /* Loop size + time-stretch row (full-width line inside each section row) */
+    .amb-sec-len { flex: 1 1 100%; display: inline-flex; align-items: center; gap: 5px; }
+    .amb-sec-len b { flex: 1 1 auto; text-align: center; color: #9fe8d8; font-size: 0.74rem; font-weight: 700; white-space: nowrap; }
+    .amb-sec-len button { padding: 2px 7px; font-size: 0.72rem; }
 
     /* Ramp multi-target picker */
     .amb-ramptgt-modal { min-width: min(92vw, 360px); }

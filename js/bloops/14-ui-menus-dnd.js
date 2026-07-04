@@ -1309,7 +1309,19 @@
         const _sid = (typeof _ambSampleIdOfSaved === 'function') ? _ambSampleIdOfSaved(saved) : null;
         const buildModeMenu = (areaIdx) => {
           const seqs = (typeof _ambListAreaSeqs === 'function') ? _ambListAreaSeqs(areaIdx) : [];
-          const sub = [{ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new', undefined, areaIdx) }];
+          const sub = [];
+          // Preview what this send creates: one Seq layer per lane, each
+          // looping its lane's full phrase (its "unit") — so the user sees
+          // the resulting loop size(s) before committing.
+          try {
+            const lus = (typeof _ambLaneUnitsFromSaved === 'function') ? _ambLaneUnitsFromSaved(saved) : [];
+            if (lus.length && typeof _ambUnitSizeLabel === 'function') {
+              sub.push({ label: lus.length === 1 ? 'Creates 1 unit:' : ('Creates ' + lus.length + ' units (one Seq layer per lane):'), disabled: true });
+              lus.forEach(lu => sub.push({ label: '  ' + (lu.name || 'Sequence') + ' — ' + _ambUnitSizeLabel(lu.unit), disabled: true }));
+              sub.push('hr');
+            }
+          } catch (e) {}
+          sub.push({ label: '＋ New Seq', fn: () => _ambSendSavedToMaster(seqIndex, 'new', undefined, areaIdx) });
           sub.push('hr');
           // Append adds this sequence as a new SECTION on an existing Seq layer
           // (edit reps / order / Random / Key-master in the layer's Sections popover).

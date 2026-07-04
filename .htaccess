@@ -1,0 +1,20 @@
+# Caching policy — fixes the mobile "black screen after a deploy" stale-cache
+# trap. The deploy stamps every asset URL with ?v=<timestamp>, but by default
+# the server let browsers cache the HTML itself for an unpredictable time — a
+# phone would then serve a stale bloops.html that references LAST deploy's
+# asset versions, one fails, and boot dies before the grid builds.
+#
+#   • HTML: no-cache → the browser REVALIDATES the page on every load (a
+#     cheap 304 when unchanged, so no real cost), and therefore always sees
+#     the current ?v= asset URLs.
+#   • Assets (js/css/wasm/media): cached for a week — their URLs change on
+#     every deploy, so stale copies simply stop being referenced. A
+#     fresh-HTML/stale-asset mix becomes impossible.
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(js|css|wasm|json|png|jpe?g|svg|gif|webp|woff2?|mp3|wav|ogg|m4a|flac)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>

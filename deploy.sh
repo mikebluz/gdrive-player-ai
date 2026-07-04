@@ -76,6 +76,9 @@ trap 'rm -rf "$STAGE_DIR"; restore_dev_bypass' EXIT
 
 echo "📦 Staging files..."
 cp -r index.html bloops.html player.html artwork.html game.html css js banner.jpg me2026.jpg samples artwork vendor "$STAGE_DIR/"
+# Caching policy (HTML revalidates every load; versioned assets cache long) —
+# without it, phones cache stale HTML pointing at old ?v= assets and boot dies.
+cp .htaccess "$STAGE_DIR/"
 
 # -----------------------------------------------
 # Cache-bust: stamp a fresh version onto the staged HTML's asset URLs so

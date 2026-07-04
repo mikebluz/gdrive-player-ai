@@ -2109,6 +2109,18 @@
       ['Andalusian', 'minor', [[1, 'min'], [7, 'maj'], [6, 'maj'], [5, 'maj']]],
       ['i–VI–iv–V', 'minor', [[1, 'min'], [6, 'maj'], [4, 'min'], [5, 'maj']]],
     ];
+    // The FULL standards catalog for the Bloom progression pickers: every
+    // family of the Prog pad's PROGRESSIONS library (major, minor, dorian,
+    // phrygian, lydian, mixolydian, harmonic/melodic minor) as
+    // [familyLabel, [[name, family, steps], …]]. Falls back to the legacy
+    // 10-entry list if the catalog isn't available.
+    function _ambProgFamilies() {
+      if (typeof PROGRESSIONS === 'undefined' || !PROGRESSIONS) {
+        return [['Standard', _AMB_PROG_STANDARDS.slice()]];
+      }
+      const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+      return Object.keys(PROGRESSIONS).map(f => [cap(f), (PROGRESSIONS[f] || []).map(t => [t.name, f, t.steps])]);
+    }
     // PROG blocks ({chordRoot, chordQuality}) → [{ root, intervals }].
     function _ambProgChordsFromBlocks(blocks) {
       return (blocks || []).map(b => {
@@ -2324,14 +2336,25 @@
         userItems.push({ label: '  ' + p.name, fn: () => apply(p.name, chords) });
       });
       if (userItems.length) { items.push({ label: 'User', disabled: true }); userItems.forEach(i => items.push(i)); }
-      // STANDARD group — built-ins.
-      const stdItems = [];
-      _AMB_PROG_STANDARDS.forEach(([nm, fam, steps]) => {
-        const chords = _ambResolveStandard(fam, steps);
-        if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
-        stdItems.push({ label: '  ' + nm, fn: () => apply(nm, chords) });
+      // STANDARD group — the full Prog-pad catalog, one submenu per family
+      // (flat it would be ~100 rows). Key-filtered per entry; a family with
+      // nothing that fits the key disappears entirely.
+      const famItems = [];
+      _ambProgFamilies().forEach(([famLabel, list]) => {
+        const sub = [];
+        list.forEach(([nm, fam, steps]) => {
+          const chords = _ambResolveStandard(fam, steps);
+          if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
+          sub.push({ label: '  ' + nm, fn: () => apply(nm, chords) });
+        });
+        if (!sub.length) return;
+        famItems.push({ label: famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
+          { label: '‹ Back', fn: () => setTimeout(() => _ambOpenGlobalProgMenu(E, x, y), 0) },
+          { label: famLabel, disabled: true },
+          ...sub,
+        ]), 0) });
       });
-      if (stdItems.length) { if (items.length) items.push('hr'); items.push({ label: 'Standard', disabled: true }); stdItems.forEach(i => items.push(i)); }
+      if (famItems.length) { if (items.length) items.push('hr'); items.push({ label: 'Standard', disabled: true }); famItems.forEach(i => items.push(i)); }
       if (!items.some(i => i && i.fn)) items.push({ label: 'No progressions available', disabled: true });
       showCtxMenu(x, y, items);
     }
@@ -2494,10 +2517,21 @@
       };
       const progSub = () => {
         const items = [{ label: 'Standards', disabled: true }];
-        _AMB_PROG_STANDARDS.forEach(([nm, fam, steps]) => {
-          const chords = _ambResolveStandard(fam, steps);
-          if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return;
-          items.push({ label: '  ' + nm, fn: () => apply({ type: 'prog', name: nm, chords }) });
+        // Full Prog-pad catalog, one submenu per family (major, minor,
+        // dorian, …) — flat it would be ~100 rows. Key-filtered per entry.
+        _ambProgFamilies().forEach(([famLabel, list]) => {
+          const sub = [];
+          list.forEach(([nm, fam, steps]) => {
+            const chords = _ambResolveStandard(fam, steps);
+            if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return;
+            sub.push({ label: '  ' + nm, fn: () => apply({ type: 'prog', name: nm, chords }) });
+          });
+          if (!sub.length) return;
+          items.push({ label: '  ' + famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [
+            { label: '‹ Back', fn: () => setTimeout(progSub, 0) },
+            { label: famLabel, disabled: true },
+            ...sub,
+          ]), 0) });
         });
         const pub = (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
         if (pub.length) {

@@ -252,10 +252,11 @@
     function _sdDestsForSeed(baseType) {
       const base = SD_MOD_DESTS.slice();
       if (baseType === 'wavetable') base.push({ id: 'wtpos', label: 'WT Pos' });
+      if (baseType === 'sample:grain') base.push({ id: 'grainpos', label: 'Position' });   // scan the buffer
       return base;
     }
     // Full-scale (amount=100) range, in the destination param's own units.
-    const SD_DEST_RANGE = { pitch: 1200 /*cents*/, cutoff: 4000 /*Hz*/, reso: 8 /*Q*/, amp: 0.9 /*gain*/, pan: 1, wtpos: 1 /*crossfade*/ };
+    const SD_DEST_RANGE = { pitch: 1200 /*cents*/, cutoff: 4000 /*Hz*/, reso: 8 /*Q*/, amp: 0.9 /*gain*/, pan: 1, wtpos: 1 /*crossfade*/, grainpos: 1 /*buffer fraction*/ };
     function _sdMatrixGet(P, src, dest) {
       const e = (P.modMatrix || []).find(r => r.src === src && r.dest === dest);
       return e ? (e.amount || 0) : 0;
@@ -569,22 +570,46 @@
     // picks up the current value. Full position-scan modulation still needs
     // the hand-rolled grain scheduler (deferred).
     function _sdGrainModHook(player, params, ctx) {
-      const matrix = (params && Array.isArray(params.modMatrix))
-        ? params.modMatrix.filter(r => r && r.amount && r.dest === 'pitch') : [];
-      if (!matrix.length || typeof Tone === 'undefined') return null;
-      const routes = matrix
-        .map(r => ({ scale: (r.amount / 100) * (SD_DEST_RANGE.pitch || 1200), fn: _sdModSrcFn(r.src, params, ctx) }))
+      const all = (params && Array.isArray(params.modMatrix)) ? params.modMatrix : [];
+      const pitchM = all.filter(r => r && r.amount && r.dest === 'pitch');
+      const posM = all.filter(r => r && r.amount && r.dest === 'grainpos');
+      if ((!pitchM.length && !posM.length) || typeof Tone === 'undefined') return null;
+      const mkRoutes = (m, range) => m
+        .map(r => ({ scale: (r.amount / 100) * range, fn: _sdModSrcFn(r.src, params, ctx) }))
         .filter(r => r.fn);
-      if (!routes.length) return null;
+      const routes = mkRoutes(pitchM, SD_DEST_RANGE.pitch || 1200);
+      // POSITION SCAN — the granular "full grain scheduler" limitation, solved
+      // at control rate: each tick moves the GrainPlayer's loop WINDOW to the
+      // scanned position (base grainOffset + mod, as a buffer fraction), so
+      // successive grains read from the moving position. The window is a few
+      // grain lengths wide — narrow enough to sound like a read head, wide
+      // enough that the loop wrap doesn't machine-gun a single grain.
+      const posRoutes = mkRoutes(posM, SD_DEST_RANGE.grainpos || 1);
+      if (!routes.length && !posRoutes.length) return null;
       const baseDet = Number.isFinite(player.detune) ? player.detune : 0;
+      const basePos = Math.max(0, Math.min(0.999, Number.isFinite(params.grainOffset) ? params.grainOffset : 0));
       const t0 = (ctx && typeof ctx.startTime === 'number') ? ctx.startTime : Tone.now();
       const iv = setInterval(() => {
         try {
           const t = Tone.now() - t0;
           if (t < 0) return;
-          let det = baseDet;
-          for (const r of routes) det += r.scale * r.fn(t);
-          player.detune = det;
+          if (routes.length) {
+            let det = baseDet;
+            for (const r of routes) det += r.scale * r.fn(t);
+            player.detune = det;
+          }
+          if (posRoutes.length && player.buffer && player.buffer.loaded) {   // pre-load writes throw inside GrainPlayer's clock
+            const durSec = (player.buffer && player.buffer.duration) || 0;
+            if (durSec > 0.02) {
+              let pos = basePos;
+              for (const r of posRoutes) pos += r.scale * r.fn(t);
+              pos = Math.max(0, Math.min(0.999, pos));
+              const win = Math.max(0.05, ((params.grainSize != null) ? params.grainSize : 0.1) * 3);
+              const a = Math.min(pos * durSec, Math.max(0, durSec - win));
+              player.loopStart = a;
+              player.loopEnd = Math.min(durSec, a + win);
+            }
+          }
         } catch (e) {}
       }, 45);
       return { dispose: () => clearInterval(iv) };

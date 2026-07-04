@@ -194,11 +194,9 @@
         const sr = audioBuf.sampleRate || 44100;
         const stride = Math.max(1, Math.floor(N / 6000));
         // Body RMS: mean energy over the first ~1 s from ONSET (skip leading
-        // silence). A transient-max or peak measure under-boosts exactly the
-        // percussive voices this exists for — their attack pins the peak while
-        // the body carries the perceived loudness. No peak ceiling: voices are
-        // float (the flat +12 dB boost already runs per-voice peaks past 1.0)
-        // and summing headroom is the master chain's job.
+        // silence). A transient-max or peak-only measure under-boosts exactly
+        // the percussive voices this exists for — their attack pins the peak
+        // while the body carries the perceived loudness.
         let onset = -1;
         for (let i = 0; i < N; i += stride) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > 0.01) { onset = i; break; } }
         if (onset < 0) { info._normByMidi[midi] = 1; return 1; }
@@ -208,7 +206,17 @@
         const rms = cnt > 0 ? Math.sqrt(sum / cnt) : 0;
         const REF_RMS = 0.25;                   // body target (≈ a healthy synth voice)
         const MAX_EXTRA = 6;                    // cap ≤ +15.6 dB
+        // PEAK CEILING: keep the boosted true peak ≤ 0.75 (pre the flat +12 dB
+        // boost). Without it the RMS target normalized long-tail pianos to
+        // ~full scale (~4.7 per voice post-boost) and a few overlapping notes
+        // summed into audible master distortion. Peak scans at stride 4 — the
+        // coarse RMS stride slips past millisecond transients and under-reads
+        // the peak by 25%+ (the ceiling then doesn't bite); stride 4 is exact
+        // enough and ~0.3 ms on a 25 s buffer (cached per midi).
+        let peak = 0;
+        for (let i = onset; i < N; i += 4) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > peak) peak = a; }
         let g = (rms > 1e-4) ? (REF_RMS / rms) : 1;
+        if (peak > 1e-4) g = Math.min(g, 0.75 / peak);
         g = Math.max(1, Math.min(MAX_EXTRA, g));
         info._normByMidi[midi] = g;
         return g;

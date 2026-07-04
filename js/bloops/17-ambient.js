@@ -4626,15 +4626,20 @@
         const stepDur = step.duration || 1;
         const stepSub = (step.subdivision != null) ? step.subdivision : gsub;
         const durMs = Math.max(20, Math.round((60 / bpm) * stepSub * stepDur * 1000));
+        // vp: the per-voice FULL step params (envelope, filter, pan, volume —
+        // everything) — additive; the Seq layer's Grid-direct output replays
+        // the step exactly as Seed played it. Old units without vp fall back
+        // to the shared voice patch.
+        const _clone = (o) => { try { return o ? JSON.parse(JSON.stringify(o)) : null; } catch (e) { return null; } };
         if (Array.isArray(step.chord) && step.chord.length) {
           const playable = step.chord.filter(n => n && n.freq != null);
           const freqs = playable.map(n => n.freq);
           const sounds = playable.map(n => n.sound || null); // per-voice source tone (merge preserves these)
           const vel = step.chord.reduce((m, n) => Math.max(m, (n && n.params && Number.isFinite(n.params.volume)) ? n.params.volume : 100), 0) || 100;
-          events.push({ freqs, sounds, durMs, vel });
+          events.push({ freqs, sounds, durMs, vel, vp: playable.map(n => _clone(n.params)) });
         } else if (step.freq != null) {
           const vel = (step.params && Number.isFinite(step.params.volume)) ? step.params.volume : 100;
-          events.push({ freqs: [step.freq], sounds: [step.sound || null], durMs, vel });
+          events.push({ freqs: [step.freq], sounds: [step.sound || null], durMs, vel, vp: [_clone(step.params)] });
         } else {
           events.push({ freqs: [], sounds: [], durMs, vel: 0 }); // rest preserves timing
         }
@@ -4898,14 +4903,14 @@
           if (_ambRand() < 0.15 * depth) { off += durMs; continue; } // drop note (keep timing)
           freqs = freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq)));
         }
-        events.push({ freqs, durMs, vel: ev.vel, sounds: ev.sounds, padStyle: false, offMs: off });
+        events.push({ freqs, durMs, vel: ev.vel, sounds: ev.sounds, vp: ev.vp, padStyle: false, offMs: off });   // vp: captured per-voice params (grid-direct replay)
         off += durMs;
       }
       // RHYTHM mode: occasionally append an extra nudged echo at the phrase tail.
       if (!verbatim && seq.varyMode === 'rhythm' && _ambRand() < 0.2 * depth) {
         const ev = seed.events[Math.floor(_ambRand() * seed.events.length)];
         if (ev && ev.freqs.length) {
-          events.push({ freqs: ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), durMs: Math.max(40, ev.durMs | 0), vel: ev.vel, sounds: ev.sounds, padStyle: false, offMs: off });
+          events.push({ freqs: ev.freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq))), durMs: Math.max(40, ev.durMs | 0), vel: ev.vel, sounds: ev.sounds, vp: ev.vp, padStyle: false, offMs: off });
         }
       }
       return { events, advanceMs, ctx, baseAt: at, cur: 0 };
@@ -4919,11 +4924,39 @@
       const dest = _ambLayerDest(ctx.key), dmod = _ambLayerDetuneMod(ctx.key);
       const durMs = ev.durMs, padStyle = ev.padStyle, sounds = ev.sounds;
       const base = ctx.base, type = ctx.type, layerSet = ctx.layerSet, seqEnsLock = ctx.seqEnsLock;
+      let _ensPick = (st && Number.isFinite(st._ensPick)) ? st._ensPick : 0;
+      // ---- GRID-DIRECT output (faithful Seed replay) ----------------------
+      // seq.out === 'grid': play each event with its CAPTURED per-voice step
+      // params (envelope, filter, pan, volume — everything) straight into the
+      // grid entry bus. No Bloom layer chain (its output Panner mono-downmixes,
+      // its ADSR overrides every note), no ×0.5 Bloom master trim, no ×0.6
+      // blend scale, no spread re-panning — the send sounds exactly like the
+      // lane did in Seed. Level still applies (numerically; 70 = unity).
+      // Default for layers created by "Send to Bloom"; the card's Output
+      // select flips back to the blended Bloom chain.
+      if (seq.out === 'grid') {
+        const lg = _ambLevelGain(seq.level);
+        const dst = (typeof globalSendTap !== 'undefined') ? globalSendTap : undefined;
+        freqs.forEach((f, vi) => {
+          const vp = (ev.vp && ev.vp[vi]) ? ev.vp[vi] : null;
+          const p0 = vp ? { ...vp } : { ...base };
+          if (layerSet) p0.type = type;                        // explicit layer Tone overrides
+          else if (!p0.type) p0.type = (sounds && sounds[vi]) || type;
+          const v0 = Number.isFinite(p0.volume) ? p0.volume : (ev.vel || 100);
+          p0.volume = Math.max(0, Math.min(200, Math.round(v0 * lg)));
+          if (isEnsembleType(p0.type)) {
+            if (seqEnsLock) p0._ensembleForceStack = true;
+            else p0._ensembleMemberIdx = _ensPick++;
+          }
+          try { playNote(f, p0, durMs, atAbs, dst, undefined, _E.laneIdx()); } catch (e) {}
+        });
+        if (st) st._ensPick = _ensPick;
+        return;
+      }
       // Spread on a melodic (single-note) sequence has nothing to fan across, so
       // a lone note gets its own pan; chords fan their voices across the field.
       const pans = (freqs.length > 1) ? _ambLayerPans(seq, freqs.length) : [_ambLayerPan(seq)];
       const vol = _ambAccentVol(_ambApplyLevel(Math.round((ev.vel || 100) * (padStyle ? 0.5 : 0.6)), seq.level), seq.accent);
-      let _ensPick = (st && Number.isFinite(st._ensPick)) ? st._ensPick : 0;
       freqs.forEach((f, vi) => {
         const vtype = layerSet ? type : ((sounds && sounds[vi]) || type);
         const p = _ambApplyAdsr(padStyle
@@ -10950,6 +10983,13 @@
           _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
           _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') + gpe() +
         grp('Mix') +
+          // Output routing: Grid direct = faithful Seed replay (captured
+          // per-step params straight to the grid bus — the Send-to-Bloom
+          // default); Bloom blend = the layer chain (mods/FX/spread, sits
+          // into the Bloom mix at the blend calibration).
+          '<div class="ambient-ctrl"><label for="' + p + 'out">Output</label><select id="' + p + 'out" class="ambient-select">' +
+            opts([['bloom', 'Bloom blend'], ['grid', 'Grid direct']], s.out === 'grid' ? 'grid' : 'bloom') +
+          '</select><span class="ambient-hint">direct = exactly as in Seed</span></div>' +
           _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
           _ambTm('Area fade', p + 'areafade', 0, 4000, 50, s.areaFadeMs) +
           _ambSl('Accent', p + 'accent', 0, 100, s.accent | 0, 'flat → dynamic') +
@@ -11038,6 +11078,8 @@
         try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
       }
       bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode');
+      // Output routing (grid-direct ↔ bloom blend) — store 'grid' or clear.
+      { const o = el('out'); if (o) o.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; if (o.value === 'grid') sq.out = 'grid'; else delete sq.out; persist(); }); }
       const secBtn = el('sections');
       if (secBtn) secBtn.addEventListener('click', () => { _E = E; _ambShowSeqSectionsMenu(E, id, secBtn); });
       const lockBtn = el('enslock');
@@ -13540,7 +13582,10 @@
         if (Number.isFinite(_v.decay))   seq.decay   = Math.max(0, Math.min(2000, Math.round(_v.decay)));
         if (Number.isFinite(_v.sustain)) seq.sustain = Math.max(0, Math.min(100, Math.round(_v.sustain)));
         if (Number.isFinite(_v.release)) seq.release = Math.max(0, Math.min(4000, Math.round(_v.release)));
-        seq.level = 90;
+        // Sent layers default to the GRID-DIRECT output (exact Seed replay —
+        // see _ambEmitSeqEvent). Level 70 = unity there; the stamped ADSR
+        // above only applies if the user flips Output back to Bloom blend.
+        seq.out = 'grid';
         _ambFitSeqInterval(seq);
         cfg.seqs.push(seq);
       } else {

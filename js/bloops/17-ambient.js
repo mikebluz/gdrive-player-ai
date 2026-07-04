@@ -9036,6 +9036,19 @@
         const lockEd = _ambLockedNotes(E, key);
         el.classList.toggle('locked', !!lockEd);
         if (lockEd) layerOn = true;
+        // Seed-phrase preview: with the layer's 🎹 piano open and the engine
+        // STOPPED (and no lock), the roll shows what the next Play would
+        // generate (silent offline render, cached on E.seedPv). First edit
+        // promotes it to a lock; "↺ Original" reverts.
+        let seedPv = null;
+        if (!lockEd && !playing) {
+          const pEl = host.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+          if (pEl && pEl.classList.contains('open')) {
+            try { seedPv = _ambSeedPreview(E, key); } catch (e) {}
+            if (seedPv && (!seedPv.events || !seedPv.events.length)) seedPv = null;
+          }
+        }
+        if (seedPv) layerOn = true;   // reserve the line height for the roll
         el.classList.toggle('reserved', layerOn);
         let html = '';
         const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
@@ -9092,12 +9105,52 @@
         // Line: LOCKED → editable chips; PLAYING → piano-roll canvas (time × pitch,
         // with a fixed-width pitch-name gutter on the LEFT — names line up with
         // their event blocks; drawn each frame by _ambDrawRolls); else empty.
+        // Editable-roll skeleton (lock or seed): a header bar (unit pager +
+        // revert) above the canvas. Rebuilt only on mode change; the dynamic
+        // bits (pager label / revert visibility / tag) refresh every pass.
+        const _rollSkeleton = () =>
+          '<div class="ambient-roll-bar">' +
+            '<span class="ambient-roll-tag"></span>' +
+            '<span class="ambient-roll-pager" hidden>' +
+              '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-prev" data-rkey="' + key + '" title="Previous unit">◀</span>' +
+              '<span class="ambient-roll-plabel"></span>' +
+              '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-next" data-rkey="' + key + '" title="Next unit">▶</span>' +
+            '</span>' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-revert" data-rkey="' + key + '" hidden title="Discard the edited phrase — back to live generation">↺ Original</span>' +
+          '</div><canvas class="ambient-np-roll ambient-np-lockroll"></canvas>';
         if (lockEd) {
           // Locked → editable piano-roll (click a block to edit, empty to add).
-          if (el._mode !== 'lockroll') { el.innerHTML = '<canvas class="ambient-np-roll ambient-np-lockroll"></canvas>'; el._mode = 'lockroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
+          if (el._mode !== 'lockroll') { el.innerHTML = _rollSkeleton(); el._mode = 'lockroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
+        } else if (seedPv) {
+          // Seed preview → same roll, promoted to a lock by the first edit.
+          if (el._mode !== 'seedroll') { el.innerHTML = _rollSkeleton(); el._mode = 'seedroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
         } else if (layerOn) {
           if (el._mode !== 'roll') { el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
         } else if (el._mode !== 'off') { el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
+        // Roll-bar refresh + a direct draw while stopped (the viz rAF drives
+        // redraws during playback; edits/toggles call this function directly).
+        if (el._mode === 'lockroll' || el._mode === 'seedroll') {
+          const cv = el.querySelector('canvas');
+          const meta = _ambRollMeta(E, key);
+          const units = _ambRollUnits(E, key, meta);
+          const pager = el.querySelector('.ambient-roll-pager');
+          if (pager) {
+            pager.hidden = units <= 1;
+            const pl = el.querySelector('.ambient-roll-plabel');
+            if (pl) pl.textContent = 'Unit ' + (((cv && cv._unitIdx) | 0) + 1) + '/' + units;
+          }
+          let seedEdited = false;
+          try {
+            const fs = E.freeze && E.freeze[key];
+            const L = _ambLayerByKey(E, key);
+            seedEdited = !!((fs && fs._seedEdit) || (L && L.lockState && L.lockState.seedEdit));
+          } catch (e) {}
+          const tag = el.querySelector('.ambient-roll-tag');
+          if (tag) tag.textContent = (el._mode === 'seedroll') ? 'seed' : (seedEdited ? 'edited seed' : 'frozen');
+          const rv = el.querySelector('.ambient-roll-revert');
+          if (rv) rv.hidden = !seedEdited;
+          if (cv && !playing) { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
+        }
         const npHtml = npSeg(curNames);
         if (npHtml) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: npHtml }); }
       });
@@ -9180,7 +9233,7 @@
         const cv = el.querySelector('canvas.ambient-np-roll'); const key = el.dataset.nkey;
         if (!cv || !key) return;
         if (el._mode === 'roll') { try { _ambDrawRoll(cv, E, key, now); } catch (e) {} }
-        else if (el._mode === 'lockroll') { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
+        else if (el._mode === 'lockroll' || el._mode === 'seedroll') { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
       });
     }
     // ===== Editable frozen-loop piano roll (locked layers) =============
@@ -9194,8 +9247,16 @@
       if (cv.width !== w) cv.width = w; if (cv.height !== h) cv.height = h;
       const ctx = cv.getContext('2d'); if (!ctx) return;
       ctx.clearRect(0, 0, w, h);
-      const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return;
-      const P = meta.P > 0.05 ? meta.P : 1;
+      // Locked store, or the read-only seed preview (kind 'seed').
+      const meta = _ambRollMeta(E, key); if (!meta || !meta.list.length) return;
+      const fullP = meta.P > 0.05 ? meta.P : 1;
+      // Unit window: a multi-unit frozen loop shows ONE unit at a time (the
+      // roll-bar pager sets cv._unitIdx); a single unit / seed shows the lot.
+      const units = _ambRollUnits(E, key, meta);
+      const uSec = fullP / units;
+      let uIdx = Math.max(0, Math.min(units - 1, cv._unitIdx | 0));
+      cv._unitIdx = uIdx; cv._units = units;
+      const W0 = uIdx * uSec, P = uSec;
       const list = meta.list, oK = meta.offKey, dK = meta.durKey;
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       const isBeat = String(key).split(':')[0] === 'beat';
@@ -9205,8 +9266,8 @@
       if (lo == null || hi == null) { lo = isBeat ? 36 : 54; hi = isBeat ? 48 : 78; }
       cv._rlo = lo; cv._rhi = hi;
       const span = Math.max(1, hi - lo) + 1;
-      const LBL = 40; cv._LBL = LBL; cv._P = P;
-      const xOf = (t) => LBL + (t / P) * (w - LBL);
+      const LBL = 40; cv._LBL = LBL; cv._P = P; cv._W0 = W0;
+      const xOf = (t) => LBL + ((t - W0) / P) * (w - LBL);
       const yOf = (m) => h - ((Math.max(lo, Math.min(hi, m)) - lo + 0.5) / span) * h;
       const nh = Math.max(6, Math.min(18, h / span));
       ctx.textBaseline = 'middle'; ctx.font = '9px "JetBrains Mono", "SF Mono", Consolas, monospace';
@@ -9216,19 +9277,28 @@
       { const seen = {}, drawn = [];
         for (const n of list) { if (!(n && n.freq > 0)) continue; const m = Math.round(69 + 12 * Math.log2(n.freq / A)); if (seen[m]) continue; seen[m] = 1; const y = yOf(m); if (drawn.some(dy => Math.abs(dy - y) < 9)) continue; drawn.push(y); const label = isBeat ? _ambDrumNameFreq(n.freq) : _ambFreqNoteName(n.freq); if (label) { ctx.fillStyle = '#9a9ac0'; ctx.fillText(label.slice(0, 6), 2, y); } }
       }
-      // Playhead at the current loop phase (when the loop's anchor is known).
+      // Playhead at the current loop phase (when the loop's anchor is known) —
+      // drawn only while its phase falls inside the viewed unit window.
       let anchor = null; try { const fs = E.freeze && E.freeze[key]; if (fs && Number.isFinite(fs.anchor) && fs.anchor > 0) anchor = fs.anchor; } catch (e) {}
-      if (anchor != null && P > 0) { const ph = (((now - anchor) % P) + P) % P; const px = xOf(ph); ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke(); }
-      // Note blocks (the one being edited is highlighted gold).
+      if (anchor != null && fullP > 0) {
+        const ph = (((now - anchor) % fullP) + fullP) % fullP;
+        if (ph >= W0 && ph < W0 + P) { const px = xOf(ph); ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke(); }
+      }
+      // Note blocks (the one being edited is highlighted gold; seed previews
+      // draw slightly dimmer until promoted by an edit).
+      const isSeed = meta.kind === 'seed';
       const edIdx = (_ambNoteEd && _ambNoteEd.E === E && _ambNoteEd.key === key) ? _ambNoteEd.index : -1;
       for (let i = 0; i < list.length; i++) {
         const n = list[i]; if (!(n && n.freq > 0)) continue;
-        const m = Math.round(69 + 12 * Math.log2(n.freq / A));
         const off = n[oK] || 0, dur = Math.max(0.04, (n[dK] || 100) / 1000);
-        const x = Math.max(LBL, xOf(off)), x2 = xOf(off + dur);
+        if (off + dur < W0 || off > W0 + P) continue;   // outside the viewed unit
+        const m = Math.round(69 + 12 * Math.log2(n.freq / A));
+        const x = Math.max(LBL, xOf(off)), x2 = Math.min(w, xOf(off + dur));
         const y = yOf(m), bw = Math.max(3, x2 - x);
         const vol = (n.params && Number.isFinite(n.params.volume)) ? Math.max(0, Math.min(1, n.params.volume / 100)) : 0.8;
-        ctx.fillStyle = (i === edIdx) ? 'rgba(255,209,102,0.95)' : 'rgba(127,214,196,' + (0.35 + 0.55 * vol).toFixed(2) + ')';
+        ctx.fillStyle = (i === edIdx) ? 'rgba(255,209,102,0.95)'
+          : isSeed ? 'rgba(159,180,214,' + (0.35 + 0.45 * vol).toFixed(2) + ')'
+          : 'rgba(127,214,196,' + (0.35 + 0.55 * vol).toFixed(2) + ')';
         ctx.fillRect(x, y - nh / 2, bw, nh);
       }
     }
@@ -9236,17 +9306,25 @@
       if (cv._lockWired) return; cv._lockWired = true;
       cv.addEventListener('pointerdown', (ev) => {
         ev.preventDefault();
+        // A seed preview promotes to a real lock on the FIRST touch, so the
+        // click below edits the standard locked store (same t/freq values —
+        // hit-testing is unaffected by the promotion).
+        if (!_ambLockMeta(E, key)) {
+          if (!_ambSeedPromote(E, key)) return;
+          try { _ambUpdateNotesLive(E); } catch (e) {}
+        }
         const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return;
         const rect = cv.getBoundingClientRect();
         const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
         const w = cv.clientWidth, h = cv.clientHeight;
         const LBL = cv._LBL || 40, P = (cv._P > 0) ? cv._P : (meta.P || 1);
+        const W0 = cv._W0 || 0;
         const lo = cv._rlo, hi = cv._rhi;
         if (x < LBL || !(P > 0) || lo == null || hi == null) return;
         const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         const span = Math.max(1, hi - lo) + 1;
         const yOf = (m) => h - ((Math.max(lo, Math.min(hi, m)) - lo + 0.5) / span) * h;
-        const tClick = (x - LBL) / Math.max(1, w - LBL) * P;
+        const tClick = W0 + (x - LBL) / Math.max(1, w - LBL) * P;
         // Hit-test: the note block under the click (within its [off,off+dur] and row).
         let hitIdx = -1, hitDy = 1e9;
         for (let i = 0; i < meta.list.length; i++) {
@@ -9395,6 +9473,173 @@
       const r = _ambLockedNotes(t.E, t.key);
       return r ? r.list : null;
     }
+    // ===== Seed-phrase preview (unfrozen layers) ============================
+    // With the layer's 🎹 piano open and the engine STOPPED, the roll shows the
+    // layer's SEED PHRASE: a silent offline render of what the next Play would
+    // generate — same cfg, same seed, same shared-RNG interleaving (ALL layers
+    // tick; only the target's notes are kept), through a throwaway engine with
+    // a stubbed clock + playNote sink (the invariant-harness technique).
+    // Editing the preview PROMOTES it into the existing lock machinery
+    // (layer.lockState → _ambRestoreLocks), so edits play on the next Play and
+    // persist; "↺ Original" reverts to live generation. Cached on E.seedPv,
+    // invalidated by any card input.
+    function _ambSeedSig(E, key) {
+      try {
+        const cfg = E._cfg || E.getCfg();
+        const L = _ambLayerByKey(E, key);
+        return JSON.stringify(L) + '|' + ((cfg.seed >>> 0) || 1) + '|' + (cfg.bpm || 0);
+      } catch (e) { return ''; }
+    }
+    function _ambSeedPreview(E, key) {
+      if (!E.seedPv) E.seedPv = {};
+      const sig = _ambSeedSig(E, key);
+      const hit = E.seedPv[key];
+      if (hit && hit.sig === sig) return hit;
+      let pv = null;
+      try { pv = _ambSeedRender(E, key); } catch (e) { console.warn('Seed preview failed', e); }
+      E.seedPv[key] = pv ? Object.assign(pv, { sig }) : { events: [], loopLen: 0, sig };
+      return E.seedPv[key];
+    }
+    function _ambSeedRender(E, key) {
+      const cfg0 = (typeof E.getCfg === 'function') ? E.getCfg() : null; if (!cfg0) return null;
+      const cfg = JSON.parse(JSON.stringify(cfg0));   // clone — ticking must not touch the real area
+      cfg.playing = false;
+      const E2 = _makeAmbientEngine({
+        getCfg: () => cfg,
+        busNode: () => (typeof globalSendTap !== 'undefined' ? globalSendTap : null),
+        laneIdx: () => -1, guard: () => true,
+        hostId: 'bloom-seedpv', idPrefix: 'ambient', vizId: 'bloom-seedpv-viz',
+        playId: 'bloom-seedpv-play', seedId: 'bloom-seedpv-seed', isLane: false,
+      });
+      E2.rng = (cfg.seed >>> 0) || 1;   // seeded exactly like _ambStartGenerator
+      E2._everRan = true;               // bypass the cold-start context gate (no audio anyway)
+      const L2 = _ambLayerByKey(E2, key); if (!L2) return null;
+      let P = 0;
+      try { P = _ambLayerPeriodSec(E2, key, L2, cfg); } catch (e) {}
+      if (!(P > 0.05)) P = (60 / (cfg.bpm > 0 ? cfg.bpm : 120)) * 4 * 2;   // fallback: 2 bars
+      P = Math.min(60, Math.max(0.5, P));
+      const notes = [];
+      let clock = 0;
+      const nowFn = function () { return clock; };
+      // Tone.now is a getter-only accessor — shadow with an own data property
+      // (same dance as 23-bloom-harness.js runOne).
+      const restorers = [];
+      const stubNow = (obj) => {
+        if (!obj) return false;
+        const hadOwn = Object.prototype.hasOwnProperty.call(obj, 'now');
+        const prevDesc = hadOwn ? Object.getOwnPropertyDescriptor(obj, 'now') : null;
+        try {
+          Object.defineProperty(obj, 'now', { configurable: true, writable: true, value: nowFn });
+          restorers.push(() => { try { if (hadOwn && prevDesc) Object.defineProperty(obj, 'now', prevDesc); else delete obj.now; } catch (e) {} });
+          return true;
+        } catch (e) { return false; }
+      };
+      const origPlay = playNote;
+      const prevE = (typeof _E !== 'undefined') ? _E : undefined;
+      const prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : undefined;
+      const prevEmitKey = (typeof window !== 'undefined') ? window._ambEmitKey : undefined;
+      const prevEmitAt = (typeof window !== 'undefined') ? window._ambEmitAt : undefined;
+      try {
+        stubNow(Tone);
+        try { stubNow((typeof Tone.getContext === 'function') ? Tone.getContext() : Tone.context); } catch (e) {}
+        // eslint-disable-next-line no-global-assign
+        playNote = function (freq, params, durMs, at) {
+          // The per-layer capture sink is what stamps window._ambEmitKey — the
+          // real playNote runs it as a tee at emit time; the stub must too, or
+          // every note reads as unowned and the key filter drops everything.
+          try { if (typeof window !== 'undefined' && typeof window._ambCaptureSink === 'function') window._ambCaptureSink(freq, params, durMs, at); } catch (e) {}
+          if (typeof window !== 'undefined' && window._ambEmitKey !== key) return;
+          notes.push({ at: +at || 0, freq: +freq || 0, dur: Math.max(20, +durMs || 100),
+            params: { type: (params && params.type) || '', volume: params ? params.volume : undefined, pan: params ? params.pan : undefined } });
+        };
+        if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = true;
+        const DT = 0.15, MAXT = 400, horizon = P * 2 + 4;
+        for (let i = 0; i < MAXT && clock < horizon; i++) {
+          try { _ambTick(E2); } catch (e) {}
+          clock += DT;
+        }
+      } finally {
+        if (typeof _ambInGeneration !== 'undefined') _ambInGeneration = false;
+        for (let k = restorers.length - 1; k >= 0; k--) restorers[k]();
+        // eslint-disable-next-line no-global-assign
+        playNote = origPlay;
+        if (prevE !== undefined) _E = prevE;
+        if (typeof window !== 'undefined') { window._ambCaptureSink = prevSink; window._ambEmitKey = prevEmitKey; window._ambEmitAt = prevEmitAt; }
+      }
+      if (!notes.length) return { events: [], loopLen: P };
+      notes.sort((a, b) => a.at - b.at);
+      // Period anchor: the throwaway engine's grid anchor when set (bar-native
+      // layers), else the first onset. Keep the FIRST full period.
+      let t0 = null;
+      if (Number.isFinite(E2._barGridAnchor)) t0 = E2._barGridAnchor;
+      else if (Number.isFinite(E2._playStartAt)) t0 = E2._playStartAt;
+      const first = notes[0].at;
+      if (t0 == null || first < t0 - 0.02 || first - t0 > P) t0 = first;
+      const events = [];
+      for (const n of notes) {
+        const rel = n.at - t0;
+        if (rel < -0.02) continue;
+        if (rel >= P - 0.005) break;
+        events.push({ t: Math.max(0, rel), freq: n.freq, dur: n.dur, params: n.params });
+      }
+      return { events, loopLen: P };
+    }
+    // Promote the cached seed preview into a REAL lock so the roll edit lands
+    // in the standard machinery: lockState (persisted, replayed on Play via
+    // _ambRestoreLocks) marked seedEdit for the revert affordance.
+    function _ambSeedPromote(E, key) {
+      if (_ambLockMeta(E, key)) return true;   // already a live lock
+      const pv = E.seedPv && E.seedPv[key];
+      if (!pv || !Array.isArray(pv.events) || !pv.events.length) return false;
+      const layer = _ambLayerByKey(E, key); if (!layer) return false;
+      layer.lockState = { kind: 'loop', seedEdit: true, loopLen: pv.loopLen || 1,
+        notes: pv.events.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })) };
+      try { _ambRestoreLocks(E); } catch (e) {}
+      delete E.seedPv[key];
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      try { _ambFreezeSyncAll(E); } catch (e) {}
+      return !!(E.freeze && E.freeze[key] && E.freeze[key].frozen);
+    }
+    // "↺ Original" — drop the seed-edit override (or any lock it became) and
+    // return the layer to live generation. Graceful boundary thaw while playing.
+    function _ambSeedRevert(E, key) {
+      const layer = _ambLayerByKey(E, key);
+      const fs = E.freeze && E.freeze[key];
+      if (E.timer && fs && fs.frozen) {
+        try { _ambFreezeThaw(E, key); } catch (e) { delete E.freeze[key]; }
+      } else {
+        if (E.freeze) delete E.freeze[key];
+        if (E.unit && E.unit[key] && E.unit[key].lock) {
+          try { _ambDoUnlock(E, key); } catch (e) { delete E.unit[key]; }
+        }
+      }
+      if (layer) delete layer.lockState;
+      if (E.seedPv) delete E.seedPv[key];
+      if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+      try { _ambFreezeSyncAll(E); } catch (e) {}
+      try { _ambUpdateNotesLive(E); } catch (e) {}
+    }
+    // Roll meta for DISPLAY: a locked layer's editable store, else the cached
+    // seed preview (kind 'seed' — read-only until promoted by the first edit).
+    function _ambRollMeta(E, key) {
+      const locked = _ambLockMeta(E, key);
+      if (locked) return locked;
+      const pv = E.seedPv && E.seedPv[key];
+      if (pv && Array.isArray(pv.events) && pv.events.length) {
+        return { kind: 'seed', list: pv.events, offKey: 't', durKey: 'dur', P: (pv.loopLen > 0.05 ? pv.loopLen : 1) };
+      }
+      return null;
+    }
+    // How many generator UNITS a frozen loop spans (loopLen / unit period) —
+    // drives the roll's unit pager. 1 for seed previews and single-unit locks.
+    function _ambRollUnits(E, key, meta) {
+      if (!meta || meta.kind !== 'loop') return 1;
+      let u = 0;
+      try { u = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
+      if (!(u > 0.05) || !(meta.P > 0)) return 1;
+      const n = Math.round(meta.P / u);
+      return (n >= 2 && Math.abs(meta.P - n * u) < u * 0.25) ? Math.min(n, 64) : 1;
+    }
     // ---- Lock persistence (survives reload; project reopens locked) ----
     // Mirror a layer's live lock into its CONFIG (layer.lockState) so the
     // workspace save carries it; clear it when the layer is unlocked. Only
@@ -9410,7 +9655,9 @@
       }
       const fs = E.freeze && E.freeze[key];
       if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length) {
-        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
+        // seedEdit marks a lock created by editing the SEED PREVIEW (not a live
+        // freeze) — it drives the "↺ Original" revert affordance across reloads.
+        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
         return;
       }
       delete layer.lockState;
@@ -9433,7 +9680,7 @@
         } else {                                                       // frozen loop (multi-unit / other layers)
           if (E.freeze && E.freeze[key] && E.freeze[key].frozen) return; // runtime wins
           E.freeze = E.freeze || {};
-          E.freeze[key] = { frozen: true, _lock: true, recording: false, recStart: 0,
+          E.freeze[key] = { frozen: true, _lock: true, _seedEdit: !!ls.seedEdit, recording: false, recStart: 0,
             events: ls.notes.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })),
             loopLen: ls.loopLen || 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null, pendingFreezeAt: null, _lockWin: null };
         }
@@ -13467,7 +13714,28 @@
         if (fl) { e.stopPropagation(); try { const L = _ambLayerByKey(E, fl.dataset.flkey); if (L) { L.freezeLock = !L.freezeLock; fl.classList.toggle('active', !!L.freezeLock); if (typeof persistWorkspace === 'function') persistWorkspace(); } } catch (err) { console.warn('Lock toggle failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
         const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
-        if (pb) { e.stopPropagation(); try { const h2 = document.getElementById(E.hostId); const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]'); if (pe) { _ambBuildPiano(pe); const open = pe.classList.toggle('open'); pb.classList.toggle('active', open); } } catch (err) { console.warn('Piano toggle failed', err); } return; }
+        if (pb) { e.stopPropagation(); try { const h2 = document.getElementById(E.hostId); const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]'); if (pe) { _ambBuildPiano(pe); const open = pe.classList.toggle('open'); pb.classList.toggle('active', open); _ambUpdateNotesLive(E); } } catch (err) { console.warn('Piano toggle failed', err); } return; }
+        // Roll header: unit pager (multi-unit frozen loops) + "↺ Original".
+        const rpg = e.target && e.target.closest && e.target.closest('.ambient-roll-prev, .ambient-roll-next');
+        if (rpg) {
+          e.stopPropagation();
+          try {
+            const line = rpg.closest('.ambient-notes-live');
+            const cv = line && line.querySelector('canvas.ambient-np-roll');
+            if (cv) {
+              const units = Math.max(1, cv._units | 0);
+              cv._unitIdx = Math.max(0, Math.min(units - 1, (cv._unitIdx | 0) + (rpg.classList.contains('ambient-roll-next') ? 1 : -1)));
+              _ambUpdateNotesLive(E);
+            }
+          } catch (err) { console.warn('Roll pager failed', err); }
+          return;
+        }
+        const rrv = e.target && e.target.closest && e.target.closest('.ambient-roll-revert');
+        if (rrv) {
+          e.stopPropagation();
+          try { _ambSeedRevert(E, rrv.dataset.rkey); } catch (err) { console.warn('Seed revert failed', err); }
+          return;
+        }
         const db = e.target && e.target.closest && e.target.closest('.ambient-dice-btn');
         if (db) {
           e.stopPropagation();
@@ -13517,8 +13785,18 @@
         if (na) { e.preventDefault(); e.stopPropagation(); try { const k = na.dataset.ekey, idx = _ambAddNote(E, k); if (idx != null) _ambOpenNoteEditor(E, k, idx); } catch (err) { console.warn('Add note failed', err); } return; }
       });
       // Any in-panel param change (slider / rate / notes / passes…) can change a
-      // layer's unit length — refresh the header readouts.
-      const _unitRefresh = () => { try { _ambSyncLayerUnits(E); } catch (e) {} };
+      // layer's unit length — refresh the header readouts. It also invalidates
+      // every cached seed preview (params feed the silent render; the next
+      // notes-live pass lazily re-renders any open one).
+      const _unitRefresh = () => {
+        try { _ambSyncLayerUnits(E); } catch (e) {}
+        E.seedPv = {};
+        // Debounced (a slider drag fires per pixel; the silent seed render is
+        // too heavy to run per event) — refresh any open seed roll shortly after
+        // the last change.
+        clearTimeout(E._seedPvT);
+        E._seedPvT = setTimeout(() => { try { _ambUpdateNotesLive(E); } catch (e) {} }, 250);
+      };
       host.addEventListener('input', _unitRefresh);
       host.addEventListener('change', _unitRefresh);
       // Per-layer EQ sliders (#1) — one delegated handler for every layer. The

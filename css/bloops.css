@@ -3153,6 +3153,26 @@
     .ambient-np-roll { display: block; width: 100%; height: 100px; background: #0c0c14; border: 1px solid #20202e; border-radius: 4px; }
     /* Locked layer's editable piano roll: click a block to edit, empty to add. */
     .ambient-np-lockroll { cursor: pointer; border-color: rgba(255,212,121,0.45); box-shadow: inset 0 0 0 1px rgba(255,212,121,0.08); touch-action: none; }
+    /* Roll header bar (above the lock/seed roll): mode tag, unit pager for
+       multi-unit frozen loops, and the "↺ Original" seed-edit revert. */
+    .ambient-roll-bar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 2px; min-height: 1.2em;
+      font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.06em;
+    }
+    .ambient-roll-tag { color: #718096; text-transform: uppercase; }
+    .ambient-roll-pager { display: inline-flex; align-items: center; gap: 4px; color: #9a9ac0; }
+    .ambient-roll-plabel { min-width: 52px; text-align: center; }
+    .ambient-roll-btn {
+      display: inline-block; padding: 1px 7px; border: 1px solid #2d2d3f;
+      border-radius: 5px; background: #1a1a2c; color: #a0aec0; cursor: pointer;
+      user-select: none; -webkit-user-select: none;
+    }
+    .ambient-roll-btn:hover { color: #e2e8f0; border-color: #4a5568; }
+    .ambient-roll-revert { margin-left: auto; color: #ffd479; border-color: rgba(255, 212, 121, 0.4); }
+    .ambient-roll-revert:hover { color: #ffe4a8; border-color: rgba(255, 212, 121, 0.7); }
+    .ambient-roll-bar [hidden] { display: none !important; }
+    .ambient-roll-pager[hidden], .ambient-roll-revert[hidden] { display: none !important; }
     /* Y-axis: simultaneous notes of a unit stack vertically (top = highest). */
     .ambient-np-col { display: inline-flex; flex-direction: column; vertical-align: top; }
     .ambient-np-col > span { display: block; }

@@ -4,6 +4,8 @@ Status: **in progress.** Phase 0 done; Phase 2a (derivation helpers) done; Phase
 
 ## Implementation log
 
+- **Card subsections regrouped by engine component (2026-07).** Every layer card's collapsible groups now mirror the §1 model: **Voice · Seed · Generator · Timing · Variation · Mix** (was Voice/Pitch/Unit/Rhythm/Variation/Mix). Schema-driven cards (`_AMB_LAYER_SCHEMA` + `_ambVoiceCtrls`) and the hand-built Seq/Sample cards both converted; the kit-voice group skip keys off `'Seed'` now. Render-only — control tokens/ids/wiring unchanged, harness green. Old persisted `groupsOpen` names go stale (groups just start collapsed once).
+
 - **Shape layer type — REMOVED.** Dropped on load (+one-time toast) via the `extras` filter; the whole shape-layer subsystem deleted (~400 lines). Master **Shapes** section + **Shape It** kept.
 - **Phase 0 — done.** `_AMB_SCHEMA_VERSION = 1` stamped on every area cfg in `_normalizeAmbientCfg` (the single migration chokepoint); `_fromVer` read at the top for version-gated migrations. "Layer-schema evolution rules" added to `CLAUDE.md`.
 - **Phase 2a — done.** Read-only derivation helpers `_ambGeneratorOf(L, type)`, `_ambVoiceOf(L, type)`, `_ambSourceKindOf(L, type, cfg)` in `17-ambient.js`. Generator is computed **live** from `type` + sub-mode (`beat.gen`, `arp.euclid`) — NOT persisted — so a runtime sub-mode toggle stays correct. `type` is passed explicitly because primary layers (bed/motif/texture/beat) carry no `.type` field (it's in the cfg key). An explicit `L.generator`/`L.voice` wins (reserved for Phase-3 custom layers).

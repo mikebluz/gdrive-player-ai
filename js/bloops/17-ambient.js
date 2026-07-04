@@ -10417,25 +10417,26 @@
           // spread across notes as independent generative voices.
           '<div class="ambient-ctrl ambient-ens-lock-row" id="' + p + 'enslock-row" hidden><label for="' + p + 'enslock">Ensemble</label>' +
             '<button type="button" id="' + p + 'enslock" class="ambient-seg ambient-ens-lock"></button><span class="ambient-hint">lock / spread</span></div>' + gpe() +
-        // No Notes source — a Seq plays the pitches captured in its own sequence.
-        grp('Variation') +
-          '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
-          _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') + gpe() +
-        grp('Unit') +
+        // No Seed group — a Seq plays the pitches captured in its own sequence.
+        // Groups follow the engine components (Voice · Generator · Timing ·
+        // Variation · Mix) like the schema-driven cards.
+        grp('Generator') +
+          '<div class="ambient-ctrl"><label>Sections</label>' +
+            '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
+            '<span class="ambient-hint">edit ▸</span></div>' + gpe() +
+        grp('Timing') +
           // Loop length: Auto (one pass == the played sequence's own length) vs
           // Manual (the Interval knob below). Auto greys out / ignores Interval.
           '<div class="ambient-ctrl"><label for="' + p + 'intervalmode">Loop</label>' +
             '<button type="button" id="' + p + 'intervalmode" class="ambient-seg ambient-interval-mode"></button>' +
             '<span class="ambient-hint">= seq length / manual</span></div>' +
           _ambTm('Interval', p + 'interval', 200, 16000, 50, s.intervalMs) +
-          _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) + gpe() +
-        grp('Rhythm') +
+          _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
-          _ambWhenCtrl(p) +
-          '<div class="ambient-ctrl"><label>Sections</label>' +
-            '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
-            '<span class="ambient-hint">edit ▸</span></div>' + gpe() +
-        grp('Return') +
+          _ambWhenCtrl(p) + gpe() +
+        grp('Variation') +
+          '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
+          _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
           '<div class="ambient-ctrl"><label for="' + p + 'return">Return</label><select id="' + p + 'return" class="ambient-select">' + opts([['everyN', 'Every N'], ['chance', 'Chance %']], s.returnMode) + '</select><span class="ambient-hint">to original</span></div>' +
           _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
           _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') + gpe() +
@@ -10758,17 +10759,18 @@
           _ambSl('Portamento', p + 'porta', 0, 300, s.portamento || 0, 'ms glide between notes') +
           _ambSl('Pitch', p + 'pitch', -24, 24, s.pitch, 'semitones (varispeed)') +
           _ambSl('Reverse', p + 'reverse', 0, 1, s.reverse, 'off → backwards') + gpe() +
-        grp('Slices') +
+        // Groups follow the engine components: the chopper params are the
+        // Generator; interval/length/drift/When are Timing.
+        grp('Generator') +
           _ambSl('Chop', p + 'chop', 1, 32, s.chop, '1 = whole → slices') +
           _ambSl('Stutter', p + 'stutter', 1, 8, s.stutter, '1 = off → rapid re-trigger') +
           '<div class="ambient-ctrl"><label for="' + p + 'order">Order</label><select id="' + p + 'order" class="ambient-select">' + opts([['forward', 'Forward'], ['random', 'Random'], ['reverse', 'Reverse']], s.order) + '</select><span class="ambient-hint">slices</span></div>' +
           '<div class="ambient-ctrl ambient-slice-row"><label>Steps</label><div class="ambient-slice-grid" id="' + p + 'slicegrid">' + _ambSampleSliceCells(s) + '</div></div>' + gpe() +
-        grp('Unit') +
+        grp('Timing') +
           '<div class="ambient-ctrl"><label>Sample length</label><span class="ambient-hint ambient-samp-len" id="' + p + 'samplen">' + (_durMs > 0 ? _ambFmtMs(_durMs) : 'loading…') + '</span></div>' +
           _ambTm('Interval', p + 'interval', 200, _ivMax, 50, s.intervalMs) +
           _ambTm('Length', p + 'length', 80, _lenMax, 20, s.lengthMs) +
-          '<div class="ambient-ctrl ambient-samp-match"><label>Match unit</label><button type="button" class="ambient-srcbtn" id="' + p + 'matchunit" title="Set this sample’s Interval to another layer’s unit length (rhythmic lock). Length past the unit is cut at the boundary.">⇄ Match to layer…</button></div>' + gpe() +
-        grp('Rhythm') +
+          '<div class="ambient-ctrl ambient-samp-match"><label>Match unit</label><button type="button" class="ambient-srcbtn" id="' + p + 'matchunit" title="Set this sample’s Interval to another layer’s unit length (rhythmic lock). Length past the unit is cut at the boundary.">⇄ Match to layer…</button></div>' +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
           _ambWhenCtrl(p) + gpe() +
         grp('Mix') +
@@ -11013,33 +11015,40 @@
         ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],
       ]);
     }
+    // Card subsections are grouped BY ENGINE COMPONENT (the composable-layers
+    // model, docs/bloom-composable-layers.md):
+    //   Voice (sound + ADSR) · Seed (pitch material) · Generator (the
+    //   algorithm's own params) · Timing (when it fires: unit/interval/bars/
+    //   length/drift/When) · Variation (per-repeat deviation) · Mix (shared).
+    // Render-only — control tokens/ids/wiring are unchanged, only which group
+    // header they sit under.
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Pitch'], ['notes'], ['chordmode'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'],
-        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
+        ['grp', 'Seed'], ['notes'], ['chordmode'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Generator'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
+        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'],
-        ['grp', 'Rhythm'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
+        ['grp', 'Generator'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
+        ['grp', 'Generator'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
-        ..._ambVoiceCtrls([['kit'], ['gen']], 500, 2000, 2000),
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'],
+        ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
+        ['grp', 'Generator'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'],
+        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
@@ -11047,44 +11056,43 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Pitch'], ['arpeuclid'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Seed'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
+        ['grp', 'Generator'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Unit'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'],
+        ['grp', 'Generator'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Timing'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
-        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
+        ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Timing'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Pitch'], ['notes'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
-        ['grp', 'Unit'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'],
-        ['grp', 'Rhythm'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
+        ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Timing'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Pitch'], ['notes'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
-        ['grp', 'Unit'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'],
-        ['grp', 'Rhythm'], ['cond'],
+        ['grp', 'Seed'], ['notes'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -11452,7 +11460,7 @@
       let grpOpen = false;        // is a group <div> currently open?
       const ctrlHtml = (c) => _ambCtrlHtml(c, p, lk, inst, type);
       // A Kit or Sample voice has no scale/pitch material: hide the synth instrument
-      // (`tone`) and the whole Pitch group (notes/register/proximity), so the card
+      // (`tone`) and the whole Seed group (notes/register/…), so the card
       // shows only what that render uses.
       const kitVoice = ['kit', 'sample'].indexOf(_ambVoiceOf(inst, type)) >= 0;
       let skipGroup = false;
@@ -11460,7 +11468,7 @@
         if (c[0] === 'grp') {
           if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
           grpOpen = false;
-          if (kitVoice && c[1] === 'Pitch') { skipGroup = true; return; }
+          if (kitVoice && c[1] === 'Seed') { skipGroup = true; return; }
           skipGroup = false;
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +

@@ -9139,7 +9139,15 @@
           // Seed preview → same roll, promoted to a lock by the first edit.
           if (el._mode !== 'seedroll') { _rescueEditor(); el.innerHTML = _rollSkeleton(); el._mode = 'seedroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
         } else if (layerOn) {
-          if (el._mode !== 'roll') { _rescueEditor(); el.innerHTML = '<canvas class="ambient-np-roll"></canvas>'; el._mode = 'roll'; el._npHtml = null; }
+          // Live playing roll — vertical (read-only, sliding window) for piano
+          // layers so it never flips orientation vs the editable roll.
+          if (el._mode !== 'roll') {
+            _rescueEditor();
+            el.innerHTML = _hasPiano
+              ? '<div class="ambient-roll-scroll ambient-roll-live"><canvas class="ambient-np-roll ambient-np-vroll"></canvas></div>'
+              : '<canvas class="ambient-np-roll"></canvas>';
+            el._mode = 'roll'; el._npHtml = null;
+          }
         } else if (el._mode !== 'off') { _rescueEditor(); el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
         // Roll-bar refresh + a direct draw while stopped (the viz rAF drives
         // redraws during playback; edits/toggles call this function directly).
@@ -9246,7 +9254,7 @@
       host.querySelectorAll('.ambient-notes-live').forEach(el => {
         const cv = el.querySelector('canvas.ambient-np-roll'); const key = el.dataset.nkey;
         if (!cv || !key) return;
-        if (el._mode === 'roll') { try { _ambDrawRoll(cv, E, key, now); } catch (e) {} }
+        if (el._mode === 'roll') { try { (cv.classList.contains('ambient-np-vroll') ? _ambDrawVRollLive : _ambDrawRoll)(cv, E, key, now); } catch (e) {} }
         else if (el._mode === 'lockroll' || el._mode === 'seedroll') { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
       });
     }
@@ -10070,6 +10078,51 @@
         ctx.fillRect(kx - bw / 2, y0, bw, Math.max(4, y1 - y0));
       }
     }
+    // LIVE vertical roll (playing, unlocked, piano layers): the horizontal
+    // _ambDrawRoll rotated 90° — a sliding time window flows DOWNWARD on the
+    // key geometry (playhead line at 72%; past above, scheduled-ahead below),
+    // read-only, fixed height (no scrolling — the window slides with `now`).
+    function _ambDrawVRollLive(cv, E, key, now) {
+      const scroll = cv.parentElement;
+      const w = ((scroll && scroll.clientWidth) || cv.clientWidth) | 0;
+      const h = 160;
+      if (!w) return;
+      if (cv.width !== w) cv.width = w;
+      if (cv.height !== h) { cv.height = h; cv.style.height = h + 'px'; }
+      const ctx = cv.getContext('2d'); if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      const cap = (E.cap && E.cap[key]) || [];
+      let P = 0; try { P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
+      const W = Math.max(1.5, Math.min(16, P || 1.5));
+      const t0 = now - W * 0.72, t1 = now + W * 0.28;
+      const g = _ambPianoKeyGeom(w);
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      // Key-column guides (same look as the editable vertical roll).
+      ctx.fillStyle = 'rgba(255,255,255,0.028)';
+      for (const k of g.keys) if (k.black) ctx.fillRect(k.x0, 0, k.x1 - k.x0, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+      ctx.beginPath();
+      for (const k of g.keys) if (!k.black) { ctx.moveTo(k.x0 + 0.5, 0); ctx.lineTo(k.x0 + 0.5, h); }
+      ctx.stroke();
+      const yOf = (t) => ((t - t0) / (t1 - t0)) * h;
+      // Playhead (horizontal, fixed at 72%).
+      { const y = yOf(now); ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); ctx.stroke(); }
+      for (const e of cap) {
+        if (!(e && e.freq > 0)) continue;
+        const dur = Math.max(0.04, (e.dur || 100) / 1000);
+        if (e.at + dur < t0 || e.at > t1) continue;
+        let m = Math.round(69 + 12 * Math.log2(e.freq / A));
+        const clamped = (m < g.LO || m > g.HI);
+        m = Math.max(g.LO, Math.min(g.HI, m));
+        const kx = g.centers[m];
+        const kk = g.keys.find(q => q.m === m);
+        const bw = kk ? Math.max(4, (kk.x1 - kk.x0) * (kk.black ? 0.9 : 0.62)) : 8;
+        const y0 = Math.max(0, yOf(e.at)), y1 = Math.min(h, yOf(e.at + dur));
+        const vol = (e.params && Number.isFinite(e.params.volume)) ? Math.max(0, Math.min(1, e.params.volume / 100)) : 0.8;
+        ctx.fillStyle = 'rgba(127,214,196,' + ((clamped ? 0.2 : 0.3) + 0.6 * vol).toFixed(2) + ')';
+        ctx.fillRect(kx - bw / 2, y0, bw, Math.max(3, y1 - y0));
+      }
+    }
     // Light each expanded piano's keys for the notes its layer is sounding at
     // `now` (audible clock). Intensity fades over the note's duration. Only open
     // pianos are touched (perf).
@@ -10627,6 +10680,16 @@
       // Optional block placed right after the head div (e.g. the composition
       // readout) — before the notes line + top-controls row so it sits on top.
       (afterHead || '') +
+      // Per-layer controls row — ABOVE the notes line / roll. Holds Rename, the
+      // layer Delete, Clone, Save-preset, the piano toggle (every non-Beat
+      // layer) and Dice.
+      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
+        (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
+        '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
+        '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
+        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
+        (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
+      '</div>' : '') +
       // Live notes line / piano roll — a direct child of .ambient-layer (NOT the
       // head), so the collapse rule (.ambient-layer.collapsed > *:not(head)) hides
       // it when the layer is collapsed; it only shows when the body is expanded.
@@ -10637,20 +10700,7 @@
       // Piano visualizer keyboard — DIRECTLY below the notes line so the
       // vertical roll's pitch columns line up with the keys (the roll draws
       // with the same key geometry; see _ambPianoKeyGeom).
-      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '') +
-      // Per-layer controls row — sits at the top of the expanded body (above the
-      // Voice group); hidden when the layer is collapsed. Holds Rename, the layer
-      // Delete (moved out of the head, next to Rename), and the piano-visualizer
-      // toggle (every non-Beat layer; also moved out of the head).
-      (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
-        (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
-        '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
-        '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
-        (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
-        (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
-      '</div>' : '');
-      // (Piano keyboard moved ABOVE — right after the notes line — so the
-      // vertical roll sits directly on the keys.)
+      (freezeKey && String(freezeKey).split(':')[0] !== 'beat' ? '<div class="ambient-piano" data-pkey="' + freezeKey + '" aria-hidden="true"></div>' : '');
     // Translate an 'ambient-' id stem to the engine's DOM prefix, and look it up.
     const _ambTrId = (E, id) => (E.idPrefix === 'ambient') ? id : id.replace(/^ambient-/, E.idPrefix + '-');
     const _ambGet = (E, id) => document.getElementById(_ambTrId(E, id));

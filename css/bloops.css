@@ -3186,6 +3186,12 @@
       border: none; border-radius: 0; background: transparent;
       box-shadow: none;
     }
+    /* Live (playing, unlocked) vertical roll: fixed-height sliding window —
+       nothing to scroll, and the amber "editable" border doesn't apply. */
+    .ambient-roll-scroll.ambient-roll-live {
+      overflow-y: hidden;
+      border-color: #20202e;
+    }
     /* Keyboard butts the roll when both are open (shared pitch columns). */
     .ambient-notes-live.reserved + .ambient-piano.open {
       margin-top: 0;

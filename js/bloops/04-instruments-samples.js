@@ -1421,6 +1421,10 @@
         play.addEventListener('click', async () => {
           try { await Tone.start(); info.sampler.triggerAttackRelease(info.rootNote || 'C4', 1.2, Tone.now()); } catch (e) {}
         });
+        const raw = document.createElement('button');
+        raw.type = 'button'; raw.className = 'sbm-raw'; raw.textContent = '🎧';
+        raw.title = 'Hear the raw tuned sample (no processing)';
+        raw.addEventListener('click', () => { try { Tone.start(); } catch (e) {} try { playRawSample(id); } catch (e) {} });
         const nm = document.createElement('span');
         nm.className = 'sbm-name';
         nm.textContent = info.name || id;
@@ -1439,13 +1443,42 @@
           try { if (typeof showToast === 'function') showToast('Sample deleted'); } catch (e) {}
           if (!list.querySelector('.sbm-row')) showEmpty();
         });
-        row.appendChild(play); row.appendChild(nm); row.appendChild(del);
+        row.appendChild(play); row.appendChild(raw); row.appendChild(nm); row.appendChild(del);
         list.appendChild(row);
       });
       // Click the dimmed backdrop (not the panel) to dismiss.
       ov.addEventListener('pointerdown', (e) => { if (e.target === ov) ov.remove(); });
       ov.appendChild(panel);
       document.body.appendChild(ov);
+    }
+    // RAW sample audition — the buffer, tuned (tuneCents correction only),
+    // connected STRAIGHT to the hardware: no ADSR voice, no norm/boost gains,
+    // no per-note FX, no master chain (limiter/clipper bypassed). For hearing
+    // what a sample actually contains vs what the processing chain adds.
+    // Only a 20 ms tail fade is applied — declick, not processing.
+    function playRawSample(id, durSec) {
+      try {
+        const buf = (typeof _getSampleAudioBuffer === 'function') ? _getSampleAudioBuffer(id) : null;
+        if (!buf) { if (typeof showToast === 'function') showToast('Sample not loaded yet'); return false; }
+        const info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null;
+        const ac = Tone.getContext().rawContext;
+        const src = ac.createBufferSource();
+        src.buffer = buf;
+        if (info && Number.isFinite(info.tuneCents) && info.tuneCents) {
+          src.playbackRate.value = Math.pow(2, -info.tuneCents / 1200);
+        }
+        const g = ac.createGain();
+        const t0 = ac.currentTime;
+        const dur = Math.min(buf.duration, (durSec > 0 ? durSec : 4));
+        g.gain.setValueAtTime(1, t0);
+        g.gain.setValueAtTime(1, t0 + Math.max(0, dur - 0.02));
+        g.gain.linearRampToValueAtTime(0, t0 + dur);
+        src.connect(g); g.connect(ac.destination);
+        src.start(t0);
+        src.stop(t0 + dur + 0.01);
+        setTimeout(() => { try { src.disconnect(); g.disconnect(); } catch (e) {} }, (dur + 0.3) * 1000);
+        return true;
+      } catch (e) { return false; }
     }
     function makeImportedSampleId(filename) {
       const base = (filename || '')

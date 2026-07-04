@@ -2917,23 +2917,40 @@
           items.forEach(o => {
             if (o.value === p.type) hasActive = true;
             const btn = addToneButton(o);
-            if (_isUserSample(o.value)) {
+            const _isSample = typeof o.value === 'string' && o.value.startsWith('sample:');
+            if (_isSample) {
               const wrap = document.createElement('span');
               wrap.className = 'sm-wave-wrap';
               wrap.appendChild(btn);
-              const x = document.createElement('button');
-              x.type = 'button';
-              x.className = 'sm-wave-del';
-              x.textContent = '×';
-              x.title = 'Delete sample “' + o.label + '”';
-              x.addEventListener('click', async (e) => {
+              // RAW audition — the tuned buffer straight to the hardware, no
+              // envelope/boost/FX/master chain (playRawSample). Every sample
+              // tone gets it; hear the source vs what processing adds.
+              const rp = document.createElement('button');
+              rp.type = 'button';
+              rp.className = 'sm-wave-raw';
+              rp.textContent = '🎧';
+              rp.title = 'Hear the raw tuned sample (no processing)';
+              rp.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
-                try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
-                if (p.type === o.value) { p.type = 'sine'; _touched.add('type'); broadcastAll('type', 'sine'); }
-                renderTonePicker();
+                try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (err) {}
+                if (typeof playRawSample === 'function') playRawSample(o.value.slice(7));
               });
-              wrap.appendChild(x);
+              wrap.appendChild(rp);
+              if (_isUserSample(o.value)) {
+                const x = document.createElement('button');
+                x.type = 'button';
+                x.className = 'sm-wave-del';
+                x.textContent = '×';
+                x.title = 'Delete sample “' + o.label + '”';
+                x.addEventListener('click', async (e) => {
+                  e.stopPropagation();
+                  if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
+                  try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
+                  if (p.type === o.value) { p.type = 'sine'; _touched.add('type'); broadcastAll('type', 'sine'); }
+                  renderTonePicker();
+                });
+                wrap.appendChild(x);
+              }
               grid.appendChild(wrap);
             } else {
               grid.appendChild(btn);
@@ -4544,23 +4561,40 @@
           items.forEach(o => {
             if (o.value === p.type) hasActive = true;
             const btn = _addToneButton(o);
-            if (_isUserSample(o.value)) {
+            const _isSample = typeof o.value === 'string' && o.value.startsWith('sample:');
+            if (_isSample) {
               const wrap = document.createElement('span');
               wrap.className = 'sm-wave-wrap';
               wrap.appendChild(btn);
-              const x = document.createElement('button');
-              x.type = 'button';
-              x.className = 'sm-wave-del';
-              x.textContent = '×';
-              x.title = 'Delete sample “' + o.label + '”';
-              x.addEventListener('click', async (e) => {
+              // RAW audition — the tuned buffer straight to the hardware, no
+              // envelope/boost/FX/master chain (playRawSample). Every sample
+              // tone gets it; hear the source vs what processing adds.
+              const rp = document.createElement('button');
+              rp.type = 'button';
+              rp.className = 'sm-wave-raw';
+              rp.textContent = '🎧';
+              rp.title = 'Hear the raw tuned sample (no processing)';
+              rp.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
-                try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
-                if (p.type === o.value) _setTone('sine');
-                renderTonePicker();
+                try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (err) {}
+                if (typeof playRawSample === 'function') playRawSample(o.value.slice(7));
               });
-              wrap.appendChild(x);
+              wrap.appendChild(rp);
+              if (_isUserSample(o.value)) {
+                const x = document.createElement('button');
+                x.type = 'button';
+                x.className = 'sm-wave-del';
+                x.textContent = '×';
+                x.title = 'Delete sample “' + o.label + '”';
+                x.addEventListener('click', async (e) => {
+                  e.stopPropagation();
+                  if (!confirm('Delete sample “' + o.label + '”? This removes it from your tones (can’t be undone).')) return;
+                  try { if (typeof deleteUserSample === 'function') await deleteUserSample(o.value.slice(7)); } catch (err) {}
+                  if (p.type === o.value) _setTone('sine');
+                  renderTonePicker();
+                });
+                wrap.appendChild(x);
+              }
               grid.appendChild(wrap);
             } else {
               grid.appendChild(btn);

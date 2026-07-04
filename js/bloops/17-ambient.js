@@ -4684,12 +4684,14 @@
     // SAMPLE layer: play a single-buffer sample raw. chop=1 retriggers the whole
     // sample; chop=N plays N step-sized slices across the Interval, forward or
     // shuffled. Skips silently until the buffer is loaded (no sine fallback).
-    function _ambEmitSample(at, layer, space, st) {
+    function _ambEmitSample(at, layer, space, st, keyOverride) {
       if (!layer.sampleId) return;
       let info = null;
       try { info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(layer.sampleId) : null; } catch (e) {}
       if (!info || !info.sampler || !info.sampler.loaded) return;
-      const key = 'samp:' + layer.id;
+      // keyOverride: an extras-hosted sample-seeded layer (Track C1) routes
+      // under its own '<type>:<id>' key; the dedicated list keeps 'samp:<id>'.
+      const key = keyOverride || ('samp:' + layer.id);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const base = (typeof cellParams !== 'undefined' && cellParams[0]) ? cellParams[0] : { type: 'sine' };
       const type = 'sample:' + layer.sampleId;
@@ -4809,7 +4811,7 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       if (cfg) { cfg.keyRoot = due.root; cfg.keyScale = due.scale; }
     }
-    function _ambRealizeSeqPhrase(at, seq, space, st) {
+    function _ambRealizeSeqPhrase(at, seq, space, st, keyOverride) {
       _ambKeyTime = null;   // Seq variance uses the normal cfg/global key, not a stale generative note-time
       if (!Array.isArray(seq.units) || !seq.units.length) return null;
       let unit;
@@ -4831,7 +4833,9 @@
       // exactly one sequence in auto mode (per-picked-unit in Interleave).
       if (st) st._lastUnitMs = _unitTotalMs(unit);
       const seed = unit;
-      const key = 'seq:' + seq.id;
+      // keyOverride: an extras-hosted sequence-seeded layer (Track C1) routes
+      // under its own '<type>:<id>' key; the dedicated list keeps 'seq:<id>'.
+      const key = keyOverride || ('seq:' + seq.id);
       const depth = Math.max(0, Math.min(100, seq.varyDepth | 0)) / 100;
       // Voice base: the unit's CAPTURED voice (from the source lane at send
       // time) so playback is lane-agnostic — falls back to the live grid only
@@ -6650,111 +6654,152 @@
       // bed/motif/etc. already do — fixing the "long seq glitches/cuts out ~4/5
       // through, then choppily resumes next iteration" burst. Manual mode (where
       // phrases can overlap) still emits a whole phrase per fire.
-      if (Array.isArray(cfg.seqs)) {
-        for (const seq of cfg.seqs) { try {
-          if (!seq || !Array.isArray(seq.units) || !seq.units.length) continue;
-          const key = 'seq:' + seq.id;
-          const stSeq = E.seqState[seq.id] || (E.seqState[seq.id] = { pick: 0, iter: 0 });
-          if (_muted(seq)) continue;
-          if (E.windingDown) continue; // Capture finalize: let the current unit finish, start no more
-          // Queue mode: STOP clamps HZ to the phrase boundary; START anchors the
-          // next phrase to it and flips on.
-          const gate = _qGate(key, !!seq.on, (t) => { C[key] = t; stSeq.plan = null; });
-          if (!gate.run) { stSeq.plan = null; continue; }
-          const HZ = gate.hz;
-          if (_ambFreezeGate(E, key, now, HZ)) { stSeq.plan = null; continue; }
-          window._ambCaptureSink = _ambCapSink(E, key);
-          // C[key] tracks the NEXT phrase's start (always in the future); the
-          // in-flight phrase streams separately via stSeq.plan, so C[key] never
-          // sits in the past and the re-anchor guard below can't misfire.
-          if (!C[key] || C[key] < now - 0.001) { C[key] = lead + _ambDriftOffset(E, key, seq, cfg); stSeq.plan = null; }
-          const manual = (seq.intervalMode === 'manual');
-          // Schedule a plan's events whose absolute start is inside the horizon;
-          // returns true when the whole plan is scheduled (nothing left).
-          const _streamPlan = (plan) => {
-            for (; plan.cur < plan.events.length; plan.cur++) {
-              const ev = plan.events[plan.cur];
-              const evAt = plan.baseAt + ev.offMs / 1000;
-              if (evAt >= HZ) return false;
-              _ambEmitSeqEvent(plan.ctx, ev, evAt, stSeq);
-            }
-            return true;
-          };
-          // (A) Continue an in-flight auto phrase from where the last tick left off.
-          if (stSeq.plan && _streamPlan(stSeq.plan)) stSeq.plan = null;
-          // (B) Start new phrases whose start falls within the horizon.
-          let g = 0;
-          while (C[key] < HZ && g++ < 64) {
-            if (!manual && stSeq.plan) break; // auto: one phrase streams at a time
-            const fires = _ambCondFires(seq.when, I[key] | 0);
-            stSeq.iter = I[key] | 0;
-            I[key] = (I[key] | 0) + 1;
-            if (!fires) {
-              const skipMs = (stSeq._lastUnitMs > 0) ? stSeq._lastUnitMs : _unitTotalMs(seq.units[0]);
-              C[key] += manual ? _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg)
-                               : Math.max(0.1, (skipMs > 0 ? skipMs : (seq.intervalMs | 0)) / 1000);
-              continue;
-            }
-            const plan = _ambRealizeSeqPhrase(C[key], seq, space, stSeq);
-            if (!plan) { C[key] += Math.max(0.1, (seq.intervalMs | 0) / 1000); continue; }
-            // Reflect the tone now playing onto the layer's Tone dropdown.
+      // ---- Seq / Sample layer tick bodies (Track C1: the Seed axis) -----------
+      // The per-entry logic of the cfg.seqs / cfg.samples loops, EXTRACTED so an
+      // extras layer carrying seedKind 'sequence' | 'sample' dispatches through
+      // the identical engine (Layer = Voice × Seed × Generator …; docs §10c).
+      // opts: { key, stateKey, reflect } — the legacy lists pass their historical
+      // keys ('seq:<id>' / bare-id seqState, reflect=true onto the Seq card's
+      // Tone dropdown); an extras-hosted layer passes its own natural
+      // '<type>:<id>' key for BOTH (so every keying site works unchanged and ids
+      // can never collide across the two homes) and reflect=false.
+      function _ambTickSeqLayer(E, seq, now, lead, space, cfg, opts) {
+        const C = E.clocks, I = E.iters;
+        if (!seq || !Array.isArray(seq.units) || !seq.units.length) return;
+        const key = opts.key;
+        const sk = opts.stateKey;
+        const stSeq = E.seqState[sk] || (E.seqState[sk] = { pick: 0, iter: 0 });
+        if (_muted(seq)) return;
+        if (E.windingDown) return; // Capture finalize: let the current unit finish, start no more
+        // Queue mode: STOP clamps HZ to the phrase boundary; START anchors the
+        // next phrase to it and flips on.
+        const gate = _qGate(key, !!seq.on, (t) => { C[key] = t; stSeq.plan = null; });
+        if (!gate.run) { stSeq.plan = null; return; }
+        const HZ = gate.hz;
+        if (_ambFreezeGate(E, key, now, HZ)) { stSeq.plan = null; return; }
+        window._ambCaptureSink = _ambCapSink(E, key);
+        // C[key] tracks the NEXT phrase's start (always in the future); the
+        // in-flight phrase streams separately via stSeq.plan, so C[key] never
+        // sits in the past and the re-anchor guard below can't misfire.
+        if (!C[key] || C[key] < now - 0.001) { C[key] = lead + _ambDriftOffset(E, key, seq, cfg); stSeq.plan = null; }
+        const manual = (seq.intervalMode === 'manual');
+        // Schedule a plan's events whose absolute start is inside the horizon;
+        // returns true when the whole plan is scheduled (nothing left).
+        const _streamPlan = (plan) => {
+          for (; plan.cur < plan.events.length; plan.cur++) {
+            const ev = plan.events[plan.cur];
+            const evAt = plan.baseAt + ev.offMs / 1000;
+            if (evAt >= HZ) return false;
+            _ambEmitSeqEvent(plan.ctx, ev, evAt, stSeq);
+          }
+          return true;
+        };
+        // (A) Continue an in-flight auto phrase from where the last tick left off.
+        if (stSeq.plan && _streamPlan(stSeq.plan)) stSeq.plan = null;
+        // (B) Start new phrases whose start falls within the horizon.
+        let g = 0;
+        while (C[key] < HZ && g++ < 64) {
+          if (!manual && stSeq.plan) break; // auto: one phrase streams at a time
+          const fires = _ambCondFires(seq.when, I[key] | 0);
+          stSeq.iter = I[key] | 0;
+          I[key] = (I[key] | 0) + 1;
+          if (!fires) {
+            const skipMs = (stSeq._lastUnitMs > 0) ? stSeq._lastUnitMs : _unitTotalMs(seq.units[0]);
+            C[key] += manual ? _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg)
+                             : Math.max(0.1, (skipMs > 0 ? skipMs : (seq.intervalMs | 0)) / 1000);
+            continue;
+          }
+          const plan = _ambRealizeSeqPhrase(C[key], seq, space, stSeq, key);
+          if (!plan) { C[key] += Math.max(0.1, (seq.intervalMs | 0) / 1000); continue; }
+          // Reflect the tone now playing onto the layer's Tone dropdown.
+          if (opts.reflect) {
             try {
               const ev0 = plan.events && plan.events[0];
               _ambSeqReflectTone(E, seq.id, (ev0 && ev0.sounds && ev0.sounds[0]) || (plan.ctx && plan.ctx.type));
             } catch (e) {}
-            if (manual) {
-              // Whole phrase now; next starts after the (snapped) Interval knob.
-              for (let i = 0; i < plan.events.length; i++) {
-                const ev = plan.events[i];
-                _ambEmitSeqEvent(plan.ctx, ev, plan.baseAt + ev.offMs / 1000, stSeq);
-              }
-              C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
-              continue;
-            }
-            // Auto: stream within the horizon now, advance C[key] to the NEXT
-            // phrase start (future) by the unit's natural length, and keep the
-            // plan if it didn't finish so the next tick resumes it.
-            const done = _streamPlan(plan);
-            const advMs = (plan.advanceMs > 0) ? plan.advanceMs
-              : (stSeq._lastUnitMs > 0 ? stSeq._lastUnitMs : (seq.intervalMs | 0));
-            C[key] = plan.baseAt + Math.max(0.1, advMs / 1000);
-            stSeq.plan = done ? null : plan;
-            if (!done) break; // still streaming this phrase across ticks
           }
-          window._ambCaptureSink = null; _ambPruneCap(E, key, now);
+          if (manual) {
+            // Whole phrase now; next starts after the (snapped) Interval knob.
+            for (let i = 0; i < plan.events.length; i++) {
+              const ev = plan.events[i];
+              _ambEmitSeqEvent(plan.ctx, ev, plan.baseAt + ev.offMs / 1000, stSeq);
+            }
+            C[key] += _ambSnap(Math.max(0.1, (seq.intervalMs | 0) / 1000), cfg);
+            continue;
+          }
+          // Auto: stream within the horizon now, advance C[key] to the NEXT
+          // phrase start (future) by the unit's natural length, and keep the
+          // plan if it didn't finish so the next tick resumes it.
+          const done = _streamPlan(plan);
+          const advMs = (plan.advanceMs > 0) ? plan.advanceMs
+            : (stSeq._lastUnitMs > 0 ? stSeq._lastUnitMs : (seq.intervalMs | 0));
+          C[key] = plan.baseAt + Math.max(0.1, advMs / 1000);
+          stSeq.plan = done ? null : plan;
+          if (!done) break; // still streaming this phrase across ticks
+        }
+        window._ambCaptureSink = null; _ambPruneCap(E, key, now);
+      }
+      function _ambTickSampleLayer(E, L, now, lead, space, cfg, opts) {
+        const C = E.clocks, I = E.iters;
+        if (!L || !L.sampleId) return;
+        const key = opts.key;
+        if (_muted(L)) return;
+        if (E.windingDown) return; // Capture finalize: start no more slices
+        const gate = _qGate(key, !!L.on, (t) => { C[key] = t; });
+        if (!gate.run) return;
+        const HZ = gate.hz;
+        if (_ambFreezeGate(E, key, now, HZ)) return;
+        window._ambCaptureSink = _ambCapSink(E, key);
+        if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
+        let g = 0;
+        while (C[key] < HZ && g++ < 4) {
+          if (_ambCondFires(L.when, I[key] | 0)) {
+            const st = E.seqState[key] || (E.seqState[key] = { pick: 0, iter: 0 });
+            st.iter = I[key] | 0;
+            _ambEmitSample(C[key], L, space, st, key);
+          }
+          I[key] = (I[key] | 0) + 1;
+          C[key] += _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
+        }
+        window._ambCaptureSink = null; _ambPruneCap(E, key, now);
+      }
+
+      if (Array.isArray(cfg.seqs)) {
+        for (const seq of cfg.seqs) { try {
+          _ambTickSeqLayer(E, seq, now, lead, space, cfg, { key: 'seq:' + (seq && seq.id), stateKey: seq && seq.id, reflect: true });
         } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       }
       // Sample layers (dynamic list). Each fire schedules up to `chop` slices.
       if (Array.isArray(cfg.samples)) {
         for (const L of cfg.samples) { try {
-          if (!L || !L.sampleId) continue;
-          const key = 'samp:' + L.id;
-          if (_muted(L)) continue;
-          if (E.windingDown) continue; // Capture finalize: start no more slices
-          const gate = _qGate(key, !!L.on, (t) => { C[key] = t; });
-          if (!gate.run) continue;
-          const HZ = gate.hz;
-          if (_ambFreezeGate(E, key, now, HZ)) continue;
-          window._ambCaptureSink = _ambCapSink(E, key);
-          if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, L, cfg);
-          let g = 0;
-          while (C[key] < HZ && g++ < 4) {
-            if (_ambCondFires(L.when, I[key] | 0)) {
-              const st = E.seqState[key] || (E.seqState[key] = { pick: 0, iter: 0 });
-              st.iter = I[key] | 0;
-              _ambEmitSample(C[key], L, space, st);
-            }
-            I[key] = (I[key] | 0) + 1;
-            C[key] += _ambSnap(Math.max(0.1, (L.intervalMs | 0) / 1000), cfg);
-          }
-          window._ambCaptureSink = null; _ambPruneCap(E, key, now);
+          _ambTickSampleLayer(E, L, now, lead, space, cfg, { key: 'samp:' + (L && L.id) });
         } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       }
       // Extra layer instances (additional Bed/Motif/Texture/Beat). runLayer
       // gates present/on/frozen and reads the instance's intervalMs/when.
       if (Array.isArray(cfg.extras)) {
         for (const ex of cfg.extras) { try {
-          if (!ex || !_AMB_LAYER_SCHEMA[ex.type]) continue;
+          if (!ex) continue;
+          // Track C1 — the SEED axis: an extras layer whose seed is a
+          // SEQUENCE or SAMPLE dispatches through the identical engine the
+          // dedicated Seq/Sample lists use (the extracted bodies above). It
+          // keeps its own natural '<type>:<id>' key for clocks/chains/freeze/
+          // cancel — every keying site works unchanged, and ids can't collide
+          // with cfg.seqs/cfg.samples. Layers stamped seedKind 'random' (C0's
+          // default for every existing extras layer) fall through untouched.
+          const _sk = (typeof _ambSeedOf === 'function') ? _ambSeedOf(ex) : null;
+          if (_sk === 'sequence' && Array.isArray(ex.units) && ex.units.length) {
+            const _k = ex.type + ':' + ex.id;
+            try { _ambTickSeqLayer(E, ex, now, lead, space, cfg, { key: _k, stateKey: _k, reflect: false }); }
+            catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; }
+            continue;
+          }
+          if (_sk === 'sample' && ex.sampleId) {
+            try { _ambTickSampleLayer(E, ex, now, lead, space, cfg, { key: ex.type + ':' + ex.id }); }
+            catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; }
+            continue;
+          }
+          if (!_AMB_LAYER_SCHEMA[ex.type]) continue;
           const key = ex.type + ':' + ex.id;
           // Phase-anchored (windowed) vs free (stepped) is resolved from the
           // layer's emit DESCRIPTOR — one uniform gate/freeze/capture path for

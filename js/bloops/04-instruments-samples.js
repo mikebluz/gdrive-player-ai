@@ -172,6 +172,15 @@
     // quiet buffers UP toward a reference peak — never attenuates, capped so a
     // near-silent buffer can't blow up. Equalizes sample loudness everywhere
     // (grid presses + Bloom), not just the Bed.
+    // Per-buffer loudness normalization — PERCEPTUAL (loudest-window RMS),
+    // not peak. Peak-normalizing left plucky/percussive samples (piano,
+    // e-piano, …) far quieter than synths: their attack transient pins the
+    // peak while the decaying body carries little energy, so they earned no
+    // boost. Instead: find the loudest ~46 ms window's RMS and boost it
+    // toward REF_RMS, with a peak-derived ceiling (true peak stays ≤ 0.95 —
+    // can't clip) and an absolute cap. Boost-only (≥1×), so already-hot
+    // samples are untouched. Strided scan (≤ ~6k reads) + cached per midi,
+    // so it stays cheap when Bloom layers hit fresh buffers mid-schedule.
     function _sampleNormGain(info, midi, audioBuf) {
       try {
         if (!info || !audioBuf) return 1;
@@ -179,16 +188,25 @@
         const cached = info._normByMidi[midi];
         if (Number.isFinite(cached)) return cached;
         const ch = audioBuf.getChannelData(0);
-        // Subsample the peak scan (≤ ~3k reads) so this stays cheap even when
-        // several Bloom layers each hit fresh buffers in the same scheduling
-        // window — a full per-sample scan there caused choppiness. A strided
-        // peak slightly underestimates, which only nudges the gain up (capped).
         const N = ch.length;
-        const stride = Math.max(1, Math.floor(N / 3000));
-        let peak = 0;
-        for (let i = 0; i < N; i += stride) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > peak) peak = a; }
-        const REF_PEAK = 0.5, MAX_EXTRA = 3; // only boost (≥1×), cap at +9.5 dB
-        let g = (peak > 1e-4) ? (REF_PEAK / peak) : 1;
+        const sr = audioBuf.sampleRate || 44100;
+        const stride = Math.max(1, Math.floor(N / 6000));
+        // Body RMS: mean energy over the first ~1 s from ONSET (skip leading
+        // silence). A transient-max or peak measure under-boosts exactly the
+        // percussive voices this exists for — their attack pins the peak while
+        // the body carries the perceived loudness. No peak ceiling: voices are
+        // float (the flat +12 dB boost already runs per-voice peaks past 1.0)
+        // and summing headroom is the master chain's job.
+        let onset = -1;
+        for (let i = 0; i < N; i += stride) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > 0.01) { onset = i; break; } }
+        if (onset < 0) { info._normByMidi[midi] = 1; return 1; }
+        const end = Math.min(N, onset + Math.floor(sr * 1.0));
+        let sum = 0, cnt = 0;
+        for (let i = onset; i < end; i += stride) { const a = ch[i]; sum += a * a; cnt++; }
+        const rms = cnt > 0 ? Math.sqrt(sum / cnt) : 0;
+        const REF_RMS = 0.25;                   // body target (≈ a healthy synth voice)
+        const MAX_EXTRA = 6;                    // cap ≤ +15.6 dB
+        let g = (rms > 1e-4) ? (REF_RMS / rms) : 1;
         g = Math.max(1, Math.min(MAX_EXTRA, g));
         info._normByMidi[midi] = g;
         return g;
@@ -431,7 +449,11 @@
         try { src.playbackRate.value = playbackRate; } catch (e) {}
 
         const envGain = ac.createGain(); envGain.gain.value = 0;
-        const boostGain = ac.createGain(); boostGain.gain.value = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20);
+        const boostGain = ac.createGain();
+        // Flat boost × the per-buffer loudness normalization (quiet pads get
+        // the same makeup the one-shot voices get).
+        const _rootMidi = Math.round(69 + 12 * Math.log2((rootFreq > 0 ? rootFreq : 261.63) / 440));
+        boostGain.gain.value = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20) * _sampleNormGain(info, _rootMidi, audioBuf);
         src.connect(envGain); envGain.connect(boostGain);
         let tail = boostGain, panNode = null;
         if (opts && Number.isFinite(opts.pan) && Math.abs(opts.pan) > 0.01 && ac.createStereoPanner) {

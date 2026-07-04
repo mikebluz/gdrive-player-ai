@@ -9757,6 +9757,27 @@
       const del = el.querySelector('.ane-del'); if (del) del.disabled = (notes.length <= 1);
       const toneSel = el.querySelector('.ane-tone');
       if (toneSel) { const ty = (n.params && n.params.type) || ''; toneSel.value = ty; if (toneSel.value !== ty) toneSel.value = ''; }
+      _ambNoteEdSyncHi();
+    }
+    // Selection highlight: the edited note's key on the layer's keyboard gets
+    // .sel (gold — distinct from the teal playing .lit). Follows pitch edits
+    // (called from every refresh) and clears on close.
+    function _ambNoteEdSyncHi() {
+      document.querySelectorAll('.ampk.sel').forEach(k => k.classList.remove('sel'));
+      const t = _ambNoteEd; if (!t) return;
+      try {
+        const host = document.getElementById(t.E.hostId);
+        const pe = host && host.querySelector('.ambient-piano[data-pkey="' + t.key + '"]');
+        if (!pe) return;
+        const notes = _ambNoteEdNotes();
+        const n = notes && notes[t.index];
+        if (!n || !(n.freq > 0)) return;
+        const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+        let m = Math.round(69 + 12 * Math.log2(n.freq / A));
+        m = Math.max(36, Math.min(84, m));
+        const kEl = pe.querySelector('.ampk[data-m="' + m + '"]');
+        if (kEl) kEl.classList.add('sel');
+      } catch (e) {}
     }
     function _ambPositionNoteEditor(anchorEl) {
       const el = document.getElementById('ambient-note-editor'); if (!el || !anchorEl) return;
@@ -9810,8 +9831,12 @@
         }
         _ambPositionNoteEditor(anchorEl || _ambNoteChipEl(E, key, index));
       }
+      // Redraw so the selected block golds immediately (while stopped the roll
+      // only repaints through _ambUpdateNotesLive, not a rAF).
+      try { _ambUpdateNotesLive(E); } catch (e) {}
     }
     function _ambCloseNoteEditor() {
+      const tE = _ambNoteEd && _ambNoteEd.E;
       _ambNoteEd = null;
       const el = document.getElementById('ambient-note-editor');
       if (el) {
@@ -9822,6 +9847,8 @@
         // working for the next non-docked open.
         if (wasDocked && el.parentNode !== document.body) { try { document.body.appendChild(el); } catch (e) {} }
       }
+      _ambNoteEdSyncHi();                                        // clear the key highlight
+      if (tE) { try { _ambUpdateNotesLive(tE); } catch (e) {} }  // un-gold the roll block
     }
     // Make a just-edited locked layer take effect on the NEXT iteration. The
     // engine schedules ~1.4 s ahead, so the next iteration's voices were already

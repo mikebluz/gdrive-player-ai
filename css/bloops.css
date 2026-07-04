@@ -3278,6 +3278,10 @@
     .ampk-b { position: absolute; top: 0; height: 62%; background: #14141d; border: 1px solid #000; border-radius: 0 0 3px 3px; z-index: 2; }
     .ampk-w.lit { background: rgba(127, 214, 196, calc(0.3 + 0.7 * var(--lit, 1))); }
     .ampk-b.lit { background: rgba(127, 214, 196, calc(0.45 + 0.55 * var(--lit, 1))); border-color: #7fd6c4; }
+    /* Selected (being edited in the note editor) — gold, matching the roll's
+       highlighted block; wins over the teal playing light. */
+    .ampk-w.sel, .ampk-w.sel.lit { background: #ffd166; border-color: #b98b2f; }
+    .ampk-b.sel, .ampk-b.sel.lit { background: #ffd166; border-color: #b98b2f; }
     /* Per-layer 3-band EQ (#1) — in the Mix group. Each row: label · live band
        meter · gain slider · dB. The meter fills + shifts hue continuously with
        that band's energy (var(--e), 0..1): dim teal when quiet → bright amber loud. */

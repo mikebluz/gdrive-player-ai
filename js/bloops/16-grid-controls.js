@@ -841,7 +841,7 @@
       if (sizeRow) sizeRow.addEventListener('click', (e) => {
         const chip = e.target.closest('.place-size-chip'); if (!chip) return;
         const v = parseFloat(chip.dataset.sub);
-        placeSize = Number.isFinite(v) ? v : null;
+        placeSize = Number.isFinite(v) && v > 0 ? v : 0.5;
         sizeRow.querySelectorAll('.place-size-chip').forEach(c => c.classList.toggle('active', c === chip));
       });
       const bb = document.getElementById('bar-rest-btn');

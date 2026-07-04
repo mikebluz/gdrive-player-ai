@@ -245,18 +245,23 @@
       // path (typical projects use far fewer).
       const sampleIdByKey = new Map();
       let sampleIdSeq = 0;
+      // Recycled numeric ids from deleted user samples (releaseSampleKeys).
+      // sample_load reuses a slot's core allocation in place when the id is
+      // re-loaded, so recycling ids here fully prevents 96-slot exhaustion
+      // from import/delete churn without a core-side free.
+      const freeSampleIds = [];
       let sTagSeq = 1 << 20;   // sample tags live above holdOn's tag range
       function _ensureSample(bufKey, audioBuf) {
         let id = sampleIdByKey.get(bufKey);
         if (id != null) return id;
-        if (sampleIdSeq >= 96 || !audioBuf || !audioBuf.length) return -1;
+        if ((freeSampleIds.length === 0 && sampleIdSeq >= 96) || !audioBuf || !audioBuf.length) return -1;
         const ch = Math.min(2, audioBuf.numberOfChannels || 1);
         const chans = [];
         try {
           // copy — transferring the live channel data would detach the app's buffer
           for (let c = 0; c < ch; c++) chans.push(audioBuf.getChannelData(c).slice());
         } catch (e) { return -1; }
-        id = sampleIdSeq++;
+        id = freeSampleIds.length ? freeSampleIds.pop() : sampleIdSeq++;
         sampleIdByKey.set(bufKey, id);
         try {
           node.port.postMessage(
@@ -265,6 +270,19 @@
           );
         } catch (e) { sampleIdByKey.delete(bufKey); return -1; }
         return id;
+      }
+      // Release every core buffer id whose bufKey belongs to a deleted user
+      // sample (bufKeys are '<sampleId>#<midi>' / '...#loop'). The numeric ids
+      // go on the free list for reuse; the core slot's heap allocation is
+      // reused in place on the next load of that id.
+      function releaseSampleKeys(sampleId) {
+        if (!sampleId) return 0;
+        const prefix = String(sampleId) + '#';
+        let n = 0;
+        for (const [k, id] of Array.from(sampleIdByKey)) {
+          if (k.startsWith(prefix)) { sampleIdByKey.delete(k); freeSampleIds.push(id); n++; }
+        }
+        return n;
       }
       // Play a sample voice in the core. o carries FINAL values (the caller —
       // 04's sample path — owns the node-parity math: rate incl. tuneCents,
@@ -446,7 +464,7 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
-      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, cancelFrom, stopBefore, stopAll, init, designParams,
+      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
                stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node };
     })();
     // Live A/B toggles from the console.

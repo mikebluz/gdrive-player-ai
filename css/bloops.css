@@ -3180,7 +3180,16 @@
       max-height: 190px; overflow-y: auto; overflow-x: hidden;
       border: 1px solid rgba(255, 212, 121, 0.45); border-bottom: none;
       border-radius: 4px 4px 0 0; background: #0c0c14;
+      /* Reserve the scrollbar gutter even when not scrolling — paired with the
+         same reservation on the keyboard below, so the roll's pitch columns
+         and the keys keep identical content widths under classic (layout)
+         scrollbars, not just macOS overlay ones. */
+      scrollbar-gutter: stable;
     }
+    .ambient-roll-scroll::-webkit-scrollbar,
+    .ambient-notes-live.reserved + .ambient-piano.open::-webkit-scrollbar { width: 8px; }
+    .ambient-roll-scroll::-webkit-scrollbar-track { background: #0a0a14; }
+    .ambient-roll-scroll::-webkit-scrollbar-thumb { background: #2d2d3f; border-radius: 4px; }
     .ambient-np-vroll {
       display: block; width: 100%; height: auto;
       border: none; border-radius: 0; background: transparent;
@@ -3192,11 +3201,15 @@
       overflow-y: hidden;
       border-color: #20202e;
     }
-    /* Keyboard butts the roll when both are open (shared pitch columns). */
+    /* Keyboard butts the roll when both are open (shared pitch columns).
+       overflow+scrollbar-gutter mirror the roll wrapper's reservation so key
+       columns stay pixel-aligned with the roll under layout scrollbars. */
     .ambient-notes-live.reserved + .ambient-piano.open {
       margin-top: 0;
       border: 1px solid rgba(255, 212, 121, 0.45); border-top: none;
       border-radius: 0 0 4px 4px; box-sizing: border-box;
+      overflow-y: hidden;
+      scrollbar-gutter: stable;
     }
     /* Note editor DOCKED above the roll (vertical-roll layers): static, full
        width, compact — replaces the floating popover there. */

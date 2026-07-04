@@ -1357,6 +1357,10 @@
       if (!info || !info.imported) return false;
       try { if (info.sampler && info.sampler.dispose) info.sampler.dispose(); } catch (e) {}
       try { if (info.urls) Object.values(info.urls).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} }); } catch (e) {}
+      // Recycle the WASM core's buffer ids for this sample (96-slot table) —
+      // without this, import/delete churn eventually exhausted the table and
+      // new samples silently fell back to the node path.
+      try { if (typeof _coreVoices !== 'undefined' && _coreVoices.releaseSampleKeys) _coreVoices.releaseSampleKeys(id); } catch (e) {}
       sampleSamplers.delete(id);
       try {
         const db = await getImportedDB();

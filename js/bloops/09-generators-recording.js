@@ -567,6 +567,27 @@
             rEl = modal.querySelector('#euc-r'), lEl = modal.querySelector('#euc-l');
       const stripEl = modal.querySelector('#euc-strip'), editEl = modal.querySelector('#euc-stepedit');
 
+      // A hit step's display labels: its actual note(s). Chords show root +
+      // quality, wrap steps show the wrap's name; rests return null.
+      const _stepNoteLabels = (s) => {
+        if (!s.hit) return null;
+        if (state.contentMode === 'wraps' && state.wrapSteps.length) {
+          const wi = Number.isFinite(s.wrapIdx) ? ((s.wrapIdx % state.wrapSteps.length) + state.wrapSteps.length) % state.wrapSteps.length : 0;
+          const it = state.wrapSteps[wi];
+          return [(it && it.name) ? it.name : ('Wrap ' + (wi + 1))];
+        }
+        const idxs = (Array.isArray(s.noteIdxs) && s.noteIdxs.length) ? s.noteIdxs : [0];
+        const lb = (ix) => (gridNotes[ix] && gridNotes[ix].label) || '?';
+        if (s.noteMode === 'chord') return [lb(idxs[0]) + ' ' + (s.chordKey || 'maj')];
+        return idxs.map(lb);
+      };
+      // Pitch-class colour (chipPalette) — same note, same colour everywhere.
+      const _noteColor = (label) => {
+        try {
+          const pc = (typeof labelToPitchClass === 'function') ? labelToPitchClass(label) : null;
+          return (pc != null && typeof chipPalette !== 'undefined' && chipPalette[pc]) ? chipPalette[pc] : null;
+        } catch (e) { return null; }
+      };
       const renderStrip = () => {
         stripEl.innerHTML = '';
         state.steps.forEach((s, i) => {
@@ -577,7 +598,25 @@
           // the strip always fills the row (8 even steps → equal eighths).
           btn.style.flexGrow = String(Math.max(0.05, s.eu || 1));
           btn.style.flexBasis = '0';
-          btn.textContent = s.hit ? '●' : '·';
+          const labels = _stepNoteLabels(s);
+          if (labels && labels.length) {
+            // Note names instead of ● — each note in its own pitch colour.
+            btn.classList.add('noted');
+            btn.innerHTML = labels.map(l => {
+              const c = _noteColor(l);
+              return '<span class="euc-cell-note"' + (c ? ' style="color:' + c + '"' : '') + '>' + l + '</span>';
+            }).join('');
+            // Inline tint would beat the .sel class styling — the selected
+            // cell keeps its amber highlight instead.
+            const c0 = _noteColor(labels[0]);
+            if (c0 && i !== state.sel) {
+              btn.style.borderColor = c0;
+              btn.style.background = (typeof tintHsl === 'function') ? tintHsl(c0, 0.16) : '';
+            }
+            btn.title = labels.join(' · ');
+          } else {
+            btn.textContent = '·';
+          }
           btn.addEventListener('click', () => {
             state.sel = (state.sel === i) ? -1 : i;  // tap toggles the editor
             renderStrip(); renderEditor();
@@ -596,9 +635,26 @@
         const isHit = !!s.hit;
         const wrapsMode = isHit && state.contentMode === 'wraps' && state.wrapSteps.length > 0;
         const chordMode = isHit && !wrapsMode && s.noteMode === 'chord';
+        // Title carries the step's actual note(s) (pitch-coloured), not the
+        // old Circle/Dot terms; the convert button speaks Note/Rest. Note-
+        // change handlers call _syncTitle to keep it live without a full
+        // editor re-render (which would rebuild the multi-select mid-pick).
+        const _titleNotesHtml = () => {
+          const L = _stepNoteLabels(s);
+          return (L && L.length)
+            ? L.map(l => {
+                const c = _noteColor(l);
+                return '<span' + (c ? ' style="color:' + c + '"' : '') + '>' + l + '</span>';
+              }).join(' · ')
+            : 'Rest ·';
+        };
+        const _syncTitle = () => {
+          const t = editEl.querySelector('.euc-step-title');
+          if (t) t.innerHTML = 'Step ' + (i + 1) + ' — ' + _titleNotesHtml();
+        };
         let html = '<div class="euc-step-head">' +
-            '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + (isHit ? 'Circle ●' : 'Dot ·') + '</div>' +
-            '<button type="button" class="euc-convert" id="euc-convert">' + (isHit ? 'Make Dot ·' : 'Make Circle ●') + '</button>' +
+            '<div class="euc-step-title">Step ' + (i + 1) + ' — ' + _titleNotesHtml() + '</div>' +
+            '<button type="button" class="euc-convert" id="euc-convert">' + (isHit ? 'Make Rest ·' : 'Make Note ●') + '</button>' +
           '</div>' +
           '<div class="sm-section-label" style="margin-top:0;">Step div</div><select class="euc-sel" id="euc-div"></select>';
         if (isHit && wrapsMode) {
@@ -652,7 +708,7 @@
             if (wi === curIdx) opt.selected = true;
             wsel.appendChild(opt);
           });
-          wsel.addEventListener('change', () => { s.wrapIdx = parseInt(wsel.value, 10) || 0; renderStrip(); });
+          wsel.addEventListener('change', () => { s.wrapIdx = parseInt(wsel.value, 10) || 0; renderStrip(); _syncTitle(); });
           const allWrap = editEl.querySelector('#euc-all-wrap');
           if (allWrap) allWrap.addEventListener('click', () => {
             // Re-distribute starting from THIS circle's wrap, looping.
@@ -709,7 +765,7 @@
               if ((s.chordKey || 'maj') === k) opt.selected = true;
               csel.appendChild(opt);
             });
-            csel.addEventListener('change', () => { s.chordKey = csel.value; renderStrip(); });
+            csel.addEventListener('change', () => { s.chordKey = csel.value; renderStrip(); _syncTitle(); });
           }
 
           const notesSel = editEl.querySelector('#euc-notes');
@@ -730,7 +786,7 @@
               if (!picked.length) picked = [0]; // keep at least one pitch
               s.noteIdxs = picked.sort((a, b) => a - b);
             }
-            renderStrip();
+            renderStrip(); _syncTitle();
           });
           const allNotes = editEl.querySelector('#euc-all-notes');
           if (allNotes) allNotes.addEventListener('click', () => {

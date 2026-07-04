@@ -901,6 +901,7 @@
         // Bar grid: the chip spans a proportional number of sub-cells in its
         // bar/row; a step crossing the bar line splits into continuation
         // segments (rendered below). _wrapCurrentCol tracks the row cursor.
+        const _chipStartCol = _wrapCurrentCol;   // head col before the plan advances it (key-group sizing)
         const _continuationPlan = _barGridPlan(_barGridSpan(step), _wrapCurrentCol);
         _wrapCurrentCol = _continuationPlan.newCol;
         chip.style.width = '';
@@ -1083,7 +1084,18 @@
             const _gInfo = _keyGroupSpansByStart.get(_stepGroupStart);
             _container = document.createElement('div');
             _container.className = 'key-group-container';
-            _container.style.gridColumn = 'span ' + (_gInfo && _gInfo.total ? _gInfo.total : 1);
+            // The container is a subgrid item, so its column span must never
+            // exceed the 32-column row — an over-span would force implicit
+            // columns and shrink every row's cells. Clamp to the space left
+            // in the head chip's row, and let a group whose chips total more
+            // than that continue on additional 48px rows via grid-row span
+            // (exact when the group starts at column 1 — the common case —
+            // approximate for mid-row starts).
+            const _gTotal = (_gInfo && _gInfo.total ? _gInfo.total : 1);
+            const _gCap = _BAR_SUBCELLS - (_chipStartCol - 1);
+            _container.style.gridColumn = 'span ' + Math.min(_gTotal, _gCap);
+            const _gRows = Math.ceil(((_chipStartCol - 1) + _gTotal) / _BAR_SUBCELLS);
+            if (_gRows > 1) _container.style.gridRow = 'span ' + _gRows;
             const _rootName  = (typeof CHROMATIC !== 'undefined' && CHROMATIC[step.keyContext.root]) || '?';
             const _scaleName = (typeof prettyScaleName === 'function')
               ? prettyScaleName(step.keyContext.scale)

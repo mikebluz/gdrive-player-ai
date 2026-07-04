@@ -5291,10 +5291,9 @@
     /* Placeholder + in-progress chip span the whole bar row. */
     .lane-chips > .seq-empty,
     .lane-chips > .seq-step.chord-pending { grid-column: 1 / -1; }
-    .lane-chips .key-group-container {
-      display: flex; flex: 0 0 auto; flex-direction: row;
-      align-items: stretch; gap: 4px;
-    }
+    /* .key-group-container layout lives in the "Visual key grouping" block
+       below — it must stay a subgrid (never flex) so grouped chips keep
+       their grid-column spans. */
     /* Collapsed lane: hide the chip strip entirely so just the lane
        controls (status pill + collapse + grid toggles) remain visible.
        Driven by the collapse button on lane-controls. */
@@ -5605,42 +5604,34 @@
        child of the parent .lane-chips grid — so chips inside it
        keep aligning to the outer column lines — while drawing a
        single thin purple border around the whole group plus a small
-       "C Major" / "G Minor" label above it. */
-    .lane-chips.grid-mode > .key-group-container {
+       "C Major" / "G Minor" label above it.
+       MUST be subgrid (never flex): inside a flex container the chips'
+       grid-column spans are ignored and they shrink to text width —
+       grouped steps then render at a fraction of their musical length
+       while playback stays correct (the audible-vs-visual divergence bug).
+       The old .grid-mode gate is gone: .lane-chips is ALWAYS a 32-col
+       bar grid now, so the subgrid rule applies unconditionally. */
+    .lane-chips > .key-group-container {
       display: grid;
       grid-template-columns: subgrid;
-      grid-auto-rows: auto;
+      /* Rows match the parent strip's 48px chip rows so a group spanning
+         multiple bars (grid-row span set inline by renderSequence) keeps
+         its internal rows aligned with the outer bar rows. */
+      grid-auto-rows: 48px;
+      align-content: start;
       gap: inherit;
       /* outline (not border) + zero padding so the purple frame draws WITHOUT
          adding layout width. With border+padding the container's chips — which
          align to the PARENT subgrid's column lines, not this box's padded
          content edge — overflowed it by exactly 6px (2px border + 4px padding),
          spilling past the lane and getting clipped by body's overflow-x:hidden.
-         Matches the non-grid-mode fallback below; keeps the lane-width
-         invariant (equal step totals → equal width) intact. */
+         Keeps the lane-width invariant (equal step totals → equal width). */
       outline: 1px solid rgba(192, 38, 211, 0.6);
       outline-offset: -1px;
       border-radius: 8px;
       padding: 0;
       position: relative;
       box-shadow: 0 0 8px rgba(192, 38, 211, 0.18);
-    }
-    /* Fallback for layouts that don't apply the grid-mode class
-       (older code paths, ungroomed lanes). Renders as a flex strip
-       so chips still flow but the visual container still appears. */
-    .lane-chips:not(.grid-mode) > .key-group-container {
-      display: flex;
-      flex-wrap: nowrap;
-      gap: inherit;
-      /* outline (not border) + zero padding so the group box draws its purple
-         frame WITHOUT adding any layout width — the container measures exactly
-         the sum of its chips. This keeps the lane-width invariant (equal step
-         totals → equal width) intact even when steps are key-grouped. */
-      outline: 1px solid rgba(192, 38, 211, 0.6);
-      outline-offset: -1px;
-      border-radius: 8px;
-      padding: 0;
-      position: relative;
     }
     /* The key name floats just above the container's top-left edge.
        Pointer-events:none so it doesn't intercept chip clicks. */

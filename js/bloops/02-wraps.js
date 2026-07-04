@@ -1547,17 +1547,19 @@
       menu.appendChild(createBtn);
 
       // ＋ Ensemble… — build a degree×tone wrap (a movable diatonic harmonizer
-      // where each voice has its own timbre). Disabled on chromatic (no scale
-      // degrees to voice against).
+      // where each voice has its own timbre). Always CLICKABLE — on the
+      // chromatic scale (the default) it can't voice by degree, but a disabled
+      // button just reads as "broken" with no feedback, so instead the click
+      // falls through to openEnsembleBuilder's toast telling the user to pick a
+      // musical scale first. (A silent disabled button was reported as "can't
+      // click the Ensemble option".)
       const ensBtn = document.createElement('button');
       ensBtn.type = 'button';
       ensBtn.className = 'wrap-bank-create-prog wrap-bank-create-ens';
       ensBtn.textContent = '＋ Ensemble…';
-      if (typeof currentScale === 'string' && currentScale === 'chromatic') {
-        ensBtn.disabled = true; ensBtn.title = 'Pick a musical scale — ensembles voice by scale degree';
-      } else {
-        ensBtn.title = 'Build a degree×tone ensemble (Stack / Run / Set)';
-      }
+      ensBtn.title = (typeof currentScale === 'string' && currentScale === 'chromatic')
+        ? 'Ensembles voice by scale degree — pick a musical scale first'
+        : 'Build a degree×tone ensemble (Stack / Run / Set)';
       ensBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
       ensBtn.addEventListener('click', (e) => { e.stopPropagation(); closeWrapsMenu(); openEnsembleBuilder(); });
       menu.appendChild(ensBtn);

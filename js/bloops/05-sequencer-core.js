@@ -46,6 +46,17 @@
     function _barGridSpan(step) {
       return Math.max(1, Math.round(stepLengthFactor(step) * _BAR_SUBCELLS));
     }
+    // A step is "off-grid" (a triplet or other non-binary value) when its
+    // natural span in 32-cells isn't (close to) an integer — 32 isn't
+    // divisible by 3, so triplets round to the nearest cell and drift. The
+    // grid stays 32-cell (per the design decision); such chips are MARKED
+    // (a ³ badge + accent, and a bracket over each group of 3) so the user
+    // can see they're triplets even though the width is approximate.
+    function _isTripletStep(step) {
+      if (!step || step.isSub) return false;
+      const raw = stepLengthFactor(step) * _BAR_SUBCELLS;
+      return raw > 0 && Math.abs(raw - Math.round(raw)) > 0.04;
+    }
     // ---- Subsequence extirpation -------------------------------------------
     // The "subsequence" step (isSub + subSteps[]) is being removed: a run of
     // notes is now just a series of INDIVIDUAL steps. These helpers expand any
@@ -748,6 +759,9 @@
       // long steps clamped to span = subCols and visually lied about
       // their actual duration. Reset on every renderSequence call.
       let _wrapCurrentCol = 1;
+      // Triplet-group cursor: counts consecutive off-grid chips so every 3rd
+      // starts a new bracketed group (,--3--,). Reset by any non-triplet chip.
+      let _tripletRun = 0;
       const _planChipPlacement = (naturalSpan) => {
         if (!(cols > 0) || !(subCols > 0)) {
           return { firstSpan: naturalSpan, continuations: [], newCol: _wrapCurrentCol };
@@ -891,6 +905,14 @@
         chip.style.width = '';
         chip.style.gridColumn = 'span ' + _continuationPlan.firstSpan;
         if (_continuationPlan.continuations.length > 0) chip.classList.add('cont-start');
+        // Triplet marking (32-grid stays; the mark shows the true intent).
+        if (_isTripletStep(step)) {
+          chip.classList.add('triplet');
+          if (_tripletRun % 3 === 0) chip.classList.add('triplet-group-start');
+          _tripletRun++;
+        } else {
+          _tripletRun = 0;
+        }
         if (isSelectedStep(step)) chip.classList.add('selected');
         // Variance markers — blinking outline while editing the pool,
         // a small ⟳ glyph (via CSS) for committed variance steps.

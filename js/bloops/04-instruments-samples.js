@@ -2575,6 +2575,10 @@
         });
         if (_h) return _h;
       }
+      // 'sync' is core-only — degrade a missed hold to a plain saw (see playNote).
+      if (type === 'sync') {
+        return startSustainedNote(freq, { ...params, type: 'sawtooth' }, startAt);
+      }
 
       // Per-note effect chain — mirrors the chain playNote builds for
       // sequence playback so a sustained press hears the same reverb,
@@ -3277,6 +3281,13 @@
           dp: _coreVoices.designParams(params),
         });
         if (_took) return;
+      }
+      // 'sync' is a CORE-ONLY oscillator (hard sync, kind 14) — the node
+      // engine has no sync voice. When the core didn't take it (flag off,
+      // cold start, offline export), degrade to a plain saw so the note
+      // still sounds (same pattern as the sampler's sine fallback).
+      if (type === 'sync') {
+        return playNote(freq, { ...params, type: 'sawtooth' }, durationMs, startTime, destination, trackIdx, laneIdx);
       }
 
       // Light up the corresponding cell in the note grid for the duration

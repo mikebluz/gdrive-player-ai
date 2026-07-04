@@ -35,16 +35,14 @@
     //    GrainPlayer.detune (a per-grain property, not an AudioParam) — live
     //    granular vibrato/sweeps in both voice paths. Rate mod skipped (would
     //    need a grain-only dest in the matrix UI).
-    // 3. Hard-sync — HARDEST (two routes).
-    //    Route A (true): an AudioWorklet custom oscillator (reset slave phase
-    //    on master wrap + PolyBLEP anti-aliasing); separate voice path, loaded
-    //    via audioWorklet.addModule. Route B (recommended, cheap): a
-    //    "sync-spectrum wavetable" — precompute PeriodicWave frames, one per
-    //    sync ratio (render one master period of the synced wave → FFT →
-    //    createPeriodicWave), then Position == sync amount. Rides on the
-    //    existing wavetable engine + its Position mod destination (already
-    //    wired), so envelope-swept sync comes nearly for free. ~85% of the
-    //    sound for a fraction of Route A's effort.
+    // 3. Hard-sync — DONE (2026-07-03) via Route A, now cheap: the bloops-dsp
+    //    core exists, so 'sync' is core voice kind 14 (true hard sync: saw
+    //    slave reset per master cycle, polyBLEP at both discontinuity
+    //    families, ratio sweep on the FM-family mod envelope). Base voice
+    //    'sync' in every tone menu + the designer (Ratio/Sweep knobs ride the
+    //    harmonicity/modIndex overrides dp[16]/dp[17]); node engine degrades
+    //    to a plain saw (core-off/cold/OFFLINE EXPORT — a Harvest render of a
+    //    sync patch loses the sync character until offline-core lands).
     // ------------------------------------------------------------
     // Bloom integration plan (separate track, non-breaking) — NOT a tabled
     // item, just deferred: B1 = fix the user:<id> param merge so Bloom's
@@ -176,6 +174,7 @@
       if (baseType === 'fm') return 'fm';
       if (baseType === 'am') return 'am';
       if (baseType === 'duo') return 'duo';
+      if (baseType === 'sync') return 'sync';
       if (baseType === 'wavetable') return 'wavetable';
       if (baseType === 'sample:grain') return 'grain';
       // pad / mono / bass carry their own hardcoded envelope/filter, so they
@@ -915,6 +914,13 @@
         if (seedClass === 'basic') {
           osc._row.appendChild(_sdMakeKnob({ label: 'Unison', min: 1, max: 7, value: P.osc.unison || 1, step: 1, defaultValue: 1, format: (v) => (v <= 1 ? 'off' : v + ' ×'), onChange: (v) => P.osc.unison = v }));
           osc._row.appendChild(_sdMakeKnob({ label: 'Spread', min: 0, max: 100, value: P.osc.spread, step: 1, unit: '¢', defaultValue: 20, onChange: (v) => P.osc.spread = v }));
+        } else if (seedClass === 'sync') {
+          // HARD SYNC (core kind 14): Ratio = slave/master (the formant
+          // position, ¬integer = audible sync), Sweep = ratio-envelope depth
+          // (the classic falling-formant attack). They ride the existing
+          // harmonicity/modIndex design overrides (dp[16]/dp[17]).
+          osc._row.appendChild(_sdMakeKnob({ label: 'Ratio', min: 1, max: 12, value: P.osc.harmonicity || 2.5, step: 0.05, defaultValue: 2.5, format: (v) => (Math.round(v * 100) / 100) + '×', onChange: (v) => P.osc.harmonicity = v }));
+          osc._row.appendChild(_sdMakeKnob({ label: 'Sweep', min: 0, max: 10, value: P.osc.modIndex || 0, step: 0.1, defaultValue: 0, format: (v) => (v <= 0 ? 'off' : (Math.round(v * 10) / 10) + ''), onChange: (v) => P.osc.modIndex = v }));
         } else {
           // Double-click resets to the SEED's default harmonicity (fm 3 / duo
           // 1.5 / else 2), not the current value — matching _sdNewPatchParams.

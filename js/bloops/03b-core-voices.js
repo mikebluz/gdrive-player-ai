@@ -29,7 +29,7 @@
       // basic waves render as kind 13 with a wave id param
       const WAVES = { square: 0, triangle: 1, sawtooth: 2, pulse: 3, fat: 4 };
       // kinds that accept Design params (filter/env/matrix/osc) in the core
-      const DESIGN_OK = { 0: 1, 1: 1, 5: 1, 13: 1 };
+      const DESIGN_OK = { 0: 1, 1: 1, 5: 1, 13: 1, 14: 1 };
       const LFO_SHAPES = { sine: 0, triangle: 1, sawtooth: 2, square: 3, smooth: 4, sharp: 5 };
       const MOD_SRC = { lfo1: 0, lfo2: 1, env2: 2, vel: 3, macro1: 4, macro2: 5, macro3: 6, macro4: 7 };
       const MOD_DEST = { pitch: 0, cutoff: 1, reso: 2, amp: 3, pan: 4 };
@@ -41,6 +41,11 @@
           return { kind: 8, p0: c === 'brown' ? 2 : (c === 'pink' ? 1 : 0) };
         }
         if (type in WAVES) return { kind: 13, p0: WAVES[type] };
+        // hard sync (core kind 14): p0 = slave/master ratio. 2.5 default —
+        // non-integer, so the sync formant is audible (integer ratios
+        // degenerate to a plain saw at ratio·f). Design patches override
+        // ratio/sweep via osc.harmonicity/modIndex (dp[16]/dp[17]).
+        if (type === 'sync') return { kind: 14, p0: 2.5 };
         return (type in KINDS) ? { kind: KINDS[type], p0: 0 } : null;
       }
 

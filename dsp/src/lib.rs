@@ -173,7 +173,7 @@ pub(crate) static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 6;
+const CORE_REV: u32 = 7;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {
@@ -369,6 +369,11 @@ pub extern "C" fn note(
                 // strings (the audible case; mid/high strings die first).
                 11 => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], Some([0.003, 0.001, 1.0, 3.0])),
                 10 => (5.1, 32.0 * cal * vel, false, [0.001, 0.001, 1.0, 0.1], Some([0.001, 1.4, 0.0, 0.2])),
+                // hard sync (kind 14): harm = slave/master ratio (from p0, ≥1);
+                // idx = ratio-SWEEP depth (0 = static ratio; set via the design
+                // modIndex override dp[17]) driven by the mod envelope below —
+                // defaults shape the classic 0.4 s sync sweep.
+                14 => (p0.max(1.0), 0.0, true, [0.001, 0.4, 0.0, 0.3], None),
                 _ => (1.0, 0.0, true, [0.001, 0.001, 1.0, 0.1], None),
             };
         let (aa, dd, ss, rr) = match amp_fixed {
@@ -1113,6 +1118,47 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                                 acc += wave_sample(wave, v.uni_ph[u], inc);
                             }
                             acc * norm
+                        }
+                    }
+                    14 => {
+                        // HARD SYNC: a saw SLAVE (ph_c) resets every MASTER
+                        // (ph_m, at the note freq) cycle. ratio = harm; with
+                        // idx>0 the ratio sweeps 1→harm scaled by idx·me
+                        // (min 1) — the classic sync sweep on the same mod
+                        // envelope the FM family uses. Both discontinuity
+                        // families get polyBLEP smoothing: a jump J anchored
+                        // at a wrap is cancelled by −(J/2)·poly_blep, which
+                        // steps +J across the wrap and decays to 0 — the
+                        // corrected signal is continuous (checked both sides).
+                        let sweep = if v.idx > 0.0 { (v.idx * me).min(1.0) } else { 1.0 };
+                        let ratio = (1.0 + (v.harm - 1.0) * sweep).max(1.0);
+                        let inc = inc_c * v.m_pitch;
+                        let inc_s = inc * ratio;
+                        v.ph_m += inc;
+                        if v.ph_m >= 1.0 {
+                            v.ph_m -= 1.0;
+                            // sync reset: fraction a past the wrap; slave
+                            // phase AT the wrap = continuation minus the
+                            // post-wrap advance
+                            let a = (v.ph_m / inc.max(1.0e-9)).min(1.0);
+                            let ph_w = v.ph_c + (1.0 - a) * inc_s;
+                            let v_cont = 2.0 * (ph_w - ph_w.floor()) - 1.0;
+                            v.ph_c = (a * inc_s).min(0.999);
+                            let raw = 2.0 * v.ph_c - 1.0;
+                            let j = v_cont - raw;
+                            raw - 0.5 * j * poly_blep(v.ph_m, inc)
+                        } else {
+                            v.ph_c += inc_s;
+                            if v.ph_c >= 1.0 { v.ph_c -= 1.0; }
+                            let mut o = saw_blep(v.ph_c, inc_s);
+                            // pre-correct the sync reset landing next sample
+                            if v.ph_m > 1.0 - inc {
+                                let ph_w = v.ph_c + (1.0 - v.ph_m) * ratio;
+                                let v_cont = 2.0 * (ph_w - ph_w.floor()) - 1.0;
+                                let j = v_cont - (-1.0);
+                                o -= 0.5 * j * poly_blep(v.ph_m, inc);
+                            }
+                            o
                         }
                     }
                     _ => {

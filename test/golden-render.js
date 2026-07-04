@@ -173,6 +173,11 @@ const SECTIONS = {
   'kind-pluck':  { s: 1.8, ev: [N(0, 11, { f: 262 }), N(0.4, 11, { f: 131, slot: 1 })] },
   'kind-wt':     { s: 1.2, ev: [N(0, 12)] },
   'kind-waves':  { s: 1.8, ev: [N(0, 13, { p0: 0 }), N(0.3, 13, { p0: 1, slot: 1 }), N(0.6, 13, { p0: 2, slot: 2 }), N(0.9, 13, { p0: 3, slot: 3 }), N(1.2, 13, { p0: 4 })] },
+  // hard sync (kind 14): static non-integer ratio, designed ratio+sweep, and
+  // through a design filter (the classic sync patch)
+  'kind-sync': { s: 1.2, ev: [N(0, 14, { p0: 2.5, dur: 0.9 }), N(0.5, 14, { f: 110, p0: 3.7, dur: 0.6, slot: 1 })] },
+  'sync-sweep': { s: 1.6, ev: [D(0, 14, { 16: 6, 17: 1.0 }, { f: 110, dur: 1.3 })] },
+  'sync-design': { s: 1.6, ev: [D(0, 14, Object.assign(lfo1Route(0, 2, 1, 0.4), { 0: 33, 1: 0, 2: 900, 3: 3, 16: 4, 17: 0.8 }), { f: 110, dur: 1.3 })] },
   // detune (cents offset applied at note build)
   'note-detune': { s: 1.2, ev: [N(0, 0, { detune: 0 }), N(0, 0, { detune: 12, slot: 1 })] },
   // design features (kind 13 sawtooth = richest filter fodder, unless noted)

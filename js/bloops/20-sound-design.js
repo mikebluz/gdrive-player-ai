@@ -40,9 +40,10 @@
     //    slave reset per master cycle, polyBLEP at both discontinuity
     //    families, ratio sweep on the FM-family mod envelope). Base voice
     //    'sync' in every tone menu + the designer (Ratio/Sweep knobs ride the
-    //    harmonicity/modIndex overrides dp[16]/dp[17]); node engine degrades
-    //    to a plain saw (core-off/cold/OFFLINE EXPORT — a Harvest render of a
-    //    sync patch loses the sync character until offline-core lands).
+    //    harmonicity/modIndex overrides dp[16]/dp[17]). The NODE path (core
+    //    off/cold + offline Harvest export) renders TRUE sync too now — the
+    //    kind-14 algorithm ported to JS PCM (_renderSyncPcm, 04) played as a
+    //    one-shot buffer, so exports keep the sync character.
     // ------------------------------------------------------------
     // Bloom integration plan (separate track, non-breaking) — NOT a tabled
     // item, just deferred: B1 = fix the user:<id> param merge so Bloom's

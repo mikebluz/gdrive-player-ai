@@ -1807,6 +1807,68 @@
     // oscillator-leak test). Fresh-synth-per-note + safeDisposeSynth leaks
     // zero; construction cost is handled by the deferred voice-build queue.
 
+    // TRUE hard-sync PCM for the NODE path (offline Harvest export, core
+    // cold-start/miss): the core's kind-14 algorithm (dsp/src/lib.rs) ported
+    // sample-for-sample — a saw SLAVE (phC) resets every MASTER (phM) cycle,
+    // polyBLEP smooths both discontinuity families, and the slave/master
+    // ratio sweeps toward 1 on the FM-family mod envelope (attack 1 ms /
+    // decay 400 ms / sustain 0 — the classic falling-formant sync attack).
+    // Ratio/Sweep ride the designer's osc.harmonicity / osc.modIndex exactly
+    // like the core's dp[16]/dp[17] overrides (default ratio 2.5, sweep 0).
+    // Unit amplitude — the caller's amp envelope + chain shape it.
+    function _renderSyncPcm(freq, params, lenSec, sr, detuneCents) {
+      const n = Math.max(16, Math.round(lenSec * sr));
+      const f = Math.max(1, freq * Math.pow(2, (detuneCents || 0) / 1200));
+      const o = (params && params.osc) || {};
+      const harm = Math.max(1, Number.isFinite(o.harmonicity) ? o.harmonicity : 2.5);
+      const idx = Math.max(0, Number.isFinite(o.modIndex) ? o.modIndex : 0);
+      const out = new Float32Array(n);
+      const pb = (t, dt) => {
+        if (t < dt) { const x = t / dt; return x + x - x * x - 1; }
+        if (t > 1 - dt) { const x = (t - 1) / dt; return x * x + x + x + 1; }
+        return 0;
+      };
+      const meA = 0.001, meD = 0.4, meS = 0.0;   // kind-14 mod-env (a, d, s)
+      const inc = f / sr;
+      let phM = 0, phC = 0;
+      for (let i = 0; i < n; i++) {
+        const tn = i / sr;
+        const me = tn < meA ? tn / meA
+          : tn < meA + meD ? meS + (1 - meS) * Math.exp(-4.6 * ((tn - meA) / meD))
+          : meS;
+        const sweep = idx > 0 ? Math.min(idx * me, 1) : 1;
+        const ratio = Math.max(1, 1 + (harm - 1) * sweep);
+        const incS = inc * ratio;
+        phM += inc;
+        let s;
+        if (phM >= 1) {
+          phM -= 1;
+          // sync reset: fraction a past the wrap; slave phase AT the wrap =
+          // continuation minus the post-wrap advance
+          const a = Math.min(phM / Math.max(inc, 1e-9), 1);
+          const phW = phC + (1 - a) * incS;
+          const vCont = 2 * (phW - Math.floor(phW)) - 1;
+          phC = Math.min(a * incS, 0.999);
+          const raw = 2 * phC - 1;
+          const j = vCont - raw;
+          s = raw - 0.5 * j * pb(phM, inc);
+        } else {
+          phC += incS;
+          if (phC >= 1) phC -= 1;
+          s = (2 * phC - 1) - pb(phC, incS);   // saw_blep
+          // pre-correct the sync reset landing next sample
+          if (phM > 1 - inc) {
+            const phW = phC + (1 - phM) * ratio;
+            const vCont = 2 * (phW - Math.floor(phW)) - 1;
+            const j = vCont - (-1);
+            s -= 0.5 * j * pb(phM, inc);
+          }
+        }
+        out[i] = s;
+      }
+      return out;
+    }
+
     // Voice cap — limits simultaneous synth voices to keep the master
     // limiter from being driven into IM artifacts by overlapping release
     // tails. When a new voice would push the count over the cap, the
@@ -3142,13 +3204,10 @@
         });
         if (_took) return;
       }
-      // 'sync' is a CORE-ONLY oscillator (hard sync, kind 14) — the node
-      // engine has no sync voice. When the core didn't take it (flag off,
-      // cold start, offline export), degrade to a plain saw so the note
-      // still sounds (same pattern as the sampler's sine fallback).
-      if (type === 'sync') {
-        return playNote(freq, { ...params, type: 'sawtooth' }, durationMs, startTime, destination, trackIdx, laneIdx);
-      }
+      // 'sync' notes the core didn't take (flag off, cold start, offline
+      // Harvest export) now render TRUE hard sync on the node path — see the
+      // `type === 'sync'` case in the synth dispatch below (_renderSyncPcm),
+      // which replaced the old plain-saw degrade.
 
       // Light up the corresponding cell in the note grid for the duration
       // of the note. Skipped during offline rendering (offline context's
@@ -3791,6 +3850,45 @@
           octaves: 1.5,
           envelope: { attack: 0.001, decay: 1.4, release: 0.2 },
         }).connect(chainHead);
+      } else if (type === 'sync') {
+        // TRUE hard sync on the NODE path (offline Harvest export, core cold
+        // start/miss): the core kind-14 algorithm rendered to PCM
+        // (_renderSyncPcm below the dispatch) and played as a one-shot buffer
+        // through the same amp envelope + chain as any other voice — exports
+        // keep the sync timbre instead of degrading to a plain saw.
+        const ampEnv = new Tone.AmplitudeEnvelope({
+          attack:  env.attack, decay: env.decay,
+          sustain: env.sustain, release: env.release,
+        }).connect(chainHead);
+        const _sr = (Tone.getContext() && Tone.getContext().sampleRate) || 44100;
+        const _len = Math.max(0.05, (Number.isFinite(preReleaseDur) ? preReleaseDur : targetDur) + (env.release || 0.5) + 0.1);
+        const pcm = _renderSyncPcm(freq, params, _len, _sr, detune);
+        const rawC = Tone.getContext().rawContext || Tone.context.rawContext;
+        const ab = rawC.createBuffer(1, pcm.length, _sr);
+        ab.copyToChannel(pcm, 0);
+        const src = new Tone.ToneBufferSource(ab);
+        src.connect(ampEnv);
+        const triggerAt = (typeof startTime === 'number' && Number.isFinite(startTime)) ? startTime : Tone.now();
+        ampEnv.triggerAttackRelease(preReleaseDur, triggerAt, velocity);
+        try { src.start(triggerAt); } catch (e) {}
+        const stopAt = triggerAt + preReleaseDur + (env.release || 0.5) + 0.05;
+        try { src.stop(stopAt); } catch (e) {}
+        // Lifecycle — same offline-skip / live-dispose pattern as wavetable.
+        if (_offlineSamplerOverride) {
+          if (Array.isArray(_offlineVoiceRefs)) {
+            _offlineVoiceRefs.push(src, ampEnv);
+            effectNodes.forEach(n2 => _offlineVoiceRefs.push(n2));
+          }
+          return;
+        }
+        const syLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
+          ? Math.max(0, (startTime - Tone.context.now()) * 1000) : 0;
+        setTimeout(() => {
+          try { src.dispose(); } catch (e) {}
+          try { ampEnv.dispose(); } catch (e) {}
+          disposeEffectChain();
+        }, syLeadMs + (preReleaseDur + (env.release || 0.5) + 0.5) * 1000);
+        return;
       } else if (type === 'wavetable') {
         // Wavetable: stack three native oscillators (sine + sawtooth
         // + triangle) blended at user-defined amplitudes, gated by

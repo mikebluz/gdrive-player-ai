@@ -580,6 +580,18 @@
           <button id="bar-rest-btn" class="kwr-extra" type="button" title="Rest to the next bar boundary (a full empty bar if already on one)"><span>⤸ BAR</span></button>
           <button id="place-btn" class="kwr-extra" type="button" title="Place mode: tap a grid note to arm it, then click anywhere on the lane strip — empty space beyond the end or inside a rest — to drop it at that exact bar/cell. Gaps auto-fill with rests."><span>✎ PLACE</span></button>
         </div>
+        <!-- Placed-note size — visible while ✎ Place mode is on. 'Div' follows
+             the grid's Step Div; the rest pin an explicit length. -->
+        <div class="place-size-row" id="place-size-row" hidden>
+          <span class="place-size-label">Size</span>
+          <button type="button" class="place-size-chip active" data-sub="">Div</button>
+          <button type="button" class="place-size-chip" data-sub="0.125">1/32</button>
+          <button type="button" class="place-size-chip" data-sub="0.25">1/16</button>
+          <button type="button" class="place-size-chip" data-sub="0.5">1/8</button>
+          <button type="button" class="place-size-chip" data-sub="1">1/4</button>
+          <button type="button" class="place-size-chip" data-sub="2">1/2</button>
+          <button type="button" class="place-size-chip" data-sub="4">1/1</button>
+        </div>
       <!-- Perform config popover — opens when PERF is pressed (while idle).
            Anchored inside .step-grid-bar (position:relative) so it floats just
            above the PERF button. -->

@@ -829,11 +829,19 @@
     // ---- ✎ PLACE toggle + ⤸ BAR rest -------------------------------------
     (function bindPlaceButtons() {
       const pb = document.getElementById('place-btn');
+      const sizeRow = document.getElementById('place-size-row');
       if (pb) pb.addEventListener('click', () => {
         placeMode = !placeMode;
         pb.classList.toggle('active', placeMode);
+        if (sizeRow) sizeRow.hidden = !placeMode;
         try { renderSequence(); } catch (e) {}
         if (placeMode && typeof showToast === 'function') showToast('Place: tap a grid note to arm it, then click the strip');
+      });
+      if (sizeRow) sizeRow.addEventListener('click', (e) => {
+        const chip = e.target.closest('.place-size-chip'); if (!chip) return;
+        const v = parseFloat(chip.dataset.sub);
+        placeSize = Number.isFinite(v) ? v : null;
+        sizeRow.querySelectorAll('.place-size-chip').forEach(c => c.classList.toggle('active', c === chip));
       });
       const bb = document.getElementById('bar-rest-btn');
       if (bb) bb.addEventListener('click', () => {

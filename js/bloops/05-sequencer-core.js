@@ -2190,6 +2190,9 @@
     // arm — same template step mode uses) at that exact bar/cell, auto-filling
     // any gap with musically-clean rests. Linear building is untouched.
     let placeMode = false;
+    // Placed-note size: null = follow the grid's Step Div; else an explicit
+    // subdivision (0.125 … 4) picked on the Size row shown while Place is on.
+    let placeSize = null;
     const _REST_FILL_SIZES = [[32, 4], [8, 1], [4, 0.5], [2, 0.25], [1, 0.125]];
     function _restFill32(gap) {
       const out = [];
@@ -2211,7 +2214,7 @@
       return null;
     }
     function _placeNoteStep(tpl, len32) {
-      const sub = (len32 != null) ? (len32 / 8) : stepSubdivision;
+      const sub = (len32 != null) ? (len32 / 8) : (placeSize != null ? placeSize : stepSubdivision);
       return { freq: tpl.freq, label: tpl.label,
                cellIndex: (tpl.cellIndex != null) ? tpl.cellIndex : null,
                sound: tpl.sound, params: { ...(tpl.params || {}) },
@@ -2241,7 +2244,7 @@
       for (let k = 0; k < i; k++) start32 += (sequence[k] && sequence[k]._wrapEditing) ? 0 : Math.max(0, Math.round(stepLengthFactor(sequence[k]) * 32));
       const len32 = Math.max(1, Math.round(stepLengthFactor(step) * 32));
       const inner = Math.max(0, Math.min(len32 - 1, pos32 - start32));
-      const want = Math.max(1, Math.round(stepSubdivision * 8));
+      const want = Math.max(1, Math.round((placeSize != null ? placeSize : stepSubdivision) * 8));
       const span = Math.min(want, len32 - inner);
       const repl = [
         ..._restFill32(inner),

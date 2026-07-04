@@ -10778,6 +10778,17 @@
       border-radius: 3px; cursor: copy; padding: 0;
     }
     .lane-chips > .place-ghost:hover { background: rgba(127, 214, 196, 0.18); border-style: solid; }
+    /* Placed-note size row (shown while ✎ Place is on) */
+    .place-size-row { display: flex; align-items: center; gap: 5px; padding: 4px 0 0; flex-wrap: wrap; }
+    .place-size-row[hidden] { display: none !important; }
+    .place-size-label { font: 700 0.66rem 'Segoe UI', sans-serif; color: #718096; letter-spacing: 0.06em; text-transform: uppercase; }
+    .place-size-chip {
+      background: #14141f; border: 1px solid #2d2d3f; border-radius: 6px;
+      color: #a0aec0; cursor: pointer; padding: 3px 8px;
+      font: 600 0.7rem 'Segoe UI', sans-serif;
+    }
+    .place-size-chip:hover { border-color: #7fd6c4; color: #cef5ec; }
+    .place-size-chip.active { background: rgba(127, 214, 196, 0.18); border-color: #7fd6c4; color: #7fd6c4; }
 
     /* ---- Euclidean preset chips (Generate Sequence dialog) ---- */
     .euc-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }

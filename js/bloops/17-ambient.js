@@ -11789,27 +11789,27 @@
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Seed'], ['notes'], ['chordmode'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ['grp', 'Generator'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
-        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['unitsync'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
         ['grp', 'Generator'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['unitsync'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
         ['grp', 'Generator'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['unitsync'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
         ['grp', 'Generator'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'],
-        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
@@ -11820,7 +11820,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Seed'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ['grp', 'Generator'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
-        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['unitsync'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -11829,7 +11829,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'],
         ['grp', 'Generator'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['unitsync'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -11838,7 +11838,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
-        ['grp', 'Timing'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
@@ -11846,7 +11846,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
-        ['grp', 'Timing'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['unitsync'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -11854,7 +11854,7 @@
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Seed'], ['notes'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
-        ['grp', 'Timing'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['unitsync'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };

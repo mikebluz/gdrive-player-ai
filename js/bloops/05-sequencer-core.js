@@ -2257,12 +2257,14 @@
         g.classList.toggle('ph-hot-end', hot && (p === pos32 + span - 1 || p % 32 === 31));
       });
     }
-    // Slow-flash the note grid while Place is on but nothing is armed and
-    // no fallback template exists — the cue that the next tap picks a note.
+    // Slow-flash the note grid while Place is on but no note is explicitly
+    // armed — the cue that the next tap picks a note. (The last-note
+    // fallback template still lets placement work without arming, but the
+    // cue should prompt for a deliberate pick regardless.)
     function _placeUpdateGridFlash() {
       const g = document.getElementById('grid');
       if (!g) return;
-      g.classList.toggle('place-pick-flash', placeMode && !_placeArmedTemplate());
+      g.classList.toggle('place-pick-flash', placeMode && !stepModeArmed);
     }
     function _placeArmedTemplate() {
       if (stepModeArmed) return stepModeArmed;

@@ -445,6 +445,17 @@
       { name: 'Venda',      k: 5, n: 12, rot: 11, hint: 'Venda bell (South Africa)' },
       { name: 'Bossa',      k: 5, n: 16, rot: 3,  hint: 'Brazilian bossa-nova' },
       { name: 'Samba',      k: 7, n: 16, rot: 15, hint: 'Brazilian samba' },
+      // Rock / R&B feels (grp 2) — the standard backline patterns, all true
+      // Euclidean necklaces; Backbeat/Offbeats intentionally DON'T start on a
+      // hit (the offset IS the feel), rotations calibrated like the rest.
+      { name: 'Four-Floor', k: 4, n: 16, rot: 3,  grp: 2, hint: 'Four on the floor — kick every quarter' },
+      { name: 'Kick 1+3',   k: 2, n: 8,  rot: 3,  grp: 2, hint: 'Rock kick — beats 1 and 3' },
+      { name: 'Backbeat',   k: 2, n: 8,  rot: 1,  grp: 2, hint: 'Snare backbeat — beats 2 and 4' },
+      { name: 'Offbeats',   k: 4, n: 8,  rot: 0,  grp: 2, hint: 'Offbeat 8ths — skank / R&B comp' },
+      { name: 'Drive',      k: 8, n: 8,  rot: 0,  grp: 2, hint: 'Straight 8ths — rock hats' },
+      { name: 'Shuffle',    k: 4, n: 12, rot: 2,  grp: 2, hint: '12/8 shuffle — blues / gospel triplet feel' },
+      { name: 'Half-Time',  k: 2, n: 16, rot: 7,  grp: 2, hint: 'Half-time — hits on 1 and 3 at double length' },
+      { name: 'Funk 16',    k: 6, n: 16, rot: 7,  grp: 2, hint: 'Sixteenth funk kick — doubled tresillo feel' },
     ];
     function showEuclidDialog() {
       const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes) && notes.length)
@@ -560,9 +571,14 @@
         // Euclidean PRESETS — the canonical world-rhythm patterns (Toussaint,
         // "The Euclidean Algorithm Generates Traditional Musical Rhythms"):
         // each chip sets Hits/Steps/Rotate (+ Length = Steps, one 1/8 per slot).
-        '<div class="sm-section-label" style="margin-top:0;">Presets</div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Presets — world</div>' +
         '<div class="euc-presets" id="euc-presets">' +
-          _EUC_PRESETS.map((pz, i) =>
+          _EUC_PRESETS.map((pz, i) => (pz.grp === 2) ? '' :
+            '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
+        '</div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Presets — rock / R&B</div>' +
+        '<div class="euc-presets" id="euc-presets-2">' +
+          _EUC_PRESETS.map((pz, i) => (pz.grp !== 2) ? '' :
             '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
         '</div>' +
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +
@@ -910,15 +926,13 @@
       });
       // Preset chips — set Hits/Steps/Rotate (+ Length = Steps) and re-seed;
       // the matching chip highlights whenever the current values equal one.
-      const presetHost = modal.querySelector('#euc-presets');
       const refreshPresetHi = () => {
-        if (!presetHost) return;
-        presetHost.querySelectorAll('.euc-preset-chip').forEach(btn => {
+        modal.querySelectorAll('.euc-preset-chip').forEach(btn => {
           const pz = _EUC_PRESETS[parseInt(btn.dataset.pi, 10)];
           btn.classList.toggle('active', !!pz && state.k === pz.k && state.n === pz.n && state.rot === pz.rot);
         });
       };
-      if (presetHost) presetHost.addEventListener('click', (e) => {
+      modal.addEventListener('click', (e) => {
         const btn = e.target.closest('.euc-preset-chip'); if (!btn) return;
         const pz = _EUC_PRESETS[parseInt(btn.dataset.pi, 10)]; if (!pz) return;
         state.n = pz.n; state.k = pz.k; state.rot = pz.rot; state.length = pz.n;

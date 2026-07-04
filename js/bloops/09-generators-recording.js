@@ -429,6 +429,23 @@
         return { chord: idxs.map(ix => voice(noteFor(ix))), label: idxs.map(ix => noteFor(ix).label).join('·'), duration: 1, subdivision: sub };
       });
     }
+    // Canonical Euclidean rhythm presets (k hits over n steps; rotation via
+    // the dialog's Rotate control). Names + provenance per Toussaint 2005.
+    // rot values are CALIBRATED to this dialog's generator phase so each
+    // preset lands the canonical hit-first (downbeat) Bjorklund pattern —
+    // e.g. Tresillo = x..x..x. — measured empirically against all rotations.
+    const _EUC_PRESETS = [
+      { name: 'Tresillo',   k: 3, n: 8,  rot: 7,  hint: 'Cuban tresillo' },
+      { name: 'Cinquillo',  k: 5, n: 8,  rot: 1,  hint: 'Cuban cinquillo' },
+      { name: 'Cumbia',     k: 3, n: 4,  rot: 1,  hint: 'Colombian cumbia / calypso' },
+      { name: 'Khafif',     k: 2, n: 5,  rot: 2,  hint: 'Persian khafif-e-ramal' },
+      { name: 'Ruchenitza', k: 4, n: 7,  rot: 6,  hint: 'Bulgarian ruchenitza' },
+      { name: 'Aksak',      k: 4, n: 9,  rot: 2,  hint: 'Turkish aksak' },
+      { name: 'Bembé',      k: 7, n: 12, rot: 3,  hint: 'West African bembé bell' },
+      { name: 'Venda',      k: 5, n: 12, rot: 11, hint: 'Venda bell (South Africa)' },
+      { name: 'Bossa',      k: 5, n: 16, rot: 3,  hint: 'Brazilian bossa-nova' },
+      { name: 'Samba',      k: 7, n: 16, rot: 15, hint: 'Brazilian samba' },
+    ];
     function showEuclidDialog() {
       const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes) && notes.length)
         ? notes : [{ freq: 261.63, label: 'C4', cellIndex: 0 }];
@@ -540,6 +557,14 @@
           _numRow('Length', 'euc-l', 1, 32, 8) +
         '</div>' +
         '<button type="button" class="euc-surprise" id="euc-surprise">✨ Surprise me</button>' +
+        // Euclidean PRESETS — the canonical world-rhythm patterns (Toussaint,
+        // "The Euclidean Algorithm Generates Traditional Musical Rhythms"):
+        // each chip sets Hits/Steps/Rotate (+ Length = Steps, one 1/8 per slot).
+        '<div class="sm-section-label" style="margin-top:0;">Presets</div>' +
+        '<div class="euc-presets" id="euc-presets">' +
+          _EUC_PRESETS.map((pz, i) =>
+            '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
+        '</div>' +
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +
         '<div class="euc-strip" id="euc-strip"></div>' +
         '<div class="euc-stepedit" id="euc-stepedit"></div>' +
@@ -809,7 +834,7 @@
         });
       };
 
-      const refreshTopVals = () => {
+      let refreshTopVals = () => {
         // Steps bounds Hits + Rotate; keep their max attrs + values in sync.
         kEl.max = String(state.n);
         rEl.max = String(Math.max(0, state.n - 1));
@@ -883,6 +908,26 @@
         state.rot = ri(0, state.n - 1);
         seed(); refreshTopVals(); renderStrip(); renderEditor();
       });
+      // Preset chips — set Hits/Steps/Rotate (+ Length = Steps) and re-seed;
+      // the matching chip highlights whenever the current values equal one.
+      const presetHost = modal.querySelector('#euc-presets');
+      const refreshPresetHi = () => {
+        if (!presetHost) return;
+        presetHost.querySelectorAll('.euc-preset-chip').forEach(btn => {
+          const pz = _EUC_PRESETS[parseInt(btn.dataset.pi, 10)];
+          btn.classList.toggle('active', !!pz && state.k === pz.k && state.n === pz.n && state.rot === pz.rot);
+        });
+      };
+      if (presetHost) presetHost.addEventListener('click', (e) => {
+        const btn = e.target.closest('.euc-preset-chip'); if (!btn) return;
+        const pz = _EUC_PRESETS[parseInt(btn.dataset.pi, 10)]; if (!pz) return;
+        state.n = pz.n; state.k = pz.k; state.rot = pz.rot; state.length = pz.n;
+        seed(); refreshTopVals(); renderStrip(); renderEditor(); refreshPresetHi();
+      });
+      { const _rtv = refreshTopVals;
+        // Keep the highlight in sync with every top-value refresh (typing,
+        // steppers, Surprise, Reset) without touching each call site.
+        refreshTopVals = () => { _rtv(); refreshPresetHi(); }; }
       // Prepend / Append / Replace selector — how Generate commits.
       const applyHost = modal.querySelector('#euc-apply');
       const refreshApply = () => {

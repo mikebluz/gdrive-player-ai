@@ -312,6 +312,41 @@
         }
         return tag || 1;
       }
+      // HELD sample voice (grid press-and-hold, looping pads): the core's
+      // sample voice natively holds with dur < 0 until release_tag — pads are
+      // just loop + hold. Returns a {release, setDetune} handle compatible
+      // with startSustainedNote's contract, or null → node engine. setDetune
+      // rides srate_tag (absolute mult vs the base rate), so held-press pitch
+      // bends work like the synth holdOn's bendTag.
+      function holdSampleOn(key, dest, o) {
+        if (!stripsEnabled() || failed) return null;
+        if (!ready) { init(); return null; }
+        if (!_running()) return null;
+        const slot = slotFor(key, dest);
+        if (slot == null || slot < 0) return null;
+        const id = _ensureSample(o.bufKey, o.buf);
+        if (id < 0) return null;
+        const tag = ++sTagSeq;
+        const sp = new Float32Array(15);
+        sp[0] = id; sp[1] = o.rate; sp[2] = o.gl; sp[3] = o.gr;
+        sp[4] = o.a; sp[5] = o.d; sp[6] = o.s; sp[7] = o.r;
+        sp[8] = o.off || 0; sp[9] = (o.len != null) ? o.len : -1;
+        sp[10] = (o.loop ? 1 : 0) | (o.reverse ? 2 : 0);
+        sp[11] = o.loopA || 0; sp[12] = o.loopB || 0;
+        sp[13] = (o.cutoff != null) ? o.cutoff : -1; sp[14] = o.fq || 0.7;
+        node.port.postMessage({ cmd: 'snote', slot, t: _tNow(o.t), dur: -1, tag, sp });
+        let released = false;
+        return {
+          release: () => {
+            if (released) return; released = true;
+            node.port.postMessage({ cmd: 'releaseTag', tag, r: o.r });
+          },
+          setDetune: (cents) => {
+            if (released) return;
+            node.port.postMessage({ cmd: 'srateTag', tag, mult: Math.pow(2, (cents || 0) / 1200), ramp: 0.03 });
+          },
+        };
+      }
       // Route the summed reverb-send bus (output 16) into the shared reverb.
       // Old reverbs dispose their own input connections, so this is additive.
       function connectSend(dest) {
@@ -464,7 +499,7 @@
       function stopAll() {
         if (ready) node.port.postMessage({ cmd: 'stopAll' });
       }
-      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
+      return { enabled, stripsEnabled, eligible, noteOn, holdOn, sampleNoteOn, holdSampleOn, releaseSampleKeys, cancelFrom, stopBefore, stopAll, init, designParams,
                stripAcquire, stripRelease, stripRekey, stripFor, connectSend, _node: () => node };
     })();
     // Live A/B toggles from the console.

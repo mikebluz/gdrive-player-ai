@@ -2460,6 +2460,49 @@
         const baseFreq = snapDrumKitFreq(type, freq);
         const tunedFreq = (typeof baseFreq === 'number') ? baseFreq * Math.pow(2, detune / 1200) : baseFreq;
         const sampleDest = fxOverrideGlobal ? masterLimiter : globalSendTap;
+        // ---- WASM core HELD sample voice --------------------------------
+        // The core sample voice natively holds (dur < 0 until release_tag) —
+        // pads are loop + hold, so this closes the "pads/held notes stay
+        // node-side" limitation. Falls through to the node voices on any
+        // miss (strips off/cold, FX override, detune-mod, table full).
+        if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled()
+            && !fxOverrideGlobal && !params._detuneMod && !_offlineSamplerOverride) {
+          const _sid = type.slice(7);
+          const _rs = _resolveSampleVoice(entry.sampler, _sid, tunedFreq);
+          if (_rs) {
+            const _isPad = !!(_rs.info && _rs.info.padLoop);
+            let _buf = _rs.audioBuf, _bufKey = _sid + '#' + _rs.sampleMidi;
+            let _loop = false, _loopA = 0, _loopB = 0;
+            if (_isPad) {
+              const _lp = _getSeamlessLoop(_bufKey, _rs.audioBuf, _rs.info);
+              if (_lp) { _buf = _lp.buffer; _bufKey += '#loop'; _loopA = _lp.loopStart; _loopB = _lp.loopEnd; }
+              _loop = true;
+            }
+            const _base = Math.pow(10, SAMPLE_VOLUME_BOOST_DB / 20)
+              * _sampleNormGain(_rs.info, _rs.sampleMidi, _rs.audioBuf) * velocity;
+            const _pn = Math.max(-1, Math.min(1, (pan || 0) / 100));
+            let _gl = _base, _gr = _base;
+            if (Math.abs(_pn) > 0.001) {
+              const _ang = (_pn + 1) * 0.25 * Math.PI, _mk = _panMakeup(_pn);
+              _gl = _base * Math.cos(_ang) * _mk;
+              _gr = _base * Math.sin(_ang) * _mk;
+            }
+            // Pad swell envelope (padAttack/padRelease ms) overrides the cell env.
+            const _atk = (_isPad && Number.isFinite(_rs.info.padAttack)) ? Math.max(0.005, _rs.info.padAttack / 1000) : env.attack;
+            const _rel = (_isPad && Number.isFinite(_rs.info.padRelease)) ? Math.max(0.01, _rs.info.padRelease / 1000) : env.release;
+            const _h = _coreVoices.holdSampleOn('live', sampleDest, {
+              bufKey: _bufKey, buf: _buf, rate: _rs.playbackRate,
+              gl: _gl, gr: _gr,
+              a: _atk, d: env.decay, s: Math.max(0, Math.min(1, env.sustain)), r: _rel,
+              off: 0, len: -1, loop: _loop, loopA: _loopA, loopB: _loopB,
+              reverse: !!params.reverse,
+              cutoff: (Number.isFinite(params.filterCutoff) && params.filterCutoff < 18000) ? Math.max(40, params.filterCutoff) : -1,
+              fq: Number.isFinite(params.filterQ) ? Math.max(0, params.filterQ) : 0.7,
+              t: _warmAt(),
+            });
+            if (_h) return _h;
+          }
+        }
         // Pad-imported samples use the dedicated single-buffer looping voice.
         if ((sampleSamplers.get(type.slice(7)) || {}).padLoop) {
           const padH = _startPadVoice(type.slice(7), tunedFreq, env, sampleDest, velocity, _warmAt(), { pan });

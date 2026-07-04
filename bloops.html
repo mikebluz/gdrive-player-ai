@@ -648,11 +648,15 @@
               <button type="button" class="step-toggle step-ratchet-label" id="step-ratchet-label" data-setting="roll" title="Roll — click to bypass / activate">Roll</button>
               <input type="range" id="step-ratchet-slider" min="1" max="8" value="1" step="1" aria-label="Ratchet — split this step into N evenly-spaced rapid sub-hits" />
               <span class="step-ratchet-val" id="step-ratchet-val">1×</span>
+              <button type="button" id="step-roll-cond" class="step-cond-btn step-roll-chip" title="Roll When — which loop passes the roll applies on (other passes play a single hit)">Always</button>
+              <button type="button" id="step-roll-mode" class="step-cond-btn step-roll-chip" title="Roll value per pass — Fixed / Random (2..Roll) / Pattern (cycling list)">Fixed</button>
+              <input type="text" id="step-roll-seq" class="step-roll-seq" placeholder="1,1,4,2" hidden aria-label="Roll pattern — comma list of roll counts, one per loop pass, cycling" />
             </div>
             <div class="step-prob-bar" id="step-prob-bar" hidden>
               <button type="button" class="step-toggle step-prob-label" id="step-prob-label" data-setting="chance" title="Chance — click to bypass / activate">Chance</button>
               <input type="range" id="step-prob-slider" min="0" max="100" value="100" step="1" aria-label="Chance — probability this step fires on each loop pass" />
               <span class="step-prob-val" id="step-prob-val">100%</span>
+              <button type="button" id="step-prob-target" class="step-cond-btn step-roll-chip" title="What the dice gates — Note: the step fires or rests. Roll: the note always plays; the dice decides rolled vs plain">Note</button>
             </div>
             <div class="step-cond-bar" id="step-cond-bar" hidden>
               <button type="button" class="step-toggle step-cond-label" id="step-cond-label" data-setting="when" title="When — click to bypass / activate">When</button>

@@ -495,20 +495,31 @@
     // step.cond gates on the loop iteration (stream.iter): '1st' (first pass
     // only), or Elektron-style 'A:B' (play on pass A of every B). 'always' /
     // unset = always.
+    // Does an Elektron-style condition ('always' / '1st' / 'A:B') pass on this
+    // loop iteration? Shared by the note gate and the Roll's own When gate.
+    function _condPasses(cond, iter) {
+      if (!cond || cond === 'always') return true;
+      if (cond === '1st') return iter === 0;
+      const m = /^(\d+):(\d+)$/.exec(cond);
+      if (m) {
+        const a = parseInt(m[1], 10), bb = parseInt(m[2], 10);
+        if (bb > 0) return (iter % bb) === (((a - 1) % bb + bb) % bb);
+      }
+      return true;
+    }
     function _stepShouldFire(step, stream, off) {
       if (!step) return true;
-      if (!(off && off.chance) && Number.isFinite(step.prob) && step.prob < 100) {
+      // Chance gates the NOTE only when its target is 'note' (default). With
+      // probTarget 'roll' the note always plays and the dice moves to the
+      // ratchet decision in scheduleStepAt (rolled vs plain).
+      if (!(off && off.chance) && step.probTarget !== 'roll'
+          && Number.isFinite(step.prob) && step.prob < 100) {
         if ((Math.random() * 100) >= step.prob) return false;
       }
       const cond = (off && off.when) ? null : step.cond;
       if (cond && cond !== 'always') {
         const iter = (stream && Number.isFinite(stream.iter)) ? stream.iter : 0;
-        if (cond === '1st') return iter === 0;
-        const m = /^(\d+):(\d+)$/.exec(cond);
-        if (m) {
-          const a = parseInt(m[1], 10), bb = parseInt(m[2], 10);
-          if (bb > 0) return (iter % bb) === (((a - 1) % bb + bb) % bb);
-        }
+        return _condPasses(cond, iter);
       }
       return true;
     }
@@ -763,8 +774,30 @@
           // Ratchet: split the step into N evenly-spaced sub-hits across its
           // duration (rolls / stutters). 1 (or unset) = the normal single
           // hit. Capped at 8 so a tiny step can't spawn a runaway burst.
-          const _rat = (_off && _off.roll) ? 1
+          // Groove nuance (all additive, default-off):
+          //   rollCond   — the Roll's own When: passes where it doesn't match
+          //                play a single hit (note itself unaffected).
+          //   probTarget 'roll' — the Chance dice decides rolled vs plain
+          //                (the note always plays; see _stepShouldFire).
+          //   rollMode   — 'random': count drawn per fire in [2..Roll];
+          //                'pattern': step.rollSeq cycles per loop pass.
+          let _rat = (_off && _off.roll) ? 1
             : (Number.isFinite(step.ratchet) ? Math.max(1, Math.min(8, Math.floor(step.ratchet))) : 1);
+          if (!(_off && _off.roll)) {
+            const _iter = (stream && Number.isFinite(stream.iter)) ? stream.iter : 0;
+            if (step.rollMode === 'pattern' && Array.isArray(step.rollSeq) && step.rollSeq.length) {
+              const v = step.rollSeq[_iter % step.rollSeq.length] | 0;
+              _rat = Math.max(1, Math.min(8, v || 1));
+            }
+            if (_rat > 1 && !_condPasses(step.rollCond, _iter)) _rat = 1;
+            if (_rat > 1 && step.probTarget === 'roll' && !(_off && _off.chance)
+                && Number.isFinite(step.prob) && step.prob < 100) {
+              if ((Math.random() * 100) >= step.prob) _rat = 1;
+            }
+            if (_rat > 1 && step.rollMode === 'random') {
+              _rat = 2 + Math.floor(Math.random() * (_rat - 1));   // 2..Roll
+            }
+          }
           if (_rat <= 1) {
             _fireStepVoices(fireTime, durMs);
           } else {

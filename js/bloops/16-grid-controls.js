@@ -1288,6 +1288,71 @@
       });
     })();
 
+    // Chance TARGET — what the dice gates: Note (step fires or rests — the
+    // default) or Roll (the note always plays; the dice decides rolled vs
+    // plain). Stored on step.probTarget ('roll'; absent = note).
+    (function bindStepProbTarget() {
+      const btn = document.getElementById('step-prob-target');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const sel = selectedStepRefs.filter(_stepHasPlayableContent);
+        if (!sel.length) return;
+        const cur = sel[sel.length - 1].probTarget === 'roll' ? 'roll' : 'note';
+        const next = cur === 'roll' ? 'note' : 'roll';
+        sel.forEach(s => { if (next === 'note') delete s.probTarget; else s.probTarget = 'roll'; });
+        btn.textContent = next === 'roll' ? 'Roll' : 'Note';
+        btn.classList.toggle('active', next === 'roll');
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
+    // Roll WHEN — the ratchet's own condition: passes that don't match play a
+    // single plain hit (the note itself is unaffected). step.rollCond.
+    (function bindStepRollCond() {
+      const btn = document.getElementById('step-roll-cond');
+      if (!btn) return;
+      const CONDS = ['always', '1st', '1:2', '2:2', '1:3', '1:4', '2:4', '3:4', '4:4'];
+      btn.addEventListener('click', () => {
+        const sel = selectedStepRefs.filter(_stepHasPlayableContent);
+        if (!sel.length) return;
+        const cur = (typeof sel[sel.length - 1].rollCond === 'string' && sel[sel.length - 1].rollCond) ? sel[sel.length - 1].rollCond : 'always';
+        const next = CONDS[(Math.max(0, CONDS.indexOf(cur)) + 1) % CONDS.length];
+        sel.forEach(s => { if (next === 'always') delete s.rollCond; else s.rollCond = next; });
+        btn.textContent = (next === 'always') ? 'Always' : next;
+        btn.classList.toggle('active', next !== 'always');
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
+    // Roll MODE — Fixed (the slider value), Random (drawn per fire, 2..Roll),
+    // Pattern (step.rollSeq — a comma list cycling one value per loop pass).
+    (function bindStepRollMode() {
+      const btn = document.getElementById('step-roll-mode');
+      const seqIn = document.getElementById('step-roll-seq');
+      if (!btn) return;
+      const MODES = ['fixed', 'random', 'pattern'];
+      const LABEL = { fixed: 'Fixed', random: 'Random', pattern: 'Pattern' };
+      btn.addEventListener('click', () => {
+        const sel = selectedStepRefs.filter(_stepHasPlayableContent);
+        if (!sel.length) return;
+        const cur = MODES.indexOf(sel[sel.length - 1].rollMode) >= 0 ? sel[sel.length - 1].rollMode : 'fixed';
+        const next = MODES[(MODES.indexOf(cur) + 1) % MODES.length];
+        sel.forEach(s => { if (next === 'fixed') delete s.rollMode; else s.rollMode = next; });
+        btn.textContent = LABEL[next];
+        btn.classList.toggle('active', next !== 'fixed');
+        if (seqIn) seqIn.hidden = next !== 'pattern';
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+      if (seqIn) seqIn.addEventListener('change', () => {
+        const sel = selectedStepRefs.filter(_stepHasPlayableContent);
+        if (!sel.length) return;
+        const vals = seqIn.value.split(/[\s,]+/).map(v => parseInt(v, 10)).filter(v => Number.isFinite(v) && v >= 1 && v <= 8);
+        sel.forEach(s => { if (vals.length) s.rollSeq = vals.slice(0, 32); else delete s.rollSeq; });
+        seqIn.value = vals.slice(0, 32).join(',');
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
+    })();
+
     // When (conditional) — cycles which loop passes the step plays on.
     (function bindStepCondButton() {
       const btn = document.getElementById('step-cond-btn');

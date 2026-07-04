@@ -1896,6 +1896,13 @@
           const ratVal = document.getElementById('step-ratchet-val');
           if (ratSlider) ratSlider.value = String(rv);
           if (ratVal) ratVal.textContent = rv + '×';
+          // Roll nuance chips: the roll's own When, its mode, and the pattern.
+          const _rs = eligible[eligible.length - 1] || {};
+          const rc = document.getElementById('step-roll-cond');
+          if (rc) { const v = (typeof _rs.rollCond === 'string' && _rs.rollCond) ? _rs.rollCond : 'always'; rc.textContent = (v === 'always') ? 'Always' : v; rc.classList.toggle('active', v !== 'always'); }
+          const rm = document.getElementById('step-roll-mode');
+          const rq = document.getElementById('step-roll-seq');
+          if (rm) { const v = (_rs.rollMode === 'random' || _rs.rollMode === 'pattern') ? _rs.rollMode : 'fixed'; rm.textContent = v === 'fixed' ? 'Fixed' : (v === 'random' ? 'Random' : 'Pattern'); rm.classList.toggle('active', v !== 'fixed'); if (rq) { rq.hidden = v !== 'pattern'; rq.value = Array.isArray(_rs.rollSeq) ? _rs.rollSeq.join(',') : ''; } }
         }
       }
       // Chance (probability) + When (conditional) bars — any playable step.
@@ -1910,6 +1917,8 @@
           const pvl = document.getElementById('step-prob-val');
           if (ps) ps.value = String(pv);
           if (pvl) pvl.textContent = pv + '%';
+          const pt = document.getElementById('step-prob-target');
+          if (pt) { const t = _condStep.probTarget === 'roll'; pt.textContent = t ? 'Roll' : 'Note'; pt.classList.toggle('active', t); }
         }
       }
       const condBar = document.getElementById('step-cond-bar');

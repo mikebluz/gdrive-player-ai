@@ -13525,6 +13525,22 @@
         // pitches on non-verbatim cycles, so you'd hear a thinned/altered take
         // rather than the merge. Variation stays opt-in via the Amount slider.
         seq.varyDepth = 0;
+        // Seed→Grow fidelity: a SENT sequence should sound like it did in the
+        // grid. (a) The seq-layer ADSR defaults (attack 120 / release 600)
+        // washed punchy material out — _ambApplyAdsr overrides every note with
+        // the layer envelope, and per-step envelopes don't survive capture —
+        // so seed the layer's ADSR from the source patch (the lane's dominant
+        // voice). (b) The seq emit scales velocity ×0.6 to sit generative
+        // layers back into a bed — compensate with level 90 (_ambLevelGain →
+        // ×1.667 ≈ 1/0.6) so the send lands at grid loudness. Both are plain
+        // layer fields the user can retune afterwards; existing layers and
+        // the harness's default-built seqs are untouched.
+        const _v = unit.voice || {};
+        if (Number.isFinite(_v.attack))  seq.attack  = Math.max(0, Math.min(4000, Math.round(_v.attack)));
+        if (Number.isFinite(_v.decay))   seq.decay   = Math.max(0, Math.min(2000, Math.round(_v.decay)));
+        if (Number.isFinite(_v.sustain)) seq.sustain = Math.max(0, Math.min(100, Math.round(_v.sustain)));
+        if (Number.isFinite(_v.release)) seq.release = Math.max(0, Math.min(4000, Math.round(_v.release)));
+        seq.level = 90;
         _ambFitSeqInterval(seq);
         cfg.seqs.push(seq);
       } else {

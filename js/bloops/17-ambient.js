@@ -1204,9 +1204,12 @@
     //        extras filter + `_ambNoteShapeDrop`).
     //   v2 — Track C, C2: cfg.seqs/cfg.samples entries COPIED into cfg.extras as
     //        seed-typed layers (type 'seq'/'samp', same ids → keys unchanged).
-    //        The legacy arrays are KEPT (frozen) so older builds still load the
-    //        project; all enumeration goes through _ambSeqList/_ambSampleList.
-    const _AMB_SCHEMA_VERSION = 2;
+    //        The legacy arrays were kept (frozen) for older builds.
+    //   v3 — Track C, C3 (ONE-WAY): the legacy arrays are RETIRED — any incoming
+    //        cfg.seqs/cfg.samples entries migrate into extras (idempotent
+    //        per-entry copy), then the arrays are DELETED. cfg.extras is the
+    //        single home; enumeration stays on _ambSeqList/_ambSampleList.
+    const _AMB_SCHEMA_VERSION = 3;
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
@@ -1407,7 +1410,7 @@
       // build enumerates through _ambSeqList/_ambSampleList (extras win).
       // Gated on _fromVer so it runs ONCE; the per-entry dedup guard protects
       // against re-entry from odd snapshots.
-      if (_fromVer < 2) {
+      if (_fromVer < 3) {
         const _cl = (o) => { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return null; } };
         (cfg.seqs || []).forEach(s => {
           if (!s || cfg.extras.some(x => x && x.type === 'seq' && x.id === s.id)) return;
@@ -1460,6 +1463,13 @@
       // Stamp the current layer-schema version so version-gated migrations run
       // once and re-normalizing is a no-op. (`_fromVer` above is the pre-migration
       // value for any gated block.)
+      // ---- Track C, C3 (v3, ONE-WAY): retire the legacy arrays ------------
+      // Everything above (normalizers, mod.sync migration, seedKind stamps,
+      // the v<3 copy-into-extras) has already consumed them; cfg.extras is
+      // the single home from here. An older build opening a v3 project will
+      // simply see no Seq/Sample layers — the accepted cost of C3.
+      delete cfg.seqs;
+      delete cfg.samples;
       void _fromVer;
       cfg.schemaVersion = _AMB_SCHEMA_VERSION;
       return cfg;
@@ -11388,8 +11398,8 @@
       if (!live) return;
       const li = _ambSeqList(cfg).indexOf(live);
       if (!_ambConfirmDeleteLayer(_ambLayerLabel(live, 'Seq' + (li + 1)))) return;
-      // C2: remove from BOTH homes (the extras-hosted live copy + the frozen
-      // legacy array entry) so neither build resurrects it.
+      // C3: extras is the single home (the legacy array no longer exists
+      // post-normalize; the guarded splice covers unnormalized area builds).
       { const xi = (cfg.extras || []).findIndex(x => x && x.type === 'seq' && x.id === id); if (xi >= 0) cfg.extras.splice(xi, 1); }
       { const si = (cfg.seqs || []).findIndex(s => s && s.id === id); if (si >= 0) cfg.seqs.splice(si, 1); }
       try { if (E.mod['seq:' + id]) _ambTeardownMod('seq:' + id); } catch (e) {}
@@ -11617,7 +11627,8 @@
       if (!live) return;
       const li = _ambSampleList(cfg).indexOf(live);
       if (!_ambConfirmDeleteLayer(_ambLayerLabel(live, 'Sample' + (li + 1)))) return;
-      // C2: remove from BOTH homes (extras-hosted live copy + frozen legacy entry).
+      // C3: extras is the single home (guarded legacy splice covers
+      // unnormalized area builds only).
       { const xi = (cfg.extras || []).findIndex(x => x && x.type === 'samp' && x.id === id); if (xi >= 0) cfg.extras.splice(xi, 1); }
       { const si = (cfg.samples || []).findIndex(s => s && s.id === id); if (si >= 0) cfg.samples.splice(si, 1); }
       try { if (E.mod['samp:' + id]) _ambTeardownMod('samp:' + id); } catch (e) {}

@@ -8284,6 +8284,12 @@
     .ens-shape-btn:hover { border-color: #9f7aea; }
     .ens-shape-btn.active { background: #2d2150; border-color: #9f7aea; color: #e9d8fd; }
     .wrap-bank-create-ens { margin-top: 4px; }
+    .ens-preview-btn {
+      padding: 8px 14px; border-radius: 8px; cursor: pointer;
+      background: #14142a; border: 1px solid #4a6a9f; color: #9ecbff; font-weight: 700; font-size: 0.85rem;
+    }
+    .ens-preview-btn:hover { border-color: #81a9e6; background: #1a1a34; }
+    .ens-preview-btn:active { transform: translateY(1px); }
 
     /* Empty-User-bank hint in the chip row. */
     .wrap-bank-empty {
@@ -10607,3 +10613,15 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
     }
     @media (max-width: 700px) { .shape-toolbar > .shape-btn { padding: 12px 8px; font-size: 0.72rem; } }
+
+    /* Bloops toast — transient bottom-center notification (showToast, 01-core-state). */
+    .bloops-toast {
+      position: fixed; left: 50%; bottom: 84px; transform: translate(-50%, 12px);
+      max-width: min(90vw, 460px); padding: 11px 18px; border-radius: 10px;
+      background: rgba(20, 20, 36, 0.96); color: #e9e9f4; border: 1px solid #3a3a55;
+      font-family: 'Segoe UI', sans-serif; font-size: 0.86rem; font-weight: 600; text-align: center;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5); z-index: 100000; pointer-events: none;
+      opacity: 0; transition: opacity 0.22s ease, transform 0.22s ease;
+    }
+    .bloops-toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .bloops-toast-warn { border-color: #f6ad55; color: #ffe4bf; }

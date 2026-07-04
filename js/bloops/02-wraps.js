@@ -1218,6 +1218,30 @@
       }
       return step;
     }
+    // Audition an ensemble at the reference root (degree 1 = the scale tonic in
+    // a mid register), the SHAPE deciding delivery: Stack = one chord, Run/Set =
+    // an arpeggio so every voice's timbre is heard. Plays via playNote so each
+    // voice sounds with its own tone (the per-note override). Reference-rooted —
+    // a grid press later re-roots the whole thing to the pressed note.
+    function _previewEnsemble(rows, shape) {
+      const step = _buildEnsembleStep(rows, shape);
+      if (!step) { if (typeof showToast === 'function') showToast('Add at least one voice'); return; }
+      const notes = _wrapNotesOf(step).filter(n => n && n.freq != null);
+      if (!notes.length || typeof playNote !== 'function') return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const voiceParams = (n) => {
+        const p = (n.params && typeof n.params === 'object') ? { ...n.params } : {};
+        p.type = (n.params && n.params.type) || n.sound || 'sine';
+        return p;
+      };
+      if (shape === 'stack') {
+        notes.forEach(n => { try { playNote(n.freq, voiceParams(n), 620, now + 0.04); } catch (e) {} });
+      } else {
+        // Run / Set → a short arpeggio so all timbres are audible.
+        const gap = 0.16;
+        notes.forEach((n, i) => { try { playNote(n.freq, voiceParams(n), 220, now + 0.04 + i * gap); } catch (e) {} });
+      }
+    }
     function openEnsembleBuilder() {
       if (typeof currentScale === 'string' && currentScale === 'chromatic') {
         if (typeof showToast === 'function') showToast('Pick a musical scale first — ensembles voice by scale degree.');
@@ -1250,6 +1274,7 @@
         `</div>` +
         `<div class="sm-footer">` +
           `<button type="button" class="sm-preview" id="ens-cancel">Cancel</button>` +
+          `<button type="button" class="ens-preview-btn" id="ens-preview" title="Hear the ensemble at the current shape">▶ Preview</button>` +
           `<button type="button" class="sm-apply" id="ens-save">Save Ensemble</button>` +
         `</div>`;
 
@@ -1288,15 +1313,21 @@
           modal.querySelectorAll('.ens-shape-btn').forEach(x => x.classList.toggle('active', x === b));
         });
       });
+      // Read the current rows into [{degree, tone}] (shared by Preview + Save).
+      const readRows = () => Array.from(rowsEl.querySelectorAll('.ens-row')).map(r => ({
+        degree: parseInt(r.querySelector('.ens-deg').value, 10) || 1,
+        tone: r.querySelector('.ens-tone').value || 'sine',
+      }));
       const nameInput = modal.querySelector('#ens-name-input');
       nameInput.value = (typeof _randAdjNoun === 'function') ? _randAdjNoun() : 'Ensemble';
       modal.querySelector('#ens-shuffle').addEventListener('click', () => { nameInput.value = (typeof _randAdjNoun === 'function') ? _randAdjNoun() : 'Ensemble'; nameInput.focus(); });
+      modal.querySelector('#ens-preview').addEventListener('click', () => {
+        try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+        _previewEnsemble(readRows(), shape);
+      });
       modal.querySelector('#ens-cancel').addEventListener('click', () => overlay.remove());
       modal.querySelector('#ens-save').addEventListener('click', () => {
-        const rows = Array.from(rowsEl.querySelectorAll('.ens-row')).map(r => ({
-          degree: parseInt(r.querySelector('.ens-deg').value, 10) || 1,
-          tone: r.querySelector('.ens-tone').value || 'sine',
-        }));
+        const rows = readRows();
         const step = _buildEnsembleStep(rows, shape);
         if (!step) { if (typeof showToast === 'function') showToast('Add at least one voice'); return; }
         const nm = (nameInput.value || '').trim();

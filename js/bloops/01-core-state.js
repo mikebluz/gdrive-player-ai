@@ -20,6 +20,31 @@
       }
     } catch (e) {}
 
+    // ---- Toast notifications -------------------------------------------------
+    // Lightweight transient message, bottom-center. The whole Bloops codebase
+    // has ~100 `if (typeof showToast === 'function') showToast(...)` call sites,
+    // but showToast was NEVER defined — so every one was a silent no-op (Grab
+    // confirmations, prog messages, the ensemble "pick a scale" hint, …). This
+    // is that missing definition; a top-level function declaration in the first
+    // Bloops script is visible to all the later ones (shared global scope).
+    let _toastEl = null, _toastTimer = null;
+    function showToast(msg, opts) {
+      try {
+        if (!_toastEl) {
+          _toastEl = document.createElement('div');
+          _toastEl.className = 'bloops-toast';
+          document.body.appendChild(_toastEl);
+        }
+        _toastEl.textContent = String(msg == null ? '' : msg);
+        _toastEl.classList.toggle('bloops-toast-warn', !!(opts && opts.warn));
+        // reflow → restart the fade-in even on a rapid second toast
+        void _toastEl.offsetWidth;
+        _toastEl.classList.add('show');
+        if (_toastTimer) clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => { if (_toastEl) _toastEl.classList.remove('show'); }, (opts && opts.ms) || 2600);
+      } catch (e) {}
+    }
+
     const CHROMATIC = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     let rootIdx = 0;       // 0 = C — pitch class of the grid's lowest cell
     let baseOctave = 4;    // octave number of the root note

@@ -12182,6 +12182,10 @@
         }
       });
       if (grpOpen) html += '</div></div>';
+      // P0: an EXTRAS Bed gets the per-chord-voice tone selects too (the last
+      // primary-template-only control) — same ids as the primary's cvt wiring
+      // but under the instance prefix.
+      if (type === 'bed' && !kitVoice) html += _ambBedCvtHtml(p);
       // Per-layer Reset — restores every group to its default fold state.
       html += '<div class="ambient-grp-resetwrap"><button type="button" class="ambient-grp-reset" id="' + p + '-grp-reset" title="Reset section folds to defaults">↺ Reset sections</button></div>';
       return html + '</div>';
@@ -12213,6 +12217,23 @@
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
       const setVal = (suf, val) => { const e = el(suf); if (e && val != null) e.value = String(val); };
+      // P0: per-chord-voice tones on an EXTRAS Bed (structured Chords/Monk
+      // modes) — populate, load + bind the 6 voice selects, writing this
+      // instance's chordVoiceTones (mirrors the primary bed wiring).
+      if (type === 'bed') {
+        ['0', '1', '2', '3', '4', '5'].forEach(i => {
+          const s = el('cvt-' + i);
+          if (!s) return;
+          try { populateGroupedToneSelect(s, _ambToneOptions(), { value: '', label: '— bed tone —' }); } catch (e) {}
+          if (Array.isArray(inst.chordVoiceTones)) s.value = inst.chordVoiceTones[i] || '';
+          s.addEventListener('change', () => {
+            _E = E; const L = get(); if (!L) return;
+            if (!Array.isArray(L.chordVoiceTones)) L.chordVoiceTones = [];
+            L.chordVoiceTones[parseInt(i, 10)] = s.value || '';
+            persist();
+          });
+        });
+      }
       // Wire on/off, delete, and collapse FIRST so a later control-wiring error
       // (e.g. the tone picker) can never leave the layer untoggleable.
       const onB = el('on'); if (onB) { onB.classList.toggle('on', !!inst.on); onB.addEventListener('click', () => { _E = E; const L = get(); if (!L) return; _ambToggleLayer(E, type + ':' + id, L, onB, persist); }); }

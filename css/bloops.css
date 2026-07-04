@@ -10815,19 +10815,32 @@
       border-radius: 3px; cursor: copy; padding: 0;
     }
     .lane-chips > .place-ghost:hover { background: rgba(127, 214, 196, 0.18); border-style: solid; }
-    /* Hover footprint: the ghost cells the placed note would cover. */
+    /* Hover footprint: the ghost cells the placed note would cover,
+       outlined as ONE would-be step chip (2px top/bottom rails on every
+       hot cell; the -start/-end caps close the left/right edges) so the
+       selected Size reads at a glance. */
     .lane-chips > .place-ghost.ph-hot {
-      background: rgba(79, 209, 197, 0.28);
-      border: 1px solid rgba(129, 230, 217, 0.8);
-      border-radius: 4px;
+      background: rgba(79, 209, 197, 0.14);
+      border: solid #4fd1c5;
+      border-width: 2px 0;
+      border-radius: 0;
+    }
+    .lane-chips > .place-ghost.ph-hot-start {
+      border-left-width: 2px;
+      border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+    }
+    .lane-chips > .place-ghost.ph-hot-end {
+      border-right-width: 2px;
+      border-top-right-radius: 8px; border-bottom-right-radius: 8px;
     }
     /* Slot preview inside a rest chip — positioned by the mousemove
-       handler to the exact cell(s) a click would place the note at. */
+       handler to the exact cell(s) a click would place the note at.
+       Same outlined-chip look as the ghost footprint. */
     .seq-step > .place-hov {
       position: absolute; top: 0; height: 100%;
-      background: rgba(79, 209, 197, 0.28);
-      border: 1px solid rgba(129, 230, 217, 0.8);
-      border-radius: 4px;
+      background: rgba(79, 209, 197, 0.14);
+      border: 2px solid #4fd1c5;
+      border-radius: 8px;
       pointer-events: none; box-sizing: border-box;
       display: none;
     }

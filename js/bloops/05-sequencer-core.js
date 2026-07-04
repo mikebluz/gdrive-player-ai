@@ -2246,7 +2246,13 @@
       const span = _placeSpan32();
       host.querySelectorAll('.place-ghost').forEach(g => {
         const p = parseInt(g.dataset.pos32, 10);
-        g.classList.toggle('ph-hot', pos32 != null && p >= pos32 && p < pos32 + span);
+        const hot = pos32 != null && p >= pos32 && p < pos32 + span;
+        g.classList.toggle('ph-hot', hot);
+        // Cap the composite outline so the footprint reads as ONE would-be
+        // step chip: left cap on the first cell, right cap on the last —
+        // and at bar (row) edges, so a wrapping footprint closes cleanly.
+        g.classList.toggle('ph-hot-start', hot && (p === pos32 || p % 32 === 0));
+        g.classList.toggle('ph-hot-end', hot && (p === pos32 + span - 1 || p % 32 === 31));
       });
     }
     function _placeArmedTemplate() {

@@ -456,6 +456,14 @@
       { name: 'Shuffle',    k: 4, n: 12, rot: 2,  grp: 2, hint: '12/8 shuffle — blues / gospel triplet feel' },
       { name: 'Half-Time',  k: 2, n: 16, rot: 7,  grp: 2, hint: 'Half-time — hits on 1 and 3 at double length' },
       { name: 'Funk 16',    k: 6, n: 16, rot: 7,  grp: 2, hint: 'Sixteenth funk kick — doubled tresillo feel' },
+      // African rhythms (grp 3) — the documented true-Euclidean patterns from
+      // Toussaint's catalog beyond the world row's Bembé/Venda: North African
+      // bendir + the Aka Pygmy family (Central African Republic).
+      { name: 'Tuareg',  k: 7,  n: 8,  rot: 1,  grp: 3, hint: 'Tuareg bendir rhythm (Libya)' },
+      { name: 'Aka 16',  k: 9,  n: 16, rot: 5,  grp: 3, hint: 'Aka Pygmies (Central African Republic)' },
+      { name: 'Mokongo', k: 11, n: 12, rot: 1,  grp: 3, hint: 'Mokongo — Aka Pygmies' },
+      { name: 'Aka 24',  k: 11, n: 24, rot: 23, grp: 3, hint: 'Aka Pygmies upper-leg drum' },
+      { name: 'Sangha',  k: 13, n: 24, rot: 9,  grp: 3, hint: 'Aka Pygmies of the upper Sangha' },
     ];
     function showEuclidDialog() {
       const gridNotes = (typeof notes !== 'undefined' && Array.isArray(notes) && notes.length)
@@ -573,12 +581,17 @@
         // each chip sets Hits/Steps/Rotate (+ Length = Steps, one 1/8 per slot).
         '<div class="sm-section-label" style="margin-top:0;">Presets — world</div>' +
         '<div class="euc-presets" id="euc-presets">' +
-          _EUC_PRESETS.map((pz, i) => (pz.grp === 2) ? '' :
+          _EUC_PRESETS.map((pz, i) => (pz.grp != null) ? '' :
             '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
         '</div>' +
         '<div class="sm-section-label" style="margin-top:0;">Presets — rock / R&B</div>' +
         '<div class="euc-presets" id="euc-presets-2">' +
           _EUC_PRESETS.map((pz, i) => (pz.grp !== 2) ? '' :
+            '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
+        '</div>' +
+        '<div class="sm-section-label" style="margin-top:0;">Presets — African</div>' +
+        '<div class="euc-presets" id="euc-presets-3">' +
+          _EUC_PRESETS.map((pz, i) => (pz.grp !== 3) ? '' :
             '<button type="button" class="euc-preset-chip" data-pi="' + i + '" title="' + pz.hint + ' — E(' + pz.k + ',' + pz.n + ')">' + pz.name + '<small>' + pz.k + ',' + pz.n + '</small></button>').join('') +
         '</div>' +
         '<div class="sm-section-label" style="margin-top:0;">Pattern — tap a step to edit (tap again to close)</div>' +

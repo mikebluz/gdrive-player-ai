@@ -1311,6 +1311,32 @@
       };
       TONE_FAMILY_ORDER.forEach(addGroup);
       byFam.forEach((_, fam) => { if (!seen.has(fam)) addGroup(fam); });
+      // ⚙ manage button — a native <select> can't host the per-option delete ×
+      // the custom tone pickers have, so any grouped select whose options
+      // include user samples gets a small button (right after the select) that
+      // opens the sample-bank manager (preview / delete). Idempotent across
+      // re-populates; removed again if the last user sample is deleted before
+      // the next rebuild.
+      try {
+        const hasUser = (opts || []).some(o => typeof o.value === 'string' && o.value.startsWith('sample:')
+          && typeof sampleSamplers !== 'undefined' && !!((sampleSamplers.get(o.value.slice(7)) || {}).imported));
+        const next = sel.nextElementSibling;
+        const already = !!(next && next.classList && next.classList.contains('tone-manage-btn'));
+        if (hasUser && !already) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'tone-manage-btn';
+          b.textContent = '⚙';
+          b.title = 'Manage user samples (preview / delete)';
+          b.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (typeof showSampleBankManager === 'function') showSampleBankManager();
+          });
+          sel.insertAdjacentElement('afterend', b);
+        } else if (!hasUser && already) {
+          next.remove();
+        }
+      } catch (e) {}
     }
     // Top-level bucket: 'synths' (oscillator-based, no sample buffer)
     // or 'samples' (sample-buffer based, played via Tone.Sampler /

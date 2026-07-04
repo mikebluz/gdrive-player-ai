@@ -1326,6 +1326,80 @@
       } catch (e) {}
       return true;
     }
+    // ---- Sample-bank manager ------------------------------------------------
+    // Overlay listing every USER sample (imported / captured / grab / TTS) with
+    // preview + delete. The custom tone pickers carry a per-option delete ×,
+    // but the <select>-based pickers (Bloom layer cards, wraps, shape) can't —
+    // they get a ⚙ button (populateGroupedToneSelect) that opens this instead.
+    function showSampleBankManager() {
+      const old = document.getElementById('sample-bank-mgr');
+      if (old) { try { old.remove(); } catch (e) {} }
+      const ov = document.createElement('div');
+      ov.id = 'sample-bank-mgr';
+      // Body-attached overlay: view-mode CSS force-hides body children with
+      // !important, so display must be inline-!important (CLAUDE.md gotcha).
+      ov.style.setProperty('display', 'flex', 'important');
+      const panel = document.createElement('div');
+      panel.className = 'sbm-panel';
+      const head = document.createElement('div');
+      head.className = 'sbm-head';
+      const title = document.createElement('span');
+      title.textContent = 'User samples';
+      head.appendChild(title);
+      const close = document.createElement('button');
+      close.type = 'button'; close.className = 'sbm-close'; close.textContent = '×';
+      close.title = 'Close';
+      close.addEventListener('click', () => ov.remove());
+      head.appendChild(close);
+      panel.appendChild(head);
+      const list = document.createElement('div');
+      list.className = 'sbm-list';
+      panel.appendChild(list);
+      const showEmpty = () => {
+        const empty = document.createElement('div');
+        empty.className = 'sbm-empty';
+        empty.textContent = 'No user samples yet — Import or Grab to create one.';
+        list.appendChild(empty);
+      };
+      const entries = [];
+      try { sampleSamplers.forEach((info, id) => { if (info && info.imported) entries.push([id, info]); }); } catch (e) {}
+      entries.sort((a, b) => String(a[1].name || a[0]).localeCompare(String(b[1].name || b[0])));
+      if (!entries.length) showEmpty();
+      entries.forEach(([id, info]) => {
+        const row = document.createElement('div');
+        row.className = 'sbm-row';
+        const play = document.createElement('button');
+        play.type = 'button'; play.className = 'sbm-play'; play.textContent = '▶';
+        play.title = 'Preview';
+        play.addEventListener('click', async () => {
+          try { await Tone.start(); info.sampler.triggerAttackRelease(info.rootNote || 'C4', 1.2, Tone.now()); } catch (e) {}
+        });
+        const nm = document.createElement('span');
+        nm.className = 'sbm-name';
+        nm.textContent = info.name || id;
+        nm.title = id + (info.padLoop ? ' · pad' : '');
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'sbm-del'; del.textContent = '×';
+        del.title = 'Delete sample “' + (info.name || id) + '”';
+        del.addEventListener('click', async () => {
+          if (!confirm('Delete sample “' + (info.name || id) + '”? This removes it from your tones (can’t be undone). Steps still using it fall back to a sine.')) return;
+          const ok = await deleteUserSample(id);
+          if (!ok) return;
+          row.remove();
+          // Strip the dead entry from every live grouped <select> so pickers
+          // don't keep offering a tone that no longer exists.
+          try { document.querySelectorAll('option[value="sample:' + id + '"]').forEach(o => o.remove()); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('Sample deleted'); } catch (e) {}
+          if (!list.querySelector('.sbm-row')) showEmpty();
+        });
+        row.appendChild(play); row.appendChild(nm); row.appendChild(del);
+        list.appendChild(row);
+      });
+      // Click the dimmed backdrop (not the panel) to dismiss.
+      ov.addEventListener('pointerdown', (e) => { if (e.target === ov) ov.remove(); });
+      ov.appendChild(panel);
+      document.body.appendChild(ov);
+    }
     function makeImportedSampleId(filename) {
       const base = (filename || '')
         .replace(/\.[^.]+$/, '')

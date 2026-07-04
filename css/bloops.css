@@ -10616,3 +10616,57 @@
     }
     .bloops-toast.show { opacity: 1; transform: translate(-50%, 0); }
     .bloops-toast-warn { border-color: #f6ad55; color: #ffe4bf; }
+    /* ---- Sample-bank manager (user samples: preview + delete) ----
+       Body-attached overlay; its display is set inline-!important by
+       showSampleBankManager (view-mode CSS hides body children). */
+    #sample-bank-mgr {
+      position: fixed; inset: 0; z-index: 10600;
+      background: rgba(5, 5, 12, 0.55);
+      display: none; align-items: center; justify-content: center;
+    }
+    #sample-bank-mgr .sbm-panel {
+      background: #12121f; border: 1px solid #2d2d3f; border-radius: 10px;
+      width: min(420px, 92vw); max-height: 70vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+    }
+    #sample-bank-mgr .sbm-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px; border-bottom: 1px solid #23233a;
+      color: #cbd5e0; font-weight: 700; font-size: 0.85rem;
+      letter-spacing: 0.4px; text-transform: uppercase;
+    }
+    #sample-bank-mgr .sbm-close {
+      background: none; border: none; color: #718096; font-size: 1.2rem;
+      cursor: pointer; line-height: 1; padding: 0 2px;
+    }
+    #sample-bank-mgr .sbm-close:hover { color: #e2e8f0; }
+    #sample-bank-mgr .sbm-list { overflow-y: auto; padding: 8px; }
+    #sample-bank-mgr .sbm-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 6px;
+    }
+    #sample-bank-mgr .sbm-row:hover { background: rgba(129, 230, 217, 0.06); }
+    #sample-bank-mgr .sbm-play {
+      flex: 0 0 auto; background: #1a1a2c; border: 1px solid #2d2d3f;
+      color: #81e6d9; border-radius: 5px; cursor: pointer;
+      font-size: 0.7rem; padding: 2px 8px;
+    }
+    #sample-bank-mgr .sbm-name {
+      flex: 1 1 auto; min-width: 0; color: #e2e8f0; font-size: 0.85rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #sample-bank-mgr .sbm-del {
+      flex: 0 0 auto; background: none; border: 1px solid #4a2530;
+      color: #fc8181; border-radius: 5px; cursor: pointer;
+      font-size: 0.85rem; line-height: 1; padding: 2px 7px;
+    }
+    #sample-bank-mgr .sbm-del:hover { background: rgba(252, 129, 129, 0.12); }
+    #sample-bank-mgr .sbm-empty { color: #718096; font-size: 0.82rem; padding: 14px 10px; }
+    /* ⚙ next to grouped tone <select>s (injected by populateGroupedToneSelect) */
+    .tone-manage-btn {
+      flex: 0 0 auto; margin-left: 4px;
+      background: #1a1a2c; border: 1px solid #2d2d3f; color: #a0aec0;
+      border-radius: 5px; cursor: pointer; font-size: 0.75rem; padding: 2px 6px;
+    }
+    .tone-manage-btn:hover { color: #e2e8f0; border-color: #4a5568; }

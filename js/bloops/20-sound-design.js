@@ -210,16 +210,11 @@
         _seed: baseType || 'sawtooth',
       };
     }
-    // True when a patch's oscillator design forces a fresh voice (so playNote
-    // must NOT serve it from the pooled-synth fast path). Only ring mod needs
-    // one now: FM/AM timbre (harmonicity/modIndex) is set per acquisition on a
-    // pooled body, and unison designs pool under a signature key that bakes the
-    // fat-oscillator config in (see _buildPooledSynthForPreset). Sub-osc and
+    // True when a patch's oscillator design needs its own dedicated voice
+    // topology (ring mod builds an extra oscillator + gain web around the
+    // synth). Historically this also gated the (now-removed) synth pool;
+    // today it feeds the sustained path's _designVoice decision. Sub-osc and
     // filter wrap the synth externally, so they never needed a fresh voice.
-    // This matters for dense Bloom layers: a Design patch always carries a
-    // finite harmonicity, and the old fm/am clause made every such note build
-    // a full synth (~7ms) instead of pooling (~1ms) — enough stacked voices
-    // starved the scheduler and cut audio out (see bloom-dense-project-perf).
     function _sdOscNeedsFreshVoice(oscD, type) {
       if (!oscD) return false;
       if (oscD.ring > 0) return true;   // ring mod multiplies the voice output

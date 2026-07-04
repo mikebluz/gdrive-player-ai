@@ -1800,235 +1800,12 @@
       } catch (e) {}
     }
 
-    // === Voice pool (Phase 1: synth bodies only) ===
-    // Bloops's hot path builds a fresh Tone synth per trigger, then disposes
-    // ~100ms after the release tail ends. At Poly-mode density (multi-lane
-    // × chord × 1/16) that's tens of constructions/sec — GC pressure that
-    // shows up as the "audio gets weird the longer it loops" drift behind
-    // ↻ Audio. Phase 1 pools the synth body for 14 common preset types; FX
-    // chains stay per-note for now. Pluck/Noise/Duo/Wavetable/Grain/Kick/
-    // Metal still construct per note — they're rarer or have unique APIs.
-    // Pool is bypassed during offline export rendering since the offline
-    // AudioContext can't host synths constructed in the live context.
-    //
-    // KILL SWITCH: set to false to bypass the pool entirely (back to the
-    // pre-pool behavior — fresh synth per note). Live debug toggle.
-    //
-    // DISABLED (2026-07-03, the dense-project cut-out root cause): POOLED
-    // REUSE LEAKS ONE RUNNING NATIVE OscillatorNode PER NOTE. Tone's
-    // retrigger bookkeeping cannot reliably stop the previous note's native
-    // oscillator when a synth body is retriggered (a scheduled native source
-    // stop can't be cancelled, so restarts orphan still-running nodes; a
-    // stop() at pool-release doesn't help — measured 1-2 leaked oscillators
-    // per pooled note, ~25/s on a dense FM project, render thread drowned in
-    // ~12 s). Fresh-synth-per-note + safeDisposeSynth measured ZERO leaks.
-    // The pool's reason to exist (construction cost inside the emitting
-    // tick) is solved by the deferred voice-build queue, which spreads
-    // builds across the 0.3-1.4 s scheduling lookahead. If re-enabling is
-    // ever considered, the oscillator-leak test must pass first
-    // (retrigger a pooled preset N times, count OscillatorNode instances).
-    const VOICE_POOL_ENABLED = false;
-    // Max idle synths kept per preset. Raised 8→32: a dense Bloom project can hold
-    // well over 8 simultaneous voices of ONE preset (e.g. bed chord + motif burst +
-    // riff all on FM), and every voice past the cap falls back to a fresh
-    // `new Tone.FMSynth` (~several ms) — a build burst that starved Tone's scheduler
-    // and cut audio out (see bloom-dense-project-perf). Idle pooled synths are
-    // DISCONNECTED (no audio-thread cost) and the pool fills lazily, so a higher cap
-    // is just a bit more retained memory in exchange for far fewer live constructions.
-    const VOICE_POOL_MAX_PER_PRESET = 32;
-    const voicePools = new Map(); // preset key → { idle: [Tone synth] }
-    function _ensurePool(key) {
-      let p = voicePools.get(key);
-      if (!p) { p = { idle: [] }; voicePools.set(key, p); }
-      return p;
-    }
-    function _acquirePooledSynth(key, factory) {
-      const v = _ensurePool(key).idle.pop();
-      if (v) return v;
-      try {
-        const s = factory();
-        // Stamp the pool key so release sites route the synth back to the
-        // SAME bucket it was acquired from. The playNote release used to pass
-        // the raw preset type, which mismatched the 'basic:*' (and now the
-        // signature-keyed) buckets — released synths parked in a bucket that
-        // acquisition never read, so those presets never actually reused.
-        if (s) s._poolKey = key;
-        return s;
-      }
-      catch (e) { console.warn('voice factory failed', key, e); return null; }
-    }
-    function _releasePooledSynth(key, synth) {
-      if (!synth) return;
-      const p = _ensurePool(key);
-      // Disconnect FIRST, then reset volume/detune. Resetting volume to unity
-      // (0 dB) while the synth is still wired to the lane bus snaps a still-
-      // ringing oscillator's residual back to full level — a step that pops
-      // audibly on a pure tone (sine). With the node already disconnected the
-      // reset produces no output. (safeReleaseSynth has ramped to -80 dB, so
-      // the disconnect itself lands at near-silence.)
-      try { synth.disconnect(); } catch (e) {}
-      // STOP the synth's source oscillators while parked. A started-never-
-      // stopped native OscillatorNode keeps rendering (and is GC-protected)
-      // even when disconnected — and Tone's retrigger bookkeeping does NOT
-      // reliably stop the previous note's native oscillator on pooled reuse,
-      // so every reacquired note leaked one RUNNING oscillator: measured
-      // ~25 leaked oscillators/second on a dense FM project, audio-clock
-      // degradation in lockstep, cut-out at ~12 s (THE original dense-project
-      // cut-out root cause). Tone oscillators restart cleanly from stopped
-      // (each start() makes a fresh native node), so the next triggerAttack
-      // is unaffected. The synth is disconnected and ramped to -80 dB here,
-      // so the stop is silent.
-      try { if (synth.oscillator && typeof synth.oscillator.stop === 'function') synth.oscillator.stop(); } catch (e) {}
-      try { if (synth.modulation && typeof synth.modulation.stop === 'function') synth.modulation.stop(); } catch (e) {}
-      try {
-        if (synth.volume) { synth.volume.cancelScheduledValues(0); synth.volume.value = 0; }
-        if (synth.detune) { synth.detune.cancelScheduledValues(0); synth.detune.value = 0; }
-      } catch (e) {}
-      if (p.idle.length < VOICE_POOL_MAX_PER_PRESET) p.idle.push(synth);
-      else { try { synth.dispose(); } catch (e) {} }
-    }
-    // Mirrors safeDisposeSynth, but releases to the pool instead of disposing.
-    // Same -80 dB ramp + 60 ms wait so the disconnect lands at near-silence
-    // (otherwise the FX-chain disconnect that follows clicks).
-    function safeReleaseSynth(key, synth) {
-      if (!synth) return;
-      try {
-        if (synth.volume && typeof synth.volume.rampTo === 'function') {
-          synth.volume.rampTo(-80, 0.03);
-          setTimeout(() => { _releasePooledSynth(key, synth); }, 60);
-        } else {
-          _releasePooledSynth(key, synth);
-        }
-      } catch (e) {}
-    }
-    function _isPooledPreset(type) {
-      switch (type) {
-        case 'bell': case 'fm': case 'xylo':
-        case 'am': case 'pad':
-        case 'mono': case 'bass':
-        case 'sine': case 'square': case 'triangle': case 'sawtooth': case 'pulse': case 'fat':
-          return true;
-        default:
-          return false;
-      }
-    }
-    // Acquire a pre-configured synth for the given preset. Returns null
-    // when the preset isn't pooled. Each preset gets its own pool key so
-    // the only per-trigger work is setting envelope/detune for the note —
-    // modulation/filter/oscillator config is reused across acquisitions.
-    // `oscD` (resolved _sdOscDesign, may be null) lets Design patches pool:
-    // FM/AM timbre (harmonicity/modIndex) is a per-acquisition param set on
-    // the shared body; unison designs get their own signature-keyed bucket
-    // because a FatOscillator rebuilds its sources when `count` changes, so
-    // different unison configs must not share one pooled synth.
-    function _buildPooledSynthForPreset(preset, env, oscD) {
-      switch (preset) {
-        case 'bell': {
-          const s = _acquirePooledSynth('bell', () => new Tone.FMSynth());
-          if (!s) return null;
-          s.harmonicity.value = 2.14;
-          s.modulationIndex.value = 4;
-          s.oscillator.type = 'sine';
-          s.modulation.type = 'sine';
-          s.envelope.set({ attack: 0.001, decay: 2.0, sustain: 0, release: 0.8 });
-          s.modulationEnvelope.set({ attack: 0.001, decay: 0.5, sustain: 0.2, release: 0.5 });
-          return s;
-        }
-        case 'fm': {
-          const s = _acquirePooledSynth('fm', () => new Tone.FMSynth());
-          if (!s) return null;
-          s.harmonicity.value = (oscD && oscD.harmonicity != null) ? oscD.harmonicity : 3;
-          s.modulationIndex.value = (oscD && oscD.modIndex != null) ? oscD.modIndex : 10;
-          s.oscillator.type = 'sine';
-          s.modulation.type = 'square';
-          s.envelope.set(env);
-          s.modulationEnvelope.set({ attack: 0.5, decay: 0, sustain: 1, release: 0.5 });
-          return s;
-        }
-        case 'xylo': {
-          const s = _acquirePooledSynth('xylo', () => new Tone.FMSynth());
-          if (!s) return null;
-          s.harmonicity.value = 7;
-          s.modulationIndex.value = 4;
-          s.oscillator.type = 'sine';
-          s.modulation.type = 'sine';
-          s.envelope.set({ attack: 0.001, decay: 0.5, sustain: 0, release: 0.3 });
-          s.modulationEnvelope.set({ attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 });
-          return s;
-        }
-        case 'am': {
-          const s = _acquirePooledSynth('am', () => new Tone.AMSynth());
-          if (!s) return null;
-          s.harmonicity.value = (oscD && oscD.harmonicity != null) ? oscD.harmonicity : 2;
-          s.oscillator.type = 'sine';
-          s.modulation.type = 'square';
-          s.envelope.set(env);
-          s.modulationEnvelope.set({ attack: 0.5, decay: 0, sustain: 1, release: 0.5 });
-          return s;
-        }
-        case 'pad': {
-          const s = _acquirePooledSynth('pad', () => new Tone.AMSynth());
-          if (!s) return null;
-          s.harmonicity.value = 1.5;
-          s.oscillator.type = 'sine';
-          s.modulation.type = 'sine';
-          s.envelope.set({ attack: 1.2, decay: 0.5, sustain: 0.7, release: 2.5 });
-          s.modulationEnvelope.set({ attack: 1.0, decay: 0.5, sustain: 0.5, release: 2.0 });
-          return s;
-        }
-        case 'mono': {
-          const s = _acquirePooledSynth('mono', () => new Tone.MonoSynth());
-          if (!s) return null;
-          s.oscillator.type = 'sawtooth';
-          s.envelope.set(env);
-          s.filterEnvelope.set({ attack: 0.01, decay: 0.3, sustain: 0.3, release: 2, baseFrequency: 200, octaves: 3 });
-          s.filter.set({ Q: 6, type: 'lowpass', rolloff: -24 });
-          return s;
-        }
-        case 'bass': {
-          const s = _acquirePooledSynth('bass', () => new Tone.MonoSynth());
-          if (!s) return null;
-          s.oscillator.type = 'square';
-          s.envelope.set(env);
-          s.filterEnvelope.set({ attack: 0.005, decay: 0.18, sustain: 0.4, release: 0.4, baseFrequency: 80, octaves: 3.2 });
-          s.filter.set({ Q: 4, type: 'lowpass', rolloff: -24 });
-          return s;
-        }
-        case 'sine':
-        case 'square':
-        case 'triangle':
-        case 'sawtooth':
-        case 'pulse':
-        case 'fat': {
-          // Resolve the oscillator config FIRST so unison designs land in
-          // their own bucket (the key bakes count/spread in). Mirrors the
-          // fresh-construction fallback branches in playNote/startSustainedNote
-          // so a patch sounds identical pooled or not.
-          let oscOpts, key = 'basic:' + preset;
-          if (preset === 'fat') {
-            const count = (oscD && oscD.unison > 1) ? oscD.unison : 3;
-            const spread = oscD ? oscD.spread : 30;
-            oscOpts = { type: 'fatsawtooth', count, spread };
-            key = 'basic:fat:u' + count + ':s' + spread;
-          } else if (preset === 'pulse') {
-            oscOpts = { type: 'pulse', width: 0.4 };
-          } else if (oscD && oscD.unison > 1) {
-            oscOpts = { type: 'fat' + preset, count: oscD.unison, spread: oscD.spread };
-            key = 'basic:' + preset + ':u' + oscD.unison + ':s' + oscD.spread;
-          } else {
-            oscOpts = { type: preset };
-          }
-          const s = _acquirePooledSynth(key, () => new Tone.Synth({ oscillator: oscOpts }));
-          if (!s) return null;
-          // Same-signature values on reacquire — cheap no-op sets (FatOscillator
-          // only rebuilds when count CHANGES, and the key pins it).
-          s.oscillator.set(oscOpts);
-          s.envelope.set(env);
-          return s;
-        }
-      }
-      return null;
-    }
+    // === Voice pool — REMOVED (2026-07) ===
+    // Synth-body pooling is permanently gone: pooled retriggers leaked one
+    // RUNNING native OscillatorNode per note (the dense-project cut-out root
+    // cause — see the CLAUDE.md gotcha; NEVER reintroduce without passing an
+    // oscillator-leak test). Fresh-synth-per-note + safeDisposeSynth leaks
+    // zero; construction cost is handled by the deferred voice-build queue.
 
     // Voice cap — limits simultaneous synth voices to keep the master
     // limiter from being driven into IM artifacts by overlapping release
@@ -2222,11 +1999,7 @@
         clearTimeout(entry.disposeTimer);
         entry.disposeTimer = null;
       }
-      if (entry.pooledPreset) {
-        try { safeReleaseSynth(entry.pooledPreset, entry.synth); } catch (e) {}
-      } else {
-        try { safeDisposeSynth(entry.synth); } catch (e) {}
-      }
+      try { safeDisposeSynth(entry.synth); } catch (e) {}
       // Wait out safeDisposeSynth's fade (~60ms) before tearing down the
       // effect chain so the rampTo doesn't ring through a dead chain.
       setTimeout(() => {
@@ -2809,14 +2582,6 @@
         sustainEffectNodes.forEach(n => { try { n.dispose(); } catch (e) {} });
       };
       let synth;
-      // Voice pool — playNote already pulls pre-built synths for the
-      // basic presets. The sustained-press path used to construct a
-      // fresh Tone.AMSynth / FMSynth / MonoSynth per cell press, which
-      // costs noticeable ms on mobile and shows up as press-to-sound
-      // lag in the note grid. Pool acquisitions reuse a configured
-      // synth body; we set the per-press env / detune below and route
-      // the disconnect through safeReleaseSynth on release so it
-      // returns to the pool instead of being disposed.
       // ---- Design voice chain (filter / mod / unison / sub / ring) ----------
       // Mirrors playNote so a sustained GRID/WRAP press of a Design patch
       // renders the SAME voice as its sequenced playback (it used to play only
@@ -2860,27 +2625,7 @@
           try { _sdRingGain = new Tone.Gain(1).connect(chainHead); sustainEffectNodes.unshift(_sdRingGain); chainHead = _sdRingGain; } catch (e) {}
         }
       }
-      let pooledPresetKey = null;
-      // Skip the pool only for ring-mod voices — exactly as playNote gates its
-      // pool. FM/AM timbre and unison designs are handled by the pooled builder
-      // (per-acquisition params / signature-keyed buckets).
-      if (VOICE_POOL_ENABLED && !_sdFreshVoice && _isPooledPreset(type)) {
-        const s = _buildPooledSynthForPreset(type, env, _sdOscD);
-        if (s) {
-          try {
-            s.connect(chainHead);
-            synth = s;
-            pooledPresetKey = s._poolKey || type;
-          } catch (e) {
-            synth = null;
-            pooledPresetKey = null;
-          }
-        }
-      }
-      if (synth) {
-        // Already provided by the pool — skip the construction chain
-        // and fall through to the trigger / handle plumbing below.
-      } else if (type === 'fm') {
+      if (type === 'fm') {
         synth = new Tone.FMSynth({
           harmonicity: (_sdOscD && _sdOscD.harmonicity != null) ? _sdOscD.harmonicity : 3,
           modulationIndex: (_sdOscD && _sdOscD.modIndex != null) ? _sdOscD.modIndex : 10,
@@ -3087,17 +2832,10 @@
           // (sustainEffectNodes) are disposed alongside the synth so
           // each press's effect chain doesn't leak.
           const tailMs = (rel + 0.5) * 1000;
-          if (pooledPresetKey) {
-            setTimeout(() => {
-              safeReleaseSynth(pooledPresetKey, synth);
-              disposeSustainFxChain();
-            }, tailMs);
-          } else {
-            setTimeout(() => {
-              safeDisposeSynth(synth);
-              disposeSustainFxChain();
-            }, tailMs);
-          }
+          setTimeout(() => {
+            safeDisposeSynth(synth);
+            disposeSustainFxChain();
+          }, tailMs);
         },
         // Used by Radial Tone to bend the live note as the user slides
         // their finger across the cell. Only touches `.detune` — the
@@ -3894,44 +3632,7 @@
 
       let synth;
 
-      // Phase 1 voice pool — acquire a pre-configured synth body for
-      // pooled presets instead of constructing one. Bypassed during
-      // offline render (separate AudioContext) and for presets that
-      // have their own lifecycle below (pluck/noise/wavetable early-
-      // return; duo/kick/metal aren't pooled yet). pooledPreset gets
-      // recorded on the voice entry so the dispose timer + steal path
-      // route the synth back to the pool instead of disposing it.
-      let pooledPreset = null;
-      const _sdFreshVoice = (typeof _sdOscNeedsFreshVoice === 'function') && _sdOscNeedsFreshVoice(_sdOscD, type);
-      if (VOICE_POOL_ENABLED && !_offlineSamplerOverride && !_sdFreshVoice && _isPooledPreset(type)) {
-        synth = _buildPooledSynthForPreset(type, env, _sdOscD);
-        if (synth) {
-          // The stamped acquisition key, NOT the raw type: basic presets pool
-          // under 'basic:<type>' (and unison designs under a signature key),
-          // so releasing under `type` parked them in a bucket acquisition
-          // never read — those presets silently never reused.
-          pooledPreset = synth._poolKey || type;
-          try {
-            synth.connect(chainHead);
-            // A reacquired pooled synth is wired up now but won't be retriggered
-            // until startTime (Bloom schedules up to ~1.2 s ahead). Its oscillator
-            // runs continuously, so any leftover release-tail residual from its
-            // previous note would leak through this whole window. Mute it until
-            // the attack; the envelope is 0 at startTime, so lifting the mute
-            // there is inaudible.
-            if (synth.volume && typeof startTime === 'number' && Number.isFinite(startTime)
-                && startTime > Tone.context.now()) {
-              synth.volume.cancelScheduledValues(Tone.context.now());
-              synth.volume.setValueAtTime(-200, Tone.context.now());
-              synth.volume.setValueAtTime(0, startTime);
-            }
-          } catch (e) { synth = null; pooledPreset = null; }
-        }
-      }
-
-      if (synth) {
-        // Already provided by the pool — skip the construction chain.
-      } else if (type === 'bell') {
+      if (type === 'bell') {
         synth = new Tone.FMSynth({
           harmonicity: 2.14,
           modulationIndex: 4,
@@ -4319,7 +4020,7 @@
       const synthLeadMs = (typeof startTime === 'number' && Number.isFinite(startTime))
         ? Math.max(0, (startTime - Tone.context.now()) * 1000)
         : 0;
-      const voiceEntry = { synth, effectNodes, pooledPreset, dspCost: _voiceDspCost(params, _sdOscD), disposeTimer: null, registerTimer: null };
+      const voiceEntry = { synth, effectNodes, dspCost: _voiceDspCost(params, _sdOscD), disposeTimer: null, registerTimer: null };
       // When this voice enters its release tail (Tone-context time) + how long
       // that release lasts — drives release-aware voice stealing
       // (_pickVoiceVictim): a sustaining pad isn't chopped by a rapid short layer,
@@ -4332,8 +4033,7 @@
       }
       voiceEntry.disposeTimer = setTimeout(() => {
         _unregisterVoice(voiceEntry);
-        if (pooledPreset) safeReleaseSynth(pooledPreset, synth);
-        else              safeDisposeSynth(synth);
+        safeDisposeSynth(synth);
         // safeRelease/DisposeSynth ramps to -80 dB over ~30 ms before letting
         // go. Tear the per-note FX chain (incl. the pan Panner) down AFTER that
         // fade — disconnecting it mid-ramp rings the tail through a dead chain

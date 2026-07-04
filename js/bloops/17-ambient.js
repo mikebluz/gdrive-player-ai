@@ -10883,7 +10883,10 @@
       '</details>';
     // "Rate" selector — a layer's speed as a note division of the global BPM
     // ('' = Free, follow the ms Interval). Used by Beat layers.
-    const _AMB_RATE_OPTS = [['', 'Free (ms)'], ['1/1', '1/1'], ['1/2', '1/2'], ['1/4', '1/4'], ['1/4T', '1/4T'], ['1/8', '1/8'], ['1/8T', '1/8T'], ['1/16', '1/16'], ['1/16T', '1/16T'], ['1/32', '1/32']];
+    // '' = derive step size from the ms Interval knob (labelled "Interval (ms)"
+    // — NOT "Free", which is the Unit-Sync mode's word and collided confusingly
+    // when Unit said Sync while Rate said Free).
+    const _AMB_RATE_OPTS = [['', 'Interval (ms)'], ['1/1', '1/1'], ['1/2', '1/2'], ['1/4', '1/4'], ['1/4T', '1/4T'], ['1/8', '1/8'], ['1/8T', '1/8T'], ['1/16', '1/16'], ['1/16T', '1/16T'], ['1/32', '1/32']];
     const _ambRateSel = (stem) =>
       '<div class="ambient-ctrl"><label for="' + stem + '">Rate</label><select id="' + stem + '" class="ambient-select">' +
       _AMB_RATE_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +

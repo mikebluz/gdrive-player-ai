@@ -8316,6 +8316,7 @@
     .ens-row { display: flex; align-items: center; gap: 8px; }
     .ens-row .ens-deg { flex: 0 0 68px; }
     .ens-row .ens-tone { flex: 1 1 auto; min-width: 0; }
+    .ens-row .ens-level { flex: 0 0 58px; min-width: 0; text-align: right; }
     .ens-row-del {
       flex: 0 0 auto; width: 26px; height: 26px; border-radius: 6px;
       background: #1c1c30; border: 1px solid #3a2d3f; color: #b98; cursor: pointer;

@@ -1188,11 +1188,14 @@
           ? shiftFreqByScaleDegree(rootFreq, (r.degree | 0) - 1)
           : rootFreq * Math.pow(2, ((r.degree | 0) - 1) / 12);
         const tone = r.tone || 'sine';
+        // Per-voice LEVEL rides in params.volume — grid playback honors it via
+        // chordVoiceParams, and _ambPublishWrap carries it to Bloom (levels[]).
+        const lv = Number.isFinite(r.level) ? Math.max(0, Math.min(100, Math.round(r.level))) : 100;
         return {
           freq: f,
           label: _ensembleDegreeLabel(r.degree),
           sound: tone,
-          params: { type: tone },
+          params: (lv !== 100) ? { type: tone, volume: lv } : { type: tone },
           toneOverride: true,           // keep this voice's own timbre
         };
       });
@@ -1282,15 +1285,17 @@
       let shape = 'stack';
       const degOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         .map(d => `<option value="${d}">${_ensembleDegreeLabel(d)}</option>`).join('');
-      const addRow = (degree, tone) => {
+      const addRow = (degree, tone, level) => {
         const row = document.createElement('div');
         row.className = 'ens-row';
         row.innerHTML =
           `<select class="ens-deg create-prog-input">${degOptions}</select>` +
           `<select class="ens-tone create-prog-input"></select>` +
+          `<input class="ens-level create-prog-input" type="number" min="0" max="100" step="5" title="Voice level (%)" aria-label="Voice level (%)" />` +
           `<button type="button" class="ens-row-del" title="Remove voice" aria-label="Remove voice">✕</button>`;
         const degSel = row.querySelector('.ens-deg');
         degSel.value = String(degree || 1);
+        row.querySelector('.ens-level').value = String(Number.isFinite(level) ? level : 100);
         const toneSel = row.querySelector('.ens-tone');
         if (typeof populateGroupedToneSelect === 'function') populateGroupedToneSelect(toneSel, toneOpts);
         else toneOpts.forEach(o => { const op = document.createElement('option'); op.value = o.value; op.textContent = o.label; toneSel.appendChild(op); });
@@ -1313,11 +1318,15 @@
           modal.querySelectorAll('.ens-shape-btn').forEach(x => x.classList.toggle('active', x === b));
         });
       });
-      // Read the current rows into [{degree, tone}] (shared by Preview + Save).
-      const readRows = () => Array.from(rowsEl.querySelectorAll('.ens-row')).map(r => ({
-        degree: parseInt(r.querySelector('.ens-deg').value, 10) || 1,
-        tone: r.querySelector('.ens-tone').value || 'sine',
-      }));
+      // Read the current rows into [{degree, tone, level}] (shared by Preview + Save).
+      const readRows = () => Array.from(rowsEl.querySelectorAll('.ens-row')).map(r => {
+        const lv = parseInt((r.querySelector('.ens-level') || {}).value, 10);
+        return {
+          degree: parseInt(r.querySelector('.ens-deg').value, 10) || 1,
+          tone: r.querySelector('.ens-tone').value || 'sine',
+          level: Number.isFinite(lv) ? Math.max(0, Math.min(100, lv)) : 100,
+        };
+      });
       const nameInput = modal.querySelector('#ens-name-input');
       nameInput.value = (typeof _randAdjNoun === 'function') ? _randAdjNoun() : 'Ensemble';
       modal.querySelector('#ens-shuffle').addEventListener('click', () => { nameInput.value = (typeof _randAdjNoun === 'function') ? _randAdjNoun() : 'Ensemble'; nameInput.focus(); });

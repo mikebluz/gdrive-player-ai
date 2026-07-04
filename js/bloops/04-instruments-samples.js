@@ -104,10 +104,12 @@
           if (Number.isFinite(m.octave) && m.octave) f = freq * Math.pow(2, m.octave);
           if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
           if (Number.isFinite(m.pan)) p.pan = m.pan;
-          if (Number.isFinite(m.level)) {
-            const base = (p.volume != null ? p.volume : 100);
-            p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100))));
-          }
+        }
+        // Per-member LEVEL applies in EVERY mode (it used to be gated behind
+        // useOffsets, so plain Stack silently ignored the editor's Level field).
+        if (Number.isFinite(m.level)) {
+          const base = (p.volume != null ? p.volume : 100);
+          p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100))));
         }
         delete p._detuneMod; // a single LFO node can't fan out to multiple voices
         try { playNote(f, p, durationMs, startTime, destination, trackIdx, laneIdx); } catch (e) {}
@@ -2436,8 +2438,9 @@
           if (Number.isFinite(m.octave) && m.octave) f = freq * Math.pow(2, m.octave);
           if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
           if (Number.isFinite(m.pan)) p.pan = m.pan;
-          if (Number.isFinite(m.level)) { const base = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100)))); }
         }
+        // Per-member LEVEL applies in every mode (see _playEnsemble).
+        if (Number.isFinite(m.level)) { const base = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(base * (m.level / 100)))); }
         delete p._detuneMod;
         try { const h = startSustainedNote(f, p, startAt); if (h) handles.push(h); } catch (e) {}
       });

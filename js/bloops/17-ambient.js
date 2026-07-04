@@ -1994,18 +1994,24 @@
       // chord whose notes carry their own tone (toneOverride). A Bloom layer on this wrap then
       // voices each degree with its own timbre; the layer MODE supplies the shape (pad=stack,
       // arp=run). Null when no per-note tones → unchanged pitch-only behaviour.
-      let tones = null;
+      let tones = null, levels = null;
       try {
         if (Array.isArray(step.chord) && step.chord.some(v => v && v.toneOverride && v.sound)) {
-          const pcTone = {};
+          const pcTone = {}, pcLevel = {};
           step.chord.forEach(v => {
             if (!v || !(v.freq > 0) || !v.toneOverride || !v.sound) return;
             const mm = (typeof _freqToMidi === 'function') ? _freqToMidi(v.freq) : null;
             if (mm == null) return;
-            pcTone[((Math.round(mm) % 12) + 12) % 12] = v.sound;
+            const pc = ((Math.round(mm) % 12) + 12) % 12;
+            pcTone[pc] = v.sound;
+            // Per-voice LEVEL (params.volume, ensemble-builder rows) — carried
+            // parallel to tones so Bloom voices each degree at its set level.
+            if (v.params && Number.isFinite(v.params.volume) && v.params.volume !== 100) pcLevel[pc] = Math.max(0, Math.min(100, v.params.volume));
           });
           tones = intervals.map(iv => pcTone[(((root + iv) % 12) + 12) % 12] || null);
           if (!tones.some(Boolean)) tones = null;
+          levels = intervals.map(iv => { const l = pcLevel[(((root + iv) % 12) + 12) % 12]; return Number.isFinite(l) ? l : null; });
+          if (!levels.some(l => l != null)) levels = null;
         }
       } catch (e) {}
       masterAmbient = masterAmbient || _defaultAmbientConfig();
@@ -2013,6 +2019,7 @@
       const id = masterAmbient.publishedWraps.reduce((m, w) => Math.max(m, w.id | 0), 0) + 1;
       const entry = { id, name: name || ('Wrap ' + id), root, intervals };
       if (tones) entry.tones = tones;
+      if (levels) entry.levels = levels;
       masterAmbient.publishedWraps.push(entry);
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return entry;
@@ -2089,11 +2096,13 @@
     // SINGLE-note emit can read it right after the pick (set null for non-wrap / no per-note
     // tone). Chord emits that pick N degrees per voice read the tone INLINE instead.
     let _ambLastDegTone = null;
+    let _ambLastDegLevel = null;   // per-degree LEVEL (0-100 or null), stamped with the tone
     function _ambDegreeFreq(deg, octave, src) {
       const intervals = _ambScaleIntervals(src);
       const N = intervals.length;
       const d = ((deg % N) + N) % N;
       _ambLastDegTone = _ambDegreeToneAt(deg, src);
+      _ambLastDegLevel = _ambDegreeLevelAt(deg, src);
       return _ambNoteFreq(intervals[d], octave, src);
     }
     // Wrap-ensemble: the per-DEGREE tone for a wrap source (parallel to its intervals),
@@ -2106,6 +2115,26 @@
       const N = (Array.isArray(w.intervals) && w.intervals.length) ? w.intervals.length : w.tones.length;
       const d = ((deg % N) + N) % N;
       return w.tones[d] || null;
+    }
+    // Wrap-ensemble: the per-DEGREE level (builder row Level, 0-100) — parallel
+    // to intervals like tones. Null → no scaling (existing behaviour).
+    function _ambDegreeLevelAt(deg, src) {
+      if (!src || src.type !== 'wrap' || !Number.isFinite(src.id)) return null;
+      const w = _ambFindWrap(src.id);
+      if (!w || !Array.isArray(w.levels) || !w.levels.length) return null;
+      const N = (Array.isArray(w.intervals) && w.intervals.length) ? w.intervals.length : w.levels.length;
+      const d = ((deg % N) + N) % N;
+      const l = w.levels[d];
+      return Number.isFinite(l) ? l : null;
+    }
+    // Apply the side-channel per-degree level to a params object (call right
+    // after the pick, beside the _ambLastDegTone apply). Gated on non-null so
+    // non-wrap sources are byte-identical.
+    function _ambApplyDegLevel(params) {
+      if (_ambLastDegLevel == null || !params) return params;
+      const base = Number.isFinite(params.volume) ? params.volume : 100;
+      params.volume = Math.max(0, Math.min(100, Math.round(base * (_ambLastDegLevel / 100))));
+      return params;
     }
     // Sanitize a layer's saved `notes` descriptor (no-op for legacy scale-string
     // layers — _ambNotesOf migrates those on the fly).
@@ -3198,13 +3227,14 @@
           const k2 = deg + ':' + oct;
           if (used.has(k2)) continue;
           used.add(k2);
-          out.push({ f: _ambDegreeFreq(deg, oct, notes), t: _ambLastDegTone });
+          out.push({ f: _ambDegreeFreq(deg, oct, notes), t: _ambLastDegTone, l: _ambLastDegLevel });
         }
         out.sort((a, b) => a.f - b.f);
         const freqs = out.map(p => p.f);
         // Wrap-ensemble Stack: carry each voice's degree-tone parallel to the sorted freqs
         // (only when the wrap has per-note tones; else undefined → bed falls back to its Tone).
         if (out.some(p => p.t)) freqs._tones = out.map(p => p.t);
+        if (out.some(p => p.l != null)) freqs._levels = out.map(p => (p.l != null ? p.l : null));
         return freqs;
       }
       // STRUCTURED modes (Chords / Chords+ / Monk): build a repeating phrase of
@@ -3382,6 +3412,7 @@
         const f = voicing[vi];
         const params = _ambApplyAdsr(_ambBedParams(durMs, n, bed.motion, overlap, pans[vi], bed.tone), bed);
         if (voicing._tones && voicing._tones[vi]) params.type = voicing._tones[vi];   // wrap-ensemble Stack: this voice's degree-tone
+        if (voicing._levels && voicing._levels[vi] != null) params.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(params.volume) ? params.volume : 100) * (voicing._levels[vi] / 100))));   // …and its level
 
         params.volume = _ambApplyLevel(params.volume, bed.level);
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
@@ -3631,7 +3662,7 @@
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
             const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
-            { const _dt = _ambDegreeToneAt(walkDeg, src); if (_dt) bp.type = _dt; }   // wrap-ensemble: this degree's own tone
+            { const _dt = _ambDegreeToneAt(walkDeg, src); if (_dt) bp.type = _dt; const _dl = _ambDegreeLevelAt(walkDeg, src); if (_dl != null) bp.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(bp.volume) ? bp.volume : 100) * (_dl / 100)))); }   // wrap-ensemble: this degree's own tone + level
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
@@ -3727,6 +3758,7 @@
           const noteLen = _ambVaryLen(lenMs, lenVary, vRnd);
           const bp = _ambApplyAdsr(_ambMotifParams(noteLen, _ambLayerPan(inst), inst.tone), inst);
           if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
+          _ambApplyDegLevel(bp);                          // …and its own level
           bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
           if (dmod) bp._detuneMod = dmod;
           _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours (no-op at default 'landing')
@@ -3806,6 +3838,7 @@
           const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
             volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)) };
           if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
+          _ambApplyDegLevel(bp);                          // …and its own level
           if (dmod) bp._detuneMod = dmod;
           _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours (no-op at default 'landing')
           try { playNote(f, bp, lenMs, at, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -3989,6 +4022,7 @@
         const pan = _ambLayerPan(motif);
         const mp = _ambApplyAdsr(_ambMotifParams(lenMs, pan, motif.tone), motif);
         if (_ambLastDegTone) mp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
+        _ambApplyDegLevel(mp);                          // …and its own level
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
         const off = _startOff + i * burstGap;
         const noteMs = _ambVaryLen(lenMs, motif.lenVary);   // Len var: per-note length jitter
@@ -4050,6 +4084,7 @@
         const pan = _ambLayerPan(texture);
         const tp = _ambApplyAdsr(_ambTexParams(lenMs, pan, texture.tone), texture);
         if (_ambLastDegTone) tp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
+        _ambApplyDegLevel(tp);                          // …and its own level
         tp.volume = _ambApplyLevel(tp.volume, texture.level);
         const dmod = _ambLayerDetuneMod(key); if (dmod) tp._detuneMod = dmod;
         try { playNote(f, tp, _ambVaryLen(lenMs, texture.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
@@ -4220,7 +4255,7 @@
       const lenMs = Math.max(40, arp.lengthMs | 0);
       const pan = _ambLayerPan(arp);
       const ap = _ambApplyAdsr(_ambMotifParams(lenMs, pan, arp.tone), arp);
-      { const _at = _ambDegreeToneAt(d, notes); if (_at) ap.type = _at; }   // wrap-ensemble: this degree's own tone
+      { const _at = _ambDegreeToneAt(d, notes); if (_at) ap.type = _at; const _al = _ambDegreeLevelAt(d, notes); if (_al != null) ap.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(ap.volume) ? ap.volume : 100) * (_al / 100)))); }   // wrap-ensemble: this degree's own tone + level
       ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
       const dmod = _ambLayerDetuneMod(key); if (dmod) ap._detuneMod = dmod;
       _ambColourLeadIn(f, ap, at, _ambLayerDest(key), _E.laneIdx(), notes);   // Harmony colours (no-op at default 'landing')
@@ -4389,7 +4424,7 @@
               // Pitch vary: per-hit ±1-octave drift (gated → no RNG at 0).
               let f = f0;
               if (pVary > 0 && rnd() * 100 < pVary) { const sh = (rnd() < 0.5 ? -1 : 1); const ff = _ambNoteFreq(intervals[deg] | 0, oct + carry + sh, notes); if (ff > 0) f = ff; }
-              hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd), tone: _ambDegreeToneAt(deg, notes) });
+              hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd), tone: _ambDegreeToneAt(deg, notes), lvl: _ambDegreeLevelAt(deg, notes) });
             }
           }
         }
@@ -4400,6 +4435,7 @@
           // NOT a per-note panner (which both glitched and didn't reach the bus).
           const ap = _ambApplyAdsr(_ambMotifParams(lenMs, 0, arp.tone), arp);
           if (hh.tone) ap.type = hh.tone;   // wrap-ensemble: this degree's own tone
+          if (hh.lvl != null) ap.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(ap.volume) ? ap.volume : 100) * (hh.lvl / 100))));   // …and its own level
           ap.volume = _ambAccentVol(_ambApplyLevel(ap.volume, arp.level), arp.accent);
           if (dmod) ap._detuneMod = dmod;
           _ambKeyTime = hh.at;

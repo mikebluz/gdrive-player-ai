@@ -1091,8 +1091,9 @@
           if (Number.isFinite(m.octave) && m.octave) f = n.freq * Math.pow(2, m.octave);
           if (Number.isFinite(m.detune) && m.detune) p.detune = (p.detune || 0) + m.detune;
           if (Number.isFinite(m.pan)) p.pan = m.pan;
-          if (Number.isFinite(m.level)) { const b = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(b * (m.level / 100)))); }
         }
+        // Per-member LEVEL applies in every mode (see _playEnsemble).
+        if (Number.isFinite(m.level)) { const b = (p.volume != null ? p.volume : 100); p.volume = Math.max(0, Math.min(100, Math.round(b * (m.level / 100)))); }
         return { ...n, freq: f, sound: m.type, params: p };
       });
     }

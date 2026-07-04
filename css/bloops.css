@@ -3273,6 +3273,10 @@
       text-align: center; font: 700 0.95rem 'JetBrains Mono', 'SF Mono', Consolas, monospace;
       color: #ffd479; letter-spacing: 0.04em; margin-bottom: 7px;
     }
+    .ambient-note-editor .ane-hint {
+      text-align: center; font-size: 0.62rem; color: #718096;
+      margin: -4px 0 6px; letter-spacing: 0.02em;
+    }
     .ambient-note-editor .ane-row { display: flex; gap: 5px; margin-bottom: 6px; }
     .ambient-note-editor .ane-btn {
       flex: 1 1 auto; padding: 8px 6px; border: 1px solid #2d2d3f; border-radius: 7px;

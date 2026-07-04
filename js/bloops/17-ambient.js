@@ -9298,6 +9298,7 @@
       el.className = 'ambient-note-editor';
       el.innerHTML =
         '<div class="ane-name"></div>' +
+        '<div class="ane-hint">&#127929; a piano key sets this note’s pitch</div>' +
         '<div class="ane-row">' +
           '<button type="button" class="ane-btn" data-op="oct-" title="Down an octave">8vb</button>' +
           '<button type="button" class="ane-btn" data-op="semi-" title="Down a semitone">&#9837;</button>' +
@@ -9349,7 +9350,11 @@
         if (!_ambNoteEd) return;
         if (_ambNoteEdOpenedAt && ((typeof performance !== 'undefined' ? performance.now() : 0) - _ambNoteEdOpenedAt) < 300) return;
         if (e.target.closest && (e.target.closest('#ambient-note-editor') ||
-            e.target.closest('.ambient-np-note') || e.target.closest('.ambient-np-add'))) return;
+            e.target.closest('.ambient-np-note') || e.target.closest('.ambient-np-add') ||
+            // Piano keys SET the selected note's pitch while the editor is open
+            // (_ambNoteEditSetMidi) — they must not double as an outside-click
+            // dismiss, or the editor closes on the first key press.
+            e.target.closest('.ambient-piano'))) return;
         _ambCloseNoteEditor();
       }, true);
       window.addEventListener('resize', _ambCloseNoteEditor);
@@ -9567,6 +9572,24 @@
       // NOTE: do NOT reposition here — the menu is anchored once on open and must
       // stay put while you nudge (the chip re-renders/moves underneath, but the
       // popover should not chase it around).
+    }
+    // Absolute-pitch setter for the open note editor: clicking an ambient piano
+    // key while a note is selected snaps that note to the clicked key (the
+    // piano is otherwise a read-only visualizer — keys have no other handler).
+    // Same apply/persist trailer as _ambNoteEditOp's relative pitch ops.
+    function _ambNoteEditSetMidi(midi) {
+      const t = _ambNoteEd; if (!t) return false;
+      const meta = _ambLockMeta(t.E, t.key); if (!meta) { _ambCloseNoteEditor(); return false; }
+      const n = meta.list[t.index]; if (!n) { _ambCloseNoteEditor(); return false; }
+      const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+      n.freq = A * Math.pow(2, (midi - 69) / 12);
+      _ambReemitLockedNext(t.E, t.key);                // apply on the next iteration
+      _ambPersistLock(t.E, t.key);                      // save the edit
+      try { _ambUpdateNotesLive(t.E); } catch (e) {}
+      if (_ambNoteEd) _ambNoteEdRefresh();
+      // Audition the new pitch so the click is heard as well as seen.
+      try { if (typeof playNote === 'function') playNote(n.freq, (n.params && n.params.type) ? n.params : 'sine', 220, Tone.now()); } catch (e) {}
+      return true;
     }
     function _ambAddNote(E, key) {
       const meta = _ambLockMeta(E, key); if (!meta || !meta.list.length) return null;
@@ -13465,6 +13488,21 @@
       // down/up targets must match). Pointerdown fires on the press, before any
       // repaint, so the editor reliably opens.
       host.addEventListener('pointerdown', (e) => {
+        // Piano key + open note editor → set the selected note's pitch to the
+        // clicked key (any open piano works; the editor popover is the intent).
+        // Without an open editor the piano stays a read-only visualizer.
+        const pk = e.target && e.target.closest && e.target.closest('.ampk');
+        if (pk && _ambNoteEd) {
+          e.preventDefault(); e.stopPropagation();
+          try {
+            const m = parseInt(pk.dataset.m, 10);
+            if (Number.isFinite(m) && _ambNoteEditSetMidi(m)) {
+              pk.classList.add('lit');
+              setTimeout(() => { try { pk.classList.remove('lit'); } catch (e2) {} }, 250);
+            }
+          } catch (err) { console.warn('Piano set-pitch failed', err); }
+          return;
+        }
         const nn = e.target && e.target.closest && e.target.closest('.ambient-np-note');
         if (nn) { e.preventDefault(); e.stopPropagation(); try { _ambOpenNoteEditor(E, nn.dataset.ekey, parseInt(nn.dataset.ei, 10) || 0, nn); } catch (err) { console.warn('Note edit failed', err); } return; }
         const na = e.target && e.target.closest && e.target.closest('.ambient-np-add');

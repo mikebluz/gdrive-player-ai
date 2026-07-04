@@ -119,6 +119,7 @@
       }
       clearVisualTimers();
       clearHighlights();
+      if (typeof _stopBarPlayhead === 'function') { try { _stopBarPlayhead(); } catch (e) {} }
       // Freeze the persistent cursor exactly where playback stopped: capture
       // the global transport tick BEFORE _removeLaneCursors / renderSequence
       // tear the playback cursors down and reset scroll.
@@ -1080,6 +1081,68 @@
         return;
       }
       sequenceTimer = setTimeout(schedulerTick, SCHED_TICK_MS);
+    }
+
+    // ---- Bar-grid playhead --------------------------------------------------
+    // A thin line sweeps each lane's bar-grid strip in time with playback: it
+    // runs left→right across the current bar row and jumps to the next row at
+    // the bar line, wrapping at the lane's loop length. Position is derived
+    // from the audio clock every animation frame (visual only — no audio-path
+    // work), so it can't drift. The old sweeping cursor was removed with the
+    // scrolling timeline; this is the bar-grid's proper playhead (CLAUDE.md §1
+    // open follow-up).
+    let _barPlayheadRaf = 0;
+    function _barPlayheadLoopSecFor(laneIdx) {
+      // per-lane loop length in seconds (matches the scheduler's wrap math)
+      const streams = Array.isArray(_schedStreams) ? _schedStreams : [];
+      const st = streams.find(s => s && (s.laneIdx === laneIdx || (!Number.isFinite(laneIdx) && s.laneIdx == null)));
+      if (st && st.source) return _intrinsicLoopSec(st.source);
+      // mono / no stream match → the visible lane's own steps
+      const lane = (typeof lanes !== 'undefined' && lanes[laneIdx]) ? lanes[laneIdx] : null;
+      return lane ? _intrinsicLoopSec(lane.steps || []) : 0;
+    }
+    function _barPlayheadFrame() {
+      if (sequenceTimer === null) { _stopBarPlayhead(); return; }
+      const strips = document.querySelectorAll('.lane-chips[data-lane-idx]');
+      const elapsed = Math.max(0, rawAudioNow() - _playBaseTime);
+      strips.forEach((strip) => {
+        const laneIdx = parseInt(strip.dataset.laneIdx, 10);
+        const loopSec = _barPlayheadLoopSecFor(Number.isFinite(laneIdx) ? laneIdx : undefined);
+        let ph = strip.querySelector(':scope > .lane-playhead');
+        if (!(loopSec > 0) || strip.classList.contains('collapsed') || !strip.clientWidth) {
+          if (ph) ph.remove();
+          return;
+        }
+        const bpm = parseInt(tempoInput?.value, 10) || 120;
+        const barSec = (60 / bpm) * 4;
+        const posInLoop = elapsed % loopSec;         // seconds into the current loop
+        const barPos = posInLoop / barSec;           // fractional bar index
+        const row = Math.floor(barPos);
+        const frac = barPos - row;
+        // geometry from the fixed grid (padding 4px 6px, auto-rows 48px, gap 0)
+        const cs = getComputedStyle(strip);
+        const padL = parseFloat(cs.paddingLeft) || 6;
+        const padT = parseFloat(cs.paddingTop) || 4;
+        const rowH = parseFloat(cs.gridAutoRows) || 48;
+        const contentW = strip.clientWidth - padL - (parseFloat(cs.paddingRight) || 6);
+        if (!ph) {
+          ph = document.createElement('div');
+          ph.className = 'lane-playhead';
+          strip.appendChild(ph);
+        }
+        ph.style.left = (padL + frac * contentW) + 'px';
+        ph.style.top = (padT + row * rowH) + 'px';
+        ph.style.height = rowH + 'px';
+      });
+      _barPlayheadRaf = requestAnimationFrame(_barPlayheadFrame);
+    }
+    function _startBarPlayhead() {
+      if (_barPlayheadRaf) return;
+      _barPlayheadRaf = requestAnimationFrame(_barPlayheadFrame);
+    }
+    function _stopBarPlayhead() {
+      if (_barPlayheadRaf) { cancelAnimationFrame(_barPlayheadRaf); _barPlayheadRaf = 0; }
+      document.querySelectorAll('.lane-chips > .lane-playhead').forEach(el => el.remove());
     }
 
     // One-shot preview that doesn't touch sequenceTimer / playback state, so

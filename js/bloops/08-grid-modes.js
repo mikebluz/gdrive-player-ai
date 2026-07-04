@@ -2287,6 +2287,8 @@
       // Synchronous first tick so the first batch of audio events lands
       // immediately rather than waiting one SCHED_TICK_MS.
       schedulerTick();
+      // Sweep the bar-grid playhead across each lane strip while playing.
+      if (typeof _startBarPlayhead === 'function') { try { _startBarPlayhead(); } catch (e) {} }
     }
 
     document.getElementById('play-btn').addEventListener('click', async () => {

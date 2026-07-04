@@ -604,6 +604,7 @@
 
           const chipsEl = document.createElement('div');
           chipsEl.className = 'lane-chips';
+          chipsEl.dataset.laneIdx = String(laneIdx);   // bar-grid playhead targets the strip by lane
           // Single-row scrolling timeline (no grid-mode wrap): chips fill
           // logically to the right at proportional widths; the strip scrolls
           // horizontally and auto-follows the playhead. See CLAUDE.md §1 carve-out.

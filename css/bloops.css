@@ -10762,14 +10762,51 @@
     .step-roll-seq[hidden] { display: none !important; }
 
     /* ---- ✎ Place mode ---- */
-    .kwr-extra {
-      background: #1a1a2c; border: 1px solid #2d2d3f; color: #a0aec0;
-      border-radius: 7px; cursor: pointer; padding: 6px 10px;
-      font: 700 0.72rem 'Segoe UI', sans-serif; letter-spacing: 0.04em;
+    /* BAR + PLACE — second row of the kwr grid, styled in the same
+       black-bg / 2px-border / glow pill language as PERF·KEEP·REST but
+       shorter (44px vs 52px) so they read as a subordinate action row.
+       BAR wears REST's lavender (it IS a rest action); PLACE wears the
+       ghost-cell teal it paints with. BAR sits under PERF; PLACE spans
+       the remaining columns whether or not REST is visible. */
+    .kwr-pair > .kwr-extra {
+      width: 100%; min-width: 0; height: 44px; box-sizing: border-box;
+      margin: 9px 0 0; padding: 0 8px;
+      background: #000; border-radius: 10px;
+      display: inline-flex; align-items: center; justify-content: center;
+      cursor: pointer; user-select: none;
+      color: #a0aec0; text-transform: uppercase;
+      font: 700 0.78rem 'Segoe UI', sans-serif; letter-spacing: 1.2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
     }
-    .kwr-extra:hover { border-color: #4a5568; color: #e2e8f0; }
-    .kwr-extra.active { background: #7fd6c4; border-color: #7fd6c4; color: #1a202c; }
-    .kwr-extra.flash { background: #2d2d44; }
+    #bar-rest-btn {
+      margin-right: 6px;
+      border: 2px solid var(--rest-color);
+      color: #e9d8fd;
+      box-shadow: 0 0 12px rgba(216, 180, 254, 0.14);
+    }
+    #bar-rest-btn:hover { border-color: #fff; box-shadow: 0 0 16px rgba(216, 180, 254, 0.32); }
+    #bar-rest-btn:active { background: #1a1a2e; }
+    #place-btn {
+      grid-column: 2 / -1;
+      border: 2px solid #4fd1c5;
+      color: #b2f5ea;
+      box-shadow: 0 0 12px rgba(79, 209, 197, 0.14);
+    }
+    #place-btn:hover { border-color: #81e6d9; color: #e6fffa; box-shadow: 0 0 16px rgba(79, 209, 197, 0.32); }
+    #place-btn.active {
+      background: rgba(79, 209, 197, 0.20);
+      border-color: #81e6d9;
+      color: #e6fffa;
+      text-shadow: 0 0 12px rgba(129, 230, 217, 0.9);
+      box-shadow:
+        0 0 20px rgba(79, 209, 197, 0.65),
+        0 0 8px  rgba(79, 209, 197, 0.4) inset;
+    }
+    .kwr-pair > .kwr-extra.flash { background: #1a1a2e; }
+    @media (max-width: 600px) {
+      .kwr-pair > .kwr-extra { font-size: 0.7rem; letter-spacing: 0.6px; padding: 0 4px; }
+    }
     /* Ghost cells: clickable empty strip space while Place mode is on. */
     .lane-chips > .place-ghost {
       width: auto; min-width: 0; height: 100%;
@@ -10778,17 +10815,28 @@
       border-radius: 3px; cursor: copy; padding: 0;
     }
     .lane-chips > .place-ghost:hover { background: rgba(127, 214, 196, 0.18); border-style: solid; }
-    /* Placed-note size row (shown while ✎ Place is on) */
-    .place-size-row { display: flex; align-items: center; gap: 5px; padding: 4px 0 0; flex-wrap: wrap; }
-    .place-size-row[hidden] { display: none !important; }
-    .place-size-label { font: 700 0.66rem 'Segoe UI', sans-serif; color: #718096; letter-spacing: 0.06em; text-transform: uppercase; }
-    .place-size-chip {
-      background: #14141f; border: 1px solid #2d2d3f; border-radius: 6px;
-      color: #a0aec0; cursor: pointer; padding: 3px 8px;
-      font: 600 0.7rem 'Segoe UI', sans-serif;
+    /* Placed-note size row (shown while ✎ Place is on) — teal to match
+       PLACE, right-aligned so it hangs under the PLACE pill. */
+    .place-size-row {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 6px; padding: 8px 0 2px; flex-wrap: wrap;
     }
-    .place-size-chip:hover { border-color: #7fd6c4; color: #cef5ec; }
-    .place-size-chip.active { background: rgba(127, 214, 196, 0.18); border-color: #7fd6c4; color: #7fd6c4; }
+    .place-size-row[hidden] { display: none !important; }
+    .place-size-label { font: 700 0.68rem 'Segoe UI', sans-serif; color: #4fd1c5; letter-spacing: 1px; text-transform: uppercase; margin-right: 2px; }
+    .place-size-chip {
+      background: #000; border: 1px solid #234e4a; border-radius: 8px;
+      color: #a0aec0; cursor: pointer; padding: 5px 10px;
+      font: 700 0.72rem 'Segoe UI', sans-serif; letter-spacing: 0.4px;
+      transition: background 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    .place-size-chip:hover { border-color: #4fd1c5; color: #e6fffa; }
+    .place-size-chip.active {
+      background: rgba(79, 209, 197, 0.18); border-color: #81e6d9; color: #b2f5ea;
+      box-shadow: 0 0 10px rgba(79, 209, 197, 0.35);
+    }
+    @media (max-width: 600px) {
+      .place-size-chip { padding: 4px 7px; font-size: 0.68rem; }
+    }
 
     /* ---- Euclidean preset chips (Generate Sequence dialog) ---- */
     .euc-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }

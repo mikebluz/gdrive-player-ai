@@ -190,6 +190,9 @@
         const cached = info._normByMidi[midi];
         if (Number.isFinite(cached)) return cached;
         const ch = audioBuf.getChannelData(0);
+        // Stereo buffers can be strongly asymmetric (GM pianos are) — the
+        // ceiling must respect the HOTTER channel or the loud side distorts.
+        const ch2 = (audioBuf.numberOfChannels > 1) ? audioBuf.getChannelData(1) : null;
         const N = ch.length;
         const sr = audioBuf.sampleRate || 44100;
         const stride = Math.max(1, Math.floor(N / 6000));
@@ -214,9 +217,17 @@
         // the peak by 25%+ (the ceiling then doesn't bite); stride 4 is exact
         // enough and ~0.3 ms on a 25 s buffer (cached per midi).
         let peak = 0;
-        for (let i = onset; i < N; i += 4) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > peak) peak = a; }
+        for (let i = onset; i < N; i += 4) {
+          let a = ch[i] < 0 ? -ch[i] : ch[i];
+          if (ch2) { const b = ch2[i] < 0 ? -ch2[i] : ch2[i]; if (b > a) a = b; }
+          if (a > peak) peak = a;
+        }
         let g = (rms > 1e-4) ? (REF_RMS / rms) : 1;
-        if (peak > 1e-4) g = Math.min(g, 0.75 / peak);
+        // 0.55 (was 0.75): at 0.75 an overlapping piano phrase sat AT the
+        // master lookahead-limiter ceiling 3-4x longer than legacy gains did —
+        // sustained deep limiting IS the audible distortion. 0.55 lands the
+        // drive near the legacy duty cycle while keeping a few dB of makeup.
+        if (peak > 1e-4) g = Math.min(g, 0.55 / peak);
         g = Math.max(1, Math.min(MAX_EXTRA, g));
         info._normByMidi[midi] = g;
         return g;

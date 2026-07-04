@@ -10815,6 +10815,22 @@
       border-radius: 3px; cursor: copy; padding: 0;
     }
     .lane-chips > .place-ghost:hover { background: rgba(127, 214, 196, 0.18); border-style: solid; }
+    /* Hover footprint: the ghost cells the placed note would cover. */
+    .lane-chips > .place-ghost.ph-hot {
+      background: rgba(79, 209, 197, 0.28);
+      border: 1px solid rgba(129, 230, 217, 0.8);
+      border-radius: 4px;
+    }
+    /* Slot preview inside a rest chip — positioned by the mousemove
+       handler to the exact cell(s) a click would place the note at. */
+    .seq-step > .place-hov {
+      position: absolute; top: 0; height: 100%;
+      background: rgba(79, 209, 197, 0.28);
+      border: 1px solid rgba(129, 230, 217, 0.8);
+      border-radius: 4px;
+      pointer-events: none; box-sizing: border-box;
+      display: none;
+    }
     /* Placed-note size row (shown while ✎ Place is on) — teal to match
        PLACE, right-aligned so it hangs under the PLACE pill. */
     .place-size-row {

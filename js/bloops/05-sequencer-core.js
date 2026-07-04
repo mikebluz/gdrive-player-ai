@@ -742,7 +742,10 @@
             gh.style.gridColumn = 'span 1';
             gh.title = 'Place the armed note here';
             const pos = g;
+            gh.dataset.pos32 = pos;
             gh.addEventListener('click', () => _placeArmedAt32(pos));
+            gh.addEventListener('mouseenter', () => _placeHoverGhosts(chipHost, pos));
+            gh.addEventListener('mouseleave', () => _placeHoverGhosts(chipHost, null));
             chipHost.appendChild(gh);
           }
         } else {
@@ -1054,6 +1057,30 @@
         chip.addEventListener('dblclick', () => {
           duplicateStep(i);
         });
+        // Place-mode hover preview on rest chips: paint the exact slot(s)
+        // the armed note would occupy at the hovered cell — same math as
+        // the click handler, so what lights up is what a click lands.
+        // Overlay is a real div (::before/::after are taken by triplet /
+        // bend / variance markers); chip is position:relative + hidden
+        // overflow, so it clips cleanly.
+        if (!step.isSub && isRestStep(step)) {
+          let hov = null;
+          chip.addEventListener('mousemove', (ev) => {
+            if (!placeMode) { if (hov) hov.style.display = 'none'; return; }
+            let rect = null;
+            try { rect = chip.getBoundingClientRect(); } catch (e) {}
+            if (!rect || !(rect.width > 0) || !Number.isFinite(ev.clientX)) return;
+            const l32 = Math.max(1, Math.round(stepLengthFactor(step) * 32));
+            const cellsN = Math.min(l32, 32);
+            const cellIn = Math.max(0, Math.min(l32 - 1, Math.floor((ev.clientX - rect.left) / rect.width * cellsN)));
+            const span = Math.min(_placeSpan32(), l32 - cellIn, cellsN - cellIn);
+            if (!hov) { hov = document.createElement('div'); hov.className = 'place-hov'; chip.appendChild(hov); }
+            hov.style.left = (cellIn / cellsN * rect.width) + 'px';
+            hov.style.width = (span / cellsN * rect.width) + 'px';
+            hov.style.display = 'block';
+          });
+          chip.addEventListener('mouseleave', () => { if (hov) hov.style.display = 'none'; });
+        }
         // Note-coloured chips: tint border + fill from chipPalette by
         // pitch class. Subsequence chips inherit the colour of their
         // first playable child (resolved by stepColorPitchClass). The
@@ -1185,7 +1212,10 @@
           gh.style.gridColumn = 'span 1';
           gh.title = 'Place the armed note here';
           const pos = end32 + g;
+          gh.dataset.pos32 = pos;
           gh.addEventListener('click', () => _placeArmedAt32(pos));
+          gh.addEventListener('mouseenter', () => _placeHoverGhosts(chipHost, pos));
+          gh.addEventListener('mouseleave', () => _placeHoverGhosts(chipHost, null));
           chipHost.appendChild(gh);
         }
       }
@@ -2204,6 +2234,20 @@
     }
     function _seqEnd32() {
       return sequence.reduce((a, s) => a + ((s && s._wrapEditing) ? 0 : Math.max(0, Math.round(stepLengthFactor(s) * 32))), 0);
+    }
+    // Hover preview: how many 1/32 cells the next placed note will span.
+    function _placeSpan32() {
+      return Math.max(1, Math.round((placeSize != null ? placeSize : stepSubdivision) * 8));
+    }
+    // Light up the ghost cells the placed note would occupy from pos32
+    // (null = clear). Ghosts carry data-pos32 so the footprint can span
+    // past the hovered one when the Size chip is bigger than one cell.
+    function _placeHoverGhosts(host, pos32) {
+      const span = _placeSpan32();
+      host.querySelectorAll('.place-ghost').forEach(g => {
+        const p = parseInt(g.dataset.pos32, 10);
+        g.classList.toggle('ph-hot', pos32 != null && p >= pos32 && p < pos32 + span);
+      });
     }
     function _placeArmedTemplate() {
       if (stepModeArmed) return stepModeArmed;

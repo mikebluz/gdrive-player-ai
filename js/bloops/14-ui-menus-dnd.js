@@ -5572,7 +5572,20 @@
         const desiredStart = Math.max(0, Math.round((cl.startMs - _performStartMs) / unitMs));
         const restUnits = Math.max(0, desiredStart - _performEmittedUnits);
         if (restUnits > 0) addToSequence({ freq: null, label: '—', cellIndex: null, duration: restUnits, subdivision: unitSub });
-        const noteUnits = Math.max(1, Math.round((cl.endMs - cl.startMs) / unitMs));
+        // Note length: a HOLD sizes by how long it was held (rounded to the
+        // resolution grid). A quick TAP carries no length information — it
+        // used to floor at ONE resolution unit, so with the default 1/16
+        // Resolution every tap landed as a 1/16 note no matter what the
+        // grid's Step Div said ("I created 1/4 steps, they came out 1/4 of
+        // 1/4"). Taps now size at the grid's current Step Div — the same
+        // length a Keep-mode press produces — expressed in resolution units.
+        // Resolution stays what it says it is: the TIMING quantize grid.
+        const heldMs = cl.endMs - cl.startMs;
+        const tapUnits = Math.max(1, Math.round(
+          ((typeof stepSubdivision === 'number' && stepSubdivision > 0) ? stepSubdivision : unitSub) / unitSub));
+        const noteUnits = (heldMs <= 200)
+          ? tapUnits
+          : Math.max(1, Math.round(heldMs / unitMs));
         let step;
         if (cl.voices.length >= 2) {
           step = { chord: cl.voices.map(v => ({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params ? { ...v.params } : undefined })), label: cl.voices.map(v => v.label).join('·'), duration: noteUnits, subdivision: unitSub };

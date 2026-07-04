@@ -754,7 +754,8 @@
               // lane's portamento). The lane object tracks its own previous freq. Single-note
               // steps only (chords share one prev and would interfere).
               const _pLane = (typeof lanes !== 'undefined' && Array.isArray(lanes)) ? lanes[laneIdx] : null;
-              if (_pLane && _pLane.portamento > 0) { _sp.glideMs = _pLane.portamento; _sp.glideLayer = _pLane; }
+              // Cap 300 ms (matches the slider) so a stale saved value can't smear notes.
+              if (_pLane && _pLane.portamento > 0) { _sp.glideMs = Math.min(300, _pLane.portamento); _sp.glideLayer = _pLane; }
               playNote(step.freq, _sp, dms, at, undefined, undefined, laneIdx);
               try { if (typeof midiEmitNote === 'function') midiEmitNote(step.freq, _sp, dms, at, laneIdx); } catch (e) {}
             }

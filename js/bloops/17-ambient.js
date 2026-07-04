@@ -1045,8 +1045,11 @@
       }
       // Portamento (pitch glide between consecutive notes, ms) — shared by EVERY layer type
       // (this normalizer runs on primary, extras, seq AND sample layers).
+      // Capped at 300 ms: anything longer smears every note into the next
+      // (old 2000 max was way past musical) — saved projects with a higher
+      // value pull down to the cap on load.
       if (!Number.isFinite(host.portamento)) host.portamento = 0;
-      host.portamento = Math.max(0, Math.min(2000, host.portamento | 0));
+      host.portamento = Math.max(0, Math.min(300, host.portamento | 0));
     }
     // A Seq layer: replays one or more saved-sequence "units", improvising
     // variations and periodically returning to verbatim. `units[]` each =
@@ -10385,7 +10388,7 @@
           _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
           _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
           _ambSl('Fine', p + 'fine', -100, 100, s.fine, 'cents') +
-          _ambSl('Portamento', p + 'porta', 0, 2000, s.portamento || 0, 'ms glide between notes') +
+          _ambSl('Portamento', p + 'porta', 0, 300, s.portamento || 0, 'ms glide between notes') +
           // Ensemble lock — only shown (un-hidden in wiring) when this seq's voice
           // is an ensemble. Locked = members fire together; Unlocked = members
           // spread across notes as independent generative voices.
@@ -10729,7 +10732,7 @@
           _ambSl('Sustain', p + 'sustain', 0, 100, s.sustain, '%') +
           _ambSl('Release', p + 'release', 0, 4000, s.release, 'ms') +
           _ambSl('Fine', p + 'fine', -100, 100, s.fine, 'cents') +
-          _ambSl('Portamento', p + 'porta', 0, 2000, s.portamento || 0, 'ms glide between notes') +
+          _ambSl('Portamento', p + 'porta', 0, 300, s.portamento || 0, 'ms glide between notes') +
           _ambSl('Pitch', p + 'pitch', -24, 24, s.pitch, 'semitones (varispeed)') +
           _ambSl('Reverse', p + 'reverse', 0, 1, s.reverse, 'off → backwards') + gpe() +
         grp('Slices') +
@@ -10984,7 +10987,7 @@
       return [['grp', 'Voice']].concat(voiceToks, [
         ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
-        ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 2000, 'ms glide'],
+        ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],
       ]);
     }
     const _AMB_LAYER_SCHEMA = {

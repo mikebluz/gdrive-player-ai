@@ -1631,10 +1631,11 @@
           valFmt: (v) => Math.round(v) + '%',
           oninput: (v) => { _setLaneVolumeLive(laneIdx, v); persist(); } },
         // Per-lane Portamento — pitch glide (ms) between consecutive single notes (0 = off).
-        { slider: true, label: 'Portamento', min: 0, max: 2000, step: 10,
-          value: Number.isFinite(lane.portamento) ? lane.portamento : 0,
+        // Max 300 ms — longer glides smear every note into the next.
+        { slider: true, label: 'Portamento', min: 0, max: 300, step: 5,
+          value: Number.isFinite(lane.portamento) ? Math.min(300, lane.portamento) : 0,
           valFmt: (v) => Math.round(v) + ' ms',
-          oninput: (v) => { lane.portamento = Math.max(0, Math.min(2000, Math.round(v))); persist(); } },
+          oninput: (v) => { lane.portamento = Math.max(0, Math.min(300, Math.round(v))); persist(); } },
         'hr',
         // Save moved out of the lane menu — it saves the whole workspace (all
         // lanes), so it lives next to "+ Lane" as a half-row button.

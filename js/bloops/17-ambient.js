@@ -664,8 +664,8 @@
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(k => add(cfg[k], k));
       (cfg.extras || []).forEach(L => add(L, (L && L.type) + ':' + (L && (L.id | 0))));
-      (cfg.seqs || []).forEach(L => add(L, 'seq:' + (L && (L.id | 0))));
-      (cfg.samples || []).forEach(L => add(L, 'samp:' + (L && (L.id | 0))));
+      _ambSeqList(cfg).forEach(L => add(L, 'seq:' + (L && (L.id | 0))));
+      _ambSampleList(cfg).forEach(L => add(L, 'samp:' + (L && (L.id | 0))));
       if (cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length) {
         const _bpc0 = Math.max(0.01, cfg.barsPerChord || 1);
         const _cycleBars = cfg.prog.chords.reduce((s, c) => s + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : _bpc0), 0);   // per-chord lengths sum to the prog cycle
@@ -753,8 +753,8 @@
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(k => add(areaCfg[k], k));
       (areaCfg.extras || []).forEach(L => add(L, (L && L.type) + ':' + (L && (L.id | 0))));
-      (areaCfg.seqs || []).forEach(L => add(L, 'seq:' + (L && (L.id | 0))));
-      (areaCfg.samples || []).forEach(L => add(L, 'samp:' + (L && (L.id | 0))));
+      _ambSeqList(areaCfg).forEach(L => add(L, 'seq:' + (L && (L.id | 0))));
+      _ambSampleList(areaCfg).forEach(L => add(L, 'samp:' + (L && (L.id | 0))));
       return m;
     }
     // Move a layer's CURRENT chain onto a unique "departing" key and gate-fade it to
@@ -767,7 +767,7 @@
     function _ambSampBoundaryFade(areaCfg, key) {
       if (!areaCfg || typeof key !== 'string' || key.indexOf('samp:') !== 0) return 0;
       const id = parseInt(key.slice(5), 10);
-      const L = (areaCfg.samples || []).find(s => s && (s.id | 0) === id);
+      const L = _ambSampleById(areaCfg, id);
       return (L && Number.isFinite(L.boundaryFadeMs)) ? Math.max(0, L.boundaryFadeMs) : 0;
     }
     function _ambDepartLayer(E, key, fadeMs, at, sampFadeMs) {
@@ -1178,9 +1178,35 @@
     // end record the current version so the migration runs ONCE and is idempotent
     // (re-normalizing an already-migrated cfg is a no-op). See CLAUDE.md
     // "Layer-schema evolution rules". Legacy pre-versioned cfgs read as 0.
+    // ---- Track C, C2: canonical Seq/Sample layer lists ----------------------
+    // Seq/Sample layers LIVE as extras-hosted entries (type 'seq'/'samp'; the
+    // v2 migration copies legacy array entries in). The legacy cfg.seqs /
+    // cfg.samples arrays are kept frozen for older builds. Every enumeration
+    // and id-lookup goes through these: extras-hosted entries win; a legacy
+    // entry not yet migrated (safety net) still enumerates.
+    function _ambSeqList(cfg) {
+      if (!cfg) return [];
+      const out = [], seen = new Set();
+      (cfg.extras || []).forEach(x => { if (x && x.type === 'seq') { out.push(x); seen.add(x.id); } });
+      (cfg.seqs || []).forEach(s => { if (s && !seen.has(s.id)) out.push(s); });
+      return out;
+    }
+    function _ambSampleList(cfg) {
+      if (!cfg) return [];
+      const out = [], seen = new Set();
+      (cfg.extras || []).forEach(x => { if (x && x.type === 'samp') { out.push(x); seen.add(x.id); } });
+      (cfg.samples || []).forEach(s => { if (s && !seen.has(s.id)) out.push(s); });
+      return out;
+    }
+    function _ambSeqById(cfg, id) { return _ambSeqList(cfg).find(s => s && s.id === id) || null; }
+    function _ambSampleById(cfg, id) { return _ambSampleList(cfg).find(s => s && s.id === id) || null; }
     //   v1 — introduced versioning; Shape layer type dropped on load (see the
     //        extras filter + `_ambNoteShapeDrop`).
-    const _AMB_SCHEMA_VERSION = 1;
+    //   v2 — Track C, C2: cfg.seqs/cfg.samples entries COPIED into cfg.extras as
+    //        seed-typed layers (type 'seq'/'samp', same ids → keys unchanged).
+    //        The legacy arrays are KEPT (frozen) so older builds still load the
+    //        project; all enumeration goes through _ambSeqList/_ambSampleList.
+    const _AMB_SCHEMA_VERSION = 2;
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
@@ -1320,9 +1346,17 @@
       cfg.extras = cfg.extras.filter(x => {
         if (!x || typeof x !== 'object') return false;
         if (x.type === 'shape') { _ambNoteShapeDrop(); return false; }   // Shape layer removed
+        if (x.type === 'seq' || x.type === 'samp') return true;          // C2: extras-hosted Seq/Sample layers
         return !!_AMB_LAYER_SCHEMA[x.type];
       }).map(x => {
         if (!Number.isFinite(x.id)) x.id = ++maxXid;
+        // C2: extras-hosted Seq/Sample layers normalize via their OWN
+        // normalizers (no _AMB_LAYER_SCHEMA entry / generic defaults), and
+        // carry an explicit seedKind so the tick's seed-aware dispatch and
+        // the late stampSeed block (which defaults extras to 'random')
+        // route them correctly.
+        if (x.type === 'seq')  { const n = _normalizeSeqLayer(x, x.id);    n.seedKind = 'sequence'; return n; }
+        if (x.type === 'samp') { const n = _normalizeSampleLayer(x, x.id); n.seedKind = 'sample';   return n; }
         const d = _ambDefaultLayer(x.type, x.id);
         // Drone gained Density/Degree voicing. A pre-existing drone on a chord /
         // wrap / prog used to sound ALL its tones — preserve that by seeding
@@ -1365,6 +1399,33 @@
         }
         return x;
       });
+      // ---- Track C, C2 (v2): host Seq/Sample layers in cfg.extras ---------
+      // COPY each legacy cfg.seqs/cfg.samples entry into cfg.extras as a
+      // seed-typed layer (type 'seq'/'samp', SAME id → freeze/mod/meter keys
+      // stay 'seq:<id>'/'samp:<id>'). The legacy arrays are kept, frozen at
+      // migration state, so an OLDER build still opens the project; the new
+      // build enumerates through _ambSeqList/_ambSampleList (extras win).
+      // Gated on _fromVer so it runs ONCE; the per-entry dedup guard protects
+      // against re-entry from odd snapshots.
+      if (_fromVer < 2) {
+        const _cl = (o) => { try { return JSON.parse(JSON.stringify(o)); } catch (e) { return null; } };
+        (cfg.seqs || []).forEach(s => {
+          if (!s || cfg.extras.some(x => x && x.type === 'seq' && x.id === s.id)) return;
+          const c = _cl(s); if (!c) return;
+          c.type = 'seq'; c.seedKind = 'sequence';
+          cfg.extras.push(c);
+        });
+        (cfg.samples || []).forEach(s => {
+          if (!s || cfg.extras.some(x => x && x.type === 'samp' && x.id === s.id)) return;
+          const c = _cl(s); if (!c) return;
+          c.type = 'samp'; c.seedKind = 'sample';
+          cfg.extras.push(c);
+        });
+      }
+      // Canonical keyMaster sweep (the earlier sweep only saw cfg.seqs; the
+      // live copies are extras-hosted now): at most ONE seq keyMaster overall.
+      { let seenKM2 = false;
+        _ambSeqList(cfg).forEach(s => { if (s && s.keyMaster) { if (seenKM2) s.keyMaster = false; else seenKM2 = true; } }); }
       // Parameter ramps (LFO automation of a layer param between A and B).
       if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
       let maxRid = 0;
@@ -3084,7 +3145,10 @@
     function _ambForEachLayer(cfg, fn) {
       if (!cfg) return;
       ['bed', 'motif', 'texture', 'beat'].forEach(k => fn(cfg[k]));
-      (cfg.extras || []).forEach(fn); (cfg.seqs || []).forEach(fn); (cfg.samples || []).forEach(fn);
+      // C2: extras already contains the hosted seq/samp entries; add only legacy stragglers.
+      (cfg.extras || []).forEach(fn);
+      (cfg.seqs || []).forEach(s => { if (s && !(cfg.extras || []).some(x => x && x.type === 'seq' && x.id === s.id)) fn(s); });
+      (cfg.samples || []).forEach(s => { if (s && !(cfg.extras || []).some(x => x && x.type === 'samp' && x.id === s.id)) fn(s); });
     }
     function _ambSnapshotTempWhen(cfg) {
       _ambForEachLayer(cfg, (L) => { if (L && L.whenTemp) { L._whenBase = (typeof L.when === 'string') ? L.when : 'always'; L._whenTempPending = []; } });
@@ -4523,7 +4587,7 @@
         const m = sel.id.match(/seq-(\d+)-tone$/);
         if (m) {
           const c = E.getCfg();
-          const sq = (c && Array.isArray(c.seqs)) ? c.seqs.find(x => (x.id | 0) === parseInt(m[1], 10)) : null;
+          const sq = _ambSeqById(c, parseInt(m[1], 10));
           if (sq) { const t = _ambSeqStepTone(sq, 0); if (t) sel.value = t; }
         }
       });
@@ -6289,10 +6353,10 @@
       ['bed', 'motif', 'texture', 'beat'].forEach(l => {
         if (cfg[l] && cfg[l].present !== false && cfg[l].on) want[l] = cfg[l];
       });
-      if (Array.isArray(cfg.seqs)) cfg.seqs.forEach(seq => {
+      _ambSeqList(cfg).forEach(seq => {
         if (seq.on && Array.isArray(seq.units) && seq.units.length) want['seq:' + seq.id] = seq;
       });
-      if (Array.isArray(cfg.samples)) cfg.samples.forEach(L => {
+      _ambSampleList(cfg).forEach(L => {
         if (L.on && L.sampleId) want['samp:' + L.id] = L;
       });
       if (Array.isArray(cfg.extras)) cfg.extras.forEach(ex => {
@@ -6577,7 +6641,7 @@
       // keyMaster: drop the key schedule when no keyMaster Seq is active (so the
       // global/cfg key takes back over), then apply any boundary that's now due.
       {
-        const _km = !E.isLane && Array.isArray(cfg.seqs) && cfg.seqs.some(s => s && s.keyMaster && s.on && s.present !== false && Array.isArray(s.units) && s.units.length);
+        const _km = !E.isLane && _ambSeqList(cfg).some(s => s && s.keyMaster && s.on && s.present !== false && Array.isArray(s.units) && s.units.length);
         if (!_km) { E._keySched = null; } else { _ambApplyDueKey(E, now); }
       }
       // Progression clock: the shared bar-aligned chord step at the current time.
@@ -6836,22 +6900,23 @@
         window._ambCaptureSink = null; _ambPruneCap(E, key, now);
       }
 
-      if (Array.isArray(cfg.seqs)) {
-        for (const seq of cfg.seqs) { try {
-          _ambTickSeqLayer(E, seq, now, lead, space, cfg, { key: 'seq:' + (seq && seq.id), stateKey: seq && seq.id, reflect: true });
-        } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
-      }
+      // C2: Seq/Sample layers dispatch from the CANONICAL lists (extras-hosted
+      // entries after the v2 migration; legacy array entries as the safety
+      // net) with their historical keys/stateKeys/reflect semantics. The
+      // extras loop below SKIPS type 'seq'/'samp' so nothing double-fires.
+      for (const seq of _ambSeqList(cfg)) { try {
+        _ambTickSeqLayer(E, seq, now, lead, space, cfg, { key: 'seq:' + (seq && seq.id), stateKey: seq && seq.id, reflect: true });
+      } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       // Sample layers (dynamic list). Each fire schedules up to `chop` slices.
-      if (Array.isArray(cfg.samples)) {
-        for (const L of cfg.samples) { try {
-          _ambTickSampleLayer(E, L, now, lead, space, cfg, { key: 'samp:' + (L && L.id) });
-        } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
-      }
+      for (const L of _ambSampleList(cfg)) { try {
+        _ambTickSampleLayer(E, L, now, lead, space, cfg, { key: 'samp:' + (L && L.id) });
+      } catch (e) { _ambLogTickErr(e); window._ambCaptureSink = null; } }
       // Extra layer instances (additional Bed/Motif/Texture/Beat). runLayer
       // gates present/on/frozen and reads the instance's intervalMs/when.
       if (Array.isArray(cfg.extras)) {
         for (const ex of cfg.extras) { try {
           if (!ex) continue;
+          if (ex.type === 'seq' || ex.type === 'samp') continue;   // C2: dispatched by the canonical loops above
           // Track C1 — the SEED axis: an extras layer whose seed is a
           // SEQUENCE or SAMPLE dispatches through the identical engine the
           // dedicated Seq/Sample lists use (the extracted bodies above). It
@@ -7045,8 +7110,8 @@
       if (!cfg) return false;
       if (['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].present !== false && cfg[k].on && cfg[k].solo)) return true;
       if (Array.isArray(cfg.extras) && cfg.extras.some(x => x && x.present !== false && x.on && x.solo)) return true;
-      if (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s && s.on && s.solo)) return true;
-      if (Array.isArray(cfg.samples) && cfg.samples.some(s => s && s.on && s.solo)) return true;
+      if (_ambSeqList(cfg).some(s => s && s.on && s.solo)) return true;
+      if (_ambSampleList(cfg).some(s => s && s.on && s.solo)) return true;
       return false;
     }
     function _ambToggleSolo(E, key) {
@@ -7074,11 +7139,15 @@
       const nextId = (arr) => arr.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
       let render;
       if (t === 'seq') {
-        if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
-        clone.id = nextId(cfg.seqs); cfg.seqs.push(clone); render = _ambRenderSeqLayers;
+        // C2: clones land extras-hosted (the canonical home); ids allocate
+        // across the CANONICAL list so they can't collide with legacy entries.
+        if (!Array.isArray(cfg.extras)) cfg.extras = [];
+        clone.id = nextId(_ambSeqList(cfg)); clone.type = 'seq'; clone.seedKind = 'sequence';
+        cfg.extras.push(clone); render = _ambRenderSeqLayers;
       } else if (t === 'samp') {
-        if (!Array.isArray(cfg.samples)) cfg.samples = [];
-        clone.id = nextId(cfg.samples); cfg.samples.push(clone); render = _ambRenderSampleLayers;
+        if (!Array.isArray(cfg.extras)) cfg.extras = [];
+        clone.id = nextId(_ambSampleList(cfg)); clone.type = 'samp'; clone.seedKind = 'sample';
+        cfg.extras.push(clone); render = _ambRenderSampleLayers;
       } else {
         // Primary or extra → land it in cfg.extras as a full instance.
         if (!Array.isArray(cfg.extras)) cfg.extras = [];
@@ -7134,8 +7203,8 @@
         if (ci < 0) fb = key.charAt(0).toUpperCase() + key.slice(1);   // primary: type name
         else {
           const t = key.slice(0, ci), cfg = E.getCfg() || {};
-          if (t === 'seq') { const i = (cfg.seqs || []).findIndex(s => s === layer); fb = 'Seq' + (i + 1); }
-          else if (t === 'samp') { const i = (cfg.samples || []).findIndex(s => s === layer); fb = 'Sample' + (i + 1); }
+          if (t === 'seq') { const i = _ambSeqList(cfg).findIndex(s => s === layer); fb = 'Seq' + (i + 1); }
+          else if (t === 'samp') { const i = _ambSampleList(cfg).findIndex(s => s === layer); fb = 'Sample' + (i + 1); }
           else { const sch = _AMB_LAYER_SCHEMA[t]; fb = (sch && sch.label) ? sch.label : t; }
         }
         span.textContent = fb;
@@ -7148,8 +7217,8 @@
       const ci = key.indexOf(':');
       if (ci < 0) return cfg[key] || null;
       const t = key.slice(0, ci), id = parseInt(key.slice(ci + 1), 10);
-      if (t === 'seq') return (cfg.seqs || []).find(s => s.id === id) || null;
-      if (t === 'samp') return (cfg.samples || []).find(s => s.id === id) || null;
+      if (t === 'seq') return _ambSeqById(cfg, id);
+      if (t === 'samp') return _ambSampleById(cfg, id);
       return (cfg.extras || []).find(x => x.id === id && x.type === t) || null;
     }
     // Rolling-capture sink (set on window so cross-file playNote can see it),
@@ -7353,8 +7422,8 @@
       const arm = (L, key) => { if (_ambIsCapturable(L, key)) _ambBarLockArm(E, key, bStart, loopSec); };
       ['bed', 'motif', 'texture', 'beat'].forEach(k => arm(cfg[k], k));
       (cfg.extras || []).forEach(L => arm(L, (L && L.type) + ':' + (L && (L.id | 0))));
-      (cfg.seqs || []).forEach(L => arm(L, 'seq:' + (L && (L.id | 0))));
-      (cfg.samples || []).forEach(L => arm(L, 'samp:' + (L && (L.id | 0))));
+      _ambSeqList(cfg).forEach(L => arm(L, 'seq:' + (L && (L.id | 0))));
+      _ambSampleList(cfg).forEach(L => arm(L, 'samp:' + (L && (L.id | 0))));
     }
     // Hard-clear all ephemeral Bar-Lock loops (on stop / toggle-off / area change),
     // without touching user Freeze loops or persisting anything.
@@ -7976,7 +8045,7 @@
     // Distill a saved sequence (by bank index) into a unit and send it to the
     // MASTER Bloom instance. Called from the saved-sequence right-click submenu.
     function _ambListMasterSeqs() {
-      try { return (_masterEng.getCfg().seqs || []).map((s, i) => ({ id: s.id, name: 'Seq' + (i + 1) })); } catch (e) { return []; }
+      try { return _ambSeqList(_masterEng.getCfg()).map((s, i) => ({ id: s.id, name: 'Seq' + (i + 1) })); } catch (e) { return []; }
     }
     // One seq unit per lane that has playable notes — so a multi-lane
     // sequence sends each lane to Bloom as its OWN independent Seq layer
@@ -8016,7 +8085,7 @@
       try {
         const s = _masterBloomState();
         const cfg = (areaIdx == null) ? masterAmbient : s.areas[areaIdx | 0];
-        return ((cfg && cfg.seqs) || []).map((sq, i) => ({ id: sq.id, name: (sq.name && sq.name.trim()) ? sq.name.trim() : ('Seq' + (i + 1)) }));
+        return _ambSeqList(cfg).map((sq, i) => ({ id: sq.id, name: (sq.name && sq.name.trim()) ? sq.name.trim() : ('Seq' + (i + 1)) }));
       } catch (e) { return []; }
     }
     // Make the chosen area the ACTIVE one before sending, so the existing send
@@ -8076,7 +8145,7 @@
       if (!lane) return [];
       if (!lane.ambient || typeof lane.ambient !== 'object') return [];
       const cfg = _normalizeAmbientCfg(lane.ambient);
-      return (cfg.seqs || []).map((s, i) => ({ id: s.id, name: 'Seq' + (i + 1) }));
+      return _ambSeqList(cfg).map((s, i) => ({ id: s.id, name: 'Seq' + (i + 1) }));
     }
     // Send the lane's own sequence into that lane's Bloom, then switch it into
     // Bloom mode so it's immediately visible/audible.
@@ -8105,7 +8174,7 @@
       if (!id) return false;
       const cfg = E.getCfg(); if (!cfg) return false;
       if (!Array.isArray(cfg.samples)) cfg.samples = [];
-      const newId = cfg.samples.reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
+      const newId = _ambSampleList(cfg).reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
       const L = _defaultSampleLayer(newId);
       L.sampleId = id;
       let info = null; try { info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(id) : null; } catch (e) {}
@@ -8116,7 +8185,10 @@
         if (_dm > 0) { L.intervalMs = _dm; L.lengthMs = _dm; } else { L._applyDefaults = true; } }
       if (opts && Number.isFinite(opts.chop)) L.chop = Math.max(1, Math.min(32, opts.chop | 0));
       if (opts && (opts.order === 'random' || opts.order === 'forward')) L.order = opts.order;
-      cfg.samples.push(L);
+      // C2: new sample layers are extras-hosted (canonical home).
+      L.type = 'samp'; L.seedKind = 'sample';
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      cfg.extras.push(L);
       if (E.timer) { _E = E; try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return true;
@@ -8251,8 +8323,8 @@
       if (!cfg) return;
       const anyOn = ['bed', 'motif', 'texture', 'beat'].some(k => cfg[k] && cfg[k].present !== false && cfg[k].on)
         || (Array.isArray(cfg.extras) && cfg.extras.some(x => x && x.present !== false && x.on && _AMB_LAYER_SCHEMA[x.type]))
-        || (Array.isArray(cfg.seqs) && cfg.seqs.some(s => s.on && s.units && s.units.length))
-        || (Array.isArray(cfg.samples) && cfg.samples.some(s => s.on && s.sampleId));
+        || _ambSeqList(cfg).some(s => s.on && s.units && s.units.length)
+        || _ambSampleList(cfg).some(s => s.on && s.sampleId);
       if (!anyOn) { alert('Turn on at least one Bloom layer before capturing.'); return; }
       // Length popover: a fixed duration (auto-finalize after it elapses) or Live
       // (record until the user presses Finalize). Either way Finalize winds Bloom
@@ -9820,8 +9892,8 @@
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) each(k, cfg[k]); });
       (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) each(x.type + ':' + x.id, x); });
-      (cfg.seqs || []).forEach(s => { if (s && s.id != null) each('seq:' + s.id, s); });
-      (cfg.samples || []).forEach(s => { if (s && s.id != null) each('samp:' + s.id, s); });
+      _ambSeqList(cfg).forEach(s => { if (s && s.id != null) each('seq:' + s.id, s); });
+      _ambSampleList(cfg).forEach(s => { if (s && s.id != null) each('samp:' + s.id, s); });
     }
     function _ambNoteEdRefresh() {
       const el = document.getElementById('ambient-note-editor'); if (!el || !_ambNoteEd) return;
@@ -10877,7 +10949,7 @@
     // iteration count (reps), reorder, delete, Order⇄Random play mode, and the
     // Key-master flag (this Seq drives the global Key; only one Seq may hold it).
     function _ambShowSeqSectionsMenu(E, seqId, anchorBtn) {
-      const getSq = () => { const c = E.getCfg(); return (c && Array.isArray(c.seqs)) ? c.seqs.find(x => x.id === seqId) : null; };
+      const getSq = () => _ambSeqById(E.getCfg(), seqId);
       if (!getSq()) return;
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       // Editing sections invalidates the live section cursor / random bag.
@@ -10922,7 +10994,7 @@
         if (km) km.addEventListener('click', () => {
           const cfg = E.getCfg(); const sq2 = getSq(); if (!cfg || !sq2) return;
           const on = !sq2.keyMaster;
-          (cfg.seqs || []).forEach(x => { x.keyMaster = false; });
+          _ambSeqList(cfg).forEach(x => { x.keyMaster = false; });
           sq2.keyMaster = on; resetState(); persist(); render();
         });
         modal.querySelectorAll('.amb-sec-row').forEach(row => {
@@ -11050,7 +11122,7 @@
     }
     function _ambSeqEnsLockVis(E, id) {
       const c = E.getCfg(); if (!c) return;
-      const sq = (c.seqs || []).find(x => x.id === id); if (!sq) return;
+      const sq = _ambSeqById(c, id); if (!sq) return;
       const p = 'ambient-seq-' + id + '-';
       const row = _ambGet(E, p + 'enslock-row'), btn = _ambGet(E, p + 'enslock');
       if (row) row.hidden = !_seqHasEnsemble(sq);
@@ -11058,7 +11130,7 @@
     }
     function _ambSeqReturnVis(E, id) {
       const c = E.getCfg(); if (!c) return;
-      const sq = (c.seqs || []).find(x => x.id === id); if (!sq) return;
+      const sq = _ambSeqById(c, id); if (!sq) return;
       const p = 'ambient-seq-' + id + '-';
       const ctrl = (suf) => { const e = _ambGet(E, p + suf); return e ? e.closest('.ambient-ctrl') : null; };
       const n = ctrl('returnN'), ch = ctrl('returnChance');
@@ -11070,7 +11142,7 @@
     // sequence's own length (longest unit) in Auto vs the manual ms otherwise.
     function _ambSeqIntervalModeVis(E, id) {
       const c = E.getCfg(); if (!c) return;
-      const sq = (c.seqs || []).find(x => x.id === id); if (!sq) return;
+      const sq = _ambSeqById(c, id); if (!sq) return;
       const p = 'ambient-seq-' + id + '-';
       const auto = (sq.intervalMode !== 'manual');
       const btn = _ambGet(E, p + 'intervalmode');
@@ -11100,7 +11172,7 @@
     }
     function _ambWireSeqLayer(E, s) {
       const id = s.id, p = 'ambient-seq-' + id + '-';
-      const getSq = () => { const c = E.getCfg(); return (c && Array.isArray(c.seqs)) ? c.seqs.find(x => x.id === id) : null; };
+      const getSq = () => _ambSeqById(E.getCfg(), id);
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const el = (suf) => _ambGet(E, p + suf);
       const bindInt = (suf, key) => { const e = el(suf); if (!e) return; e.addEventListener('input', () => { _E = E; const sq = getSq(); if (!sq) return; sq[key] = parseInt(e.value, 10) || 0; if (key === 'level') _ambSyncLevelUI(E, 'seq:' + sq.id, sq.level); persist(); }); };
@@ -11195,11 +11267,11 @@
       // (_ambSeqLayerHtml uses 'Seq'+(i+1), _ambSampleLayerHtml 'Sample'+(i+1))
       // so the mixer reads the same as the layer it controls — honouring any
       // user-set label.
-      (Array.isArray(cfg.seqs) ? cfg.seqs : []).forEach((s, i) => {
+      _ambSeqList(cfg).forEach((s, i) => {
         if (!s) return;
         out.push({ key: 'seq:' + s.id, name: _ambLayerLabel(s, 'Seq' + (i + 1)), layer: s });
       });
-      (Array.isArray(cfg.samples) ? cfg.samples : []).forEach((s, i) => {
+      _ambSampleList(cfg).forEach((s, i) => {
         if (!s) return;
         out.push({ key: 'samp:' + s.id, name: _ambLayerLabel(s, 'Sample' + (i + 1)), layer: s });
       });
@@ -11285,18 +11357,22 @@
       const wrap = _ambGet(E, 'ambient-seq-layers');
       if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
-      const seqs = Array.isArray(cfg.seqs) ? cfg.seqs : [];
+      const seqs = _ambSeqList(cfg);
       wrap.innerHTML = _ambNamespaceHtml(E, seqs.map((s, i) => _ambSeqLayerHtml(s, i)).join(''));
       seqs.forEach((s) => _ambWireSeqLayer(E, s));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
     }
     function _ambDeleteSeqLayer(E, id) {
       _E = E;
-      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.seqs)) return;
-      const idx = cfg.seqs.findIndex(s => s.id === id);
-      if (idx < 0) return;
-      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.seqs[idx], 'Seq' + (idx + 1)))) return;
-      cfg.seqs.splice(idx, 1);
+      const cfg = E.getCfg(); if (!cfg) return;
+      const live = _ambSeqById(cfg, id);
+      if (!live) return;
+      const li = _ambSeqList(cfg).indexOf(live);
+      if (!_ambConfirmDeleteLayer(_ambLayerLabel(live, 'Seq' + (li + 1)))) return;
+      // C2: remove from BOTH homes (the extras-hosted live copy + the frozen
+      // legacy array entry) so neither build resurrects it.
+      { const xi = (cfg.extras || []).findIndex(x => x && x.type === 'seq' && x.id === id); if (xi >= 0) cfg.extras.splice(xi, 1); }
+      { const si = (cfg.seqs || []).findIndex(s => s && s.id === id); if (si >= 0) cfg.seqs.splice(si, 1); }
       try { if (E.mod['seq:' + id]) _ambTeardownMod('seq:' + id); } catch (e) {}
       if (E.seqState) delete E.seqState[id];
       _ambRenderSeqLayers(E);
@@ -11373,7 +11449,7 @@
     // new unit is cut at the boundary (the emit dur-cap already does this).
     function _ambSampleMatchUnit(E, id, ms) {
       try {
-        const cfg = E.getCfg(); const L = (cfg && Array.isArray(cfg.samples)) ? cfg.samples.find(s => s.id === id) : null; if (!L) return;
+        const cfg = E.getCfg(); const L = _ambSampleById(cfg, id); if (!L) return;
         L.intervalMs = Math.max(80, Math.round(ms));
         const iv = _ambGet(E, 'ambient-samp-' + id + '-interval');
         if (iv) { iv.max = String(Math.max(parseInt(iv.max, 10) || 0, L.intervalMs)); iv.value = String(L.intervalMs); const v = _ambGet(E, 'ambient-samp-' + id + '-interval-v'); if (v) v.textContent = _ambFmtMs(L.intervalMs); }
@@ -11390,14 +11466,14 @@
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(l => { if (cfg[l] && cfg[l].on && cfg[l].present !== false) add(l, _ambLayerLabel(cfg[l], l), cfg[l]); });
       (cfg.extras || []).forEach(x => { if (x && x.on) add(x.type + ':' + x.id, _ambLayerLabel(x, x.type), x); });
-      (cfg.seqs || []).forEach(sq => { if (sq && sq.on) add('seq:' + sq.id, _ambLayerLabel(sq, 'Seq'), sq); });
-      (cfg.samples || []).forEach(sm => { if (sm && sm.on && sm.id !== sampId) add('samp:' + sm.id, _ambLayerLabel(sm, 'Sample'), sm); });
+      _ambSeqList(cfg).forEach(sq => { if (sq && sq.on) add('seq:' + sq.id, _ambLayerLabel(sq, 'Seq'), sq); });
+      _ambSampleList(cfg).forEach(sm => { if (sm && sm.on && sm.id !== sampId) add('samp:' + sm.id, _ambLayerLabel(sm, 'Sample'), sm); });
       if (!items.length) items.push({ label: 'No other active layers to match', disabled: true });
       const r = btn.getBoundingClientRect(); showCtxMenu(r.left, r.bottom, items);
     }
     function _ambWireSampleLayer(E, s) {
       const id = s.id, p = 'ambient-samp-' + id + '-';
-      const getL = () => { const c = E.getCfg(); return (c && Array.isArray(c.samples)) ? c.samples.find(x => x.id === id) : null; };
+      const getL = () => _ambSampleById(E.getCfg(), id);
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
       const el = (suf) => _ambGet(E, p + suf);
       const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (x) {} } };
@@ -11474,7 +11550,7 @@
       const wrap = _ambGet(E, 'ambient-sample-layers');
       if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
-      const arr = Array.isArray(cfg.samples) ? cfg.samples : [];
+      const arr = _ambSampleList(cfg);
       wrap.innerHTML = _ambNamespaceHtml(E, arr.map((s, i) => _ambSampleLayerHtml(s, i)).join(''));
       arr.forEach((s) => _ambWireSampleLayer(E, s));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
@@ -11486,7 +11562,7 @@
     function _ambSyncSampleMax(E) {
       try {
         const host = document.getElementById(E.hostId); if (!host) return;
-        const cfg = E.getCfg(); const samples = (cfg && cfg.samples) || [];
+        const cfg = E.getCfg(); const samples = _ambSampleList(cfg);
         host.querySelectorAll('.ambient-layer[data-samp-id]').forEach(card => {
           const id = card.getAttribute('data-samp-id');
           const L = samples.find(s => String(s.id) === String(id)); if (!L) return;
@@ -11512,16 +11588,19 @@
       try { _ambSyncSampleMax(E); } catch (e) {}
       tries = tries | 0;
       let pending = false;
-      try { const c = E.getCfg(); (c && Array.isArray(c.samples) ? c.samples : []).forEach(s => { if (s && s.sampleId && (s._applyDefaults || !(_ambSampleDurMs(s.sampleId) > 0))) pending = true; }); } catch (e) {}
+      try { const c = E.getCfg(); _ambSampleList(c).forEach(s => { if (s && s.sampleId && (s._applyDefaults || !(_ambSampleDurMs(s.sampleId) > 0))) pending = true; }); } catch (e) {}
       if (pending && tries < 30) setTimeout(() => _ambSampleMaxPoll(E, tries + 1), 250);
     }
     function _ambDeleteSampleLayer(E, id) {
       _E = E;
-      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.samples)) return;
-      const idx = cfg.samples.findIndex(s => s.id === id);
-      if (idx < 0) return;
-      if (!_ambConfirmDeleteLayer(_ambLayerLabel(cfg.samples[idx], 'Sample' + (idx + 1)))) return;
-      cfg.samples.splice(idx, 1);
+      const cfg = E.getCfg(); if (!cfg) return;
+      const live = _ambSampleById(cfg, id);
+      if (!live) return;
+      const li = _ambSampleList(cfg).indexOf(live);
+      if (!_ambConfirmDeleteLayer(_ambLayerLabel(live, 'Sample' + (li + 1)))) return;
+      // C2: remove from BOTH homes (extras-hosted live copy + frozen legacy entry).
+      { const xi = (cfg.extras || []).findIndex(x => x && x.type === 'samp' && x.id === id); if (xi >= 0) cfg.extras.splice(xi, 1); }
+      { const si = (cfg.samples || []).findIndex(s => s && s.id === id); if (si >= 0) cfg.samples.splice(si, 1); }
       try { if (E.mod['samp:' + id]) _ambTeardownMod('samp:' + id); } catch (e) {}
       if (E.seqState) delete E.seqState['samp:' + id];
       _ambRenderSampleLayers(E);
@@ -11547,10 +11626,13 @@
     // creates the layer first, rather than forcing an import up front.
     function _ambAddSampleLayer(E) {
       _E = E; const cfg = E.getCfg(); if (!cfg) return;
-      if (!Array.isArray(cfg.samples)) cfg.samples = [];
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
       if (typeof snapshotForUndo === 'function') snapshotForUndo('Add Bloom sample layer');
-      const newId = cfg.samples.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      cfg.samples.push(_defaultSampleLayer(newId));   // sampleId '' — import in the card
+      // C2: new sample layers are extras-hosted (canonical home); id from the
+      // canonical list so it can't collide with a frozen legacy entry.
+      const newId = _ambSampleList(cfg).reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      const _nl = _defaultSampleLayer(newId); _nl.type = 'samp'; _nl.seedKind = 'sample';
+      cfg.extras.push(_nl);   // sampleId '' — import in the card
       try { _ambRenderSampleLayers(E); } catch (e) {}
       try {
         const wrap = _ambGet(E, 'ambient-sample-layers');
@@ -11565,8 +11647,8 @@
     function _ambSetSampleLayerSource(E, id, sampleId, name) {
       if (!sampleId) return;
       _E = E;
-      const cfg = E.getCfg(); if (!cfg || !Array.isArray(cfg.samples)) return;
-      const L = cfg.samples.find(x => x.id === id); if (!L) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      const L = _ambSampleById(cfg, id); if (!L) return;
       let info = null; try { info = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(sampleId) : null; } catch (e) {}
       L.sampleId = sampleId;
       L.name = name || (info && info.name) || sampleId;
@@ -12904,7 +12986,7 @@
         const L = cfg[t]; if (L && L.present !== false) add(L, t, _ambLayerLabel(L, nm), t);
       });
       // Seq layers (capture key 'seq:id').
-      (Array.isArray(cfg.seqs) ? cfg.seqs : []).forEach((s, i) => add(s, 'seq', _ambLayerLabel(s, 'Seq' + (i + 1)), 'seq:' + s.id));
+      _ambSeqList(cfg).forEach((s, i) => add(s, 'seq', _ambLayerLabel(s, 'Seq' + (i + 1)), 'seq:' + s.id));
       // Generative extras (capture key 'type:id').
       (Array.isArray(cfg.extras) ? cfg.extras : []).forEach(ex => {
         const sch = _AMB_LAYER_SCHEMA[ex.type];
@@ -12931,8 +13013,11 @@
       const wrap = _ambGet(E, 'ambient-extra-layers'); if (!wrap) return;
       const cfg = E.getCfg(); if (!cfg) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
-      wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => _ambInstCardHtml(inst)).join(''));
-      cfg.extras.forEach(inst => _ambWireInst(E, inst));
+      // C2: extras-hosted Seq/Sample layers render through their OWN card
+      // builders (_ambRenderSeqLayers/_ambRenderSampleLayers read the
+      // canonical lists) — skip them here so they don't get a blank card.
+      wrap.innerHTML = _ambNamespaceHtml(E, cfg.extras.map(inst => (inst && (inst.type === 'seq' || inst.type === 'samp')) ? '' : _ambInstCardHtml(inst)).join(''));
+      cfg.extras.forEach(inst => { if (inst && (inst.type === 'seq' || inst.type === 'samp')) return; _ambWireInst(E, inst); });
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
       try { _ambRefreshAreaFadeUI(E); } catch (e) {}       // grey out Area fade on capturable layers
@@ -13124,10 +13209,10 @@
         obj = cfg[head];
       } else if (head.indexOf('seq:') === 0) {
         const sid = parseInt(head.slice(4), 10);
-        obj = (cfg.seqs || []).find(s => s.id === sid); cat = 'seq';
+        obj = _ambSeqById(cfg, sid); cat = 'seq';
       } else if (head.indexOf('samp:') === 0) {
         const sid = parseInt(head.slice(5), 10);
-        obj = (cfg.samples || []).find(s => s.id === sid); cat = 'samp';
+        obj = _ambSampleById(cfg, sid); cat = 'samp';
       } else {
         // Extra-instance layer: head = '<type>:<id>' (bass/run/pedal/arp/shape, or
         // additional bed/motif/texture/beat). cat = the type.
@@ -13183,8 +13268,8 @@
       [['Bed', 'bed'], ['Motif', 'motif'], ['Texture', 'texture'], ['Beat', 'beat']].forEach(([lab, t]) => {
         if (cfg[t] && cfg[t].present !== false) add(lab, t, t);
       });
-      (cfg.seqs || []).forEach((s, i) => add('Seq' + (i + 1), 'seq:' + s.id, 'seq'));
-      (cfg.samples || []).forEach((s, i) => add('Sample' + (i + 1), 'samp:' + s.id, 'samp'));
+      _ambSeqList(cfg).forEach((s, i) => add('Seq' + (i + 1), 'seq:' + s.id, 'seq'));
+      _ambSampleList(cfg).forEach((s, i) => add('Sample' + (i + 1), 'samp:' + s.id, 'samp'));
       // Extra-instance layers (bass / run / pedal / arp / shape / extra bed…).
       const _tc = {};
       (cfg.extras || []).forEach((x) => {
@@ -13582,13 +13667,13 @@
     function _ambSendSeedToInstance(E, unit, mode, targetSeqId, nameHint) {
       if (!_ambValidUnit(unit)) return false;
       const cfg = E.getCfg(); if (!cfg) return false;
-      if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
       let eff = mode;
-      if ((mode === 'append' || mode === 'interleave') && !cfg.seqs.length) eff = 'new';
+      if ((mode === 'append' || mode === 'interleave') && !_ambSeqList(cfg).length) eff = 'new';
       if (typeof nameHint === 'string' && nameHint) unit.name = nameHint;
       if (!Number.isFinite(unit.reps)) unit.reps = 1;
       if (eff === 'new') {
-        const id = cfg.seqs.reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
+        const id = _ambSeqList(cfg).reduce((m, s) => Math.max(m, s.id | 0), 0) + 1;
         const seq = _defaultSeqLayer(id);
         if (typeof nameHint === 'string' && nameHint) seq.name = nameHint;
         seq.units = [unit];
@@ -13623,9 +13708,12 @@
         // above only applies if the user flips Output back to Bloom blend.
         seq.out = 'grid';
         _ambFitSeqInterval(seq);
-        cfg.seqs.push(seq);
+        // C2: new Seq layers are extras-hosted (canonical home).
+        seq.type = 'seq'; seq.seedKind = 'sequence';
+        cfg.extras.push(seq);
       } else {
-        const seq = cfg.seqs.find(s => s.id === targetSeqId) || cfg.seqs[cfg.seqs.length - 1];
+        const _list = _ambSeqList(cfg);
+        const seq = _ambSeqById(cfg, targetSeqId) || _list[_list.length - 1];
         // Append / Interleave both ADD a new SECTION (unit) to the target layer —
         // its sections play in turn (see the Sections popover for reps / order /
         // Random). Interleave additionally defaults the layer to Random order.

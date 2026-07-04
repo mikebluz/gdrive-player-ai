@@ -8223,6 +8223,31 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
+    /* Wrap-ensemble builder */
+    .ens-rows { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; max-height: 260px; overflow-y: auto; }
+    .ens-row { display: flex; align-items: center; gap: 8px; }
+    .ens-row .ens-deg { flex: 0 0 68px; }
+    .ens-row .ens-tone { flex: 1 1 auto; min-width: 0; }
+    .ens-row-del {
+      flex: 0 0 auto; width: 26px; height: 26px; border-radius: 6px;
+      background: #1c1c30; border: 1px solid #3a2d3f; color: #b98; cursor: pointer;
+      font-size: 0.8rem; line-height: 1;
+    }
+    .ens-row-del:hover { border-color: #ff5c6c; color: #ff8894; }
+    .ens-add-row {
+      align-self: flex-start; margin-bottom: 8px; padding: 5px 12px; border-radius: 8px;
+      background: #191932; border: 1px dashed #4a3d6a; color: #d6bcfa; cursor: pointer; font-size: 0.8rem;
+    }
+    .ens-add-row:hover { border-color: #9f7aea; background: #20203c; }
+    .ens-shape-picker { display: flex; gap: 6px; margin: 4px 0 2px; }
+    .ens-shape-btn {
+      flex: 1 1 0; padding: 7px 4px; border-radius: 8px; cursor: pointer;
+      background: #14142a; border: 1px solid #2d2d3f; color: #a0aec0; font-weight: 700; font-size: 0.82rem;
+    }
+    .ens-shape-btn:hover { border-color: #9f7aea; }
+    .ens-shape-btn.active { background: #2d2150; border-color: #9f7aea; color: #e9d8fd; }
+    .wrap-bank-create-ens { margin-top: 4px; }
+
     /* Empty-User-bank hint in the chip row. */
     .wrap-bank-empty {
       font-family: 'Segoe UI', sans-serif;

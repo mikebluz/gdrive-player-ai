@@ -1148,6 +1148,171 @@
       setTimeout(() => { try { nameInput.focus(); nameInput.select(); } catch (e) {} }, 0);
     }
 
+    // ---- Wrap-ensemble builder ------------------------------------------------
+    // A "wrap-ensemble" is a wrap whose voices each carry a scale DEGREE and a
+    // TONE, delivered by a play shape. Degrees are RELATIVE to the played note,
+    // stepped through the current scale (a movable diatonic harmonizer): degree
+    // 1 = the pressed note, 3 = a third up IN THE SCALE, etc. — so the same
+    // ensemble adapts to wherever it's played. Each voice keeps its own timbre
+    // via a per-note tone override, and the shape decides delivery:
+    //   Stack = chord (all at once)   Run = arpeggio (fill the note's slot)
+    //   Set   = one voice per press, cycling members across passes
+    // This just emits a normal wrap (per-note overrides + keyContext), so all
+    // the wrap machinery — rebasing, cycling, Bloom voicing — works unchanged.
+    function _ensembleRootFreq() {
+      // Voice degree 1 at the scale tonic in a mid register, so the built wrap
+      // sits where generated wraps do; a later grid press re-roots the whole
+      // ensemble to the pressed note (resolveStepPerOffset).
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const tonic = (typeof rootIdx === 'number') ? rootIdx : 0;   // pc 0-11
+      // MIDI 60 (C4) octave: pick the tonic pc nearest MIDI 60.
+      const midi = 60 + (((tonic - 60) % 12) + 12) % 12 - (((tonic - 60) % 12 + 12) % 12 > 6 ? 12 : 0);
+      return A * Math.pow(2, (midi - 69) / 12);
+    }
+    function _ensembleDegreeLabel(deg) {
+      const names = ['1', '2', '3', '4', '5', '6', '7'];
+      const d = deg | 0;
+      if (d >= 1 && d <= 7) return names[d - 1];
+      // octave-extended: 8→"1↑", 9→"2↑", …
+      const within = ((d - 1) % 7) + 1;
+      const oct = Math.floor((d - 1) / 7);
+      return names[within - 1] + (oct > 0 ? '↑'.repeat(oct) : (oct < 0 ? '↓'.repeat(-oct) : ''));
+    }
+    // Build a wrap step from ensemble rows [{degree, tone}] under the current
+    // scale, applying the shape. Each voice carries its own tone override.
+    function _buildEnsembleStep(rows, shape) {
+      const rootFreq = _ensembleRootFreq();
+      const voices = rows.filter(r => r && Number.isFinite(r.degree)).map(r => {
+        // degree d → (d-1) scale steps above the root (degree 1 = root itself)
+        const f = (typeof shiftFreqByScaleDegree === 'function')
+          ? shiftFreqByScaleDegree(rootFreq, (r.degree | 0) - 1)
+          : rootFreq * Math.pow(2, ((r.degree | 0) - 1) / 12);
+        const tone = r.tone || 'sine';
+        return {
+          freq: f,
+          label: _ensembleDegreeLabel(r.degree),
+          sound: tone,
+          params: { type: tone },
+          toneOverride: true,           // keep this voice's own timbre
+        };
+      });
+      if (!voices.length) return null;
+      const sub = (typeof stepSubdivision !== 'undefined') ? stepSubdivision : 1;
+      let step;
+      if (shape === 'run') {
+        step = { isSub: true, label: '▤', duration: 1, subdivision: 1,
+          subSteps: voices.map(v => ({ ...v, duration: 1, subdivision: sub })) };
+      } else if (shape === 'set') {
+        const first = voices[0];
+        step = Object.assign({}, first, {
+          duration: 1, subdivision: sub,
+          variance: { mode: 'linear', itersPerVariant: 1, randomEachIter: false, notes: voices },
+        });
+      } else { // stack (chord)
+        step = { chord: voices, label: voices.map(v => v.label).join('·'), duration: 1, subdivision: sub };
+      }
+      // Stamp the birth key so the rebase path harmonizes diatonically.
+      if (typeof _captureKeyContext === 'function') {
+        const kc = _captureKeyContext();
+        if (kc) step.keyContext = kc;
+      }
+      return step;
+    }
+    function openEnsembleBuilder() {
+      if (typeof currentScale === 'string' && currentScale === 'chromatic') {
+        if (typeof showToast === 'function') showToast('Pick a musical scale first — ensembles voice by scale degree.');
+        return;
+      }
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay ens-builder-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal ens-builder-modal';
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+      const scaleLabel = (typeof prettyScaleName === 'function') ? prettyScaleName(currentScale) : currentScale;
+      const toneOpts = (typeof getAllSoundOptions === 'function') ? getAllSoundOptions() : [{ value: 'sine', label: 'Sine' }];
+      modal.innerHTML =
+        `<div class="sm-title">Build Ensemble</div>` +
+        `<div class="create-prog-namerow">` +
+          `<input type="text" id="ens-name-input" class="create-prog-input" placeholder="Ensemble name" />` +
+          `<button type="button" id="ens-shuffle" class="create-prog-dice" title="Suggest another name">🎲</button>` +
+        `</div>` +
+        `<div class="create-prog-hint">Degrees are relative to the played note in <b>${scaleLabel}</b> — a movable harmonizer.</div>` +
+        `<div class="ens-rows" id="ens-rows"></div>` +
+        `<button type="button" id="ens-add-row" class="ens-add-row">＋ Add voice</button>` +
+        `<div class="create-prog-hint">Shape:</div>` +
+        `<div class="ens-shape-picker" id="ens-shape">` +
+          `<button type="button" class="ens-shape-btn active" data-shape="stack" title="All voices at once (a chord)">Stack</button>` +
+          `<button type="button" class="ens-shape-btn" data-shape="run" title="Arpeggiate across the note's length">Run</button>` +
+          `<button type="button" class="ens-shape-btn" data-shape="set" title="One voice per press, cycling members">Set</button>` +
+        `</div>` +
+        `<div class="sm-footer">` +
+          `<button type="button" class="sm-preview" id="ens-cancel">Cancel</button>` +
+          `<button type="button" class="sm-apply" id="ens-save">Save Ensemble</button>` +
+        `</div>`;
+
+      const rowsEl = modal.querySelector('#ens-rows');
+      let shape = 'stack';
+      const degOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        .map(d => `<option value="${d}">${_ensembleDegreeLabel(d)}</option>`).join('');
+      const addRow = (degree, tone) => {
+        const row = document.createElement('div');
+        row.className = 'ens-row';
+        row.innerHTML =
+          `<select class="ens-deg create-prog-input">${degOptions}</select>` +
+          `<select class="ens-tone create-prog-input"></select>` +
+          `<button type="button" class="ens-row-del" title="Remove voice" aria-label="Remove voice">✕</button>`;
+        const degSel = row.querySelector('.ens-deg');
+        degSel.value = String(degree || 1);
+        const toneSel = row.querySelector('.ens-tone');
+        if (typeof populateGroupedToneSelect === 'function') populateGroupedToneSelect(toneSel, toneOpts);
+        else toneOpts.forEach(o => { const op = document.createElement('option'); op.value = o.value; op.textContent = o.label; toneSel.appendChild(op); });
+        toneSel.value = tone || (toneOpts[0] && toneOpts[0].value) || 'sine';
+        row.querySelector('.ens-row-del').addEventListener('click', () => {
+          if (rowsEl.querySelectorAll('.ens-row').length > 1) row.remove();
+        });
+        rowsEl.appendChild(row);
+      };
+      // seed a triad (1·3·5), each a different starter tone
+      addRow(1, 'sine'); addRow(3, 'triangle'); addRow(5, 'sawtooth');
+
+      modal.querySelector('#ens-add-row').addEventListener('click', () => {
+        const n = rowsEl.querySelectorAll('.ens-row').length;
+        addRow([1, 3, 5, 7, 2, 4, 6][n % 7], (toneOpts[0] && toneOpts[0].value) || 'sine');
+      });
+      modal.querySelectorAll('.ens-shape-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          shape = b.dataset.shape;
+          modal.querySelectorAll('.ens-shape-btn').forEach(x => x.classList.toggle('active', x === b));
+        });
+      });
+      const nameInput = modal.querySelector('#ens-name-input');
+      nameInput.value = (typeof _randAdjNoun === 'function') ? _randAdjNoun() : 'Ensemble';
+      modal.querySelector('#ens-shuffle').addEventListener('click', () => { nameInput.value = (typeof _randAdjNoun === 'function') ? _randAdjNoun() : 'Ensemble'; nameInput.focus(); });
+      modal.querySelector('#ens-cancel').addEventListener('click', () => overlay.remove());
+      modal.querySelector('#ens-save').addEventListener('click', () => {
+        const rows = Array.from(rowsEl.querySelectorAll('.ens-row')).map(r => ({
+          degree: parseInt(r.querySelector('.ens-deg').value, 10) || 1,
+          tone: r.querySelector('.ens-tone').value || 'sine',
+        }));
+        const step = _buildEnsembleStep(rows, shape);
+        if (!step) { if (typeof showToast === 'function') showToast('Add at least one voice'); return; }
+        const nm = (nameInput.value || '').trim();
+        pushWrapToBank(step);
+        // pushWrapToBank names it via wrapBankNextName(); rename to the user's.
+        if (nm && Array.isArray(savedWraps) && savedWraps.length) {
+          savedWraps[savedWraps.length - 1].name = nm.slice(0, 40);
+          persistSavedWraps();
+          if (typeof renderWrapBank === 'function') renderWrapBank();
+        }
+        overlay.remove();
+        if (typeof showToast === 'function') showToast('Ensemble “' + (nm || 'saved') + '” added to the Wrap bank');
+      });
+      setTimeout(() => { try { nameInput.focus(); nameInput.select(); } catch (e) {} }, 0);
+    }
+
     // Wipe the whole wrap bank after a confirm, tearing down any armed wrap
     // and cycle state so nothing dangles.
     function clearWrapBank() {
@@ -1190,6 +1355,11 @@
         freq: n.freq, label: n.label,
         cellIndex: (n.cellIndex != null) ? n.cellIndex : null,
         sound: n.sound, params: n.params ? { ...n.params } : undefined,
+        // Carry the per-note tone override so a Stack/Run/Set conversion (the
+        // Wraps menu bulk actions, and the wrap-ensemble builder) keeps each
+        // voice's own timbre — without this, converting a per-note-voiced wrap
+        // dropped the override flag and every note reverted to the master tone.
+        toneOverride: n.toneOverride ? true : undefined,
       };
     }
     function _wrapStepToShape(step, shape) {
@@ -1375,6 +1545,22 @@
       createBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
       createBtn.addEventListener('click', (e) => { e.stopPropagation(); closeWrapsMenu(); openCreateProgDialog(); });
       menu.appendChild(createBtn);
+
+      // ＋ Ensemble… — build a degree×tone wrap (a movable diatonic harmonizer
+      // where each voice has its own timbre). Disabled on chromatic (no scale
+      // degrees to voice against).
+      const ensBtn = document.createElement('button');
+      ensBtn.type = 'button';
+      ensBtn.className = 'wrap-bank-create-prog wrap-bank-create-ens';
+      ensBtn.textContent = '＋ Ensemble…';
+      if (typeof currentScale === 'string' && currentScale === 'chromatic') {
+        ensBtn.disabled = true; ensBtn.title = 'Pick a musical scale — ensembles voice by scale degree';
+      } else {
+        ensBtn.title = 'Build a degree×tone ensemble (Stack / Run / Set)';
+      }
+      ensBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      ensBtn.addEventListener('click', (e) => { e.stopPropagation(); closeWrapsMenu(); openEnsembleBuilder(); });
+      menu.appendChild(ensBtn);
 
       const sepHr = document.createElement('hr');
       menu.appendChild(sepHr);

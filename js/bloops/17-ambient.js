@@ -2669,10 +2669,53 @@
       });
       requestAnimationFrame(() => overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); }));
     }
+    // When a layer's Notes source is a wrap-ensemble whose voices carry their
+    // own tones, the layer Tone is overridden per degree (_ambDegreeToneAt) —
+    // the select showing the grid tone anyway read as a lie. Returns the wrap
+    // name when that override is in effect, else null.
+    function _ambWrapToneInfo(L) {
+      try {
+        const src = _ambNotesOf(L);
+        if (!src || src.type !== 'wrap' || !Number.isFinite(src.id)) return null;
+        const w = _ambFindWrap(src.id);
+        if (!w || !Array.isArray(w.tones) || !w.tones.some(t => t)) return null;
+        return w.name || 'Wrap ensemble';
+      } catch (e) { return null; }
+    }
+    // Reflect that override on the Tone select: show "⊕ <wrap> (per-voice
+    // tones)" and disable it; restore the real value when the source changes.
+    function _ambToneWrapVis(E, p, L) {
+      const s = _ambGet(E, p + 'tone'); if (!s) return;
+      const nm = _ambWrapToneInfo(L);
+      if (nm) {
+        let ph = s._wrapPh;
+        if (!ph || ph.parentNode !== s) {
+          ph = s._wrapPh = document.createElement('option');
+          ph.value = '__wraptones__';
+          s.insertBefore(ph, s.firstChild);
+        }
+        ph.textContent = '⊕ ' + nm + ' (per-voice tones)';
+        s.value = '__wraptones__';
+        s.disabled = true;
+        s.title = 'Notes come from a wrap-ensemble whose voices carry their own tones — the layer Tone is overridden per voice. Voices without a tone still fall back to it.';
+      } else if (s._wrapPh) {
+        try { s._wrapPh.remove(); } catch (e) {}
+        s._wrapPh = null;
+        s.disabled = false;
+        s.title = '';
+        s.value = (L && L.tone) || '';
+      }
+    }
     function _ambWireNotesBtn(E, btnId, getLayer) {
       const btn = _ambGet(E, btnId);
       if (!btn) return;
-      const refresh = () => { const L = getLayer(); if (L) btn.textContent = _ambNotesLabel(_ambNotesOf(L)); };
+      // 'xxx-notes' → 'xxx-' — the same prefix the Tone select id uses.
+      const tonePrefix = btnId.slice(0, -'notes'.length);
+      const refresh = () => {
+        const L = getLayer(); if (!L) return;
+        btn.textContent = _ambNotesLabel(_ambNotesOf(L));
+        try { _ambToneWrapVis(E, tonePrefix, L); } catch (e) {}
+      };
       refresh();
       btn.addEventListener('click', () => {
         const r = btn.getBoundingClientRect();

@@ -12149,7 +12149,8 @@
     // of a control's markup, so a schema change renders identically everywhere.
     function _ambCtrlHtml(c, p, lk, inst, type) {
       const k = c[0];
-      if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
+      if (k === 'tone') return '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
+        (type === 'bed' ? _ambBedCvtRows(p) : '');
       if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
       if (k === 'gen') return _ambGenSel(p + '-');
       if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
@@ -12174,15 +12175,15 @@
       if (k === 'unitsync') return _ambUnitSyncHtml(p);
       return '';
     }
-    // Bed per-chord-voice tone selects (structured Chords/Monk modes) — a bed-only
-    // control the schema doesn't carry. Injected into the primary Bed card; ids
-    // 'ambient-bed-cvt-0..5' match the existing primary cvt wiring.
-    function _ambBedCvtHtml(p) {
-      return '<div class="ambient-grp" data-grp="Chord voices"><button type="button" class="ambient-grp-head" data-grp="Chord voices">Chord voices<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">' +
-        '<div class="ambient-ctrl ambient-cvt-head"><label>Per-voice tone</label><span class="ambient-hint">Chords / Monk</span></div>' +
+    // Bed per-chord-voice tone selects (structured Chords/Monk modes) — a
+    // bed-only control the schema doesn't carry. Rendered INSIDE the Voice
+    // group right after Tone (it's voice material: which tone each chord
+    // voice sounds with), not as its own section. Ids 'ambient-bed-cvt-0..5'
+    // match the existing cvt wiring.
+    function _ambBedCvtRows(p) {
+      return '<div class="ambient-ctrl ambient-cvt-head"><label>Per-voice tone</label><span class="ambient-hint">Chords / Monk</span></div>' +
         [['0', 'Root'], ['1', '3rd'], ['2', '5th'], ['3', '7th'], ['4', '9th'], ['5', '11th']].map(v =>
-          '<div class="ambient-ctrl"><label for="' + p + '-cvt-' + v[0] + '">' + v[1] + '</label><select id="' + p + '-cvt-' + v[0] + '" class="ambient-select ambient-bed-cvt"></select></div>').join('') +
-        '</div></div>';
+          '<div class="ambient-ctrl"><label for="' + p + '-cvt-' + v[0] + '">' + v[1] + '</label><select id="' + p + '-cvt-' + v[0] + '" class="ambient-select ambient-bed-cvt"></select></div>').join('');
     }
     // Render a PRIMARY (built-in) layer's card body from the schema — the same
     // control markup as an extras card, but with the primary id scheme
@@ -12210,8 +12211,6 @@
         }
       });
       if (grpOpen) html += '</div></div>';
-      // Bed-only: the per-chord-voice tone selects (not in the schema).
-      if (type === 'bed') html += _ambBedCvtHtml(p);
       return html;
     }
     function _ambInstCardHtml(inst) {
@@ -12256,10 +12255,6 @@
         }
       });
       if (grpOpen) html += '</div></div>';
-      // P0: an EXTRAS Bed gets the per-chord-voice tone selects too (the last
-      // primary-template-only control) — same ids as the primary's cvt wiring
-      // but under the instance prefix.
-      if (type === 'bed' && !kitVoice) html += _ambBedCvtHtml(p);
       // Per-layer Reset — restores every group to its default fold state.
       html += '<div class="ambient-grp-resetwrap"><button type="button" class="ambient-grp-reset" id="' + p + '-grp-reset" title="Reset section folds to defaults">↺ Reset sections</button></div>';
       return html + '</div>';

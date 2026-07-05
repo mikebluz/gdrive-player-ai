@@ -9615,7 +9615,7 @@
         // Vertical roll: y → time within the viewed unit, x → key (geometry
         // cached by the draw). Hit a block → edit; empty → add at that key/time.
         if (cv.classList.contains('ambient-np-vroll')) {
-          const g = cv._geom || _ambPianoKeyGeom(cv.clientWidth || 1);
+          const g = cv._geom || (function () { const r = _ambPianoRangeFor(E, key); return _ambPianoKeyGeom(cv.clientWidth || 1, r.LO, r.HI); })();
           const Pv = (cv._P > 0) ? cv._P : (meta.P || 1);
           const W0v = cv._W0 || 0;
           const hv = cv._vh || cv.clientHeight || 1;
@@ -10047,7 +10047,7 @@
         if (!n || !(n.freq > 0)) return;
         const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
         let m = Math.round(69 + 12 * Math.log2(n.freq / A));
-        m = Math.max(36, Math.min(84, m));
+        m = Math.max(pe._lo != null ? pe._lo : 36, Math.min(pe._hi != null ? pe._hi : 84, m));
         const kEl = pe.querySelector('.ampk[data-m="' + m + '"]');
         if (kEl) kEl.classList.add('sel');
       } catch (e) {}
@@ -10260,9 +10260,52 @@
     // Build the keys once (lazily, on first expand). C2..C6; white keys flex, black
     // keys absolutely positioned straddling the gaps. Lit in real time by
     // _ambUpdatePianos from the layer's captured notes (E.cap).
-    function _ambBuildPiano(el) {
-      if (!el || el._built) return; el._built = true;
-      const LO = 36, HI = 84;
+    // The keyboard/roll's octave span, from the layer's own pitch params —
+    // smaller Range → fewer octaves → bigger keys. Whole octaves (C..B),
+    // ≥ 2 octaves, clamped to C1..C7; layers without pitch params (and any
+    // failure) keep the classic C2..C6.
+    function _ambPianoRangeFor(E, key) {
+      const DEF = { LO: 36, HI: 84 };
+      try {
+        const ty = String(key).split(':')[0];
+        const L = _ambLayerByKey(E, key);
+        if (!L) return DEF;
+        let lo = null, hi = null;
+        if (ty === 'seq' || ty === 'samp') {
+          // Content-based: the span of the unit notes themselves.
+          const ms = [];
+          const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+          (Array.isArray(L.units) ? L.units : []).forEach(u => (u && u.events || []).forEach(ev => (ev.freqs || []).forEach(f => { if (f > 0) ms.push(Math.round(69 + 12 * Math.log2(f / A))); })));
+          if (ms.length) { lo = Math.min.apply(null, ms) - 2; hi = Math.max.apply(null, ms) + 2; }
+        } else if (Number.isFinite(L.register)) {
+          const base = 12 * ((L.register | 0) + 1);   // octave N → its C midi
+          const range = Number.isFinite(L.range) ? Math.max(1, L.range | 0) : null;
+          const spread = Number.isFinite(L.spread) ? Math.max(0, L.spread | 0) : 0;
+          const octs = Number.isFinite(L.octaves) ? Math.max(1, L.octaves | 0) : null;
+          if (ty === 'motif' && range != null) { lo = base - range * 12; hi = base + range * 12 + 12; }        // Register ± Range
+          else if (ty === 'run' && range != null) { lo = base; hi = base + range * 12 + 12; }                  // Register + span up
+          else if (ty === 'bed') { lo = base - spread * 12; hi = base + (spread + 1) * 12 + 12; }              // Register ± Spread (+chord top)
+          else if (ty === 'arp' && octs != null) { lo = base; hi = base + octs * 12 + 12; }                    // base + Octaves up
+          else { lo = base - 12; hi = base + 24; }                                                             // register-only types
+          if (ty === 'run' && Number.isFinite(L.transpose)) { lo += L.transpose | 0; hi += L.transpose | 0; }
+        }
+        if (lo == null || hi == null) return DEF;
+        // Whole-octave math: C-snapped span of 2..6 octaves, SHIFTED (not
+        // clipped) into C1..B6 so a high Register keeps its Range-driven
+        // width instead of saturating at the top. Extreme notes beyond the
+        // span clamp to the edge key in the draws (dimmed), as before.
+        let loO = Math.floor(lo / 12);
+        const hiO = Math.floor(hi / 12) + 1;           // exclusive top C
+        const span = Math.max(2, Math.min(6, hiO - loO));
+        loO = Math.max(2, Math.min(8 - span, loO));
+        return { LO: loO * 12, HI: (loO + span) * 12 - 1 };
+      } catch (e) { return DEF; }
+    }
+    function _ambBuildPiano(el, lo, hi) {
+      if (!el) return;
+      const LO = Number.isFinite(lo) ? lo : 36, HI = Number.isFinite(hi) ? hi : 84;
+      if (el._built && el._lo === LO && el._hi === HI) return;
+      el._built = true; el._lo = LO; el._hi = HI;
       const black = (m) => { const p = ((m % 12) + 12) % 12; return p === 1 || p === 3 || p === 6 || p === 8 || p === 10; };
       const whites = [];
       for (let m = LO; m <= HI; m++) if (!black(m)) whites.push(m);
@@ -10279,8 +10322,8 @@
     // Key geometry shared by the keyboard AND the vertical roll — the same
     // layout math as _ambBuildPiano (in px over a given width) so roll columns
     // land exactly on their keys.
-    function _ambPianoKeyGeom(w) {
-      const LO = 36, HI = 84;
+    function _ambPianoKeyGeom(w, lo, hi) {
+      const LO = Number.isFinite(lo) ? lo : 36, HI = Number.isFinite(hi) ? hi : 84;
       const black = (m) => { const p = ((m % 12) + 12) % 12; return p === 1 || p === 3 || p === 6 || p === 8 || p === 10; };
       const whites = [];
       for (let m = LO; m <= HI; m++) if (!black(m)) whites.push(m);
@@ -10327,7 +10370,8 @@
       if (cv.height !== h) { cv.height = h; cv.style.height = h + 'px'; }
       const ctx = cv.getContext('2d'); if (!ctx) return;
       ctx.clearRect(0, 0, w, h);
-      const g = _ambPianoKeyGeom(w);
+      const rr = _ambPianoRangeFor(E, key);
+      const g = _ambPianoKeyGeom(w, rr.LO, rr.HI);
       cv._geom = g; cv._P = P; cv._W0 = W0; cv._vh = h;
       // Column guides: a dark stripe under each black-key lane + white boundaries.
       ctx.fillStyle = 'rgba(255,255,255,0.028)';
@@ -10415,7 +10459,8 @@
       let P = 0; try { P = _ambLayerPeriodSec(E, key, _ambLayerByKey(E, key), E._cfg || (E.getCfg && E.getCfg())); } catch (e) {}
       const W = Math.max(1.5, Math.min(16, P || 1.5));
       const t0 = now - W * 0.72, t1 = now + W * 0.28;
-      const g = _ambPianoKeyGeom(w);
+      const rr = _ambPianoRangeFor(E, key);
+      const g = _ambPianoKeyGeom(w, rr.LO, rr.HI);
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       // Key-column guides (same look as the editable vertical roll).
       ctx.fillStyle = 'rgba(255,255,255,0.028)';
@@ -10452,6 +10497,8 @@
       const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
       pianos.forEach(el => {
         const key = el.dataset.pkey; if (!key || !el._built) return;
+        // Range/Register edits re-span the keyboard live (cheap no-op check).
+        try { const r = _ambPianoRangeFor(E, key); _ambBuildPiano(el, r.LO, r.HI); } catch (e) {}
         const cap = (E.cap && E.cap[key]) || [];
         const lit = {};
         for (let i = cap.length - 1; i >= 0 && i >= cap.length - 96; i--) {
@@ -14423,7 +14470,7 @@
             const h2 = document.getElementById(E.hostId);
             const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + pb.dataset.pkey + '"]');
             if (pe) {
-              _ambBuildPiano(pe);
+              { const r = _ambPianoRangeFor(E, pb.dataset.pkey); _ambBuildPiano(pe, r.LO, r.HI); }
               const open = pe.classList.toggle('open');
               pb.classList.toggle('active', open);
               // Defer the notes-line refresh a frame: opening the piano can

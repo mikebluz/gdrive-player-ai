@@ -36,8 +36,7 @@
     // Create Prog ▸ Standard publishes more). Walk banks resolve against this,
     // not the live-Key-only _wrapProgList(), so any published prog is playable.
     function _wrapAllProgs() {
-      return (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs))
-        ? masterAmbient.publishedProgs : [];
+      return (typeof _ambPublishedProgs === 'function') ? _ambPublishedProgs() : [];
     }
     function _progWrapChords() {
       if (!_progWrapActive()) return [];
@@ -507,8 +506,7 @@
     // Bloom + Shape Prog pickers read from. Each entry is { id, name, chords:[
     // {root, intervals}] }.
     function _wrapProgList() {
-      const all = (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs))
-        ? masterAmbient.publishedProgs : [];
+      const all = (typeof _ambPublishedProgs === 'function') ? _ambPublishedProgs() : [];
       // The Key wrap list mirrors the LIVE Key-mode pad: show only the
       // progression currently on the pad (tracked by Key mode), so the list is
       // empty whenever Key mode is empty. (Bloom/Shape still read the full
@@ -1116,10 +1114,9 @@
           const chords = (s && Array.isArray(s.chords)) ? s.chords.filter(c => c && Array.isArray(c.intervals) && c.intervals.length) : [];
           if (!chords.length) { if (typeof showToast === 'function') showToast('That progression produced no chords'); return; }
           const nm = (nameInput.value || '').trim() || (s && s.name) || _randAdjNoun();
-          masterAmbient = masterAmbient || (typeof _defaultAmbientConfig === 'function' ? _defaultAmbientConfig() : { publishedProgs: [] });
-          if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
-          const pid = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
-          masterAmbient.publishedProgs.push({ id: pid, name: nm, chords: chords.map(c => ({ root: ((c.root | 0) % 12 + 12) % 12, intervals: c.intervals.slice() })) });
+          const reg = (typeof _ambPublishedProgs === 'function') ? _ambPublishedProgs() : [];
+          const pid = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+          reg.push({ id: pid, name: nm, chords: chords.map(c => ({ root: ((c.root | 0) % 12 + 12) % 12, intervals: c.intervals.slice() })) });
           if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
           overlay.remove();
           setWrapBank('prog:' + pid);

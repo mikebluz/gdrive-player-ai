@@ -719,7 +719,7 @@
       const add = (val, label, parent) => { const o = document.createElement('option'); o.value = val; o.textContent = label; (parent || sel).appendChild(o); };
       add('', '— None (single notes)');
       try {
-        const ups = (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+        const ups = (typeof _ambPublishedProgs === 'function') ? _ambPublishedProgs() : [];
         if (ups.length) {
           const g = document.createElement('optgroup'); g.label = 'Your progressions'; sel.appendChild(g);
           ups.forEach(p => add('u:' + (p.id | 0), p.name || ('Prog ' + (p.id | 0)), g));
@@ -744,7 +744,7 @@
       try {
         if (key.indexOf('u:') === 0) {
           const id = parseInt(key.slice(2), 10);
-          const ups = (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+          const ups = (typeof _ambPublishedProgs === 'function') ? _ambPublishedProgs() : [];
           const p = ups.find(x => (x.id | 0) === id);
           if (p && Array.isArray(p.chords) && p.chords.length) {
             return { name: p.name || ('Prog ' + id), key, chords: p.chords.map(c => ({ root: c.root | 0, intervals: (c.intervals || []).slice() })) };

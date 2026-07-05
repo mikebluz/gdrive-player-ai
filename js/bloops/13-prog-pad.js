@@ -200,9 +200,10 @@
     // Key list stays in step with what's actually in Key mode.
     function _progDeleteBankEntry(id) {
       if (id == null) return;
-      if (typeof masterAmbient !== 'undefined' && masterAmbient && Array.isArray(masterAmbient.publishedProgs)) {
-        const i = masterAmbient.publishedProgs.findIndex(p => (p.id | 0) === (id | 0));
-        if (i >= 0) masterAmbient.publishedProgs.splice(i, 1);
+      if (typeof _ambPublishedProgs === 'function') {
+        const reg = _ambPublishedProgs();
+        const i = reg.findIndex(p => (p.id | 0) === (id | 0));
+        if (i >= 0) reg.splice(i, 1);
       }
       try {
         if (typeof wrapBank === 'string' && wrapBank === 'prog:' + (id | 0) && typeof setWrapBank === 'function') setWrapBank('user');
@@ -225,14 +226,13 @@
       if (typeof _ambProgChordsFromBlocks !== 'function') return;
       const chords = _ambProgChordsFromBlocks(progBlocks);
       if (!chords.length) return;
-      masterAmbient = masterAmbient || (typeof _defaultAmbientConfig === 'function' ? _defaultAmbientConfig() : { publishedProgs: [] });
-      if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
+      const reg = (typeof _ambPublishedProgs === 'function') ? _ambPublishedProgs() : [];
       const name = _progAutoName();
-      let entry = (_progBankId != null) ? masterAmbient.publishedProgs.find(p => (p.id | 0) === _progBankId) : null;
+      let entry = (_progBankId != null) ? reg.find(p => (p.id | 0) === _progBankId) : null;
       if (entry) { entry.chords = chords; entry.name = name; }
       else {
-        const id = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
-        masterAmbient.publishedProgs.push({ id, name, chords });
+        const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        reg.push({ id, name, chords });
         _progBankId = id;
       }
       _progBankSig = sig;

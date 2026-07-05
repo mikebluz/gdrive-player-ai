@@ -637,6 +637,14 @@
             ? { mode: snapAreas.orch.mode === 'sequence' ? 'sequence' : 'single', shuffle: !!snapAreas.orch.shuffle }
             : { mode: 'single', shuffle: false };
           masterBloomAreas = { areas, activeIdx, orch };
+          // Shared published registries + master Width (container-level).
+          if (snapAreas.published && typeof snapAreas.published === 'object') {
+            masterBloomAreas.published = {
+              wraps: Array.isArray(snapAreas.published.wraps) ? snapAreas.published.wraps : [],
+              progs: Array.isArray(snapAreas.published.progs) ? snapAreas.published.progs : [],
+            };
+          }
+          if (snapAreas.width && typeof snapAreas.width === 'object') masterBloomAreas.width = { ...snapAreas.width };
           masterAmbient = areas[activeIdx];
           try { if (typeof _ambApplyAreaGlobals === 'function') _ambApplyAreaGlobals(masterAmbient); } catch (e) {}
         } else {

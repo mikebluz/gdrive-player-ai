@@ -174,6 +174,58 @@
       else { if (!Number.isFinite(s.width.mix)) s.width.mix = 0; if (!Number.isFinite(s.width.depth)) s.width.depth = 60; if (!Number.isFinite(s.width.rate)) s.width.rate = 25; }
       return s;
     }
+    // ---- Published registries (wraps + progs) — SHARED across areas -----
+    // Previously stored per-area on masterAmbient (the active area), so a wrap
+    // published in one area was invisible from the others despite the "shared
+    // registry" intent. They now live on the areas CONTAINER, with a one-time
+    // merge of any legacy per-area lists: wrap id collisions get a fresh id
+    // and that area's wrap references are rewritten; progs (applied by value)
+    // dedupe by content and keep their id when free.
+    function _ambPublished() {
+      const s = _masterBloomState();
+      if (!s.published || typeof s.published !== 'object') s.published = { wraps: [], progs: [] };
+      const P = s.published;
+      if (!Array.isArray(P.wraps)) P.wraps = [];
+      if (!Array.isArray(P.progs)) P.progs = [];
+      s.areas.forEach(a => {
+        if (!a) return;
+        if (Array.isArray(a.publishedWraps)) {
+          a.publishedWraps.forEach(w => {
+            if (!w) return;
+            const clash = P.wraps.find(x => (x.id | 0) === (w.id | 0));
+            if (clash && JSON.stringify(clash) === JSON.stringify(w)) return;   // same entry (area duplicate)
+            if (!clash) { P.wraps.push(w); return; }
+            const nid = P.wraps.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1; // id taken by different content
+            const oldId = w.id | 0; w.id = nid; P.wraps.push(w);
+            _ambRewriteWrapRefs(a, oldId, nid);
+          });
+          delete a.publishedWraps;
+        }
+        if (Array.isArray(a.publishedProgs)) {
+          a.publishedProgs.forEach(pg => {
+            if (!pg) return;
+            if (P.progs.some(x => x && x.name === pg.name && JSON.stringify(x.chords) === JSON.stringify(pg.chords))) return;
+            const id = P.progs.some(x => x && (x.id | 0) === (pg.id | 0))
+              ? P.progs.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1 : (pg.id | 0);
+            P.progs.push(Object.assign({}, pg, { id }));
+          });
+          delete a.publishedProgs;
+        }
+      });
+      return P;
+    }
+    // Rewrite one area's wrap references (layer.notes + arp series entries)
+    // after a merge re-ids a colliding wrap.
+    function _ambRewriteWrapRefs(cfg, oldId, newId) {
+      const fix = (n) => { if (n && n.type === 'wrap' && (n.id | 0) === oldId) n.id = newId; };
+      [cfg.bed, cfg.motif, cfg.texture, cfg.beat].concat(Array.isArray(cfg.extras) ? cfg.extras : []).forEach(L => {
+        if (!L) return;
+        fix(L.notes);
+        (Array.isArray(L.steps) ? L.steps : []).forEach(st => { if (st) fix(st.notes); });
+      });
+    }
+    function _ambPublishedWraps() { return _ambPublished().wraps; }
+    function _ambPublishedProgs() { return _ambPublished().progs; }
     // Read-only-ish accessors.
     function _ambAreas() { return _masterBloomState().areas; }
     function _ambActiveAreaIdx() { return _masterBloomState().activeIdx; }
@@ -1714,7 +1766,7 @@
     // Published wraps live on the master Bloom config (shared registry); both
     // master + lane Notes menus read from there.
     function _ambFindWrap(id) {
-      const arr = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
+      const arr = _ambPublishedWraps();
       return arr.find(w => w && w.id === id) || null;
     }
     // Per-layer progression override: when set (by a layer's emit to its own loop
@@ -2117,13 +2169,12 @@
           if (!levels.some(l => l != null)) levels = null;
         }
       } catch (e) {}
-      masterAmbient = masterAmbient || _defaultAmbientConfig();
-      if (!Array.isArray(masterAmbient.publishedWraps)) masterAmbient.publishedWraps = [];
-      const id = masterAmbient.publishedWraps.reduce((m, w) => Math.max(m, w.id | 0), 0) + 1;
+      const reg = _ambPublishedWraps();
+      const id = reg.reduce((m, w) => Math.max(m, w.id | 0), 0) + 1;
       const entry = { id, name: name || ('Wrap ' + id), root, intervals };
       if (tones) entry.tones = tones;
       if (levels) entry.levels = levels;
-      masterAmbient.publishedWraps.push(entry);
+      reg.push(entry);
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return entry;
     }
@@ -2171,11 +2222,10 @@
     function _ambPublishProg(name, blocks) {
       const chords = _ambProgChordsFromBlocks(blocks);
       if (!chords.length) return null;
-      masterAmbient = masterAmbient || _defaultAmbientConfig();
-      if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
-      const id = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+      const reg = _ambPublishedProgs();
+      const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
       const entry = { id, name: name || ('Prog ' + id), chords };
-      masterAmbient.publishedProgs.push(entry);
+      reg.push(entry);
       if (typeof persistWorkspace === 'function') persistWorkspace();
       return entry;
     }
@@ -2361,7 +2411,7 @@
         if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
         userItems.push({ label: '  ' + (wp.name || 'Prog'), fn: () => apply(wp.name || 'Prog', chords) });
       });
-      const pub = (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+      const pub = _ambPublishedProgs();
       pub.forEach(p => {
         const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals, bars: c.bars }));
         if (keyOn && !_ambProgWorksInKey({ chords }, cfg)) return;
@@ -2488,12 +2538,11 @@
       else if (op === 'inv') { const ns = _ambPeNotes(ch); if (ns.length > 1) { const newRoot = (((ch.root + ch.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, false); ch.root = newRoot; ch.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'save') {
-        const E = ed.E; masterAmbient = masterAmbient || _defaultAmbientConfig();
-        if (!Array.isArray(masterAmbient.publishedProgs)) masterAmbient.publishedProgs = [];
-        const id = masterAmbient.publishedProgs.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        const E = ed.E; const reg = _ambPublishedProgs();
+        const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
         const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
         const name = (ed.name || ('Prog ' + id)).trim() || ('Prog ' + id);
-        masterAmbient.publishedProgs.push({ id, name, chords });
+        reg.push({ id, name, chords });
         const c = E.getCfg(); if (c) { if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] }; c.prog.name = name; c.prog.chords = chords; c.prog.on = true; try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }
         try { _ambSyncControls(E); } catch (e) {}
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
@@ -2537,7 +2586,7 @@
         showCtxMenu(x, y, items);
       };
       const wrapSub = () => {
-        let wraps = (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) ? masterAmbient.publishedWraps : [];
+        let wraps = _ambPublishedWraps();
         if (keyOn) wraps = wraps.filter(w => _ambWrapWorksInKey(w, kcfg));
         if (!wraps.length) {
           showCtxMenu(x, y, keyOn
@@ -2565,7 +2614,7 @@
             ...sub,
           ]), 0) });
         });
-        const pub = (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) ? masterAmbient.publishedProgs : [];
+        const pub = _ambPublishedProgs();
         if (pub.length) {
           const pubItems = [];
           pub.forEach(p => {
@@ -7814,9 +7863,10 @@
         const lane = (typeof lanes !== 'undefined') ? lanes[activeLaneIdx] : null;
         if (lane) lane.ambient = def;
       } else {
-        if (masterAmbient && Array.isArray(masterAmbient.publishedWraps)) def.publishedWraps = masterAmbient.publishedWraps;
-        if (masterAmbient && Array.isArray(masterAmbient.publishedProgs)) def.publishedProgs = masterAmbient.publishedProgs;
+        // Published wraps/progs live on the areas container now — a reset of
+        // this area's config doesn't touch them.
         masterAmbient = def;
+        try { const s = _masterBloomState(); s.areas[s.activeIdx] = def; masterAmbient = s.areas[s.activeIdx]; } catch (e) {}
       }
       // Clear per-run engine state + any built mod/FX chains + freeze loops.
       try { _ambFreezeStopAll(E); } catch (e) {}

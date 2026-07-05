@@ -931,6 +931,12 @@
                 areas: masterBloomAreas.areas.map(a => ({ ...a, playing: false })),
                 activeIdx: masterBloomAreas.activeIdx | 0,
                 orch: { ...(masterBloomAreas.orch || { mode: 'single', shuffle: false }) },
+                // Shared published wraps/progs (cross-area registry) + master
+                // Width — both container-level, not per-area.
+                published: (masterBloomAreas.published && typeof masterBloomAreas.published === 'object')
+                  ? masterBloomAreas.published : { wraps: [], progs: [] },
+                width: (masterBloomAreas.width && typeof masterBloomAreas.width === 'object')
+                  ? masterBloomAreas.width : undefined,
               }));
             }
           } catch (e) {}

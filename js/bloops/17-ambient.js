@@ -12177,13 +12177,54 @@
     }
     // Bed per-chord-voice tone selects (structured Chords/Monk modes) — a
     // bed-only control the schema doesn't carry. Rendered INSIDE the Voice
-    // group right after Tone (it's voice material: which tone each chord
-    // voice sounds with), not as its own section. Ids 'ambient-bed-cvt-0..5'
-    // match the existing cvt wiring.
+    // group right after Tone. Tone and the per-voice selects are ALTERNATIVE
+    // views: a "Tones: Single | Per-voice" seg swaps between the one Tone
+    // select and the six degree selects (_ambBedCvtVis). Switching to Single
+    // CLEARS the per-voice overrides so the visible view matches what plays.
     function _ambBedCvtRows(p) {
-      return '<div class="ambient-ctrl ambient-cvt-head"><label>Per-voice tone</label><span class="ambient-hint">Chords / Monk</span></div>' +
+      return '<div class="ambient-ctrl ambient-cvt-head"><label>Tones</label>' +
+        '<span class="ambient-seg-row">' +
+          '<button type="button" id="' + p + '-cvtmode-one" class="ambient-seg">Single</button>' +
+          '<button type="button" id="' + p + '-cvtmode-per" class="ambient-seg">Per-voice</button>' +
+        '</span><span class="ambient-hint">Chords / Monk</span></div>' +
         [['0', 'Root'], ['1', '3rd'], ['2', '5th'], ['3', '7th'], ['4', '9th'], ['5', '11th']].map(v =>
           '<div class="ambient-ctrl"><label for="' + p + '-cvt-' + v[0] + '">' + v[1] + '</label><select id="' + p + '-cvt-' + v[0] + '" class="ambient-select ambient-bed-cvt"></select></div>').join('');
+    }
+    // Per-voice view active? Explicit flag wins; otherwise derive from data
+    // (any override set → per-voice), so pre-flag beds land on the right view.
+    function _ambBedCvtPer(L) {
+      if (!L) return false;
+      if (typeof L.cvtView === 'boolean') return L.cvtView;
+      return Array.isArray(L.chordVoiceTones) && L.chordVoiceTones.some(t => t);
+    }
+    // Show Tone XOR the per-voice selects (p = wire prefix ending '-').
+    function _ambBedCvtVis(E, p, L) {
+      const per = _ambBedCvtPer(L);
+      const t = _ambGet(E, p + 'tone');
+      if (t) { const c = t.closest('.ambient-ctrl'); if (c) c.style.display = per ? 'none' : ''; }
+      const one = _ambGet(E, p + 'cvtmode-one'); if (one) one.classList.toggle('on', !per);
+      const pb = _ambGet(E, p + 'cvtmode-per'); if (pb) pb.classList.toggle('on', per);
+      for (let i = 0; i < 6; i++) {
+        const s = _ambGet(E, p + 'cvt-' + i);
+        if (s) { const c = s.closest('.ambient-ctrl'); if (c) c.style.display = per ? '' : 'none'; }
+      }
+    }
+    function _ambWireBedCvtMode(E, p, get, persist) {
+      const one = _ambGet(E, p + 'cvtmode-one');
+      const per = _ambGet(E, p + 'cvtmode-per');
+      if (one) one.addEventListener('click', () => {
+        _E = E; const L = get(); if (!L) return;
+        L.cvtView = false;
+        L.chordVoiceTones = [];   // single tone = no per-voice overrides
+        for (let i = 0; i < 6; i++) { const s = _ambGet(E, p + 'cvt-' + i); if (s) s.value = ''; }
+        _ambBedCvtVis(E, p, L); persist();
+      });
+      if (per) per.addEventListener('click', () => {
+        _E = E; const L = get(); if (!L) return;
+        L.cvtView = true;
+        _ambBedCvtVis(E, p, L); persist();
+      });
+      try { _ambBedCvtVis(E, p, get()); } catch (e) {}
     }
     // Render a PRIMARY (built-in) layer's card body from the schema — the same
     // control markup as an extras card, but with the primary id scheme
@@ -12302,6 +12343,7 @@
             persist();
           });
         });
+        _ambWireBedCvtMode(E, p, get, persist);
       }
       // Wire on/off, delete, and collapse FIRST so a later control-wiring error
       // (e.g. the tone picker) can never leave the layer untoggleable.
@@ -14634,6 +14676,7 @@
           persist();
         });
       });
+      _ambWireBedCvtMode(E, 'ambient-bed-', () => { const c = cfg0(); return c && c.bed; }, persist);
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
       bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
       bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');

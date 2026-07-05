@@ -3093,9 +3093,21 @@
     // Custom fractional step size — any N/D of a whole note (3/8, 3/4, 5/16…).
     // Labels here follow the preset chips' convention (note-value fractions of
     // a whole note), so subdivision = 4·N/D quarter-notes: 3/8 → 1.5, 3/4 → 3.
+    const _sdivNumOpts = (sel) => Array.from({ length: 16 }, (_, i) => '<option value="' + (i + 1) + '"' + ((i + 1) === sel ? ' selected' : '') + '>' + (i + 1) + '</option>').join('');
+    const _sdivDenOpts = (sel) => [1, 2, 4, 8, 16, 32].map(d => '<option value="' + d + '"' + (d === sel ? ' selected' : '') + '>' + d + '</option>').join('');
+    // subdivision (4·N/D quarter-notes) → {n, d} with d from the den select's
+    // straight set; null when it doesn't reduce cleanly (e.g. triplets).
+    function _sdivFrac(v) {
+      if (!Number.isFinite(v) || v <= 0) return null;
+      for (const d of [1, 2, 4, 8, 16, 32]) {
+        const n = v * d / 4;
+        if (n > 0 && n <= 16 && Math.abs(n - Math.round(n)) < 1e-6) return { n: Math.round(n), d };
+      }
+      return null;
+    }
     function _sdivCustomRowHtml() {
-      const nums = Array.from({ length: 16 }, (_, i) => '<option value="' + (i + 1) + '"' + (i === 2 ? ' selected' : '') + '>' + (i + 1) + '</option>').join('');
-      const dens = [1, 2, 4, 8, 16, 32].map(d => '<option value="' + d + '"' + (d === 8 ? ' selected' : '') + '>' + d + '</option>').join('');
+      const nums = _sdivNumOpts(3);
+      const dens = _sdivDenOpts(8);
       return '<div class="sdiv-custom">' +
         '<span class="sdiv-custom-lab">Custom</span>' +
         '<select class="sdiv-num" title="Numerator">' + nums + '</select>' +
@@ -3259,7 +3271,38 @@
         if (!_SDIV_SIZES.some(([, v]) => Math.abs(v - cur) < 1e-9) && Number.isFinite(cur) && cur > 0) {
           opts.unshift(`<option value="${cur}" selected>${_divReadout(cur)}</option>`);
         }
+        opts.push('<option value="custom">N/D…</option>');   // inline fraction editor
         return opts.join('');
+      };
+      // Size select wiring shared by note + rest rows. Picking "N/D…" swaps
+      // the select for inline numerator/denominator selects (seeded from the
+      // current size); ✓ commits and re-renders (the custom value then shows
+      // as its fraction in the rebuilt select).
+      const wireSizeSel = (row, entry) => {
+        const sel = row.querySelector('.keep-sdiv-sel');
+        if (!sel) return;
+        sel.addEventListener('change', (e) => {
+          if (e.target.value === 'custom') {
+            const f = _sdivFrac(entry.sub) || { n: 3, d: 8 };
+            const wrap = document.createElement('span');
+            wrap.className = 'keep-sdiv-frac';
+            wrap.innerHTML =
+              '<select class="sdiv-num sm-select" title="Numerator">' + _sdivNumOpts(f.n) + '</select>' +
+              '<span class="sdiv-custom-slash">/</span>' +
+              '<select class="sdiv-den sm-select" title="Denominator (note value)">' + _sdivDenOpts(f.d) + '</select>' +
+              '<button type="button" class="keep-sdiv-fracok" title="Set this size">✓</button>';
+            sel.replaceWith(wrap);
+            wrap.querySelector('.keep-sdiv-fracok').addEventListener('click', () => {
+              const n = Math.max(1, wrap.querySelector('.sdiv-num').value | 0);
+              const d = Math.max(1, wrap.querySelector('.sdiv-den').value | 0);
+              entry.sub = 4 * n / d;
+              renderPer();
+            });
+            return;
+          }
+          const v = parseFloat(e.target.value);
+          if (Number.isFinite(v) && v > 0) { entry.sub = v; renderPer(); }
+        });
       };
       // Pitch <option> list for single-note rows — drawn from the current
       // grid notes, with the note's own pitch prepended if it isn't on the
@@ -3413,10 +3456,7 @@
               const gi = (typeof _findCellIdxForFreq === 'function') ? _findCellIdxForFreq(f) : -1;
               entry.cellIndex = (gi >= 0) ? gi : null;
             });
-            row.querySelector('.keep-sdiv-sel').addEventListener('change', (e) => {
-              const v = parseFloat(e.target.value);
-              if (Number.isFinite(v) && v > 0) { entry.sub = v; renderPer(); }
-            });
+            wireSizeSel(row, entry);
             row.querySelector('.keep-sdiv-addrest').addEventListener('click', () => {
               model.splice(idx + 1, 0, { kind: 'rest', sub: 0.5 });
               renderPer();
@@ -3428,10 +3468,7 @@
               `<select class="keep-sdiv-sel sm-select">${optionsFor(entry.sub)}</select>` +
               `<span class="keep-sdiv-total"></span>` +
               `<button type="button" class="keep-sdiv-delrest" title="Remove this rest">×</button>`;
-            row.querySelector('.keep-sdiv-sel').addEventListener('change', (e) => {
-              const v = parseFloat(e.target.value);
-              if (Number.isFinite(v) && v > 0) { entry.sub = v; renderPer(); }
-            });
+            wireSizeSel(row, entry);
             row.querySelector('.keep-sdiv-delrest').addEventListener('click', () => {
               model.splice(idx, 1); renderPer();
             });

@@ -8717,6 +8717,13 @@
       white-space: nowrap;
     }
     .step-div-modal .sdiv-custom-apply:hover { background: #2a2a4a; }
+    /* Inline per-row fraction editor (Per-note tab, after picking "N/D…"). */
+    .keep-sdiv-frac { display: inline-flex; align-items: center; gap: 4px; }
+    .keep-sdiv-fracok {
+      background: #1d3a2f; border: 1px solid #4fd1a5; border-radius: 6px;
+      color: #9ff0cf; padding: 3px 9px; font: 700 0.8rem 'Segoe UI', sans-serif; cursor: pointer;
+    }
+    .keep-sdiv-fracok:hover { background: #245243; }
     .step-div-modal .sdiv-opt {
       padding: 12px 8px;
       border: 1px solid #2d2d3f;

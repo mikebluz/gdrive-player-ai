@@ -7525,6 +7525,13 @@
     function _ambReplayFrozen(E, key, now, horizon) {
       const st = E.freeze && E.freeze[key];
       if (!st || !st.frozen || !st.events.length || !(st.loopLen > 0)) return;
+      // A lock restored from persisted lockState (a seed-roll edit, stop→play,
+      // or a reloaded locked project) carries anchor 0. Anchor it NOW, once —
+      // `st.anchor || now` below would otherwise recompute the loop base from
+      // the moving clock every tick, so the loop never phase-locks and the
+      // phrase degrades to whichever note offsets slide through the window
+      // (heard as one note repeating instead of the edited unit).
+      if (!(st.anchor > 0)) { st.anchor = now; if (!(st.scheduledUpto > now)) st.scheduledUpto = now; }
       const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
       let from = st.scheduledUpto;
       if (from == null || from < now) from = Math.max(now, st.anchor || now);

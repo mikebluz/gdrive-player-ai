@@ -9908,6 +9908,19 @@
       display: flex; align-items: stretch;
     }
     .float-header > * { pointer-events: auto; }
+    /* Workspace-key readout — left of the elapsed/BPM strip; same visual
+       language, teal accent, sized to its content. Click = key picker. */
+    .bloom-hdr-key {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+      height: 40px; padding: 0 12px; cursor: pointer; touch-action: manipulation;
+      font: 700 clamp(0.85rem, 2.8vw, 1.05rem) 'Segoe UI', Tahoma, sans-serif;
+      letter-spacing: 0.5px; white-space: nowrap; color: #7fd6c4;
+      border-bottom: 1px solid rgba(79,209,197,0.35);
+      border-right: 1px solid rgba(79,209,197,0.25);
+      background: rgba(79,209,197,0.08);
+      transition: all 0.15s ease;
+    }
+    @media (hover: hover) { .bloom-hdr-key:hover { background: rgba(79,209,197,0.16); color: #b2f5ea; } }
     /* Elapsed-time + BPM readout — full-width header, doubles as the Settings
        trigger (the standalone Settings button was removed). */
     .bloom-hdr-elapsed {

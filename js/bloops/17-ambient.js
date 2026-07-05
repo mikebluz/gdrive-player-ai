@@ -1672,10 +1672,16 @@
       // _ambScaleIntervals / _ambSrcRootPc apply it. Absent/0 → no change (default).
       const hasMode = !!(layer && (layer.modeRot | 0) && (notes.type === 'scale' || !notes.type));
       const hasColor = !!(layer && Array.isArray(layer.colors) && layer.colors.length && ((layer.colorAmt | 0) > 0));
+      // PINNED per-layer root (Notes ▸ Root) — scale sources only. Carried on
+      // the descriptor so _ambSrcRootPc / labels / key-fit all see it.
+      const pinned = (layer && Number.isFinite(layer.rootPc) && (notes.type === 'scale' || !notes.type))
+        ? (((layer.rootPc | 0) % 12) + 12) % 12 : null;
+      if (pinned != null && !hasMode && !hasColor) return Object.assign({}, notes, { rootPc: pinned });
       if (hasMode || hasColor) {
         const out = hasMode
           ? { type: 'scale', scale: notes.scale || '', modeRot: ((layer.modeRot | 0) % 7 + 7) % 7 }
           : Object.assign({}, notes);
+        if (pinned != null) out.rootPc = pinned;
         if (hasColor) {
           out.colors = layer.colors; out.colorAmt = layer.colorAmt | 0;
           // Timed usage (Phase 4b): how colours are applied — 'landing' just
@@ -1991,7 +1997,11 @@
       // Scales root to the key tonic in transpose mode. Time-indexed (keyMaster)
       // key first, so a scale re-roots exactly on the boundary for the note now.
       let sr = null;
-      if (_ambKeyTime != null) { const ks = _ambKeyAt(_E, _ambKeyTime); if (ks) sr = (((ks.root | 0) % 12) + 12) % 12; }
+      // Notes ▸ Root pin: an explicit per-layer root replaces the Key/keyMaster/
+      // workspace chain entirely — "this layer stays on A". Relative mode still
+      // rotates from it below.
+      if (Number.isFinite(n.rootPc)) sr = ((n.rootPc % 12) + 12) % 12;
+      if (sr == null && _ambKeyTime != null) { const ks = _ambKeyAt(_E, _ambKeyTime); if (ks) sr = (((ks.root | 0) % 12) + 12) % 12; }
       if (sr == null) sr = transpose ? keyRoot : baseRoot;
       // Relative mode: shift the tonic to scale-degree `modeRot` (same pcs).
       const rot = (n.modeRot | 0);
@@ -2033,7 +2043,13 @@
         }
       } else if (n.type === 'wrap') { const w = _ambFindWrap(n.id); base = '⊕ ' + (w ? w.name : 'Wrap'); }
       else if (n.type === 'prog') base = '⇶ ' + (n.name || 'Progression');
-      else base = n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
+      else {
+        base = n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
+        if (Number.isFinite(n.rootPc)) {
+          const rn = (typeof CHROMATIC !== 'undefined' && CHROMATIC[((n.rootPc % 12) + 12) % 12]) || '';
+          if (rn) base = rn + ' ' + base;
+        }
+      }
       // Relative-mode rotation (scale sources) + live key-fit, appended once here
       // so every Notes-button label reflects them.
       if ((n.type === 'scale' || !n.type) && (n.modeRot | 0)) {
@@ -2594,9 +2610,28 @@
         if (on.length) items.push('hr', { label: '✕ Clear colours', fn: () => { _E = E; const L = getLayer(); if (!L) return; L.colors = []; persist(); } });
         showCtxMenu(x, y, items);
       };
+      // Root submenu: pin the layer's actual root note for scale sources
+      // (chords/wraps/progs carry their own roots) — or Follow Key (default).
+      const rootSub = () => {
+        const L0 = getLayer();
+        const cur = (L0 && Number.isFinite(L0.rootPc)) ? (((L0.rootPc | 0) % 12) + 12) % 12 : null;
+        const CHROM = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const setR = (v) => {
+          _E = E; const L = getLayer(); if (!L) return;
+          if (v == null) delete L.rootPc; else L.rootPc = v;
+          if (typeof afterChange === 'function') afterChange();
+          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        };
+        const items = [{ label: 'Root — scale sources (chords/wraps keep their own)', disabled: true },
+          { label: (cur == null ? '● ' : '   ') + 'Follow Key (workspace root)', fn: () => setR(null) }];
+        for (let i = 0; i < 12; i++) { const pc = i; items.push({ label: (cur === pc ? '● ' : '   ') + CHROM[pc], fn: () => setR(pc) }); }
+        showCtxMenu(x, y, items);
+      };
       showCtxMenu(x, y, [
         (keyTag ? { label: 'Key' + keyTag, disabled: true } : null),
         { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
+        { label: '◉ Root ▸', fn: () => setTimeout(rootSub, 0) },
         { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
         { label: '⇶ Progression ▸', fn: () => setTimeout(progSub, 0) },

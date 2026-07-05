@@ -10350,7 +10350,11 @@
       if (!L || !Number.isFinite(L.register)) return null;
       let pc = 0;
       try { pc = ((_ambSrcRootPc(_ambAsNotes(_ambNotesOf(L))) % 12) + 12) % 12; } catch (e) {}
-      return 12 * ((L.register | 0) + 1) + pc;
+      let hm = 12 * ((L.register | 0) + 1) + pc;
+      // Riff Transpose shifts everything it plays — fold it in so the
+      // readout, home marker, and keyboard span all tell the same truth.
+      if (Number.isFinite(L.transpose) && (L.transpose | 0)) hm += (L.transpose | 0);
+      return hm;
     }
     // Live right-gutter readouts for the Seed sliders: Register shows the
     // actual home note ("D#4"), Range/Spread shows a direction-aware octave
@@ -10414,44 +10418,46 @@
     // failure) keep the classic C2..C6.
     function _ambPianoRangeFor(E, key) {
       const DEF = { LO: 36, HI: 84 };
+      const isBlack = (m) => { const q = ((m % 12) + 12) % 12; return q === 1 || q === 3 || q === 6 || q === 8 || q === 10; };
+      // Edges must be WHITE keys (the key layout builds black keys relative to
+      // a flanking white), and stay inside a sane midi window.
+      const fin = (lo, hi) => {
+        lo = Math.max(12, Math.round(lo)); hi = Math.min(108, Math.round(hi));
+        if (isBlack(lo)) lo -= 1;
+        if (isBlack(hi)) hi += 1;
+        if (!(hi - lo >= 12)) return DEF;
+        return { LO: lo, HI: hi };
+      };
       try {
         const ty = String(key).split(':')[0];
         const L = _ambLayerByKey(E, key);
         if (!L) return DEF;
-        let lo = null, hi = null;
         if (ty === 'seq' || ty === 'samp') {
           // Content-based: the span of the unit notes themselves.
           const ms = [];
           const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
           (Array.isArray(L.units) ? L.units : []).forEach(u => (u && u.events || []).forEach(ev => (ev.freqs || []).forEach(f => { if (f > 0) ms.push(Math.round(69 + 12 * Math.log2(f / A))); })));
-          if (ms.length) { lo = Math.min.apply(null, ms) - 2; hi = Math.max.apply(null, ms) + 2; }
-        } else if (Number.isFinite(L.register)) {
-          const base = 12 * ((L.register | 0) + 1);   // octave N → its C midi
-          const range = Number.isFinite(L.range) ? Math.max(1, L.range | 0) : null;
-          const spread = Number.isFinite(L.spread) ? Math.max(0, L.spread | 0) : 0;
-          const octs = Number.isFinite(L.octaves) ? Math.max(1, L.octaves | 0) : null;
-          // Span size per type, placed around Register by the Home setting
-          // (floor = up from it, center = ± around it, ceiling = down to it).
-          const n = (ty === 'motif' || ty === 'run') ? range : (ty === 'bed') ? spread : (ty === 'arp') ? octs : null;
-          if (n != null) {
-            const home = _ambHomeOf(L, ty);
-            const dn = (home === 'floor') ? 0 : n;
-            const up = (home === 'ceiling') ? 0 : n;
-            lo = base - dn * 12;
-            hi = base + up * 12 + 12 + (ty === 'bed' ? 12 : 0);   // bed chords voice above the root
-          } else { lo = base - 12; hi = base + 24; }              // register-only types
-          if (ty === 'run' && Number.isFinite(L.transpose)) { lo += L.transpose | 0; hi += L.transpose | 0; }
+          if (!ms.length) return DEF;
+          let lo = Math.min.apply(null, ms) - 2, hi = Math.max.apply(null, ms) + 2;
+          if (hi - lo < 12) { const pad = Math.ceil((12 - (hi - lo)) / 2); lo -= pad; hi += pad; }
+          return fin(lo, hi);
         }
-        if (lo == null || hi == null) return DEF;
-        // Whole-octave math: C-snapped span of 2..6 octaves, SHIFTED (not
-        // clipped) into C1..B6 so a high Register keeps its Range-driven
-        // width instead of saturating at the top. Extreme notes beyond the
-        // span clamp to the edge key in the draws (dimmed), as before.
-        let loO = Math.floor(lo / 12);
-        const hiO = Math.floor(hi / 12) + 1;           // exclusive top C
-        const span = Math.max(2, Math.min(6, hiO - loO));
-        loO = Math.max(2, Math.min(8 - span, loO));
-        return { LO: loO * 12, HI: (loO + span) * 12 - 1 };
+        // Anchored AT the home note (source root at Register, + Transpose):
+        // Floor  = [home … home + Range oct] — home is the FIRST key;
+        // Center = home ± Range — home dead-center (Range 3 → 6 octaves wide);
+        // Ceiling= [home − Range oct … home] — home is the LAST key.
+        const hm = _ambHomeMidi(L);
+        if (hm == null) return DEF;
+        const range = Number.isFinite(L.range) ? Math.max(1, L.range | 0) : null;
+        const spread = Number.isFinite(L.spread) ? Math.max(0, L.spread | 0) : 0;
+        const octs = Number.isFinite(L.octaves) ? Math.max(1, L.octaves | 0) : null;
+        const n = (ty === 'motif' || ty === 'run') ? range : (ty === 'bed') ? Math.max(1, spread) : (ty === 'arp') ? octs : 1;
+        if (n == null) return DEF;
+        const home = _ambHomeOf(L, ty);
+        let lo = (home === 'floor') ? hm : hm - 12 * n;
+        let hi = (home === 'ceiling') ? hm : hm + 12 * n;
+        if (ty === 'bed') hi += 12;   // chord voices stack above the root
+        return fin(lo, hi);
       } catch (e) { return DEF; }
     }
     function _ambBuildPiano(el, lo, hi) {

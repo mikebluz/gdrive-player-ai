@@ -1735,7 +1735,7 @@
        The active tab reads as a filled purple pill. */
     .mode-tabs {
       display: flex;
-      flex: 0 0 33.333%;    /* left third of the banner row (mode button) */
+      flex: 0 0 50%;    /* left half of the banner row (Scale dropdown retired — header Key readout took over) */
       box-sizing: border-box;
       min-width: 0;
       align-items: center;
@@ -1744,6 +1744,7 @@
     /* Middle third of the banner row — the Scale dropdown, styled to match the
        mode / Sounds buttons (centered, uppercase teal). Borders come from the
        neighbours (mode's border-right, Sounds' border-left). */
+    .banner-row .banner-scale[hidden] { display: none !important; }
     .banner-row .banner-scale {
       flex: 0 0 33.333%;
       box-sizing: border-box;
@@ -1920,9 +1921,10 @@
     /* Sounds menu — pinned to the right edge at 25% of the banner width
        (where the master-vol speaker used to be). */
     .banner-row #scale-banner-half.banner-sounds {
-      /* Right third of the banner row — mode | scale | Sounds each take 1/3.
+      /* Right half of the banner row — mode | Sounds, 50/50 (the Scale
+         dropdown retired; header Key readout took over).
          Long tone names ellipsize rather than overflow. */
-      flex: 0 0 33.333%;
+      flex: 0 0 50%;
       box-sizing: border-box;
       max-width: none;
       border-right: none;

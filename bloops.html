@@ -363,12 +363,13 @@
           </div>
         </div>
         <button type="button" id="fluid-grid-toggle" hidden aria-hidden="true" tabindex="-1" style="display:none"></button>
-        <!-- Scale dropdown — the MIDDLE third of the banner row (moved out of
-             the ⚙ Mode settings popover). Banner is now mode | scale | Sounds,
-             each 1/3. The #scale-select ID is unchanged so every JS handler
-             (populateGroupedScaleSelect, value reads/writes) keeps resolving. -->
-        <div class="banner-scale" id="scale-banner-mid">
-          <select id="scale-select" title="Scale — highlight a scale; non-scale notes are blacked out"></select>
+        <!-- Scale select — HIDDEN anchor (the header Key readout → key picker
+             is the scale UI now). #scale-select stays in the DOM because a
+             dozen handlers (populateGroupedScaleSelect, value reads/writes,
+             the key picker itself) drive state through it. Banner is now
+             mode | Sounds, 50/50. -->
+        <div class="banner-scale" id="scale-banner-mid" hidden aria-hidden="true">
+          <select id="scale-select" tabindex="-1" title="Scale — highlight a scale; non-scale notes are blacked out"></select>
         </div>
         <!-- Note-shift + octave-nudge buttons moved to the vertical rail to
              the RIGHT of the grid (.grid-rail, below). -->

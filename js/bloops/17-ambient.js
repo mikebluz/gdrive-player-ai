@@ -7537,11 +7537,13 @@
       if (from == null || from < now) from = Math.max(now, st.anchor || now);
       const L = st.loopLen, A = st.anchor || now;
       let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
-      // Tag these replay voices (key + start time) so an edit can cancel just the
-      // ones at/after the next boundary. (The freeze gate runs before the dispatch
-      // sets the capture sink, so without this they'd be untagged.)
+      // CAPTURE these replay voices like generated ones: _ambCapSink both tags
+      // them (key + start time, so an edit can cancel scheduled-ahead notes)
+      // AND records them into E.cap — which is what lights the piano keys
+      // (_ambUpdatePianos) and feeds the live rolls. The old tag-only sink
+      // left locked layers dark and empty-rolled.
       const prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : null;
-      if (typeof window !== 'undefined') window._ambCaptureSink = _ambTagSink(key);
+      if (typeof window !== 'undefined') window._ambCaptureSink = _ambCapSink(E, key);
       try {
         while (guard++ < 4096) {
           const base = A + k * L;
@@ -7554,6 +7556,9 @@
         }
       } finally { if (typeof window !== 'undefined') window._ambCaptureSink = prevSink; }
       st.scheduledUpto = horizon;
+      // Frozen layers skip the tick wrappers (freeze gate returns before them),
+      // so prune here or the capture buffer grows unbounded while locked.
+      try { _ambPruneCap(E, key, now); } catch (e) {}
     }
     // Thaw is deferred: schedule generation to resume at the end of the loop's
     // current iteration (symmetric with Freeze, which starts on the grid). The
@@ -10306,6 +10311,26 @@
           const y = ((ph - W0) / P) * h;
           ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1;
           ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); ctx.stroke();
+          // While PLAYING, auto-follow: drive the wrapper's scrollTop so the
+          // playhead stays pinned (~60% down the viewport) and the roll
+          // scrolls past it — same feel as the live waterfall — instead of a
+          // cursor crawling down a static page. A manual scroll pauses the
+          // follow for a beat so mid-play editing isn't fought.
+          if (E.timer && scroll && scroll.clientHeight > 0 && h > scroll.clientHeight + 4) {
+            if (!scroll._afWired) {
+              scroll._afWired = true;
+              scroll.addEventListener('scroll', () => {
+                if (scroll._afSelf) { scroll._afSelf = false; return; }
+                scroll._userScrollAt = Date.now();
+              }, { passive: true });
+            }
+            const hold = scroll._userScrollAt && (Date.now() - scroll._userScrollAt < 1600);
+            if (!hold) {
+              const vh = scroll.clientHeight;
+              const target = Math.max(0, Math.min(h - vh, Math.round(y - vh * 0.6)));
+              if (Math.abs(scroll.scrollTop - target) > 1) { scroll._afSelf = true; scroll.scrollTop = target; }
+            }
+          }
         }
       }
       const isSeed = meta.kind === 'seed';

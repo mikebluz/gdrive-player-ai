@@ -8703,6 +8703,20 @@
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
+    /* Custom fractional size row (N / D of a whole note) under the chips. */
+    .step-div-modal .sdiv-custom { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
+    .step-div-modal .sdiv-custom-lab { font: 700 0.68rem 'Segoe UI', sans-serif; color: #8a8aa8; letter-spacing: 0.6px; text-transform: uppercase; }
+    .step-div-modal .sdiv-custom select {
+      background: #14142a; border: 1px solid #2d2d3f; border-radius: 7px;
+      color: #d6bcfa; padding: 5px 8px; font: 700 0.8rem 'Segoe UI', sans-serif; cursor: pointer;
+    }
+    .step-div-modal .sdiv-custom-slash { color: #8a8aa8; font-weight: 700; }
+    .step-div-modal .sdiv-custom-apply {
+      margin-left: auto; background: #1d1d33; border: 1px solid #9f7aea; border-radius: 7px;
+      color: #e9d8fb; padding: 5px 12px; font: 700 0.78rem 'Segoe UI', sans-serif; cursor: pointer;
+      white-space: nowrap;
+    }
+    .step-div-modal .sdiv-custom-apply:hover { background: #2a2a4a; }
     .step-div-modal .sdiv-opt {
       padding: 12px 8px;
       border: 1px solid #2d2d3f;

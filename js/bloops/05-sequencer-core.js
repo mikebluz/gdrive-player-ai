@@ -3090,6 +3090,31 @@
       showStepDivPicker(stepRef);
     }
 
+    // Custom fractional step size — any N/D of a whole note (3/8, 3/4, 5/16…).
+    // Labels here follow the preset chips' convention (note-value fractions of
+    // a whole note), so subdivision = 4·N/D quarter-notes: 3/8 → 1.5, 3/4 → 3.
+    function _sdivCustomRowHtml() {
+      const nums = Array.from({ length: 16 }, (_, i) => '<option value="' + (i + 1) + '"' + (i === 2 ? ' selected' : '') + '>' + (i + 1) + '</option>').join('');
+      const dens = [1, 2, 4, 8, 16, 32].map(d => '<option value="' + d + '"' + (d === 8 ? ' selected' : '') + '>' + d + '</option>').join('');
+      return '<div class="sdiv-custom">' +
+        '<span class="sdiv-custom-lab">Custom</span>' +
+        '<select class="sdiv-num" title="Numerator">' + nums + '</select>' +
+        '<span class="sdiv-custom-slash">/</span>' +
+        '<select class="sdiv-den" title="Denominator (note value)">' + dens + '</select>' +
+        '<button type="button" class="sdiv-custom-apply">Set 3/8</button>' +
+      '</div>';
+    }
+    function _wireSdivCustom(root, onPick) {
+      const row = root.querySelector('.sdiv-custom'); if (!row) return;
+      const num = row.querySelector('.sdiv-num'), den = row.querySelector('.sdiv-den'), go = row.querySelector('.sdiv-custom-apply');
+      const label = () => { if (go) go.textContent = 'Set ' + (num.value | 0) + '/' + (den.value | 0); };
+      num.addEventListener('change', label); den.addEventListener('change', label); label();
+      go.addEventListener('click', () => {
+        const n = Math.max(1, num.value | 0), d = Math.max(1, den.value | 0);
+        const v = 4 * n / d;
+        if (Number.isFinite(v) && v > 0) onPick(v);
+      });
+    }
     // Modal that asks the user to pick a step-div size (4/1 → 1/32) for
     // the just-added note. The "Use for…" checkbox locks the chosen
     // value for the rest of the current Keep session so subsequent
@@ -3118,7 +3143,7 @@
           <button type="button" class="sdiv-opt" data-sub="12">3/1</button>
           <button type="button" class="sdiv-opt" data-sub="16">4/1</button>
         </div>
-      `;
+      ` + _sdivCustomRowHtml();
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
@@ -3139,20 +3164,25 @@
             : 'Step size for this note';
         });
       }
+      // One apply path for preset chips AND the custom N/D row.
+      const _pickDiv = (v) => {
+        if (!Number.isFinite(v) || v <= 0) return;
+        // Route through the helper so Run wraps spread the value
+        // across their subSteps instead of landing on the outer
+        // wrap (which is a no-op for the audible cadence).
+        _applyStepDivToStep(stepRef, v);
+        if (titleToggle && titleToggle.classList.contains('active')) {
+          _keepStepDivLocked = true;
+          _keepStepDivLockedValue = v;
+        }
+        renderSequence();
+        overlay.remove();
+      };
+      _wireSdivCustom(modal, _pickDiv);
       modal.querySelectorAll('.sdiv-opt').forEach(b => {
         b.addEventListener('click', () => {
           const v = parseFloat(b.dataset.sub);
-          if (!Number.isFinite(v) || v <= 0) return;
-          // Route through the helper so Run wraps spread the value
-          // across their subSteps instead of landing on the outer
-          // wrap (which is a no-op for the audible cadence).
-          _applyStepDivToStep(stepRef, v);
-          if (titleToggle && titleToggle.classList.contains('active')) {
-            _keepStepDivLocked = true;
-            _keepStepDivLockedValue = v;
-          }
-          renderSequence();
-          overlay.remove();
+          _pickDiv(v);
         });
       });
       // Click outside dismisses — the step keeps whatever subdivision
@@ -3194,6 +3224,17 @@
     function _divReadout(v) {
       if (!Number.isFinite(v) || v <= 0) return '0';
       for (const [lbl, val] of _SDIV_SIZES) if (Math.abs(val - v) < 1e-6) return lbl;
+      // Custom fraction: subdivision 4·N/D → "N/D" (whole-note fractions,
+      // same convention as the preset labels). Try straight then triplet
+      // denominators; fall back to quarter-note beats.
+      for (const d of [1, 2, 4, 8, 16, 32, 3, 6, 12, 24]) {
+        const n = v * d / 4;
+        if (n > 0 && Math.abs(n - Math.round(n)) < 1e-6) {
+          const ni = Math.round(n);
+          const g = (function gcd(a, b) { return b ? gcd(b, a % b) : a; })(ni, d);
+          return (ni / g) + '/' + (d / g);
+        }
+      }
       return (+v.toFixed(3)) + '♩';
     }
     function _stepName(s) {
@@ -3210,9 +3251,16 @@
       const sizeBtns = _SDIV_SIZES
         .map(([lbl, v]) => `<button type="button" class="sdiv-opt" data-sub="${v}">${lbl}</button>`)
         .join('');
-      const optionsFor = (cur) => _SDIV_SIZES
-        .map(([lbl, v]) => `<option value="${v}"${Math.abs(v - cur) < 1e-9 ? ' selected' : ''}>${lbl}</option>`)
-        .join('');
+      const optionsFor = (cur) => {
+        let opts = _SDIV_SIZES
+          .map(([lbl, v]) => `<option value="${v}"${Math.abs(v - cur) < 1e-9 ? ' selected' : ''}>${lbl}</option>`);
+        // A custom fractional size (3/8 etc.) isn't in the preset list — keep
+        // it selectable so reopening the menu doesn't silently change it.
+        if (!_SDIV_SIZES.some(([, v]) => Math.abs(v - cur) < 1e-9) && Number.isFinite(cur) && cur > 0) {
+          opts.unshift(`<option value="${cur}" selected>${_divReadout(cur)}</option>`);
+        }
+        return opts.join('');
+      };
       // Pitch <option> list for single-note rows — drawn from the current
       // grid notes, with the note's own pitch prepended if it isn't on the
       // grid (e.g. after a scale change) so it stays selectable.
@@ -3253,6 +3301,7 @@
         </div>
         <div class="keep-sdiv-body" data-body="all">
           <div class="sdiv-grid">${sizeBtns}</div>
+          ${_sdivCustomRowHtml()}
         </div>
         <div class="keep-sdiv-body" data-body="per" hidden>
           <div class="keep-sdiv-rows" id="keep-sdiv-rows"></div>
@@ -3415,19 +3464,20 @@
         loopBtn.setAttribute('aria-pressed', _previewLoop ? 'true' : 'false');
       });
 
-      // All-notes mode: one size applied to every kept note.
+      // All-notes mode: one size applied to every kept note (chips + custom N/D).
+      const _applyAll = (v) => {
+        if (!Number.isFinite(v) || v <= 0) return;
+        _stopPreview();
+        if (typeof snapshotForUndo === 'function') snapshotForUndo('Keep step sizes');
+        list.forEach(s => _applyStepDivToStep(s, v));
+        renderSequence();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        overlay.remove();
+      };
       modal.querySelectorAll('.keep-sdiv-body[data-body="all"] .sdiv-opt').forEach(b => {
-        b.addEventListener('click', () => {
-          const v = parseFloat(b.dataset.sub);
-          if (!Number.isFinite(v) || v <= 0) return;
-          _stopPreview();
-          if (typeof snapshotForUndo === 'function') snapshotForUndo('Keep step sizes');
-          list.forEach(s => _applyStepDivToStep(s, v));
-          renderSequence();
-          if (typeof persistWorkspace === 'function') persistWorkspace();
-          overlay.remove();
-        });
+        b.addEventListener('click', () => _applyAll(parseFloat(b.dataset.sub)));
       });
+      _wireSdivCustom(modal.querySelector('.keep-sdiv-body[data-body="all"]'), _applyAll);
 
       // Per-note mode: write each note's size, then splice in the rests.
       const applyBtn = modal.querySelector('.keep-sdiv-apply');

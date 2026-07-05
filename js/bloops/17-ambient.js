@@ -2715,6 +2715,12 @@
         const L = getLayer(); if (!L) return;
         btn.textContent = _ambNotesLabel(_ambNotesOf(L));
         try { _ambToneWrapVis(E, tonePrefix, L); } catch (e) {}
+        // Notes root moved → the home note (Register readout + key mark) moves.
+        try {
+          const mid = btnId.slice('ambient-'.length, -('-notes'.length));
+          const k2 = mid.indexOf('-') > 0 ? mid.replace('-', ':') : mid;
+          _ambSeedUiRefresh(E, tonePrefix, getLayer, k2);
+        } catch (e) {}
       };
       refresh();
       btn.addEventListener('click', () => {
@@ -3374,7 +3380,14 @@
           const deg = (_ambRand() < 0.75 && chordDegrees.length)
             ? chordDegrees[Math.floor(_ambRand() * chordDegrees.length)]
             : Math.floor(_ambRand() * N);
-          const oct = center + Math.round((_ambRand() * 2 - 1) * spread);
+          // Home maps the SAME single RNG draw into the window: center (the
+          // default) keeps the historical ± math byte-identical; floor folds
+          // it upward from Register, ceiling downward.
+          const _r = _ambRand() * 2 - 1;
+          const _home = _ambHomeOf(bed, 'bed');
+          const oct = (_home === 'floor') ? center + Math.round(Math.abs(_r) * spread)
+                    : (_home === 'ceiling') ? center - Math.round(Math.abs(_r) * spread)
+                    : center + Math.round(_r * spread);
           const k2 = deg + ':' + oct;
           if (used.has(k2)) continue;
           used.add(k2);
@@ -3861,6 +3874,10 @@
       const src    = _ambNotesOf(inst);
       const N      = Math.max(1, _ambScaleIntervals(src).length);
       const span   = Math.max(1, N * range);
+      // Home: floor (default, historical) = degrees stack UP from Register;
+      // center/ceiling shift the whole window down by half/all of Range.
+      const _home = _ambHomeOf(inst, 'run');
+      const homeShift = (_home === 'ceiling') ? -range : (_home === 'center') ? -Math.floor(range / 2) : 0;
       const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
 
       // Fixed base run — seeded by layer id + project seed, so it repeats
@@ -3901,7 +3918,7 @@
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
-          let f = _ambDegreeFreq(deg % N, reg + Math.floor(deg / N), src);
+          let f = _ambDegreeFreq(deg % N, reg + homeShift + Math.floor(deg / N), src);
           if (f == null) continue;
           f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
           // Len var: spread this note's length around Length via the shared helper
@@ -4109,7 +4126,11 @@
       const N = intervals.length;
       const center = Math.max(1, Math.min(8, motif.register | 0));
       const range = Math.max(1, Math.min(4, motif.range | 0));
-      const lo = (center - range) * N, hi = (center + range) * N;
+      // Home: where Register sits in the walk window (default center — the
+      // historical ± geometry, harness byte-identical).
+      const _home = _ambHomeOf(motif, 'motif');
+      const lo = ((_home === 'floor') ? center : center - range) * N;
+      const hi = ((_home === 'ceiling') ? center : center + range) * N;
       if (_E.motifDeg == null) _E.motifDeg = center * N;
       // Proximity caps how far consecutive notes may leap (in scale degrees).
       // 0 → every step is EXACTLY ±1 (strictly adjacent); higher widens the
@@ -10260,6 +10281,80 @@
     // Build the keys once (lazily, on first expand). C2..C6; white keys flex, black
     // keys absolutely positioned straddling the gaps. Lit in real time by
     // _ambUpdatePianos from the layer's captured notes (E.cap).
+    // ---- Home: where Register sits in the layer's pitch span ------------
+    // 'floor' = Register is the lowest octave (span reaches up), 'center' =
+    // the middle (span reaches ± around it), 'ceiling' = the top (span
+    // reaches down). Defaults preserve each engine's historical geometry.
+    const _AMB_HOME_DEF = { motif: 'center', run: 'floor', bed: 'center', arp: 'floor' };
+    function _ambHomeOf(L, ty) {
+      const h = L && L.home;
+      if (h === 'floor' || h === 'center' || h === 'ceiling') return h;
+      return _AMB_HOME_DEF[ty] || 'center';
+    }
+    // The layer's HOME note: the Notes source's root (key tonic / chord root /
+    // wrap root) at the Register octave — the pitch _ambDegreeFreq anchors to.
+    function _ambHomeMidi(L) {
+      if (!L || !Number.isFinite(L.register)) return null;
+      let pc = 0;
+      try { pc = ((_ambSrcRootPc(_ambAsNotes(_ambNotesOf(L))) % 12) + 12) % 12; } catch (e) {}
+      return 12 * ((L.register | 0) + 1) + pc;
+    }
+    // Live right-gutter readouts for the Seed sliders: Register shows the
+    // actual home note ("D#4"), Range/Spread shows a direction-aware octave
+    // count ("↑ 2 oct" / "± 2 oct" / "↓ 2 oct").
+    function _ambSeedReadouts(E, p, L) {
+      if (!L) return;
+      const m = /^ambient-([a-z]+)/.exec(p);
+      const ty = m ? m[1] : '';
+      const hintOf = (suf) => {
+        const e = _ambGet(E, p + suf); if (!e) return null;
+        const c = e.closest('.ambient-ctrl');
+        return c ? c.querySelector('.ambient-hint') : null;
+      };
+      const rh = hintOf('register');
+      if (rh) {
+        const hm = _ambHomeMidi(L);
+        if (hm != null) {
+          const KEYN = (typeof CHROMATIC !== 'undefined' && Array.isArray(CHROMATIC)) ? CHROMATIC : ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+          rh.textContent = (KEYN[((hm % 12) + 12) % 12] || 'C') + (Math.floor(hm / 12) - 1);
+        }
+      }
+      const home = _ambHomeOf(L, ty);
+      const arrow = home === 'floor' ? '↑' : home === 'ceiling' ? '↓' : '±';
+      [['range', L.range], ['spread', L.spread]].forEach(([suf, v]) => {
+        const h2 = hintOf(suf);
+        if (h2 && Number.isFinite(v)) h2.textContent = arrow + ' ' + (v | 0) + ' oct';
+      });
+    }
+    // Mark the layer's home note on its keyboard (gold dot). Cheap no-op when
+    // unchanged; cleared + re-set after rebuilds (rebuild resets el._homeM).
+    function _ambPianoHomeMark(E, key, el) {
+      try {
+        const L = _ambLayerByKey(E, key); if (!el) return;
+        let hm = L ? _ambHomeMidi(L) : null;
+        if (hm != null && (hm < (el._lo != null ? el._lo : 36) || hm > (el._hi != null ? el._hi : 84))) hm = null;
+        if (el._homeM === hm) return;
+        el._homeM = hm;
+        el.querySelectorAll('.ampk.home').forEach(k => k.classList.remove('home'));
+        if (hm != null) { const k = el.querySelector('.ampk[data-m="' + hm + '"]'); if (k) k.classList.add('home'); }
+      } catch (e) {}
+    }
+    // Refresh the Seed readouts + resize/re-mark the open keyboard — wired to
+    // Register/Range/Spread input, the Home select, and Notes changes.
+    function _ambSeedUiRefresh(E, p, get, key) {
+      const L = (typeof get === 'function') ? get() : null;
+      if (!L) return;
+      try { _ambSeedReadouts(E, p, L); } catch (e) {}
+      try {
+        const host = document.getElementById(E.hostId);
+        const pe = host && host.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+        if (pe && pe._built) {
+          const r = _ambPianoRangeFor(E, key);
+          _ambBuildPiano(pe, r.LO, r.HI);
+          _ambPianoHomeMark(E, key, pe);
+        }
+      } catch (e) {}
+    }
     // The keyboard/roll's octave span, from the layer's own pitch params —
     // smaller Range → fewer octaves → bigger keys. Whole octaves (C..B),
     // ≥ 2 octaves, clamped to C1..C7; layers without pitch params (and any
@@ -10282,11 +10377,16 @@
           const range = Number.isFinite(L.range) ? Math.max(1, L.range | 0) : null;
           const spread = Number.isFinite(L.spread) ? Math.max(0, L.spread | 0) : 0;
           const octs = Number.isFinite(L.octaves) ? Math.max(1, L.octaves | 0) : null;
-          if (ty === 'motif' && range != null) { lo = base - range * 12; hi = base + range * 12 + 12; }        // Register ± Range
-          else if (ty === 'run' && range != null) { lo = base; hi = base + range * 12 + 12; }                  // Register + span up
-          else if (ty === 'bed') { lo = base - spread * 12; hi = base + (spread + 1) * 12 + 12; }              // Register ± Spread (+chord top)
-          else if (ty === 'arp' && octs != null) { lo = base; hi = base + octs * 12 + 12; }                    // base + Octaves up
-          else { lo = base - 12; hi = base + 24; }                                                             // register-only types
+          // Span size per type, placed around Register by the Home setting
+          // (floor = up from it, center = ± around it, ceiling = down to it).
+          const n = (ty === 'motif' || ty === 'run') ? range : (ty === 'bed') ? spread : (ty === 'arp') ? octs : null;
+          if (n != null) {
+            const home = _ambHomeOf(L, ty);
+            const dn = (home === 'floor') ? 0 : n;
+            const up = (home === 'ceiling') ? 0 : n;
+            lo = base - dn * 12;
+            hi = base + up * 12 + 12 + (ty === 'bed' ? 12 : 0);   // bed chords voice above the root
+          } else { lo = base - 12; hi = base + 24; }              // register-only types
           if (ty === 'run' && Number.isFinite(L.transpose)) { lo += L.transpose | 0; hi += L.transpose | 0; }
         }
         if (lo == null || hi == null) return DEF;
@@ -10305,7 +10405,7 @@
       if (!el) return;
       const LO = Number.isFinite(lo) ? lo : 36, HI = Number.isFinite(hi) ? hi : 84;
       if (el._built && el._lo === LO && el._hi === HI) return;
-      el._built = true; el._lo = LO; el._hi = HI;
+      el._built = true; el._lo = LO; el._hi = HI; el._homeM = undefined;   // marker re-set after rebuild
       const black = (m) => { const p = ((m % 12) + 12) % 12; return p === 1 || p === 3 || p === 6 || p === 8 || p === 10; };
       const whites = [];
       for (let m = LO; m <= HI; m++) if (!black(m)) whites.push(m);
@@ -10499,6 +10599,7 @@
         const key = el.dataset.pkey; if (!key || !el._built) return;
         // Range/Register edits re-span the keyboard live (cheap no-op check).
         try { const r = _ambPianoRangeFor(E, key); _ambBuildPiano(el, r.LO, r.HI); } catch (e) {}
+        try { _ambPianoHomeMark(E, key, el); } catch (e) {}
         const cap = (E.cap && E.cap[key]) || [];
         const lit = {};
         for (let i = cap.length - 1; i >= 0 && i >= cap.length - 96; i--) {
@@ -11920,14 +12021,14 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Seed'], ['notes'], ['chordmode'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Seed'], ['notes'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ['grp', 'Generator'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
+        ['grp', 'Seed'], ['notes'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
         ['grp', 'Generator'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
@@ -11969,7 +12070,7 @@
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
+        ['grp', 'Seed'], ['notes'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
@@ -12278,6 +12379,7 @@
       if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
       if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
       if (k === 'rate') return _ambRateSel(p + '-rate');
+      if (k === 'home') return '<div class="ambient-ctrl"><label for="' + p + '-home" title="Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).">Home</label><select id="' + p + '-home" class="ambient-select"><option value="floor">Floor</option><option value="center">Center</option><option value="ceiling">Ceiling</option></select><span class="ambient-hint">Register sits at\u2026</span></div>';
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
@@ -12600,6 +12702,7 @@
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
           else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
+          else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
@@ -12628,6 +12731,12 @@
       try { _ambUnitSyncViz(E, p, inst); } catch (e) {}   // hide free Interval when BPM-synced
       if (type === 'beat') { try { _ambBeatGenVis(E, p, inst, p); } catch (e) {} }   // Gen mode rows (after UnitSyncViz so euclid can hide Interval)
       if (type === 'arp') { try { _ambArpEuclidVis(E, p, inst); } catch (e) {} }      // Series/Euclid mode rows
+      // Seed readouts (home-note Register / direction-aware Range) live-update
+      // on the pitch sliders, and the open keyboard re-spans + re-marks Home.
+      ['register', 'range', 'spread', 'octaves', 'transpose'].forEach(suf => {
+        const e2 = el(suf); if (e2) e2.addEventListener('input', () => { try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} });
+      });
+      try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {}
     }
     // ---- Arp layer: scale/chord series browser -----------------------------
     // Clear an Arp layer's playback cursor so a series/direction/passes edit
@@ -14799,6 +14908,20 @@
         });
       });
       _ambWireBedCvtMode(E, 'ambient-bed-', () => { const c = cfg0(); return c && c.bed; }, persist);
+      // Home select + live Seed readouts on the primary pitched layers.
+      ['bed', 'motif', 'texture'].forEach((ly) => {
+        const pp = 'ambient-' + ly + '-';
+        const getL = () => { const c = cfg0(); return c ? c[ly] : null; };
+        const hm = G(pp + 'home');
+        if (hm) {
+          hm.value = _ambHomeOf(getL(), ly);
+          hm.addEventListener('change', () => { _E = E; const L = getL(); if (!L) return; L.home = hm.value || ''; persist(); try { _ambSeedUiRefresh(E, pp, getL, ly); } catch (e) {} });
+        }
+        ['register', 'range', 'spread', 'octaves'].forEach(suf => {
+          const e2 = G(pp + suf); if (e2) e2.addEventListener('input', () => { try { _ambSeedUiRefresh(E, pp, getL, ly); } catch (e) {} });
+        });
+        try { _ambSeedUiRefresh(E, pp, getL, ly); } catch (e) {}
+      });
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
       bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
       bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');

@@ -3291,7 +3291,14 @@
     .ambient-piano { display: none; width: 100%; margin: 4px 0 2px; position: relative; height: 40px; font-size: 0; white-space: nowrap; }
     .ambient-piano.open { display: block; }
     .ampk { box-sizing: border-box; transition: background 0.05s linear; }
-    .ampk-w { display: inline-block; vertical-align: top; height: 100%; background: #d7d7e2; border: 1px solid #20202e; border-radius: 0 0 3px 3px; }
+    .ampk-w { display: inline-block; vertical-align: top; height: 100%; background: #d7d7e2; border: 1px solid #20202e; border-radius: 0 0 3px 3px; position: relative; /* anchors the .home marker */ }
+    /* Home-note marker: gold dot on the layer's Register root key. */
+    .ampk.home::after {
+      content: ''; position: absolute; bottom: 4px; left: 50%;
+      transform: translateX(-50%); width: 6px; height: 6px; border-radius: 50%;
+      background: #f4b740; box-shadow: 0 0 6px rgba(244, 183, 64, 0.85);
+      pointer-events: none;
+    }
     .ampk-b { position: absolute; top: 0; height: 62%; background: #14141d; border: 1px solid #000; border-radius: 0 0 3px 3px; z-index: 2; }
     .ampk-w.lit { background: rgba(127, 214, 196, calc(0.3 + 0.7 * var(--lit, 1))); }
     .ampk-b.lit { background: rgba(127, 214, 196, calc(0.45 + 0.55 * var(--lit, 1))); border-color: #7fd6c4; }

@@ -94,8 +94,11 @@
           { name: 'seq-pitch',   cfg: mk((c) => { c.bed.on = false; const s = _defaultSeqLayer(1); s.units = [seqUnit()]; s.on = true; c.seqs = [s]; }) },
           { name: 'combo',       cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.texture.on = true; c.beat.on = true; }) },
           // Key ON (root G major) — lock the new transpose/quantize behavior.
-          { name: 'key-transpose', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'transpose'; }) },
-          { name: 'key-quantize',  cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'quantize'; }) },
+          // keyFollow=false: these pin a CUSTOM key (G major) — under the
+          // key-integration default (keyOn+follow-workspace) an explicit
+          // root/scale means detached, exactly like editing the Configure row.
+          { name: 'key-transpose', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyFollow = false; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'transpose'; }) },
+          { name: 'key-quantize',  cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.keyOn = true; c.keyFollow = false; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'quantize'; }) },
           // Phase 3 — relative mode (bed re-centred to the 6th, the relative minor).
           { name: 'mode-relminor', cfg: mk((c) => { c.bed.on = true; c.motif.on = true; c.bed.modeRot = 5; c.motif.modeRot = 5; }) },
           // Phase 4 — colour set (blue notes at 50%) inflecting bed + motif.
@@ -240,6 +243,12 @@
         'mode-relminor': { hash: '33f6b03a', count: 18 },
         // Phase 4 — blue-notes colour set at 50%.
         'color-blue':    { hash: '94d352e9', count: 19 },
+        // Progressions (bar-aligned chord clock) — recorded 2026-07-05; these
+        // were in the battery but never baselined (verified stable across the
+        // key-integration change: identical hashes before/after).
+        'prog-bass':     { hash: 'c6987a55', count: 32 },
+        'prog-global':   { hash: 'c6987a55', count: 32 },
+        'prog-arp':      { hash: '4d144e5a', count: 52 },
       };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}

@@ -9923,6 +9923,14 @@
       transition: all 0.15s ease;
     }
     @media (hover: hover) { .bloom-hdr-key:hover { background: rgba(79,209,197,0.16); color: #b2f5ea; } }
+    /* Grow view + active Area on Free (Key off): the workspace key doesn't
+       drive that Area — grey the pill and make it inert. */
+    .bloom-hdr-key.disabled {
+      color: #4a5568; background: rgba(74, 85, 104, 0.08);
+      border-bottom-color: rgba(74, 85, 104, 0.3); border-right-color: rgba(74, 85, 104, 0.3);
+      cursor: not-allowed;
+    }
+    @media (hover: hover) { .bloom-hdr-key.disabled:hover { background: rgba(74, 85, 104, 0.08); color: #4a5568; } }
     /* Elapsed-time + BPM readout — full-width header, doubles as the Settings
        trigger (the standalone Settings button was removed). */
     .bloom-hdr-elapsed {
@@ -10361,7 +10369,7 @@
        top-level children show. */
     #serialbox-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px; box-sizing: border-box; }
     body.view-serialbox > #serialbox-view { display: block; }
-    body.view-serialbox > *:not(.float-header):not(.xport-menu):not(.top-bar):not(#serialbox-view):not(script) {
+    body.view-serialbox > *:not(.key-picker-overlay):not(.float-header):not(.xport-menu):not(.top-bar):not(#serialbox-view):not(script) {
       display: none !important;
     }
     body.view-serialbox { overflow-y: auto; }
@@ -10379,7 +10387,7 @@
        no empty gap between the Bloom panel and the project bar below it. The
        Shapes / Mixdown subtabs keep flex:1. */
     body.view-mix > #mix-view.mix-sub-bloom { flex: 0 0 auto; }
-    body.view-mix > *:not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(script) {
+    body.view-mix > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#mix-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(.track-item-popover):not(#ambient-shape-edithost):not(#midi-overlay):not(#xport-menu):not(script) {
       display: none !important;
     }
     body.view-mix { overflow-y: auto; }
@@ -10392,7 +10400,7 @@
     /* Harvest view — captured Blooms + Shapes bank. Same show/hide model as Mix. */
     #harvest-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 16px; }
     body.view-harvest > #harvest-view { display: block; }
-    body.view-harvest > *:not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(script) {
+    body.view-harvest > *:not(.key-picker-overlay):not(.float-header):not(.top-bar):not(.project-bottom-bar):not(.project-panel):not(#harvest-view):not(.ctx-menu):not(.sm-overlay):not(.modal-overlay):not(#midi-overlay):not(#xport-menu):not(script) {
       display: none !important;
     }
     body.view-harvest { overflow-y: auto; }

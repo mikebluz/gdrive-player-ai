@@ -54,7 +54,14 @@
         // passing tone (see _ambPcsWorkInKey); (2) scales/progressions root to
         // the key tonic (chords/wraps keep their own root so degrees & borrowed
         // chords play true). keyOff = behaviour exactly as before.
-        keyOn:    false,
+        keyOn:    true,
+        // keyFollow: the Bloom key mirrors the WORKSPACE key (header pill /
+        // key picker) live — one source of truth. Turning the Configure row
+        // to Free (keyOn=false) opts an Area out; editing the row's root or
+        // scale detaches it onto its own custom key (keyFollow=false).
+        // With follow on, key==workspace so generation is byte-identical to
+        // the old keyOff default (delta 0, no quantize) — harness-verified.
+        keyFollow: true,
         keyRoot:  0,
         keyScale: 'major',
         // How Key reshapes the material: 'transpose' (default — move every layer
@@ -1226,6 +1233,10 @@
       if (!Number.isFinite(cfg.seed)) cfg.seed = d.seed;
       if (!Number.isFinite(cfg.space)) cfg.space = d.space;
       if (typeof cfg.keyOn !== 'boolean') cfg.keyOn = d.keyOn;
+      // Pre-keyFollow saves: an area with Key ON had a deliberately-chosen
+      // custom key — preserve it (follow=false). Key-off areas follow when
+      // (re)enabled.
+      if (typeof cfg.keyFollow !== 'boolean') cfg.keyFollow = !cfg.keyOn;
       if (!Number.isFinite(cfg.keyRoot)) cfg.keyRoot = d.keyRoot;
       cfg.keyRoot = ((((cfg.keyRoot | 0) % 12) + 12) % 12);
       if (typeof cfg.keyScale !== 'string' || !cfg.keyScale) cfg.keyScale = d.keyScale;
@@ -1624,7 +1635,7 @@
       // SCALE (not just its root) — so a separate Bloom key actually re-colors
       // them major↔minor↔etc.
       const kc = _ambKeyCfg();
-      if (kc && kc.keyOn && typeof kc.keyScale === 'string' && typeof SCALES !== 'undefined' && SCALES[kc.keyScale]) return kc.keyScale;
+      if (kc && kc.keyOn) { const ks2 = _ambKeyScaleName(kc); if (typeof SCALES !== 'undefined' && SCALES[ks2]) return ks2; }   // follow-aware (stored keyScale is stale when following)
       return (typeof currentScale === 'string') ? currentScale : 'chromatic';
     }
     // ---- Note source ("Notes" menu) ------------------------------------
@@ -1758,10 +1769,15 @@
     }
     function _ambKeyRootPc(cfg) {
       const c = cfg || _ambKeyCfg();
+      if (c && c.keyOn && c.keyFollow !== false) return (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;   // follow the workspace key
       return c ? ((((c.keyRoot | 0) % 12) + 12) % 12) : 0;
     }
     function _ambKeyScaleName(cfg) {
       const c = cfg || _ambKeyCfg();
+      if (c && c.keyOn && c.keyFollow !== false) {   // follow the workspace scale
+        const ws = (typeof currentScale === 'string') ? currentScale : 'major';
+        return (typeof SCALES !== 'undefined' && SCALES[ws]) ? ws : 'major';
+      }
       const q = (c && typeof c.keyScale === 'string' && c.keyScale) ? c.keyScale : 'major';
       return (typeof SCALES !== 'undefined' && SCALES[q]) ? q : 'major';
     }
@@ -9035,9 +9051,20 @@
         if (kEl) {
           if (!kEl._wired) {
             kEl._wired = true;
-            kEl.addEventListener('click', () => { try { _openKeyPicker(); } catch (e) {} });
-            kEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); try { _openKeyPicker(); } catch (x) {} } });
+            kEl.addEventListener('click', () => { if (kEl.classList.contains('disabled')) return; try { _openKeyPicker(); } catch (e) {} });
+            kEl.addEventListener('keydown', (e) => { if (kEl.classList.contains('disabled')) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); try { _openKeyPicker(); } catch (x) {} } });
           }
+          // Grow view + the active Area set to Free (Key off) → the workspace
+          // key doesn't drive that Area: grey the pill out. Seed/Harvest (and
+          // key-following Areas) keep it live. Scoped per Area by definition —
+          // masterAmbient mirrors the ACTIVE area.
+          const freeInGrow = document.body.classList.contains('view-mix')
+            && !!masterAmbient && masterAmbient.keyOn === false;
+          kEl.classList.toggle('disabled', freeInGrow);
+          const wantTitle = freeInGrow
+            ? 'This Area is set to Free (Configure → Key) — the workspace key doesn\u2019t apply here'
+            : 'Workspace key (root + scale) — every Follow-Key layer roots here. Click to change.';
+          if (kEl.title !== wantTitle) kEl.title = wantTitle;
           const KEYN = (typeof CHROMATIC !== 'undefined' && Array.isArray(CHROMATIC)) ? CHROMATIC : ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
           const r = (typeof rootIdx === 'number') ? (((rootIdx % 12) + 12) % 12) : 0;
           const sc = (typeof currentScale === 'string') ? currentScale : 'chromatic';
@@ -14216,17 +14243,31 @@
         if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
       { const qT = document.getElementById(tr('ambient-queue-tails'));
         if (qT) qT.classList.toggle('active', !!cfg.tails); }
-      { const kOn = document.getElementById(tr('ambient-key-on'));
+      { const follow = !!cfg.keyOn && cfg.keyFollow !== false;
+        const kOn = document.getElementById(tr('ambient-key-on'));
         if (kOn) kOn.classList.toggle('active', !!cfg.keyOn);
-        set('ambient-key-root', cfg.keyRoot);
-        set('ambient-key-scale', cfg.keyScale);
-        const kSel = document.getElementById(tr('ambient-key-root')); if (kSel) kSel.disabled = !cfg.keyOn;
-        const kqSel = document.getElementById(tr('ambient-key-scale')); if (kqSel) kqSel.disabled = !cfg.keyOn;
+        const kFree = document.getElementById(tr('ambient-key-free'));
+        if (kFree) kFree.classList.toggle('active', !cfg.keyOn);
+        const kFol = document.getElementById(tr('ambient-key-follow'));
+        if (kFol) { kFol.classList.toggle('active', follow); kFol.disabled = !cfg.keyOn; }
+        // Effective key: workspace when following, the stored custom key otherwise.
+        const effRoot = follow ? _ambKeyRootPc(cfg) : (cfg.keyRoot | 0);
+        const effScale = follow ? _ambKeyScaleName(cfg) : cfg.keyScale;
+        set('ambient-key-root', effRoot);
+        set('ambient-key-scale', effScale);
+        // Following → the pickers are redundant (the workspace key picker is the
+        // UI); hide them. Custom → show + enable as before.
+        const kSel = document.getElementById(tr('ambient-key-root'));
+        if (kSel) { kSel.disabled = !cfg.keyOn; kSel.style.display = follow ? 'none' : ''; }
+        const kqSel = document.getElementById(tr('ambient-key-scale'));
+        if (kqSel) { kqSel.disabled = !cfg.keyOn; kqSel.style.display = follow ? 'none' : ''; }
         const kMode = document.getElementById(tr('ambient-key-mode'));
         if (kMode) { kMode.textContent = (cfg.keyMode === 'quantize') ? 'Quantize' : 'Transpose'; kMode.disabled = !cfg.keyOn; kMode.classList.toggle('active', !!cfg.keyOn); }
-        const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[cfg.keyRoot | 0]) || '';
-        const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(cfg.keyScale) : cfg.keyScale;
-        hint('ambient-key-hint', cfg.keyOn ? (kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift')) : 'off'); }
+        const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[effRoot | 0]) || '';
+        const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(effScale) : effScale;
+        hint('ambient-key-hint', cfg.keyOn
+          ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
+          : 'free — no key constraint'); }
       { const p = (cfg.prog && typeof cfg.prog === 'object') ? cfg.prog : { on: false, chords: [] };
         const pOn = document.getElementById(tr('ambient-prog-on'));
         if (pOn) pOn.classList.toggle('active', !!p.on);
@@ -14438,7 +14479,9 @@
         // Instance Key — when on, every layer roots its scales/wraps/chords at
         // the chosen root and snaps chord/wrap tones to that key's scale.
         '<div class="ambient-row ambient-key">' +
-          '<button type="button" class="ambient-seg" id="ambient-key-on" title="Constrain every layer to one key — only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-key-on" title="Key mode — constrain every layer to one key; only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-key-free" title="Free — no key constraint for this Area (the header Key pill greys out in Grow)">Free</button>' +
+          '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Off = this Area keeps its own custom key via the root/scale pickers.">= Workspace</button>' +
           '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
           '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
           '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
@@ -15114,7 +15157,18 @@
       { const kOn = G('ambient-key-on');
         if (kOn) kOn.addEventListener('click', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
-          cfg.keyOn = !cfg.keyOn; _ambSyncControls(E); persist();
+          cfg.keyOn = true; _ambSyncControls(E); persist();
+        });
+        const kFree = G('ambient-key-free');
+        if (kFree) kFree.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.keyOn = false; _ambSyncControls(E); persist();
+        });
+        const kFol = G('ambient-key-follow');
+        if (kFol) kFol.addEventListener('click', () => {
+          _E = E; const cfg = cfg0(); if (!cfg || !cfg.keyOn) return;
+          cfg.keyFollow = (cfg.keyFollow === false);   // toggle
+          _ambSyncControls(E); persist();
         });
         const kMode = G('ambient-key-mode');
         if (kMode) kMode.addEventListener('click', () => {
@@ -15126,6 +15180,7 @@
         if (kRoot) kRoot.addEventListener('change', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
           cfg.keyRoot = ((((parseInt(kRoot.value, 10) || 0) % 12) + 12) % 12);
+          cfg.keyFollow = false;   // manual root = a custom key, detach from workspace
           _ambSyncControls(E); persist();
         });
         const kScale = G('ambient-key-scale');
@@ -15135,6 +15190,7 @@
           kScale.addEventListener('change', () => {
             _E = E; const cfg = cfg0(); if (!cfg) return;
             cfg.keyScale = kScale.value || 'major';
+            cfg.keyFollow = false;   // manual scale = a custom key, detach from workspace
             _ambSyncControls(E); persist();
           });
         }

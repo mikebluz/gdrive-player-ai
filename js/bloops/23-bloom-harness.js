@@ -148,6 +148,10 @@
           playId: 'bloom-harness-play', seedId: 'bloom-harness-seed', isLane: false,
         });
         E.rng = (cfg.seed >>> 0) || 1;     // seed exactly like _ambStartGenerator would
+        // Bypass the cold-start context gate (added 2026-06-25): headless has no
+        // running AudioContext, and without this every tick returns early — the
+        // whole battery silently compares EMPTY note streams and always "passes".
+        E._everRan = true;
 
         const notes = [];
         let clock = 0;

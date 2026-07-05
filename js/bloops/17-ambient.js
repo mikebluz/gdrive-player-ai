@@ -5810,11 +5810,19 @@
     // '…-interval', extras use '…-intervalMs'), so try both.
     function _ambUnitSyncViz(E, p, L) {
       try { _ambSyncDriftReadouts(E); } catch (e) {}   // interval/rate edits change the step count → refresh Drift readouts
-      const intv = _ambGet(E, p + 'intervalMs') || _ambGet(E, p + 'interval'); if (!intv) return;
-      const ctrl = intv.closest('.ambient-ctrl'); if (!ctrl) return;
       const rateLocked = !!(L && L.rate && _ambRateBeats(L.rate) > 0);
       const unitLocked = !!(L && L.unit && L.unit.mode === 'sync');
-      ctrl.style.display = (rateLocked || unitLocked) ? 'none' : '';
+      // Euclid engines (Beat gen euclid / Arp poly) own these rows via
+      // _ambBeatGenVis/_ambArpEuclidVis and keep BOTH hidden — don't re-show
+      // them here when a unit toggle triggers a refresh.
+      const euclid = !!(L && (L.gen === 'euclid' || L.euclid));
+      const intv = _ambGet(E, p + 'intervalMs') || _ambGet(E, p + 'interval');
+      if (intv) { const c = intv.closest('.ambient-ctrl'); if (c) c.style.display = (euclid || rateLocked || unitLocked) ? 'none' : ''; }
+      // Unit-Sync time-scales the whole pattern to the reference, so Rate
+      // cancels out exactly like the ms Interval (scale = ref ÷ natural, and
+      // Rate only changes natural) — hide it while synced.
+      const rate = _ambGet(E, p + 'rate');
+      if (rate) { const c = rate.closest('.ambient-ctrl'); if (c) c.style.display = (euclid || unitLocked) ? 'none' : ''; }
     }
     // ----- Unit-Sync control (Free / Sync = Reference × Ratio) --------------
     const _AMB_RATIOS = [[1,4,'×¼'],[1,3,'×⅓'],[1,2,'×½'],[2,3,'×⅔'],[3,4,'×¾'],[1,1,'×1'],[3,2,'×1½'],[2,1,'×2'],[3,1,'×3'],[4,1,'×4']];

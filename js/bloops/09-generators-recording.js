@@ -1983,9 +1983,11 @@
     function _laneToTickEvents(steps) {
       const events = [];
       const ticksOf = (s) => Math.max(1, Math.round(stepLengthFactor(s) * 4 * _MERGE_TPQ));
-      const push = (n, start, len) => {
+      // Each event carries the ORIGINAL step's subdivision so the merge can
+      // reconstruct its exact size (no GCD re-quantization).
+      const push = (n, start, len, sub) => {
         if (n && Number.isFinite(n.freq)) events.push({
-          start, end: start + len,
+          start, end: start + len, sub,
           note: { freq: n.freq, label: n.label, cellIndex: n.cellIndex, sound: n.sound, params: n.params ? { ...n.params } : {} },
         });
       };
@@ -1995,26 +1997,60 @@
           let t = start; s.subSteps.forEach(ss => { t += walk(ss, t); }); return t - start;
         }
         const len = ticksOf(s);
-        if (Array.isArray(s.chord)) s.chord.forEach(n => push(n, start, len));
-        else if (Number.isFinite(s.freq)) push(s, start, len); // single note (rest: freq null → skipped)
-        return len;
+        const sub = (s.subdivision != null) ? s.subdivision : stepSubdivision;
+        // A chord voice already tagged endFrac (from a prior merge) sounds for
+        // that fraction — carry its true length so re-merging keeps it short.
+        if (Array.isArray(s.chord)) s.chord.forEach(n => {
+          const vlen = (n && n.endFrac != null && n.endFrac < 1) ? Math.max(1, Math.round(len * n.endFrac)) : len;
+          push(n, start, vlen, sub);
+        });
+        else if (Number.isFinite(s.freq)) push(s, start, len, sub); // single note (rest: freq null → skipped)
+        return len; // the STEP advances by its full length regardless
       };
       let t = 0;
       (steps || []).forEach(s => { t += walk(s, t); });
       return { events, total: t };
     }
     const _mergeGcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) { [x, y] = [y, x % y]; } return x; };
+    // Candidate subdivisions (quarter-note units) the merge reconstructs sizes
+    // from — straight + triplet down to 1/32. TPQ=96 represents them all exactly.
+    const _MERGE_SUBS = [4, 2, 1, 0.5, 1 / 3, 0.25, 1 / 6, 0.125, 1 / 12];
+    // Ticks → {dur, sub}. Prefers `preferSub` (the step-defining voice's own
+    // subdivision) so a note's exact step size survives the merge; otherwise
+    // picks the subdivision that represents the length with the least rounding.
+    function _ticksToDurSub(ticks, preferSub) {
+      const ev = (sub) => { const d = ticks / (sub * _MERGE_TPQ); const rd = Math.max(1, Math.round(d)); return { sub, dur: rd, err: Math.abs(d - rd) }; };
+      if (preferSub) { const c = ev(preferSub); if (c.err < 1e-6) return { dur: c.dur, sub: preferSub }; }
+      let best = null;
+      for (const s of _MERGE_SUBS) { const c = ev(s); if (!best || c.err < best.err - 1e-9 || (Math.abs(c.err - best.err) < 1e-9 && s > best.sub)) best = c; }
+      return { dur: best.dur, sub: best.sub };
+    }
+    // Fill a tick gap with rest steps at natural sizes (largest first).
+    function _mergePushRests(out, ticks) {
+      let g = Math.round(ticks);
+      for (const sub of _MERGE_SUBS) {
+        const unit = sub * _MERGE_TPQ;
+        if (g < unit - 1e-6) continue;
+        const dur = Math.floor((g + 1e-6) / unit);
+        if (dur >= 1) { out.push({ freq: null, label: '—', cellIndex: null, duration: dur, subdivision: sub }); g -= dur * unit; }
+      }
+    }
+    // Merge two lanes onto one absolute timeline, ONSET-DRIVEN so trigger counts
+    // and step sizes are preserved: one step per unique note start (a long note
+    // is never re-cut into extra triggers). Notes sharing an onset become a
+    // chord whose length is the LONGEST voice; shorter voices carry `endFrac`
+    // (they end early within the step — the chip shows a cue). A would-be-longer
+    // note is truncated only when a later onset actually interrupts it.
     function _mergeLaneSteps(stepsA, stepsB, squareUp) {
       const A = _laneToTickEvents(stepsA), B = _laneToTickEvents(stepsB);
       let evA = A.events, evB = B.events, total = Math.max(A.total, B.total);
-      // Square up: repeat each lane to their common multiple length so both
-      // end together (a resolving polyrhythm). A repeats lcm/la times, B
-      // repeats lcm/lb times.
+      // Square up: repeat each lane to their common multiple length so both end
+      // together (a resolving polyrhythm). Preserves each event's `sub`.
       if (squareUp && A.total > 0 && B.total > 0 && A.total !== B.total) {
         const g = _mergeGcd(A.total, B.total), lcm = (A.total / g) * B.total;
         const tile = (ev, period, n) => {
           const out = [];
-          for (let r = 0; r < n; r++) ev.forEach(e => out.push({ start: e.start + r * period, end: e.end + r * period, note: e.note }));
+          for (let r = 0; r < n; r++) ev.forEach(e => out.push({ start: e.start + r * period, end: e.end + r * period, sub: e.sub, note: e.note }));
           return out;
         };
         evA = tile(A.events, A.total, lcm / A.total);
@@ -2023,35 +2059,48 @@
       }
       const events = evA.concat(evB);
       if (total <= 0 || events.length === 0) {
-        // Nothing pitched — fall back to a single rest spanning the longer lane.
         return [{ freq: null, label: '—', cellIndex: null, duration: Math.max(1, total || 1), subdivision: 0.125 }];
       }
-      const bset = new Set([0, total]);
-      events.forEach(e => { if (e.start >= 0 && e.start <= total) bset.add(e.start); if (e.end >= 0 && e.end <= total) bset.add(e.end); });
-      const bounds = Array.from(bset).sort((a, b) => a - b);
-      const _gcd = (x, y) => { x = Math.abs(x); y = Math.abs(y); while (y) { [x, y] = [y, x % y]; } return x; };
-      let g = 0;
-      for (let k = 1; k < bounds.length; k++) g = _gcd(g, bounds[k] - bounds[k - 1]);
-      if (!(g > 0)) g = _MERGE_TPQ;
-      const subdivision = g / _MERGE_TPQ; // one dur unit = g ticks (model: sub=1 ⇒ a quarter)
+      const onsets = Array.from(new Set(events.map(e => e.start))).sort((a, b) => a - b);
       const out = [];
-      for (let k = 0; k < bounds.length - 1; k++) {
-        const t0 = bounds[k], segLen = bounds[k + 1] - t0;
-        if (segLen <= 0) continue;
-        const dur = Math.max(1, Math.round(segLen / g));
-        const active = events.filter(e => e.start <= t0 && e.end > t0);
-        // De-dupe identical pitches sounding from both lanes at once.
-        const seen = new Set(); const voices = [];
-        active.forEach(e => { const key = Math.round(e.note.freq * 100); if (!seen.has(key)) { seen.add(key); voices.push(e.note); } });
-        if (voices.length === 0) {
-          out.push({ freq: null, label: '—', cellIndex: null, duration: dur, subdivision });
-        } else if (voices.length === 1) {
-          const v = voices[0];
-          out.push({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params, duration: dur, subdivision });
+      let cursor = 0;
+      for (let k = 0; k < onsets.length; k++) {
+        const o = onsets[k];
+        if (o > cursor) { _mergePushRests(out, o - cursor); cursor = o; }
+        // Voices STARTING here (not merely overlapping — that would re-trigger).
+        // De-dupe identical pitches, keeping the longer.
+        const byPitch = new Map();
+        events.forEach(e => {
+          if (e.start !== o) return;
+          const key = Math.round(e.note.freq * 100);
+          const prev = byPitch.get(key);
+          if (!prev || (e.end - e.start) > (prev.end - prev.start)) byPitch.set(key, e);
+        });
+        const voices = Array.from(byPitch.values());
+        if (!voices.length) continue;
+        const nextOnset = (k + 1 < onsets.length) ? onsets[k + 1] : total;
+        let maxLen = 0, definer = voices[0];
+        voices.forEach(e => { const L = e.end - e.start; if (L > maxLen) { maxLen = L; definer = e; } });
+        // Step length = the longest voice, truncated only if a later onset lands first.
+        const slotLen = Math.min(maxLen, nextOnset - o);
+        if (slotLen <= 0) continue;
+        const { dur, sub } = _ticksToDurSub(slotLen, ((definer.end - definer.start) === slotLen) ? definer.sub : null);
+        const chordVoices = voices.map(e => {
+          const vlen = Math.min(e.end - e.start, slotLen);
+          const frac = slotLen > 0 ? vlen / slotLen : 1;
+          const v = { ...e.note };
+          if (frac < 0.999) v.endFrac = Math.round(frac * 1000) / 1000;   // ends early within the step
+          return v;
+        });
+        if (chordVoices.length === 1) {
+          const v = chordVoices[0];
+          out.push({ freq: v.freq, label: v.label, cellIndex: v.cellIndex, sound: v.sound, params: v.params, duration: dur, subdivision: sub });
         } else {
-          out.push({ freq: null, label: voices.map(v => v.label).join('·'), chord: voices.map(v => ({ ...v })), duration: dur, subdivision, params: voices[0].params ? { ...voices[0].params } : {} });
+          out.push({ freq: null, label: chordVoices.map(v => v.label).join('·'), chord: chordVoices, duration: dur, subdivision: sub, params: chordVoices[0].params ? { ...chordVoices[0].params } : {} });
         }
+        cursor = o + slotLen;
       }
+      if (cursor < total) _mergePushRests(out, total - cursor);
       return out;
     }
     // Warn that the two lanes are different lengths and offer to square them up

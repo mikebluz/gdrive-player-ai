@@ -828,7 +828,8 @@
           const size = s.chord.length;
           s.chord.forEach(n => {
             if (n.freq == null) return;
-            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, s), s.bend), waitMs, at);
+            const _vw = (n.endFrac != null && n.endFrac < 1) ? Math.max(1, Math.round(waitMs * n.endFrac)) : waitMs;
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, s), s.bend), _vw, at);
           });
         } else if (s.freq != null) {
           playNote(s.freq, paramsWithBend(s.params || s.sound || 'sine', s.bend), waitMs, at);

@@ -10893,6 +10893,22 @@
       border-radius: 3px; cursor: copy; padding: 0;
     }
     .lane-chips > .place-ghost:hover { background: rgba(127, 214, 196, 0.18); border-style: solid; }
+    /* Merged-chord "ends early" cue: a gate bar along the chip's bottom edge
+       reaching only as far as the earliest-ending voice, capped with a red
+       tick where it cuts off (the label also shows ‹NN per early voice). */
+    .seq-step.has-early-voice { position: relative; }
+    .seq-step .seq-early-gate {
+      position: absolute; left: 0; bottom: 0; height: 3px;
+      min-width: 2px; pointer-events: none;
+      background: linear-gradient(90deg, #ffd873, #ff9d5c);
+      border-right: 2px solid #ff5c5c;
+      border-radius: 0 0 0 3px;
+    }
+    /* Transient drop-cells injected while dragging a note into empty tail
+       space. Fainter than place-mode ghosts (they appear unbidden mid-drag);
+       the cell under the pointer lights up as the drop target. */
+    .lane-chips > .place-ghost.drag-ghost { cursor: grabbing; background: rgba(127, 214, 196, 0.03); border-color: rgba(127, 214, 196, 0.16); }
+    .lane-chips > .place-ghost.drag-over { background: rgba(79, 209, 197, 0.28); border: solid #4fd1c5; }
     /* Hover footprint: the ghost cells the placed note would cover,
        outlined as ONE would-be step chip (2px top/bottom rails on every
        hot cell; the -start/-end caps close the left/right edges) so the

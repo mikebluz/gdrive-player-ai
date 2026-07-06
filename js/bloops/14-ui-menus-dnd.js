@@ -3255,7 +3255,7 @@
     let _stepDragIdx = null;
 
     function clearStepDragOver() {
-      document.querySelectorAll('.seq-step.drag-over').forEach(c => c.classList.remove('drag-over'));
+      document.querySelectorAll('.seq-step.drag-over, .place-ghost.drag-over').forEach(c => c.classList.remove('drag-over'));
     }
 
     // Nudge a step's onset earlier (dir<0) or later (dir>0) by dUnits (in
@@ -3511,6 +3511,7 @@
       let clone = null;
       let offX = 0, offY = 0;
       let dropIdx = null;
+      let dropPos32 = null;   // set when hovering an empty-tail ghost drop-cell
       const MOVE_THRESHOLD = 6;
 
       const engage = () => {
@@ -3528,16 +3529,22 @@
         });
         document.body.appendChild(clone);
         chip.classList.add('dragging');
+        // Expose empty-tail drop cells so the note can be dragged into space
+        // that has no notes yet (not just swapped with existing chips). Place
+        // mode already renders its own ghosts, so only inject when it's off.
+        try { if (typeof placeMode === 'undefined' || !placeMode) { const host = chip.closest('.lane-chips'); if (host && typeof _injectDragGhosts === 'function') _injectDragGhosts(host); } } catch (e) {}
       };
 
       const cleanup = () => {
         if (clone) { try { clone.remove(); } catch (e) {} clone = null; }
         chip.classList.remove('dragging');
         clearStepDragOver();
+        try { if (typeof _clearDragGhosts === 'function') _clearDragGhosts(); } catch (e) {}
         try { chip.releasePointerCapture(pointerId); } catch (e) {}
         pointerId = null;
         dragging = false;
         dropIdx = null;
+        dropPos32 = null;
         _stepDragIdx = null;
       };
 
@@ -3569,6 +3576,7 @@
         clone.style.top  = (e.clientY - offY) + 'px';
         clearStepDragOver();
         dropIdx = null;
+        dropPos32 = null;
         const el = document.elementFromPoint(e.clientX, e.clientY);
         const target = el && el.closest && el.closest('.seq-step');
         if (target && target !== chip) {
@@ -3577,6 +3585,14 @@
             target.classList.add('drag-over');
             dropIdx = idx;
           }
+        } else {
+          // Not over a chip — maybe over an empty-tail ghost drop-cell (either
+          // the injected drag ghosts or Place-mode's own).
+          const ghost = el && el.closest && el.closest('.place-ghost');
+          if (ghost && ghost.dataset.pos32 != null) {
+            ghost.classList.add('drag-over');
+            dropPos32 = parseInt(ghost.dataset.pos32, 10);
+          }
         }
       });
 
@@ -3584,8 +3600,10 @@
         if (pointerId == null || (e && e.pointerId !== pointerId)) return;
         const didDrag = dragging;
         const target = dropIdx;
+        const targetPos = dropPos32;
         cleanup();
-        if (didDrag && Number.isFinite(target)) moveSequenceStep(i, target);
+        if (didDrag && Number.isFinite(targetPos) && typeof _moveStepTo32 === 'function') _moveStepTo32(i, targetPos);
+        else if (didDrag && Number.isFinite(target)) moveSequenceStep(i, target);
         // Suppress the click that follows pointerup so a drag that
         // ended on the original chip doesn't also fire the chip's
         // select/preview click handler.
@@ -3613,6 +3631,7 @@
       let clone = null;
       let offX = 0, offY = 0;
       let dropIdx = null;
+      let dropPos32 = null;   // empty-tail ghost drop position
       // ---- Drag-to-scroll state (the chip strip is a horizontal timeline).
       // A quick horizontal swipe STARTING on a chip drags the whole lane
       // sideways (chips fill the strip, so without this there's nowhere to
@@ -3647,6 +3666,8 @@
         });
         document.body.appendChild(clone);
         chip.classList.add('dragging');
+        // Empty-tail drop cells so a note can be dragged into note-less space.
+        try { if (typeof placeMode === 'undefined' || !placeMode) { const host = chip.closest('.lane-chips'); if (host && typeof _injectDragGhosts === 'function') _injectDragGhosts(host); } } catch (e) {}
       };
 
       chip.addEventListener('touchstart', (e) => {
@@ -3723,12 +3744,19 @@
           clone.style.visibility = '';
           clearStepDragOver();
           dropIdx = null;
+          dropPos32 = null;
           const target = el?.closest('.seq-step');
           if (target && target !== chip) {
             const idx = parseInt(target.dataset.stepIdx);
             if (!isNaN(idx) && idx !== i) {
               target.classList.add('drag-over');
               dropIdx = idx;
+            }
+          } else {
+            const ghost = el?.closest('.place-ghost');
+            if (ghost && ghost.dataset.pos32 != null) {
+              ghost.classList.add('drag-over');
+              dropPos32 = parseInt(ghost.dataset.pos32, 10);
             }
           }
         }
@@ -3758,10 +3786,13 @@
           clone = null;
           chip.classList.remove('dragging');
           clearStepDragOver();
-          if (dropIdx !== null) moveSequenceStep(_stepDragIdx, dropIdx);
+          try { if (typeof _clearDragGhosts === 'function') _clearDragGhosts(); } catch (e) {}
+          if (dropPos32 !== null && typeof _moveStepTo32 === 'function') _moveStepTo32(_stepDragIdx, dropPos32);
+          else if (dropIdx !== null) moveSequenceStep(_stepDragIdx, dropIdx);
         }
         dragging = false;
         dropIdx = null;
+        dropPos32 = null;
         _stepDragIdx = null;
       };
       chip.addEventListener('touchend', onTouchEnd);

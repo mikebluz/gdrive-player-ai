@@ -965,6 +965,31 @@
       catch (e) { return masterBus; }
       return _bloomMasterGain;
     }
+    // Active (non-departing) layer count across both master-Bloom engines —
+    // the layers summing into _bloomMasterGain. Departing chains are keyed
+    // "<key>#dep…" and excluded.
+    function _ambBloomMasterLayerCount() {
+      let n = 0;
+      [_masterEng, _shapeBloomEng].forEach(E => {
+        if (E && E.mod) { for (const k in E.mod) { if (E.mod[k] && k.indexOf('#') < 0) n++; } }
+      });
+      return n;
+    }
+    // Adaptive Master/Mix-Bloom trim. The grid sums its lanes through
+    // laneSumBus at 1/sqrt(N) (so one lane = unity); Bloom used a FLAT 0.5
+    // (−6 dB), which left a single layer 6 dB below the same tone on the grid.
+    // Mirror the grid's law instead, but FLOOR it at the old 0.5 so dense
+    // stacks never exceed their prior (calibrated) level — this only RAISES
+    // sparse layers toward grid parity (N=1 → ×1, N≥4 → ×0.5, as before).
+    function _ambUpdateBloomMasterTrim() {
+      if (!_bloomMasterGain || _bloomMasterGain === masterBus) return;
+      const n = Math.max(1, _ambBloomMasterLayerCount());
+      const t = Math.max(_BLOOM_MASTER_TRIM, Math.min(1, 1 / Math.sqrt(n)));
+      try {
+        if (_bloomMasterGain.gain.rampTo) _bloomMasterGain.gain.rampTo(t, 0.08);
+        else _bloomMasterGain.gain.value = t;
+      } catch (e) {}
+    }
     // Master "Width" — a whole-Bloom-mix chorus lazily spliced into the Bloom master
     // path (_bloomMasterGain → [chorus] → masterBus). GLOBAL (one node, on masterBloomAreas
     // .width), so it's constant across areas; affects only the Bloom sum, not the grid.
@@ -6806,6 +6831,10 @@
       // cost grows with layer count, was glitching dense Bloom stacks).
       E._cfg = cfg;
       if (!cfg) return;
+      // Keep the Master/Mix-Bloom trim tracking the live layer count (grid-
+      // parity headroom law). Self-correcting per tick with a short ramp, so
+      // build/teardown/orchestration don't each need their own hook.
+      if (E === _masterEng || E === _shapeBloomEng) { try { _ambUpdateBloomMasterTrim(); } catch (e) {} }
       // COLD START ONLY: skip scheduling until the AudioContext first reaches
       // 'running'. Pressing Play resumes it asynchronously; ticking while still
       // 'suspended' on the very first start would anchor every layer's first

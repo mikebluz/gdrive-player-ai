@@ -676,7 +676,10 @@
                   + (isRest ? ' rest'   : '');
                 let label = '';
                 if (isSub)       label = step._seqClip ? ('▤ ' + (step._seqName || 'Seq')) : '▤';
-                else if (isCh)   label = step.chord.map(_chipNoteLabel).join('·');
+                else if (isCh)   label = step.chord.map(v => {
+                  const l = _chipNoteLabel(v);
+                  return (v && v.endFrac != null && v.endFrac < 0.999) ? (l + '‹' + Math.round(v.endFrac * 100)) : l;
+                }).join('·');
                 else if (isRest) label = '—';
                 else             label = _chipNoteLabel(step);
                 chip.textContent = label;
@@ -948,7 +951,24 @@
                            : (count > 0 ? `▤  ${preview}` : '▤');
         } else if (step.chord) {
           chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '') + (bendDir ? ' ' + bendDir : '');
-          chip.textContent = step.chord.map(_chipNoteLabel).join('·') + (durSuffix ? ' ' + durSuffix : '');
+          // Merged chords can hold voices that END EARLY (a shorter note stacked
+          // under a longer one). Mark each such voice in the label with ‹NN (its
+          // end %), add a gate bar showing how far the earliest one reaches, and
+          // a tooltip naming which voices end early.
+          const _early = step.chord.filter(v => v && v.endFrac != null && v.endFrac < 0.999);
+          chip.textContent = step.chord.map(v => {
+            const l = _chipNoteLabel(v);
+            return (v && v.endFrac != null && v.endFrac < 0.999) ? (l + '‹' + Math.round(v.endFrac * 100)) : l;
+          }).join('·') + (durSuffix ? ' ' + durSuffix : '');
+          if (_early.length) {
+            chip.classList.add('has-early-voice');
+            const _minFrac = Math.min.apply(null, _early.map(v => v.endFrac));
+            const gate = document.createElement('span');
+            gate.className = 'seq-early-gate';
+            gate.style.width = Math.max(2, Math.min(100, Math.round(_minFrac * 100))) + '%';
+            chip.appendChild(gate);
+            chip.title = 'Ends early: ' + _early.map(v => `${_chipNoteLabel(v)} at ${Math.round(v.endFrac * 100)}%`).join(', ');
+          }
         } else if (treatAsEmptySlot) {
           chip.className = 'seq-step empty-slot' + (i === activeIndex ? ' active' : '');
           chip.textContent = '·';
@@ -2344,6 +2364,46 @@
     }
     function _seqEnd32() {
       return sequence.reduce((a, s) => a + ((s && s._wrapEditing) ? 0 : Math.max(0, Math.round(stepLengthFactor(s) * 32))), 0);
+    }
+    // Drag-drop into EMPTY bar-grid space. Existing gaps between notes are rest
+    // chips (already droppable), so the only note-less region is the tail past
+    // the sequence end. During a chip drag we inject transient ghost drop-cells
+    // there (reusing the Place-mode ghost element) so a note can be dragged into
+    // future empty positions; _moveStepTo32 lands it (gap auto-fills with rests).
+    function _injectDragGhosts(chipHost) {
+      if (!chipHost || !chipHost.classList || !chipHost.classList.contains('lane-chips')) return;
+      const end32 = _seqEnd32();
+      const rowFill = (32 - (end32 % 32)) % 32;   // fill the last partial bar…
+      const ghostCount = rowFill + 32;            // …plus one whole empty bar
+      for (let g = 0; g < ghostCount; g++) {
+        const gh = document.createElement('button');
+        gh.type = 'button';
+        gh.className = 'place-ghost drag-ghost';
+        gh.style.gridColumn = 'span 1';
+        gh.dataset.pos32 = String(end32 + g);
+        chipHost.appendChild(gh);
+      }
+    }
+    function _clearDragGhosts() {
+      document.querySelectorAll('.place-ghost.drag-ghost').forEach(el => el.remove());
+    }
+    // Move the step at fromIdx to absolute bar-grid position pos32 (in the empty
+    // tail). Its old slot becomes a same-length rest so the other notes keep
+    // their timing; the gap up to pos32 auto-fills with rests.
+    function _moveStepTo32(fromIdx, pos32) {
+      const step = sequence[fromIdx];
+      if (!step || pos32 == null) return;
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Move note');
+      const dur = step.duration ?? 1;
+      const sub = (step.subdivision != null) ? step.subdivision : stepSubdivision;
+      sequence[fromIdx] = { freq: null, label: '—', cellIndex: null, duration: dur, subdivision: sub };
+      const end32 = _seqEnd32();
+      const gap = pos32 - end32;
+      if (gap > 0) _restFill32(gap).forEach(r => sequence.push(r));
+      sequence.push(step);
+      renderSequence();
+      const sv = document.getElementById('save-btn'); if (sv) sv.disabled = sequence.length === 0;
+      if (typeof persistWorkspace === 'function') persistWorkspace();
     }
     // Hover preview: how many 1/32 cells the next placed note will span.
     function _placeSpan32() {

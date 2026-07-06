@@ -756,8 +756,11 @@
                   ? at
                   : at + (_strumSec >= 0 ? ci : (size - 1 - ci)) * Math.abs(_strumSec);
                 const _cp = paramsWithBend(_withVel(_withBypass(_withSlice(chordVoiceParams(n.params || n.sound || 'sine', size, step)))), step.bend);
-                playNote(n.freq, _cp, dms, _voiceAt, undefined, undefined, laneIdx);
-                try { if (typeof midiEmitNote === 'function') midiEmitNote(n.freq, _cp, dms, _voiceAt, laneIdx); } catch (e) {}
+                // A merged voice tagged endFrac ends early within the step —
+                // gate it for that fraction so it sounds as short as it looks.
+                const _vdms = (n.endFrac != null && n.endFrac < 1) ? Math.max(1, Math.round(dms * n.endFrac)) : dms;
+                playNote(n.freq, _cp, _vdms, _voiceAt, undefined, undefined, laneIdx);
+                try { if (typeof midiEmitNote === 'function') midiEmitNote(n.freq, _cp, _vdms, _voiceAt, laneIdx); } catch (e) {}
               }
             } else {
               const _sp = paramsWithBend(_withVel(_withBypass(_withSlice(step.params || step.sound || 'sine'))), step.bend);
@@ -1209,7 +1212,9 @@
         if (s.chord) {
           const size = s.chord.length;
           s.chord.forEach(n => {
-            if (n.freq != null) playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, s), s.bend), waitMs);
+            if (n.freq == null) return;
+            const _vw = (n.endFrac != null && n.endFrac < 1) ? Math.max(1, Math.round(waitMs * n.endFrac)) : waitMs;
+            playNote(n.freq, paramsWithBend(chordVoiceParams(n.params || n.sound || 'sine', size, s), s.bend), _vw);
           });
         } else if (s.freq != null) {
           playNote(s.freq, paramsWithBend(s.params || s.sound || 'sine', s.bend), waitMs);

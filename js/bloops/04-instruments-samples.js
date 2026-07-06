@@ -900,7 +900,11 @@
       // density and lets Tone.Sampler pitch-shift between anchors.
       // CDN: gleitz.github.io/midi-js-soundfonts/MusyngKite (CC-BY).
       ..._buildGmInstruments(),
-      // ---- Drum kits — CC0 / public-domain from tidalcycles/dirt-samples.
+      // ---- Drum kits — CC0 / public-domain from tidalcycles/dirt-samples,
+      // served via the jsDelivr CDN mirror (cdn.jsdelivr.net/gh/…) NOT
+      // raw.githubusercontent.com: raw.githubusercontent rate-limits the boot
+      // burst (~138 sample fetches) with HTTP 429, so kits silently failed to
+      // load. jsDelivr is a real CDN (CORS *, 7-day cache, no per-IP burst cap).
       // Each kit fans out 12 distinct hits across the chromatic C2-B2 row
       // (kick → C, rim → C#, snare → D, clap → D#, closed hat → E, open
       // hat → F, low tom → F#, mid tom → G, cowbell/cymbal → G#, crash/
@@ -910,7 +914,7 @@
         id: 'tr808',
         label: 'TR-808',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/',
         urls: {
           'C2':   '808bd/BD0000.WAV',
           'C#2':  '808/RS.WAV',
@@ -934,7 +938,7 @@
         id: 'drumtraks',
         label: 'DrumTraks',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/drumtraks/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/drumtraks/',
         urls: {
           'C2':   '006_DT Kick.wav',
           'C#2':  '008_DT Rimshot.wav',
@@ -954,7 +958,7 @@
         id: 'drumkit',
         label: 'Drum Kit',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/',
         urls: {
           'C2':   'bd/BT0AAD0.wav',
           'C#2':  'rs/rytm-rs.wav',
@@ -977,7 +981,7 @@
         id: 'dr55',
         label: 'DR-55',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/',
         urls: {
           // Literal spaces (not %20) — see DrumTraks comment above.
           'C2':   'dr55/001_DR55 kick.wav',
@@ -1000,7 +1004,7 @@
         id: 'hardcore',
         label: 'Hardcore',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/hardcore/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/hardcore/',
         urls: {
           'C2':   '004_hckick1.wav',
           'C#2':  '001_hchit1.wav',
@@ -1022,7 +1026,7 @@
         id: 'house',
         label: 'House',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/house/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/house/',
         urls: {
           'C2':   '000_BD.wav',
           'C#2':  '001_CB.wav',
@@ -1044,7 +1048,7 @@
         id: 'tabla',
         label: 'Tabla',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/tabla/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/tabla/',
         urls: {
           'C2':   '006_d_sharp_hit.wav',
           'C#2':  '003_dead_hit1.wav',
@@ -1066,7 +1070,7 @@
         id: 'taiko',
         label: 'Taiko',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/east/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/east/',
         urls: {
           'C2':   '006_taiko_1.wav',
           'C#2':  '000_nipon_wood_block.wav',
@@ -1088,7 +1092,7 @@
         id: 'gretsch',
         label: 'Gretsch (acoustic)',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/gretsch/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/gretsch/',
         urls: {
           'C2':   '013_kick.wav',
           'C#2':  '021_snareghost.wav',
@@ -1109,7 +1113,7 @@
         id: 'dbx',
         label: 'DBX (break)',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/db/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/db/',
         urls: {
           'C2':   'dbs12kick1.wav',
           'C#2':  'dbs12hit1.wav',
@@ -1131,7 +1135,7 @@
         id: 'sequential',
         label: 'Sequential Tom',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/sequential/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/sequential/',
         urls: {
           'C2':   '003_Tom Kick.wav',
           'C#2':  '000_Tom Clap.wav',
@@ -1152,7 +1156,7 @@
         id: 'sid',
         label: 'SID (8-bit)',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/sid/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/sid/',
         urls: {
           'C2':   '002_basd.wav',
           'C#2':  '003_blipp01.wav',
@@ -1173,7 +1177,7 @@
         id: 'peri',
         label: 'Peri (electro)',
         drumKit: true,
-        baseUrl: 'https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/peri/',
+        baseUrl: 'https://cdn.jsdelivr.net/gh/tidalcycles/dirt-samples@master/peri/',
         urls: {
           'C2':   '000_bd.wav',
           'C#2':  '007_xbigclang.wav',

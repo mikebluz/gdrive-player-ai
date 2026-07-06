@@ -2855,6 +2855,28 @@
         _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
       });
     }
+    // Wire the header compose-readout's Note-source CHIP (the interactive
+    // `…-srcswap` button) — the single source control now that the Seed-group
+    // "Notes" button is gone. Same behaviour as _ambWireNotesBtn: opens the
+    // shared source menu and, on change, updates the chip's DETAILED label
+    // (e.g. "C Dorian") plus the Tone-wrap visibility + Seed UI (Register/Range
+    // readouts, piano home mark). `tonePrefix` = the layer's id stem ending in
+    // '-'; `key` = the engine layer key (e.g. 'bed' or 'bass:1').
+    function _ambWireSrcChip(E, chipId, getLayer, tonePrefix, key) {
+      const chip = _ambGet(E, chipId);
+      if (!chip) return;
+      const refresh = () => {
+        const L = getLayer(); if (!L) return;
+        chip.textContent = _ambNotesLabel(_ambNotesOf(L));
+        try { _ambToneWrapVis(E, tonePrefix, L); } catch (e) {}
+        try { _ambSeedUiRefresh(E, tonePrefix, getLayer, key); } catch (e) {}
+      };
+      refresh();
+      chip.addEventListener('click', () => {
+        const r = chip.getBoundingClientRect();
+        _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
+      });
+    }
 
     // ---- Space (stereo distribution) -----------------------------------
     // For a chord of N notes (sorted), returns each note's pan (-100..100).
@@ -12425,21 +12447,21 @@
     // header they sit under.
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Seed'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Generator'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
+        ['grp', 'Seed'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 3, 7, 'octave'],
+        ['grp', 'Seed'], ['sl', 'register', 'Register', 3, 7, 'octave'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
@@ -12465,7 +12487,7 @@
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'],
+        ['grp', 'Seed'], ['sl', 'register', 'Register', 1, 4, 'octave'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
@@ -12474,7 +12496,7 @@
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
+        ['grp', 'Seed'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
@@ -12482,7 +12504,7 @@
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
+        ['grp', 'Seed'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
@@ -12491,7 +12513,7 @@
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
-        ['grp', 'Seed'], ['notes'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Seed'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -12606,7 +12628,14 @@
       const voice = _ambVoiceOf(L, type), src = _ambSourceKindOf(L, type), gen = _ambGeneratorOf(L, type);
       const tag = (t2) => '<span class="ambient-compose-tag">' + t2 + '</span>';
       const bits = [tag(_AMB_VOICE_LBL[voice] || voice)];
-      if (src && src !== 'none') bits.push(tag(_AMB_SRC_LBL[src] || src));
+      // Note-source: an interactive chip (opens the source menu, shows the detailed
+      // material label) for editable-source layers — this replaced the Seed-group
+      // "Notes" button. Static tag otherwise (e.g. Beat has no pitch source).
+      if (src && src !== 'none') {
+        if (_ambSourceEditable(type)) {
+          bits.push('<button type="button" id="ambient-' + type + '-srcswap" class="ambient-compose-sel" title="Note-source — the pitch material this layer draws from (click to change)">' + _ambNotesLabel(_ambNotesOf(L)) + '</button>');
+        } else bits.push(tag(_AMB_SRC_LBL[src] || src));
+      }
       if (gen === 'riff' || gen === 'mutate') { bits.push(tag('Riff')); bits.push(tag(gen === 'mutate' ? 'Evolve' : 'Re-roll')); }
       else bits.push(tag(_AMB_GEN_LBL[gen] || gen));
       return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
@@ -12638,7 +12667,8 @@
         const slbl = (t === 'arp') ? 'Series' : (_AMB_SRC_LBL[src] || src);
         if (_ambSourceEditable(t)) {
           const sid = 'ambient-' + inst.type + '-' + inst.id + '-srcswap';
-          bits.push('<button type="button" id="' + sid + '" class="ambient-compose-sel" title="Note-source — the pitch material this layer draws from (click to change)">' + slbl + '</button>');
+          // Detailed label (e.g. "C Dorian") — this chip is the sole source control now.
+          bits.push('<button type="button" id="' + sid + '" class="ambient-compose-sel" title="Note-source — the pitch material this layer draws from (click to change)">' + _ambNotesLabel(_ambNotesOf(inst)) + '</button>');
         } else {
           bits.push(tag(slbl));
         }
@@ -13031,19 +13061,10 @@
         const target = (pmode.value === 'evolve') ? 'texture' : 'run';
         if (target !== L.type) _ambSwapGenerator(E, L, target, null);
       });
-      // Note-source chip → the shared source menu (scale/chord/wrap/prog). Reuses
-      // the tested _ambOpenNotesMenu (sets L.notes + syncs + persists); afterChange
-      // just refreshes the chip + the Pitch-group Notes button, so the card stays
-      // expanded (no re-render).
-      const ssw = el('srcswap');
-      if (ssw) ssw.addEventListener('click', () => {
-        _E = E; const r = ssw.getBoundingClientRect();
-        _ambOpenNotesMenu(E, get, r.left, r.bottom + 4, () => {
-          const L = get(); if (!L) return;
-          ssw.textContent = (L.type === 'arp') ? 'Series' : (_AMB_SRC_LBL[_ambSourceKindOf(L, L.type)] || 'Scale');
-          const nb = el('notes'); if (nb) nb.textContent = _ambNotesLabel(_ambNotesOf(L));
-        });
-      });
+      // Note-source chip → the shared source menu (scale/chord/wrap/prog). This is
+      // the sole source control (the Seed-group "Notes" button was removed);
+      // _ambWireSrcChip updates the detailed label + Tone-wrap/Seed UI on change.
+      _ambWireSrcChip(E, p + 'srcswap', get, p, type + ':' + id);
       // Voice chip → swap the sound family (Synth ↔ Kit) via in-place conversion:
       // Kit → a Beat (keeping euclid vs random), Synth → a Bass (pitched line).
       const vsw = el('voiceswap');
@@ -15143,8 +15164,9 @@
       ['bed', 'motif', 'texture'].forEach(layer => {
         wireSelect('ambient-' + layer + '-tone', layer, 'tone',
           (sel) => populateGroupedToneSelect(sel, _ambToneOptions(), _ambGridVoiceOption()));
-        // "Notes" source button (Scale / Chord) replaces the old scale select.
-        _ambWireNotesBtn(E, 'ambient-' + layer + '-notes', () => { const c = cfg0(); return c ? c[layer] : null; });
+        // Note-source is the header compose-readout CHIP now (the Seed-group "Notes"
+        // button was removed); it opens the same source menu + refreshes the Seed UI.
+        _ambWireSrcChip(E, 'ambient-' + layer + '-srcswap', () => { const c = cfg0(); return c ? c[layer] : null; }, 'ambient-' + layer + '-', layer);
       });
 
       // Mod controls for the fixed layers (seq layers wire their own in the renderer).

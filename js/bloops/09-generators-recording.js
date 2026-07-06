@@ -1041,6 +1041,12 @@
       const stopEucPreview = () => {
         if (_eucPreviewTimer) { clearTimeout(_eucPreviewTimer); _eucPreviewTimer = null; }
         _eucPreviewAt = 0;
+        // Clearing the timer only stops FUTURE cycles — the current cycle's
+        // notes are already scheduled ahead on the audio clock and would ring
+        // on. Cut them (and any not-yet-started scheduled voices) at once so
+        // Stop kills the preview immediately. Held live cell presses are
+        // untracked, so they survive.
+        try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {}
         if (previewBtn) { previewBtn.classList.remove('active'); previewBtn.textContent = 'Preview'; }
       };
       const _eucPreviewTick = () => {
@@ -2153,6 +2159,92 @@
       try { showHistoryToast(`Merged ${laneA.name} + ${laneB.name} → ${newLane.name}`); } catch (e) {}
       try { refreshMergeLanesBtn(); } catch (e) {}
       if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // One-action merge of an ENTIRE yolk group into a single combined lane.
+    // Yolked lanes already share a sound engine, so merging them is a common
+    // "flatten this kit's parts into one lane" move — this does it in one step
+    // (no lane picker, no per-lane prompt). Steps fold together on the absolute
+    // timeline (same rule as the 2-lane merge); the group's shared voice seeds
+    // the new lane; every source lane is kept but muted.
+    //
+    // `squareUp` mirrors the 2-lane merge: undefined → prompt when the group's
+    // lanes differ in length (offer LCM square-up vs merge-as-is); true → repeat
+    // each lane to the group's common multiple so they all end together; false →
+    // absolute-timeline merge (lengths left as-is). Folding pairwise with
+    // squareUp=true composes to the OVERALL LCM across all lanes.
+    function _mergeYolkGroup(laneIdx, squareUp) {
+      const src = lanes[laneIdx];
+      if (!src || !src.yolk) return;
+      const groupIdxs = [];
+      lanes.forEach((l, i) => { if (l && l.yolk === src.yolk) groupIdxs.push(i); });
+      if (groupIdxs.length < 2) return;
+      if (lanes.length >= 8) { try { showHistoryToast('Already at the 8-lane cap — delete a lane first.'); } catch (e) {} return; }
+      // Flush the active lane's live steps back before reading lane.steps.
+      if (activeLaneIdx >= 0 && activeLaneIdx < lanes.length) lanes[activeLaneIdx].steps = sequence;
+      // Different-length lanes: offer the LCM square-up choice (once) before
+      // merging, exactly like the 2-lane merge does.
+      if (squareUp === undefined) {
+        const totals = groupIdxs.map(i => _laneToTickEvents(lanes[i].steps || []).total).filter(t => t > 0);
+        if (totals.length >= 2 && new Set(totals).size >= 2) {
+          _showYolkMergeLengthDialog(laneIdx, groupIdxs, totals);
+          return;
+        }
+        squareUp = false;
+      }
+      // Fold every group lane's steps into one (absolute timeline, or squared up).
+      let merged = Array.isArray(lanes[groupIdxs[0]].steps) ? lanes[groupIdxs[0]].steps : [];
+      for (let k = 1; k < groupIdxs.length; k++) {
+        const next = Array.isArray(lanes[groupIdxs[k]].steps) ? lanes[groupIdxs[k]].steps : [];
+        merged = _mergeLaneSteps(merged, next, squareUp);
+      }
+      const newLane = _makeLane(lanes.length, merged);
+      // Seed the combined lane with the group's shared sound engine.
+      const gv = (laneIdx === activeLaneIdx && typeof _captureVoiceGlobals === 'function')
+        ? _captureVoiceGlobals()
+        : (src.voice || (typeof _captureVoiceGlobals === 'function' ? _captureVoiceGlobals() : null));
+      if (gv) { try { newLane.voice = JSON.parse(JSON.stringify(gv)); } catch (e) {} }
+      const wasPlaying = (typeof sequenceTimer !== 'undefined') && sequenceTimer !== null;
+      if (wasPlaying) { try { stopSequence(); } catch (e) {} }
+      lanes.push(newLane);
+      groupIdxs.forEach(i => { if (lanes[i]) lanes[i].muted = true; });
+      gridRows = Math.min(8, Math.max(gridRows, lanes.length));
+      const rowsEl = document.getElementById('grid-rows-input');
+      if (rowsEl) rowsEl.value = String(gridRows);
+      activateLane(lanes.length - 1);
+      if (wasPlaying) { try { playSequence(); } catch (e) {} }
+      try { showHistoryToast(`Merged ${groupIdxs.length} yolked lanes → ${newLane.name}`); } catch (e) {}
+      try { refreshMergeLanesBtn(); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
+    // N-lane version of _showMergeLengthDialog: offer to square the whole yolk
+    // group up to its common multiple (LCM of every lane's length) so all lanes
+    // end together, or merge on the absolute timeline as-is.
+    function _showYolkMergeLengthDialog(laneIdx, groupIdxs, totals) {
+      const beats = (t) => (t / _MERGE_TPQ);
+      const fmt = (t) => { const b = beats(t); return (Math.abs(b - Math.round(b)) < 0.01 ? String(Math.round(b)) : b.toFixed(2)) + ' beat' + (Math.round(b) === 1 ? '' : 's'); };
+      let lcm = totals[0];
+      for (let i = 1; i < totals.length; i++) { const g = _mergeGcd(lcm, totals[i]); lcm = (lcm / g) * totals[i]; }
+      const lens = groupIdxs.map(i => (lanes[i] && lanes[i].name) || '?').join(', ');
+      const overlay = document.createElement('div'); overlay.className = 'sm-overlay';
+      const modal = document.createElement('div'); modal.className = 'sm-modal';
+      modal.innerHTML = `
+        <div class="sm-title">Yolked lanes are different lengths</div>
+        <div style="color:#a0aec0;font-family:'Segoe UI',sans-serif;font-size:0.82rem;padding:2px 0 12px;line-height:1.5;">
+          ${groupIdxs.length} lanes (<b>${lens}</b>) are different lengths.<br>
+          Square up so they all end together at <b>${fmt(lcm)}</b> (each repeats to the common multiple)?
+        </div>
+        <div class="sm-footer" style="flex-wrap:wrap;gap:8px;">
+          <button type="button" class="sm-preview" id="ymerge-cancel">Cancel</button>
+          <button type="button" class="sm-preview" id="ymerge-asis">Merge as-is</button>
+          <button type="button" class="sm-apply"   id="ymerge-square">Square up &amp; merge</button>
+        </div>`;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const close = () => { try { document.body.removeChild(overlay); } catch (e) {} };
+      modal.querySelector('#ymerge-cancel').addEventListener('click', close);
+      modal.querySelector('#ymerge-asis').addEventListener('click', () => { close(); _mergeYolkGroup(laneIdx, false); });
+      modal.querySelector('#ymerge-square').addEventListener('click', () => { close(); _mergeYolkGroup(laneIdx, true); });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     }
     function _openMergeLaneMenu() {
       if (!Array.isArray(lanes) || lanes.length < 2) return;

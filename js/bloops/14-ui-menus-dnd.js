@@ -480,6 +480,8 @@
         // (c) Pre-per-lane-FX schema: no l.fx, no l.sends → fall back
         //     to globalFx mix values.
         sends: _migrateLaneSends(l),
+        yolk: (typeof l?.yolk === 'string' && l.yolk) ? l.yolk : null,
+        yolkFx: !!l?.yolkFx,
       })) : [];
       _stashedLanes = Array.isArray(w.stashedLanes) ? w.stashedLanes.map((l, i) => ({
         name: (typeof l?.name === 'string' && l.name) ? l.name : _laneName(i),
@@ -502,6 +504,8 @@
         voice:  (l && l.voice && typeof l.voice === 'object')
           ? JSON.parse(JSON.stringify(l.voice)) : null,
         sends: _migrateLaneSends(l),
+        yolk: (typeof l?.yolk === 'string' && l.yolk) ? l.yolk : null,
+        yolkFx: !!l?.yolkFx,
       })) : null;
       // Always-poly invariant: if the restored snapshot had no lanes
       // (older Mono-mode save), seed one from the restored sequence.
@@ -4014,6 +4018,11 @@
       } else {
         if (step && (step.chord || step.freq !== null)) {
           actions.push({ label: 'Edit step…', fn: () => showStepEditor(stepIndex) });
+          // Edit-all: same editor, but the change-only fan-out targets every
+          // step in the lane (warning + whole-lane Preview + Cancel inside).
+          if (Array.isArray(sequence) && sequence.length > 1) {
+            actions.push({ label: 'Edit all steps…', fn: () => showStepEditor(stepIndex, { allSteps: true }) });
+          }
         }
       }
       // Tone submenu — set the voice for every selected step in one tap (no need
@@ -4061,6 +4070,18 @@
       actions.push({ label: 'Insert before', fn: () => { insertionPoint = stepIndex; renderSequence(); } });
       actions.push({ label: 'Insert after',  fn: () => { insertionPoint = stepIndex + 1; renderSequence(); } });
       actions.push('hr');
+      // Convert to rest — the gentler counterpart to Remove: strips the note
+      // (or chord) but KEEPS the slot's timing (duration + subdivision), so the
+      // space it occupied stays in the pattern. Fans out across the selection.
+      if (stepHasNotes(step)) {
+        actions.push({ label: '␣ Convert to rest', fn: () => _runStepCtxAction(stepIndex, 'Convert to rest', (i) => {
+          const s = sequence[i];
+          if (!s || s.isSub) return;
+          const dur = s.duration ?? 1;
+          const sub = (s.subdivision != null) ? s.subdivision : stepSubdivision;
+          sequence[i] = { freq: null, label: '—', cellIndex: null, duration: dur, subdivision: sub };
+        }) });
+      }
       // Multi-select aware delete: when 2+ chips are selected and the
       // long-pressed chip is one of them, "Remove step" turns into
       // "Remove N steps" and wipes the entire selection in one shot.
@@ -4166,20 +4187,40 @@
       return container;
     }
 
-    function showStepEditor(stepIndex) {
-      const step = sequence[stepIndex];
+    function showStepEditor(stepIndex, opts) {
+      const allSteps = !!(opts && opts.allSteps);
+      // "Edit all steps" always routes through the NOTE editor (its change-only
+      // fan-out reaches chord voices too, so sound/FX/envelope edits cover the
+      // whole lane). Anchor the editor's seed values on a real plain-note step
+      // when the clicked one is a chord, so the sliders start from sane values.
+      let anchorIdx = stepIndex;
+      if (allSteps) {
+        const s = sequence[stepIndex];
+        if (!s || s.chord || s.freq == null) {
+          const ni = sequence.findIndex(st => st && !st.chord && st.freq != null);
+          if (ni >= 0) anchorIdx = ni;
+        }
+      }
+      const step = sequence[anchorIdx];
       const overlay = document.createElement('div');
       overlay.className = 'sm-overlay';
       const modal = document.createElement('div');
       modal.className = 'sm-modal';
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-      if (step.chord) buildChordEditor(modal, stepIndex, overlay);
-      else             buildNoteEditor(modal, stepIndex, overlay);
+      overlay.addEventListener('click', (e) => {
+        if (e.target !== overlay) return;
+        // A running whole-lane preview must die when the sheet is dismissed.
+        if (allSteps) { try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (err) {} }
+        overlay.remove();
+      });
+      if (allSteps)        buildNoteEditor(modal, anchorIdx, overlay, { allSteps: true });
+      else if (step.chord) buildChordEditor(modal, anchorIdx, overlay);
+      else                 buildNoteEditor(modal, anchorIdx, overlay);
     }
 
-    function buildNoteEditor(modal, stepIndex, overlay) {
+    function buildNoteEditor(modal, stepIndex, overlay, opts) {
+      const _allSteps = !!(opts && opts.allSteps);
       const step = sequence[stepIndex];
       // Selection scope: when the edited chip is part of a multi-selection,
       // Apply writes the fields the user actually changed to EVERY selected
@@ -4192,9 +4233,13 @@
       // that guard silently fell back to single-step editing if refs ever
       // desynced (the "only the last selected step resizes" bug on mobile).
       // Always include the edited step so the chip you opened is covered too.
-      const _selTargets = (typeof selectedStepRefs !== 'undefined' && selectedStepRefs.length > 1)
-        ? (selectedStepRefs.indexOf(step) >= 0 ? selectedStepRefs.slice() : selectedStepRefs.concat([step]))
-        : null;
+      // In "Edit all steps" mode the fan-out targets EVERY step in the lane,
+      // regardless of the current selection.
+      const _selTargets = _allSteps
+        ? sequence.slice()
+        : ((typeof selectedStepRefs !== 'undefined' && selectedStepRefs.length > 1)
+            ? (selectedStepRefs.indexOf(step) >= 0 ? selectedStepRefs.slice() : selectedStepRefs.concat([step]))
+            : null);
       const _touched = new Set();
       const p = {
         freq:    step.freq,
@@ -4400,10 +4445,19 @@
       `;
 
       // In multi-select scope, retitle so it's clear edits hit every selected
-      // step (and that untouched fields are left per-step).
+      // step (and that untouched fields are left per-step). "Edit all steps"
+      // additionally shows a prominent warning banner.
       if (_selTargets) {
         const t = modal.querySelector('.sm-title');
-        if (t) t.textContent = 'Edit ' + _selTargets.length + ' steps — only changed fields apply';
+        if (t) t.textContent = _allSteps
+          ? ('Edit all ' + _selTargets.length + ' steps')
+          : ('Edit ' + _selTargets.length + ' steps — only changed fields apply');
+        if (_allSteps && t) {
+          const warn = document.createElement('div');
+          warn.textContent = '⚠ Changes apply to EVERY step in this lane. Only the fields you change are affected. Use Preview to hear the whole lane; Cancel discards everything.';
+          warn.style.cssText = 'margin:6px 0 2px;padding:8px 10px;border-radius:6px;font-size:0.78rem;line-height:1.35;color:#4a2c00;background:#ffd873;border:1px solid #e0a800;';
+          if (t.parentNode) t.parentNode.insertBefore(warn, t.nextSibling);
+        }
       }
 
       // Subdivision picker — 6 presets plus a Custom N/N field for finer/arbitrary
@@ -4785,14 +4839,79 @@
         if (p.bendSemitones !== 0) out.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
         return out;
       };
-      modal.querySelector('.sm-preview').addEventListener('click', () => playNote(p.freq, buildPreviewParams()));
+      // Fan the fields the user changed onto a set of target steps
+      // (change-only). Shared by Apply (writes the REAL lane steps) and the
+      // whole-lane Preview (writes throwaway CLONES so nothing is committed
+      // until Apply). Note identity applies to plain-note steps only; FX /
+      // envelope params fan out to chord voices and sub-step leaves too.
+      const applyTouchedTo = (targets) => {
+        const META = ['note', 'duration', 'subdivision', 'bend'];
+        const paramKeys = Array.from(_touched).filter(k => META.indexOf(k) < 0);
+        const writeParamsDeep = (st) => {
+          if (!st) return;
+          if (st.isSub && Array.isArray(st.subSteps)) { st.subSteps.forEach(writeParamsDeep); return; }
+          if (paramKeys.length) {
+            if (!st.params) st.params = {};
+            paramKeys.forEach(k => { st.params[k] = p[k]; if (k === 'type') st.sound = p[k]; });
+            if (Array.isArray(st.chord)) st.chord.forEach(v => {
+              if (!v) return; if (!v.params) v.params = {};
+              paramKeys.forEach(k => { v.params[k] = p[k]; if (k === 'type') v.sound = p[k]; });
+            });
+          }
+        };
+        const writeSel = (st) => {
+          if (!st) return;
+          if (_touched.has('note') && !Array.isArray(st.chord) && !st.isSub) {
+            st.freq = p.freq; st.label = p.label; st.cellIndex = p.cellIndex;
+          }
+          if (_touched.has('duration'))    st.duration = p.duration;
+          if (_touched.has('subdivision')) st.subdivision = p.subdivision;
+          if (_touched.has('bend')) {
+            if (p.bendSemitones !== 0) st.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
+            else delete st.bend;
+          }
+          writeParamsDeep(st);
+        };
+        (targets || []).forEach(writeSel);
+      };
 
-      modal.querySelector('.sm-remove-step').addEventListener('click', () => {
-        sequence.splice(stepIndex, 1);
-        renderSequence();
-        document.getElementById('save-btn').disabled = sequence.length === 0;
-        overlay.remove();
-      });
+      const _stopLanePreview = () => { try { if (typeof silenceActiveVoices === 'function') silenceActiveVoices(); } catch (e) {} };
+      const previewBtn = modal.querySelector('.sm-preview');
+      if (_allSteps) {
+        // Preview the WHOLE lane with the pending edits applied to a clone —
+        // hear exactly what Apply would do, without touching the real steps.
+        previewBtn.textContent = '▶ Preview all';
+        previewBtn.addEventListener('click', () => {
+          try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+          _stopLanePreview();  // restart cleanly if already auditioning
+          let clones = null;
+          try { clones = JSON.parse(JSON.stringify(sequence)); } catch (e) { clones = null; }
+          if (!clones || !clones.length || typeof playSubStepsAtTime !== 'function') return;
+          applyTouchedTo(clones);
+          const now = (typeof Tone !== 'undefined' && typeof Tone.now === 'function') ? Tone.now() : 0;
+          try { playSubStepsAtTime(clones, now + 0.06); } catch (e) {}
+        });
+      } else {
+        previewBtn.addEventListener('click', () => playNote(p.freq, buildPreviewParams()));
+      }
+
+      if (_allSteps) {
+        // No single-step Remove in all-steps mode — repurpose the button as an
+        // explicit Cancel that discards every pending change.
+        const cancelBtn = modal.querySelector('.sm-remove-step');
+        if (cancelBtn) {
+          cancelBtn.textContent = 'Cancel';
+          cancelBtn.title = 'Discard changes — no steps are modified';
+          cancelBtn.addEventListener('click', () => { _stopLanePreview(); overlay.remove(); });
+        }
+      } else {
+        modal.querySelector('.sm-remove-step').addEventListener('click', () => {
+          sequence.splice(stepIndex, 1);
+          renderSequence();
+          document.getElementById('save-btn').disabled = sequence.length === 0;
+          overlay.remove();
+        });
+      }
 
       modal.querySelector('.sm-apply').addEventListener('click', () => {
         // Multi-select scope: write ONLY the fields the user changed to every
@@ -4801,36 +4920,10 @@
         // plain-note steps; FX/envelope params fan out to chord voices and
         // sub-step leaves too.
         if (_selTargets) {
-          if (!_touched.size) { overlay.remove(); return; }
-          if (typeof snapshotForUndo === 'function') snapshotForUndo('Edit step');
-          const META = ['note', 'duration', 'subdivision', 'bend'];
-          const paramKeys = Array.from(_touched).filter(k => META.indexOf(k) < 0);
-          const writeParamsDeep = (st) => {
-            if (!st) return;
-            if (st.isSub && Array.isArray(st.subSteps)) { st.subSteps.forEach(writeParamsDeep); return; }
-            if (paramKeys.length) {
-              if (!st.params) st.params = {};
-              paramKeys.forEach(k => { st.params[k] = p[k]; if (k === 'type') st.sound = p[k]; });
-              if (Array.isArray(st.chord)) st.chord.forEach(v => {
-                if (!v) return; if (!v.params) v.params = {};
-                paramKeys.forEach(k => { v.params[k] = p[k]; if (k === 'type') v.sound = p[k]; });
-              });
-            }
-          };
-          const writeSel = (st) => {
-            if (!st) return;
-            if (_touched.has('note') && !Array.isArray(st.chord) && !st.isSub) {
-              st.freq = p.freq; st.label = p.label; st.cellIndex = p.cellIndex;
-            }
-            if (_touched.has('duration'))    st.duration = p.duration;
-            if (_touched.has('subdivision')) st.subdivision = p.subdivision;
-            if (_touched.has('bend')) {
-              if (p.bendSemitones !== 0) st.bend = { semitones: p.bendSemitones, atFraction: p.bendAt / 100 };
-              else delete st.bend;
-            }
-            writeParamsDeep(st);
-          };
-          _selTargets.forEach(writeSel);
+          if (!_touched.size) { _stopLanePreview(); overlay.remove(); return; }
+          if (typeof snapshotForUndo === 'function') snapshotForUndo(_allSteps ? 'Edit all steps' : 'Edit step');
+          applyTouchedTo(_selTargets);
+          _stopLanePreview();
           renderSequence();
           if (typeof persistWorkspace === 'function') persistWorkspace();
           overlay.remove();
@@ -4939,13 +5032,13 @@
           </div>
         </details>
         <details class="sm-fold">
-          <summary>Notes</summary>
+          <summary id="se-chord-notes-sum">Notes</summary>
           <div class="sm-fold-body">
             <div class="se-chord-list" id="se-chord-list"></div>
-            <div class="sm-section-label">Add note</div>
-            <div class="sm-section-label" style="opacity:0.7;margin-top:4px;">Octave</div>
+            <div class="sm-section-label" id="se-chord-add-lbl">Add note</div>
+            <div class="sm-section-label" id="se-chord-add-oct-lbl" style="opacity:0.7;margin-top:4px;">Octave</div>
             <div class="sm-waves" id="se-add-oct-row"></div>
-            <div class="sm-section-label" style="opacity:0.7;margin-top:6px;">Pitch</div>
+            <div class="sm-section-label" id="se-chord-add-pitch-lbl" style="opacity:0.7;margin-top:6px;">Pitch</div>
             <div class="sm-waves" id="se-add-picker"></div>
           </div>
         </details>
@@ -4990,6 +5083,23 @@
       if (_selTargets) {
         const t = modal.querySelector('.sm-title');
         if (t) t.textContent = 'Edit ' + _selTargets.length + ' steps — Length / size / bend apply to all';
+      }
+
+      // Drum-awareness: a voice whose sound is a drum KIT reads as its role
+      // (Kick / Snare / …) instead of a chromatic note — in the voice list,
+      // both pitch pickers, and the section headers. `_voiceRole` returns the
+      // role or null (melodic voice); `_chordIsKit` gates the header relabels.
+      const _voiceSoundOf = (n) => (n && n.params && n.params.type) || (n && n.sound) || 'sine';
+      const _voiceRole = (n) => (n && typeof _drumRoleForSound === 'function')
+        ? _drumRoleForSound(_voiceSoundOf(n), n.freq, n.label) : null;
+      const _chordIsKit = chordNotes.some(n => !!_voiceRole(n));
+      if (_chordIsKit) {
+        const sum = modal.querySelector('#se-chord-notes-sum'); if (sum) sum.textContent = 'Drums';
+        const addL = modal.querySelector('#se-chord-add-lbl'); if (addL) addL.textContent = 'Add drum';
+        // Drums all live on one row (C2-B2), so the octave selector is noise.
+        const octL = modal.querySelector('#se-chord-add-oct-lbl'); if (octL) octL.hidden = true;
+        const octR = modal.querySelector('#se-add-oct-row');       if (octR) octR.hidden = true;
+        const pitL = modal.querySelector('#se-chord-add-pitch-lbl'); if (pitL) pitL.textContent = 'Drum';
       }
 
       const chordSubRow = modal.querySelector('#se-chord-sub-row');
@@ -5087,7 +5197,11 @@
         _notesForChordOct(addOctave).forEach(n => {
           const btn = document.createElement('button');
           btn.className = 'sm-wave';
-          btn.textContent = n.label;
+          // Show the drum role when the pitch's grid cell is a kit.
+          const _aci = _cellIndexForFreq(n.freq);
+          const _ast = (_aci >= 0 && cellParams[_aci]) ? cellParams[_aci].type : null;
+          const _arole = (typeof _drumRoleForSound === 'function') ? _drumRoleForSound(_ast, n.freq, n.label) : null;
+          btn.textContent = _arole || n.label;
           btn.addEventListener('click', () => {
             const ci = _cellIndexForFreq(n.freq);
             const baseParams = (ci >= 0 && cellParams[ci])
@@ -5153,10 +5267,13 @@
           const lbl = document.createElement('button');
           lbl.type = 'button';
           lbl.className = 'se-chord-note-label';
-          lbl.textContent = n.label + (pitchExpandedIdx === ni ? ' ▴' : ' ▾');
+          // Drum-kit voices read as their role (Kick / Snare / …); melodic
+          // voices keep the note name.
+          const _lblRole = _voiceRole(n);
+          lbl.textContent = (_lblRole || n.label) + (pitchExpandedIdx === ni ? ' ▴' : ' ▾');
           lbl.title = pitchExpandedIdx === ni
-            ? 'Close the pitch picker'
-            : 'Click to change this voice’s pitch';
+            ? (_lblRole ? 'Close the drum picker' : 'Close the pitch picker')
+            : (_lblRole ? 'Click to change this voice’s drum' : 'Click to change this voice’s pitch');
 
           const badge = document.createElement('span');
           badge.className = 'se-wave-badge';
@@ -5180,6 +5297,9 @@
           // sit outside the grid's current octave (cellIndex = -1) so
           // the user isn't constrained to the active octave count.
           if (pitchExpandedIdx === ni) {
+            // Kit voices pick a DRUM (one C2-B2 row), so the octave selector is
+            // hidden and the picker/label read as drums.
+            const _rowIsKit = !!_voiceRole(n);
             const curOct = _octaveOfLabel(n.label);
             let pickOct = curOct;
             const octLabel = document.createElement('div');
@@ -5187,7 +5307,6 @@
             octLabel.style.opacity = '0.7';
             octLabel.style.marginTop = '4px';
             octLabel.textContent = 'Octave';
-            listEl.appendChild(octLabel);
             const octRow = document.createElement('div');
             octRow.className = 'sm-waves';
             const paintOct = () => {
@@ -5208,16 +5327,19 @@
             pitchLabel.className = 'sm-section-label';
             pitchLabel.style.opacity = '0.7';
             pitchLabel.style.marginTop = '6px';
-            pitchLabel.textContent = 'Pitch';
+            pitchLabel.textContent = _rowIsKit ? 'Drum' : 'Pitch';
             const picker = document.createElement('div');
             picker.className = 'sm-waves';
+            const _voiceSound = _voiceSoundOf(n);
             const paintPitch = () => {
               picker.innerHTML = '';
               _notesForChordOct(pickOct).forEach(note => {
                 const pb = document.createElement('button');
                 const isActive = Math.abs(note.freq - n.freq) < 1e-3;
                 pb.className = 'sm-wave' + (isActive ? ' active' : '');
-                pb.textContent = note.label;
+                pb.textContent = _rowIsKit
+                  ? ((typeof _drumRoleForSound === 'function' && _drumRoleForSound(_voiceSound, note.freq, note.label)) || note.label)
+                  : note.label;
                 pb.addEventListener('click', () => {
                   chordNotes[ni].freq      = note.freq;
                   chordNotes[ni].label     = note.label;
@@ -5228,9 +5350,9 @@
                 picker.appendChild(pb);
               });
             };
-            paintOct();
+            // Octave selector only for melodic voices.
+            if (!_rowIsKit) { paintOct(); listEl.appendChild(octLabel); listEl.appendChild(octRow); }
             paintPitch();
-            listEl.appendChild(octRow);
             listEl.appendChild(pitchLabel);
             listEl.appendChild(picker);
           }

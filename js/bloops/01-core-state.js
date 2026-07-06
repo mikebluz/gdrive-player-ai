@@ -270,6 +270,10 @@
     let performMode = false;
     let performQuantize = true;
     let performResolution = 0.25;
+    // When on, arming Perform starts a BPM click that stays on until Perform
+    // is clicked again to finalize. With a count-in the click is phase-locked
+    // to the count-in grid so it continues seamlessly into the take.
+    let performClick = false;
     let _performStartMs = null;
     let _performEmittedUnits = 0;
     // While a count-in click is playing, Perform is armed but not yet

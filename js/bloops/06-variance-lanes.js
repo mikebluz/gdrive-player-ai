@@ -907,7 +907,44 @@
         pianoMode: false,
         // Whether this lane's shape is sent to the Mix "Master Shape" overview.
         sentToMaster: false,
+        // Yolk — lanes sharing a non-null `yolk` group id keep their grid
+        // VOICE in sync: editing one lane's tone / scale / cell sounds / any
+        // grid setting propagates to its yolk siblings (a merged "kit", so you
+        // can swap it across a multi-lane drumbeat in one move). STEPS stay
+        // independent — the patterns don't merge, only the sound engine.
+        // `yolkFx` (set per group) also syncs the per-lane FX sends.
+        yolk: null,
+        yolkFx: false,
       };
+    }
+    // Copy `src` lane's voice — and its FX sends when the group opted in — onto
+    // every OTHER lane in the same yolk group. Called right after the active
+    // lane's voice is captured (lane switch / save) so a grid edit reflects on
+    // its siblings the instant you leave the lane. Steps are never touched.
+    function _propagateYolk(srcIdx) {
+      const src = lanes[srcIdx];
+      if (!src || !src.yolk) return;
+      lanes.forEach((l, i) => {
+        if (i === srcIdx || !l || l.yolk !== src.yolk) return;
+        if (src.voice) { try { l.voice = JSON.parse(JSON.stringify(src.voice)); } catch (e) {} }
+        if (src.yolkFx && src.sends) { try { l.sends = { ...src.sends }; } catch (e) {} }
+      });
+    }
+    // The lane indices that belong to `laneIdx`'s yolk group (itself included).
+    // A lone lane (no group) returns just itself.
+    function _yolkGroupIndices(laneIdx) {
+      const src = lanes[laneIdx];
+      if (!src || !src.yolk) return [laneIdx];
+      const out = [];
+      lanes.forEach((l, i) => { if (l && l.yolk === src.yolk) out.push(i); });
+      return out.length ? out : [laneIdx];
+    }
+    // After a lane is removed from / added to a group, dissolve any group that
+    // has dropped to a single member (a yolk of one is just a normal lane).
+    function _yolkCleanup() {
+      const counts = {};
+      lanes.forEach(l => { if (l && l.yolk) counts[l.yolk] = (counts[l.yolk] || 0) + 1; });
+      lanes.forEach(l => { if (l && l.yolk && counts[l.yolk] < 2) { l.yolk = null; l.yolkFx = false; } });
     }
     // Snapshot the currently-mirrored voice globals into a plain object
     // suitable for storing on a lane. Deep-clones the cell arrays so
@@ -1404,6 +1441,10 @@
           ? _captureVoiceGlobals()
           : (src.voice ? JSON.parse(JSON.stringify(src.voice)) : null),
         sends: src.sends ? { ...src.sends } : null,
+        // A clone starts as its own independent sound engine — it does NOT
+        // inherit the source's yolk grouping (re-yolk explicitly if wanted).
+        yolk: null,
+        yolkFx: false,
       };
       const at = idx + 1;
       lanes.splice(at, 0, copy);
@@ -1441,6 +1482,8 @@
         try { disposeAllLaneAudio([removed]); } catch (e) {}
       }
       lanes.splice(idx, 1);
+      // A yolk group that just dropped below 2 members is no longer a group.
+      _yolkCleanup();
       if (typeof gridRows !== 'undefined') gridRows = lanes.length;
       const rowsEl = document.getElementById('grid-rows-input');
       if (rowsEl) rowsEl.value = String(Math.min(8, lanes.length));
@@ -1581,6 +1624,94 @@
         }
       } catch (e) {}
     }
+    // Yolk dialog — pick which other lanes to merge sound engines with, and
+    // whether to also merge FX. On confirm every chosen lane joins one yolk
+    // group and immediately adopts THIS lane's grid voice (see _propagateYolk).
+    function _openYolkMenu(laneIdx) {
+      const src = lanes[laneIdx];
+      if (!src || !Array.isArray(lanes) || lanes.length < 2) return;
+      const others = lanes.map((l, i) => ({ lane: l, idx: i })).filter(({ idx }) => idx !== laneIdx);
+      if (!others.length) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'sm-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'sm-modal';
+      const alreadyYolked = !!src.yolk;
+      modal.innerHTML = `
+        <div class="sm-title">Yolk lane ${src.name} with…</div>
+        <div class="sm-fold-body" style="font-size:0.78rem;line-height:1.35;opacity:0.85;padding-top:4px;">
+          Merges the chosen lanes' sound engines with <b>${src.name}</b>. Any edit to one lane's tone, scale or grid then updates them all — steps stay independent.
+        </div>
+        <div class="sm-fold-body" id="yolk-lane-list" style="display:flex;flex-direction:column;gap:6px;padding-top:8px;"></div>
+        <div class="sm-fold-body" style="padding-top:8px;">
+          <div class="sm-section-label" style="margin-top:0;">Merge scope</div>
+          <label class="sm-checkbox-row"><input type="radio" name="yolk-scope" value="voice" checked> Grid voice only (kit + scale + key + tuning)</label>
+          <label class="sm-checkbox-row"><input type="radio" name="yolk-scope" value="fx"> Grid voice + FX sends</label>
+        </div>
+        <div class="sm-footer">
+          ${alreadyYolked ? '<button type="button" class="sm-remove-step" id="yolk-break">Break yolk</button>' : ''}
+          <button type="button" class="sm-preview" id="yolk-cancel">Cancel</button>
+          <button type="button" class="sm-apply" id="yolk-apply">Yolk</button>
+        </div>
+      `;
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      const list = modal.querySelector('#yolk-lane-list');
+      const checks = [];
+      others.forEach(({ lane, idx }) => {
+        const row = document.createElement('label');
+        row.className = 'sm-checkbox-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        // Pre-check lanes already in this lane's group.
+        cb.checked = !!(src.yolk && lane.yolk === src.yolk);
+        cb.dataset.idx = String(idx);
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(` Lane ${lane.name}${lane.muted ? ' (muted)' : ''}${(lane.yolk && lane.yolk !== src.yolk) ? ' — in another yolk' : ''}`));
+        list.appendChild(row);
+        checks.push(cb);
+      });
+      // Default the scope radio to the group's current FX setting.
+      if (src.yolkFx) { const r = modal.querySelector('input[name="yolk-scope"][value="fx"]'); if (r) r.checked = true; }
+      const close = () => overlay.remove();
+      modal.querySelector('#yolk-cancel')?.addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      modal.querySelector('#yolk-break')?.addEventListener('click', () => {
+        src.yolk = null; src.yolkFx = false;
+        _yolkCleanup();
+        if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Break yolk'); } catch (e) {} }
+        try { renderSequence(); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Yolk broken for lane ' + src.name);
+        close();
+      });
+      modal.querySelector('#yolk-apply')?.addEventListener('click', () => {
+        const picked = checks.filter(c => c.checked).map(c => parseInt(c.dataset.idx, 10)).filter(i => i >= 0);
+        if (!picked.length) { close(); return; }
+        const fx = !!modal.querySelector('input[name="yolk-scope"][value="fx"]:checked');
+        // Reuse the source lane's group id when it has one, else mint a new id.
+        const gid = src.yolk || ('yolk-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 5));
+        // If the source is the active lane, its live edits live in the globals
+        // — freeze them onto the lane so the group adopts the CURRENT sound.
+        if (laneIdx === activeLaneIdx && typeof _captureVoiceGlobals === 'function') {
+          src.voice = _captureVoiceGlobals();
+        }
+        // Lanes previously in this group but now UNCHECKED leave the group.
+        lanes.forEach((l, i) => { if (l && l.yolk === gid && i !== laneIdx && picked.indexOf(i) < 0) { l.yolk = null; l.yolkFx = false; } });
+        // Source + every checked lane join the group with the chosen scope.
+        src.yolk = gid; src.yolkFx = fx;
+        picked.forEach(i => { if (lanes[i]) { lanes[i].yolk = gid; lanes[i].yolkFx = fx; } });
+        // Merge NOW: push the source voice (and FX) onto the whole group.
+        _propagateYolk(laneIdx);
+        _yolkCleanup();
+        if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Yolk lanes'); } catch (e) {} }
+        try { renderSequence(); } catch (e) {}
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+        if (typeof showToast === 'function') showToast('Yolked ' + (picked.length + 1) + ' lanes' + (fx ? ' (voice + FX)' : ''));
+        close();
+      });
+    }
+
     function _showLaneMenu(laneIdx, x, y) {
       const lane = lanes[laneIdx];
       if (!lane) return;
@@ -1648,9 +1779,15 @@
             const n = normalizeLaneTones(laneIdx);
             if (n > 0) { renderSequence(); persist(); }
           } },
+        // Yolk: merge this lane's sound engine with other lanes so a grid edit
+        // to any of them updates them all (swap a multi-lane kit in one move).
+        // Label reflects current grouping so it doubles as a status readout.
+        { label: lane.yolk ? ('Yolk ▸ (grouped' + (lane.yolkFx ? ', +FX' : '') + ')') : 'Yolk…',
+          disabled: lanes.length < 2,
+          fn: () => setTimeout(() => { try { _openYolkMenu(laneIdx); } catch (e) { console.warn('Yolk menu failed', e); } }, 0) },
         // Clone: exact copy of this lane (steps, voice, FX, shape/Bloom config,
         // mix) inserted right below, named "<name> copy N". Disabled at the
-        // 8-lane grid cap.
+        // 8-lane grid cap. A clone starts UN-yolked (independent sound engine).
         { label: 'Clone lane', disabled: lanes.length >= 8, fn: () => _cloneLane(laneIdx) },
         // Delete the whole lane. Disabled when it's the only one. Confirms
         // first if the lane has any steps (undo can still recover it).
@@ -1707,10 +1844,40 @@
         }});
       }
       if (riffActions.length) {
+        // On a YOLKED lane, each Manipulate action first asks whether to affect
+        // just this lane or every lane in the yolk group (step transforms don't
+        // merge automatically — yolk only merges the sound engine). On a normal
+        // lane the actions run as-is. The group run activates each member,
+        // fires the same transform, then restores the original active lane.
+        const groupIdxs = _yolkGroupIndices(laneIdx);
+        const yolked = groupIdxs.length > 1;
+        const runOnGroup = (origFn) => {
+          const restore = activeLaneIdx;
+          groupIdxs.forEach(i => { try { activateLane(i); origFn(); } catch (e) {} });
+          try { activateLane(restore); } catch (e) {}
+        };
+        const laneRiffActions = yolked
+          ? riffActions.map(a => {
+              // Merge is inherently multi-lane (it opens its own picker), so the
+              // "this lane / all lanes" prompt makes no sense for it. On a yolk
+              // group, collapse it to ONE action that merges the whole group.
+              if (/^merge/i.test(a.label)) {
+                return { label: `Merge ${groupIdxs.length} yolked lanes → one`, disabled: a.disabled,
+                  fn: () => { try { if (typeof _mergeYolkGroup === 'function') _mergeYolkGroup(laneIdx); } catch (e) {} } };
+              }
+              return {
+                label: a.label, disabled: a.disabled,
+                fn: () => setTimeout(() => showCtxMenu(x, y, [
+                  { label: 'This lane only',  fn: () => a.fn() },
+                  { label: `All ${groupIdxs.length} yolked lanes`, fn: () => runOnGroup(a.fn) },
+                ]), 0),
+              };
+            })
+          : riffActions;
         // Defer the submenu to the next tick: showCtxMenu's click handler
         // runs dismissCtxMenu() right after fn(), which would otherwise
         // tear down the submenu we just opened.
-        actions.push({ label: 'Manipulate ▸', fn: () => setTimeout(() => showCtxMenu(x, y, riffActions), 0) });
+        actions.push({ label: yolked ? 'Manipulate ▸ (yolked)' : 'Manipulate ▸', fn: () => setTimeout(() => showCtxMenu(x, y, laneRiffActions), 0) });
       }
       // Lane view-resolution zoom — horizontal density of the step timeline
       // (global). Lives here now instead of the banner row.
@@ -1859,6 +2026,10 @@
         // root / scale changes, palette tweaks) persist on that lane
         // when it's activated again.
         lanes[activeLaneIdx].voice = _captureVoiceGlobals();
+        // Yolk: push the just-captured voice (and FX, if merged) onto the
+        // leaving lane's siblings so the edit you made is mirrored before we
+        // load the lane you're switching to.
+        _propagateYolk(activeLaneIdx);
       }
       activeLaneIdx = idx;
       // The active lane's chip strip is the workspace's working

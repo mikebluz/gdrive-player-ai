@@ -266,6 +266,8 @@
               sends: (typeof _migrateLaneSends === 'function')
                 ? _migrateLaneSends(l)
                 : (l?.sends ? { ...l.sends } : null),
+              yolk: (typeof l?.yolk === 'string' && l.yolk) ? l.yolk : null,
+              yolkFx: !!l?.yolkFx,
             }));
             activeLaneIdx = Number.isFinite(saved.activeLaneIdx)
               ? Math.max(0, Math.min(saved.activeLaneIdx, lanes.length - 1))

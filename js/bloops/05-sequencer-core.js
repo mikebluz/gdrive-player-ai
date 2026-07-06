@@ -448,6 +448,17 @@
       if (_resizeBothEdges) addHandle('seq-resize-l', 'left');
     }
 
+    // Chip label for one note/voice: the drum role (Kick / Snare / …) when the
+    // note's sound is a drum kit, otherwise its chromatic label. Used for both
+    // plain steps and each chord voice so kit lanes read as drums, not notes.
+    function _chipNoteLabel(n) {
+      if (!n) return '';
+      const dr = (typeof _drumRoleForSound === 'function')
+        ? _drumRoleForSound((n.params && n.params.type) || n.sound, n.freq, n.label)
+        : null;
+      return dr || n.label || '';
+    }
+
     function renderSequence(activeIndex = -1) {
       // Subsequence extirpation — normalize any isSub step in the active
       // sequence into individual steps. Done here (the funnel every edit calls)
@@ -582,8 +593,22 @@
           menubarLanes.hidden = true;
         }
         let collapsedStrip = null;
+        // Yolk cue: give each distinct yolk group a stable accent colour by
+        // first-appearance order, so lanes sharing a sound engine read as a set
+        // (matching left bar + ⊛ badge). Recomputed per render — cheap, and it
+        // survives group edits without any persisted colour.
+        const _yolkColors = ['#4ea1ff', '#ffb14e', '#57d38c', '#c88bff', '#ff6b9d', '#4ececd', '#e6d24a', '#ff8a5c'];
+        const _yolkColorMap = {};
+        let _yolkColorN = 0;
+        lanes.forEach(l => { if (l && l.yolk && !(l.yolk in _yolkColorMap)) _yolkColorMap[l.yolk] = _yolkColors[_yolkColorN++ % _yolkColors.length]; });
         lanes.forEach((lane, laneIdx) => {
           const isActiveLane = laneIdx === activeLaneIdx;
+          // Mixed-tone lanes (e.g. a yolk-merged kit) colour their chips by
+          // HIT SET rather than pitch class — computed once per lane. `laneMixed`
+          // drives the CSS class (sound-type mix); `laneToneColor` also fires on
+          // drum-kit beats (same sample, different drums).
+          const laneMixed = _laneToneMixed(lane);
+          const laneToneColor = _laneWantsToneColor(lane);
           const row = document.createElement('div');
           row.className = 'lane-row'
             + (isActiveLane ? ' active' : '')
@@ -595,7 +620,23 @@
             + (lane.driftMs > 0 || lane.driftLocked ? ' drifting' : '')
             // Steps don't all share one Tone → flag so mixed-tone lanes read
             // differently from uniform-tone ones (pitch differences ignored).
-            + (_laneToneMixed(lane) ? ' lane-tone-mixed' : '');
+            + (laneMixed ? ' lane-tone-mixed' : '')
+            // Yolked lanes carry a colour-coded left bar + ⊛ badge.
+            + (lane.yolk ? ' yolked' : '');
+
+          // Yolk badge — a ⊛ tinted with the group colour, overlaid at the
+          // row's left edge (click-through, so lane-switch still works).
+          if (lane.yolk) {
+            const yc = _yolkColorMap[lane.yolk] || '#6cf';
+            row.style.setProperty('--yolk-color', yc);
+            const badge = document.createElement('span');
+            badge.className = 'lane-yolk-badge';
+            badge.textContent = '⊛';
+            badge.style.color = yc;
+            badge.title = 'Yolked — shares its sound engine with the other ⊛ lanes of this colour'
+              + (lane.yolkFx ? ' (voice + FX)' : '');
+            row.appendChild(badge);
+          }
 
           // Lane-controls removed — a lane row is now just its steps viewer.
           // The active lane's name + menu live in the add-lane-row's ☰ Lane
@@ -635,9 +676,9 @@
                   + (isRest ? ' rest'   : '');
                 let label = '';
                 if (isSub)       label = step._seqClip ? ('▤ ' + (step._seqName || 'Seq')) : '▤';
-                else if (isCh)   label = step.chord.map(n => n.label).join('·');
+                else if (isCh)   label = step.chord.map(_chipNoteLabel).join('·');
                 else if (isRest) label = '—';
-                else             label = step.label || '';
+                else             label = _chipNoteLabel(step);
                 chip.textContent = label;
                 // Bar grid: span sub-cells; split across rows at bar lines.
                 const _pvPlan = _barGridPlan(_barGridSpan(step), _previewCol);
@@ -645,9 +686,11 @@
                 chip.style.gridColumn = 'span ' + _pvPlan.firstSpan;
                 if (_pvPlan.continuations.length > 0) chip.classList.add('cont-start');
                 {
-                  const pc = stepColorPitchClass(step);
-                  if (pc != null && chipPalette[pc]) {
-                    const c = chipPalette[pc];
+                  // Hit-set colouring on drum/mixed lanes; else pitch class.
+                  const tsc = laneToneColor ? _stepToneSetColor(step) : null;
+                  const pc = tsc ? null : stepColorPitchClass(step);
+                  const c = tsc || ((pc != null && chipPalette[pc]) ? chipPalette[pc] : null);
+                  if (c) {
                     chip.style.borderColor = c;
                     chip.style.background = tintHsl(c, 0.5);
                     chip.style.color = c;
@@ -864,6 +907,10 @@
       // the same wrapper.
       const _keyGroupContainerByStart = new Map();
 
+      // Drum / mixed-tone active lane → chips colour by HIT SET (each
+      // combination gets its own hue) rather than by pitch class.
+      const _activeLaneMixed = _laneWantsToneColor(lanes[activeLaneIdx] || { steps: sequence });
+
       sequence.forEach((step, i) => {
         // Wrap-editor stash: showWrapEditor temporarily parks the
         // wrapTemplate at the end of `sequence` so it can drive the
@@ -890,10 +937,10 @@
           const SUB_PREVIEW_MAX = 6;
           const labels = (step.subSteps || []).map(s => {
             if (!s) return '';
-            if (Array.isArray(s.chord)) return s.chord.map(n => n.label).join('·');
+            if (Array.isArray(s.chord)) return s.chord.map(_chipNoteLabel).join('·');
             if (s.isSub) return '▤';
             if (s.freq == null) return '—';
-            return s.label || '';
+            return _chipNoteLabel(s);
           }).filter(Boolean);
           const preview = labels.slice(0, SUB_PREVIEW_MAX).join(' ')
                         + (labels.length > SUB_PREVIEW_MAX ? ' …' : '');
@@ -901,14 +948,17 @@
                            : (count > 0 ? `▤  ${preview}` : '▤');
         } else if (step.chord) {
           chip.className = 'seq-step chord' + (i === activeIndex ? ' active' : '') + (bendDir ? ' ' + bendDir : '');
-          chip.textContent = step.chord.map(n => n.label).join('·') + (durSuffix ? ' ' + durSuffix : '');
+          chip.textContent = step.chord.map(_chipNoteLabel).join('·') + (durSuffix ? ' ' + durSuffix : '');
         } else if (treatAsEmptySlot) {
           chip.className = 'seq-step empty-slot' + (i === activeIndex ? ' active' : '');
           chip.textContent = '·';
         } else {
           chip.className = 'seq-step' + (step.freq === null ? ' rest' : '') + (i === activeIndex ? ' active' : '') + (bendDir ? ' ' + bendDir : '');
+          // Drum-kit steps read as their role (Kick / Snare / …) with no sound
+          // abbreviation; melodic steps keep note + 3-char tone hint.
+          const _dr = (typeof stepDrumRole === 'function') ? stepDrumRole(step) : null;
           const main = step.freq !== null
-            ? `${step.label}${step.sound && step.sound !== 'sine' ? '\n' + step.sound.slice(0,3) : ''}`
+            ? (_dr ? _dr : `${step.label}${step.sound && step.sound !== 'sine' ? '\n' + step.sound.slice(0,3) : ''}`)
             : step.label;
           chip.textContent = durSuffix ? `${main}\n${durSuffix}` : main;
         }
@@ -1089,9 +1139,11 @@
         // without the palette tint masking it.
         let chipBaseColor = null;
         if (i !== activeIndex) {
-          const pc = stepColorPitchClass(step);
-          if (pc != null && chipPalette[pc]) {
-            const c = chipPalette[pc];
+          // Mixed-tone lane → colour by tone set; else by pitch class.
+          const tsc = _activeLaneMixed ? _stepToneSetColor(step) : null;
+          const pc = tsc ? null : stepColorPitchClass(step);
+          const c = tsc || ((pc != null && chipPalette[pc]) ? chipPalette[pc] : null);
+          if (c) {
             chipBaseColor = c;
             chip.style.borderColor = c;
             chip.style.background = tintHsl(c, 0.5);
@@ -1236,7 +1288,7 @@
       if (chordMode && keepMode && pendingChord.length > 0) {
         const chip = document.createElement('div');
         chip.className = 'seq-step chord-pending';
-        chip.textContent = pendingChord.map(n => n.label).join('·') + '…';
+        chip.textContent = pendingChord.map(_chipNoteLabel).join('·') + '…';
         chipHost.appendChild(chip);
         chip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
@@ -1810,6 +1862,62 @@
       const steps = (lane && Array.isArray(lane.steps)) ? lane.steps : [];
       steps.forEach(s => _collectStepTones(s, set));
       return set.size > 1;
+    }
+    // The SET OF HITS in a step, as a stable key. Each voice contributes its
+    // identity: a drum-kit voice keys by its ROLE (Kick / Snare / …) — so a
+    // merged beat that shares one kit sample still distinguishes combinations —
+    // and a melodic voice keys by sound + pitch class. Returns {key,size} or
+    // null for rests / tone-less steps.
+    function _stepHitSet(step) {
+      const set = new Set();
+      const add = (sound, label, freq) => {
+        const role = (typeof _drumRoleForSound === 'function') ? _drumRoleForSound(sound, freq, label) : null;
+        if (role) { set.add('d:' + role); return; }
+        let pc = (typeof labelToPitchClass === 'function') ? labelToPitchClass(label) : null;
+        if (pc == null && freq != null) { try { pc = ((Math.round(Tone.Frequency(freq).toMidi()) % 12) + 12) % 12; } catch (e) {} }
+        set.add((sound || 'sine') + '@' + (pc == null ? '?' : pc));
+      };
+      const walk = (s) => {
+        if (!s) return;
+        if (s.isSub && Array.isArray(s.subSteps)) { s.subSteps.forEach(walk); return; }
+        if (Array.isArray(s.chord)) { s.chord.forEach(v => add((v && v.params && v.params.type) || (v && v.sound), v && v.label, v && v.freq)); return; }
+        if (s.freq == null) return;
+        add((s.params && s.params.type) || s.sound, s.label, s.freq);
+      };
+      walk(step);
+      return set.size ? { key: Array.from(set).sort().join('|'), size: set.size } : null;
+    }
+    // A stable, distinct colour for a step's set of hits, so on a merged beat
+    // each combination (Kick, Kick+Snare, Hat, …) reads at a glance — same set
+    // → same colour, different set → different hue. Null for rests.
+    function _stepToneSetColor(step) {
+      const hs = _stepHitSet(step);
+      if (!hs) return null;
+      // FNV-ish string hash → hue, golden-ratio spun so adjacent keys spread.
+      let h = 2166136261;
+      for (let i = 0; i < hs.key.length; i++) { h ^= hs.key.charCodeAt(i); h = Math.imul(h, 16777619); }
+      const hue = Math.round((((h >>> 0) * 0.61803398875) % 1) * 360);
+      // Stacked hits read a touch deeper so a combo is distinct from a lone hit.
+      const sat = hs.size > 1 ? 70 : 62;
+      const light = hs.size > 1 ? 55 : 62;
+      return `hsl(${hue}, ${sat}%, ${light}%)`;
+    }
+    // Whether a lane should colour by hit-set instead of pitch class: any
+    // drum-kit content (a beat — colour by drum role/combination) or genuinely
+    // mixed sound types. Plain melodic lanes (incl. single-synth chord lanes)
+    // keep the pitch-class rainbow so harmonic movement still reads by hue.
+    function _laneWantsToneColor(lane) {
+      const steps = (lane && Array.isArray(lane.steps)) ? lane.steps : [];
+      const sounds = new Set();
+      steps.forEach(s => _collectStepTones(s, sounds));
+      if (sounds.size > 1) return true;
+      for (const t of sounds) {
+        if (typeof t === 'string' && t.startsWith('sample:')) {
+          const m = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(t.slice(7)) : null;
+          if (m && m.drumKit) return true;
+        }
+      }
+      return false;
     }
     function syncStepEditorFromSelection() {
       _reconcileStepGridPreview();

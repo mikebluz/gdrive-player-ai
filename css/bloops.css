@@ -5155,6 +5155,25 @@
       min-height: 55px;   /* lanes 25% taller (was 44px) */
       transition: background 0.12s ease;
     }
+    /* Yolk cue — lanes that share a sound engine get a colour-coded left bar
+       (same colour = same yolk group) and a ⊛ badge. Both are colour-driven by
+       the inline --yolk-color renderSequence sets per group. The badge is
+       click-through so it never blocks the row's lane-switch handler. */
+    .lane-row.yolked {
+      position: relative;
+      box-shadow: inset 4px 0 0 0 var(--yolk-color, #6cf);
+    }
+    .lane-yolk-badge {
+      position: absolute;
+      top: 3px;
+      left: 9px;
+      z-index: 4;
+      font-size: 0.72rem;
+      line-height: 1;
+      pointer-events: none;
+      opacity: 0.95;
+      text-shadow: 0 0 3px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9);
+    }
     /* Lane voice editor — the cell grid + Scale/Tone/FX/Spell pills.
        renderSequence reparents this node from #lane-expander-stash to
        sit just before the active .lane-row. The close button (top

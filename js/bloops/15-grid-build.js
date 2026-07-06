@@ -327,6 +327,31 @@
         }
       });
     }
+    // ---- Drum-role labels for SEQUENCE steps (mirrors the grid-cell naming) ----
+    // A step/voice whose SOUND is a drum kit reads as its drum role (Kick /
+    // Snare / Hat / …) on its chip, NOT the chromatic note it maps to. Pitch
+    // class → role uses the same DRUM_ROLE_BY_PC table + C-rooted pitch class
+    // as the cells (via snapDrumKitFreq's C2-B2 mapping). Returns null when the
+    // sound isn't a drum kit, so callers fall back to the note label.
+    function _drumRoleForSound(soundType, freq, label) {
+      if (typeof soundType !== 'string' || !soundType.startsWith('sample:')) return null;
+      const meta = (typeof sampleSamplers !== 'undefined') ? sampleSamplers.get(soundType.slice(7)) : null;
+      if (!meta || !meta.drumKit) return null;
+      let pc = null;
+      if (freq != null) {
+        try { pc = ((Math.round(Tone.Frequency(freq).toMidi()) % 12) + 12) % 12; } catch (e) { pc = null; }
+      }
+      if (pc == null) pc = labelToPitchClass(label);
+      if (pc == null) return null;
+      return DRUM_ROLE_BY_PC[pc] || null;
+    }
+    // Drum role for a whole plain-note step (reads its own sound/params), or
+    // null. Chords/subs/rests return null — callers map chord voices per note.
+    function stepDrumRole(step) {
+      if (!step || step.chord || step.isSub || step.freq == null) return null;
+      const soundType = (step.params && step.params.type) || step.sound || null;
+      return _drumRoleForSound(soundType, step.freq, step.label);
+    }
     function updateScaleBanner() {
       const scaleHalf = document.getElementById('scale-banner-half');
       const root = (typeof CHROMATIC !== 'undefined' && CHROMATIC[rootIdx]) || 'C';

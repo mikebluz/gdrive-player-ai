@@ -88,6 +88,27 @@
         ? 'Metronome on — click to silence.'
         : 'Metronome — toggle a click at the current BPM so you can hear the rhythm.';
     }
+    // Perform mode drives its count-in / sustained click through these
+    // helpers so there is ONE click source (no double-clicks) and the same
+    // drift-corrected schedule-ahead loop is reused. `startMetronomeAt`
+    // phase-locks the click to a given audio-context beat time so a count-in
+    // and the click that follows it ride one continuous grid; pass 0/omit to
+    // start free-running (now + lead). These are script-scope globals so the
+    // grid controls (file 16) can call them.
+    function startMetronomeAt(anchorSec) {
+      _metronomeOn = true;
+      _stopMetronomeTimer();                  // clear any running timer (resets next)
+      if (anchorSec && anchorSec > 0) _metronomeNextAt = anchorSec;
+      refreshMetronomeBtn();
+      _scheduleMetronomeAhead();               // fill the first lookahead window now
+      _metronomeTimer = setInterval(_scheduleMetronomeAhead, 100);
+    }
+    function stopMetronomeClick() {
+      _metronomeOn = false;
+      refreshMetronomeBtn();
+      _stopMetronomeTimer();
+    }
+    function isMetronomeOn() { return _metronomeOn; }
     // Set true when a long-press on the metronome opened the BPM picker, so
     // the click that follows the press doesn't ALSO toggle the metronome.
     let _bpmLpFired = false;

@@ -939,28 +939,26 @@
       const listenBtn = document.getElementById('perform-listen-btn');
       const countinBtn = document.getElementById('perform-countin-btn');
       const barsEl = document.getElementById('perform-countin-bars');
+      const clickCb = document.getElementById('perform-click');
       if (!btn) return;
+      if (clickCb) clickCb.checked = performClick;
       const refresh = () => btn.classList.toggle('active', performMode);
       const closePop = () => { if (pop) pop.hidden = true; };
       const openPop = () => { if (pop) pop.hidden = false; };
       refresh();
 
-      // N bars of metronome click, then fire onStart on the downbeat after.
-      const runCountIn = (bars, onStart) => {
-        const bpm = parseInt(tempoInput?.value, 10) || 120;
-        const beatSec = 60 / bpm;
-        const beats = Math.max(1, bars | 0) * 4;
-        const synth = (typeof _getMetronomeSynth === 'function') ? _getMetronomeSynth() : null;
-        const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
-        const t0 = now + 0.12;
-        if (synth) {
-          for (let i = 0; i < beats; i++) {
-            try { synth.triggerAttackRelease(i % 4 === 0 ? 'C6' : 'C5', '32n', t0 + i * beatSec); } catch (e) {}
-          }
-        }
-        const delayMs = ((t0 - now) + beats * beatSec) * 1000;
-        setTimeout(() => { try { onStart(); } catch (e) {} }, Math.max(0, delayMs));
-      };
+      // Perform's click track piggybacks on the manual metronome (via the
+      // file-03 helpers) so there is ONE click source and the drift-corrected
+      // scheduler is reused. `_performPrevMetro` remembers whether the user
+      // already had the metronome running when they armed, so finalize
+      // restores that state instead of always silencing it.
+      let _performPrevMetro = false;
+      const metroOn    = () => (typeof isMetronomeOn === 'function') ? isMetronomeOn() : false;
+      const metroStart = (at) => { if (typeof startMetronomeAt === 'function') startMetronomeAt(at); };
+      const metroStop  = () => { if (typeof stopMetronomeClick === 'function') stopMetronomeClick(); };
+      // Silence Perform's click unless the user already had the metronome on
+      // before arming (then it keeps running, now phase-locked to the grid).
+      const restoreMetro = () => { if (!_performPrevMetro) metroStop(); };
 
       const arm = (countInBars) => {
         performMode = true;
@@ -968,27 +966,47 @@
         closePop();
         refresh();
         try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+        _performPrevMetro = metroOn();
         if (countInBars > 0) {
           _performCountingIn = true;
           _performStartMs = null;
+          // One continuous beat grid: the count-in clicks and the sustained
+          // click (when Click is on) run off the same anchor, so the click
+          // never jumps phase when recording begins. Restarting the metronome
+          // here also re-times any already-running click to the count-in.
+          const bpm = parseInt(tempoInput?.value, 10) || 120;
+          const beatSec = 60 / bpm;
+          const beats = Math.max(1, countInBars | 0) * 4;
+          const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+          const t0 = now + 0.12;                  // first count-in click
+          const startAt = t0 + beats * beatSec;   // recording downbeat
+          metroStart(t0);                          // count-in clicks, phase-locked
           if (typeof showToast === 'function') showToast('Perform: counting in…');
-          runCountIn(countInBars, () => {
+          const delayMs = (startAt - now) * 1000;
+          setTimeout(() => {
             if (!performMode) return; // disarmed during count-in
             _performCountingIn = false;
             _performStartMs = performance.now(); // recording anchor = end of count-in
+            // Keep the click running through the take if Click is checked;
+            // otherwise silence it (the count-in has served its purpose).
+            if (!performClick) restoreMetro();
             // Start the lanes the instant recording starts, so the take
             // overdubs in time with playback.
             try { if (typeof playSequence === 'function') playSequence(); } catch (e) {}
             if (typeof showToast === 'function') showToast('Perform: recording…');
-          });
+          }, Math.max(0, delayMs));
         } else {
           _performCountingIn = false;
           _performStartMs = null; // first played note anchors the timeline
+          // No count-in grid to lock to — start a free-running click now if
+          // Click is checked. It stays on until Perform is finalized.
+          if (performClick) metroStart(0);
           if (typeof showToast === 'function') showToast('Perform: listening — play to record.');
         }
       };
       const disarm = () => {
         performMode = false; _performCountingIn = false;
+        restoreMetro();
         closePop(); refresh();
       };
 
@@ -1005,6 +1023,7 @@
       if (countinBtn) countinBtn.addEventListener('click', () => arm(Math.max(1, parseInt(barsEl?.value, 10) || 1)));
       if (qz) qz.addEventListener('change', () => { performQuantize = !!qz.checked; });
       if (res) res.addEventListener('change', () => { performResolution = parseFloat(res.value) || 0.25; });
+      if (clickCb) clickCb.addEventListener('change', () => { performClick = !!clickCb.checked; });
       // Close the popover on outside click / Escape.
       document.addEventListener('click', (e) => {
         if (!pop || pop.hidden) return;

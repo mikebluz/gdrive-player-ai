@@ -790,6 +790,18 @@
     window.addEventListener('pagehide',     () => { try { persistWorkspaceNow(); } catch (e) {} });
 
     function buildProjectSnapshot() {
+      // Keep yolked lanes' stored voices fresh at save time: freeze the active
+      // lane's live voice and mirror it onto its yolk siblings, so a reload
+      // shows the merged sound even if the user never switched lanes after
+      // editing the shared kit.
+      try {
+        if (typeof _captureVoiceGlobals === 'function' && typeof _propagateYolk === 'function' &&
+            Array.isArray(lanes) && activeLaneIdx >= 0 && activeLaneIdx < lanes.length &&
+            lanes[activeLaneIdx] && lanes[activeLaneIdx].yolk) {
+          lanes[activeLaneIdx].voice = _captureVoiceGlobals();
+          _propagateYolk(activeLaneIdx);
+        }
+      } catch (e) {}
       return {
         version: 1,
         savedAt: new Date().toISOString(),
@@ -859,6 +871,9 @@
             // Per-lane FX send levels — shallow clone so snapshot edits
             // don't share refs with the live lane.sends.
             sends: l.sends ? { ...l.sends } : null,
+            // Yolk grouping (shared sound engine across lanes).
+            yolk: l.yolk || null,
+            yolkFx: !!l.yolkFx,
           })),
           stashedLanes: Array.isArray(_stashedLanes) ? _stashedLanes.map(l => ({
             name: l.name,
@@ -884,6 +899,8 @@
             text: l.text ? JSON.parse(JSON.stringify(l.text)) : null,
             voice: l.voice ? JSON.parse(JSON.stringify(l.voice)) : null,
             sends: l.sends ? { ...l.sends } : null,
+            yolk: l.yolk || null,
+            yolkFx: !!l.yolkFx,
           })) : null,
         },
         grid: (() => {

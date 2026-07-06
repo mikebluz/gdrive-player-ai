@@ -1399,6 +1399,7 @@
           else if (!Number.isFinite(cfg[layer][k])) cfg[layer][k] = d[layer][k];
         });
         _ambNormalizeFx(cfg[layer]);
+        _ambNormalizeEuclidPattern(cfg[layer]);   // beat (euclid) editable-grid override
       });
       // Built-in layers are now "addable": only present ones show + play. New
       // configs start with just Bed; an Add-layer menu adds the others. Migrate
@@ -1462,6 +1463,7 @@
         if (typeof x.present !== 'boolean') x.present = true;
         _ambNormalizeModObj(x, _ambDefaultMod());
         _ambNormalizeFx(x);
+        _ambNormalizeEuclidPattern(x);   // bass/beat/arp (euclid) editable-grid override
         _ambNormalizeUnit(x);
         if (x.type !== 'beat' && x.type !== 'arp') _ambNormalizeNotes(x);
         if (x.type === 'arp') {
@@ -3775,7 +3777,7 @@
       const phraseSec = bars * barSec;            // content length
       if (!(phraseSec > 0.05)) return;
       const loopSec = phraseSec + Math.max(0, (inst.unitPadMs | 0)) / 1000;   // + silent pad (Unit Match)
-      const steps  = Math.max(2, Math.min(16, inst.steps | 0) || 8);
+      const steps  = Math.max(2, Math.min(32, inst.steps | 0) || 8);
       const pulses = Math.max(1, Math.min(steps, inst.pulses | 0) || 1);
       const rotate = Math.max(0, inst.rotate | 0);
       const slotSec = barSec / steps;
@@ -3836,11 +3838,11 @@
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
-            const vpat = _ambEuclidVoicePat(pulses, rotate, steps, V, v, inst.euclidRegen | 0);
+            const vpat = _ambEuclidPat(inst, pulses, steps, rotate, V, v, inst.euclidRegen | 0);
             const vpan = _spreadLfo ? 0 : ((V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40))));
             for (let bar = 0; bar < bars; bar++) {
               for (let slot = 0; slot < steps; slot++) {
-                let hit = vpat[slot] === 1;
+                let hit = vpat[(bar * steps + slot) % vpat.length] === 1;   // per-bar when the override spans the phrase; else repeats
                 if (rVar > 0) {
                   if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
                   else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
@@ -3881,10 +3883,10 @@
         let f; try { f = Tone.Frequency(60 + (inst.samplePitch | 0), 'midi').toFrequency(); } catch (e) { f = 261.63; }
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
-          const pat = euclideanPattern(pulses, steps, rotate);
+          const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, 0);   // single pattern (override row 0 or generated)
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
-              let hit = pat[slot] === 1;
+              let hit = pat[(bar * steps + slot) % pat.length] === 1;
               if (rVar > 0) {
                 if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }
                 else      { if (rnd() * 100 < rVar * 0.22) hit = true; }
@@ -3917,11 +3919,11 @@
       const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per phrase cycle
       _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
         const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
-        const pat = euclideanPattern(pulses, steps, rotate);   // base euclidean seed
+        const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, 0);   // base euclidean seed (override row 0 or generated)
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
         for (let bar = 0; bar < bars; bar++) {
           for (let slot = 0; slot < steps; slot++) {
-            let hit = pat[slot] === 1;
+            let hit = pat[(bar * steps + slot) % pat.length] === 1;
             if (rVar > 0) {
               if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }       // drop a seed hit
               else      { if (rnd() * 100 < rVar * 0.22) hit = true; }        // add a ghost hit
@@ -4663,7 +4665,7 @@
       const bars = Math.max(1, Math.min(8, (arp.bars | 0) || 1));
       const phraseSec = bars * barSec; if (!(phraseSec > 0.05)) return;
       const loopSec = phraseSec + Math.max(0, (arp.unitPadMs | 0)) / 1000;
-      const steps = Math.max(2, Math.min(16, (arp.steps | 0) || 8));
+      const steps = Math.max(2, Math.min(32, (arp.steps | 0) || 8));
       const pulses = Math.max(1, Math.min(steps, (arp.pulses | 0) || 1));
       const rotate = Math.max(0, arp.rotate | 0);
       const slotSec = barSec / steps;
@@ -4703,7 +4705,7 @@
         // Collect the whole cycle's hits (deterministic via rnd), then cap.
         const hits = [];
         for (let v = 0; v < Veff; v++) {
-          const vpat = _ambEuclidVoicePat(pulses, rotate, steps, Veff, v, arp.euclidRegen | 0);
+          const vpat = _ambEuclidPat(arp, pulses, steps, rotate, Veff, v, arp.euclidRegen | 0);
           const deg = v % N, oct = baseOct + Math.floor(v / N);
           const carry = Math.floor((_ambSrcRootPc(notes) + (intervals[deg] | 0)) / 12);
           _ambKeyTime = cStart;
@@ -4711,7 +4713,7 @@
           if (!(f0 > 0)) continue;
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
-              let hit = vpat[slot] === 1;
+              let hit = vpat[(bar * steps + slot) % vpat.length] === 1;   // per-bar when the override spans the phrase; else repeats
               if (rVar > 0) {                              // stochastic euclid variation per cycle
                 if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }
                 else      { if (rnd() * 100 < rVar * 0.22) hit = true; }
@@ -4906,12 +4908,221 @@
       }
       return euclideanPattern(pul, steps, rot);
     }
+    // Effective per-voice euclid pattern: a hand-edited OVERRIDE row (from the
+    // editable step grid, stored on inst.euclidPattern[v]) when present AND its
+    // length matches the live step count, else the GENERATED euclidean voice
+    // pattern. The length gate means a Steps change auto-drops a stale override
+    // row → re-derives. BYTE-IDENTICAL to the old direct call when no override
+    // exists (default euclidPattern absent → this is exactly _ambEuclidVoicePat),
+    // so the invariant harness is unperturbed until a user actually edits a cell.
+    // Returns a pattern of length `steps` (one bar, generated or a 1-bar override)
+    // OR a multiple of `steps` (a hand-edited FULL-PHRASE override, one bar-block
+    // per Phrase bar). Callers index with `(bar*steps+slot) % pat.length`, so a
+    // steps-long pattern repeats every bar (the default, byte-identical to before)
+    // and a phrase-long one plays a different bar-block per bar.
+    function _ambEuclidPat(inst, pulses, steps, rotate, V, v, salt) {
+      const ov = inst && inst.euclidPattern;
+      if (ov && Array.isArray(ov[v]) && ov[v].length > 0 && ov[v].length % steps === 0) return ov[v];
+      return _ambEuclidVoicePat(pulses, rotate, steps, V, v, salt);
+    }
+    // Normalize a euclid layer's hand-edited pattern override: keep it only if
+    // it's a non-empty array of non-empty 0/1 rows, else drop it (→ regenerate).
+    // Additive/absent-default: a layer with no euclidPattern is byte-identical to
+    // before, so the invariant harness is unaffected (schema rule #3/#5).
+    function _ambNormalizeEuclidPattern(L) {
+      if (!L || typeof L !== 'object' || L.euclidPattern == null) return;
+      const ov = L.euclidPattern;
+      const ok = Array.isArray(ov) && ov.length > 0 &&
+        ov.every(r => Array.isArray(r) && r.length > 0 && r.every(x => x === 0 || x === 1));
+      if (!ok) delete L.euclidPattern;
+    }
+    // Grid geometry for a euclid layer: the SAME step/pulse/rotate clamps the
+    // emitters use (see _ambEmitEuclidCore / _ambEmitArpEuclid) and the voice
+    // count the emitter renders — so the on/off grid mirrors exactly what plays.
+    // V: arp euclid → euclidVoices (1..6); a kit-voice beat/bass → euclidVoices
+    // (1..4); any synth/sample euclid → 1 (its emitter uses a single pattern).
+    function _ambEuclidGridDims(inst, type) {
+      if (!inst) return null;
+      const steps  = Math.max(2, Math.min(32, inst.steps | 0) || 8);
+      const pulses = Math.max(1, Math.min(steps, inst.pulses | 0) || 1);
+      const rotate = Math.max(0, inst.rotate | 0);
+      const bars = Math.max(1, Math.min(8, (inst.bars | 0) || 1));   // Phrase — the grid spans this many bars
+      let V = 1;
+      if (type === 'arp') V = Math.max(1, Math.min(6, (inst.euclidVoices | 0) || 1));
+      else if (_ambVoiceOf(inst, type) === 'kit') V = Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
+      return { V, steps, pulses, rotate, bars, salt: inst.euclidRegen | 0 };
+    }
+    // Rhythm-preset library (world/rock/African/clave) — reuses the SAME presets
+    // the grid "Generate Sequence" dialog offers (_EUC_PRESETS in 09), grouped
+    // by their `grp` tag into <optgroup>s. Option value = index into _EUC_PRESETS.
+    const _AMB_EUC_GRP_LBL = { 1: 'World', 2: 'Rock / R&B', 3: 'African', 4: 'Clave / Bell' };
+    function _ambEuclidPresetOptions() {
+      const list = (typeof _EUC_PRESETS !== 'undefined' && Array.isArray(_EUC_PRESETS)) ? _EUC_PRESETS : [];
+      const byGrp = {};
+      list.forEach((p, i) => { const g = p.grp || 1; (byGrp[g] = byGrp[g] || []).push({ p, i }); });
+      let html = '<option value="">Preset…</option>';
+      Object.keys(byGrp).sort((a, b) => a - b).forEach(g => {
+        html += '<optgroup label="' + (_AMB_EUC_GRP_LBL[g] || 'Other') + '">';
+        byGrp[g].forEach(({ p, i }) => {
+          const n = (typeof p.pat === 'string') ? p.pat.length : (p.n | 0);
+          html += '<option value="' + i + '" title="' + String(p.hint || '').replace(/"/g, '&quot;') + '">' + p.name + ' · ' + n + '</option>';
+        });
+        html += '</optgroup>';
+      });
+      return html;
+    }
+    // Apply a preset to a euclid layer. EUCLIDEAN presets (k/n/rot) drive the
+    // Pulses/Steps/Rotate knobs and CLEAR any override (the generated pattern IS
+    // the preset, and multi-voice spread still works). DIRECT presets (clave
+    // `pat` strings — non-Euclidean) can't be expressed as k/n/rot, so they set
+    // Steps + store an explicit override on voice 0. Returns the applied preset.
+    function _ambApplyEuclidPreset(L, idx) {
+      const list = (typeof _EUC_PRESETS !== 'undefined' && Array.isArray(_EUC_PRESETS)) ? _EUC_PRESETS : [];
+      const pr = list[idx]; if (!pr || !L) return null;
+      if (typeof pr.pat === 'string') {
+        const row = pr.pat.split('').map(ch => (ch === 'x' || ch === 'X') ? 1 : 0);
+        const steps = Math.max(2, Math.min(32, row.length));
+        L.steps = steps;
+        const r = row.slice(0, steps); while (r.length < steps) r.push(0);
+        L.euclidPattern = [r];   // clave = a single timeline (voice 0); extra voices derive
+      } else {
+        const steps = Math.max(2, Math.min(32, pr.n | 0));
+        L.steps = steps;
+        L.pulses = Math.max(1, Math.min(steps, pr.k | 0));
+        L.rotate = Math.max(0, (pr.rot | 0) % steps);
+        L.euclidPattern = null;   // generated euclidean pattern == the preset
+      }
+      return pr;
+    }
+    // Readout for the Pattern grid. The grid now spans the whole PHRASE — `bars`
+    // (Phrase) bars of `steps` cells each — so the bar count IS Phrase and it
+    // grows as you raise Phrase. Lock-to is a SEPARATE axis: it time-scales the
+    // phrase's DURATION (not its bar count), so when synced we also note how many
+    // real bars it actually plays in (e.g. "2 bars · plays in 1 bar" = 2× speed).
+    function _ambEuclidBarInfo(E, key, inst, cfg, steps, bars) {
+      let synced = false, playBars = bars;
+      try {
+        const u = inst && inst.unit;
+        synced = !!(u && u.mode === 'sync' && u.ref);
+        if (synced && E && key) {
+          const realBar = (60 / _ambBpm()) * 4;
+          const resolved = _ambResolvedUnitSec(E, key, cfg, new Set());
+          if (realBar > 0 && resolved > 0) playBars = resolved / realBar;
+        }
+      } catch (e) {}
+      const fmt = (x) => (Math.abs(x - Math.round(x)) < 0.02) ? String(Math.round(x)) : String(Math.round(x * 100) / 100);
+      const barWord = (x) => fmt(x) + (Math.abs(x - 1) < 0.02 ? ' bar' : ' bars');
+      let label = '⟳ ' + barWord(bars);
+      if (synced) label += (Math.abs(playBars - bars) > 0.02) ? (' · plays in ' + barWord(playBars)) : ' · locked';
+      return { bars, playBars, synced, label };
+    }
+    // Render the editable step grid: for each voice, `bars`×`steps` cells laid out
+    // as `bars` bar-groups of `steps` (so raising Phrase LENGTHENS the grid). Each
+    // cell's data-ei is its ABSOLUTE index (bar*steps+slot) into the full-phrase
+    // override; the first cell of each bar (after the first) gets a divider + bar
+    // number. The generated pattern is one bar and repeats (pat[idx % pat.length]);
+    // a hand-edited override is the full phrase, one bar-block per bar.
+    function _ambEuclidCellsHtml(inst, type, bar) {
+      const d = _ambEuclidGridDims(inst, type); if (!d) return '';
+      const nBars = d.bars;
+      const edited = Array.isArray(inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
+      let html = '<div class="ambient-euclid-meta">' +
+        '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
+        (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
+        '</div>';
+      for (let v = 0; v < d.V; v++) {
+        const pat = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, v, d.salt);
+        html += '<div class="ambient-euclid-row">';
+        if (d.V > 1) html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
+        html += '<div class="ambient-slice-grid ambient-euclid-cells">';
+        for (let b = 0; b < nBars; b++) {
+          for (let slot = 0; slot < d.steps; slot++) {
+            const idx = b * d.steps + slot;                    // absolute index into the phrase
+            const on = pat[idx % pat.length] === 1;
+            const barStart = (slot === 0);
+            html += '<button type="button" class="ambient-slice-cell ambient-euclid-cell' + (on ? ' on' : '') + (barStart && b > 0 ? ' barstart' : '') +
+              '" data-ev="' + v + '" data-ei="' + idx + '"' + (on ? ' aria-pressed="true"' : '') +
+              (barStart && nBars > 1 ? ' data-bar="' + (b + 1) + '"' : '') +
+              ' aria-label="Voice ' + (v + 1) + ' bar ' + (b + 1) + ' step ' + (slot + 1) + '">' + (slot + 1) + '</button>';
+          }
+        }
+        html += '</div></div>';
+      }
+      return html;
+    }
+    // Wire one euclid layer's editable step grid (shared by primary Beat + extras
+    // bass/beat/arp, mirroring _ambWireTg). `el(suf)` scopes this layer's elements,
+    // `getL` returns the live cfg layer, `type` picks the voice count, `key` is the
+    // engine layer key (for the bars readout's Unit-Sync scale). Cell taps promote
+    // the shown pattern to an explicit override; the Pulses/Rotate/Steps knobs and
+    // Regen re-derive; the Preset select loads a named rhythm.
+    function _ambWireEuclidGrid(E, el, getL, persist, sync, type, key) {
+      const grid = el('euclidgrid');
+      if (!grid) return;
+      const dims = () => { const L = getL(); return L ? _ambEuclidGridDims(L, type) : null; };
+      const render = () => {
+        const L = getL(); if (!L) return;
+        const d = _ambEuclidGridDims(L, type);
+        const bar = d ? _ambEuclidBarInfo(E, key, L, (E.getCfg && E.getCfg()) || null, d.steps, d.bars) : null;
+        grid.innerHTML = _ambEuclidCellsHtml(L, type, bar);
+      };
+      // Mirror a knob value + its readout into the slider UI (preset application
+      // writes cfg directly, so the sliders must be re-synced by hand).
+      const syncSlider = (suf, v) => { const e = el(suf); if (!e || v == null) return; e.value = String(v); const rv = el(suf + '-v'); if (rv) rv.textContent = _ambSlReadout(e.id, v); };
+      render();
+      // Preset picker → load a named rhythm, reflect into the knobs, re-render.
+      { const ps = el('euclidpreset'); if (ps) ps.addEventListener('change', () => {
+          _E = E; const L = getL(); const idx = parseInt(ps.value, 10); ps.value = '';
+          if (!L || !Number.isFinite(idx)) return;
+          if (!_ambApplyEuclidPreset(L, idx)) return;
+          syncSlider('steps', L.steps); syncSlider('pulses', L.pulses); syncSlider('rotate', L.rotate);
+          render(); persist();
+          if (E.timer) { try { sync && sync(); } catch (e) {} }
+        }); }
+      grid.addEventListener('click', (ev) => {
+        const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
+        _E = E; const L = getL(); if (!L) return;
+        const v = parseInt(c.dataset.ev, 10), i = parseInt(c.dataset.ei, 10);   // i = absolute index into the phrase
+        const d = _ambEuclidGridDims(L, type); if (!d || !Number.isFinite(v) || !Number.isFinite(i)) return;
+        const total = d.bars * d.steps;   // full-phrase override length
+        let ov = L.euclidPattern;
+        const ok = Array.isArray(ov) && ov.length === d.V && ov.every(r => Array.isArray(r) && r.length === total);
+        if (!ok) {   // snapshot the WHOLE phrase as shown (generated repeats via modulo) so WYSIWYG
+          ov = [];
+          for (let vv = 0; vv < d.V; vv++) {
+            const pat = _ambEuclidPat(L, d.pulses, d.steps, d.rotate, d.V, vv, d.salt);
+            const row = []; for (let j = 0; j < total; j++) row.push(pat[j % pat.length] === 1 ? 1 : 0);
+            ov.push(row);
+          }
+          L.euclidPattern = ov;
+        }
+        ov[v][i] = ov[v][i] ? 0 : 1;
+        if (ov[v][i]) { c.classList.add('on'); c.setAttribute('aria-pressed', 'true'); }
+        else { c.classList.remove('on'); c.removeAttribute('aria-pressed'); }
+        if (!grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
+        persist();
+      });
+      // Generator knobs re-derive: pulses/rotate/steps CLEAR the override (the
+      // knob must visibly reshape the pattern); voices KEEPS edited rows and just
+      // adds/drops rows; Regen clears (a fresh re-roll). All re-render the grid.
+      // These listeners register after the generic `sl` handlers, so L is already
+      // updated when they fire.
+      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (clear) L.euclidPattern = null; render(); persist(); };
+      ['pulses', 'rotate', 'steps'].forEach(s => { const e = el(s); if (e) e.addEventListener('input', onGen(true)); });
+      { const e = el('euclidVoices'); if (e) e.addEventListener('input', onGen(false)); }
+      { const b = el('euclidregen'); if (b) b.addEventListener('click', onGen(true)); }
+      // Timing that changes the bars readout but NOT the pattern → render only.
+      // (Lock-to is covered by _ambRefreshEuclidGrids via _ambSyncLayerUnits.)
+      { const e = el('bars'); if (e) e.addEventListener('input', onGen(false)); }     // Phrase
+      { const e = el('rate'); if (e) e.addEventListener('change', onGen(false)); }     // Rate (if shown)
+    }
     // Regen: re-roll the euclidean pattern(s) for a Beat/Arp layer. Sets a new salt
     // (read per-cycle by the emitters) and, while playing, cancels the scheduled-
     // ahead voices and re-anchors so the fresh pattern takes over at the NEXT unit
     // boundary (the current unit plays out).
     function _ambEuclidRegen(E, key) {
       const L = _ambLayerByKey(E, key); if (!L) return;
+      L.euclidPattern = null;   // Regen re-rolls the GENERATED pattern → drop any hand-edited override
       const t = (typeof performance !== 'undefined' && performance.now) ? Math.floor(performance.now()) : ((L.euclidRegen | 0) + 1);
       L.euclidRegen = (((L.euclidRegen | 0) * 1103515245 + 12345 + t) >>> 0) || 1;
       if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
@@ -5543,10 +5754,14 @@
           _E._revConv = false;
         }
         // CORE STRIPS: route the worklet's summed reverb-send bus (output 16)
-        // into this reverb. Master engine only — the send bus is global, so a
-        // lane Bloom's strip sends also land here (documented limitation).
+        // into this reverb. The bus is GLOBAL (one sum across all strips), so
+        // whichever engine builds core strips claims it — _ambBuildMod's core
+        // path re-claims on every strip build, so the engine that's actually
+        // generating owns the bus. (The old master-only gate left a lane/Shape
+        // Bloom's strip sends feeding a master reverb that often didn't exist
+        // → the per-layer Reverb send did nothing under core strips.)
         try {
-          if (_E === _masterEng && typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()) {
+          if (typeof _coreVoices !== 'undefined' && _coreVoices.stripsEnabled && _coreVoices.stripsEnabled()) {
             _coreVoices.connectSend(_E.reverb);
           }
         } catch (e) {}
@@ -5615,9 +5830,11 @@
         if (typeof _coreVoices !== 'undefined' && _coreVoices.stripAcquire) {
           const h = _coreVoices.stripAcquire(layer, out);
           if (h) {
-            // ensure the shared reverb exists — its builder wires the
-            // worklet's send bus (output 16) into it for core strips
-            try { _ambEnsureReverb(); } catch (x) {}
+            // ensure the shared reverb exists AND (re)claim the worklet's
+            // global send bus for THIS engine's reverb — the reverb may be
+            // cached from an earlier build while another engine owned the
+            // bus, or from before the worklet node existed (failed claim).
+            try { const rv = _ambEnsureReverb(); if (rv) _coreVoices.connectSend(rv); } catch (x) {}
             const e = {
               core: h, input: h.input,
               vcf: null, eq: null, eqAnalyser: null, vca: null,
@@ -5988,7 +6205,28 @@
           span.textContent = (L && p > 0) ? (_ambFmtMs(Math.round(p * 1000)) + ' / block') : '';
         });
         _ambSyncDriftReadouts(E);
+        _ambRefreshEuclidGrids(E);   // euclid Pattern grids: bars readout tracks Lock-to / Phrase / Rate
       } catch (e) {}
+    }
+    // Re-render every euclid Pattern grid in the host (readout + per-bar markers)
+    // — called from _ambSyncLayerUnits so a Timing change (Lock-to / Phrase / Rate)
+    // updates the bars readout. Stateless: the grid's delegated click listener
+    // lives on the persistent container, so replacing its cells is safe. Keyed off
+    // the enclosing layer card (extras: data-inst; primary: header data-phkey).
+    function _ambRefreshEuclidGrids(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      host.querySelectorAll('.ambient-euclid-grid').forEach(grid => {
+        const card = grid.closest('.ambient-layer'); if (!card) return;
+        let key = card.getAttribute('data-inst');
+        if (!key) { const ph = card.querySelector('[data-phkey]'); key = ph && ph.getAttribute('data-phkey'); }
+        if (!key) return;
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const type = String(key).split(':')[0];
+        const d = _ambEuclidGridDims(L, type); if (!d) return;
+        let bar = null; try { bar = _ambEuclidBarInfo(E, key, L, cfg, d.steps, d.bars); } catch (e) {}
+        grid.innerHTML = _ambEuclidCellsHtml(L, type, bar);
+      });
     }
     // ---- Per-layer Unit controls (BPM-sync visibility + Match-to-layer) -----
     // The free ms Interval is a NO-OP when the layer's length is otherwise locked,
@@ -6198,8 +6436,10 @@
         const cFrac = bars * (60 / _ambBpm()) * 4 / period;   // content portion (pad is silent)
         for (let i = 0; i < total; i++) evs.push({ at: (i / total) * cFrac, dur: durFrac, label: lbl });
       } else if (type === 'bass' || (type === 'beat' && L.gen === 'euclid')) {
-        const steps = Math.max(2, Math.min(16, (L.steps | 0) || 8)), pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1)), rotate = Math.max(0, L.rotate | 0), bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
-        const pat = (typeof euclideanPattern === 'function') ? euclideanPattern(pulses, steps, rotate) : [], totalS = bars * steps;
+        const steps = Math.max(2, Math.min(32, (L.steps | 0) || 8)), pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1)), rotate = Math.max(0, L.rotate | 0), bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
+        // Voice-0 pattern — honour a hand-edited grid override so the readout
+        // matches what plays (falls back to the generated pattern otherwise).
+        const pat = (typeof euclideanPattern === 'function') ? _ambEuclidPat(L, pulses, steps, rotate, 1, 0, 0) : [], totalS = bars * steps;
         const cFrac = bars * (60 / _ambBpm()) * 4 / period;
         for (let b = 0; b < bars; b++) for (let s = 0; s < steps; s++) if (pat[s] === 1) evs.push({ at: ((b * steps + s) / totalS) * cFrac, dur: durFrac, label: '' });
       } else if (type === 'run') {
@@ -11154,7 +11394,7 @@
       // Interval tm id differs: primary 'interval', extras 'intervalMs'.
       const setIntervalRow = (show) => { const r = rowOf('intervalMs') || rowOf('interval'); if (r) r.style.display = show ? '' : 'none'; };
       // 'voices' = primary id; 'euclidVoices' = extra-layer (schema) id.
-      ['pulses', 'steps', 'rotate', 'voices', 'euclidVoices', 'euclidregen', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      ['pulses', 'steps', 'rotate', 'voices', 'euclidVoices', 'euclidregen', 'euclidgrid', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       setRow('rate', !euclid);
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
@@ -12207,7 +12447,7 @@
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
-        ['grp', 'Generator'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'],
+        ['grp', 'Generator'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 4, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
@@ -12218,7 +12458,7 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Seed'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Generator'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Generator'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -12227,7 +12467,7 @@
       bass: { label: 'Bass', ctrls: [
         ['grp', 'Seed'], ['notes'], ['sl', 'register', 'Register', 1, 4, 'octave'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Generator'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 16, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 15, 'euclid offset'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Generator'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
@@ -12543,6 +12783,15 @@
       if (k === 'gen') return _ambGenSel(p + '-');
       if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
       if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
+      // Editable on/off step grid: the Pulses/Steps/Rotate knobs GENERATE the
+      // euclidean pattern shown here; tapping a cell hand-edits it into an
+      // explicit override. A knob change or Regen resets it to the generated
+      // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
+      if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
+        '<div class="ambient-euclid-wrap">' +
+          '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="Load a rhythm preset (world / rock / African / clave) into the step grid">' + _ambEuclidPresetOptions() + '</select></div>' +
+          '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +
+        '</div></div>';
       if (k === 'rate') return _ambRateSel(p + '-rate');
       if (k === 'home') return '<div class="ambient-ctrl"><label for="' + p + '-home" title="Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).">Home</label><select id="' + p + '-home" class="ambient-select"><option value="floor">Floor</option><option value="center">Center</option><option value="ceiling">Ceiling</option></select><span class="ambient-hint">Register sits at\u2026</span></div>';
       if (k === 'notes') return _ambNotesButtonHtml(p);
@@ -12874,6 +13123,7 @@
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); try { _ambRefreshAreaFadeUI(E); } catch (e) {} } }); } }
           else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
+          else if (k === 'euclidgrid') { _ambWireEuclidGrid(E, el, get, persist, sync, type, type + ':' + id); }
           else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
@@ -15153,6 +15403,10 @@
       bind('ambient-beat-rotate', 'beat', 'rotate');
       bind('ambient-beat-euclidVoices', 'beat', 'euclidVoices');
       { const rb = G('ambient-beat-euclidregen'); if (rb) rb.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, 'beat'); }); }
+      // Editable euclid step grid (primary Beat) — wired after the pulses/steps/
+      // rotate/voices binds above so its re-derive listeners fire after them.
+      _ambWireEuclidGrid(E, (suf) => G('ambient-beat-' + suf), () => { const c = cfg0(); return c ? c.beat : null; },
+        persist, () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } }, 'beat', 'beat');
       bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
       bind('ambient-beat-drift', 'beat', 'drift');
       bind('ambient-beat-lenVary', 'beat', 'lenVary');

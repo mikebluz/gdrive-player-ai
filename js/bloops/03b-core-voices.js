@@ -347,10 +347,26 @@
           },
         };
       }
-      // Route the summed reverb-send bus (output 16) into the shared reverb.
-      // Old reverbs dispose their own input connections, so this is additive.
+      // Route the summed reverb-send bus (output 16) into an engine's reverb.
+      // The bus is GLOBAL (one sum across all strips) so it feeds ONE reverb at
+      // a time; re-routing goes through a persistent native gain — output 16
+      // itself is never disconnected (the keep-pull sink hangs off it) and a
+      // disposed reverb can't strand the bus. Whichever engine last claims it
+      // wins (17-ambient re-claims on every core-strip build, so the engine
+      // that's actually generating owns the bus — a lane/Shape Bloom playing
+      // alone no longer sends into a master reverb that was never built).
+      let sendVia = null, sendDest = null;
       function connectSend(dest) {
-        try { Tone.connect(node, dest, SLOTS, 0); } catch (e) {}
+        if (!dest || dest === sendDest) return;
+        try {
+          if (!sendVia) {
+            sendVia = Tone.getContext().rawContext.createGain();
+            Tone.connect(node, sendVia, SLOTS, 0);
+          }
+          try { sendVia.disconnect(); } catch (e) {}
+          Tone.connect(sendVia, dest);
+          sendDest = dest;
+        } catch (e) { sendDest = null; }
       }
       // Cheap per-note FX check: any engaged per-note effect keeps the note on
       // the old engine (Bloom layer notes carry none by default).

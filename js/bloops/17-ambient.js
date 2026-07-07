@@ -3947,7 +3947,11 @@
             const vpat = kitPat
               ? ((Array.isArray(kitPat[v]) && kitPat[v].length) ? kitPat[v] : new Array(steps).fill(0))
               : _ambEuclidPat(inst, pulses, steps, rotate, V, v, inst.euclidRegen | 0);
-            const vpan = _spreadLfo ? 0 : ((V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40))));
+            // Drum-lanes CENTER by default (pan via the per-step Pan or the layer's
+            // Spread) — the per-voice fan is a polyphonic-euclid feature and at 8
+            // lanes it panned Kick+Snare hard left (left-heavy mix + reverb). Non-kit
+            // multi-voice keeps the fan.
+            const vpan = _spreadLfo ? 0 : ((V === 1 || inst.euclidKit) ? (pan | 0) : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40))));
             for (let bar = 0; bar < bars; bar++) {
               for (let slot = 0; slot < steps; slot++) {
                 let hit = vpat[(bar * steps + slot) % vpat.length] === 1;   // per-bar when the override spans the phrase; else repeats

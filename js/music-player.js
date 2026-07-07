@@ -13,6 +13,11 @@ class MusicPlayer {
         this._prefetchCache = new Map(); // trackId -> Blob
         this._blob = null;    // raw Blob for the currently loaded track
         this._blobUrl = null; // object URL for _blob, set as audio.src
+        // Monotonic load generation — bumped on every loadTrack(). play() captures
+        // it at entry and bails before assigning audio.src if it has moved, so a
+        // slow fetch for a track you've since skipped past can't clobber the
+        // current track's audio (the "wrong song plays" race).
+        this._loadSeq = 0;
 
         this.initializeElements();
         this.bindEvents();
@@ -62,6 +67,9 @@ class MusicPlayer {
 
     loadTrack(track) {
         if (!track) return;
+
+        // New load generation — invalidates any in-flight play() for a prior track.
+        this._loadSeq++;
 
         this.audio.pause();
 
@@ -193,6 +201,11 @@ class MusicPlayer {
 
     async play() {
         if (!this.currentTrack) return;
+        // Capture the load generation. If loadTrack() runs during any await below
+        // (the user skipped to another track), this play() is stale: bail before
+        // touching audio.src so the newer track's play() owns the audio element.
+        const seq = this._loadSeq;
+        const superseded = () => this._loadSeq !== seq;
         try {
             if (!this._blobUrl) {
                 const prefetchedBlob = this._prefetchCache.get(this.currentTrack.id);
@@ -213,6 +226,7 @@ class MusicPlayer {
                     const persistedBlob = this.blobCache
                         ? await this.blobCache.getBlob(this.currentTrack.id)
                         : null;
+                    if (superseded()) return;   // skipped to another track during the lookup
 
                     if (persistedBlob) {
                         // 2. Persistent blob cache — user-saved tracks, works offline
@@ -234,12 +248,14 @@ class MusicPlayer {
                         let response = await fetch(url, {
                             headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
                         });
+                        if (superseded()) { this.playPauseBtn.disabled = false; return; }
 
                         if (response.status === 401) {
                             await this.gDrive.refreshTokenSilently();
                             response = await fetch(url, {
                                 headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
                             });
+                            if (superseded()) { this.playPauseBtn.disabled = false; return; }
                         }
 
                         if (!response.ok) {
@@ -247,6 +263,10 @@ class MusicPlayer {
                         }
 
                         this._blob = await response.blob();
+                        // Last and most important guard: the blob just finished
+                        // downloading — if we've skipped past this track, drop it
+                        // rather than assigning it over the current track's audio.
+                        if (superseded()) { this.playPauseBtn.disabled = false; return; }
                         this._blobUrl = URL.createObjectURL(this._blob);
                         this.audio.src = this._blobUrl;
                         this.playPauseBtn.disabled = false;
@@ -254,6 +274,7 @@ class MusicPlayer {
                 }
             }
 
+            if (superseded()) return;
             await this.audio.play();
         } catch (error) {
             console.error('Error playing audio:', error);

@@ -3172,9 +3172,10 @@
     /* Drum-lanes PAGE tabs (pattern banks) + orchestration — ONE row. */
     .ambient-euclid-pagebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
     .ambient-euclid-pages { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-    .ambient-euclid-tab { flex: 0 0 auto; min-width: 26px; height: 24px; padding: 0 7px; border: 1px solid #34344a; border-radius: 6px 6px 0 0;
+    .ambient-euclid-tab { flex: 0 0 auto; min-width: 26px; height: 24px; padding: 0 7px; box-sizing: border-box; line-height: 1;
+      border: 1px solid #34344a; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
       background: #17172490; color: #8a8aa8; font: 600 0.66rem 'Segoe UI', sans-serif; cursor: pointer; transition: all 0.12s ease; }
-    .ambient-euclid-tab.on { border-color: #5e9ead; color: #cdf0fa; background: rgba(94,158,173,0.22); border-bottom-color: transparent; }
+    .ambient-euclid-tab.on { border-color: #5e9ead; color: #cdf0fa; background: rgba(94,158,173,0.22); }
     @media (hover: hover) { .ambient-euclid-tab:hover { border-color: #9f7aea; color: #d9cbff; } }
     .ambient-euclid-tab-add { color: #7fe0b0; font-weight: 700; }
     .ambient-euclid-tabx { margin-left: 3px; font-size: 0.56rem; opacity: 0.85; color: #9fe0ef; }

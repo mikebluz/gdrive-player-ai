@@ -8661,6 +8661,71 @@
       else { try { if (_masterEng.inited) _ambRenderSeqLayers(_masterEng); } catch (e) {} }
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
+    // Convert a grid sequence's steps into a Bloom PROGRESSION — a list of
+    // {root, intervals, bars} chords. Each sounding step becomes a chord (its
+    // pitch-class set → root + intervals, same extraction as _ambPublishWrap);
+    // rests are skipped; consecutive identical chords MERGE into one spanning
+    // `bars` bars (a held chord across N steps = one N-bar chord). Steps are
+    // taken at one bar each (the Bloom prog editor / Bars-per-chord tune timing).
+    function _ambProgFromSteps(steps) {
+      if (!Array.isArray(steps)) return [];
+      const raw = [];
+      steps.forEach(step => {
+        if (!step) return;
+        let freqs = [];
+        try { freqs = (typeof collectStepFreqs === 'function') ? (collectStepFreqs(step) || []) : []; } catch (e) {}
+        freqs = (freqs || []).filter(f => Number.isFinite(f) && f > 0).sort((a, b) => a - b);
+        if (!freqs.length) return;   // rest → not part of the chord sequence
+        // Root = the BASS note's pitch class (musical root for root-position
+        // voicings); intervals are the other pitch classes relative to it.
+        const rootMidi = (typeof _freqToMidi === 'function') ? _freqToMidi(freqs[0]) : null;
+        if (rootMidi == null) return;
+        const rootM = Math.round(rootMidi);
+        const root = ((rootM % 12) + 12) % 12;
+        const ivSet = new Set();
+        freqs.forEach(f => { const m = (typeof _freqToMidi === 'function') ? _freqToMidi(f) : null; if (m != null) ivSet.add((((Math.round(m) - rootM) % 12) + 12) % 12); });
+        const intervals = Array.from(ivSet).sort((a, b) => a - b);
+        raw.push({ root, intervals });
+      });
+      const chords = [];
+      raw.forEach(c => {
+        const last = chords[chords.length - 1];
+        if (last && last.root === c.root && last.intervals.length === c.intervals.length && last.intervals.every((x, i) => x === c.intervals[i])) {
+          last.bars = (last.bars || 1) + 1;
+        } else {
+          chords.push({ root: c.root, intervals: c.intervals, bars: 1 });
+        }
+      });
+      return chords;
+    }
+    // Send a saved sequence to Bloom AS A PROGRESSION: publish it as a named prog
+    // (a reusable per-layer note source) AND set it as the target area's GLOBAL
+    // progression, so every default-scale layer inherits its chords. areaIdx: a
+    // number / 'new' / null (active) — same routing as the Seq-layer send.
+    function _ambSendSavedToBloomAsProg(seqIndex, areaIdx) {
+      const saved = (typeof savedSequences !== 'undefined') ? savedSequences[seqIndex] : null;
+      if (!saved || !Array.isArray(saved.steps)) return;
+      const chords = _ambProgFromSteps(saved.steps);
+      if (!chords.length) { try { alert('That sequence has no chords/notes to make a progression.'); } catch (e) {} return; }
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Bloom (Progression)');
+      const switched = _ambSendTargetArea(areaIdx);
+      const name = (saved.name && saved.name.trim()) ? saved.name.trim() : 'Progression';
+      // Publish as a named, reusable progression (selectable per layer).
+      try {
+        const reg = _ambPublishedProgs();
+        const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        reg.push({ id, name, chords: chords.map(c => ({ root: c.root, intervals: c.intervals.slice(), bars: c.bars })) });
+      } catch (e) {}
+      // Set it as the GLOBAL progression on the (now active) target area.
+      const c = _masterEng.getCfg();
+      if (c) {
+        if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
+        c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
+        if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(_masterEng, c); } catch (e) {} }
+      }
+      try { if (_masterEng.inited || switched) _ambRebuildMaster(); } catch (e) {}
+      try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
+    }
     // Build a unit from a LANE's own steps (+ workspace key/tempo).
     function _ambUnitFromLane(laneIdx) {
       const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;
@@ -13142,7 +13207,21 @@
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
-          else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) { L.gen = s.value || 'random'; _ambBeatGenVis(E, p, L, p); const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk]; sync(); persist(); try { _ambRefreshAreaFadeUI(E); } catch (e) {} } }); } }
+          else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) {
+            L.gen = s.value || 'random';
+            const gk = type + ':' + id;
+            if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk];
+            // Cancel the OLD mode's scheduled-ahead voices so the switch is clean —
+            // without this the ~1.4 s lookahead of the previous generator overlaps
+            // the new one ("plays some euclidean and some random").
+            try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(gk, (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0); } catch (e) {}
+            sync(); persist();
+            // Re-render the card so the HEADER Generator chip (and euclid rows) track
+            // the new mode — the lightweight visibility toggle left the header stale.
+            _ambRenderExtras(E);
+            try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + gk + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
+            try { _ambRefreshAreaFadeUI(E); } catch (e) {}
+          } }); } }
           else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
           else if (k === 'euclidgrid') { _ambWireEuclidGrid(E, el, get, persist, sync, type, type + ':' + id); }
           else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); }); } }
@@ -15216,6 +15295,10 @@
         cfg.beat.gen = beatGenSel.value || 'random';
         _ambBeatGenVis(E, 'ambient-beat-', cfg.beat);   // primary: no UnitSyncViz p
         if (E.runPhase) delete E.runPhase['beat']; if (E.clocks) delete E.clocks['beat'];
+        // Clean switch (drop the old mode's lookahead voices) + sync the header
+        // compose tag, which the visibility toggle alone left stale.
+        try { if (E.timer && typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices('beat', (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0); } catch (e) {}
+        try { const card = beatGenSel.closest('.ambient-layer'); const compose = card && card.querySelector('.ambient-compose'); if (compose) compose.outerHTML = _ambComposePrimaryHtml('beat', cfg.beat); } catch (e) {}
         persist();
       });
 

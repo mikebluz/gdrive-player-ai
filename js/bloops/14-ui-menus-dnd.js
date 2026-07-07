@@ -1339,6 +1339,12 @@
           // (edit reps / order / Random / Key-master in the layer's Sections popover).
           if (seqs.length) seqs.forEach(s => sub.push({ label: '⊕ Append → ' + s.name, fn: () => _ambSendSavedToMaster(seqIndex, 'append', s.id, areaIdx) }));
           else sub.push({ label: 'Append → (no Seqs yet)', disabled: true, fn: () => {} });
+          // As a chord PROGRESSION: extract the sequence's chords → publish as a
+          // named prog + set the area's global progression (all layers inherit).
+          if (typeof _ambSendSavedToBloomAsProg === 'function') {
+            sub.push('hr');
+            sub.push({ label: '⇶ As Progression (global chords)', fn: () => _ambSendSavedToBloomAsProg(seqIndex, areaIdx) });
+          }
           // If this sequence's voice is a single-buffer sample, also offer the
           // raw Sample layer (chopped/whole) on the master Bloom.
           if (_sid) {

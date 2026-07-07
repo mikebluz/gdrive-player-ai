@@ -4,11 +4,6 @@
     // its variance.notes pool instead of being added as new steps.
     // The blinking chip click finalizes the edit.
     let _varianceEdit = null; // { stepRef, stepIdx } | null
-    // Per-variance-pool shuffle queue. Keyed by the variance object on
-    // a step so two different steps each cycle their own pool; entries
-    // are auto-removed when the step (and its variance object) get
-    // garbage-collected.
-    const _varianceShuffleState = new WeakMap();
 
     // Pitch ramp dialog — picks a target note (as a semitone offset
     // from the step's pitch) and how far through the step duration
@@ -592,8 +587,27 @@
       const seedIters = (existing && Number.isFinite(existing.itersPerVariant) && existing.itersPerVariant > 0)
         ? existing.itersPerVariant : 1;
       const seedRandomEach = !!(existing && existing.randomEachIter);
+      // Current state — the live pool (from the linked Set wrap when present) so
+      // re-opening shows what's there and you can remove entries. A rest shows ∅.
+      const _vLabel = (n) => (n && n.label != null && n.label !== '')
+        ? String(n.label) : (n && Number.isFinite(n.freq) ? (Math.round(n.freq) + ' Hz') : '∅');
+      const _esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const renderPool = () => {
+        const cur = sequence[stepIndex] && sequence[stepIndex].variance;
+        const pool = cur ? _varianceEffectivePool(cur) : [];
+        const link = _varianceBankWrap(cur);
+        const host = modal.querySelector('.vrn-pool');
+        if (!host) return;
+        if (!pool.length) { host.innerHTML = '<div class="vrn-empty">No variants yet — pick a mode below, then press grid notes to add them.</div>'; return; }
+        host.innerHTML =
+          (link ? `<div class="vrn-link">Set wrap · <b>${_esc(link.name || 'Set')}</b> <span class="vrn-link-note">(shared — edits propagate)</span></div>` : '') +
+          `<div class="vrn-poolgrid">` +
+          pool.map((n, i) => `<span class="vrn-chip">${_esc(_vLabel(n))}<button type="button" class="vrn-chip-x" data-idx="${i}" title="Remove this variant" aria-label="Remove ${_esc(_vLabel(n))}">×</button></span>`).join('') +
+          `</div>`;
+      };
       modal.innerHTML = `
         <div class="vrn-title">Variance for this step</div>
+        <div class="vrn-pool"></div>
         <label class="vrn-iters">
           Iterations per variance
           <input type="number" id="vrn-iters" min="1" max="64" step="1" value="${seedIters}" />
@@ -610,6 +624,25 @@
       `;
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
+      renderPool();
+      // Remove a variant from the pool. Edits the linked Set wrap (propagates)
+      // via _varianceSyncToBank, or the inline pool when unlinked; drops the
+      // variance entirely once fewer than two remain (the bank wrap stays for reuse).
+      modal.querySelector('.vrn-pool').addEventListener('click', (e) => {
+        const x = e.target.closest && e.target.closest('.vrn-chip-x'); if (!x) return;
+        const cur = sequence[stepIndex] && sequence[stepIndex].variance; if (!cur) return;
+        const idx = parseInt(x.dataset.idx, 10); if (!Number.isFinite(idx)) return;
+        const pool = _varianceEffectivePool(cur).map(n => ({ ...n }));
+        if (idx < 0 || idx >= pool.length) return;
+        if (typeof snapshotForUndo === 'function') { try { snapshotForUndo('Variance edit'); } catch (er) {} }
+        pool.splice(idx, 1);
+        cur.notes = pool;
+        if (pool.length < 2) delete sequence[stepIndex].variance;
+        else { try { _varianceSyncToBank(sequence[stepIndex]); } catch (er) {} }
+        renderPool();
+        if (typeof renderSequence === 'function') renderSequence();
+        if (typeof persistWorkspace === 'function') persistWorkspace();
+      });
       const itersInput = modal.querySelector('#vrn-iters');
       const randomCb   = modal.querySelector('#vrn-random');
       modal.querySelectorAll('.vrn-opt').forEach(b => {
@@ -678,6 +711,10 @@
         step.variance.mode = mode;
         step.variance.itersPerVariant = itersPerVariant;
         step.variance.randomEachIter = randomEachIter;
+        // Linked to a Set wrap? Refresh the cached notes from the LIVE pool so
+        // captures extend the current shared pool (not a stale copy).
+        const livePool = _varianceEffectivePool(step.variance);
+        if (livePool && livePool.length) step.variance.notes = livePool.map(n => ({ ...n }));
       }
       _varianceEdit = { stepRef: step, stepIdx: stepIndex };
       renderSequence();
@@ -692,6 +729,10 @@
       if (step && step.variance && Array.isArray(step.variance.notes)
           && step.variance.notes.length <= 1) {
         delete step.variance;
+      } else if (step && step.variance) {
+        // The pool IS a Set wrap: publish/refresh it in the bank and link the
+        // step, so it's reusable and edits propagate to every step sharing it.
+        try { _varianceSyncToBank(step); } catch (e) {}
       }
       renderSequence();
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -720,58 +761,123 @@
       return true;
     }
 
-    // Pick the active variant of a step at a given iteration count.
-    // Linear cycles, random samples uniformly. Returns the step
-    // unchanged when there's no variance pool with multiple entries.
+    // ---- Variance ⇄ Wraps: a variance pool IS a "Set" wrap ------------------
+    // A step's variance can LINK to a bank Set wrap by id (v.wrapId). When it
+    // does, the wrap owns the pool of notes (the shared "Set"), so editing that
+    // wrap — from the variance dialog OR the Wraps bank — propagates to every
+    // step linked to it. The step keeps its own mode / itersPerVariant (how THIS
+    // instance cycles the shared pool) and a cached copy of the notes (fallback
+    // when the wrap is deleted, and for legacy inline variances with no wrapId).
+    function _varianceBankWrap(v) {
+      if (!v || !v.wrapId) return null;
+      if (typeof savedWraps === 'undefined' || !Array.isArray(savedWraps)) return null;
+      return savedWraps.find(w => w && w.id === v.wrapId) || null;
+    }
+    // The live pool for a variance: the linked bank wrap's notes when present,
+    // else the step's own cached notes (legacy / unlinked).
+    function _varianceEffectivePool(v) {
+      const w = _varianceBankWrap(v);
+      if (w && typeof _wrapNotesOf === 'function') {
+        const pool = _wrapNotesOf(w.step);
+        if (Array.isArray(pool) && pool.length) return pool;
+      }
+      return (v && Array.isArray(v.notes)) ? v.notes : [];
+    }
+    // Publish/refresh a step's variance pool AS a bank Set wrap and link the
+    // step to it (v.wrapId). Creating a variance thus creates a reusable Set
+    // wrap; re-finalizing an already-linked variance updates that wrap in place
+    // so the change propagates to every step sharing it. No-op without ≥2 notes
+    // or when the Wraps subsystem isn't present (keeps 06 self-contained).
+    function _varianceSyncToBank(step) {
+      const v = step && step.variance;
+      if (!v || !Array.isArray(v.notes) || v.notes.length < 2) return;
+      if (typeof savedWraps === 'undefined' || !Array.isArray(savedWraps)) return;
+      if (typeof _wrapStepToShape !== 'function') return;
+      // A Set wrap (wrap voice) needs a freq — _wrapStepToShape drops rests. Keep
+      // rest-containing pools INLINE so silent variants aren't lost on conversion.
+      const hasRest = v.notes.some(n => n && !(Array.isArray(n.chord) && n.chord.length) && !Number.isFinite(n.freq));
+      if (hasRest) return;
+      // A Set-shaped wrap step whose pool == this step's notes (drop the link so
+      // the bank entry doesn't self-reference).
+      const setStep = _wrapStepToShape({ ...step, variance: { ...v, wrapId: undefined } }, 'set');
+      if (!setStep || !setStep.variance) return;
+      const _cs = (typeof cloneStep === 'function') ? cloneStep : (s) => JSON.parse(JSON.stringify(s));
+      const entry = _varianceBankWrap(v);
+      if (entry) {
+        entry.step = setStep;                                   // update in place → propagates
+        if (entry.origin) entry.origin.step = _cs(setStep);
+        if (typeof persistSavedWraps === 'function') persistSavedWraps();
+        if (typeof renderWrapBank === 'function') { try { renderWrapBank(); } catch (e) {} }
+        return;
+      }
+      if (typeof pushWrapToBank === 'function') {               // no link → create + link
+        const before = savedWraps.length;
+        pushWrapToBank(setStep);
+        if (savedWraps.length > before) {
+          const created = savedWraps[savedWraps.length - 1];
+          if (created && created.id) v.wrapId = created.id;
+        }
+      }
+    }
+    // A deterministic Fisher–Yates permutation of [0..L-1] for a given
+    // (seed, pass). Used by the random variance mode so each pass through the
+    // pool is a fresh shuffle that is STABLE for a given iteration — see
+    // _resolveVariantStep for why determinism matters.
+    function _variantPermAt(L, seed, pass) {
+      let s = ((seed >>> 0) ^ ((pass | 0) * 0x9e3779b1)) >>> 0;
+      const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+      const order = Array.from({ length: L }, (_, i) => i);
+      for (let i = L - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
+      return order;
+    }
+    // Pick the active variant of a step at a given loop-iteration count. The
+    // pick is a PURE FUNCTION of (iter, itersPerVariant, pool) — NOT a stateful
+    // queue — so it is idempotent: the scheduler calls this once per step per
+    // iteration, but also on muted/silent passes and on live-edit re-walks, and
+    // any per-call state would advance out of sync with the audible iterations
+    // (the "a variant plays for more/fewer iterations than selected" bug). By
+    // holding for `slot = floor(iter/itersPer)`, every mode now honours
+    // Iterations-per-variance exactly. Returns the step unchanged when there's
+    // no pool of ≥2. (A Set wrap is exactly this pool — same modes.)
     function _resolveVariantStep(step, iter) {
       if (!step || !step.variance) return step;
-      const arr = step.variance.notes;
-      if (!Array.isArray(arr) || arr.length < 2) return step;
       const v = step.variance;
-      // randomEachIter overrides the mode buttons — every iteration
-      // picks at random from the pool. Otherwise:
-      //   linear → cycle, holding each variant for itersPerVariant
-      //            iterations before advancing.
-      //   random → shuffle the pool, play through once, reshuffle.
-      //            Plain uniform Math.random() per pick produced
-      //            audible streaks of the same variant; shuffle
-      //            guarantees each variant plays once per cycle and
-      //            avoids picking the same variant twice in a row
-      //            across the refill boundary.
+      // Live pool — from the linked Set wrap when present (so wrap edits
+      // propagate), else the step's own cached notes.
+      const arr = _varianceEffectivePool(v);
+      if (!Array.isArray(arr) || arr.length < 2) return step;
+      const L = arr.length;
       const itersPer = (Number.isFinite(v.itersPerVariant) && v.itersPerVariant > 0)
         ? Math.floor(v.itersPerVariant) : 1;
+      // randomEachIter = a fresh pick EVERY iteration (its label overrides the
+      // hold), so its slot is the raw iteration; otherwise a slot spans itersPer.
+      const effPer = v.randomEachIter ? 1 : itersPer;
+      const slot = Math.floor((iter | 0) / effPer);
+      const useShuffle = v.randomEachIter || (v.mode !== 'linear' && v.mode !== 'backward');
       let pickIdx;
-      // Shuffle for random/shuffle modes (and randomEachIter); 'linear' cycles
-      // forward and 'backward' cycles in reverse — both hold each variant for
-      // itersPerVariant iterations. (Set wraps use these same modes.)
-      const _useShuffle = v.randomEachIter || (v.mode !== 'linear' && v.mode !== 'backward');
-      if (_useShuffle) {
-        let state = _varianceShuffleState.get(v);
-        if (!state || state.queue.length === 0) {
-          const queue = arr.map((_, i) => i);
-          for (let i = queue.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [queue[i], queue[j]] = [queue[j], queue[i]];
-          }
-          // Swap the head of the new queue if it matches the previous
-          // refill's last pick — keeps streaks from forming at the
-          // boundary between cycles when the pool happens to shuffle
-          // with the same index back-to-back.
-          if (state && state.lastPick != null
-              && queue[0] === state.lastPick
-              && queue.length > 1) {
-            [queue[0], queue[1]] = [queue[1], queue[0]];
-          }
-          state = { queue, lastPick: state ? state.lastPick : null };
-          _varianceShuffleState.set(v, state);
-        }
-        pickIdx = state.queue.shift();
-        state.lastPick = pickIdx;
-      } else {
-        const cycleStep = Math.floor(((iter | 0) / itersPer));
-        let idx = ((cycleStep % arr.length) + arr.length) % arr.length;
-        if (v.mode === 'backward') idx = arr.length - 1 - idx;   // cycle in reverse
+      if (!useShuffle) {
+        // linear cycles forward, backward in reverse — each held for itersPer.
+        let idx = ((slot % L) + L) % L;
+        if (v.mode === 'backward') idx = L - 1 - idx;
         pickIdx = idx;
+      } else {
+        // Random: each pass through the pool is a seeded shuffle (so every
+        // variant plays once per cycle, no immediate repeats) that is stable
+        // per slot. Seed from the pool's content so distinct pools shuffle
+        // differently without any stored/migrated state.
+        let seed = 0;
+        for (let i = 0; i < L; i++) { const n = arr[i]; const k = (n && (n.cellIndex != null ? n.cellIndex : (Number.isFinite(n.freq) ? Math.round(n.freq) : (n.label ? n.label.length : 0)))) | 0; seed = ((seed * 31) + k + 7) >>> 0; }
+        const pass = Math.floor(slot / L), within = ((slot % L) + L) % L;
+        const order = _variantPermAt(L, seed, pass);
+        // Avoid the same variant landing across a pass boundary. The swap depends
+        // only on (seed, pass) so it must apply for EVERY position in the pass —
+        // gating it on within===0 would desync the recomputed order and duplicate
+        // a variant inside the pass.
+        if (pass > 0 && L > 1) {
+          const prev = _variantPermAt(L, seed, pass - 1);
+          if (order[0] === prev[L - 1]) { const t = order[0]; order[0] = order[1]; order[1] = t; }
+        }
+        pickIdx = order[within];
       }
       const variant = arr[pickIdx];
       if (!variant) return step;

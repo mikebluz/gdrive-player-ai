@@ -9028,6 +9028,24 @@
       color: #f0f4ff; margin-bottom: 14px;
       text-align: center;
     }
+    /* Current-state pool: the variants already in the Set, removable. */
+    .variance-modal .vrn-pool { margin-bottom: 12px; }
+    .variance-modal .vrn-empty { font: 0.76rem 'Segoe UI', sans-serif; color: #6a6a8a; text-align: center; padding: 4px 0 2px; }
+    .variance-modal .vrn-link { font: 0.74rem 'Segoe UI', sans-serif; color: #9fe0ef; margin-bottom: 7px; text-align: center; }
+    .variance-modal .vrn-link b { color: #c9f2fb; }
+    .variance-modal .vrn-link-note { color: #6a6a8a; }
+    .variance-modal .vrn-poolgrid { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .variance-modal .vrn-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 4px 3px 9px; border: 1px solid #3a3a52; border-radius: 7px;
+      background: rgba(94,158,173,0.14); color: #cfe8ef;
+      font: 600 0.74rem 'Segoe UI', sans-serif;
+    }
+    .variance-modal .vrn-chip-x {
+      border: none; background: transparent; color: #8a8aa8; cursor: pointer;
+      font-size: 0.9rem; line-height: 1; padding: 0 2px; border-radius: 4px;
+    }
+    @media (hover: hover) { .variance-modal .vrn-chip-x:hover { color: #ff6b6b; } }
     .variance-modal .vrn-iters {
       display: flex;
       align-items: center;

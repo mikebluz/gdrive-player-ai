@@ -3155,9 +3155,14 @@
     .ambient-euclid-cell { min-width: 0; width: auto; padding: 0; box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; overflow: hidden; }
     .ambient-euclid-vlab { flex: 0 0 auto; width: 14px; text-align: right; color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
-    /* Drum-lanes: a fixed drum-name label at the head of each lane row. */
+    /* Drum-lanes: each lane's name is a SELECTOR button (click to focus the lane). */
     .ambient-euclid-drumlbl { flex: 0 0 auto; width: 74px; text-align: right; color: #c9b8ef;
-      font: 600 0.62rem 'Segoe UI', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      font: 600 0.62rem 'Segoe UI', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      background: transparent; border: none; padding: 2px 4px 2px 0; border-radius: 4px; cursor: pointer; transition: color 0.12s ease, background 0.12s ease; }
+    @media (hover: hover) { .ambient-euclid-drumlbl:hover { color: #e6ddff; } }
+    .ambient-euclid-drumlbl.on { color: #12121c; background: #9f7aea; padding-right: 5px; }
+    .ambient-euclid-row.lane-sel .ambient-euclid-cell { border-color: #4a3f66; }
+    .ambient-euclid-row.lane-sel .ambient-euclid-cell.on { border-color: #9f7aea; }
     /* Drum-lanes full-width layout: break out of the .ambient-ctrl 3-col grid so the
        lane labels sit in the same left gutter as the "Pattern" label and the step
        cells get the full row width. */
@@ -3179,8 +3184,17 @@
     @media (hover: hover) { .ambient-euclid-tab:hover { border-color: #9f7aea; color: #d9cbff; } }
     .ambient-euclid-tab-add { color: #7fe0b0; font-weight: 700; }
     .ambient-euclid-tabx { margin-left: 3px; font-size: 0.56rem; opacity: 0.85; color: #9fe0ef; }
-    .ambient-euclid-seqmode, .ambient-euclid-plays { flex: 0 0 auto; padding: 2px 5px; font: 600 0.62rem 'Segoe UI', sans-serif;
-      color: #d8d8ea; background: #1b1b2a; border: 1px solid #34344a; border-radius: 4px; }
+    /* Mode = a segmented Loop/Seq toggle (click-committed, no dropdown). */
+    .ambient-euclid-seg { flex: 0 0 auto; display: inline-flex; border: 1px solid #34344a; border-radius: 5px; overflow: hidden; }
+    .ambient-euclid-segbtn { padding: 3px 9px; font: 600 0.62rem 'Segoe UI', sans-serif; color: #8a8aa8; background: #1b1b2a; border: none; cursor: pointer; transition: all 0.12s ease; }
+    .ambient-euclid-segbtn + .ambient-euclid-segbtn { border-left: 1px solid #34344a; }
+    .ambient-euclid-segbtn.on { color: #cdf0fa; background: rgba(94,158,173,0.28); }
+    @media (hover: hover) { .ambient-euclid-segbtn:not(.on):hover { color: #d9cbff; } }
+    /* Plays = a compact − N× + stepper (also click-committed). */
+    .ambient-euclid-plays-step { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+    .ambient-euclid-playsbtn { width: 20px; height: 20px; line-height: 1; font: 700 0.8rem 'Segoe UI', sans-serif; color: #b0a0c8; background: #1b1b2a; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
+    @media (hover: hover) { .ambient-euclid-playsbtn:hover { border-color: #9f7aea; color: #d9cbff; } }
+    .ambient-euclid-playsval { min-width: 20px; text-align: center; color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; }
     .ambient-euclid-playslbl { color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
     .ambient-euclid-pagedel { flex: 0 0 auto; margin-left: auto; padding: 2px 6px; font-size: 0.72rem; line-height: 1;
       background: transparent; border: 1px solid #34344a; border-radius: 4px; color: #b06a7a; cursor: pointer; }
@@ -3197,8 +3211,10 @@
     .ambient-step-fx { margin-top: 8px; padding: 8px 10px; border: 1px solid #34344a; border-radius: 7px; background: #17172470; }
     .ambient-step-fx-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
     .ambient-step-fx-lbl { color: #cdf0fa; font: 700 0.66rem 'Segoe UI', sans-serif; }
-    .ambient-step-fx-clear { padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
-    @media (hover: hover) { .ambient-step-fx-clear:hover { border-color: #9f7aea; color: #d9cbff; } }
+    .ambient-step-fx-btns { display: inline-flex; gap: 6px; }
+    .ambient-step-fx-clear, .ambient-step-fx-trig { padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
+    .ambient-step-fx-trig { color: #7fe0b0; border-color: #2f5c48; }
+    @media (hover: hover) { .ambient-step-fx-clear:hover { border-color: #9f7aea; color: #d9cbff; } .ambient-step-fx-trig:hover { border-color: #4fd090; color: #b6f5d6; } }
     .ambient-step-fx-ctrl { display: grid; grid-template-columns: 54px 1fr 42px; align-items: center; gap: 8px; margin: 3px 0; }
     .ambient-step-fx-ctrl label { color: #a0aec0; font: 600 0.62rem 'Segoe UI', sans-serif; }
     .ambient-step-fx-sl { width: 100%; min-width: 0; accent-color: #9f7aea; }

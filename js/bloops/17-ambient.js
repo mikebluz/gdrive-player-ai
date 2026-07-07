@@ -4975,6 +4975,22 @@
       if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.prob === 100) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
     }
+    // Audition: play the SELECTED lane's drum once (with the selected step's vel/len)
+    // — the sequencer's ▶ Play button. Routes through the layer's mod chain if it
+    // exists (engine running), else playNote's default bus.
+    function _ambTriggerLaneStep(E, key, L) {
+      if (!L || !L._selStep || typeof playNote !== 'function' || typeof Tone === 'undefined') return;
+      try { if (Tone.start) Tone.start(); } catch (e) {}
+      const v = L._selStep.v | 0, i = L._selStep.i | 0;
+      let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
+      const lenMs = Math.max(60, L.lengthMs | 0), sfx = _ambStepFxGet(_ambEuclidPage(L), v, i);
+      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, 0), L);
+      bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level) * (sfx.vel / 100)));
+      _E = E;
+      const dest = (E && E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
+      const at = (Tone.now ? Tone.now() : 0) + 0.03;
+      try { playNote(f, bp, lenMs * (sfx.len / 100), at, dest, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
+    }
     // Re-fit every page's rows to the current Steps×Bars (preserves overlapping
     // edits; pads with silence). Run on a Steps/Bars change.
     function _ambEuclidResizePages(L) {
@@ -5317,13 +5333,16 @@
             (i + 1) + (seq && pages.length > 1 ? '<span class="ambient-euclid-tabx">×' + Math.max(1, (p.plays | 0) || 1) + '</span>' : '') + '</button>';
         });
         bar1 += '<button type="button" class="ambient-euclid-tab ambient-euclid-tab-add" title="Add a pattern page (a copy of this one to vary)">+</button></div>' +
-          '<select class="ambient-euclid-seqmode" title="Loop the current page, or play all pages in sequence (song mode)">' +
-            '<option value="0"' + (seq ? '' : ' selected') + '>Loop page</option>' +
-            '<option value="1"' + (seq ? ' selected' : '') + '>Sequence</option></select>';
+          // Mode = a segmented toggle (like Areas single/sequence). Buttons commit
+          // on click, so a re-render can't cancel a half-open native <select>.
+          '<div class="ambient-euclid-seg" role="group" title="Loop the current page, or play all pages in sequence (song mode)">' +
+            '<button type="button" class="ambient-euclid-segbtn' + (seq ? '' : ' on') + '" data-seq="0">Loop</button>' +
+            '<button type="button" class="ambient-euclid-segbtn' + (seq ? ' on' : '') + '" data-seq="1">Seq</button></div>';
         if (seq && pages.length > 1) {
-          bar1 += '<label class="ambient-euclid-playslbl">Plays</label><select class="ambient-euclid-plays" title="How many times this page loops before advancing to the next">';
-          for (let n = 1; n <= 8; n++) bar1 += '<option value="' + n + '"' + ((Math.max(1, (pages[cur].plays | 0) || 1) === n) ? ' selected' : '') + '>' + n + '</option>';
-          bar1 += '</select>';
+          bar1 += '<label class="ambient-euclid-playslbl">Plays</label><div class="ambient-euclid-plays-step">' +
+            '<button type="button" class="ambient-euclid-playsbtn" data-plays="-1">–</button>' +
+            '<span class="ambient-euclid-playsval">' + Math.max(1, (pages[cur].plays | 0) || 1) + '×</span>' +
+            '<button type="button" class="ambient-euclid-playsbtn" data-plays="1">+</button></div>';
         }
         if (pages.length > 1) bar1 += '<button type="button" class="ambient-euclid-pagedel" title="Delete this page">🗑</button>';
         bar1 += '</div>';
@@ -5338,10 +5357,13 @@
       const sel = (inst.euclidKit && inst._selStep) ? inst._selStep : null;
       for (let v = 0; v < d.V; v++) {
         const pat = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, v, d.salt);
-        html += '<div class="ambient-euclid-row' + (inst.euclidKit ? ' ambient-euclid-kitrow' : '') + '">';
+        const laneSel = sel && sel.v === v;
+        html += '<div class="ambient-euclid-row' + (inst.euclidKit ? ' ambient-euclid-kitrow' : '') + (laneSel ? ' lane-sel' : '') + '">';
         if (inst.euclidKit) {
-          // Drum-lanes: each row is a fixed, named drum lane (one sequence per drum).
-          html += '<span class="ambient-euclid-drumlbl" title="' + (_AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v)) + '">' + (_AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v)) + '</span>';
+          // Drum-lanes: each row's label is a SELECTOR — click it to focus the lane
+          // (highlight + show the step FX inspector) without touching the steps.
+          const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
+          html += '<button type="button" class="ambient-euclid-drumlbl' + (laneSel ? ' on' : '') + '" data-lane="' + v + '" title="Select the ' + dn + ' lane">' + dn + '</button>';
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
         }
@@ -5375,7 +5397,9 @@
           '<span class="ambient-step-fx-v" data-sfxv="' + key + '">' + val + (unit || '') + '</span></div>';
         html += '<div class="ambient-step-fx">' +
           '<div class="ambient-step-fx-head"><span class="ambient-step-fx-lbl">' + drum + ' · step ' + stepNo + (d.bars > 1 ? ' · bar ' + barNo : '') + '</span>' +
-            '<button type="button" class="ambient-step-fx-clear" title="Reset this step to defaults">Reset</button></div>' +
+            '<span class="ambient-step-fx-btns">' +
+              '<button type="button" class="ambient-step-fx-trig" title="Play this drum (audition)">▶ Play</button>' +
+              '<button type="button" class="ambient-step-fx-clear" title="Reset this step to defaults">Reset</button></span></div>' +
           sfxRow('Vel', 'vel', 0, 200, fx.vel, '%', 'Velocity — this step’s loudness (100 = normal)') +
           sfxRow('Length', 'len', 5, 400, fx.len, '%', 'Note length for this step (100 = the layer’s length)') +
           sfxRow('Ratchet', 'rat', 1, 8, fx.rat, '×', 'Retrigger this step N times across its slot (a roll)') +
@@ -5484,22 +5508,20 @@
         render(); persist();
       });
       // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).
+      // Drum-lanes chrome: page tabs, add/delete, mode (Loop/Seq), Plays stepper,
+      // lane-label selectors, and the ▶ audition. All BUTTONS (click-committed) so a
+      // re-render can never cancel a half-open native <select> — the "Sequence never
+      // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-step-fx-trig'); if (!t) return;
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
+        if (t.classList.contains('ambient-step-fx-trig')) { _ambTriggerLaneStep(E, key, L); return; }   // audition — no state change / re-render
         if (t.classList.contains('ambient-euclid-tab-add')) _ambEuclidAddPage(L);
         else if (t.classList.contains('ambient-euclid-pagedel')) _ambEuclidDelPage(L);
         else if (t.dataset.page != null) L.euclidPageIdx = parseInt(t.dataset.page, 10) | 0;
-        render(); persist();
-        if (E.timer) { try { sync && sync(); } catch (e) {} }
-      });
-      grid.addEventListener('change', (ev) => {
-        const sm = ev.target.closest && ev.target.closest('.ambient-euclid-seqmode');
-        const pl = ev.target.closest && ev.target.closest('.ambient-euclid-plays');
-        if (!sm && !pl) return;
-        _E = E; const L = getL(); if (!L || !L.euclidKit) return;
-        if (sm) L.euclidSeq = sm.value === '1';
-        if (pl) _ambEuclidPages(L)[_ambPageIdx(L)].plays = Math.max(1, Math.min(8, parseInt(pl.value, 10) || 1));
+        else if (t.dataset.seq != null) L.euclidSeq = t.dataset.seq === '1';
+        else if (t.dataset.plays != null) { const pg = _ambEuclidPage(L); pg.plays = Math.max(1, Math.min(8, (pg.plays | 0 || 1) + parseInt(t.dataset.plays, 10))); }
+        else if (t.dataset.lane != null) { const d = _ambEuclidGridDims(L, type), lv = parseInt(t.dataset.lane, 10) | 0; const i = (L._selStep && L._selStep.i < d.bars * d.steps) ? L._selStep.i : 0; L._selStep = { v: lv, i }; }
         render(); persist();
         if (E.timer) { try { sync && sync(); } catch (e) {} }
       });

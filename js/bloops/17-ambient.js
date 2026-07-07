@@ -3918,7 +3918,7 @@
       if (_euVoice === 'kit') {
         const lenMs  = Math.max(60, inst.lengthMs | 0);
         const pan    = _ambLayerPan(inst);   // keep the shared-RNG draw (harness/music parity) even when the LFO drives spread
-        const V = Math.max(1, Math.min(inst.euclidKit ? 8 : 4, (inst.euclidVoices | 0) || 1));
+        const V = inst.euclidKit ? _AMB_KIT_LANES : Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
         const VDRUM = _AMB_VDRUM;
         // PERF: spread via the layer's SINGLE shared panner (an LFO on e.pan), NOT a
         // Tone.Panner (+ makeup gain) PER drum hit — a busy euclid beat with spread made
@@ -4872,10 +4872,35 @@
     // 5–8 extend the auto-kit so lane counts up to 8 have a sensible default drum.
     const _AMB_VDRUM = [0, 2, 4, 3, 5, 7, 9, 11];
     // The drum a euclid Beat lane `v` plays: an explicit per-lane override
-    // (Drum-lanes mode, inst.euclidDrums[v]) wins; else the auto-kit slot.
+    // (inst.euclidDrums[v]) wins; else the fixed kit slot for that lane.
     function _ambLaneDrumPc(inst, v) {
       if (inst && Array.isArray(inst.euclidDrums) && inst.euclidDrums[v] != null) return inst.euclidDrums[v] | 0;
       return (_AMB_VDRUM[v] != null) ? _AMB_VDRUM[v] : 0;
+    }
+    // Drum-lanes shows ALL kit drums as fixed lanes (one sequence per drum).
+    const _AMB_KIT_LANES = _AMB_VDRUM.length;   // 8: Kick/Snare/Hat/Clap/Open/Tom/Crash/Perc
+    // Seed a basic backbeat into a fresh Drum-lanes layer so enabling it plays
+    // immediately (and gives an obvious starting point) — Kick on 1&3, Snare on
+    // 2&4, closed Hat on every step; other lanes empty. Won't clobber an existing
+    // valid kit pattern (so re-enabling keeps your edits).
+    function _ambSeedDrumLanes(L) {
+      if (!L) return;
+      const steps = Math.max(2, Math.min(32, L.steps | 0) || 8);
+      const bars  = Math.max(1, Math.min(8, (L.bars | 0) || 1));
+      const total = bars * steps;
+      const V = _AMB_KIT_LANES;
+      const ok = Array.isArray(L.euclidPattern) && L.euclidPattern.length === V &&
+        L.euclidPattern.every(r => Array.isArray(r) && r.length === total);
+      if (ok) return;
+      const rows = []; for (let v = 0; v < V; v++) rows.push(new Array(total).fill(0));
+      const beat = Math.max(1, Math.round(steps / 4));   // slots per quarter (4/4)
+      for (let b = 0; b < bars; b++) {
+        const o = b * steps;
+        rows[0][o + 0] = 1; if ((2 * beat) < steps) rows[0][o + 2 * beat] = 1;   // Kick 1 & 3
+        if (beat < steps) rows[1][o + beat] = 1; if ((3 * beat) < steps) rows[1][o + 3 * beat] = 1;   // Snare 2 & 4
+        for (let s = 0; s < steps; s++) rows[2][o + s] = 1;                       // Hat every step
+      }
+      L.euclidPattern = rows;
     }
     function _ambDrumName(midi) {
       const pc = (((Math.round(midi) - 36) % 12) + 12) % 12;
@@ -5034,6 +5059,9 @@
     function _ambEuclidPat(inst, pulses, steps, rotate, V, v, salt) {
       const ov = inst && inst.euclidPattern;
       if (ov && Array.isArray(ov[v]) && ov[v].length > 0 && ov[v].length % steps === 0) return ov[v];
+      // Drum-lanes is a step SEQUENCER, not a euclidean generator: a lane with no
+      // drawn pattern is silent (all 8 lanes start empty; you program the beat).
+      if (inst && inst.euclidKit) return new Array(steps).fill(0);
       return _ambEuclidVoicePat(pulses, rotate, steps, V, v, salt);
     }
     // Normalize a euclid layer's hand-edited pattern override: keep it only if
@@ -5068,7 +5096,7 @@
       const bars = Math.max(1, Math.min(8, (inst.bars | 0) || 1));   // Phrase — the grid spans this many bars
       let V = 1;
       if (type === 'arp') V = Math.max(1, Math.min(6, (inst.euclidVoices | 0) || 1));
-      else if (_ambVoiceOf(inst, type) === 'kit') V = Math.max(1, Math.min(inst.euclidKit ? 8 : 4, (inst.euclidVoices | 0) || 1));
+      else if (_ambVoiceOf(inst, type) === 'kit') V = inst.euclidKit ? _AMB_KIT_LANES : Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1));
       return { V, steps, pulses, rotate, bars, salt: inst.euclidRegen | 0 };
     }
     // Rhythm-preset library (world/rock/African/clave) — reuses the SAME presets
@@ -5144,7 +5172,9 @@
     function _ambEuclidCellsHtml(inst, type, bar) {
       const d = _ambEuclidGridDims(inst, type); if (!d) return '';
       const nBars = d.bars;
-      const edited = Array.isArray(inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
+      // Drum-lanes always carries a pattern (it IS the sequencer) → the "edited"
+      // hint (about the euclidean generator being reset) doesn't apply there.
+      const edited = !inst.euclidKit && Array.isArray(inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
       let html = '<div class="ambient-euclid-meta">' +
         '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
         (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
@@ -5153,15 +5183,12 @@
         const pat = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, v, d.salt);
         html += '<div class="ambient-euclid-row' + (inst.euclidKit ? ' ambient-euclid-kitrow' : '') + '">';
         if (inst.euclidKit) {
-          // Drum-lanes mode: each row is a drum lane with its own drum picker.
-          const cur = _ambLaneDrumPc(inst, v);
-          let opts = '';
-          Object.keys(_AMB_DRUM_NAMES).forEach(pc => { opts += '<option value="' + pc + '"' + (((pc | 0) === cur) ? ' selected' : '') + '>' + _AMB_DRUM_NAMES[pc] + '</option>'; });
-          html += '<select class="ambient-euclid-drumsel" data-elane="' + v + '" title="Drum for this lane" aria-label="Lane ' + (v + 1) + ' drum">' + opts + '</select>';
+          // Drum-lanes: each row is a fixed, named drum lane (one sequence per drum).
+          html += '<span class="ambient-euclid-drumlbl" title="' + (_AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v)) + '">' + (_AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v)) + '</span>';
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
         }
-        html += '<div class="ambient-slice-grid ambient-euclid-cells">';
+        html += '<div class="ambient-slice-grid ambient-euclid-cells" style="--eusteps:' + d.steps + '">';
         for (let b = 0; b < nBars; b++) {
           for (let slot = 0; slot < d.steps; slot++) {
             const idx = b * d.steps + slot;                    // absolute index into the phrase
@@ -5229,25 +5256,28 @@
         if (!grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
         persist();
       });
-      // Drum-lanes: the per-lane drum picker (delegated → survives re-renders).
-      grid.addEventListener('change', (ev) => {
-        const s = ev.target.closest && ev.target.closest('.ambient-euclid-drumsel'); if (!s) return;
-        _E = E; const L = getL(); if (!L) return;
-        const v = parseInt(s.dataset.elane, 10), pc = parseInt(s.value, 10);
-        if (!Number.isFinite(v) || !Number.isFinite(pc)) return;
-        if (!Array.isArray(L.euclidDrums)) L.euclidDrums = [];
-        L.euclidDrums[v] = pc; persist();
-        if (E.timer) { try { sync && sync(); } catch (e) {} }
-      });
-      // Drum-lanes toggle: turn the voices into assignable drum lanes (a mini drum
-      // machine in one layer) → re-render (drum pickers appear) + hide the single-
-      // drum "Drum" picker (per-lane drums supersede it) while playing stays live.
+      // Hide the euclidean-generator controls (Pulses/Rotate/Regen/Voices + the
+      // single-drum picker) in Drum-lanes mode — it's a step sequencer over all 8
+      // fixed drum lanes, so those knobs don't apply. Steps (resolution) + Phrase
+      // stay. Shared by the toggle handler and the initial wire.
+      const kitVis = (on) => {
+        ['pulses', 'rotate', 'euclidregen', 'euclidVoices', 'drumpick'].forEach(suf => {
+          const e = el(suf); const row = e && e.closest && e.closest('.ambient-ctrl');
+          if (row) row.style.display = on ? 'none' : '';
+        });
+      };
+      { const L0 = getL(); if (L0 && L0.euclidKit) kitVis(true); }
+      // Drum-lanes toggle: flip the grid into a one-sequence-per-drum machine
+      // (all 8 named lanes) → seed a backbeat, hide the euclidean knobs, re-render.
       { const kt = el('euclidkit'); if (kt) kt.addEventListener('change', () => {
           _E = E; const L = getL(); if (!L) return;
           L.euclidKit = kt.value === '1';
+          // Enable → seed a backbeat; disable → drop the kit pattern so euclid
+          // reverts to its generator (a leftover 8-row kit grid would otherwise be
+          // misread as a voice-0 override by the non-kit euclid emitter).
+          if (L.euclidKit) _ambSeedDrumLanes(L); else L.euclidPattern = null;
+          kitVis(L.euclidKit);
           render(); persist();
-          const dp = el('drumpick'); const dpr = dp && dp.closest && dp.closest('.ambient-ctrl');
-          if (dpr) dpr.style.display = L.euclidKit ? 'none' : '';
           if (E.timer) { try { sync && sync(); } catch (e) {} }
         }); }
       // Generator knobs re-derive: pulses/rotate/steps CLEAR the override (the
@@ -5255,7 +5285,7 @@
       // adds/drops rows; Regen clears (a fresh re-roll). All re-render the grid.
       // These listeners register after the generic `sl` handlers, so L is already
       // updated when they fire.
-      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (clear) L.euclidPattern = null; render(); persist(); };
+      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (clear) { L.euclidPattern = null; if (L.euclidKit) _ambSeedDrumLanes(L); } render(); persist(); };
       ['pulses', 'rotate', 'steps'].forEach(s => { const e = el(s); if (e) e.addEventListener('input', onGen(true)); });
       { const e = el('euclidVoices'); if (e) e.addEventListener('input', onGen(false)); }
       { const b = el('euclidregen'); if (b) b.addEventListener('click', onGen(true)); }
@@ -11635,10 +11665,13 @@
       // 'voices' = primary id; 'euclidVoices' = extra-layer (schema) id.
       ['pulses', 'steps', 'rotate', 'euclidkit', 'voices', 'euclidVoices', 'euclidregen', 'euclidgrid', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       setRow('rate', !euclid);
-      // Drum-lanes mode assigns a drum per lane → the single "Drum" (Varied) picker
-      // no longer applies; hide it in that mode (shown for Random + non-lane euclid).
+      // Drum-lanes = a step sequencer over all 8 fixed drum lanes → the euclidean
+      // generator knobs (Pulses/Rotate/Regen/Voices) and the single-drum "Drum"
+      // picker don't apply; hide them in that mode (Steps + Phrase stay).
+      const kit = euclid && !!(inst && inst.euclidKit);
+      if (kit) ['pulses', 'rotate', 'euclidregen', 'euclidVoices'].forEach(s => setRow(s, false));
       { const dp = _ambGet(E, stem + 'drumpick'); const dpr = dp && dp.closest && dp.closest('.ambient-ctrl');
-        if (dpr) dpr.style.display = (euclid && inst && inst.euclidKit) ? 'none' : ''; }
+        if (dpr) dpr.style.display = kit ? 'none' : ''; }
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
     }

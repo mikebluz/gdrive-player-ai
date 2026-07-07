@@ -3146,20 +3146,25 @@
     .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
     .ambient-euclid-grid { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; min-width: 0; }
     .ambient-euclid-row { display: flex; align-items: center; gap: 6px; }
-    .ambient-euclid-cells { flex: 1 1 auto; padding-top: 8px; }
+    /* Uniform, column-aligned step chips: a CSS grid of `--eusteps` equal columns
+       (one bar per grid row). Every cell is the SAME width no matter its number
+       label — the label is centered + clipped, so it can never resize the cell or
+       break column alignment. No horizontal scroll (columns shrink to fit). */
+    .ambient-euclid-cells { display: grid; grid-template-columns: repeat(var(--eusteps, 8), minmax(0, 1fr));
+      column-gap: 3px; row-gap: 13px; flex: 1 1 auto; min-width: 0; padding-top: 8px; }
+    .ambient-euclid-cell { min-width: 0; width: auto; padding: 0; box-sizing: border-box;
+      display: flex; align-items: center; justify-content: center; overflow: hidden; }
     .ambient-euclid-vlab { flex: 0 0 auto; width: 14px; text-align: right; color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
-    /* Drum-lanes: a compact drum picker at the head of each lane row. */
-    .ambient-euclid-drumsel { flex: 0 0 auto; width: 68px; min-width: 0; padding: 2px 4px; font: 600 0.62rem 'Segoe UI', sans-serif;
-      color: #d8d8ea; background: #1b1b2a; border: 1px solid #34344a; border-radius: 4px; }
+    /* Drum-lanes: a fixed drum-name label at the head of each lane row. */
+    .ambient-euclid-drumlbl { flex: 0 0 auto; width: 58px; text-align: right; color: #c9b8ef;
+      font: 600 0.62rem 'Segoe UI', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ambient-euclid-kitrow .ambient-euclid-cells { padding-top: 4px; }
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-euclid-barsreadout { color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; opacity: 0.9; }
     .ambient-euclid-note { color: #c9b8ef; font: 500 0.6rem 'Segoe UI', sans-serif; opacity: 0.85; }
-    /* Bar-group marker: a divider + a small bar number above the first cell of
-       each bar, so the grouping reads even when cells wrap. */
-    .ambient-euclid-cell.barstart { margin-left: 7px; position: relative; }
-    .ambient-euclid-cell.barstart::before { content: ''; position: absolute; left: -4px; top: 2px; bottom: 2px; width: 1px; background: #4a4a63; }
-    .ambient-euclid-cell[data-bar]::after { content: attr(data-bar); position: absolute; left: 0; top: -9px; font: 600 0.5rem 'Segoe UI', sans-serif; color: #7a7a9a; }
+    /* Bar-group marker: each bar is its own grid row; a small bar number sits above
+       the first cell of bars 2+ (the row-gap above reserves its space). */
+    .ambient-euclid-cell[data-bar]::after { content: attr(data-bar); position: absolute; left: 0; top: -11px; font: 600 0.5rem 'Segoe UI', sans-serif; color: #7a7a9a; }
     .ambient-euclid-cell[data-bar] { position: relative; overflow: visible; }
     .ambient-layer-head { display: flex; align-items: center; flex-wrap: wrap; position: relative; }
     /* Read-only live notes line — wraps to its own full-width row under the head

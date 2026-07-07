@@ -3185,6 +3185,11 @@
        sounding, distinct from the viewed/edited tab (.on). */
     .ambient-euclid-tab.playing { border-color: #7fe0b0; box-shadow: 0 0 0 1px #7fe0b0, 0 0 7px rgba(126,224,176,0.5); }
     .ambient-euclid-tab.playing::before { content: '▸'; margin-right: 2px; color: #7fe0b0; font-size: 0.6rem; }
+    /* Up next: during the playing page's LAST loop, the next page pulses amber with
+       a ⤳ so you know the change is one iteration away. */
+    .ambient-euclid-tab.up-next { border-color: #e0b062; color: #f0d0a0; animation: ambient-upnext 0.7s ease-in-out infinite; }
+    .ambient-euclid-tab.up-next::before { content: '⤳'; margin-right: 2px; color: #e0b062; font-size: 0.6rem; }
+    @keyframes ambient-upnext { 0%,100% { box-shadow: 0 0 0 1px rgba(224,176,98,0.5); } 50% { box-shadow: 0 0 0 1px #e0b062, 0 0 7px rgba(224,176,98,0.6); } }
     @media (hover: hover) { .ambient-euclid-tab:hover { border-color: #9f7aea; color: #d9cbff; } }
     .ambient-euclid-tab-add { color: #7fe0b0; font-weight: 700; }
     .ambient-euclid-tabx { margin-left: 3px; font-size: 0.56rem; opacity: 0.85; color: #9fe0ef; }

@@ -4960,6 +4960,21 @@
       for (let i = 0; i < pages.length; i++) { const n = Math.max(1, (pages[i].plays | 0) || 1); if (idx < n) return i; idx -= n; }
       return 0;
     }
+    // Sequence run info at cycle c: the playing page, how many loops REMAIN on it
+    // (incl. the current one), and the page that plays next. `remaining === 1` ⇒ the
+    // page changes after this iteration → drive the "up next" countdown on nextIdx.
+    function _ambEuclidPageRunInfo(L, c) {
+      const pages = _ambEuclidPages(L);
+      if (!L.euclidSeq || pages.length <= 1) return { idx: _ambPageIdx(L), remaining: Infinity, nextIdx: -1 };
+      let total = 0; for (const p of pages) total += Math.max(1, (p.plays | 0) || 1);
+      let idx = (((c | 0) % total) + total) % total;
+      for (let i = 0; i < pages.length; i++) {
+        const n = Math.max(1, (pages[i].plays | 0) || 1);
+        if (idx < n) return { idx: i, remaining: n - idx, nextIdx: (i + 1) % pages.length };
+        idx -= n;
+      }
+      return { idx: 0, remaining: Infinity, nextIdx: -1 };
+    }
     // ---- Per-step FX (velocity / length / ratchet / probability) ----------------
     // Stored SPARSE on a page: `pg.fx["v:i"] = {vel,len,rat,prob}` — only for steps
     // the user shaped (a plain on/off step has no entry → these defaults, so the
@@ -9882,7 +9897,7 @@
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())) || null;
       const bpm = _ambBpm();
       grids.forEach(grid => {
-        let cur = -1, curPage = -1;
+        let cur = -1, curPage = -1, nextPage = -1;
         try {
           const card = grid.closest('.ambient-layer');
           let key = card && card.getAttribute('data-inst');
@@ -9898,9 +9913,12 @@
                 const s = Math.floor(((now - st.startAt) % loopSec) / slotSec);
                 if (s >= 0 && s < bars * steps) cur = s;
                 // Sequence mode: which PAGE is sounding this cycle (may differ from
-                // the viewed page) → mark that tab "playing".
+                // the viewed page) → mark that tab "playing"; and when the current
+                // page is on its LAST loop, flag the NEXT page as "up next".
                 if (L.euclidKit && L.euclidSeq && Array.isArray(L.euclidPages) && L.euclidPages.length > 1) {
-                  curPage = _ambEuclidActivePageIdx(L, Math.floor((now - st.startAt) / loopSec));
+                  const info = _ambEuclidPageRunInfo(L, Math.floor((now - st.startAt) / loopSec));
+                  curPage = info.idx;
+                  if (info.remaining === 1 && info.nextIdx >= 0 && info.nextIdx !== info.idx) nextPage = info.nextIdx;
                 }
               }
             }
@@ -9918,12 +9936,18 @@
           grid.querySelectorAll('.ambient-euclid-tab.playing').forEach(t => t.classList.remove('playing'));
           if (curPage >= 0) { const t = grid.querySelector('.ambient-euclid-tab[data-page="' + curPage + '"]'); if (t) t.classList.add('playing'); }
         }
+        if (!(grid._phNext === nextPage && (nextPage < 0 || grid.querySelector('.ambient-euclid-tab[data-page="' + nextPage + '"].up-next')))) {
+          grid._phNext = nextPage;
+          grid.querySelectorAll('.ambient-euclid-tab.up-next').forEach(t => t.classList.remove('up-next'));
+          if (nextPage >= 0) { const t = grid.querySelector('.ambient-euclid-tab[data-page="' + nextPage + '"]'); if (t) t.classList.add('up-next'); }
+        }
       });
     }
     function _ambClearEuclidPlayheads(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       host.querySelectorAll('.ambient-euclid-cell.playing, .ambient-euclid-tab.playing').forEach(c => c.classList.remove('playing'));
-      host.querySelectorAll('.ambient-euclid-grid').forEach(g => { g._phStep = -1; g._phPage = -1; });
+      host.querySelectorAll('.ambient-euclid-tab.up-next').forEach(t => t.classList.remove('up-next'));
+      host.querySelectorAll('.ambient-euclid-grid').forEach(g => { g._phStep = -1; g._phPage = -1; g._phNext = -1; });
     }
     function _ambVizFrame(E) {
       if (!E.viz) return;

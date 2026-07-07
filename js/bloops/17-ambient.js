@@ -8949,6 +8949,7 @@
       E._playStartMs = null;   // reset footer elapsed time to 00:00:00
       E._keySched = null;   // drop the keyMaster key schedule on stop
       try { _ambRampVizClear(E); } catch (e) {}
+      try { _ambClearEuclidPlayheads(E); } catch (e) {}   // drop the step-playhead highlight on stop
       try { _ambRestoreTempWhen(E); } catch (e) {}   // drop lingering "Temp" When edits back to baseline
       try { _ambFreezeStopAll(E); } catch (e) {}
       _ambResetClocks(E);
@@ -9861,6 +9862,49 @@
     // ---- Visual (analyser-bound waveform; animates only while playing) --
     // Per-engine: viz state lives on E.viz so the lane + master canvases can
     // animate independently. Both analysers tap masterBus (decorative).
+    // Live step PLAYHEAD for euclid grids: highlight the column currently sounding.
+    // Driven by _ambVizFrame each frame; anchors to the layer's phase store
+    // (runPhase[key].startAt) at the Bloom bpm, so the lit step tracks the audio.
+    // Cached per grid (grid._phStep) → DOM only touched when the step changes.
+    function _ambEuclidStepPlayheads(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      const grids = host.querySelectorAll('.ambient-euclid-grid'); if (!grids.length) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())) || null;
+      const bpm = _ambBpm();
+      grids.forEach(grid => {
+        let cur = -1;
+        try {
+          const card = grid.closest('.ambient-layer');
+          let key = card && card.getAttribute('data-inst');
+          if (!key) { const ph = card && card.querySelector('[data-phkey]'); key = ph && ph.getAttribute('data-phkey'); }
+          const st = key && E.timer && E.runPhase && E.runPhase[key];
+          if (key && st && st.startAt != null && now >= st.startAt) {
+            const L = _ambLayerByKey(E, key);
+            if (L) {
+              const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, L, cfg);
+              const bars = Math.max(1, Math.min(8, L.bars | 0) || 1), steps = Math.max(2, Math.min(32, L.steps | 0) || 8);
+              const slotSec = barSec / steps, loopSec = bars * barSec + Math.max(0, (L.unitPadMs | 0)) / 1000;
+              if (slotSec > 0 && loopSec > 0) {
+                const s = Math.floor(((now - st.startAt) % loopSec) / slotSec);
+                if (s >= 0 && s < bars * steps) cur = s;
+              }
+            }
+          }
+        } catch (e) {}
+        // Skip DOM work if the lit step is unchanged AND still applied (a grid
+        // re-render wipes the class, so re-verify before short-circuiting).
+        if (grid._phStep === cur && (cur < 0 || grid.querySelector('.ambient-euclid-cell[data-ei="' + cur + '"].playing'))) return;
+        grid._phStep = cur;
+        grid.querySelectorAll('.ambient-euclid-cell.playing').forEach(c => c.classList.remove('playing'));
+        if (cur >= 0) grid.querySelectorAll('.ambient-euclid-cell[data-ei="' + cur + '"]').forEach(c => c.classList.add('playing'));
+      });
+    }
+    function _ambClearEuclidPlayheads(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-euclid-cell.playing').forEach(c => c.classList.remove('playing'));
+      host.querySelectorAll('.ambient-euclid-grid').forEach(g => { g._phStep = -1; });
+    }
     function _ambVizFrame(E) {
       if (!E.viz) return;
       // The spectrum canvas is OPTIONAL (the master Bloom has none) — draw it only if
@@ -9886,6 +9930,7 @@
         ctx.stroke();
       }
       try { _ambUpdatePlayheads(E); } catch (e) {}
+      try { _ambEuclidStepPlayheads(E); } catch (e) {}
       if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
       else E.viz.raf = 0;
     }

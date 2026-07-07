@@ -3207,6 +3207,10 @@
     .ambient-euclid-cell.has-fx { position: relative; overflow: visible; }
     .ambient-euclid-cell.has-fx::before { content: ''; position: absolute; top: 1px; right: 1px; width: 4px; height: 4px; border-radius: 50%; background: #e0b062; }
     .ambient-euclid-cell.sel { outline: 2px solid #9f7aea; outline-offset: 1px; }
+    /* Live playhead: the column currently sounding. OFF cells get a faint tint; a
+       firing (ON) cell flashes bright so you see the hit land. */
+    .ambient-euclid-cell.playing { background: rgba(159,122,234,0.22); border-color: #8f78c8; }
+    .ambient-euclid-cell.on.playing { background: rgba(126,224,176,0.55); border-color: #9df5c8; color: #eafff4; box-shadow: 0 0 7px rgba(126,224,176,0.55); }
     /* Per-step FX inspector (the selected step's velocity / length / ratchet / prob). */
     .ambient-step-fx { margin-top: 8px; padding: 8px 10px; border: 1px solid #34344a; border-radius: 7px; background: #17172470; }
     .ambient-step-fx-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }

@@ -3975,7 +3975,9 @@
                 const velS = sfx ? sfx.vel / 100 : 1, lenS = sfx ? sfx.len / 100 : 1;
                 for (let rr = 0; rr < rat && ctx.cap < 256; rr++) {
                   const rAt = at + (rr / rat) * slotSec;
-                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, vpan), inst);
+                  // Per-step pan OVERRIDES the layer/spread pan when set (≠ 0).
+                  const stPan = (sfx && sfx.pan) ? Math.max(-100, Math.min(100, sfx.pan)) : vpan;
+                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, stPan), inst);
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
                   _ambKeyTime = rAt;
@@ -4979,15 +4981,15 @@
     // Stored SPARSE on a page: `pg.fx["v:i"] = {vel,len,rat,prob}` — only for steps
     // the user shaped (a plain on/off step has no entry → these defaults, so the
     // grid + emitter are unchanged for untouched steps).
-    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, prob: 100 };
+    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 };
     function _ambStepFxGet(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, prob: (e.prob != null ? e.prob : 100) }
-               : { vel: 100, len: 100, rat: 1, prob: 100 };
+      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0) }
+               : { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 };
     }
     function _ambStepFxCustom(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || (e.prob != null && e.prob !== 100)));
+      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0)));
     }
     function _ambStepFxSet(pg, v, i, patch) {
       if (!pg) return;
@@ -4996,7 +4998,8 @@
       cur.len = Math.max(5, Math.min(400, cur.len | 0));
       cur.rat = Math.max(1, Math.min(8, cur.rat | 0));
       cur.prob = Math.max(0, Math.min(100, cur.prob | 0));
-      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.prob === 100) { if (pg.fx) delete pg.fx[k]; }
+      cur.pan = Math.max(-100, Math.min(100, cur.pan | 0));
+      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.prob === 100 && cur.pan === 0) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
     }
     // Audition: play the SELECTED lane's drum once (with the selected step's vel/len)
@@ -5008,7 +5011,7 @@
       const v = L._selStep.v | 0, i = L._selStep.i | 0;
       let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, L.lengthMs | 0), sfx = _ambStepFxGet(_ambEuclidPage(L), v, i);
-      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, 0), L);
+      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, Math.max(-100, Math.min(100, sfx.pan | 0))), L);
       bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level) * (sfx.vel / 100)));
       _E = E;
       const dest = (E && E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
@@ -5237,7 +5240,8 @@
                 if (e.len != null) e.len = Math.max(5, Math.min(400, e.len | 0));
                 if (e.rat != null) e.rat = Math.max(1, Math.min(8, e.rat | 0));
                 if (e.prob != null) e.prob = Math.max(0, Math.min(100, e.prob | 0));
-                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100)) delete pg.fx[k];
+                if (e.pan != null) e.pan = Math.max(-100, Math.min(100, e.pan | 0));
+                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100) && (e.pan == null || e.pan === 0)) delete pg.fx[k];
               }
               if (!Object.keys(pg.fx).length) delete pg.fx;
             } else if (pg.fx != null) delete pg.fx;
@@ -5428,6 +5432,7 @@
           sfxRow('Length', 'len', 5, 400, fx.len, '%', 'Note length for this step (100 = the layer’s length)') +
           sfxRow('Ratchet', 'rat', 1, 8, fx.rat, '×', 'Retrigger this step N times across its slot (a roll)') +
           sfxRow('Prob', 'prob', 0, 100, fx.prob, '%', 'Probability this step fires each pass (100 = always)') +
+          sfxRow('Pan', 'pan', -100, 100, fx.pan, '', 'Stereo position for this step (−100 = hard left, +100 = hard right)') +
         '</div>';
       }
       return html;
@@ -5520,7 +5525,7 @@
         _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) return;
         const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx, val = parseInt(sl.value, 10);
         _ambStepFxSet(pg, L._selStep.v, L._selStep.i, { [sfxKey]: val });
-        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : '%');
+        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : (sfxKey === 'pan' ? '' : '%'));
         const cell = grid.querySelector('.ambient-euclid-cell[data-ev="' + L._selStep.v + '"][data-ei="' + L._selStep.i + '"]');
         if (cell) cell.classList.toggle('has-fx', _ambStepFxCustom(pg, L._selStep.v, L._selStep.i));
         persist();
@@ -5528,7 +5533,7 @@
       grid.addEventListener('click', (ev) => {
         const cl = ev.target.closest && ev.target.closest('.ambient-step-fx-clear'); if (!cl) return;
         _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) return;
-        _ambStepFxSet(_ambEuclidPage(L), L._selStep.v, L._selStep.i, { vel: 100, len: 100, rat: 1, prob: 100 });
+        _ambStepFxSet(_ambEuclidPage(L), L._selStep.v, L._selStep.i, { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 });
         render(); persist();
       });
       // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).

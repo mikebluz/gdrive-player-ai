@@ -164,6 +164,9 @@
         filterEnv: { on: false, attack: 5, decay: 220, sustain: 40, release: 300, amount: 0, vel: 0 },
         lfos: [{ on: false, shape: 'sine', rateHz: 5 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
         env2: { on: false, attack: 5, decay: 200, sustain: 0, release: 300 },
+        // Dedicated PITCH envelope (drum boom→thud): amount in SEMITONES (deep,
+        // ±48), a fast AD that bends the pitch from base+amount down to base.
+        pitchEnv: { on: false, amount: 0, attack: 0, decay: 60 },
         macros: [{ name: 'Macro 1', value: 0 }, { name: 'Macro 2', value: 0 }, { name: 'Macro 3', value: 0 }, { name: 'Macro 4', value: 0 }],
         modMatrix: [],
       };
@@ -201,7 +204,7 @@
       return {
         attack: 10, decay: 100, sustain: 50, release: 1400, volume: 100, detune: 0,
         osc: Object.assign({}, d.osc, { harmonicity: harm }),
-        filter: d.filter, filterEnv: d.filterEnv, lfos: d.lfos, env2: d.env2,
+        filter: d.filter, filterEnv: d.filterEnv, lfos: d.lfos, env2: d.env2, pitchEnv: d.pitchEnv,
         macros: d.macros, modMatrix: d.modMatrix,
         // Granular (grain seed) — read by the GrainPlayer branch (flat keys).
         grainSize: 0.1, grainOverlap: 0.05, grainRate: 1, grainOffset: 0,
@@ -355,13 +358,32 @@
     }
 
     function _sdBuildModRig(params, refs, ctx) {
+      if (typeof Tone === 'undefined') return [];
       const matrix = (params && Array.isArray(params.modMatrix)) ? params.modMatrix.filter(r => r && r.amount) : [];
-      if (!matrix.length || typeof Tone === 'undefined') return [];
       const now = (ctx && typeof ctx.startTime === 'number') ? ctx.startTime
         : ((typeof Tone.now === 'function') ? Tone.now() : 0);
       const vel = (ctx && ctx.velocity != null) ? ctx.velocity : 1;
       const dur = Math.max(0.02, (ctx && ctx.dur) || 0.3);
       const nodes = [];
+      // PITCH ENVELOPE (node fallback for the core's dedicated pitch env): a
+      // scheduled detune bend from base+Amount → base. Runs even with no matrix,
+      // so drum presets (which carry only a pitchEnv) still boom→thud on node.
+      { const pe = params && params.pitchEnv;
+        if (pe && pe.on && Number.isFinite(pe.amount) && pe.amount !== 0 && refs.synth && refs.synth.detune) {
+          try {
+            const det = refs.synth.detune;
+            const base = Number.isFinite(det.value) ? det.value : 0;
+            const amtC = pe.amount * 100;                              // semitones → cents
+            const atk = Math.max(0, (pe.attack || 0) / 1000);
+            const dec = Math.max(0.005, (pe.decay || 0) / 1000);
+            det.cancelScheduledValues(now);
+            det.setValueAtTime(base + (atk > 0 ? 0 : amtC), now);
+            if (atk > 0) det.linearRampToValueAtTime(base + amtC, now + atk);
+            det.linearRampToValueAtTime(base, now + atk + dec);
+          } catch (e) {}
+        }
+      }
+      if (!matrix.length) return nodes;
       const lfos = Array.isArray(params.lfos) ? params.lfos : [];
       const macros = Array.isArray(params.macros) ? params.macros : [];
 
@@ -1007,6 +1029,14 @@
       fenv._row.appendChild(_sdMakeKnob({ label: 'Vel→Cut', min: 0, max: 100,  value: P.filterEnv.vel,     step: 1, unit: '%', defaultValue: 0, onChange: (v) => P.filterEnv.vel = v }));
       panes.appendChild(fenv);
 
+      // --- Pitch envelope (drum boom→thud; deep bend, base + Amount → base) ---
+      if (!P.pitchEnv) P.pitchEnv = _sdDesignDefaults().pitchEnv;
+      const penv = _sdSection('Pitch envelope', { toggle: { on: !!P.pitchEnv.on, onChange: (on) => { P.pitchEnv.on = on; } } });
+      penv._row.appendChild(_sdMakeKnob({ label: 'Amount', min: -48, max: 48, value: P.pitchEnv.amount, step: 1, unit: 'st', defaultValue: 0, onChange: (v) => P.pitchEnv.amount = v }));
+      penv._row.appendChild(_sdMakeKnob({ label: 'Attack', min: 0, max: 500, value: P.pitchEnv.attack, step: 1, defaultValue: 0, format: ms, onChange: (v) => P.pitchEnv.attack = v }));
+      penv._row.appendChild(_sdMakeKnob({ label: 'Decay', min: 1, max: 2000, value: P.pitchEnv.decay, step: 1, defaultValue: 60, format: ms, onChange: (v) => P.pitchEnv.decay = v }));
+      panes.appendChild(penv);
+
       // --- LFOs (×2) ---
       if (!Array.isArray(P.lfos) || P.lfos.length < 2) P.lfos = _sdDesignDefaults().lfos;
       ['LFO 1', 'LFO 2'].forEach((nm, i) => {
@@ -1353,5 +1383,49 @@
       mk('f-fmbright', 'FM Bright', 'fm', {
         attack: 10, decay: 200, sustain: 65, release: 450,
         osc: { harmonicity: 5, modIndex: 14 },
+      });
+      // ---- Drum synthesis — synthesize your own kit from the synth engine.
+      // Kicks/toms: a sine/triangle body + a fast env2 → PITCH drop (the
+      // "boom→thud"). Snare/hat/clap: noise through a band/high-pass with a fast
+      // amp (and filter) decay. All start from these and reshape in Design:
+      // Tune = the played pitch, Decay = amp Decay, Pitch drop = the env2→pitch
+      // route amount, Tone/brightness = the Filter. Fully synthesized — no samples.
+      mk('d-kick', 'Kick (synth)', 'sine', {
+        attack: 1, decay: 120, sustain: 0, release: 30, volume: 100,
+        pitchEnv: { on: true, amount: 36, attack: 0, decay: 55 },   // +3 oct → base (deep drop)
+      });
+      mk('d-kick-long', 'Kick 808', 'sine', {
+        attack: 1, decay: 380, sustain: 0, release: 120, volume: 100,
+        pitchEnv: { on: true, amount: 30, attack: 0, decay: 75 },
+      });
+      mk('d-tom', 'Tom (synth)', 'triangle', {
+        attack: 1, decay: 240, sustain: 0, release: 70,
+        pitchEnv: { on: true, amount: 16, attack: 0, decay: 95 },
+      });
+      mk('d-snare', 'Snare (synth)', 'noise', {
+        attack: 1, decay: 160, sustain: 0, release: 60,
+        filter: { on: true, type: 'bandpass', cutoff: 1800, q: 1.1 },
+        filterEnv: { on: true, amount: 35, attack: 0, decay: 130, sustain: 0, release: 60 },
+      });
+      mk('d-hat', 'Hi-Hat (synth)', 'noise', {
+        attack: 0, decay: 55, sustain: 0, release: 25,
+        filter: { on: true, type: 'highpass', cutoff: 8500, q: 0.7 },
+      });
+      mk('d-hat-open', 'Open Hat (synth)', 'noise', {
+        attack: 0, decay: 340, sustain: 0, release: 180,
+        filter: { on: true, type: 'highpass', cutoff: 7000, q: 0.7 },
+      });
+      mk('d-clap', 'Clap (synth)', 'noise', {
+        attack: 1, decay: 140, sustain: 0, release: 45,
+        filter: { on: true, type: 'bandpass', cutoff: 1300, q: 1.4 },
+      });
+      mk('d-rim', 'Rimshot (synth)', 'triangle', {
+        attack: 0, decay: 45, sustain: 0, release: 18,
+        filter: { on: true, type: 'bandpass', cutoff: 1700, q: 2.2 },
+      });
+      mk('d-cowbell', 'Cowbell (synth)', 'square', {
+        attack: 1, decay: 220, sustain: 0, release: 80,
+        osc: { ring: 45, ringRatio: 1.5 },
+        filter: { on: true, type: 'bandpass', cutoff: 2600, q: 1.2 },
       });
     })();

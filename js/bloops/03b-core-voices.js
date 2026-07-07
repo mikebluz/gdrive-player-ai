@@ -376,7 +376,8 @@
       }
       function _hasDesign(p) {
         return !!((p.filter && p.filter.on) || (p.filterEnv && p.filterEnv.on)
-          || (Array.isArray(p.modMatrix) && p.modMatrix.length) || p.osc);
+          || (Array.isArray(p.modMatrix) && p.modMatrix.length)
+          || (p.pitchEnv && p.pitchEnv.on && p.pitchEnv.amount) || p.osc);
       }
       function eligible(type, p) {
         const kf = kindFor(type);
@@ -422,6 +423,15 @@
           if (o.ring > 0) { flags |= 8; dp[14] = Math.min(1, o.ring / 100); dp[15] = Number.isFinite(o.ringRatio) ? o.ringRatio : 1; }
           if (Number.isFinite(o.harmonicity)) dp[16] = o.harmonicity;
           if (Number.isFinite(o.modIndex)) dp[17] = o.modIndex;
+        }
+        // Dedicated PITCH ENVELOPE (drum boom→thud): amount SEMITONES → cents,
+        // fast AD. Flag 64. Deep range, separate from the mod matrix.
+        const pe = p.pitchEnv;
+        if (pe && pe.on && Number.isFinite(pe.amount) && pe.amount !== 0) {
+          flags |= 64;
+          dp[55] = pe.amount * 100;                          // semitones → cents
+          dp[56] = Math.max(0, (pe.attack || 0) / 1000);
+          dp[57] = Math.max(0.001, (pe.decay || 0) / 1000);
         }
         const routes = (Array.isArray(p.modMatrix) ? p.modMatrix : []).filter((r) => r && r.amount && (r.src in MOD_SRC) && (r.dest in MOD_DEST)).slice(0, 8);
         if (routes.length) {

@@ -105,6 +105,13 @@ struct Voice {
     d_macro: [f32; 4],
     d_nroutes: u32,
     d_routes: [[f32; 3]; MAX_ROUTES],
+    // dedicated PITCH ENVELOPE (drum "boom→thud"): a fast AD that adds
+    // d_pe_amt CENTS to the pitch (deep range, independent of the ±1200-cent mod
+    // matrix). Attacks to peak over d_pe_atk, decays to 0 over d_pe_dec. Off when
+    // amt == 0 (flag bit 64), so it's byte-identical when unused.
+    d_pe_amt: f32,
+    d_pe_atk: f32,
+    d_pe_dec: f32,
     // control-rate mod values (updated every 16 frames)
     m_pitch: f32, // frequency multiplier
     m_amp: f32,
@@ -137,6 +144,7 @@ const VOICE0: Voice = Voice {
     d_ring: 0.0, d_ringratio: 1.0,
     d_lshape: [-1; 2], d_lrate: [1.0; 2], d_e2: [-1.0, 0.001, 1.0, 0.1],
     d_macro: [0.0; 4], d_nroutes: 0, d_routes: [[0.0; 3]; MAX_ROUTES],
+    d_pe_amt: 0.0, d_pe_atk: 0.001, d_pe_dec: 0.05,
     m_pitch: 1.0, m_amp: 1.0, m_pan: 0.0, m_n: 0,
     tag: 0, bend: 1.0, bend_t: 1.0,
     g_s: [0.0; 8], g_b: [0.0; 3], g_a: [0.0; 2],
@@ -173,7 +181,7 @@ pub(crate) static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 7;
+const CORE_REV: u32 = 8;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {
@@ -507,6 +515,13 @@ pub extern "C" fn note_ex(
             for k in 0..v.d_nroutes as usize {
                 v.d_routes[k] = [q[31 + k * 3], q[32 + k * 3], q[33 + k * 3]];
             }
+        }
+        if flags & 64 != 0 {
+            // dedicated pitch envelope — dp[55] amount (cents, signed),
+            // dp[56] attack (s), dp[57] decay (s).
+            v.d_pe_amt = q[55].clamp(-9600.0, 9600.0);
+            v.d_pe_atk = q[56].max(0.0);
+            v.d_pe_dec = q[57].max(0.001);
         }
     }
 }
@@ -854,9 +869,14 @@ pub extern "C" fn process(t_block: f64, frames: u32) {
                         v.bend += 0.35 * (v.bend_t - v.bend);
                     }
                 }
-                if v.d_flags & (1 | 2 | 32) != 0 {
+                if v.d_flags & (1 | 2 | 32 | 64) != 0 {
                     if v.m_n == 0 {
                         let mut m = [0f32; 5]; // pitch cents, cut Hz, res Q, amp, pan
+                        // dedicated pitch envelope: adds CENTS to the pitch (deep,
+                        // independent of the mod-matrix ±1200 clamp). AD to 0.
+                        if v.d_pe_amt != 0.0 {
+                            m[0] += v.d_pe_amt * adsr_held(tn, v.d_pe_atk, v.d_pe_dec, 0.0);
+                        }
                         for k in 0..v.d_nroutes as usize {
                             let ro = v.d_routes[k];
                             let srcv = match ro[0] as u32 {

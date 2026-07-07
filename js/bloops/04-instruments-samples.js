@@ -2934,7 +2934,9 @@
       // follows the amp envelope; all nodes ride sustainEffectNodes so the
       // release handler's disposeSustainFxChain() tears them down.
       if (_designVoice) {
-        if (typeof _sdBuildModRig === 'function' && params.modMatrix && params.modMatrix.length) {
+        if (typeof _sdBuildModRig === 'function'
+            && (((params.modMatrix && params.modMatrix.length))
+                || (params.pitchEnv && params.pitchEnv.on && params.pitchEnv.amount))) {
           try {
             const _modNodes = _sdBuildModRig(params,
               { synth, filter: _sdVoiceFilter, panner: _sdModPanner, gain: _sdModGain },
@@ -4096,7 +4098,9 @@
       // pan. Built once the synth (and its .detune), filter and mod panner all
       // exist; nodes are pushed onto effectNodes so they're disposed with the
       // voice. No-op (and zero nodes) when the patch has no routings.
-      if (typeof _sdBuildModRig === 'function' && params.modMatrix && params.modMatrix.length) {
+      if (typeof _sdBuildModRig === 'function'
+          && (((params.modMatrix && params.modMatrix.length))
+              || (params.pitchEnv && params.pitchEnv.on && params.pitchEnv.amount))) {
         try {
           const _modNodes = _sdBuildModRig(params,
             { synth, filter: _sdVoiceFilter, panner: _sdModPanner, gain: _sdModGain },

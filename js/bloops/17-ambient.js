@@ -5558,16 +5558,18 @@
       // Drag-reorder the page tabs (pointer-based → works on touch + desktop). A
       // horizontal drag past a small threshold reorders the pages (= the play
       // sequence); a plain click falls through to the chrome handler (select).
-      let _dragPage = -1, _dragMoved = false, _dragX0 = 0, _suppressTabClick = false;
+      let _dragPage = -1, _dragMoved = false, _dragX0 = 0, _dragPtr = -1, _suppressTabClick = false;
       grid.addEventListener('pointerdown', (ev) => {
         const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab[data-page]'); if (!t) return;
         const L = getL(); if (!L || !L.euclidKit) return;
-        _dragPage = parseInt(t.dataset.page, 10) | 0; _dragMoved = false; _dragX0 = ev.clientX; _suppressTabClick = false;
-        try { grid.setPointerCapture(ev.pointerId); } catch (e) {}   // keep move/up on the grid if the pointer drifts off
+        _dragPage = parseInt(t.dataset.page, 10) | 0; _dragMoved = false; _dragX0 = ev.clientX; _dragPtr = ev.pointerId; _suppressTabClick = false;
       });
       grid.addEventListener('pointermove', (ev) => {
         if (_dragPage < 0) return;
         if (!_dragMoved && Math.abs(ev.clientX - _dragX0) < 6) return;
+        // Capture ONLY once a drag starts — capturing on pointerdown retargets the
+        // pointerup (and the synthesized click) to the grid, breaking plain-click select.
+        if (!_dragMoved) { try { grid.setPointerCapture(_dragPtr); } catch (e) {} }
         _dragMoved = true;
         grid.querySelectorAll('.ambient-euclid-tab.drop-to').forEach(x => x.classList.remove('drop-to'));
         const src = grid.querySelector('.ambient-euclid-tab[data-page="' + _dragPage + '"]'); if (src) src.classList.add('dragging');

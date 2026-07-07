@@ -3148,6 +3148,10 @@
     .ambient-euclid-row { display: flex; align-items: center; gap: 6px; }
     .ambient-euclid-cells { flex: 1 1 auto; padding-top: 8px; }
     .ambient-euclid-vlab { flex: 0 0 auto; width: 14px; text-align: right; color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
+    /* Drum-lanes: a compact drum picker at the head of each lane row. */
+    .ambient-euclid-drumsel { flex: 0 0 auto; width: 68px; min-width: 0; padding: 2px 4px; font: 600 0.62rem 'Segoe UI', sans-serif;
+      color: #d8d8ea; background: #1b1b2a; border: 1px solid #34344a; border-radius: 4px; }
+    .ambient-euclid-kitrow .ambient-euclid-cells { padding-top: 4px; }
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-euclid-barsreadout { color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; opacity: 0.9; }
     .ambient-euclid-note { color: #c9b8ef; font: 500 0.6rem 'Segoe UI', sans-serif; opacity: 0.85; }

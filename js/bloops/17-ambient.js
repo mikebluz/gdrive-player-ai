@@ -4951,6 +4951,15 @@
       return pages[0];
     }
     function _ambEuclidActivePat(L, c) { return _ambEuclidActivePage(L, c).pat; }
+    // The page INDEX active for cycle c (for the "now playing" tab marker).
+    function _ambEuclidActivePageIdx(L, c) {
+      const pages = _ambEuclidPages(L);
+      if (!L.euclidSeq || pages.length <= 1) return _ambPageIdx(L);
+      let total = 0; for (const p of pages) total += Math.max(1, (p.plays | 0) || 1);
+      let idx = (((c | 0) % total) + total) % total;
+      for (let i = 0; i < pages.length; i++) { const n = Math.max(1, (pages[i].plays | 0) || 1); if (idx < n) return i; idx -= n; }
+      return 0;
+    }
     // ---- Per-step FX (velocity / length / ratchet / probability) ----------------
     // Stored SPARSE on a page: `pg.fx["v:i"] = {vel,len,rat,prob}` — only for steps
     // the user shaped (a plain on/off step has no entry → these defaults, so the
@@ -9873,7 +9882,7 @@
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())) || null;
       const bpm = _ambBpm();
       grids.forEach(grid => {
-        let cur = -1;
+        let cur = -1, curPage = -1;
         try {
           const card = grid.closest('.ambient-layer');
           let key = card && card.getAttribute('data-inst');
@@ -9888,22 +9897,33 @@
               if (slotSec > 0 && loopSec > 0) {
                 const s = Math.floor(((now - st.startAt) % loopSec) / slotSec);
                 if (s >= 0 && s < bars * steps) cur = s;
+                // Sequence mode: which PAGE is sounding this cycle (may differ from
+                // the viewed page) → mark that tab "playing".
+                if (L.euclidKit && L.euclidSeq && Array.isArray(L.euclidPages) && L.euclidPages.length > 1) {
+                  curPage = _ambEuclidActivePageIdx(L, Math.floor((now - st.startAt) / loopSec));
+                }
               }
             }
           }
         } catch (e) {}
         // Skip DOM work if the lit step is unchanged AND still applied (a grid
         // re-render wipes the class, so re-verify before short-circuiting).
-        if (grid._phStep === cur && (cur < 0 || grid.querySelector('.ambient-euclid-cell[data-ei="' + cur + '"].playing'))) return;
-        grid._phStep = cur;
-        grid.querySelectorAll('.ambient-euclid-cell.playing').forEach(c => c.classList.remove('playing'));
-        if (cur >= 0) grid.querySelectorAll('.ambient-euclid-cell[data-ei="' + cur + '"]').forEach(c => c.classList.add('playing'));
+        if (!(grid._phStep === cur && (cur < 0 || grid.querySelector('.ambient-euclid-cell[data-ei="' + cur + '"].playing')))) {
+          grid._phStep = cur;
+          grid.querySelectorAll('.ambient-euclid-cell.playing').forEach(c => c.classList.remove('playing'));
+          if (cur >= 0) grid.querySelectorAll('.ambient-euclid-cell[data-ei="' + cur + '"]').forEach(c => c.classList.add('playing'));
+        }
+        if (!(grid._phPage === curPage && (curPage < 0 || grid.querySelector('.ambient-euclid-tab[data-page="' + curPage + '"].playing')))) {
+          grid._phPage = curPage;
+          grid.querySelectorAll('.ambient-euclid-tab.playing').forEach(t => t.classList.remove('playing'));
+          if (curPage >= 0) { const t = grid.querySelector('.ambient-euclid-tab[data-page="' + curPage + '"]'); if (t) t.classList.add('playing'); }
+        }
       });
     }
     function _ambClearEuclidPlayheads(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
-      host.querySelectorAll('.ambient-euclid-cell.playing').forEach(c => c.classList.remove('playing'));
-      host.querySelectorAll('.ambient-euclid-grid').forEach(g => { g._phStep = -1; });
+      host.querySelectorAll('.ambient-euclid-cell.playing, .ambient-euclid-tab.playing').forEach(c => c.classList.remove('playing'));
+      host.querySelectorAll('.ambient-euclid-grid').forEach(g => { g._phStep = -1; g._phPage = -1; });
     }
     function _ambVizFrame(E) {
       if (!E.viz) return;

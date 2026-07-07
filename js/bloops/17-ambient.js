@@ -14743,12 +14743,18 @@
       // Period can be synced to BARS (fractional) instead of free ms.
       if (typeof r.syncBars !== 'boolean') r.syncBars = false;
       if (!Number.isFinite(r.periodBars) || r.periodBars <= 0) r.periodBars = 4;
-      // HOLD: plateau at the peak (B) for this long before the sweep continues.
-      // 0 = no hold (a plain LFO, backward-identical). Follows the sync unit.
+      // HOLD: plateau at `holdVal` (a value you define, not just the peak) for this
+      // long before the sweep continues. 0 = no hold (a plain LFO, backward-identical).
+      // The plateau is inserted where the RISING wave crosses holdVal → smooth.
+      // Duration follows the sync unit (holdBars when synced, holdMs when free).
       if (!Number.isFinite(r.holdMs) || r.holdMs < 0) r.holdMs = 0;
       r.holdMs = Math.min(600000, r.holdMs | 0);
       if (!Number.isFinite(r.holdBars) || r.holdBars < 0) r.holdBars = 0;
       r.holdBars = Math.min(64, Math.round(r.holdBars * 1000) / 1000);
+      // holdVal is a PERCENT of the target range (like A/B); default 100 = the top
+      // (= B for a full-range ramp → the old peak-hold behavior).
+      if (!Number.isFinite(r.holdVal)) r.holdVal = 100;
+      r.holdVal = Math.max(0, Math.min(100, Math.round(r.holdVal * 100) / 100));
       if (['sine','triangle','saw','square','seq'].indexOf(r.wave) < 0) r.wave = 'sine';
       // Sequence-as-waveform fields (only meaningful when wave === 'seq').
       if (!Number.isFinite(r.seqRef)) r.seqRef = 0;
@@ -14912,8 +14918,19 @@
       return host._seqCurve;
     }
     // Waveform position factor in [0,1] for phase in [0,1).
-    // The phase where a wave hits its PEAK (f=1) — where a Hold plateau is inserted.
-    function _ambRampPeakPhase(wave) { return (wave === 'saw' || wave === 'seq') ? 1 : 0.5; }
+    // The RISING-edge phase where a wave's factor first equals `hf` (0..1) — where
+    // the Hold plateau is inserted so the sweep reaches holdVal, holds, continues.
+    function _ambRampHoldPhase(wave, hf) {
+      hf = Math.max(0, Math.min(1, hf));
+      switch (wave) {
+        case 'saw':      return hf;               // f = phase
+        case 'triangle': return hf / 2;           // rising edge is [0, 0.5]
+        case 'square':   return 0.5;              // the 0→1 jump
+        case 'seq':      return 1;                // end of the curve
+        case 'sine':
+        default:         return Math.acos(1 - 2 * hf) / (2 * Math.PI);   // rising edge [0, 0.5]
+      }
+    }
     function _ambRampFactor(wave, phase) {
       switch (wave) {
         case 'triangle': return phase < 0.5 ? phase * 2 : 2 - phase * 2;
@@ -14937,15 +14954,19 @@
           period = Math.max(50, r.periodBars * barMs);   // bars → ms
           holdMs = Math.max(0, (Number.isFinite(r.holdBars) ? r.holdBars : 0) * barMs);
         } else { period = Math.max(50, r.periodMs | 0); holdMs = Math.max(0, r.holdMs | 0); }
-        // HOLD: insert a plateau at the wave's PEAK (f=1 = B) lasting holdMs, so the
+        // HOLD: insert a plateau at `holdVal` lasting holdMs, at the phase where the
+        // RISING wave crosses holdVal (so the sweep reaches it, holds, continues) →
         // cycle = period + holdMs. 0 = no hold (phase math identical to before).
-        let phase;
+        const holdV = Number.isFinite(r.holdVal) ? r.holdVal : 100;
+        let phase, holding = false;
         if (holdMs > 0) {
+          // fraction along the A→B sweep where the value == holdVal (clamped)
+          const hf = (r.b !== r.a) ? Math.max(0, Math.min(1, (holdV - r.a) / (r.b - r.a))) : (holdV >= r.a ? 1 : 0);
+          const holdPh = _ambRampHoldPhase(r.wave, hf), holdT = holdPh * period;
           const cycleMs = period + holdMs, e = eMs % cycleMs;
-          const peakPh = _ambRampPeakPhase(r.wave), peakT = peakPh * period;
-          if (e < peakT) phase = e / period;
-          else if (e < peakT + holdMs) phase = peakPh;        // hold at the peak
-          else phase = (e - holdMs) / period;                 // resume the sweep past the peak
+          if (e < holdT) phase = e / period;
+          else if (e < holdT + holdMs) { phase = holdPh; holding = true; }   // plateau at holdVal
+          else phase = (e - holdMs) / period;                                // resume the sweep
         } else { phase = (eMs % period) / period; }
         let f;
         if (r.wave === 'seq') {
@@ -14954,10 +14975,12 @@
         } else {
           f = _ambRampFactor(r.wave, phase);
         }
-        r._f = f;   // live sweep position (0..1) for the row's visual cue
-        // A/B are percentages; map to each target's own range so a single ramp
-        // can drive several params (with different ranges) together.
-        const pct = (r.a + f * (r.b - r.a)) / 100;
+        // A/B are percentages; map to each target's own range so a single ramp can
+        // drive several params. During the hold, output the exact holdVal.
+        const pct = holding ? (holdV / 100) : (r.a + f * (r.b - r.a)) / 100;
+        // Cue factor: during the hold, the position of holdVal along the A→B sweep,
+        // so the row readout shows the held value (pctNow = a + _f*(b-a) = holdVal).
+        r._f = holding ? ((r.b !== r.a) ? Math.max(0, Math.min(1, (holdV - r.a) / (r.b - r.a))) : 1) : f;
         for (const t of r.targets) {
           const res = _ambRampResolve(cfg, t);
           if (!res) continue;
@@ -15035,7 +15058,8 @@
           '<label>A<input type="number" id="' + p + 'a" class="ambient-ramp-num" min="0" max="100" value="' + r.a + '"><span class="ambient-hint" id="' + p + 'a-u">%</span></label>' +
           '<label>B<input type="number" id="' + p + 'b" class="ambient-ramp-num" min="0" max="100" value="' + r.b + '"><span class="ambient-hint" id="' + p + 'b-u">%</span></label>' +
           '<label>Period<input type="number" id="' + p + 'period" class="ambient-ramp-num" min="' + (r.syncBars ? '0.125' : '50') + '" step="' + (r.syncBars ? '0.25' : '50') + '" value="' + (r.syncBars ? (Number.isFinite(r.periodBars) ? r.periodBars : 4) : r.periodMs) + '"><button type="button" id="' + p + 'periodunit" class="ambient-ramp-unit" title="Toggle the ramp period between milliseconds and bars (synced to tempo; fractional allowed)">' + (r.syncBars ? 'bars' : 'ms') + '</button></label>' +
-          '<label title="Hold the ramp at its peak value (B) for this long each cycle. 0 = no hold. Uses the same unit as Period.">Hold<input type="number" id="' + p + 'hold" class="ambient-ramp-num" min="0" step="' + (r.syncBars ? '0.25' : '100') + '" value="' + (r.syncBars ? (Number.isFinite(r.holdBars) ? r.holdBars : 0) : (r.holdMs | 0)) + '"><span class="ambient-hint ambient-ramp-holdu">' + (r.syncBars ? 'bars' : 'ms') + '</span></label>' +
+          '<label title="Hold the ramp at the “at” value for this long each cycle. 0 = no hold. Uses the same unit as Period.">Hold<input type="number" id="' + p + 'hold" class="ambient-ramp-num" min="0" step="' + (r.syncBars ? '0.25' : '100') + '" value="' + (r.syncBars ? (Number.isFinite(r.holdBars) ? r.holdBars : 0) : (r.holdMs | 0)) + '"><span class="ambient-hint ambient-ramp-holdu">' + (r.syncBars ? 'bars' : 'ms') + '</span></label>' +
+          '<label title="The value to hold at (in the target’s unit for a single target, else percent). The ramp sweeps up, pauses here, then continues.">at<input type="number" id="' + p + 'holdval" class="ambient-ramp-num" min="0" max="100" value="' + r.holdVal + '"><span class="ambient-hint" id="' + p + 'holdval-u">%</span></label>' +
           '<label>Wave<select id="' + p + 'wave" class="ambient-select ambient-ramp-wave">' + waveOpts + (seqWaveOpts ? '<optgroup label="Sequence">' + seqWaveOpts + '</optgroup>' : '') + '</select></label>' +
         '</div>' +
         seqRowHtml +
@@ -15070,18 +15094,22 @@
       const r = (cfg.ramps || []).find(x => x.id === id); if (!r) return;
       const p = 'ambient-ramp-' + id + '-';
       const u = _ambRampSingleUnit(r, cfg);
-      const aEl = _ambGet(E, p + 'a'), bEl = _ambGet(E, p + 'b');
-      const aU = _ambGet(E, p + 'a-u'), bU = _ambGet(E, p + 'b-u');
+      const aEl = _ambGet(E, p + 'a'), bEl = _ambGet(E, p + 'b'), hvEl = _ambGet(E, p + 'holdval');
+      const aU = _ambGet(E, p + 'a-u'), bU = _ambGet(E, p + 'b-u'), hvU = _ambGet(E, p + 'holdval-u');
       if (u) {
         if (aEl) { aEl.min = u.min; aEl.max = u.max; aEl.value = String(_ampPctToReal(r.a, u)); }
         if (bEl) { bEl.min = u.min; bEl.max = u.max; bEl.value = String(_ampPctToReal(r.b, u)); }
+        if (hvEl) { hvEl.min = u.min; hvEl.max = u.max; hvEl.value = String(_ampPctToReal(Number.isFinite(r.holdVal) ? r.holdVal : 100, u)); }
         if (aU) aU.textContent = u.unit || '';
         if (bU) bU.textContent = u.unit || '';
+        if (hvU) hvU.textContent = u.unit || '';
       } else {
         if (aEl) { aEl.min = 0; aEl.max = 100; aEl.value = String(Math.round(r.a)); }
         if (bEl) { bEl.min = 0; bEl.max = 100; bEl.value = String(Math.round(r.b)); }
+        if (hvEl) { hvEl.min = 0; hvEl.max = 100; hvEl.value = String(Math.round(Number.isFinite(r.holdVal) ? r.holdVal : 100)); }
         if (aU) aU.textContent = '%';
         if (bU) bU.textContent = '%';
+        if (hvU) hvU.textContent = '%';
       }
       _ambRampReadout(E, id);
     }
@@ -15159,6 +15187,7 @@
         if (R.syncBars) { const v = parseFloat(hold.value); R.holdBars = (Number.isFinite(v) && v > 0) ? Math.min(64, v) : 0; }
         else { R.holdMs = Math.max(0, Math.min(600000, parseInt(hold.value, 10) || 0)); }
         persist(); });
+      const holdv = el('holdval'); if (holdv) holdv.addEventListener('input', () => { _E = E; const R = getR(); if (!R) return; const v = _readAB(holdv); if (v == null) return; R.holdVal = v; persist(); });
       const perU = el('periodunit'); if (perU) perU.addEventListener('click', () => { _E = E; const R = getR(); if (!R) return; R.syncBars = !R.syncBars; persist(); _ambRenderRamps(E); });
       const wv = el('wave'); if (wv) wv.addEventListener('change', () => {
         _E = E; const R = getR(); if (!R) return;

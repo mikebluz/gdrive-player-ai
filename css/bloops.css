@@ -3532,7 +3532,10 @@
     .ambient-layer.collapsed > *:not(.ambient-layer-head):not(.ambient-compose) { display: none; }
     /* Composable-layer readout: Voice · Note-source · Generator, shown on the
        card header (collapsed or not) as a compact derived summary. */
-    .ambient-compose { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 2px 6px; margin: -2px 0 2px; }
+    .ambient-compose { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 4px 8px; padding: 2px 2px 6px; margin: -2px 0 2px; }
+    /* Each chip is a labeled field: a tiny caption above the tag/select/button. */
+    .ambient-compose-field { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+    .ambient-compose-lbl { font: 700 0.56rem 'Segoe UI', sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #6a6a8a; padding-left: 2px; }
     .ambient-compose-tag {
       font: 600 0.81rem 'Segoe UI', sans-serif; letter-spacing: 0.02em; color: #9aa3c4;
       background: rgba(159, 122, 234, 0.12); border: 1px solid rgba(159, 122, 234, 0.28);
@@ -3558,6 +3561,13 @@
     }
     .ambient-compose-sel:hover { background: rgba(159, 122, 234, 0.30); }
     .ambient-compose-sel:focus { outline: none; border-color: rgba(159, 122, 234, 0.8); }
+    /* Notes chip locked to the Area progression — read-only, prog-tinted. */
+    button.ambient-compose-sel.ambient-compose-locked {
+      cursor: not-allowed; color: #f0b3ff;
+      background: rgba(214, 122, 234, 0.14); border-color: rgba(214, 122, 234, 0.45);
+    }
+    button.ambient-compose-sel.ambient-compose-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
+    @media (hover: hover) { button.ambient-compose-sel.ambient-compose-locked:hover { background: rgba(214, 122, 234, 0.14); } }
     /* ---- Collapsible parameter groups (Voice / Pitch / Rhythm / …) ------- */
     .ambient-grp { margin: 6px 0 0; border-top: 1px solid #1c1c2e; }
     .ambient-grp:first-of-type { border-top: none; margin-top: 2px; }

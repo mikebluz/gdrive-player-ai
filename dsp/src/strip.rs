@@ -180,6 +180,11 @@ pub(crate) struct Strip {
     // it always runs when the strip is enabled. Mod REPLACES the cutoff.
     vcf_mod: SMod,
     vcf_last: f32,
+    // Static (hand-controllable) base cutoff Hz + resonance Q. When no VCF LFO is
+    // engaged the cutoff holds here (a live filter knob); the reso applies either
+    // way. Defaults 20000/0.7 reproduce the old fixed-open behaviour byte-for-byte.
+    vcf_cutoff: f32,
+    vcf_reso: f32,
     vcf_b: [f32; 3],
     vcf_a: [f32; 2],
     vcf_s: [[f32; 2]; 2],
@@ -239,6 +244,8 @@ pub(crate) const STRIP0: Strip = Strip {
     on: false,
     vcf_mod: SMOD0,
     vcf_last: 0.0,
+    vcf_cutoff: 20000.0,
+    vcf_reso: 0.7,
     vcf_b: [0.0; 3],
     vcf_a: [0.0; 2],
     vcf_s: [[0.0; 2]; 2],
@@ -549,14 +556,15 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                 let n = (frames - i0).min(CHUNK);
                 let tc = t_block + i0 as f64 * dt;
                 let te = t_block + (i0 + n) as f64 * dt;
-                // ---- vcf (always on; mod carries the absolute cutoff) ------
+                // ---- vcf (always on; LFO carries the absolute cutoff, else the
+                // static base cutoff knob). Resonance = the base Q either way. ----
                 let cut = if st.vcf_mod.shape >= 0 {
                     smod_val(&st.vcf_mod, tc, seed ^ 0x1234_5678)
                 } else {
-                    20000.0
+                    st.vcf_cutoff
                 };
                 if (cut - st.vcf_last).abs() > st.vcf_last.abs() * 0.002 + 0.01 {
-                    let (b, a) = nat_lp(cut, 0.7, sr);
+                    let (b, a) = nat_lp(cut, st.vcf_reso, sr);
                     st.vcf_b = b;
                     st.vcf_a = a;
                     st.vcf_last = cut;
@@ -758,6 +766,28 @@ pub extern "C" fn strip_mod(slot: u32, target: u32, shape: i32, hz: f32, min: f3
         if target == 1 {
             st.vcf_last = 0.0;
         }
+    }
+}
+
+/// Static base cutoff (Hz) for the vcf — the hand filter knob. Held when no VCF
+/// LFO is engaged; ignored (LFO wins) while it is. Clamped to a sane audio range.
+#[no_mangle]
+pub extern "C" fn strip_cutoff(slot: u32, hz: f32) {
+    unsafe {
+        let st = &mut STRIPS[(slot as usize) % SLOTS];
+        st.vcf_cutoff = hz.clamp(20.0, 20000.0);
+        st.vcf_last = -1.0; // force a coefficient recompute next block
+    }
+}
+
+/// Resonance (RBJ Q) for the vcf — applies with the static cutoff AND under an
+/// LFO. Default 0.7 (Butterworth). Clamped to avoid self-oscillation blowups.
+#[no_mangle]
+pub extern "C" fn strip_reso(slot: u32, q: f32) {
+    unsafe {
+        let st = &mut STRIPS[(slot as usize) % SLOTS];
+        st.vcf_reso = q.clamp(0.1, 20.0);
+        st.vcf_last = -1.0;
     }
 }
 

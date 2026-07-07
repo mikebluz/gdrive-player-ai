@@ -36,7 +36,10 @@
     // FeedbackDelay (mix 0..100, timeMs, feedback 0..95). `dist` is a Distortion
     // (amount 0..100 drive, mix 0..100 wet).
     function _ambDefaultFx() {
-      return { revSend: 0, delay: { mix: 0, timeMs: 300, feedback: 35, ping: 0 }, dist: { mix: 0, amount: 40 }, chorus: { mix: 0, depth: 50, rate: 30 }, phaser: { mix: 0, depth: 50, rate: 30 }, autopan: { mix: 0, depth: 100, rate: 30 },
+      // cutoff/reso: the live per-layer FILTER knob (0–100). cutoff 100 = fully
+      // open (20 kHz), reso 0 = Butterworth (Q 0.7) — the defaults reproduce the
+      // old always-open filter exactly, so they're byte-identical / golden-safe.
+      return { cutoff: 100, reso: 0, revSend: 0, delay: { mix: 0, timeMs: 300, feedback: 35, ping: 0 }, dist: { mix: 0, amount: 40 }, chorus: { mix: 0, depth: 50, rate: 30 }, phaser: { mix: 0, depth: 50, rate: 30 }, autopan: { mix: 0, depth: 100, rate: 30 },
                // Trance gate: a bar-synced step pattern that chops the layer's output. `steps`
                // = steps per bar (= pattern length); each step on (1) passes, off (0) cuts by
                // `depth`%. `edge` ms softens each transition. Default = an 8th-note gate.
@@ -1104,6 +1107,8 @@
     // Backfill a layer's FX block in place (preserves objects across reload).
     function _ambNormalizeFx(host) {
       const d = _ambDefaultFx();
+      if (!Number.isFinite(host.cutoff)) host.cutoff = d.cutoff;
+      if (!Number.isFinite(host.reso)) host.reso = d.reso;
       if (!Number.isFinite(host.revSend)) host.revSend = d.revSend;
       if (!host.delay || typeof host.delay !== 'object') host.delay = { ...d.delay };
       else ['mix', 'timeMs', 'feedback', 'ping'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
@@ -1750,12 +1755,13 @@
       let notes;
       if (layer && layer.notes && typeof layer.notes === 'object' && typeof layer.notes.type === 'string') notes = layer.notes;
       else notes = { type: 'scale', scale: (layer && typeof layer.scale === 'string') ? layer.scale : '' };
-      // Inherit the global progression when this layer is on the default "follow the
-      // Key" scale (empty scale) and a global progression is active.
-      if (notes && notes.type === 'scale' && !notes.scale) {
-        const gp = _ambGlobalProg();
-        if (gp) notes = gp;
-      }
+      // AREA PROGRESSION LOCK: when a global (Area) progression is active, EVERY
+      // layer's Notes source is overridden to it, so the whole Area follows one
+      // harmony — the per-layer selection is restored the moment the Area prog is
+      // turned off. (Previously only default-scale layers inherited; this locks
+      // explicit selections too. Harness-neutral: the only prog config with a
+      // GLOBAL prog uses a default-scale layer, which resolved to the same prog.)
+      { const gp = _ambGlobalProg(); if (gp) return gp; }
       // Relative MODE: re-centre a scale source to a different degree (a mode of
       // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
       // new tonic. Only meaningful for scale sources; carried on the descriptor so
@@ -2426,6 +2432,7 @@
         c.prog.name = name; c.prog.chords = chords; c.prog.on = true;
         if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }   // Phase 2c
         try { _ambSyncControls(E); } catch (e) {}
+        try { _ambRefreshSrcChips(E); } catch (e) {}   // lock the per-layer Notes chips
         if (typeof persistWorkspace === 'function') persistWorkspace();
       };
       const items = [];
@@ -2867,14 +2874,40 @@
       if (!chip) return;
       const refresh = () => {
         const L = getLayer(); if (!L) return;
-        chip.textContent = _ambNotesLabel(_ambNotesOf(L));
+        chip.textContent = _ambNotesLabel(_ambNotesOf(L));   // _ambNotesOf → the Area prog when locked
+        const locked = !!_ambGlobalProg();
+        chip.classList.toggle('ambient-compose-locked', locked);
+        chip.title = _ambSrcChipTitle();
         try { _ambToneWrapVis(E, tonePrefix, L); } catch (e) {}
         try { _ambSeedUiRefresh(E, tonePrefix, getLayer, key); } catch (e) {}
       };
       refresh();
       chip.addEventListener('click', () => {
+        // Locked to the Area progression → don't open the source menu (the prog
+        // owns the Notes for every layer while it's on).
+        if (_ambGlobalProg()) { try { if (typeof showToast === 'function') showToast('Notes are locked to the Area progression — turn Prog off (Configure) to edit'); } catch (e) {} return; }
         const r = chip.getBoundingClientRect();
         _ambOpenNotesMenu(E, getLayer, r.left, r.bottom + 4, refresh);
+      });
+    }
+    // Refresh every layer's Note-source chip (label + lock state) — called when
+    // the Area progression toggles, so the chips lock/unlock without a full panel
+    // rebuild. Keyed off the enclosing layer card (extras: data-inst; primary:
+    // header data-phkey), like _ambRefreshEuclidGrids.
+    function _ambRefreshSrcChips(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      _E = E;   // _ambGlobalProg / _ambNotesOf read the module-global engine
+      const locked = !!_ambGlobalProg();
+      const ttl = _ambSrcChipTitle();
+      host.querySelectorAll('button[id$="-srcswap"]').forEach(btn => {
+        const card = btn.closest('.ambient-layer'); if (!card) return;
+        let k = card.getAttribute('data-inst');
+        if (!k) { const ph = card.querySelector('[data-phkey]'); k = ph && ph.getAttribute('data-phkey'); }
+        if (!k) return;
+        const L = _ambLayerByKey(E, k); if (!L) return;
+        btn.textContent = _ambNotesLabel(_ambNotesOf(L));
+        btn.classList.toggle('ambient-compose-locked', locked);
+        btn.title = ttl;
       });
     }
 
@@ -3137,6 +3170,48 @@
         if (P > 0.05) { E.clocks = E.clocks || {}; let b = base + P; while (b < tn + 0.03) b += P; E.clocks[key] = b; }
       } catch (e) {}
     }
+    // Apply a generation / per-note edit to a PLAYING layer on its NEXT UNIT
+    // instead of a loop later: drop the layer's scheduled-ahead voices from the
+    // next unit boundary (the current unit rings out), then re-anchor its phase so
+    // the next tick re-emits from that boundary with the fresh cfg. Windowed
+    // layers keep their phase in a *Phase/arpState store (reset lastAt to the
+    // boundary); step layers (bed/motif/texture/random beat) in E.clocks. This is
+    // what makes the generation + per-note sliders feel LIVE (they otherwise land
+    // ~1.4 s late because the lookahead already committed the old values).
+    function _ambReanchorLayer(E, key) {
+      if (!E || !E.timer) return;
+      try {
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const cfg = E._cfg || (E.getCfg && E.getCfg());
+        const P = _ambLayerPeriodSec(E, key, L, cfg);
+        if (!(P > 0.02)) return;
+        const tn = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+        const type = String(key).split(':')[0];
+        let store = { bass: 'bassPhase', run: 'runPhase', pedal: 'runPhase', drone: 'runPhase' }[type] || null;
+        if (type === 'arp')  store = L.euclid ? 'runPhase' : 'arpState';
+        if (type === 'beat') store = (L.gen === 'euclid') ? 'runPhase' : null;   // random beat = step mode
+        if (store) {
+          const st = E[store] && E[store][key];
+          if (st && Number.isFinite(st.startAt)) {
+            const k = Math.max(0, Math.ceil((tn + 0.03 - st.startAt) / P));
+            const b = st.startAt + k * P;                       // next unit boundary
+            if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, b);
+            st.lastAt = b;                                        // re-emit from the boundary
+            return;
+          }
+        }
+        // step-mode: E.clocks[key] holds the next onset; re-anchor to the boundary.
+        const c = E.clocks && E.clocks[key];
+        let b = Number.isFinite(c) ? c : (tn + P);
+        while (b < tn + 0.03) b += P;
+        if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, b);
+        E.clocks = E.clocks || {}; E.clocks[key] = b;
+      } catch (e) {}
+    }
+    // Slider keys that are ALREADY live via the persistent DSP chain (a node
+    // sweep, not the note stream) — they must NOT re-anchor (that would needlessly
+    // re-emit). Everything else (generation + per-note) re-anchors on commit.
+    const _AMB_LIVE_NODE_PARAMS = { level: 1, space: 1, areaFadeMs: 1 };
     // Is `key` currently locked (single unit OR a frozen loop, incl. an armed
     // pending one)? Bed/Motif can be locked either way (single → E.unit,
     // multi-unit → a freeze loop).
@@ -5927,9 +6002,35 @@
     // Distortion/Delay tail on demand so a layer with FX off carries no extra
     // DSP, then sets params/wet. Reconnects VCA → [Dist] → [Delay] → bus
     // (matching the original signal order) only when the tail's shape changes.
+    // Live per-layer FILTER (Cutoff + Resonance). cutoff/reso are 0–100:
+    //   cutoff → Hz, log 20 … 20 000 (100 = open);  reso → RBJ Q, 0.7 … 20 (0 = flat).
+    // Core: strip_cutoff/strip_reso (base cutoff the VCF LFO modulates around; the
+    // LFO wins the cutoff while engaged, reso applies either way). Node fallback:
+    // e.vcf.frequency (only when no VCF LFO drives it) + e.vcf.Q. Real-time — acts
+    // on the persistent chain, so it sweeps sounding voices/tails.
+    function _ambApplyLayerFilter(layer, lc) {
+      const e = (_E.mod && _E.mod[layer]) || null;
+      if (!e || !lc) return;
+      const cutoff = Math.max(0, Math.min(100, Number.isFinite(lc.cutoff) ? lc.cutoff : 100));
+      const reso   = Math.max(0, Math.min(100, Number.isFinite(lc.reso)   ? lc.reso   : 0));
+      const hz = 20 * Math.pow(1000, cutoff / 100);          // 0→20 Hz, 100→20 kHz
+      const q  = 0.7 * Math.pow(20 / 0.7, reso / 100);        // 0→0.7, 100→20
+      if (e.core) {
+        try { e.core.cmd('strip_cutoff', e.core.slot, hz); e.core.cmd('strip_reso', e.core.slot, q); } catch (x) {}
+        return;
+      }
+      try {
+        if (e.vcf) {
+          const vcfLfoOn = !!(e.src && e.src.vcf);            // an LFO already drives the cutoff
+          if (!vcfLfoOn && e.vcf.frequency) e.vcf.frequency.value = hz;
+          if (e.vcf.Q) e.vcf.Q.value = q;
+        }
+      } catch (x) {}
+    }
     function _ambApplyLayerFx(layer, lc) {
       const e = _E.mod[layer];
       if (!e || !lc) return;
+      try { _ambApplyLayerFilter(layer, lc); } catch (x) {}   // live cutoff/reso
       const dly = lc.delay || {}, dst = lc.dist || {}, cho = lc.chorus || {}, pha = lc.phaser || {}, apan = lc.autopan || {};
       const wantDelay = (dly.mix | 0) > 0;
       const wantPing = (dly.ping | 0) > 0;   // ping-pong vs plain feedback delay
@@ -11561,9 +11662,33 @@
         persist();
       });
     }
+    // Wire the live Cutoff/Reso filter sliders (shared by every layer type). Uses
+    // a DIRECT _ambApplyLayerFilter on input (a single strip_cutoff/strip_reso, or
+    // an e.vcf write) — NOT _ambSyncMods, which would rebuild every chain per drag.
+    // `el(suf)` scopes this layer's elements; `key` is its engine mod key.
+    function _ambWireFilter(E, el, getL, key, persist) {
+      const setSl = (suf, v) => { const e = el('fx-' + suf); if (e && v != null) { e.value = String(v); const rv = el('fx-' + suf + '-v'); if (rv) rv.textContent = String(v) + _ambSlUnit(e.id); } };
+      { const L = getL(); if (L) { setSl('cutoff', Number.isFinite(L.cutoff) ? L.cutoff : 100); setSl('reso', Number.isFinite(L.reso) ? L.reso : 0); } }
+      ['cutoff', 'reso'].forEach(suf => {
+        const e = el('fx-' + suf); if (!e) return;
+        e.addEventListener('input', () => {
+          const L = getL(); if (!L) return;
+          L[suf] = Math.max(0, Math.min(100, parseInt(e.value, 10) || 0));
+          const rv = el('fx-' + suf + '-v'); if (rv) rv.textContent = String(L[suf]) + _ambSlUnit(e.id);
+          _E = E;
+          if (E.timer && (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E))) { try { _ambApplyLayerFilter(key, L); } catch (x) {} }
+          persist();
+        });
+      });
+    }
     // Per-layer FX (Reverb send + Delay + Distortion), collapsible like Mod.
     const _ambFxUi = (layer) =>
-      '<details class="ambient-mod"><summary class="ambient-mod-head">FX · Reverb / Delay / Chorus / Distortion</summary>' +
+      '<details class="ambient-mod"><summary class="ambient-mod-head">FX · Filter / Reverb / Delay / Chorus / Distortion</summary>' +
+        // Live per-layer low-pass filter — Cutoff sweeps the whole layer (tails
+        // included) in real time; Resonance peaks at the cutoff. Cutoff 100 = open.
+        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Filter</div>' +
+          _ambSl('Cutoff', 'ambient-' + layer + '-fx-cutoff', 0, 100, 100, 'dark → open') +
+          _ambSl('Reso', 'ambient-' + layer + '-fx-reso', 0, 100, 0, 'flat → peak') + '</div>' +
         '<div class="ambient-mod-target"><div class="ambient-mod-sub">Reverb</div>' +
           _ambSl('Send', 'ambient-' + layer + '-fx-rev', 0, 100, 0, 'to verb') + '</div>' +
         '<div class="ambient-mod-target"><div class="ambient-mod-sub">Delay</div>' +
@@ -11871,7 +11996,7 @@
       const opts = (arr, cur) => arr.map(o => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('');
       const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
-        _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id, _ambComposeReadonlyHtml(['Synth', 'Sequence'], 'Voice · Seed (an authored sequence)')) +
+        _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id, _ambComposeReadonlyHtml([['Voice','Synth'],['Seed','Sequence']], 'Voice · Seed (an authored sequence)')) +
         grp('Voice') +
           '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambSl('Attack', p + 'attack', 0, 4000, s.attack, 'ms') +
@@ -12041,6 +12166,7 @@
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
       bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
       _ambWireTg(E, el, getSq, persist);
+      _ambWireFilter(E, el, getSq, 'seq:' + id, persist);
       const onB = el('on'); if (onB) { onB.classList.toggle('on', !!s.on); onB.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; _ambToggleLayer(E, 'seq:' + id, sq, onB, persist); }); }
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteSeqLayer(E, id));
       const layerDiv = onB ? onB.closest('.ambient-layer') : null;
@@ -12223,7 +12349,7 @@
       const _lenMax = _durMs > 0 ? Math.max(120, _durMs) : Math.max(16000, s.lengthMs | 0);          // Length capped at sample length
       const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
-        _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id, _ambComposeReadonlyHtml(['Sample', 'Chop'], 'Voice · Generator (buffer chopper)')) +
+        _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id, _ambComposeReadonlyHtml([['Voice','Sample'],['Gen','Chop']], 'Voice · Generator (buffer chopper)')) +
         grp('Voice') +
           '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint ambient-samp-srcname" id="' + p + 'srcname" style="margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nm + '</span></div>' +
           '<div class="ambient-ctrl ambient-samp-srcbtns">' +
@@ -12330,6 +12456,7 @@
       bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; });
       bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
       _ambWireTg(E, el, getL, persist);
+      _ambWireFilter(E, el, getL, 'samp:' + id, persist);
       const impB = el('import');
       if (impB) impB.addEventListener('click', () => { if (typeof triggerImportSample === 'function') triggerImportSample((sid, sname) => _ambSetSampleLayerSource(E, id, sid, sname)); });
       const drvB = el('drive');
@@ -12688,23 +12815,33 @@
     // chips are static (the source is still editable via the Pitch-group Notes
     // control). Uses the same labels + fold (run/texture → "Pattern" + mode) as the
     // extras readout so both read consistently. `L` = the live cfg layer.
+    // Wrap a compose chip (tag / select / button) with a small caption above it
+    // so the row reads "Voice · Notes · Gen" as labeled fields, not bare values.
+    const _ambComposeField = (lbl, html) =>
+      '<span class="ambient-compose-field"><span class="ambient-compose-lbl">' + lbl + '</span>' + html + '</span>';
+    // Note-source chip title, reflecting the Area-progression LOCK: while the Area
+    // prog is on, every source-editable layer's Notes is overridden to it, so the
+    // chip is read-only (its click toasts instead of opening the source menu).
+    const _ambSrcChipTitle = () => _ambGlobalProg()
+      ? 'Notes locked to the Area progression 🔒 — turn Prog off (Configure) to edit per-layer Notes'
+      : 'Note-source — the pitch material this layer draws from (click to change)';
     function _ambComposePrimaryHtml(type, L) {
       L = L || {};
       const voice = _ambVoiceOf(L, type), src = _ambSourceKindOf(L, type), gen = _ambGeneratorOf(L, type);
       const tag = (t2) => '<span class="ambient-compose-tag">' + t2 + '</span>';
-      const bits = [tag(_AMB_VOICE_LBL[voice] || voice)];
+      const bits = [_ambComposeField('Voice', tag(_AMB_VOICE_LBL[voice] || voice))];
       // Note-source: an interactive chip (opens the source menu, shows the detailed
       // material label) for editable-source layers — this replaced the Seed-group
       // "Notes" button. Static tag otherwise (e.g. Beat has no pitch source).
       if (src && src !== 'none') {
         if (_ambSourceEditable(type)) {
-          bits.push('<button type="button" id="ambient-' + type + '-srcswap" class="ambient-compose-sel" title="Note-source — the pitch material this layer draws from (click to change)">' + _ambNotesLabel(_ambNotesOf(L)) + '</button>');
-        } else bits.push(tag(_AMB_SRC_LBL[src] || src));
+          bits.push(_ambComposeField('Notes', '<button type="button" id="ambient-' + type + '-srcswap" class="ambient-compose-sel' + (_ambGlobalProg() ? ' ambient-compose-locked' : '') + '" title="' + _ambSrcChipTitle() + '">' + _ambNotesLabel(_ambNotesOf(L)) + '</button>'));
+        } else bits.push(_ambComposeField('Notes', tag(_AMB_SRC_LBL[src] || src)));
       }
-      if (gen === 'riff' || gen === 'mutate') { bits.push(tag('Riff')); bits.push(tag(gen === 'mutate' ? 'Evolve' : 'Re-roll')); }
-      else bits.push(tag(_AMB_GEN_LBL[gen] || gen));
+      if (gen === 'riff' || gen === 'mutate') { bits.push(_ambComposeField('Gen', tag('Riff'))); bits.push(_ambComposeField('Var', tag(gen === 'mutate' ? 'Evolve' : 'Re-roll'))); }
+      else bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
       return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
-        bits.join('<span class="ambient-compose-dot">·</span>') + '</div>';
+        bits.join('') + '</div>';
     }
     function _ambComposeReadoutHtml(inst) {
       const t = inst.type;
@@ -12723,8 +12860,8 @@
       const canRhythm = (t === 'bass') || (t === 'beat');
       const hasSamples = _ambHasSampleInsts();
       const vopts = [['synth', 'Synth', !(canSynth || voice === 'synth')], ['kit', 'Kit', !(canRhythm || voice === 'kit')], ['sample', 'Sample', !((canRhythm && hasSamples) || voice === 'sample')]];
-      const bits = ['<select id="' + vid + '" class="ambient-compose-sel" title="Voice — the sound family (Synth = pitched, Kit = drums). Sample comes with the Seed rework.">' +
-        vopts.map(o => '<option value="' + o[0] + '"' + (o[0] === voice ? ' selected' : '') + (o[2] ? ' disabled' : '') + '>' + o[1] + '</option>').join('') + '</select>'];
+      const bits = [_ambComposeField('Voice', '<select id="' + vid + '" class="ambient-compose-sel" title="Voice — the sound family (Synth = pitched, Kit = drums). Sample comes with the Seed rework.">' +
+        vopts.map(o => '<option value="' + o[0] + '"' + (o[0] === voice ? ' selected' : '') + (o[2] ? ' disabled' : '') + '>' + o[1] + '</option>').join('') + '</select>')];
       // Source chip: a button that opens the shared note-source menu (scale/chord/
       // wrap/prog) for editable-source layers; a static tag otherwise (arp shows
       // its Series, pedal its Degree).
@@ -12732,10 +12869,10 @@
         const slbl = (t === 'arp') ? 'Series' : (_AMB_SRC_LBL[src] || src);
         if (_ambSourceEditable(t)) {
           const sid = 'ambient-' + inst.type + '-' + inst.id + '-srcswap';
-          // Detailed label (e.g. "C Dorian") — this chip is the sole source control now.
-          bits.push('<button type="button" id="' + sid + '" class="ambient-compose-sel" title="Note-source — the pitch material this layer draws from (click to change)">' + _ambNotesLabel(_ambNotesOf(inst)) + '</button>');
+          // Detailed label (e.g. "C Dorian"), or the Area prog when locked.
+          bits.push(_ambComposeField('Notes', '<button type="button" id="' + sid + '" class="ambient-compose-sel' + (_ambGlobalProg() ? ' ambient-compose-locked' : '') + '" title="' + _ambSrcChipTitle() + '">' + _ambNotesLabel(_ambNotesOf(inst)) + '</button>'));
         } else {
-          bits.push(tag(slbl));
+          bits.push(_ambComposeField('Notes', tag(slbl)));
         }
       }
       // Generator is an interactive SWAP picker (converts the layer's preset in
@@ -12744,21 +12881,21 @@
       const opts = _ambGenSwapOptions(inst);
       if (opts.length > 1) {
         const cur = _ambCurrentGenKey(inst), gid = 'ambient-' + inst.type + '-' + inst.id + '-genswap';
-        bits.push('<select id="' + gid + '" class="ambient-compose-sel" title="Generator — swaps how this layer sequences (keeps its sound + source)">' +
-          opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>');
+        bits.push(_ambComposeField('Gen', '<select id="' + gid + '" class="ambient-compose-sel" title="Generator — swaps how this layer sequences (keeps its sound + source)">' +
+          opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>'));
       } else {
-        bits.push(tag(_AMB_GEN_LBL[gen] || gen));
+        bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
       }
       // Pattern generator (run/texture) carries a VARIATION MODE chip — re-roll
       // (run) swaps the whole phrase, evolve (texture) mutates it gradually. This
       // is where the old standalone "Mutate" generator now lives.
       if (t === 'run' || t === 'texture') {
         const mid = 'ambient-' + inst.type + '-' + inst.id + '-patmode', mcur = (t === 'texture') ? 'evolve' : 'reroll';
-        bits.push('<select id="' + mid + '" class="ambient-compose-sel" title="Variation mode — Re-roll swaps the whole phrase; Evolve mutates it gradually">' +
-          [['reroll', 'Re-roll'], ['evolve', 'Evolve']].map(m => '<option value="' + m[0] + '"' + (m[0] === mcur ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>');
+        bits.push(_ambComposeField('Var', '<select id="' + mid + '" class="ambient-compose-sel" title="Variation mode — Re-roll swaps the whole phrase; Evolve mutates it gradually">' +
+          [['reroll', 'Re-roll'], ['evolve', 'Evolve']].map(m => '<option value="' + m[0] + '"' + (m[0] === mcur ? ' selected' : '') + '>' + m[1] + '</option>').join('') + '</select>'));
       }
       return '<div class="ambient-compose" title="Voice · Note-source · Generator · (variation mode)">' +
-        bits.join('<span class="ambient-compose-dot">·</span>') + '</div>';
+        bits.join('') + '</div>';
     }
     // Convert a layer to a different GENERATOR by rebuilding it as the target preset
     // type and carrying over the tuned SOUND (voice/ADSR), SOURCE (notes), and
@@ -12850,9 +12987,10 @@
     }
     // A static (read-only) composition readout from label parts — used on cards
     // that aren't convertible extras (primary layers, Seq, Sample).
-    function _ambComposeReadonlyHtml(parts, title) {
+    // pairs: [[label, value], …] → labeled static fields (seq / sample cards).
+    function _ambComposeReadonlyHtml(pairs, title) {
       return '<div class="ambient-compose" title="' + (title || 'Voice · Seed · Generator') + '">' +
-        parts.map(t => '<span class="ambient-compose-tag">' + t + '</span>').join('<span class="ambient-compose-dot">·</span>') + '</div>';
+        (pairs || []).map(p => _ambComposeField(p[0], '<span class="ambient-compose-tag">' + p[1] + '</span>')).join('') + '</div>';
     }
     // Sample-voice params: a chosen sample triggered one-shot per onset + a ±semitone
     // trigger-pitch offset. Injected only when the voice derives to 'sample'.
@@ -13200,8 +13338,8 @@
           else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
           else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
-          else if (k === 'sl') { const e = el(c[1]); if (e) e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); }
-          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); } }
+          else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
+          else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
@@ -13235,6 +13373,7 @@
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { const L = get(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v && /time/.test(suf)) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
       bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; }); bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; }); bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; }); bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
       _ambWireTg(E, el, get, persist);
+      _ambWireFilter(E, el, get, type + ':' + id, persist);
       ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); _ambSyncModShapeEl(el, inst.mod[t], t); } });
       setVal('mod-sync', (inst.mod && inst.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', inst.revSend);
@@ -14833,6 +14972,7 @@
       _ambRenderExtras(E);   // each of the three renders the mixer in sync
       _ambRenderRamps(E);
       try { _ambSyncLayerUnits(E); } catch (e) {} // header unit-length readouts
+      try { _ambRefreshSrcChips(E); } catch (e) {} // lock the Notes chips when the Area prog is on (robust vs _E at build time)
       try { _ambRestoreLocks(E); } catch (e) {}  // reopen locked: rebuild saved lock state so chips/buttons show
       try { _ambFreezeSyncAll(E); } catch (e) {} // restore freeze-button states after re-render
       try { _ambSoloSyncAll(E); } catch (e) {}   // restore solo-button states after re-render
@@ -14920,7 +15060,7 @@
         // Override a layer via its Notes button. Bars/chord is the bar-aligned rate.
         (E.isLane ? '' :
           '<div class="ambient-row ambient-prog">' +
-            '<button type="button" class="ambient-seg" id="ambient-prog-on" title="Global progression — every layer on the default scale follows these chords. Override per layer via its Notes button.">Prog</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-prog-on" title="Area progression — while on, EVERY layer&#39;s Notes lock to these chords (the per-layer Notes chip is read-only). Turn off to restore per-layer sources.">Prog</button>' +
             '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
             '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
             '<span class="ambient-hint" id="ambient-prog-hint">off</span>' +
@@ -15302,6 +15442,12 @@
         persist();
       });
 
+      // Live re-anchor on commit (change) so a generation/per-note edit lands on
+      // the layer's NEXT unit, not a loop later — skipped for live-node params.
+      const bindReanchor = (el, layer, key) => {
+        if (!el || layer === null || _AMB_LIVE_NODE_PARAMS[key]) return;
+        el.addEventListener('change', () => { _E = E; if (E.timer) { try { _ambReanchorLayer(E, layer); } catch (x) {} } });
+      };
       const bind = (id, layer, key) => {
         const el = G(id);
         if (!el) return;
@@ -15312,6 +15458,7 @@
           if (layer && key === 'level') _ambSyncLevelUI(E, layer, cfg[layer].level);   // mirror into the mixer fader
           persist();
         });
+        bindReanchor(el, layer, key);
       };
       const bindTime = (id, layer, key) => {
         const el = G(id);
@@ -15324,6 +15471,7 @@
           if (vEl) vEl.textContent = _ambFmtMs(v);
           persist();
         });
+        bindReanchor(el, layer, key);
       };
       // (Global "Bars / chord" input removed — per-chord bars are set in the Prog Edit
       // popover; barsPerChord stays as the internal fallback default of 1.)
@@ -15554,6 +15702,7 @@
         fxBind('apan-depth', (lc, v) => { lc.autopan.depth = v; });
         fxBind('apan-rate', (lc, v) => { lc.autopan.rate = v; });
         _ambWireTg(E, (suf) => G('ambient-' + layer + '-' + suf), () => { const c = cfg0(); return c ? c[layer] : null; }, persist);
+        _ambWireFilter(E, (suf) => G('ambient-' + layer + '-' + suf), () => { const c = cfg0(); return c ? c[layer] : null; }, layer, persist);
       });
       const bindCond = (layer) => {
         _ambWireWhenGrid(E, G('ambient-' + layer + '-when'), () => { const c = cfg0(); return c ? c[layer] : null; }, persist);
@@ -15640,7 +15789,8 @@
           if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
           cfg.prog.on = !cfg.prog.on;
           if (cfg.prog.on && typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }   // Phase 2c
-          _ambSyncControls(E); persist();
+          _ambSyncControls(E); try { _ambRefreshSrcChips(E); } catch (e) {}   // lock/unlock the per-layer Notes chips
+          persist();
         });
         const pPick = G('ambient-prog-pick');
         if (pPick) pPick.addEventListener('click', () => {

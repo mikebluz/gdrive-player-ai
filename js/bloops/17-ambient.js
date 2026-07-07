@@ -3941,7 +3941,8 @@
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
           // Drum-lanes: the PAGE active for this cycle (page-sequence orchestration);
           // the viewed page when looping / single page. Non-kit uses _ambEuclidPat.
-          const kitPat = inst.euclidKit ? _ambEuclidActivePat(inst, ctx.c) : null;
+          const kitPage = inst.euclidKit ? _ambEuclidActivePage(inst, ctx.c) : null;
+          const kitPat = kitPage ? kitPage.pat : null;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
             const vpat = kitPat
               ? ((Array.isArray(kitPat[v]) && kitPat[v].length) ? kitPat[v] : new Array(steps).fill(0))
@@ -3958,23 +3959,31 @@
                 if (restP > 0 && rnd() * 100 < restP) continue;
                 const at = cStart + (bar * steps + slot) * slotSec;
                 if (at < tFrom || at >= tTo) continue;
-                // Drum pitch: an explicit single drum (`inst.drum`, e.g. a Bass
-                // voice-swapped to Kit → one consistent drum on its mono rhythm),
-                // else the native Beat behaviour (random per hit at V=1, fixed
-                // per-voice drum when polyphonic). A native Beat has no `drum`
-                // field → unchanged (harness byte-identical).
-                // Drum-lanes: each lane plays its assigned drum (a mini drum
-                // machine). Otherwise the classic Beat: an explicit single drum,
-                // else random-per-hit at V=1 or the fixed auto-kit slot when poly.
+                // Per-step FX (Drum-lanes only): probability gate, then velocity /
+                // length scaling + ratchet (retrigger N times across the slot).
+                // Default step (vel/len 100, rat 1, prob 100) → one note at full,
+                // byte-identical to before; non-kit skips this (sfx null).
+                const absI = bar * steps + slot;
+                const sfx = kitPage ? _ambStepFxGet(kitPage, v, absI) : null;
+                if (sfx && sfx.prob < 100 && rnd() * 100 >= sfx.prob) continue;
+                // Drum pitch: Drum-lanes = the lane's fixed drum; else the classic
+                // Beat (explicit single drum, random-per-hit at V=1, or auto-kit slot).
                 const pc = inst.euclidKit ? _ambLaneDrumPc(inst, v)
                   : ((inst.drum != null) ? (inst.drum | 0) : ((V === 1) ? _ambPickDrumPc() : VDRUM[v]));
                 let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
-                const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, vpan), inst);
-                bp.volume = _ambApplyLevel(bp.volume, inst.level);
-                if (dmod) bp._detuneMod = dmod;
-                _ambKeyTime = at;
-                try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
-                ctx.cap++;
+                const rat = sfx ? sfx.rat : 1;
+                const velS = sfx ? sfx.vel / 100 : 1, lenS = sfx ? sfx.len / 100 : 1;
+                for (let rr = 0; rr < rat && ctx.cap < 256; rr++) {
+                  const rAt = at + (rr / rat) * slotSec;
+                  const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, vpan), inst);
+                  bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
+                  if (dmod) bp._detuneMod = dmod;
+                  _ambKeyTime = rAt;
+                  const baseLen = _ambVaryLen(lenMs, inst.lenVary, rnd) * lenS;
+                  const noteLen = (rat > 1) ? Math.min(baseLen, (slotSec / rat) * 1000 * 0.95) : baseLen;
+                  try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
+                  ctx.cap++;
+                }
                 if (ctx.cap >= 256) break;
               }
               if (ctx.cap >= 256) break;
@@ -4928,17 +4937,43 @@
       let i = L.euclidPageIdx | 0; if (i < 0) i = 0; if (i >= n) i = n - 1;
       L.euclidPageIdx = i; return i;
     }
-    function _ambEuclidViewPat(L) { return _ambEuclidPages(L)[_ambPageIdx(L)].pat; }   // the edited page
-    // The pattern active for emit CYCLE c: the viewed page when looping (or a single
+    function _ambEuclidPage(L) { return _ambEuclidPages(L)[_ambPageIdx(L)]; }   // the edited page
+    function _ambEuclidViewPat(L) { return _ambEuclidPage(L).pat; }
+    // The PAGE active for emit CYCLE c: the viewed page when looping (or a single
     // page), else the page whose run the cycle falls in (page i spans `plays[i]`
     // consecutive cycles, then the bank loops).
-    function _ambEuclidActivePat(L, c) {
+    function _ambEuclidActivePage(L, c) {
       const pages = _ambEuclidPages(L);
-      if (!L.euclidSeq || pages.length <= 1) return pages[_ambPageIdx(L)].pat;
+      if (!L.euclidSeq || pages.length <= 1) return pages[_ambPageIdx(L)];
       let total = 0; for (const p of pages) total += Math.max(1, (p.plays | 0) || 1);
       let idx = (((c | 0) % total) + total) % total;
-      for (const p of pages) { const n = Math.max(1, (p.plays | 0) || 1); if (idx < n) return p.pat; idx -= n; }
-      return pages[0].pat;
+      for (const p of pages) { const n = Math.max(1, (p.plays | 0) || 1); if (idx < n) return p; idx -= n; }
+      return pages[0];
+    }
+    function _ambEuclidActivePat(L, c) { return _ambEuclidActivePage(L, c).pat; }
+    // ---- Per-step FX (velocity / length / ratchet / probability) ----------------
+    // Stored SPARSE on a page: `pg.fx["v:i"] = {vel,len,rat,prob}` — only for steps
+    // the user shaped (a plain on/off step has no entry → these defaults, so the
+    // grid + emitter are unchanged for untouched steps).
+    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, prob: 100 };
+    function _ambStepFxGet(pg, v, i) {
+      const e = pg && pg.fx && pg.fx[v + ':' + i];
+      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, prob: (e.prob != null ? e.prob : 100) }
+               : { vel: 100, len: 100, rat: 1, prob: 100 };
+    }
+    function _ambStepFxCustom(pg, v, i) {
+      const e = pg && pg.fx && pg.fx[v + ':' + i];
+      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || (e.prob != null && e.prob !== 100)));
+    }
+    function _ambStepFxSet(pg, v, i, patch) {
+      if (!pg) return;
+      const k = v + ':' + i, cur = { ..._AMB_STEP_FX_DEF, ...(pg.fx && pg.fx[k]), ...patch };
+      cur.vel = Math.max(0, Math.min(200, cur.vel | 0));
+      cur.len = Math.max(5, Math.min(400, cur.len | 0));
+      cur.rat = Math.max(1, Math.min(8, cur.rat | 0));
+      cur.prob = Math.max(0, Math.min(100, cur.prob | 0));
+      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.prob === 100) { if (pg.fx) delete pg.fx[k]; }
+      else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
     }
     // Re-fit every page's rows to the current Steps×Bars (preserves overlapping
     // edits; pads with silence). Run on a Steps/Bars change.
@@ -5151,7 +5186,22 @@
         if (Array.isArray(L.euclidPages)) {
           L.euclidPages = L.euclidPages.filter(pg => pg && Array.isArray(pg.pat) && pg.pat.length &&
             pg.pat.every(r => Array.isArray(r) && r.length > 0 && r.every(x => x === 0 || x === 1)));
-          L.euclidPages.forEach(pg => { pg.plays = Math.max(1, Math.min(16, (pg.plays | 0) || 1)); });
+          L.euclidPages.forEach(pg => {
+            pg.plays = Math.max(1, Math.min(16, (pg.plays | 0) || 1));
+            // Per-step FX map: clamp entries, drop non-objects / all-default ones.
+            if (pg.fx && typeof pg.fx === 'object') {
+              for (const k in pg.fx) {
+                const e = pg.fx[k];
+                if (!e || typeof e !== 'object') { delete pg.fx[k]; continue; }
+                if (e.vel != null) e.vel = Math.max(0, Math.min(200, e.vel | 0));
+                if (e.len != null) e.len = Math.max(5, Math.min(400, e.len | 0));
+                if (e.rat != null) e.rat = Math.max(1, Math.min(8, e.rat | 0));
+                if (e.prob != null) e.prob = Math.max(0, Math.min(100, e.prob | 0));
+                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100)) delete pg.fx[k];
+              }
+              if (!Object.keys(pg.fx).length) delete pg.fx;
+            } else if (pg.fx != null) delete pg.fx;
+          });
         }
         if (!Array.isArray(L.euclidPages) || !L.euclidPages.length) delete L.euclidPages;
       }
@@ -5260,29 +5310,32 @@
       // viewed page, or play all pages in sequence with a per-page repeat count).
       if (inst.euclidKit) {
         const pages = _ambEuclidPages(inst), cur = _ambPageIdx(inst), seq = !!inst.euclidSeq;
-        let tabs = '<div class="ambient-euclid-pages" role="tablist">';
+        // Page tabs + orchestration on ONE row: [1][2][3][+]  [Loop/Seq] [Plays] [🗑]
+        let bar1 = '<div class="ambient-euclid-pagebar"><div class="ambient-euclid-pages" role="tablist">';
         pages.forEach((p, i) => {
-          tabs += '<button type="button" class="ambient-euclid-tab' + (i === cur ? ' on' : '') + '" data-page="' + i + '" role="tab" aria-selected="' + (i === cur) + '">' +
+          bar1 += '<button type="button" class="ambient-euclid-tab' + (i === cur ? ' on' : '') + '" data-page="' + i + '" role="tab" aria-selected="' + (i === cur) + '">' +
             (i + 1) + (seq && pages.length > 1 ? '<span class="ambient-euclid-tabx">×' + Math.max(1, (p.plays | 0) || 1) + '</span>' : '') + '</button>';
         });
-        tabs += '<button type="button" class="ambient-euclid-tab ambient-euclid-tab-add" title="Add a pattern page (a copy of this one to vary)">+</button></div>';
-        let orch = '<div class="ambient-euclid-orch">' +
+        bar1 += '<button type="button" class="ambient-euclid-tab ambient-euclid-tab-add" title="Add a pattern page (a copy of this one to vary)">+</button></div>' +
           '<select class="ambient-euclid-seqmode" title="Loop the current page, or play all pages in sequence (song mode)">' +
             '<option value="0"' + (seq ? '' : ' selected') + '>Loop page</option>' +
             '<option value="1"' + (seq ? ' selected' : '') + '>Sequence</option></select>';
         if (seq && pages.length > 1) {
-          orch += '<label class="ambient-euclid-playslbl">Plays</label><select class="ambient-euclid-plays" title="How many times this page loops before advancing to the next">';
-          for (let n = 1; n <= 8; n++) orch += '<option value="' + n + '"' + ((Math.max(1, (pages[cur].plays | 0) || 1) === n) ? ' selected' : '') + '>' + n + '</option>';
-          orch += '</select>';
+          bar1 += '<label class="ambient-euclid-playslbl">Plays</label><select class="ambient-euclid-plays" title="How many times this page loops before advancing to the next">';
+          for (let n = 1; n <= 8; n++) bar1 += '<option value="' + n + '"' + ((Math.max(1, (pages[cur].plays | 0) || 1) === n) ? ' selected' : '') + '>' + n + '</option>';
+          bar1 += '</select>';
         }
-        if (pages.length > 1) orch += '<button type="button" class="ambient-euclid-pagedel" title="Delete this page">🗑</button>';
-        orch += '</div>';
-        html += tabs + orch;
+        if (pages.length > 1) bar1 += '<button type="button" class="ambient-euclid-pagedel" title="Delete this page">🗑</button>';
+        bar1 += '</div>';
+        html += bar1;
       }
       html += '<div class="ambient-euclid-meta">' +
         '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
         (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
         '</div>';
+      // Drum-lanes: page (for per-step FX lookup) + the selected step (inspector).
+      const kpage = inst.euclidKit ? _ambEuclidPage(inst) : null;
+      const sel = (inst.euclidKit && inst._selStep) ? inst._selStep : null;
       for (let v = 0; v < d.V; v++) {
         const pat = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, v, d.salt);
         html += '<div class="ambient-euclid-row' + (inst.euclidKit ? ' ambient-euclid-kitrow' : '') + '">';
@@ -5298,13 +5351,36 @@
             const idx = b * d.steps + slot;                    // absolute index into the phrase
             const on = pat[idx % pat.length] === 1;
             const barStart = (slot === 0);
+            const hasFx = kpage && _ambStepFxCustom(kpage, v, idx);
+            const isSel = sel && sel.v === v && sel.i === idx;
             html += '<button type="button" class="ambient-slice-cell ambient-euclid-cell' + (on ? ' on' : '') + (barStart && b > 0 ? ' barstart' : '') +
+              (hasFx ? ' has-fx' : '') + (isSel ? ' sel' : '') +
               '" data-ev="' + v + '" data-ei="' + idx + '"' + (on ? ' aria-pressed="true"' : '') +
               (barStart && nBars > 1 ? ' data-bar="' + (b + 1) + '"' : '') +
               ' aria-label="Voice ' + (v + 1) + ' bar ' + (b + 1) + ' step ' + (slot + 1) + '">' + (slot + 1) + '</button>';
           }
         }
         html += '</div></div>';
+      }
+      // Per-step inspector (Drum-lanes): shape the SELECTED step — velocity, length,
+      // ratchet (retrigger N times), probability (chance to fire). Long-press / right-
+      // click a step to select without toggling; a plain click selects too.
+      if (inst.euclidKit && sel && kpage) {
+        const fx = _ambStepFxGet(kpage, sel.v, sel.i);
+        const drum = _AMB_DRUM_NAMES[_AMB_VDRUM[sel.v]] || ('Drum ' + sel.v);
+        const stepNo = (sel.i % d.steps) + 1, barNo = Math.floor(sel.i / d.steps) + 1;
+        const sfxRow = (lbl, key, min, max, val, unit, hint) =>
+          '<div class="ambient-step-fx-ctrl" title="' + hint + '"><label>' + lbl + '</label>' +
+          '<input type="range" class="ambient-step-fx-sl" data-sfx="' + key + '" min="' + min + '" max="' + max + '" value="' + val + '">' +
+          '<span class="ambient-step-fx-v" data-sfxv="' + key + '">' + val + (unit || '') + '</span></div>';
+        html += '<div class="ambient-step-fx">' +
+          '<div class="ambient-step-fx-head"><span class="ambient-step-fx-lbl">' + drum + ' · step ' + stepNo + (d.bars > 1 ? ' · bar ' + barNo : '') + '</span>' +
+            '<button type="button" class="ambient-step-fx-clear" title="Reset this step to defaults">Reset</button></div>' +
+          sfxRow('Vel', 'vel', 0, 200, fx.vel, '%', 'Velocity — this step’s loudness (100 = normal)') +
+          sfxRow('Length', 'len', 5, 400, fx.len, '%', 'Note length for this step (100 = the layer’s length)') +
+          sfxRow('Ratchet', 'rat', 1, 8, fx.rat, '×', 'Retrigger this step N times across its slot (a roll)') +
+          sfxRow('Prob', 'prob', 0, 100, fx.prob, '%', 'Probability this step fires each pass (100 = always)') +
+        '</div>';
       }
       return html;
     }
@@ -5337,8 +5413,28 @@
           render(); persist();
           if (E.timer) { try { sync && sync(); } catch (e) {} }
         }); }
+      // Long-press / right-click a Drum-lanes step SELECTS it (for the per-step FX
+      // inspector) WITHOUT toggling; a plain click toggles AND selects.
+      let _lpTimer = null, _lpFired = false;
+      const _selectStep = (c) => { const L = getL(); if (!L || !L.euclidKit) return; _E = E; L._selStep = { v: parseInt(c.dataset.ev, 10), i: parseInt(c.dataset.ei, 10) }; render(); };
+      const _clearLp = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
+      grid.addEventListener('pointerdown', (ev) => {
+        const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
+        const L = getL(); if (!L || !L.euclidKit) return;
+        _lpFired = false; _clearLp();
+        _lpTimer = setTimeout(() => { _lpFired = true; _selectStep(c); }, 450);
+      });
+      grid.addEventListener('pointerup', _clearLp);
+      grid.addEventListener('pointermove', _clearLp);
+      grid.addEventListener('pointerleave', _clearLp);
+      grid.addEventListener('contextmenu', (ev) => {
+        const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
+        const L = getL(); if (!L || !L.euclidKit) return;
+        ev.preventDefault(); _selectStep(c);
+      });
       grid.addEventListener('click', (ev) => {
         const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
+        if (_lpFired) { _lpFired = false; return; }   // long-press already selected — don't toggle
         _E = E; const L = getL(); if (!L) return;
         const v = parseInt(c.dataset.ev, 10), i = parseInt(c.dataset.ei, 10);   // i = absolute index into the phrase
         const d = _ambEuclidGridDims(L, type); if (!d || !Number.isFinite(v) || !Number.isFinite(i)) return;
@@ -5366,8 +5462,26 @@
         ov[v][i] = ov[v][i] ? 0 : 1;
         if (ov[v][i]) { c.classList.add('on'); c.setAttribute('aria-pressed', 'true'); }
         else { c.classList.remove('on'); c.removeAttribute('aria-pressed'); }
-        if (!L.euclidKit && !grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
+        if (L.euclidKit) { L._selStep = { v, i }; render(); }   // select the step → per-step FX inspector
+        else if (!grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
         persist();
+      });
+      // Per-step FX inspector: live-update the selected step's vel/len/ratchet/prob.
+      grid.addEventListener('input', (ev) => {
+        const sl = ev.target.closest && ev.target.closest('.ambient-step-fx-sl'); if (!sl) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) return;
+        const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx, val = parseInt(sl.value, 10);
+        _ambStepFxSet(pg, L._selStep.v, L._selStep.i, { [sfxKey]: val });
+        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : '%');
+        const cell = grid.querySelector('.ambient-euclid-cell[data-ev="' + L._selStep.v + '"][data-ei="' + L._selStep.i + '"]');
+        if (cell) cell.classList.toggle('has-fx', _ambStepFxCustom(pg, L._selStep.v, L._selStep.i));
+        persist();
+      });
+      grid.addEventListener('click', (ev) => {
+        const cl = ev.target.closest && ev.target.closest('.ambient-step-fx-clear'); if (!cl) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) return;
+        _ambStepFxSet(_ambEuclidPage(L), L._selStep.v, L._selStep.i, { vel: 100, len: 100, rat: 1, prob: 100 });
+        render(); persist();
       });
       // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).
       grid.addEventListener('click', (ev) => {

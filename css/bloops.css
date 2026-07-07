@@ -3169,15 +3169,15 @@
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-euclid-barsreadout { color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; opacity: 0.9; }
     .ambient-euclid-note { color: #c9b8ef; font: 500 0.6rem 'Segoe UI', sans-serif; opacity: 0.85; }
-    /* Drum-lanes PAGE tabs (pattern banks) + orchestration row. */
-    .ambient-euclid-pages { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 5px; }
+    /* Drum-lanes PAGE tabs (pattern banks) + orchestration — ONE row. */
+    .ambient-euclid-pagebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .ambient-euclid-pages { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .ambient-euclid-tab { flex: 0 0 auto; min-width: 26px; height: 24px; padding: 0 7px; border: 1px solid #34344a; border-radius: 6px 6px 0 0;
       background: #17172490; color: #8a8aa8; font: 600 0.66rem 'Segoe UI', sans-serif; cursor: pointer; transition: all 0.12s ease; }
     .ambient-euclid-tab.on { border-color: #5e9ead; color: #cdf0fa; background: rgba(94,158,173,0.22); border-bottom-color: transparent; }
     @media (hover: hover) { .ambient-euclid-tab:hover { border-color: #9f7aea; color: #d9cbff; } }
     .ambient-euclid-tab-add { color: #7fe0b0; font-weight: 700; }
     .ambient-euclid-tabx { margin-left: 3px; font-size: 0.56rem; opacity: 0.85; color: #9fe0ef; }
-    .ambient-euclid-orch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
     .ambient-euclid-seqmode, .ambient-euclid-plays { flex: 0 0 auto; padding: 2px 5px; font: 600 0.62rem 'Segoe UI', sans-serif;
       color: #d8d8ea; background: #1b1b2a; border: 1px solid #34344a; border-radius: 4px; }
     .ambient-euclid-playslbl { color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
@@ -3188,6 +3188,20 @@
        the first cell of bars 2+ (the row-gap above reserves its space). */
     .ambient-euclid-cell[data-bar]::after { content: attr(data-bar); position: absolute; left: 0; top: -11px; font: 600 0.5rem 'Segoe UI', sans-serif; color: #7a7a9a; }
     .ambient-euclid-cell[data-bar] { position: relative; overflow: visible; }
+    /* Per-step FX: a corner dot marks a shaped step; a ring marks the selected one. */
+    .ambient-euclid-cell.has-fx { position: relative; overflow: visible; }
+    .ambient-euclid-cell.has-fx::before { content: ''; position: absolute; top: 1px; right: 1px; width: 4px; height: 4px; border-radius: 50%; background: #e0b062; }
+    .ambient-euclid-cell.sel { outline: 2px solid #9f7aea; outline-offset: 1px; }
+    /* Per-step FX inspector (the selected step's velocity / length / ratchet / prob). */
+    .ambient-step-fx { margin-top: 8px; padding: 8px 10px; border: 1px solid #34344a; border-radius: 7px; background: #17172470; }
+    .ambient-step-fx-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .ambient-step-fx-lbl { color: #cdf0fa; font: 700 0.66rem 'Segoe UI', sans-serif; }
+    .ambient-step-fx-clear { padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
+    @media (hover: hover) { .ambient-step-fx-clear:hover { border-color: #9f7aea; color: #d9cbff; } }
+    .ambient-step-fx-ctrl { display: grid; grid-template-columns: 54px 1fr 42px; align-items: center; gap: 8px; margin: 3px 0; }
+    .ambient-step-fx-ctrl label { color: #a0aec0; font: 600 0.62rem 'Segoe UI', sans-serif; }
+    .ambient-step-fx-sl { width: 100%; min-width: 0; accent-color: #9f7aea; }
+    .ambient-step-fx-v { text-align: right; color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; }
     .ambient-layer-head { display: flex; align-items: center; flex-wrap: wrap; position: relative; }
     /* Read-only live notes line — wraps to its own full-width row under the head
        buttons. Hidden by default; while the layer is active it's RESERVED (a

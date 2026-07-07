@@ -5287,7 +5287,7 @@
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
         }
-        html += '<div class="ambient-slice-grid ambient-euclid-cells" style="--eusteps:' + d.steps + '">';
+        html += '<div class="ambient-slice-grid ambient-euclid-cells" style="--eucols:' + Math.min(d.steps, 16) + '">';
         for (let b = 0; b < nBars; b++) {
           for (let slot = 0; slot < d.steps; slot++) {
             const idx = b * d.steps + slot;                    // absolute index into the phrase
@@ -5393,6 +5393,9 @@
           const e = el(suf); const row = e && e.closest && e.closest('.ambient-ctrl');
           if (row) row.style.display = on ? 'none' : '';
         });
+        // Full-width kit layout: lane labels move into the "Pattern" gutter.
+        const ctrl = grid.closest && grid.closest('.ambient-euclid-ctrl');
+        if (ctrl) ctrl.classList.toggle('ambient-euclid-kitctrl', !!on);
       };
       { const L0 = getL(); if (L0 && L0.euclidKit) kitVis(true); }
       // Drum-lanes toggle: flip the grid into a one-sequence-per-drum machine
@@ -13242,7 +13245,7 @@
       // euclidean pattern shown here; tapping a cell hand-edits it into an
       // explicit override. A knob change or Regen resets it to the generated
       // pattern. Filled/wired by _ambWireEuclidGrid (like the trance-gate grid).
-      if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
+      if (k === 'euclidgrid') return '<div class="ambient-ctrl ambient-slice-row ambient-euclid-ctrl' + ((inst && inst.euclidKit) ? ' ambient-euclid-kitctrl' : '') + '"><label title="The on/off step pattern. Pulses/Steps/Rotate generate it; tap cells to hand-edit; or load a rhythm Preset. A knob change or Regen resets it to the generated Euclid pattern.">Pattern</label>' +
         '<div class="ambient-euclid-wrap">' +
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="Load a rhythm preset (world / rock / African / clave) into the step grid">' + _ambEuclidPresetOptions() + '</select></div>' +
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +

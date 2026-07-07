@@ -3146,18 +3146,25 @@
     .ambient-euclid-preset { flex: 1 1 auto; min-width: 0; }
     .ambient-euclid-grid { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; min-width: 0; }
     .ambient-euclid-row { display: flex; align-items: center; gap: 6px; }
-    /* Uniform, column-aligned step chips: a CSS grid of `--eusteps` equal columns
-       (one bar per grid row). Every cell is the SAME width no matter its number
-       label — the label is centered + clipped, so it can never resize the cell or
-       break column alignment. No horizontal scroll (columns shrink to fit). */
-    .ambient-euclid-cells { display: grid; grid-template-columns: repeat(var(--eusteps, 8), minmax(0, 1fr));
+    /* Uniform, column-aligned step chips: a CSS grid of `--eucols` equal columns
+       (capped at 16, so >16 steps WRAP onto extra rows per lane). Every cell is the
+       SAME width no matter its number label — the label is centered + clipped, so it
+       can never resize the cell or break column alignment. No horizontal scroll. */
+    .ambient-euclid-cells { display: grid; grid-template-columns: repeat(var(--eucols, 8), minmax(0, 1fr));
       column-gap: 3px; row-gap: 13px; flex: 1 1 auto; min-width: 0; padding-top: 8px; }
     .ambient-euclid-cell { min-width: 0; width: auto; padding: 0; box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; overflow: hidden; }
     .ambient-euclid-vlab { flex: 0 0 auto; width: 14px; text-align: right; color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
     /* Drum-lanes: a fixed drum-name label at the head of each lane row. */
-    .ambient-euclid-drumlbl { flex: 0 0 auto; width: 58px; text-align: right; color: #c9b8ef;
+    .ambient-euclid-drumlbl { flex: 0 0 auto; width: 74px; text-align: right; color: #c9b8ef;
       font: 600 0.62rem 'Segoe UI', sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Drum-lanes full-width layout: break out of the .ambient-ctrl 3-col grid so the
+       lane labels sit in the same left gutter as the "Pattern" label and the step
+       cells get the full row width. */
+    .ambient-euclid-ctrl.ambient-euclid-kitctrl { display: block; }
+    .ambient-euclid-ctrl.ambient-euclid-kitctrl > label { display: block; margin-bottom: 6px; }
+    .ambient-euclid-kitrow { align-items: flex-start; }   /* wrapped (>16-step) lanes: label hugs the top row */
+    .ambient-euclid-kitrow .ambient-euclid-drumlbl { padding-top: 6px; }
     .ambient-euclid-kitrow .ambient-euclid-cells { padding-top: 4px; }
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-euclid-barsreadout { color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; opacity: 0.9; }

@@ -3190,6 +3190,10 @@
     .ambient-euclid-tab.up-next { border-color: #e0b062; color: #f0d0a0; animation: ambient-upnext 0.7s ease-in-out infinite; }
     .ambient-euclid-tab.up-next::before { content: '⤳'; margin-right: 2px; color: #e0b062; font-size: 0.6rem; }
     @keyframes ambient-upnext { 0%,100% { box-shadow: 0 0 0 1px rgba(224,176,98,0.5); } 50% { box-shadow: 0 0 0 1px #e0b062, 0 0 7px rgba(224,176,98,0.6); } }
+    /* Drag-to-reorder: page tabs grab horizontally; a drop target shows a bar. */
+    .ambient-euclid-tab[data-page] { cursor: grab; touch-action: pan-y; }
+    .ambient-euclid-tab.dragging { opacity: 0.5; cursor: grabbing; }
+    .ambient-euclid-tab.drop-to { box-shadow: -2px 0 0 0 #9f7aea; }
     @media (hover: hover) { .ambient-euclid-tab:hover { border-color: #9f7aea; color: #d9cbff; } }
     .ambient-euclid-tab-add { color: #7fe0b0; font-weight: 700; }
     .ambient-euclid-tabx { margin-left: 3px; font-size: 0.56rem; opacity: 0.85; color: #9fe0ef; }

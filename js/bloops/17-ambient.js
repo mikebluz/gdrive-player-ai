@@ -5047,6 +5047,20 @@
       const pages = _ambEuclidPages(L); if (pages.length <= 1) return;
       const i = _ambPageIdx(L); pages.splice(i, 1); L.euclidPageIdx = Math.max(0, i - 1);
     }
+    // Reorder: move page `from` to index `to` (drag-reorder the tabs = the play
+    // sequence). Keeps the VIEWED page following its content across the shift.
+    function _ambEuclidMovePage(L, from, to) {
+      const pages = _ambEuclidPages(L), n = pages.length;
+      from |= 0; to |= 0;
+      if (from < 0 || from >= n || to < 0 || to >= n || from === to) return;
+      const [pg] = pages.splice(from, 1);
+      pages.splice(to, 0, pg);
+      let idx = _ambPageIdx(L);
+      if (idx === from) idx = to;
+      else if (from < idx && to >= idx) idx--;
+      else if (from > idx && to <= idx) idx++;
+      L.euclidPageIdx = Math.max(0, Math.min(n - 1, idx));
+    }
     // Enable Drum-lanes: ensure a page bank exists (seeds a backbeat if fresh).
     function _ambSeedDrumLanes(L) { if (L) _ambEuclidPages(L); }
     function _ambDrumName(midi) {
@@ -5541,12 +5555,47 @@
         render(); persist();
       });
       // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).
+      // Drag-reorder the page tabs (pointer-based → works on touch + desktop). A
+      // horizontal drag past a small threshold reorders the pages (= the play
+      // sequence); a plain click falls through to the chrome handler (select).
+      let _dragPage = -1, _dragMoved = false, _dragX0 = 0, _suppressTabClick = false;
+      grid.addEventListener('pointerdown', (ev) => {
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab[data-page]'); if (!t) return;
+        const L = getL(); if (!L || !L.euclidKit) return;
+        _dragPage = parseInt(t.dataset.page, 10) | 0; _dragMoved = false; _dragX0 = ev.clientX; _suppressTabClick = false;
+        try { grid.setPointerCapture(ev.pointerId); } catch (e) {}   // keep move/up on the grid if the pointer drifts off
+      });
+      grid.addEventListener('pointermove', (ev) => {
+        if (_dragPage < 0) return;
+        if (!_dragMoved && Math.abs(ev.clientX - _dragX0) < 6) return;
+        _dragMoved = true;
+        grid.querySelectorAll('.ambient-euclid-tab.drop-to').forEach(x => x.classList.remove('drop-to'));
+        const src = grid.querySelector('.ambient-euclid-tab[data-page="' + _dragPage + '"]'); if (src) src.classList.add('dragging');
+        const under = document.elementFromPoint(ev.clientX, ev.clientY);
+        const tgt = under && under.closest && under.closest('.ambient-euclid-tab[data-page]');
+        if (tgt && (parseInt(tgt.dataset.page, 10) | 0) !== _dragPage) tgt.classList.add('drop-to');
+      });
+      const _tabDrop = (ev) => {
+        if (_dragPage < 0) return;
+        const from = _dragPage, moved = _dragMoved; _dragPage = -1; _dragMoved = false;
+        grid.querySelectorAll('.ambient-euclid-tab.dragging, .ambient-euclid-tab.drop-to').forEach(x => x.classList.remove('dragging', 'drop-to'));
+        if (!moved) return;   // a plain click → let the chrome handler select the page
+        _suppressTabClick = true; setTimeout(() => { _suppressTabClick = false; }, 350);
+        const under = ev.clientX != null ? document.elementFromPoint(ev.clientX, ev.clientY) : null;
+        const tgt = under && under.closest && under.closest('.ambient-euclid-tab[data-page]');
+        _E = E; const L = getL();
+        if (L && L.euclidKit && tgt) { const to = parseInt(tgt.dataset.page, 10) | 0; if (to !== from) { _ambEuclidMovePage(L, from, to); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} } } }
+        render();
+      };
+      grid.addEventListener('pointerup', _tabDrop);
+      grid.addEventListener('pointercancel', () => { _dragPage = -1; _dragMoved = false; grid.querySelectorAll('.ambient-euclid-tab.dragging, .ambient-euclid-tab.drop-to').forEach(x => x.classList.remove('dragging', 'drop-to')); });
       // Drum-lanes chrome: page tabs, add/delete, mode (Loop/Seq), Plays stepper,
       // lane-label selectors, and the ▶ audition. All BUTTONS (click-committed) so a
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
         const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-step-fx-trig'); if (!t) return;
+        if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
         if (t.classList.contains('ambient-step-fx-trig')) { _ambTriggerLaneStep(E, key, L); return; }   // audition — no state change / re-render
         if (t.classList.contains('ambient-euclid-tab-add')) _ambEuclidAddPage(L);

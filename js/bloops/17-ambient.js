@@ -3025,11 +3025,16 @@
     // not a per-note volume — so a ramp/slider sweeps the whole layer (held tails included)
     // in real time. This stays a no-op pass-through so the many emit call sites are unchanged.
     function _ambApplyLevel(vol, level) { return vol || 0; }
-    // Map a 0–100 Level to a layer-gain multiplier: 0 → silent, 70 (default) → unity,
-    // 100 → ×2 (+6 dB boost). Mirrors the old curve's shape as a continuous gain.
+    // Map a 0–100 Level to a layer-gain multiplier. 0 → silent. 70 (default) →
+    // ×1.3 (a ~+2.3 dB baseline lift, since Bloom layers read quiet in a dense mix
+    // under the −6 dB master trim). 70→100 → ×1.3…×4 (up to +12 dB) so the slider
+    // has enough range to push a per-note-staged-low layer (bass ×0.34, run/pedal
+    // ×0.32, drone ×0.2) back up to — or past — parity; the old ×2 ceiling couldn't.
+    // The master limiter/clipper guards the sum, so the extra range is safe.
+    const _AMB_LEVEL_BASE = 1.3, _AMB_LEVEL_MAX = 4.0;
     function _ambLevelGain(level) {
       const L = Number.isFinite(level) ? Math.max(0, Math.min(100, level)) : 70;
-      return (L <= 70) ? (L / 70) : (1 + (L - 70) / 30);
+      return (L <= 70) ? (L / 70) * _AMB_LEVEL_BASE : _AMB_LEVEL_BASE + (L - 70) / 30 * (_AMB_LEVEL_MAX - _AMB_LEVEL_BASE);
     }
     // Stochastic Accent (0..100): randomly widen a layer's note-to-note
     // dynamics. 0 = flat (every note at its level). As it rises, more notes pop

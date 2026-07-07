@@ -7816,6 +7816,7 @@
       const windowLayer = (key, lc, anchorStore, emit) => {
         if (!lc || lc.present === false) return;   // deleted layer (present=false) → silent, like runLayer
         if (_muted(lc)) return;
+        if (E.windingDown) return; // Capture finalize: schedule no more phrases (already-scheduled hits play out, then silence) — matches stepLayer/runLayer, so the euclid Beat actually stops
         const gate = _qGate(key, !!lc.on, (t) => { if (!E[anchorStore]) E[anchorStore] = {}; E[anchorStore][key] = { startAt: t, lastAt: null }; });
         if (!gate.run) return;
         if (_ambFreezeGate(E, key, now, gate.hz)) return;

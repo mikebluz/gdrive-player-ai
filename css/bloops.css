@@ -3162,6 +3162,21 @@
     .ambient-euclid-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .ambient-euclid-barsreadout { color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; opacity: 0.9; }
     .ambient-euclid-note { color: #c9b8ef; font: 500 0.6rem 'Segoe UI', sans-serif; opacity: 0.85; }
+    /* Drum-lanes PAGE tabs (pattern banks) + orchestration row. */
+    .ambient-euclid-pages { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 5px; }
+    .ambient-euclid-tab { flex: 0 0 auto; min-width: 26px; height: 24px; padding: 0 7px; border: 1px solid #34344a; border-radius: 6px 6px 0 0;
+      background: #17172490; color: #8a8aa8; font: 600 0.66rem 'Segoe UI', sans-serif; cursor: pointer; transition: all 0.12s ease; }
+    .ambient-euclid-tab.on { border-color: #5e9ead; color: #cdf0fa; background: rgba(94,158,173,0.22); border-bottom-color: transparent; }
+    @media (hover: hover) { .ambient-euclid-tab:hover { border-color: #9f7aea; color: #d9cbff; } }
+    .ambient-euclid-tab-add { color: #7fe0b0; font-weight: 700; }
+    .ambient-euclid-tabx { margin-left: 3px; font-size: 0.56rem; opacity: 0.85; color: #9fe0ef; }
+    .ambient-euclid-orch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .ambient-euclid-seqmode, .ambient-euclid-plays { flex: 0 0 auto; padding: 2px 5px; font: 600 0.62rem 'Segoe UI', sans-serif;
+      color: #d8d8ea; background: #1b1b2a; border: 1px solid #34344a; border-radius: 4px; }
+    .ambient-euclid-playslbl { color: #7a7a9a; font: 600 0.6rem 'Segoe UI', sans-serif; }
+    .ambient-euclid-pagedel { flex: 0 0 auto; margin-left: auto; padding: 2px 6px; font-size: 0.72rem; line-height: 1;
+      background: transparent; border: 1px solid #34344a; border-radius: 4px; color: #b06a7a; cursor: pointer; }
+    @media (hover: hover) { .ambient-euclid-pagedel:hover { border-color: #c0526a; color: #e08a9a; } }
     /* Bar-group marker: each bar is its own grid row; a small bar number sits above
        the first cell of bars 2+ (the row-gap above reserves its space). */
     .ambient-euclid-cell[data-bar]::after { content: attr(data-bar); position: absolute; left: 0; top: -11px; font: 600 0.5rem 'Segoe UI', sans-serif; color: #7a7a9a; }

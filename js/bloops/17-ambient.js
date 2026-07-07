@@ -3934,8 +3934,13 @@
         _ambArpSpreadLfo(E, key, _me, (inst.panMode === 'pan') ? 0 : _sp, _barSec);
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
+          // Drum-lanes: the PAGE active for this cycle (page-sequence orchestration);
+          // the viewed page when looping / single page. Non-kit uses _ambEuclidPat.
+          const kitPat = inst.euclidKit ? _ambEuclidActivePat(inst, ctx.c) : null;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
-            const vpat = _ambEuclidPat(inst, pulses, steps, rotate, V, v, inst.euclidRegen | 0);
+            const vpat = kitPat
+              ? ((Array.isArray(kitPat[v]) && kitPat[v].length) ? kitPat[v] : new Array(steps).fill(0))
+              : _ambEuclidPat(inst, pulses, steps, rotate, V, v, inst.euclidRegen | 0);
             const vpan = _spreadLfo ? 0 : ((V === 1) ? pan : Math.max(-100, Math.min(100, (pan | 0) + Math.round((v - (V - 1) / 2) * 40))));
             for (let bar = 0; bar < bars; bar++) {
               for (let slot = 0; slot < steps; slot++) {
@@ -4879,29 +4884,84 @@
     }
     // Drum-lanes shows ALL kit drums as fixed lanes (one sequence per drum).
     const _AMB_KIT_LANES = _AMB_VDRUM.length;   // 8: Kick/Snare/Hat/Clap/Open/Tom/Crash/Perc
-    // Seed a basic backbeat into a fresh Drum-lanes layer so enabling it plays
-    // immediately (and gives an obvious starting point) — Kick on 1&3, Snare on
-    // 2&4, closed Hat on every step; other lanes empty. Won't clobber an existing
-    // valid kit pattern (so re-enabling keeps your edits).
-    function _ambSeedDrumLanes(L) {
-      if (!L) return;
-      const steps = Math.max(2, Math.min(32, L.steps | 0) || 8);
-      const bars  = Math.max(1, Math.min(8, (L.bars | 0) || 1));
-      const total = bars * steps;
-      const V = _AMB_KIT_LANES;
-      const ok = Array.isArray(L.euclidPattern) && L.euclidPattern.length === V &&
-        L.euclidPattern.every(r => Array.isArray(r) && r.length === total);
-      if (ok) return;
-      const rows = []; for (let v = 0; v < V; v++) rows.push(new Array(total).fill(0));
-      const beat = Math.max(1, Math.round(steps / 4));   // slots per quarter (4/4)
-      for (let b = 0; b < bars; b++) {
-        const o = b * steps;
-        rows[0][o + 0] = 1; if ((2 * beat) < steps) rows[0][o + 2 * beat] = 1;   // Kick 1 & 3
-        if (beat < steps) rows[1][o + beat] = 1; if ((3 * beat) < steps) rows[1][o + 3 * beat] = 1;   // Snare 2 & 4
-        for (let s = 0; s < steps; s++) rows[2][o + s] = 1;                       // Hat every step
-      }
-      L.euclidPattern = rows;
+    function _ambKitDims(L) {
+      return { steps: Math.max(2, Math.min(32, L.steps | 0) || 8), bars: Math.max(1, Math.min(8, (L.bars | 0) || 1)) };
     }
+    // 8 empty lane rows of `bars*steps`; when `seed`, a basic backbeat (Kick 1&3,
+    // Snare 2&4, closed Hat every step) so a fresh page plays immediately.
+    function _ambSeedKitRows(steps, bars, seed) {
+      const total = Math.max(1, bars * steps);
+      const rows = []; for (let v = 0; v < _AMB_KIT_LANES; v++) rows.push(new Array(total).fill(0));
+      if (seed) {
+        const beat = Math.max(1, Math.round(steps / 4));   // slots per quarter (4/4)
+        for (let b = 0; b < bars; b++) {
+          const o = b * steps;
+          rows[0][o + 0] = 1; if ((2 * beat) < steps) rows[0][o + 2 * beat] = 1;   // Kick 1 & 3
+          if (beat < steps) rows[1][o + beat] = 1; if ((3 * beat) < steps) rows[1][o + 3 * beat] = 1;   // Snare 2 & 4
+          for (let s = 0; s < steps; s++) rows[2][o + s] = 1;                       // Hat every step
+        }
+      }
+      return rows;
+    }
+    // ---- Drum-lanes PAGES (pattern banks, like Areas but for one Beat) ----------
+    // A kit layer's beat is a bank of PAGES: `euclidPages: [{pat:[8 rows], plays}]`.
+    // `euclidPageIdx` = the page shown/edited via the tabs; `euclidSeq` chains them
+    // (each page loops `plays` times, then advances) vs looping the viewed page.
+    // Created on first use (migrating a legacy single `euclidPattern`, else a seeded
+    // backbeat). `euclidPattern` stays the NON-kit euclidean override only.
+    function _ambEuclidPages(L) {
+      if (!Array.isArray(L.euclidPages) || !L.euclidPages.length) {
+        const d = _ambKitDims(L);
+        const legacy = (Array.isArray(L.euclidPattern) && L.euclidPattern.length === _AMB_KIT_LANES) ? L.euclidPattern : null;
+        L.euclidPages = [{ pat: legacy || _ambSeedKitRows(d.steps, d.bars, true), plays: 1 }];
+        L.euclidPageIdx = 0;
+      }
+      return L.euclidPages;
+    }
+    function _ambPageIdx(L) {
+      const n = _ambEuclidPages(L).length;
+      let i = L.euclidPageIdx | 0; if (i < 0) i = 0; if (i >= n) i = n - 1;
+      L.euclidPageIdx = i; return i;
+    }
+    function _ambEuclidViewPat(L) { return _ambEuclidPages(L)[_ambPageIdx(L)].pat; }   // the edited page
+    // The pattern active for emit CYCLE c: the viewed page when looping (or a single
+    // page), else the page whose run the cycle falls in (page i spans `plays[i]`
+    // consecutive cycles, then the bank loops).
+    function _ambEuclidActivePat(L, c) {
+      const pages = _ambEuclidPages(L);
+      if (!L.euclidSeq || pages.length <= 1) return pages[_ambPageIdx(L)].pat;
+      let total = 0; for (const p of pages) total += Math.max(1, (p.plays | 0) || 1);
+      let idx = (((c | 0) % total) + total) % total;
+      for (const p of pages) { const n = Math.max(1, (p.plays | 0) || 1); if (idx < n) return p.pat; idx -= n; }
+      return pages[0].pat;
+    }
+    // Re-fit every page's rows to the current Steps×Bars (preserves overlapping
+    // edits; pads with silence). Run on a Steps/Bars change.
+    function _ambEuclidResizePages(L) {
+      const d = _ambKitDims(L), total = d.bars * d.steps;
+      _ambEuclidPages(L).forEach(pg => {
+        const rows = [];
+        for (let v = 0; v < _AMB_KIT_LANES; v++) {
+          const old = Array.isArray(pg.pat[v]) ? pg.pat[v] : [];
+          const row = new Array(total).fill(0);
+          for (let i = 0, m = Math.min(total, old.length); i < m; i++) row[i] = old[i] ? 1 : 0;
+          rows.push(row);
+        }
+        pg.pat = rows;
+      });
+    }
+    function _ambEuclidAddPage(L) {
+      const pages = _ambEuclidPages(L), d = _ambKitDims(L), total = d.bars * d.steps;
+      const cur = pages[_ambPageIdx(L)].pat;   // duplicate the current page → tweak a variation
+      pages.push({ pat: cur.map(r => (Array.isArray(r) ? r.slice() : new Array(total).fill(0))), plays: 1 });
+      L.euclidPageIdx = pages.length - 1;
+    }
+    function _ambEuclidDelPage(L) {
+      const pages = _ambEuclidPages(L); if (pages.length <= 1) return;
+      const i = _ambPageIdx(L); pages.splice(i, 1); L.euclidPageIdx = Math.max(0, i - 1);
+    }
+    // Enable Drum-lanes: ensure a page bank exists (seeds a backbeat if fresh).
+    function _ambSeedDrumLanes(L) { if (L) _ambEuclidPages(L); }
     function _ambDrumName(midi) {
       const pc = (((Math.round(midi) - 36) % 12) + 12) % 12;
       return _AMB_DRUM_NAMES[pc] || ('Drum ' + pc);
@@ -5057,11 +5117,14 @@
     // steps-long pattern repeats every bar (the default, byte-identical to before)
     // and a phrase-long one plays a different bar-block per bar.
     function _ambEuclidPat(inst, pulses, steps, rotate, V, v, salt) {
+      // Drum-lanes is a step SEQUENCER (not euclidean-generated): the grid shows the
+      // VIEWED page; a lane with no drawn hits is silent.
+      if (inst && inst.euclidKit) {
+        const pat = _ambEuclidViewPat(inst);
+        return (Array.isArray(pat[v]) && pat[v].length) ? pat[v] : new Array(steps).fill(0);
+      }
       const ov = inst && inst.euclidPattern;
       if (ov && Array.isArray(ov[v]) && ov[v].length > 0 && ov[v].length % steps === 0) return ov[v];
-      // Drum-lanes is a step SEQUENCER, not a euclidean generator: a lane with no
-      // drawn pattern is silent (all 8 lanes start empty; you program the beat).
-      if (inst && inst.euclidKit) return new Array(steps).fill(0);
       return _ambEuclidVoicePat(pulses, rotate, steps, V, v, salt);
     }
     // Normalize a euclid layer's hand-edited pattern override: keep it only if
@@ -5077,6 +5140,18 @@
           L.euclidDrums.every(x => x == null || (Number.isFinite(x) && x >= 0 && x <= 11));
         if (!ok) delete L.euclidDrums;
       }
+      // Drum-lanes PAGES: bank of {pat:[8 rows of 0/1], plays}. Drop malformed
+      // pages/rows; clamp plays; keep the viewed index + sequence flag in range.
+      if (L.euclidPages != null) {
+        if (Array.isArray(L.euclidPages)) {
+          L.euclidPages = L.euclidPages.filter(pg => pg && Array.isArray(pg.pat) && pg.pat.length &&
+            pg.pat.every(r => Array.isArray(r) && r.length > 0 && r.every(x => x === 0 || x === 1)));
+          L.euclidPages.forEach(pg => { pg.plays = Math.max(1, Math.min(16, (pg.plays | 0) || 1)); });
+        }
+        if (!Array.isArray(L.euclidPages) || !L.euclidPages.length) delete L.euclidPages;
+      }
+      if (L.euclidPageIdx != null) L.euclidPageIdx = Math.max(0, L.euclidPageIdx | 0);
+      if (L.euclidSeq != null) L.euclidSeq = !!L.euclidSeq;
       if (L.euclidPattern == null) return;
       const ov = L.euclidPattern;
       const ok = Array.isArray(ov) && ov.length > 0 &&
@@ -5175,7 +5250,31 @@
       // Drum-lanes always carries a pattern (it IS the sequencer) → the "edited"
       // hint (about the euclidean generator being reset) doesn't apply there.
       const edited = !inst.euclidKit && Array.isArray(inst.euclidPattern) && inst.euclidPattern.some(r => Array.isArray(r));
-      let html = '<div class="ambient-euclid-meta">' +
+      let html = '';
+      // Drum-lanes: a row of PAGE tabs (pattern banks) + orchestration (loop the
+      // viewed page, or play all pages in sequence with a per-page repeat count).
+      if (inst.euclidKit) {
+        const pages = _ambEuclidPages(inst), cur = _ambPageIdx(inst), seq = !!inst.euclidSeq;
+        let tabs = '<div class="ambient-euclid-pages" role="tablist">';
+        pages.forEach((p, i) => {
+          tabs += '<button type="button" class="ambient-euclid-tab' + (i === cur ? ' on' : '') + '" data-page="' + i + '" role="tab" aria-selected="' + (i === cur) + '">' +
+            (i + 1) + (seq && pages.length > 1 ? '<span class="ambient-euclid-tabx">×' + Math.max(1, (p.plays | 0) || 1) + '</span>' : '') + '</button>';
+        });
+        tabs += '<button type="button" class="ambient-euclid-tab ambient-euclid-tab-add" title="Add a pattern page (a copy of this one to vary)">+</button></div>';
+        let orch = '<div class="ambient-euclid-orch">' +
+          '<select class="ambient-euclid-seqmode" title="Loop the current page, or play all pages in sequence (song mode)">' +
+            '<option value="0"' + (seq ? '' : ' selected') + '>Loop page</option>' +
+            '<option value="1"' + (seq ? ' selected' : '') + '>Sequence</option></select>';
+        if (seq && pages.length > 1) {
+          orch += '<label class="ambient-euclid-playslbl">Plays</label><select class="ambient-euclid-plays" title="How many times this page loops before advancing to the next">';
+          for (let n = 1; n <= 8; n++) orch += '<option value="' + n + '"' + ((Math.max(1, (pages[cur].plays | 0) || 1) === n) ? ' selected' : '') + '>' + n + '</option>';
+          orch += '</select>';
+        }
+        if (pages.length > 1) orch += '<button type="button" class="ambient-euclid-pagedel" title="Delete this page">🗑</button>';
+        orch += '</div>';
+        html += tabs + orch;
+      }
+      html += '<div class="ambient-euclid-meta">' +
         '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
         (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
         '</div>';
@@ -5239,22 +5338,51 @@
         const v = parseInt(c.dataset.ev, 10), i = parseInt(c.dataset.ei, 10);   // i = absolute index into the phrase
         const d = _ambEuclidGridDims(L, type); if (!d || !Number.isFinite(v) || !Number.isFinite(i)) return;
         const total = d.bars * d.steps;   // full-phrase override length
-        let ov = L.euclidPattern;
-        const ok = Array.isArray(ov) && ov.length === d.V && ov.every(r => Array.isArray(r) && r.length === total);
-        if (!ok) {   // snapshot the WHOLE phrase as shown (generated repeats via modulo) so WYSIWYG
-          ov = [];
-          for (let vv = 0; vv < d.V; vv++) {
-            const pat = _ambEuclidPat(L, d.pulses, d.steps, d.rotate, d.V, vv, d.salt);
-            const row = []; for (let j = 0; j < total; j++) row.push(pat[j % pat.length] === 1 ? 1 : 0);
-            ov.push(row);
+        let ov;
+        if (L.euclidKit) {
+          // Drum-lanes: write into the VIEWED page's pattern (re-fit if a Steps/Bars
+          // change left it a stale length).
+          let pat = _ambEuclidViewPat(L);
+          if (!(pat.length === d.V && pat.every(r => Array.isArray(r) && r.length === total))) { _ambEuclidResizePages(L); pat = _ambEuclidViewPat(L); }
+          ov = pat;
+        } else {
+          ov = L.euclidPattern;
+          const ok = Array.isArray(ov) && ov.length === d.V && ov.every(r => Array.isArray(r) && r.length === total);
+          if (!ok) {   // snapshot the WHOLE phrase as shown (generated repeats via modulo) so WYSIWYG
+            ov = [];
+            for (let vv = 0; vv < d.V; vv++) {
+              const pat = _ambEuclidPat(L, d.pulses, d.steps, d.rotate, d.V, vv, d.salt);
+              const row = []; for (let j = 0; j < total; j++) row.push(pat[j % pat.length] === 1 ? 1 : 0);
+              ov.push(row);
+            }
+            L.euclidPattern = ov;
           }
-          L.euclidPattern = ov;
         }
         ov[v][i] = ov[v][i] ? 0 : 1;
         if (ov[v][i]) { c.classList.add('on'); c.setAttribute('aria-pressed', 'true'); }
         else { c.classList.remove('on'); c.removeAttribute('aria-pressed'); }
-        if (!grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
+        if (!L.euclidKit && !grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
         persist();
+      });
+      // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).
+      grid.addEventListener('click', (ev) => {
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel'); if (!t) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit) return;
+        if (t.classList.contains('ambient-euclid-tab-add')) _ambEuclidAddPage(L);
+        else if (t.classList.contains('ambient-euclid-pagedel')) _ambEuclidDelPage(L);
+        else if (t.dataset.page != null) L.euclidPageIdx = parseInt(t.dataset.page, 10) | 0;
+        render(); persist();
+        if (E.timer) { try { sync && sync(); } catch (e) {} }
+      });
+      grid.addEventListener('change', (ev) => {
+        const sm = ev.target.closest && ev.target.closest('.ambient-euclid-seqmode');
+        const pl = ev.target.closest && ev.target.closest('.ambient-euclid-plays');
+        if (!sm && !pl) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit) return;
+        if (sm) L.euclidSeq = sm.value === '1';
+        if (pl) _ambEuclidPages(L)[_ambPageIdx(L)].plays = Math.max(1, Math.min(8, parseInt(pl.value, 10) || 1));
+        render(); persist();
+        if (E.timer) { try { sync && sync(); } catch (e) {} }
       });
       // Hide the euclidean-generator controls (Pulses/Rotate/Regen/Voices + the
       // single-drum picker) in Drum-lanes mode — it's a step sequencer over all 8
@@ -5285,7 +5413,7 @@
       // adds/drops rows; Regen clears (a fresh re-roll). All re-render the grid.
       // These listeners register after the generic `sl` handlers, so L is already
       // updated when they fire.
-      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (clear) { L.euclidPattern = null; if (L.euclidKit) _ambSeedDrumLanes(L); } render(); persist(); };
+      const onGen = (clear) => () => { _E = E; const L = getL(); if (!L) return; if (L.euclidKit) _ambEuclidResizePages(L); else if (clear) L.euclidPattern = null; render(); persist(); };
       ['pulses', 'rotate', 'steps'].forEach(s => { const e = el(s); if (e) e.addEventListener('input', onGen(true)); });
       { const e = el('euclidVoices'); if (e) e.addEventListener('input', onGen(false)); }
       { const b = el('euclidregen'); if (b) b.addEventListener('click', onGen(true)); }

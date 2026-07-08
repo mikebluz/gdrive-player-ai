@@ -1156,7 +1156,7 @@
                panMode: 'spread', space: 0, attack: 120, decay: 120, sustain: 70, release: 600, fine: 0,
                level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
-               unitMode: 'single', units: [], keyMaster: false, harmony: 'fixed', chordMode: 'poly', ..._ambDefaultFx() };
+               unitMode: 'single', units: [], keyMaster: false, harmony: 'fixed', chordMode: 'poly', revoice: 'smooth', chordBorrow: true, ..._ambDefaultFx() };
     }
     function _ambValidUnit(u) {
       return !!(u && typeof u === 'object' && Array.isArray(u.events) && u.events.length > 0);
@@ -1192,6 +1192,9 @@
       // B5: chord realization for multi-note events — 'poly' (default, stack all),
       // 'arp' (strum across the slot), 'monoRoot'/'monoTop' (fold to lowest/highest).
       if (['poly', 'arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) < 0) s.chordMode = 'poly';
+      // B4 refinements: re-voicing mode + missing-tone scale-borrow (chord-lock).
+      if (['smooth', 'preserve', 'reset'].indexOf(s.revoice) < 0) s.revoice = 'smooth';
+      if (typeof s.chordBorrow !== 'boolean') s.chordBorrow = true;
       if (!Array.isArray(s.units)) s.units = [];
       s.units = s.units.filter(_ambValidUnit);
       // Per-section fields: iterations before switching + a display name.
@@ -6117,7 +6120,7 @@
       const curRoot = _ambKeyRootPc(cfg);
       let d = (((curRoot - capRoot) % 12) + 12) % 12; if (d > 6) d -= 12;   // nearest transpose
       // Chord-locked: resolve the current chord's absolute pitch classes at atSec.
-      let chordPcs = null;
+      let chordPcs = null, chordRoot = 0;
       if (mode === 'chordlock') {
         try {
           const src = _ambNotesOf(seq);
@@ -6128,17 +6131,47 @@
             _ambProgStepOverride = prevOv;
             if (ch && Array.isArray(ch.intervals) && ch.intervals.length) {
               const r = (((ch.root | 0) % 12) + 12) % 12;
+              chordRoot = r;
               chordPcs = new Set(ch.intervals.map(iv => (((r + (iv | 0)) % 12) + 12) % 12));
             }
           }
         } catch (e) {}
       }
-      return freqs.map(f => {
-        if (!(f > 0)) return f;
-        let m = Math.round(toMidi(f)) + d;
-        m = chordPcs ? _ambSnapMidiToPcs(m, chordPcs) : _ambKeyQuantizeMidi(m, cfg);
-        return toFreq(m);
-      });
+      const scalePcs = _ambKeyDiatonicPcs(cfg);
+      const targetPcs = (mode === 'chordlock' && chordPcs) ? chordPcs : scalePcs;
+      const tm = freqs.map(f => (f > 0) ? (Math.round(toMidi(f)) + d) : null);   // transposed midi (null = rest/invalid)
+      if (!targetPcs || !targetPcs.size) return tm.map((m, i) => m == null ? freqs[i] : toFreq(m));
+      // Re-voicing (B4): how notes settle onto the target set.
+      //  • smooth  (default) — each note → nearest target tone (minimal movement).
+      //  • preserve          — keep the captured intervals; re-root the whole voicing
+      //                        by snapping only its lowest note (color/shape intact).
+      //  • reset             — canonical: stack the target tones in root position from
+      //                        the lowest note up (chords only; single notes = smooth).
+      const revoice = (seq.revoice === 'preserve' || seq.revoice === 'reset') ? seq.revoice : 'smooth';
+      if (revoice === 'preserve') {
+        let lowIdx = -1, lowVal = Infinity;
+        tm.forEach((m, i) => { if (m != null && m < lowVal) { lowVal = m; lowIdx = i; } });
+        if (lowIdx < 0) return freqs;
+        const delta = _ambSnapMidiToPcs(lowVal, targetPcs) - lowVal;
+        return tm.map((m, i) => m == null ? freqs[i] : toFreq(m + delta));
+      }
+      // Missing-tone BORROW (chord-lock only, default on): a note that isn't a chord
+      // tone but IS a diatonic scale tone stays put (a legit passing/colour tone over
+      // the chord) instead of snapping to the nearest chord tone. Off → strict lock.
+      const borrow = (mode === 'chordlock') && !!chordPcs && (seq.chordBorrow !== false);
+      const snap = (m) => (borrow && scalePcs.has((((m % 12) + 12) % 12))) ? m : _ambSnapMidiToPcs(m, targetPcs);
+      let out = tm.map(m => (m == null) ? null : snap(m));
+      // Reset = root-position stack of the CHORD tones (chord-lock only; stacking a
+      // 7-note scale would just cluster, so for Diatonic 'reset' behaves as smooth).
+      // Ascending intervals from the chord ROOT (root, 3rd, 5th, …) stacked from the
+      // lowest note's octave, so the bass is the actual root, not just the lowest pc.
+      if (revoice === 'reset' && mode === 'chordlock' && chordPcs && out.filter(x => x != null).length > 1) {
+        const asc = Array.from(new Set(Array.from(chordPcs).map(pc => (((pc - chordRoot) % 12) + 12) % 12))).sort((a, b) => a - b);
+        const nn = out.map((m, i) => ({ m, i })).filter(x => x.m != null).sort((a, b) => a.m - b.m);
+        const baseRoot = Math.floor(nn[0].m / 12) * 12 + chordRoot;
+        nn.forEach((x, k) => { out[x.i] = baseRoot + asc[k % asc.length] + 12 * Math.floor(k / asc.length); });
+      }
+      return out.map((m, i) => m == null ? freqs[i] : toFreq(m));
     }
     function _ambRealizeSeqPhrase(at, seq, space, st, keyOverride) {
       _ambKeyTime = null;   // Seq variance uses the normal cfg/global key, not a stale generative note-time
@@ -12812,6 +12845,14 @@
           '<div class="ambient-ctrl"><label for="' + p + 'chordmode">Chords</label><select id="' + p + 'chordmode" class="ambient-select">' +
             opts([['poly', 'Poly (stack)'], ['arp', 'Arp (strum)'], ['monoRoot', 'Mono — low'], ['monoTop', 'Mono — high']], ['arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) >= 0 ? s.chordMode : 'poly') +
             '</select><span class="ambient-hint">stack / strum / fold</span></div>' +
+          // B4 refinements — how Diatonic/Chord-locked settle the voicing, and whether
+          // non-chord scale tones are kept over a chord (borrow) or snapped (strict).
+          '<div class="ambient-ctrl"><label for="' + p + 'revoice">Re-voice</label><select id="' + p + 'revoice" class="ambient-select">' +
+            opts([['smooth', 'Smooth'], ['preserve', 'Preserve'], ['reset', 'Reset']], ['preserve', 'reset'].indexOf(s.revoice) >= 0 ? s.revoice : 'smooth') +
+            '</select><span class="ambient-hint">voice-lead / keep shape / root pos</span></div>' +
+          '<div class="ambient-ctrl"><label>Borrow</label>' +
+            '<button type="button" id="' + p + 'borrow" class="ambient-seg" title="Chord-locked: keep a note that isn’t a chord tone but IS a diatonic scale tone (a passing/colour tone) instead of snapping it to the nearest chord tone. Off = strict lock to chord tones.">On</button>' +
+            '<span class="ambient-hint">scale tones over chords</span></div>' +
           // B3-sync: lock this Seq's chords to the shared progression clock so it
           // stays in sync with a Pad / area Progression of the same chords. Reversible.
           '<div class="ambient-ctrl"><label>Prog sync</label>' +
@@ -12932,7 +12973,12 @@
         // blank default — updated live to the playing step during playback.
         try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
       }
-      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony'); bindStr('chordmode', 'chordMode');
+      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony'); bindStr('chordmode', 'chordMode'); bindStr('revoice', 'revoice');
+      // B4 borrow toggle (default on).
+      const borrowBtn = el('borrow');
+      const refreshBorrow = () => { const sq = getSq(); if (sq && borrowBtn) { const on = (sq.chordBorrow !== false); borrowBtn.textContent = on ? 'On' : 'Off'; borrowBtn.classList.toggle('active', on); } };
+      if (borrowBtn) borrowBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.chordBorrow = (sq.chordBorrow === false); refreshBorrow(); if (E.timer) { try { _ambSyncMods(); } catch (e) {} } persist(); });
+      if (borrowBtn) refreshBorrow();
       // Output routing (grid-direct ↔ bloom blend) — store 'grid' or clear.
       { const o = el('out'); if (o) o.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; if (o.value === 'grid') sq.out = 'grid'; else delete sq.out; persist(); }); }
       const secBtn = el('sections');

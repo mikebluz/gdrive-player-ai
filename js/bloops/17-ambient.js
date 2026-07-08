@@ -10738,16 +10738,18 @@
         // STOPPED (and no lock), the roll shows what the next Play would
         // generate (silent offline render, cached on E.seedPv). First edit
         // promotes it to a lock; "↺ Original" reverts.
+        // Task 3: the per-layer note ROLL (live / locked-editable / seed preview) only
+        // shows when this layer's 🎹 piano is open — default hidden, revealed on toggle.
+        // (The compact Now-Playing panel above still lists every layer.)
+        const _pEl = host.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+        const pianoOpen = !!(_pEl && _pEl.classList.contains('open'));
         let seedPv = null;
-        if (!lockEd && !playing) {
-          const pEl = host.querySelector('.ambient-piano[data-pkey="' + key + '"]');
-          if (pEl && pEl.classList.contains('open')) {
-            try { seedPv = _ambSeedPreview(E, key); } catch (e) {}
-            if (seedPv && (!seedPv.events || !seedPv.events.length)) seedPv = null;
-          }
+        if (!lockEd && !playing && pianoOpen) {
+          try { seedPv = _ambSeedPreview(E, key); } catch (e) {}
+          if (seedPv && (!seedPv.events || !seedPv.events.length)) seedPv = null;
         }
         if (seedPv) layerOn = true;   // reserve the line height for the roll
-        el.classList.toggle('reserved', layerOn);
+        el.classList.toggle('reserved', layerOn && pianoOpen);   // .reserved is the display gate → piano-gated
         let html = '';
         const st = E._npCol[key] || (E._npCol[key] = { next: 0, map: {} });
         // Colour a unit by its NOTE CONTENT (not its time), persistently per layer
@@ -10837,7 +10839,10 @@
           const ed = el.querySelector('#ambient-note-editor');
           if (ed) { try { ed.classList.remove('docked', 'open'); ed.style.removeProperty('display'); document.body.appendChild(ed); } catch (e) {} }
         };
-        if (lockEd) {
+        if (!pianoOpen) {
+          // Task 3: piano closed → no roll at all (the readout is piano-gated).
+          if (el._mode !== 'off') { _rescueEditor(); el.innerHTML = ''; el._mode = 'off'; el._npHtml = null; }
+        } else if (lockEd) {
           // Locked → editable piano-roll (click a block to edit, empty to add).
           if (el._mode !== 'lockroll') { _rescueEditor(); el.innerHTML = _rollSkeleton(); el._mode = 'lockroll'; el._npHtml = null; const cv = el.querySelector('canvas'); if (cv) _ambWireLockedRoll(cv, E, key); }
         } else if (seedPv) {

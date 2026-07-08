@@ -71,11 +71,15 @@ B1 (KEY axis) · B2 (layer KEY override) · B3 (scope editor + roman numerals + 
 `a2d7f1f` + promote-part `6c3309f`) · B4 (Harmony: Fixed/Diatonic/Chord-locked) · B5
 (Poly/Arp/Mono).
 
-Remaining B items, by what they need:
-- **Send-to-Bloom part-vs-progression routing** — the last substantive safe B3 item;
-  more involved (touches the grid→Bloom send flow). Not yet started.
-- **B4 re-voicing (Smooth/Reset/Preserve), missing-tone borrow; B5 strum shape** — audio
-  refinements → compound the unverified B4/B5 audio, want the ear-check first.
+**B3 COMPLETE** — Send-to-Bloom routing done (`bff68f1`): part = ＋New Seq / ⊕Append;
+progression = ⇶ As Progression (area-global, pre-existing) OR ⇶ As chord pad (own
+layer, new-model keyOv). Plus ＋Pad + promote-part + roman numerals.
+
+**All safe, non-audio-refinement B work is now done.** What remains needs YOU:
+- **Audio refinements** (B4 re-voicing Smooth/Reset/Preserve + missing-tone borrow; B5
+  strum shape) — compound the unverified B4/B5 audio → want the ear-check first.
+- **Track C** — deliberate harness re-baseline (C1) + IRREVERSIBLE cleanups (C2). Needs
+  an explicit go + real-project regression.
 
 ⚠️ **Two gates before more:**
 1. **B4 + B5 change AUDIO and Seq isn't harness-covered** — Diatonic/Chord-locked/Arp/

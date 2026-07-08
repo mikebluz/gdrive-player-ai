@@ -10039,7 +10039,7 @@
           durSec = 0;
         }
         let url = null; try { url = URL.createObjectURL(blob); } catch (e) {}
-        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: 'Bloom' });
+        _ambCaptureBank.push({ id: ++_ambCapBankSeq, name: filename, ext, mime, folder: folder || 'bloops/exports', durSec, bytes: blob.size, blob, url, uploaded: false, source: 'Bloom', grid: _ambCaptureGrid(E, durSec) });
         _ambRenderCaptureBank();
         if (typeof showToast === 'function') {
           showToast(audioBuf
@@ -10240,6 +10240,8 @@
         if (!host._capWired) {
           host._capWired = true;
           host.addEventListener('click', (e) => {
+            const arrB = e.target && e.target.closest && e.target.closest('.ambient-cap-arrange');
+            if (arrB) { _ambOpenArrangeModal(); return; }
             const btn = e.target && e.target.closest && e.target.closest('.ambient-cap-btn'); if (!btn) return;
             const row = btn.closest('.ambient-cap-item'); if (!row) return;
             const id = parseInt(row.dataset.cap, 10);
@@ -10255,11 +10257,13 @@
           });
         }
         if (!_ambCaptureBank.length) { host.innerHTML = '<div class="ambient-cap-empty">No captures yet — press ⤓ Capture to record a take.</div>'; return; }
-        host.innerHTML = '<div class="ambient-cap-title">Captures</div>' + _ambCaptureBank.map(it =>
+        host.innerHTML = '<div class="ambient-cap-title">Captures' +
+          (_ambCaptureBank.some(x => x.durSec > 0) ? '<button type="button" class="ambient-cap-arrange" title="Cut slices from captures and rearrange them into an interleaved or superimposed master">✂ Arrange</button>' : '') +
+          '</div>' + _ambCaptureBank.map(it =>
           '<div class="ambient-cap-item' + (it.uploaded ? ' uploaded' : '') + '" data-cap="' + it.id + '">' +
             (it.source ? '<span class="ambient-cap-src" title="Source">' + String(it.source).replace(/[<>&]/g, '') + '</span>' : '') +
             '<span class="ambient-cap-name" title="' + (it.uploaded ? 'Uploaded' : 'Not uploaded') + '">' + (it.uploaded ? '✓ ' : '') + String(it.name).replace(/[<>&]/g, '') + '.' + it.ext + '</span>' +
-            '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + '</span>' +
+            '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + (it.grid && it.grid.bars ? ' · ' + it.grid.bpm + ' BPM · ' + it.grid.bars + ' bars' : '') + '</span>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-master' + (it.mastered ? ' on' : '') + '" data-act="master" title="Master this take — preview + Download/Upload run through the Mastering chain above">' + (it.mastered ? '★' : '☆') + '</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview' + (it.mastered ? ' (mastered)' : '') + '">▶</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="proc" title="Process — reverse / pitch / glide → new take">⚙</button>' +
@@ -10353,6 +10357,37 @@
       }
       return b;
     }
+    // Grid metadata stamped on every capture (feature B): the tempo the take was
+    // recorded at, its 4/4 bar length in seconds, and how many bars fit the take.
+    // Slice editing (feature C) snaps to this so cut/rearrange stays musical.
+    function _ambCaptureGrid(E, durSec) {
+      let bpm = 120;
+      try {
+        const cfg = E && E.getCfg && E.getCfg();
+        if (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) bpm = cfg.bpm;
+        else if (typeof _ambBpm === 'function') { const b = _ambBpm(); if (b > 0) bpm = b; }
+      } catch (e) {}
+      bpm = Math.max(20, bpm);
+      const barSec = (60 / bpm) * 4;   // 4/4
+      const bars = durSec > 0 ? Math.max(1, Math.round(durSec / barSec)) : 0;
+      return { bpm: Math.round(bpm * 100) / 100, beatsPerBar: 4, barSec, bars };
+    }
+    // Derive the grid of a PROCESSED take from its source grid + the op applied.
+    // Reverse and pitch-shift keep length (grid unchanged); resample (varispeed)
+    // scales tempo/barSec by the playback-rate ratio (avg over a glide).
+    function _ambGridAfterOp(grid, op, newDurSec) {
+      if (!grid || !grid.barSec) return _ambCaptureGrid(null, newDurSec);
+      const g = { bpm: grid.bpm, beatsPerBar: grid.beatsPerBar || 4, barSec: grid.barSec, bars: grid.bars };
+      if (op && op.pitch && op.pitch.mode !== 'shift' && (op.pitch.semis || op.pitch.toSemis != null)) {
+        const r0 = Math.pow(2, (op.pitch.semis || 0) / 12);
+        const r1 = op.pitch.toSemis != null ? Math.pow(2, op.pitch.toSemis / 12) : r0;
+        const r = (r0 + r1) / 2;
+        g.barSec = grid.barSec / r;
+        g.bpm = Math.round(grid.bpm * r * 100) / 100;
+      }
+      g.bars = (newDurSec > 0 && g.barSec > 0) ? Math.max(1, Math.round(newDurSec / g.barSec)) : grid.bars;
+      return g;
+    }
     // Decode → process → encode WAV → add as a NEW capture in the bank.
     async function _ambProcessCaptureItem(it, op, suffix) {
       const src = await _ambDecodeBlob(it.blob);
@@ -10362,7 +10397,7 @@
       const url = URL.createObjectURL(blob);
       _ambCaptureBank.push({ id, name: it.name + (suffix || ' (proc)'), ext: 'wav', mime: 'audio/wav',
         folder: it.folder || 'bloops/exports', durSec: outBuf.duration, bytes: blob.size, blob, url,
-        uploaded: false, source: it.source || 'Harvest' });
+        uploaded: false, source: it.source || 'Harvest', grid: _ambGridAfterOp(it.grid, op, outBuf.duration) });
       _ambRenderCaptureBank();
       return id;
     }
@@ -10414,6 +10449,266 @@
           if (typeof showToast === 'function') showToast('Processing failed: ' + (e.message || e));
         }
       });
+      host.style.setProperty('display', 'flex', 'important');
+    }
+
+    // ================= Harvest SLICE / ARRANGE editor (feature C) =============
+    // Cut grid-snapped slices out of captures and rearrange them into a master:
+    // place slices end-to-end (interleave) or overlapping (superimpose), then
+    // render → a new capture. Reuses the offline primitives above; grid comes
+    // from feature B so every cut/placement snaps to bars & beats.
+    let _ambArrWaveCache = {};   // capId -> decoded AudioBuffer (per modal session)
+
+    function _ambCloseArrangeModal() {
+      const h = document.getElementById('ambient-arrange-modal');
+      if (h) h.style.setProperty('display', 'none', 'important');
+    }
+    function _ambArrBarsOf(buf, barSec) { return (buf && barSec > 0) ? buf.duration / barSec : 0; }
+    function _ambArrSnap(bars) { return Math.max(0, Math.round(bars * 4) / 4); }   // 1/4-bar (beat) grid
+
+    // Draw a capture's waveform with bar/beat grid lines + the current selection.
+    function _ambDrawArrWave(cv, buf, barSec, sel) {
+      const ctx = cv.getContext('2d'); if (!ctx) return;
+      const W = cv.width, H = cv.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(0, 0, W, H);
+      const totalBars = _ambArrBarsOf(buf, barSec) || 1;
+      // selection band
+      if (sel && sel.lenBars > 0) {
+        const x0 = (sel.startBar / totalBars) * W, x1 = ((sel.startBar + sel.lenBars) / totalBars) * W;
+        ctx.fillStyle = 'rgba(79,209,197,0.28)'; ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+      }
+      // waveform peaks
+      const ch = buf.getChannelData(0), N = buf.length, mid = H / 2;
+      ctx.strokeStyle = '#7fd6c4'; ctx.beginPath();
+      for (let x = 0; x < W; x++) {
+        const s0 = Math.floor((x / W) * N), s1 = Math.floor(((x + 1) / W) * N);
+        let mn = 1, mx = -1;
+        for (let i = s0; i < s1; i++) { const v = ch[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+        if (s1 <= s0) { mn = mx = ch[s0] || 0; }
+        ctx.moveTo(x + 0.5, mid - mx * mid); ctx.lineTo(x + 0.5, mid - mn * mid);
+      }
+      ctx.stroke();
+      // bar lines (bright) + beat lines (dim)
+      const beats = Math.ceil(totalBars * 4);
+      for (let b = 0; b <= beats; b++) {
+        const bar = b / 4, x = (bar / totalBars) * W, isBar = (b % 4 === 0);
+        ctx.strokeStyle = isBar ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.1)';
+        ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
+        if (isBar && bar < totalBars) { ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '9px monospace'; ctx.fillText(String(bar + 1), x + 2, 9); }
+      }
+    }
+
+    // Draw the master arrangement: tracks as rows, slices as blocks over bars.
+    function _ambDrawArrTimeline(cv, arr) {
+      const ctx = cv.getContext('2d'); if (!ctx) return;
+      const W = cv.width, H = cv.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(0, 0, W, H);
+      let masterBars = 0, tracks = 1;
+      arr.slices.forEach(s => { masterBars = Math.max(masterBars, s.atBar + s.lenBars); tracks = Math.max(tracks, s.track + 1); });
+      masterBars = Math.max(masterBars, 1);
+      const rowH = H / Math.max(1, tracks);
+      // bar grid
+      for (let b = 0; b <= masterBars; b++) {
+        const x = (b / masterBars) * W;
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
+      }
+      const cols = ['#4fd1c5', '#f6ad55', '#9f7aea', '#68d391', '#fc8181', '#63b3ed'];
+      arr.slices.forEach((s, i) => {
+        const x = (s.atBar / masterBars) * W, w = (s.lenBars / masterBars) * W, y = s.track * rowH;
+        ctx.fillStyle = cols[(s.capId - 1) % cols.length];
+        ctx.globalAlpha = 0.75; ctx.fillRect(x + 1, y + 2, Math.max(2, w - 2), rowH - 4); ctx.globalAlpha = 1;
+        ctx.fillStyle = '#0a1416'; ctx.font = '9px monospace';
+        ctx.fillText('#' + s.capId + ' ' + s.lenBars + 'b', x + 3, y + rowH / 2 + 3);
+      });
+    }
+
+    // Offline render: sum every slice's source samples into a master buffer at its
+    // placed bar (overlaps mix = superimpose), peak-normalize, encode WAV → capture.
+    async function _ambRenderArrangement(arr) {
+      const barSec = arr.grid.barSec;
+      for (const s of arr.slices) {
+        if (!_ambArrWaveCache[s.capId]) {
+          const it = _ambCaptureBank.find(x => x.id === s.capId);
+          if (it) _ambArrWaveCache[s.capId] = await _ambDecodeBlob(it.blob);
+        }
+      }
+      const first = arr.slices.map(s => _ambArrWaveCache[s.capId]).find(Boolean);
+      const sr = (first && first.sampleRate) || 44100;
+      let masterBars = 0;
+      arr.slices.forEach(s => { masterBars = Math.max(masterBars, s.atBar + s.lenBars); });
+      if (masterBars <= 0) throw new Error('No slices to render');
+      const total = Math.ceil(masterBars * barSec * sr);
+      const out = _ambProcOfflineCtx(2, total, sr).createBuffer(2, total, sr);
+      const oL = out.getChannelData(0), oR = out.getChannelData(1);
+      for (const s of arr.slices) {
+        const buf = _ambArrWaveCache[s.capId]; if (!buf) continue;
+        const srcStart = Math.floor(s.srcStartBar * barSec * sr);
+        const len = Math.floor(s.lenBars * barSec * sr);
+        const dst = Math.floor(s.atBar * barSec * sr);
+        const bL = buf.getChannelData(0), bR = buf.numberOfChannels > 1 ? buf.getChannelData(1) : bL;
+        for (let i = 0; i < len; i++) {
+          const si = srcStart + i; if (si >= buf.length) break;
+          const di = dst + i; if (di >= total) break;
+          oL[di] += bL[si]; oR[di] += bR[si];
+        }
+      }
+      // peak-normalize only if the superimpose summed past full-scale
+      let peak = 0;
+      for (let i = 0; i < total; i++) { const a = Math.abs(oL[i]), b = Math.abs(oR[i]); if (a > peak) peak = a; if (b > peak) peak = b; }
+      if (peak > 1) { const g = 0.99 / peak; for (let i = 0; i < total; i++) { oL[i] *= g; oR[i] *= g; } }
+      const blob = audioBufferToWav(out);
+      const id = (_ambCaptureBank.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1) || 1;
+      const url = URL.createObjectURL(blob);
+      _ambCaptureBank.push({ id, name: 'Master ' + _ambRandomTrackName(), ext: 'wav', mime: 'audio/wav',
+        folder: 'bloops/exports', durSec: out.duration, bytes: blob.size, blob, url, uploaded: false,
+        source: 'Arrange', grid: { bpm: arr.grid.bpm, beatsPerBar: 4, barSec, bars: masterBars } });
+      _ambRenderCaptureBank();
+      return id;
+    }
+
+    function _ambOpenArrangeModal() {
+      const caps = _ambCaptureBank.filter(x => x.durSec > 0);
+      if (!caps.length) { alert('Capture a take first — Arrange builds a master from captured slices.'); return; }
+      _ambArrWaveCache = {};
+      const g0 = (caps.find(c => c.grid && c.grid.barSec) || {}).grid;
+      const arr = { grid: { bpm: (g0 && g0.bpm) || 120, barSec: (g0 && g0.barSec) || 2 }, slices: [], sel: {} };
+
+      let host = document.getElementById('ambient-arrange-modal');
+      if (!host) {
+        host = document.createElement('div'); host.id = 'ambient-arrange-modal'; host.className = 'ambient-arrange-modal';
+        document.body.appendChild(host);
+        host.addEventListener('click', (e) => { if (e.target === host) _ambCloseArrangeModal(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && host.style.display !== 'none') _ambCloseArrangeModal(); });
+      }
+      const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+      function srcRowsHtml() {
+        return caps.map(c => {
+          const bars = (c.grid && c.grid.bars) || Math.round(_ambArrBarsOf({ duration: c.durSec }, arr.grid.barSec));
+          return '<div class="ambient-arr-src" data-cap="' + c.id + '">' +
+            '<div class="ambient-arr-srchead"><span class="ambient-arr-dot" data-cap="' + c.id + '"></span>' +
+            '<span class="ambient-arr-srcname">' + esc(c.name) + '</span>' +
+            '<span class="ambient-arr-srcmeta">' + Math.round(c.durSec) + 's · ' + bars + ' bars</span></div>' +
+            '<canvas class="ambient-arr-wave" data-cap="' + c.id + '" width="520" height="54"></canvas>' +
+            '<div class="ambient-arr-srcctl"><span class="ambient-arr-selreadout" data-cap="' + c.id + '">drag on the waveform to select bars</span>' +
+            '<button type="button" class="ambient-seg ambient-arr-addslice" data-cap="' + c.id + '">＋ Add slice</button></div>' +
+          '</div>';
+        }).join('');
+      }
+
+      host.innerHTML =
+        '<div class="ambient-arrange-box">' +
+          '<div class="ambient-arr-title">✂ Arrange — build a master from slices' +
+            '<button type="button" class="ambient-arr-x" id="arr-close" title="Close">✕</button></div>' +
+          '<div class="ambient-arr-gridrow"><label>Grid tempo</label>' +
+            '<input type="number" id="arr-bpm" min="20" max="300" step="1" value="' + Math.round(arr.grid.bpm) + '"><span>BPM</span>' +
+            '<span class="ambient-arr-gridnote">cutting &amp; placement snap to this 4/4 grid (¼-bar)</span></div>' +
+          '<div class="ambient-arr-sources">' + srcRowsHtml() + '</div>' +
+          '<div class="ambient-arr-arrtitle">Arrangement' +
+            '<button type="button" class="ambient-seg ambient-arr-lay" id="arr-interleave" title="Lay every slice end-to-end on one track">⇥ Interleave</button>' +
+            '<button type="button" class="ambient-seg ambient-arr-lay" id="arr-superimpose" title="Stack every slice at bar 1 on its own track (mixed)">⇊ Superimpose</button>' +
+            '<button type="button" class="ambient-seg ambient-arr-lay" id="arr-clear" title="Remove all slices">Clear</button></div>' +
+          '<canvas class="ambient-arr-timeline" id="arr-timeline" width="560" height="90"></canvas>' +
+          '<div class="ambient-arr-slices" id="arr-slices"></div>' +
+          '<div class="ambient-arr-actions"><button type="button" class="ambient-seg" id="arr-cancel">Close</button>' +
+            '<button type="button" class="ambient-regen" id="arr-render">Render → master take</button></div>' +
+        '</div>';
+
+      const $ = (id) => host.querySelector('#' + id);
+
+      function redrawWaves() {
+        host.querySelectorAll('.ambient-arr-wave').forEach(async cv => {
+          const cap = parseInt(cv.dataset.cap, 10);
+          if (!_ambArrWaveCache[cap]) {
+            const it = caps.find(x => x.id === cap); if (!it) return;
+            try { _ambArrWaveCache[cap] = await _ambDecodeBlob(it.blob); } catch (e) { return; }
+          }
+          _ambDrawArrWave(cv, _ambArrWaveCache[cap], arr.grid.barSec, arr.sel[cap]);
+        });
+      }
+      function renderSlices() {
+        const box = $('arr-slices');
+        if (!arr.slices.length) { box.innerHTML = '<div class="ambient-arr-empty">No slices yet — select bars on a capture and press ＋ Add slice.</div>'; _ambDrawArrTimeline($('arr-timeline'), arr); return; }
+        box.innerHTML = arr.slices.map((s, i) =>
+          '<div class="ambient-arr-slice" data-i="' + i + '">' +
+            '<span class="ambient-arr-slicelbl">#' + s.capId + ' src b' + (s.srcStartBar + 1) + '·' + s.lenBars + 'bar</span>' +
+            '<label>at bar<input type="number" class="ambient-arr-at" data-i="' + i + '" min="1" step="0.25" value="' + (s.atBar + 1) + '"></label>' +
+            '<label>track<input type="number" class="ambient-arr-trk" data-i="' + i + '" min="1" step="1" value="' + (s.track + 1) + '"></label>' +
+            '<button type="button" class="ambient-arr-slicedel" data-i="' + i + '">✕</button>' +
+          '</div>').join('');
+        _ambDrawArrTimeline($('arr-timeline'), arr);
+      }
+
+      // BPM → regrid (keeps slice bar positions; only barSec changes)
+      $('arr-bpm').addEventListener('change', (e) => {
+        const b = Math.max(20, Math.min(300, parseInt(e.target.value, 10) || arr.grid.bpm));
+        arr.grid.bpm = b; arr.grid.barSec = (60 / b) * 4; e.target.value = b;
+        arr.sel = {}; redrawWaves(); renderSlices();
+      });
+
+      // Drag-select bars on a waveform
+      host.querySelectorAll('.ambient-arr-wave').forEach(cv => {
+        const cap = parseInt(cv.dataset.cap, 10);
+        let dragging = false, x0 = 0;
+        const barsOf = () => { const buf = _ambArrWaveCache[cap]; return buf ? _ambArrBarsOf(buf, arr.grid.barSec) : 0; };
+        const toBar = (clientX) => { const r = cv.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width)); return _ambArrSnap(f * barsOf()); };
+        const upd = (bA, bB) => {
+          const start = Math.min(bA, bB), len = Math.max(0.25, Math.abs(bB - bA));
+          arr.sel[cap] = { startBar: start, lenBars: len };
+          const ro = host.querySelector('.ambient-arr-selreadout[data-cap="' + cap + '"]');
+          if (ro) ro.textContent = 'bar ' + (start + 1) + ' → ' + (start + len) + '  (' + len + ' bars)';
+          _ambDrawArrWave(cv, _ambArrWaveCache[cap], arr.grid.barSec, arr.sel[cap]);
+        };
+        cv.addEventListener('pointerdown', (e) => { if (!_ambArrWaveCache[cap]) return; dragging = true; x0 = toBar(e.clientX); try { cv.setPointerCapture(e.pointerId); } catch (er) {} upd(x0, x0 + 0.25); e.preventDefault(); });
+        cv.addEventListener('pointermove', (e) => { if (dragging) upd(x0, toBar(e.clientX)); });
+        cv.addEventListener('pointerup', (e) => { dragging = false; try { cv.releasePointerCapture(e.pointerId); } catch (er) {} });
+      });
+
+      // Add slice from a source's selection → placed at the current master end (interleave-by-default)
+      host.querySelectorAll('.ambient-arr-addslice').forEach(btn => btn.addEventListener('click', () => {
+        const cap = parseInt(btn.dataset.cap, 10);
+        const sel = arr.sel[cap];
+        if (!sel || sel.lenBars <= 0) { if (typeof showToast === 'function') showToast('Select bars on the waveform first.'); return; }
+        let end = 0; arr.slices.forEach(s => { end = Math.max(end, s.atBar + s.lenBars); });
+        arr.slices.push({ capId: cap, srcStartBar: sel.startBar, lenBars: sel.lenBars, atBar: end, track: 0 });
+        renderSlices();
+      }));
+
+      // Slice list edits (delegated)
+      $('arr-slices').addEventListener('input', (e) => {
+        const i = parseInt(e.target.dataset.i, 10); if (!(i >= 0) || !arr.slices[i]) return;
+        if (e.target.classList.contains('ambient-arr-at')) arr.slices[i].atBar = Math.max(0, (parseFloat(e.target.value) || 1) - 1);
+        else if (e.target.classList.contains('ambient-arr-trk')) arr.slices[i].track = Math.max(0, (parseInt(e.target.value, 10) || 1) - 1);
+        _ambDrawArrTimeline($('arr-timeline'), arr);
+      });
+      $('arr-slices').addEventListener('click', (e) => {
+        const del = e.target.closest && e.target.closest('.ambient-arr-slicedel'); if (!del) return;
+        const i = parseInt(del.dataset.i, 10); if (i >= 0) { arr.slices.splice(i, 1); renderSlices(); }
+      });
+
+      $('arr-interleave').addEventListener('click', () => { let at = 0; arr.slices.forEach(s => { s.atBar = at; s.track = 0; at += s.lenBars; }); renderSlices(); });
+      $('arr-superimpose').addEventListener('click', () => { arr.slices.forEach((s, i) => { s.atBar = 0; s.track = i; }); renderSlices(); });
+      $('arr-clear').addEventListener('click', () => { arr.slices = []; renderSlices(); });
+      $('arr-close').addEventListener('click', _ambCloseArrangeModal);
+      $('arr-cancel').addEventListener('click', _ambCloseArrangeModal);
+      $('arr-render').addEventListener('click', async () => {
+        if (!arr.slices.length) { if (typeof showToast === 'function') showToast('Add at least one slice first.'); return; }
+        const btn = $('arr-render'); btn.disabled = true; btn.textContent = 'Rendering…';
+        try {
+          await _ambRenderArrangement(arr);
+          _ambCloseArrangeModal();
+          if (typeof showToast === 'function') showToast('Master take added to the bank.');
+        } catch (e) {
+          console.error('Arrange render failed', e);
+          btn.disabled = false; btn.textContent = 'Render → master take';
+          if (typeof showToast === 'function') showToast('Render failed: ' + (e.message || e));
+        }
+      });
+
+      renderSlices();
+      redrawWaves();
       host.style.setProperty('display', 'flex', 'important');
     }
 

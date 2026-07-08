@@ -13357,21 +13357,12 @@
       const t = inst.type;
       const voice = _ambVoiceOf(inst, t), gen = _ambGeneratorOf(inst, t), src = _ambSourceKindOf(inst, t);
       const tag = (txt) => '<span class="ambient-compose-tag">' + txt + '</span>';
-      // Voice chip — interactive: Synth (pitched) ↔ Kit (drums), swapped via an
-      // in-place conversion. Sample is disabled until the Seed rework (samples are
-      // a separate subsystem; Sample binds Voice).
-      const vid = 'ambient-' + inst.type + '-' + inst.id + '-voiceswap';
-      // Euclid layers (Bass / euclid Beat) share one onset engine, so they can
-      // TRUE-swap Synth↔Kit (same rhythm, different sound). Other layers can't yet,
-      // so their non-current voice is disabled. Sample awaits the Seed rework.
-      // Which voices this layer can render: synth (a pitched walk) only on euclid
-      // layers; kit + sample on any bass/beat (euclid OR random beat).
-      const canSynth = (t === 'bass') || (t === 'beat' && inst.gen === 'euclid');
-      const canRhythm = (t === 'bass') || (t === 'beat');
-      const hasSamples = _ambHasSampleInsts();
-      const vopts = [['synth', 'Synth', !(canSynth || voice === 'synth')], ['kit', 'Kit', !(canRhythm || voice === 'kit')], ['sample', 'Sample', !((canRhythm && hasSamples) || voice === 'sample')]];
-      const bits = [_ambComposeField('Voice', '<select id="' + vid + '" class="ambient-compose-sel" title="Voice — the sound family (Synth = pitched, Kit = drums). Sample comes with the Seed rework.">' +
-        vopts.map(o => '<option value="' + o[0] + '"' + (o[0] === voice ? ' selected' : '') + (o[2] ? ' disabled' : '') + '>' + o[1] + '</option>').join('') + '</select>')];
+      // Voice chip — a static readout of the sound family (Synth = pitched,
+      // Kit = drums, Sample). Voice is a property of the layer's INSTRUMENT preset,
+      // not an in-card axis picker; the old Synth↔Kit swap select was dropped in the
+      // layer-model rework (docs/bloom-layer-model.md — INSTRUMENT owns the voice).
+      const voiceLbl = { synth: 'Synth', kit: 'Kit', sample: 'Sample' }[voice] || voice;
+      const bits = [_ambComposeField('Voice', tag(voiceLbl))];
       // Source chip: a button that opens the shared note-source menu (scale/chord/
       // wrap/prog) for editable-source layers; a static tag otherwise (arp shows
       // its Series, pedal its Degree).
@@ -13385,17 +13376,10 @@
           bits.push(_ambComposeField('Notes', tag(slbl)));
         }
       }
-      // Generator is an interactive SWAP picker (converts the layer's preset in
-      // place, keeping its sound + source + mix); a single-generator voice (sample)
-      // falls back to a static tag.
-      const opts = _ambGenSwapOptions(inst);
-      if (opts.length > 1) {
-        const cur = _ambCurrentGenKey(inst), gid = 'ambient-' + inst.type + '-' + inst.id + '-genswap';
-        bits.push(_ambComposeField('Gen', '<select id="' + gid + '" class="ambient-compose-sel" title="Generator — swaps how this layer sequences (keeps its sound + source)">' +
-          opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>'));
-      } else {
-        bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
-      }
+      // Generator — a static readout of how the layer sequences. Swapping the
+      // generator in-card (the old select) was dropped in the layer-model rework:
+      // the generator is fixed by the layer's preset, not assembled from an axis.
+      bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
       // Pattern generator (run/texture) carries a VARIATION MODE chip — re-roll
       // (run) swaps the whole phrase, evolve (texture) mutates it gradually. This
       // is where the old standalone "Mutate" generator now lives.

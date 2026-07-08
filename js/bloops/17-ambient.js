@@ -2560,10 +2560,53 @@
     }
     function _ambPeChLabel(ch) { return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
     function _ambPeClose() { const h = document.getElementById('ambient-prog-editor'); if (h) h.style.setProperty('display', 'none', 'important'); _ambProgEd = null; }
-    function _ambOpenProgEditor(E) {
-      const cfg = E.getCfg();
-      if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.chords) || !cfg.prog.chords.length) return;
-      _ambProgEd = { E, chords: cfg.prog.chords.map(c => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; }), sel: 0, name: (cfg.prog.name || 'Prog') + ' edit' };
+    const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; };
+    // Publish a chord-array progression to the shared registry (the prog pickers'
+    // User group). (Distinct from _ambPublishProg, which takes wrap-step BLOCKS.)
+    function _ambPublishProgChords(name, chords) {
+      const reg = _ambPublishedProgs();
+      const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+      reg.push({ id, name, chords: (chords || []).map(_ambCloneChord) });
+    }
+    // B3: the chord/region editor is scope-aware. `opts.scope`:
+    //   'area'  (default) → edits cfg.prog (requires existing chords).
+    //   'layer' + opts.getLayer → authors a layer's OWN progression (layer.keyOv),
+    //            seeding one chord when the layer has none yet. opts.after refreshes
+    //            the caller (e.g. the KEY chip label).
+    function _ambOpenProgEditor(E, opts) {
+      opts = opts || {};
+      let chords, name, target;
+      if (opts.scope === 'layer' && typeof opts.getLayer === 'function') {
+        const L = opts.getLayer(); if (!L) return;
+        const ko = L.keyOv;
+        let base = (ko && ko.mode === 'prog' && Array.isArray(ko.chords) && ko.chords.length) ? ko.chords
+          : (L.notes && L.notes.type === 'prog' && Array.isArray(L.notes.chords) && L.notes.chords.length) ? L.notes.chords
+            : null;
+        if (!base || !base.length) base = [{ root: (typeof rootIdx === 'number' ? (((rootIdx % 12) + 12) % 12) : 0), intervals: [0, 4, 7] }];
+        chords = base.map(_ambCloneChord);
+        name = (ko && ko.name) || (L.notes && L.notes.name) || 'Layer progression';
+        target = { label: 'Edit layer progression', apply: (nm, chs) => {
+          _E = E; const L2 = opts.getLayer(); if (!L2) return;
+          L2.keyOv = { mode: 'prog', name: nm, chords: chs };
+          if (L2.notes && L2.notes.type === 'prog') L2.notes = { type: 'scale', scale: '' };
+          _ambPublishProgChords(nm, chs);
+          if (typeof opts.after === 'function') { try { opts.after(); } catch (e) {} }
+        } };
+      } else {
+        const cfg = E.getCfg();
+        if (!cfg || !cfg.prog || !Array.isArray(cfg.prog.chords) || !cfg.prog.chords.length) return;
+        chords = cfg.prog.chords.map(_ambCloneChord);
+        name = (cfg.prog.name || 'Prog') + ' edit';
+        target = { label: 'Edit progression', apply: (nm, chs) => {
+          _E = E; const c = E.getCfg(); if (!c) return;
+          if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] };
+          c.prog.name = nm; c.prog.chords = chs; c.prog.on = true;
+          try { _ambAutoSyncFreeForProg(E, c); } catch (e) {}
+          _ambPublishProgChords(nm, chs);
+          try { _ambSyncControls(E); } catch (e) {}
+        } };
+      }
+      _ambProgEd = { E, chords, sel: 0, name, target };
       let host = document.getElementById('ambient-prog-editor');
       if (!host) {
         host = document.createElement('div'); host.id = 'ambient-prog-editor'; host.className = 'ambient-prog-editor';
@@ -2593,7 +2636,7 @@
         '<button type="button" class="pe-x" data-pe="rmnote:' + ni + '" title="Remove note"' + (notes.length <= 1 ? ' disabled' : '') + '>✕</button></span>').join('');
       const qButtons = _AMB_PE_QUALITIES.map(q => '<button type="button" class="pe-q" data-pe="qual:' + q[0] + '">' + q[0] + '</button>').join('');
       host.innerHTML =
-        '<div class="pe-title">Edit progression</div>' +
+        '<div class="pe-title">' + esc((ed.target && ed.target.label) || 'Edit progression') + '</div>' +
         '<div class="pe-chords">' + chordsRow + '</div>' +
         '<div class="pe-chordhdr">Chord ' + (sel + 1) + ' of ' + ed.chords.length +
           '<span class="pe-chordops">' +
@@ -2636,13 +2679,12 @@
       else if (op === 'inv') { const ns = _ambPeNotes(ch); if (ns.length > 1) { const newRoot = (((ch.root + ch.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, false); ch.root = newRoot; ch.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'save') {
-        const E = ed.E; const reg = _ambPublishedProgs();
-        const id = reg.reduce((m, p) => Math.max(m, p.id | 0), 0) + 1;
+        const E = ed.E;
         const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
-        const name = (ed.name || ('Prog ' + id)).trim() || ('Prog ' + id);
-        reg.push({ id, name, chords });
-        const c = E.getCfg(); if (c) { if (!c.prog || typeof c.prog !== 'object') c.prog = { on: false, name: '', chords: [] }; c.prog.name = name; c.prog.chords = chords; c.prog.on = true; try { _ambAutoSyncFreeForProg(E, c); } catch (e) {} }
-        try { _ambSyncControls(E); } catch (e) {}
+        const name = (ed.name || 'Prog').trim() || 'Prog';
+        // Scope-aware commit: area → cfg.prog; layer → layer.keyOv. Both publish
+        // to the shared registry for reuse (handled inside target.apply). B3.
+        try { if (ed.target && typeof ed.target.apply === 'function') ed.target.apply(name, chords); } catch (e) {}
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
         if (typeof persistWorkspace === 'function') persistWorkspace();
         if (typeof showToast === 'function') showToast('Saved "' + name + '"');
@@ -13421,8 +13463,11 @@
       const setInherit = () => { _E = E; const L = getLayer(); if (!L) return; delete L.keyOv; if (L.notes && L.notes.type === 'prog') L.notes = { type: 'scale', scale: '' }; done(); };
       const setProg = (name, chords) => { _E = E; const L = getLayer(); if (!L) return; L.keyOv = { mode: 'prog', name: name, chords: chords }; if (L.notes && L.notes.type === 'prog') L.notes = { type: 'scale', scale: '' }; done(); };
       const setKey = (root, scale) => { _E = E; const L = getLayer(); if (!L) return; L.keyOv = { mode: 'key', root: (((root | 0) % 12) + 12) % 12, scale: scale || 'major' }; done(); };
+      // B3: author/edit this layer's OWN progression in the scope-aware editor.
+      const openEditor = () => { setTimeout(() => { try { _ambOpenProgEditor(E, { scope: 'layer', getLayer: getLayer, after: refresh }); } catch (e) {} }, 0); };
       const progSub = () => {
-        const items = [{ label: 'Progression — this layer follows its own chords', disabled: true }];
+        const items = [{ label: 'Progression — this layer follows its own chords', disabled: true },
+          { label: '✎ Author / edit chords…', fn: openEditor }, 'hr'];
         _ambProgFamilies().forEach(fam => {
           const famLabel = fam[0], list = fam[1], sub = [];
           list.forEach(row => { const nm = row[0], f = row[1], steps = row[2]; const chords = _ambResolveStandard(f, steps); if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return; sub.push({ label: '  ' + nm, fn: () => setProg(nm, chords) }); });
@@ -13463,7 +13508,7 @@
         { label: (st.mode === 'inherit' ? '● ' : '   ') + 'Inherit (Area KEY)', fn: setInherit },
         { label: (st.mode === 'key' ? '● ' : '   ') + 'Key… ▸', fn: () => setTimeout(keySub, 0) },
         { label: (st.mode === 'prog' ? '● ' : '   ') + 'Progression… ▸', fn: () => setTimeout(progSub, 0) },
-      ]);
+      ].concat(st.mode === 'prog' ? [{ label: '   ✎ Edit chords…', fn: openEditor }] : []));
     }
     function _ambWireKeyChip(E, chipId, getLayer) {
       const chip = _ambGet(E, chipId);

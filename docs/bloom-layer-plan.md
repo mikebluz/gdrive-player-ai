@@ -80,8 +80,13 @@ layer, new-model keyOv). Plus ＋Pad + promote-part + roman numerals.
 - B5 strum shape `3311041` — Arp ↑ / ↓ by pitch.
 - Plus: reversible Seq "Prog sync" (`d014782`) and the Tone-dropdown fix (`ce53c00`).
 
-**Only Track C remains.** It is REFACTORING/CLEANUP, not new capability — and it's the
-riskiest work against the "don't break" rule:
+**Track C — BOOKMARKED / DEFERRED (2026-07, decided not to pursue now).** The
+additive-first migration left the old code + new model coexisting cleanly, so C's
+cleanup turned out cheap to CARRY and expensive to PAY (changes working audio, drops
+fields irreversibly) — net risk over reward. The model is complete and working without
+it. Revisit only if the redundant code/fields actually get in the way. It is
+REFACTORING/CLEANUP, not new capability — the riskiest work against the "don't break"
+rule:
 - **C1** — unify walk/riff/mutate into one Melody generator + variation mode. The ONE
   deliberate harness re-baseline (changes generation output; re-baseline in the same
   commit). Reversible via git, but changes working/verified behavior for internal

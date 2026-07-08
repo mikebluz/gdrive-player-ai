@@ -88,11 +88,12 @@ class PlaylistManager {
             this.currentIndex--;
         }
 
-        this.tracks.splice(index, 1);
-        this.originalOrder = this.originalOrder.filter(track => 
-            track.id !== this.tracks[index]?.id
-        );
-        
+        const removed = this.tracks.splice(index, 1)[0];
+        // Filter by the REMOVED track's id — captured before the splice. (Reading
+        // this.tracks[index] after the splice grabbed the shifted-up next track,
+        // corrupting originalOrder → wrong tracks after remove + shuffle-toggle.)
+        this.originalOrder = this.originalOrder.filter(track => track.id !== removed?.id);
+
         this.renderPlaylist();
         this.updatePlaylistInfo();
     }

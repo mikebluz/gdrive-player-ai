@@ -6014,13 +6014,28 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       if (cfg) { cfg.keyRoot = due.root; cfg.keyScale = due.scale; }
     }
+    // Snap a MIDI note to the nearest pitch in an absolute pitch-class Set
+    // (ties resolve downward), like _ambKeyQuantizeMidi but for an arbitrary set.
+    function _ambSnapMidiToPcs(midi, pcs) {
+      if (!pcs || !pcs.size) return midi;
+      const m = Math.round(midi), pc = (((m % 12) + 12) % 12);
+      if (pcs.has(pc)) return m;
+      for (let off = 1; off <= 6; off++) {
+        if (pcs.has((((pc - off) % 12) + 12) % 12)) return m - off;
+        if (pcs.has((((pc + off) % 12) + 12) % 12)) return m + off;
+      }
+      return m;
+    }
     // B4: apply a seq's Harmony mode to a captured phrase's frequencies. 'fixed'
-    // returns them untouched (byte-identical). 'diatonic' transposes each note by
-    // the interval from the unit's CAPTURED key root to the CURRENT key root
-    // (nearest direction), then snaps into the current key scale — so an authored
-    // phrase follows key changes. ('chordlock' falls back to diatonic until its
-    // own slice.) Preserves note count + order, so per-voice params stay aligned.
-    function _ambSeqHarmonizeFreqs(freqs, unit, seq) {
+    // returns them untouched (byte-identical). All others first transpose each note
+    // by the interval from the unit's CAPTURED key root to the CURRENT key root
+    // (nearest direction), then:
+    //   'diatonic'  → snap into the current key scale (follows key changes).
+    //   'chordlock' → snap onto the CURRENT chord's tones at this onset (atSec),
+    //                 from the seq's effective progression; with no progression it
+    //                 falls back to the diatonic scale snap.
+    // Preserves note count + order, so per-voice params stay aligned.
+    function _ambSeqHarmonizeFreqs(freqs, unit, seq, atSec) {
       const mode = (seq && seq.harmony) || 'fixed';
       if (mode === 'fixed' || !Array.isArray(freqs) || !freqs.length) return freqs;
       const cfg = _ambKeyCfg(); if (!cfg) return freqs;
@@ -6030,10 +6045,27 @@
       const capRoot = (unit && Number.isFinite(unit.rootIdx)) ? ((((unit.rootIdx | 0) % 12) + 12) % 12) : _ambKeyRootPc(cfg);
       const curRoot = _ambKeyRootPc(cfg);
       let d = (((curRoot - capRoot) % 12) + 12) % 12; if (d > 6) d -= 12;   // nearest transpose
+      // Chord-locked: resolve the current chord's absolute pitch classes at atSec.
+      let chordPcs = null;
+      if (mode === 'chordlock') {
+        try {
+          const src = _ambNotesOf(seq);
+          if (src && src.type === 'prog') {
+            const prevOv = _ambProgStepOverride;
+            if (Number.isFinite(atSec)) _ambProgStepOverride = _ambProgStepAt(_E, atSec);
+            const ch = _ambProgCurrentChord(src);
+            _ambProgStepOverride = prevOv;
+            if (ch && Array.isArray(ch.intervals) && ch.intervals.length) {
+              const r = (((ch.root | 0) % 12) + 12) % 12;
+              chordPcs = new Set(ch.intervals.map(iv => (((r + (iv | 0)) % 12) + 12) % 12));
+            }
+          }
+        } catch (e) {}
+      }
       return freqs.map(f => {
         if (!(f > 0)) return f;
         let m = Math.round(toMidi(f)) + d;
-        m = _ambKeyQuantizeMidi(m, cfg);   // snap into the current key scale (diatonic / chordlock-fallback)
+        m = chordPcs ? _ambSnapMidiToPcs(m, chordPcs) : _ambKeyQuantizeMidi(m, cfg);
         return toFreq(m);
       });
     }
@@ -6137,7 +6169,7 @@
     // a mod-chain rebuild between ticks can't strand a phrase on a dead node.
     function _ambEmitSeqEvent(ctx, ev, atAbs, st) {
       // B4: remap the captured pitches per the seq's Harmony mode (Fixed = untouched).
-      const freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, ctx.seq);
+      const freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, ctx.seq, atAbs);
       if (!freqs || !freqs.length) return;
       const seq = ctx.seq;
       const dest = _ambLayerDest(ctx.key), dmod = _ambLayerDetuneMod(ctx.key);
@@ -12671,8 +12703,8 @@
           // B4: Harmony — Fixed plays the captured pitches; Diatonic transposes the
           // phrase to the current key + snaps it into scale (follows key changes).
           '<div class="ambient-ctrl"><label for="' + p + 'harmony">Harmony</label><select id="' + p + 'harmony" class="ambient-select">' +
-            opts([['fixed', 'Fixed'], ['diatonic', 'Diatonic']], (s.harmony === 'diatonic' ? 'diatonic' : 'fixed')) +
-            '</select><span class="ambient-hint">fixed pitch / follow key</span></div>' + gpe() +
+            opts([['fixed', 'Fixed'], ['diatonic', 'Diatonic'], ['chordlock', 'Chord-locked']], (s.harmony === 'diatonic' || s.harmony === 'chordlock') ? s.harmony : 'fixed') +
+            '</select><span class="ambient-hint">fixed / follow key / lock to chord</span></div>' + gpe() +
         grp('Timing') +
           // Loop length: Auto (one pass == the played sequence's own length) vs
           // Manual (the Interval knob below). Auto greys out / ignores Interval.

@@ -1413,6 +1413,7 @@
         if (typeof cfg[l].present !== 'boolean') cfg[l].present = (l === 'bed') ? true : !!cfg[l].on;
       });
       ['bed', 'motif', 'texture'].forEach(l => _ambNormalizeNotes(cfg[l]));
+      ['bed', 'motif', 'texture', 'beat'].forEach(l => _ambNormalizeKeyOv(cfg[l]));   // B2 per-layer KEY override
       ['bed', 'motif', 'texture', 'beat'].forEach(l => _ambNormalizeUnit(cfg[l]));
       // Seq layers: ensure array; migrate a legacy single `seq` slot → seqs[].
       if (!Array.isArray(cfg.seqs)) cfg.seqs = [];
@@ -1471,6 +1472,7 @@
         _ambNormalizeEuclidPattern(x);   // bass/beat/arp (euclid) editable-grid override
         _ambNormalizeUnit(x);
         if (x.type !== 'beat' && x.type !== 'arp') _ambNormalizeNotes(x);
+        _ambNormalizeKeyOv(x);   // B2 per-layer KEY override (all extra types)
         if (x.type === 'arp') {
           if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
           const _DIRS = ['up', 'down', 'updown', 'downup', 'random'];
@@ -1762,6 +1764,22 @@
       // explicit selections too. Harness-neutral: the only prog config with a
       // GLOBAL prog uses a default-scale layer, which resolved to the same prog.)
       { const gp = _ambGlobalProg(); if (gp) return gp; }
+      // B2: per-layer KEY OVERRIDE — a layer follows its OWN progression or key,
+      // overriding the inherited area KEY. Precedence preserved from before: the
+      // area progression (above) still wins, so this only applies when the area is
+      // Chromatic/Key. Absent keyOv → Inherit → falls through to the layer's own
+      // note-source material below (byte-identical to pre-B2). Returns the SAME
+      // shapes the generators already handle (type:'prog' / type:'scale'), so the
+      // emitters and the invariant harness are unchanged.
+      if (layer && layer.keyOv && typeof layer.keyOv === 'object') {
+        const ko = layer.keyOv;
+        if (ko.mode === 'prog' && Array.isArray(ko.chords) && ko.chords.length) {
+          return { type: 'prog', name: ko.name || 'Progression', chords: ko.chords };
+        }
+        if (ko.mode === 'key' && typeof ko.scale === 'string') {
+          return { type: 'scale', scale: ko.scale, rootPc: (((ko.root | 0) % 12) + 12) % 12 };
+        }
+      }
       // Relative MODE: re-centre a scale source to a different degree (a mode of
       // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
       // new tonic. Only meaningful for scale sources; carried on the descriptor so
@@ -2378,6 +2396,27 @@
         if (typeof n.scale !== 'string') n.scale = '';
       }
     }
+    // B2: per-layer KEY override (docs/bloom-layer-model.md — KEY cascades
+    // workspace→area→layer). Optional `layer.keyOv`: absent → Inherit (default,
+    // byte-identical); { mode:'prog', name, chords } → the layer follows its OWN
+    // progression; { mode:'key', root, scale } → its own key/scale. Kept OUT of
+    // layer defaults (like euclidPattern/euclidKit) so the boolean/object backfill
+    // never clobbers it. Coerced here; an invalid/empty override drops to Inherit.
+    function _ambNormalizeKeyOv(layer) {
+      if (!layer || typeof layer !== 'object') return;
+      const ko = layer.keyOv;
+      if (!ko || typeof ko !== 'object') { if ('keyOv' in layer) delete layer.keyOv; return; }
+      if (ko.mode === 'prog') {
+        if (!Array.isArray(ko.chords) || !ko.chords.length) { delete layer.keyOv; return; }
+        layer.keyOv = { mode: 'prog', name: (typeof ko.name === 'string' && ko.name) ? ko.name : 'Progression', chords: ko.chords };
+      } else if (ko.mode === 'key') {
+        let scale = (typeof ko.scale === 'string' && ko.scale) ? ko.scale : 'major';
+        if (typeof SCALES !== 'undefined' && SCALES && !SCALES[scale]) scale = 'major';
+        layer.keyOv = { mode: 'key', root: (((ko.root | 0) % 12) + 12) % 12, scale: scale };
+      } else {
+        delete layer.keyOv;   // 'inherit' / unknown → no override
+      }
+    }
     // ---- "Notes" control: a button that opens a Scale / Chord menu ----------
     function _ambNotesButtonHtml(prefix) {
       return '<div class="ambient-ctrl"><label>Notes</label>' +
@@ -2758,7 +2797,8 @@
         { label: '◉ Root ▸', fn: () => setTimeout(rootSub, 0) },
         { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
-        { label: '⇶ Progression ▸', fn: () => setTimeout(progSub, 0) },
+        // Progression retired from the Notes (material) menu — it's now a per-layer
+        // KEY override (the "Key" chip in the layer header). B2.
         { label: '↻ Relative mode ▸', fn: () => setTimeout(modeSub, 0) },
         { label: '🎨 Colours ▸', fn: () => setTimeout(colorSub, 0) },
       ].filter(Boolean));
@@ -2933,6 +2973,11 @@
         btn.textContent = _ambNotesLabel(_ambNotesOf(L));
         btn.classList.toggle('ambient-compose-locked', locked);
         btn.title = ttl;
+      });
+      // B2: the per-layer KEY chip greys while the Area progression forces global
+      // lock (area wins), so refresh its lock styling alongside the Notes chips.
+      host.querySelectorAll('button[id$="-keyov"]').forEach(btn => {
+        btn.classList.toggle('ambient-compose-locked', locked);
       });
     }
 
@@ -13345,6 +13390,97 @@
     function _ambSourceEditable(t) {
       return t === 'bed' || t === 'motif' || t === 'texture' || t === 'bass' || t === 'run' || t === 'pedal' || t === 'drone';
     }
+    // B2: per-layer KEY override — chip state + HTML + menu + wiring. Reads the new
+    // `keyOv` field, falling back to a legacy per-layer 'prog' note-source (still
+    // played) for display. Only pitched, source-editable layers get the chip.
+    function _ambLayerKeyState(layer) {
+      const CHROM = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const ko = layer && layer.keyOv;
+      if (ko && ko.mode === 'prog' && Array.isArray(ko.chords) && ko.chords.length) return { mode: 'prog', label: ko.name || 'Progression' };
+      if (ko && ko.mode === 'key') return { mode: 'key', label: (CHROM[(ko.root | 0) % 12] || '') + ' ' + ((typeof prettyScaleName === 'function') ? prettyScaleName(ko.scale) : ko.scale) };
+      const n = layer && layer.notes;
+      if (n && n.type === 'prog' && Array.isArray(n.chords) && n.chords.length) return { mode: 'prog', label: n.name || 'Progression' };
+      return { mode: 'inherit', label: 'Inherit' };
+    }
+    function _ambKeyChipHtml(idBase, layer) {
+      const st = _ambLayerKeyState(layer);
+      const locked = !!_ambGlobalProg();
+      const cls = 'ambient-compose-sel ambient-keyov-chip' + (st.mode === 'inherit' ? ' ambient-keyov-inherit' : '') + (locked ? ' ambient-compose-locked' : '');
+      const title = locked
+        ? 'Layer KEY — overridden by the Area progression while it is on. Turn Area Prog off (Configure) for a per-layer KEY to take effect.'
+        : 'Layer KEY — Inherit the Area KEY, or override this layer to its own Key or Progression';
+      return _ambComposeField('Key', '<button type="button" id="' + idBase + '-keyov" class="' + cls + '" title="' + title + '">' + _ambEscText(st.label) + '</button>');
+    }
+    // The layer-KEY menu: Inherit (area) / Key… (own root+scale) / Progression…
+    // (own chords). Writes `layer.keyOv`; picking a progression also clears any
+    // legacy per-layer prog note-source so material + frame don't both read "prog".
+    function _ambOpenLayerKeyMenu(E, getLayer, refresh, x, y) {
+      _E = E; const L0 = getLayer(); if (!L0) return;
+      const kcfg = E.getCfg(); const keyOn = !!(kcfg && kcfg.keyOn);
+      const done = () => { if (typeof refresh === 'function') refresh(); if (E.timer) { try { _ambSyncMods(); } catch (e) {} } if (typeof persistWorkspace === 'function') persistWorkspace(); };
+      const setInherit = () => { _E = E; const L = getLayer(); if (!L) return; delete L.keyOv; if (L.notes && L.notes.type === 'prog') L.notes = { type: 'scale', scale: '' }; done(); };
+      const setProg = (name, chords) => { _E = E; const L = getLayer(); if (!L) return; L.keyOv = { mode: 'prog', name: name, chords: chords }; if (L.notes && L.notes.type === 'prog') L.notes = { type: 'scale', scale: '' }; done(); };
+      const setKey = (root, scale) => { _E = E; const L = getLayer(); if (!L) return; L.keyOv = { mode: 'key', root: (((root | 0) % 12) + 12) % 12, scale: scale || 'major' }; done(); };
+      const progSub = () => {
+        const items = [{ label: 'Progression — this layer follows its own chords', disabled: true }];
+        _ambProgFamilies().forEach(fam => {
+          const famLabel = fam[0], list = fam[1], sub = [];
+          list.forEach(row => { const nm = row[0], f = row[1], steps = row[2]; const chords = _ambResolveStandard(f, steps); if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return; sub.push({ label: '  ' + nm, fn: () => setProg(nm, chords) }); });
+          if (!sub.length) return;
+          items.push({ label: '  ' + famLabel + ' (' + sub.length + ') ▸', fn: () => setTimeout(() => showCtxMenu(x, y, [{ label: '‹ Back', fn: () => setTimeout(progSub, 0) }, { label: famLabel, disabled: true }].concat(sub)), 0) });
+        });
+        const pub = _ambPublishedProgs();
+        if (pub.length) {
+          const pubItems = [];
+          pub.forEach(p => { const chords = (p.chords || []).map(c => ({ root: c.root, intervals: c.intervals, bars: c.bars })); if (keyOn && !_ambProgWorksInKey({ chords }, kcfg)) return; pubItems.push({ label: '  ' + p.name, fn: () => setProg(p.name, chords) }); });
+          if (pubItems.length) { items.push('hr', { label: 'Published', disabled: true }); pubItems.forEach(i => items.push(i)); }
+        }
+        if (items.length <= 1) items.push({ label: 'No progressions fit this key', disabled: true });
+        showCtxMenu(x, y, items);
+      };
+      const keySub = () => {
+        const CHROM = (typeof CHROMATIC !== 'undefined') ? CHROMATIC : ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const cur = (L0.keyOv && L0.keyOv.mode === 'key') ? L0.keyOv : null;
+        const scalePick = (root) => {
+          const sitems = [{ label: CHROM[root] + ' — pick a scale', disabled: true }, { label: '‹ Back', fn: () => setTimeout(keySub, 0) }];
+          try {
+            const tmp = document.createElement('select');
+            populateGroupedScaleSelect(tmp, null);
+            Array.from(tmp.children).forEach(node => {
+              if (node.tagName === 'OPTGROUP') { const kids = Array.from(node.children); if (!kids.length) return; sitems.push({ label: node.label, disabled: true }); kids.forEach(o => sitems.push({ label: '  ' + o.textContent, fn: () => setKey(root, o.value || 'major') })); }
+              else sitems.push({ label: node.textContent, fn: () => setKey(root, node.value || 'major') });
+            });
+          } catch (e) {}
+          showCtxMenu(x, y, sitems);
+        };
+        const items = [{ label: 'Key — this layer plays in its own key', disabled: true }];
+        for (let i = 0; i < 12; i++) { const pc = i; items.push({ label: ((cur && (cur.root | 0) === pc) ? '● ' : '   ') + CHROM[pc], fn: () => setTimeout(() => scalePick(pc), 0) }); }
+        showCtxMenu(x, y, items);
+      };
+      const st = _ambLayerKeyState(L0);
+      showCtxMenu(x, y, [
+        { label: 'Layer KEY — overrides the Area KEY', disabled: true },
+        { label: (st.mode === 'inherit' ? '● ' : '   ') + 'Inherit (Area KEY)', fn: setInherit },
+        { label: (st.mode === 'key' ? '● ' : '   ') + 'Key… ▸', fn: () => setTimeout(keySub, 0) },
+        { label: (st.mode === 'prog' ? '● ' : '   ') + 'Progression… ▸', fn: () => setTimeout(progSub, 0) },
+      ]);
+    }
+    function _ambWireKeyChip(E, chipId, getLayer) {
+      const chip = _ambGet(E, chipId);
+      if (!chip) return;
+      const refresh = () => {
+        const L = getLayer(); if (!L) return;
+        const st = _ambLayerKeyState(L);
+        chip.textContent = st.label;
+        chip.classList.toggle('ambient-keyov-inherit', st.mode === 'inherit');
+        chip.classList.toggle('ambient-compose-locked', !!_ambGlobalProg());
+      };
+      refresh();
+      chip.addEventListener('click', () => {
+        const r = chip.getBoundingClientRect();
+        _ambOpenLayerKeyMenu(E, getLayer, refresh, r.left, r.bottom + 4);
+      });
+    }
     // READ-ONLY composition readout for the built-in PRIMARY layers (bed/motif/
     // texture/beat). They're fixed slots — not convertible like extras — so the
     // chips are static (the source is still editable via the Pitch-group Notes
@@ -13373,6 +13509,8 @@
           bits.push(_ambComposeField('Notes', '<button type="button" id="ambient-' + type + '-srcswap" class="ambient-compose-sel' + (_ambGlobalProg() ? ' ambient-compose-locked' : '') + '" title="' + _ambSrcChipTitle() + '">' + _ambNotesLabel(_ambNotesOf(L)) + '</button>'));
         } else bits.push(_ambComposeField('Notes', tag(_AMB_SRC_LBL[src] || src)));
       }
+      // B2: per-layer KEY override chip (Inherit / Key / Progression).
+      if (_ambSourceEditable(type)) bits.push(_ambKeyChipHtml('ambient-' + type, L));
       if (gen === 'riff' || gen === 'mutate') { bits.push(_ambComposeField('Gen', tag('Riff'))); bits.push(_ambComposeField('Var', tag(gen === 'mutate' ? 'Evolve' : 'Re-roll'))); }
       else bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
       return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
@@ -13401,6 +13539,8 @@
           bits.push(_ambComposeField('Notes', tag(slbl)));
         }
       }
+      // B2: per-layer KEY override chip (Inherit / Key / Progression).
+      if (_ambSourceEditable(t)) bits.push(_ambKeyChipHtml('ambient-' + inst.type + '-' + inst.id, inst));
       // Generator — a static readout of how the layer sequences. Swapping the
       // generator in-card (the old select) was dropped in the layer-model rework:
       // the generator is fixed by the layer's preset, not assembled from an axis.
@@ -13793,6 +13933,7 @@
       // the sole source control (the Seed-group "Notes" button was removed);
       // _ambWireSrcChip updates the detailed label + Tone-wrap/Seed UI on change.
       _ambWireSrcChip(E, p + 'srcswap', get, p, type + ':' + id);
+      _ambWireKeyChip(E, p + 'keyov', get);   // B2 per-layer KEY override chip
       // Voice chip → swap the sound family (Synth ↔ Kit) via in-place conversion:
       // Kit → a Beat (keeping euclid vs random), Synth → a Bass (pitched line).
       const vsw = el('voiceswap');
@@ -15963,6 +16104,7 @@
         // Note-source is the header compose-readout CHIP now (the Seed-group "Notes"
         // button was removed); it opens the same source menu + refreshes the Seed UI.
         _ambWireSrcChip(E, 'ambient-' + layer + '-srcswap', () => { const c = cfg0(); return c ? c[layer] : null; }, 'ambient-' + layer + '-', layer);
+        _ambWireKeyChip(E, 'ambient-' + layer + '-keyov', () => { const c = cfg0(); return c ? c[layer] : null; });   // B2 per-layer KEY override chip
       });
 
       // Mod controls for the fixed layers (seq layers wire their own in the renderer).

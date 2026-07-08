@@ -3648,6 +3648,9 @@
     }
     button.ambient-compose-sel.ambient-compose-locked::after { content: ' 🔒'; font-size: 0.72em; opacity: 0.8; }
     @media (hover: hover) { button.ambient-compose-sel.ambient-compose-locked:hover { background: rgba(214, 122, 234, 0.14); } }
+    /* B2: per-layer KEY override chip — "Inherit" (the default) reads as muted so an
+       active Key/Progression override stands out. */
+    button.ambient-compose-sel.ambient-keyov-inherit { color: #8b93a7; font-style: italic; border-color: rgba(120, 130, 150, 0.35); }
     /* ---- Collapsible parameter groups (Voice / Pitch / Rhythm / …) ------- */
     .ambient-grp { margin: 6px 0 0; border-top: 1px solid #1c1c2e; }
     .ambient-grp:first-of-type { border-top: none; margin-top: 2px; }

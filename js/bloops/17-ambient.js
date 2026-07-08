@@ -8150,8 +8150,12 @@
           }
           const plan = _ambRealizeSeqPhrase(C[key], seq, space, stSeq, key);
           if (!plan) { C[key] += Math.max(0.1, (seq.intervalMs | 0) / 1000); continue; }
-          // Reflect the tone now playing onto the layer's Tone dropdown.
-          if (opts.reflect) {
+          // Reflect the tone now playing onto the layer's Tone dropdown — but ONLY
+          // in "Grid voice" mode (seq.tone === ''), where the select doubles as a
+          // live readout of each step's captured voice. When an explicit layer Tone
+          // is set, that IS the sound of every note, so keep the select on it (else
+          // the live reflection clobbers the user's pick — "set sine, shows sawtooth").
+          if (opts.reflect && !(seq.tone && seq.tone !== '')) {
             try {
               const ev0 = plan.events && plan.events[0];
               _ambSeqReflectTone(E, seq.id, (ev0 && ev0.sounds && ev0.sounds[0]) || (plan.ctx && plan.ctx.type));

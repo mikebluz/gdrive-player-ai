@@ -115,6 +115,7 @@ class MusicPlayer {
                 const blob = await this.blobCache.getBlob(track.id);
                 if (blob) {
                     this._prefetchCache.set(track.id, blob);
+                    this._diag('prefetch(cache) ' + this._short(track.id) + ' ' + Math.round(blob.size / 1024) + 'KB');
                     document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
                     this._probeBlobDuration(blob, track.id);
                     return 'cached';
@@ -128,6 +129,7 @@ class MusicPlayer {
             if (!response.ok) return 'failed';
             const blob = await response.blob();
             this._prefetchCache.set(track.id, blob);
+            this._diag('prefetch(fetch) ' + this._short(track.id) + ' ' + Math.round(blob.size / 1024) + 'KB');
             if (this.blobCache) this.blobCache.store(track.id, blob);
             document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
             this._probeBlobDuration(blob, track.id);
@@ -216,6 +218,32 @@ class MusicPlayer {
         return `https://www.googleapis.com/drive/v3/files/${trackId}?alt=media&_cb=${nonce}`;
     }
 
+    // ---- On-screen diagnostics (mobile has no console) -------------------
+    // Enable by adding ?diag=1 to the URL (or localStorage.sbDiag='1'). Surfaces,
+    // per play: the DISPLAYED track (name/id) vs the id the blob actually came
+    // from, the blob source + size, and expected-vs-actual duration — so a repro
+    // shows exactly where title and audio diverge.
+    _diagOn() {
+        try { return /[?&]diag=1\b/.test(location.search) || localStorage.getItem('sbDiag') === '1'; } catch { return false; }
+    }
+    _diag(msg, warn) {
+        if (!this._diagOn()) return;
+        let el = document.getElementById('sb-diag');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'sb-diag';
+            el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;max-height:42vh;overflow:auto;' +
+                'background:rgba(0,0,0,0.9);color:#7fd6c4;font:11px/1.45 ui-monospace,Menlo,monospace;' +
+                'padding:6px 8px;white-space:pre-wrap;border-top:1px solid #4fd1c5;';
+            el.addEventListener('click', () => { el.textContent = ''; });   // tap to clear
+            document.body.appendChild(el);
+        }
+        const t = (new Date()).toTimeString().slice(0, 8);
+        const line = t + '  ' + (warn ? '⚠ ' : '') + msg;
+        el.textContent = (line + '\n' + el.textContent).slice(0, 3000);
+    }
+    _short(id) { return id ? ('…' + String(id).slice(-6)) : '∅'; }
+
     isPrefetched(trackId) {
         return this._prefetchCache.has(trackId);
     }
@@ -234,6 +262,7 @@ class MusicPlayer {
         const seq = this._loadSeq;
         const superseded = () => this._loadSeq !== seq;
         const wantId = this.currentTrack.id;
+        let src = 'held';   // diagnostic: where the blob came from
         try {
             // Resolve a fresh blob when we have none OR the one we hold belongs to a
             // DIFFERENT track (the "right title, wrong audio" guard). A stale blob is
@@ -244,6 +273,7 @@ class MusicPlayer {
 
                 if (prefetchedBlob) {
                     // 1. In-memory prefetch — fully synchronous, preserves iOS gesture chain
+                    src = 'prefetch';
                     this._blob = prefetchedBlob;
                     this._prefetchCache.delete(wantId);
                     this._blobUrl = URL.createObjectURL(this._blob);
@@ -263,6 +293,7 @@ class MusicPlayer {
 
                     if (persistedBlob) {
                         // 2. Persistent blob cache — user-saved tracks, works offline
+                        src = 'persisted';
                         this._blob = persistedBlob;
                         this._blobUrl = URL.createObjectURL(this._blob);
                         this._blobTrackId = wantId;
@@ -298,6 +329,7 @@ class MusicPlayer {
                             throw new Error(`Drive fetch failed: ${response.status} ${response.statusText}`);
                         }
 
+                        src = 'fetch';
                         this._blob = await response.blob();
                         // Last and most important guard: the blob just finished
                         // downloading — if we've skipped past this track, drop it
@@ -318,8 +350,14 @@ class MusicPlayer {
             // (or a retry) owns the element instead of sounding the wrong song.
             if (this._blobTrackId !== this.currentTrack.id) {
                 console.warn('MusicPlayer: blob/track mismatch — refusing to play wrong audio', { blobTrackId: this._blobTrackId, currentTrackId: this.currentTrack.id });
+                this._diag('BLOCKED mismatch: want ' + this._short(this.currentTrack.id) + ' but blob ' + this._short(this._blobTrackId), true);
                 return;
             }
+            const _n = (this.currentTrack.name || '').slice(0, 22);
+            const _kb = this._blob ? Math.round(this._blob.size / 1024) + 'KB' : '?';
+            const _exp = Math.round((this.currentTrack.durationMs || 0) / 1000);
+            this._diagWant = { id: wantId, name: _n, exp: _exp };   // for the loadedmetadata check
+            this._diag('PLAY "' + _n + '" id=' + this._short(wantId) + ' blob=' + this._short(this._blobTrackId) + ' via=' + src + ' ' + _kb + ' exp=' + _exp + 's');
             await this.audio.play();
         } catch (error) {
             console.error('Error playing audio:', error);
@@ -374,6 +412,16 @@ class MusicPlayer {
     onLoadedMetadata() {
         this.totalTimeEl.textContent = this.formatTime(this.audio.duration);
         this.progressSlider.disabled = false;
+        // Diagnostic: does the decoded audio's LENGTH match the displayed track's
+        // expected length? A mismatch means a different FILE is sounding under the
+        // right title — the smoking gun for "wrong song plays".
+        if (this._diagOn()) {
+            const act = Math.round(this.audio.duration || 0);
+            const w = this._diagWant || {};
+            const exp = w.exp || 0;
+            const bad = exp > 0 && act > 0 && Math.abs(act - exp) > 2;
+            this._diag('LOADED "' + (w.name || '') + '" actual=' + act + 's expected=' + exp + 's' + (bad ? '  ← WRONG FILE' : '  ✓'), bad);
+        }
         // Surface the decoded duration so the playlist can backfill its
         // total-running-time tally for tracks Drive didn't report metadata
         // for (e.g. WAVs Drive hasn't finished probing).

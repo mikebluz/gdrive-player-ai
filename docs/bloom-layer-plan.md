@@ -18,8 +18,18 @@ Companion to `bloom-layer-model.md` (the spec). Branch: `bloops-layers`.
   have no inapplicable controls to hide. Inventing new hide-rules would risk the
   "don't break" contract for no real gain, so this is deliberately NOT done.
 
-**Track B — foundation already exists; B1 is smaller than written.** Audit found the
-cascading KEY frame is largely in place at the DATA level already:
+**Track B — B1 DONE (`b47490b`).** Unified the area Key + Progression into one KEY
+axis (mode selector Chromatic | Key | Progression + adaptive sub-controls) with the
+`_ambResolveKey(scope)` read model. Additive — no new persisted fields, no migration,
+harness byte-identical. Underlying keyOn/prog.on stay independent (a progression can
+still be diatonic to a key). One deferred UX nicety: while in Progression mode the
+diatonic key isn't directly editable (shown in the hint as "· in C Dorian"); switch
+to Key mode to edit it (which deactivates the prog; chords retained). Revisit if it
+bites. **Next: B2** — first-class per-layer KEY override (fold the per-layer
+"Progression" note-source into a layer KEY override). NEEDS save/load sign-off.
+
+Audit context — the cascading KEY frame was largely in place at the DATA level
+already before B1:
 - Area KEY: `cfg.keyRoot`/`cfg.keyScale`/`cfg.keyOn`/`cfg.keyFollow`
   (`_ambKeyRootPc`/`_ambKeyScaleName`) — with a workspace-follow that reads the
   grid's `rootIdx`/`currentScale`. That IS workspace→area cascade.

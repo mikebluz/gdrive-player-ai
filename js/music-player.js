@@ -13,6 +13,10 @@ class MusicPlayer {
         this._prefetchCache = new Map(); // trackId -> Blob
         this._blob = null;    // raw Blob for the currently loaded track
         this._blobUrl = null; // object URL for _blob, set as audio.src
+        this._blobTrackId = null; // id of the track _blobUrl belongs to — asserted
+                                  // against currentTrack before play so a stale blob
+                                  // can never sound under the wrong title ("right
+                                  // title, wrong audio").
         // Monotonic load generation — bumped on every loadTrack(). play() captures
         // it at entry and bails before assigning audio.src if it has moved, so a
         // slow fetch for a track you've since skipped past can't clobber the
@@ -80,6 +84,7 @@ class MusicPlayer {
             this._blobUrl = null;
         }
         this._blob = null;
+        this._blobTrackId = null;
 
         this.currentTrack = track;
         this.isPlaying = false;
@@ -119,7 +124,7 @@ class MusicPlayer {
             const token = this.gDrive.accessToken;
             if (!token) return 'skipped';
             const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
-            const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            const response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
             if (!response.ok) return 'failed';
             const blob = await response.blob();
             this._prefetchCache.set(track.id, blob);
@@ -178,7 +183,7 @@ class MusicPlayer {
                 const token = this.gDrive.accessToken;
                 if (!token) return;
                 const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
-                const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+                const response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
                 if (!response.ok) return;
                 await this.blobCache.store(track.id, await response.blob());
             }
@@ -206,15 +211,21 @@ class MusicPlayer {
         // touching audio.src so the newer track's play() owns the audio element.
         const seq = this._loadSeq;
         const superseded = () => this._loadSeq !== seq;
+        const wantId = this.currentTrack.id;
         try {
-            if (!this._blobUrl) {
-                const prefetchedBlob = this._prefetchCache.get(this.currentTrack.id);
+            // Resolve a fresh blob when we have none OR the one we hold belongs to a
+            // DIFFERENT track (the "right title, wrong audio" guard). A stale blob is
+            // revoked before re-resolving.
+            if (!this._blobUrl || this._blobTrackId !== wantId) {
+                if (this._blobUrl) { try { URL.revokeObjectURL(this._blobUrl); } catch {} this._blobUrl = null; }
+                const prefetchedBlob = this._prefetchCache.get(wantId);
 
                 if (prefetchedBlob) {
                     // 1. In-memory prefetch — fully synchronous, preserves iOS gesture chain
                     this._blob = prefetchedBlob;
-                    this._prefetchCache.delete(this.currentTrack.id);
+                    this._prefetchCache.delete(wantId);
                     this._blobUrl = URL.createObjectURL(this._blob);
+                    this._blobTrackId = wantId;
                     this.audio.src = this._blobUrl;
 
                 } else {
@@ -232,6 +243,7 @@ class MusicPlayer {
                         // 2. Persistent blob cache — user-saved tracks, works offline
                         this._blob = persistedBlob;
                         this._blobUrl = URL.createObjectURL(this._blob);
+                        this._blobTrackId = wantId;
                         this.audio.src = this._blobUrl;
 
                     } else if (!this.gDrive.accessToken) {
@@ -244,8 +256,9 @@ class MusicPlayer {
                         this.playPauseBtn.textContent = '⏳';
                         this.playPauseBtn.disabled = true;
 
-                        const url = `https://www.googleapis.com/drive/v3/files/${this.currentTrack.id}?alt=media`;
+                        const url = `https://www.googleapis.com/drive/v3/files/${wantId}?alt=media`;
                         let response = await fetch(url, {
+                            cache: 'no-store',
                             headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
                         });
                         if (superseded()) { this.playPauseBtn.disabled = false; return; }
@@ -253,6 +266,7 @@ class MusicPlayer {
                         if (response.status === 401) {
                             await this.gDrive.refreshTokenSilently();
                             response = await fetch(url, {
+                                cache: 'no-store',
                                 headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }
                             });
                             if (superseded()) { this.playPauseBtn.disabled = false; return; }
@@ -268,6 +282,7 @@ class MusicPlayer {
                         // rather than assigning it over the current track's audio.
                         if (superseded()) { this.playPauseBtn.disabled = false; return; }
                         this._blobUrl = URL.createObjectURL(this._blob);
+                        this._blobTrackId = wantId;
                         this.audio.src = this._blobUrl;
                         this.playPauseBtn.disabled = false;
                     }
@@ -275,6 +290,14 @@ class MusicPlayer {
             }
 
             if (superseded()) return;
+            // Final invariant: the audio element must be holding THIS track's blob.
+            // If anything left a mismatched src (the reported "right title, wrong
+            // audio"), don't play it — log and bail so the correct track's play()
+            // (or a retry) owns the element instead of sounding the wrong song.
+            if (this._blobTrackId !== this.currentTrack.id) {
+                console.warn('MusicPlayer: blob/track mismatch — refusing to play wrong audio', { blobTrackId: this._blobTrackId, currentTrackId: this.currentTrack.id });
+                return;
+            }
             await this.audio.play();
         } catch (error) {
             console.error('Error playing audio:', error);

@@ -527,6 +527,7 @@
         '<div class="ambient-orch">' +
           '<button type="button" class="ambient-area-btn ambient-area-dup" title="Clone the current area">⧉</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-ren" title="Rename the current area">✎</button>' +
+          '<button type="button" class="ambient-area-btn ambient-area-clear" title="Clear all layers from this area (keeps its key / tempo / name)">🧹</button>' +
           '<button type="button" class="ambient-area-btn ambient-area-del" title="Delete the current area"' + (s.areas.length <= 1 ? ' disabled' : '') + '>✕</button>' +
         '</div>' +
         // Plays × random + Bar Lock + Bars.
@@ -592,6 +593,11 @@
         if (typeof prompt !== 'function') return;
         const cur = _ambAreas()[i]; const nm = prompt('Area name (blank = number):', (cur && cur.name) || '');
         if (nm != null) { _ambRenameArea(i, nm.trim()); _ambRebuildMaster(); try { persistWorkspace(); } catch (e) {} }
+      });
+      const clrArea = host.querySelector('.ambient-area-clear');
+      if (clrArea) clrArea.addEventListener('click', () => {
+        if (typeof confirm === 'function' && !confirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.')) return;
+        _ambClearArea(_masterEng);
       });
       const del = host.querySelector('.ambient-area-del');
       if (del) del.addEventListener('click', () => {

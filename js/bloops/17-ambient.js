@@ -12460,7 +12460,7 @@
       const euclid = !!(inst && inst.euclid);
       const rowOf = (suf) => { const e = _ambGet(E, stem + suf); return (e && e.closest) ? e.closest('.ambient-ctrl') : null; };
       const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
-      ['pulses', 'steps', 'rotate', 'euclidVoices', 'euclidregen', 'maxPitches', 'maxEvents', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
+      ['pulses', 'steps', 'rotate', 'euclidVoices', 'euclidregen', 'euclidgrid', 'maxPitches', 'maxEvents', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       ['randomness'].forEach(s => setRow(s, !euclid));
       setRow('rate', !euclid);
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
@@ -14383,7 +14383,7 @@
           } }); } }
           else if (k === 'euclidregen') { const b = el('euclidregen'); if (b) b.addEventListener('click', () => { _E = E; _ambEuclidRegen(E, type + ':' + id); }); }
           else if (k === 'euclidgrid') { _ambWireEuclidGrid(E, el, get, persist, sync, type, type + ':' + id); }
-          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); }); } }
+          else if (k === 'arpeuclid') { const s = el('euclid'); if (s) { s.value = inst.euclid ? '1' : '0'; s.addEventListener('change', () => { const L = get(); if (!L) return; L.euclid = (s.value === '1'); if (L.euclid) { if (!(L.pulses | 0)) L.pulses = 4; if (!(L.steps | 0)) L.steps = 8; if (!(L.euclidVoices | 0)) L.euclidVoices = 2; if (!(L.bars | 0)) L.bars = 1; } const gk = type + ':' + id; if (E.runPhase) delete E.runPhase[gk]; if (E.arpState) delete E.arpState[gk]; if (E.clocks) delete E.clocks[gk]; persist(); _ambRenderExtras(E); try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="' + type + ':' + id + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {} }); } }
         } catch (err) { console.warn('Bloom extra control wiring failed', type, id, k, err); }
       });
       ['vca', 'vco', 'vcf'].forEach(t => {

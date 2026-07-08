@@ -60,8 +60,26 @@ byte-identical. The Harmony toggle is now complete (Fixed / Diatonic / Chord-loc
 **B3 slice 2 DONE (`d7d5b2a`).** Roman-numeral labels in the chord editor (I, ii, V7,
 vii°, ♭III…), relative to the current key. Pure display, harness byte-identical.
 
-⚠️ **B4 Diatonic + Chord-locked change AUDIO and Seq isn't harness-covered → they want
-an ear-check before B5 piles more realization on top.**
+**B5 slice 1 DONE (`420f95b`).** Chords-in-sequences realization: `seq.chordMode` =
+'poly' (default, stack — byte-identical) | 'arp' (strum across the slot) | 'monoRoot' /
+'monoTop' (fold to lowest/highest). Applied in `_ambEmitSeqEvent` after the B4 remap so
+they compose; "Chords" select on the Seq card. Harness byte-identical.
+
+## Track B CORE COMPLETE
+
+B1 (KEY axis) · B2 (layer KEY override) · B3 (scope editor + roman numerals) · B4
+(Harmony: Fixed/Diatonic/Chord-locked) · B5 (Poly/Arp/Mono). Remaining B work is minor
+polish (B3: Send-to-Bloom part-vs-prog routing, promote-part, pad-from-prog; B4:
+re-voicing Smooth/Reset/Preserve, missing-tone borrow, per-unit; B5: strum shape).
+
+⚠️ **Two gates before more:**
+1. **B4 + B5 change AUDIO and Seq isn't harness-covered** — Diatonic/Chord-locked/Arp/
+   Mono are logic-verified but not ear-verified. Want a real-project ear-check.
+2. **Track C is a different risk class — do NOT start it autonomously.** C1 is the one
+   DELIBERATE harness re-baseline; C2 is ONE-WAY (retire the primary hardcoded templates,
+   drop `cfg.prog`/per-layer prog fields, remove dead dispatch). Both need an explicit
+   decision + real-project regression, per the plan's own rule ("only once real projects
+   have exercised the whole thing").
 
 Audit context — the cascading KEY frame was largely in place at the DATA level
 already before B1:

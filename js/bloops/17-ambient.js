@@ -2699,6 +2699,24 @@
         _ambPeRender();
       });
     }
+    // B3: extract a Seq part's events into a chord-array progression (root = lowest
+    // pc, intervals from the event's pitch classes) — the SEED→KEY escape hatch.
+    function _ambSeqPartToChords(seq) {
+      const u = (seq && Array.isArray(seq.units) && seq.units[0]) ? seq.units[0] : null;
+      if (!u || !Array.isArray(u.events)) return [];
+      const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+      const out = [];
+      u.events.forEach(e => {
+        const fs = Array.isArray(e.freqs) ? e.freqs : [];
+        const pcs = [], seen = new Set();
+        fs.forEach(f => { if (!(f > 0)) return; const m = Math.round(69 + 12 * Math.log2(f / A)); const pc = (((m % 12) + 12) % 12); if (!seen.has(pc)) { seen.add(pc); pcs.push(pc); } });
+        if (!pcs.length) return;
+        const root = Math.min.apply(null, pcs);
+        const intervals = Array.from(new Set(pcs.map(p => (((p - root) % 12) + 12) % 12))).sort((a, b) => a - b);
+        out.push({ root, intervals });
+      });
+      return out;
+    }
     // B3: spawn a Bed pad layer that plays a progression (a chord array), via a
     // per-layer KEY override (keyOv prog) — reuses the verified bed+prog generation.
     // Closes the author→hear loop from the chord editor.
@@ -12773,7 +12791,11 @@
           // B5: how a multi-note (chord) event is realized — stack, strum, or fold.
           '<div class="ambient-ctrl"><label for="' + p + 'chordmode">Chords</label><select id="' + p + 'chordmode" class="ambient-select">' +
             opts([['poly', 'Poly (stack)'], ['arp', 'Arp (strum)'], ['monoRoot', 'Mono — low'], ['monoTop', 'Mono — high']], ['arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) >= 0 ? s.chordMode : 'poly') +
-            '</select><span class="ambient-hint">stack / strum / fold</span></div>' + gpe() +
+            '</select><span class="ambient-hint">stack / strum / fold</span></div>' +
+          // B3: escape hatch — extract this part's chords into a reusable progression.
+          '<div class="ambient-ctrl"><label>Promote</label>' +
+            '<button type="button" id="' + p + 'promote" class="ambient-seg" title="Extract this part’s chords into a reusable progression (appears in every KEY menu)">→ Progression</button>' +
+            '<span class="ambient-hint">part → prog</span></div>' + gpe() +
         grp('Timing') +
           // Loop length: Auto (one pass == the played sequence's own length) vs
           // Manual (the Interval knob below). Auto greys out / ignores Interval.
@@ -12890,6 +12912,16 @@
       { const o = el('out'); if (o) o.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; if (o.value === 'grid') sq.out = 'grid'; else delete sq.out; persist(); }); }
       const secBtn = el('sections');
       if (secBtn) secBtn.addEventListener('click', () => { _E = E; _ambShowSeqSectionsMenu(E, id, secBtn); });
+      const promoteBtn = el('promote');
+      if (promoteBtn) promoteBtn.addEventListener('click', () => {
+        _E = E; const sq = getSq(); if (!sq) return;
+        const chords = _ambSeqPartToChords(sq);
+        if (!chords.length) { try { if (typeof showToast === 'function') showToast('This part has no notes to promote.'); } catch (e) {} return; }
+        const nm = _ambLayerLabel(sq, 'Seq') + ' progression';
+        _ambPublishProgChords(nm, chords);
+        persist();
+        try { if (typeof showToast === 'function') showToast('Promoted “' + nm + '” (' + chords.length + ' chords) — pick it from any KEY menu.'); } catch (e) {}
+      });
       const lockBtn = el('enslock');
       if (lockBtn) lockBtn.addEventListener('click', () => { _E = E; const sq = getSq(); if (!sq) return; sq.ensembleLock = !(sq.ensembleLock !== false); _ambSeqEnsLockVis(E, id); persist(); });
       _ambSeqEnsLockVis(E, id);

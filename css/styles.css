@@ -138,6 +138,30 @@ body {
     transform: translateY(-1px);
     box-shadow: 0 0 16px rgba(79, 209, 197, 0.6);
 }
+/* Sort dropdown — matches the shuffle button (black + teal), native appearance
+   stripped, custom teal caret. */
+#sb-sort-select {
+    background: #000;
+    color: #4fd1c5;
+    border: 1px solid #4fd1c5;
+    box-shadow: 0 0 10px rgba(79, 209, 197, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath fill='%234fd1c5' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 11px center;
+    padding: 5px 28px 5px 15px;
+    line-height: 1.4;
+    cursor: pointer;
+}
+#sb-sort-select:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 16px rgba(79, 209, 197, 0.6);
+}
+#sb-sort-select:focus { outline: none; box-shadow: 0 0 16px rgba(79, 209, 197, 0.6); }
+#sb-sort-select option { background: #000; color: #4fd1c5; }
 
 .main-content {
     display: grid;

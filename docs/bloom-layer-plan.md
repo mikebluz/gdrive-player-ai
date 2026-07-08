@@ -33,10 +33,14 @@ bites.
 resolved in `_ambNotesOf` after the area-prog check (precedence preserved). "⇶
 Progression" retired from the Notes menu. Harness byte-identical; legacy per-layer prog
 note-sources still play (not migrated). **GATE: first per-layer-persistence stage —
-needs a real-project load→play→save→reload→reload-stable check before B3.** **Next:
-B3** — dedicated progression authoring surface (an `_ambOpenProgEditor` already exists
-for area prog; B3 makes a purpose-built chord/region timeline writing to KEY at area OR
-layer scope, + Send-to-Bloom part-vs-progression routing + promote-part).
+needs a real-project load→play→save→reload→reload-stable check before B3.**
+
+**B3 slice 1 DONE (`aeaed40`) — same save/load gate.** Made the existing chord editor
+scope-aware: it now authors a LAYER's own progression (`layer.keyOv`), seeding a chord
+when empty, wired into the B2 KEY chip ("✎ Author / edit chords…"). Area editing of
+`cfg.prog` is byte-preserved. UI-only → harness green. **B3 remaining slices** (each
+still additive): roman-numeral display in the editor; Send-to-Bloom part-vs-progression
+routing; "promote part → progression"; "add a pad playing this progression".
 
 Audit context — the cascading KEY frame was largely in place at the DATA level
 already before B1:

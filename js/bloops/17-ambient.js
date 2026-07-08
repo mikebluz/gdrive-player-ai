@@ -1191,7 +1191,7 @@
       if (s.harmony !== 'diatonic' && s.harmony !== 'chordlock') s.harmony = 'fixed';
       // B5: chord realization for multi-note events — 'poly' (default, stack all),
       // 'arp' (strum across the slot), 'monoRoot'/'monoTop' (fold to lowest/highest).
-      if (['poly', 'arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) < 0) s.chordMode = 'poly';
+      if (['poly', 'arp', 'arpDown', 'monoRoot', 'monoTop'].indexOf(s.chordMode) < 0) s.chordMode = 'poly';
       // B4 refinements: re-voicing mode + missing-tone scale-borrow (chord-lock).
       if (['smooth', 'preserve', 'reset'].indexOf(s.revoice) < 0) s.revoice = 'smooth';
       if (typeof s.chordBorrow !== 'boolean') s.chordBorrow = true;
@@ -6285,10 +6285,21 @@
         freqs = [freqs.reduce((a, b) => (top ? Math.max(a, b) : Math.min(a, b)))];
       }
       // Per-voice onset stagger: 0 for poly/mono (grid-direct stays sample-exact),
-      // a musical strum spread across the slot for arp.
-      const strumStep = (cmode === 'arp' && freqs.length > 1)
+      // a musical strum spread across the slot for arp (↑ = low→high, ↓ = high→low).
+      const isArp = (cmode === 'arp' || cmode === 'arpDown');
+      const strumStep = (isArp && freqs.length > 1)
         ? Math.min(0.09, Math.max(0.012, (Math.max(20, ev.durMs | 0) / 1000) * 0.4 / freqs.length))
         : 0;
+      // Strum ORDER = pitch rank (not array index), so ↑/↓ are true low→high /
+      // high→low regardless of the captured voice order. rank[vi] → its delay slot.
+      // Kept parallel to freqs (vp/params stay aligned; only the onset time shifts).
+      let strumRank = null;
+      if (strumStep > 0) {
+        const order = freqs.map((f, i) => i).sort((a, b) => (cmode === 'arpDown') ? (freqs[b] - freqs[a]) : (freqs[a] - freqs[b]));
+        strumRank = new Array(freqs.length);
+        order.forEach((idx, r) => { strumRank[idx] = r; });
+      }
+      const strumAt = (vi) => strumRank ? (strumRank[vi] * strumStep) : 0;
       const dest = _ambLayerDest(ctx.key), dmod = _ambLayerDetuneMod(ctx.key);
       const durMs = ev.durMs, padStyle = ev.padStyle, sounds = ev.sounds;
       const base = ctx.base, type = ctx.type, layerSet = ctx.layerSet, seqEnsLock = ctx.seqEnsLock;
@@ -6316,7 +6327,7 @@
             if (seqEnsLock) p0._ensembleForceStack = true;
             else p0._ensembleMemberIdx = _ensPick++;
           }
-          try { playNote(f, p0, durMs, atAbs + vi * strumStep, dst, undefined, _E.laneIdx()); } catch (e) {}
+          try { playNote(f, p0, durMs, atAbs + strumAt(vi), dst, undefined, _E.laneIdx()); } catch (e) {}
         });
         if (st) st._ensPick = _ensPick;
         return;
@@ -6335,7 +6346,7 @@
           else p._ensembleMemberIdx = _ensPick++;          // unlocked: one member per note, rotating
         }
         if (dmod) p._detuneMod = dmod;
-        try { playNote(f, p, durMs, atAbs + vi * (strumStep || 0.006), dest, undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, p, durMs, atAbs + (strumStep > 0 ? strumAt(vi) : vi * 0.006), dest, undefined, _E.laneIdx()); } catch (e) {}
       });
       if (st) st._ensPick = _ensPick; // carry the unlocked-ensemble rotation across fires
     }
@@ -12843,7 +12854,7 @@
             '</select><span class="ambient-hint">fixed / follow key / lock to chord</span></div>' +
           // B5: how a multi-note (chord) event is realized — stack, strum, or fold.
           '<div class="ambient-ctrl"><label for="' + p + 'chordmode">Chords</label><select id="' + p + 'chordmode" class="ambient-select">' +
-            opts([['poly', 'Poly (stack)'], ['arp', 'Arp (strum)'], ['monoRoot', 'Mono — low'], ['monoTop', 'Mono — high']], ['arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) >= 0 ? s.chordMode : 'poly') +
+            opts([['poly', 'Poly (stack)'], ['arp', 'Arp ↑ (strum up)'], ['arpDown', 'Arp ↓ (strum down)'], ['monoRoot', 'Mono — low'], ['monoTop', 'Mono — high']], ['arp', 'arpDown', 'monoRoot', 'monoTop'].indexOf(s.chordMode) >= 0 ? s.chordMode : 'poly') +
             '</select><span class="ambient-hint">stack / strum / fold</span></div>' +
           // B4 refinements — how Diatonic/Chord-locked settle the voicing, and whether
           // non-chord scale tones are kept over a chord (borrow) or snapped (strict).

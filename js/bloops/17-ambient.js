@@ -14578,23 +14578,6 @@
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
-    // Add a CUSTOM layer — a neutral composable starting point (Synth · Scale ·
-    // Euclid; euclid is the fully voice/generator-swappable generator), named
-    // "Custom" and auto-expanded so the user composes it via the chips. Internally
-    // it's a standard 'bass'-type layer; the interactive Voice/Source/Generator
-    // pickers do the rest.
-    function _ambAddCustom(E) {
-      _E = E; const cfg = E.getCfg(); if (!cfg) return;
-      if (!Array.isArray(cfg.extras)) cfg.extras = [];
-      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      const L = _ambDefaultLayer('bass', newId);
-      L.name = 'Custom';
-      cfg.extras.push(L);
-      _ambRenderExtras(E);
-      try { const wrap = _ambGet(E, 'ambient-extra-layers'); const card = wrap && wrap.querySelector('.ambient-layer[data-inst="bass:' + newId + '"]'); if (card) card.classList.remove('collapsed'); } catch (e) {}
-      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
-      if (typeof persistWorkspace === 'function') persistWorkspace();
-    }
     // ---- Custom layer PRESETS (user-saved compositions, global via localStorage) ----
     // A preset = { name, type, cfg } where cfg is a deep copy of a composed layer.
     // Saved presets appear in the Add-layer menu, so a composition becomes a
@@ -16362,31 +16345,35 @@
       const addLayerBtn = G('ambient-add-layer');
       if (addLayerBtn) addLayerBtn.addEventListener('click', () => {
         _E = E; const cfg = cfg0(); if (!cfg) return;
-        const LABELS = { bed: 'Bed', motif: 'Motif', texture: 'Texture', beat: 'Beat' };
-        // Custom: a neutral composable layer (compose Voice/Source/Generator from
-        // the card chips). Presets below are named starting points.
-        const actions = [{ label: '✦ Custom — compose your own', fn: () => _ambAddCustom(E) }, 'hr'];
-        // Always offer all four types. Picking one activates the absent primary,
-        // or — if the primary is already present — adds another instance.
-        ['bed', 'motif', 'texture', 'beat'].forEach(l => {
-          const primaryAbsent = !!(cfg[l] && cfg[l].present === false);
-          actions.push({ label: LABELS[l] + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, l) : _ambAddExtra(E, l)) });
+        // The built-in layer types ARE the curated presets (docs/bloom-layer-model.md
+        // — "old 11 types → presets, no per-scratch assembly"), grouped into families
+        // so they read as purpose-built instruments rather than a flat type list.
+        // Each fn sets type + defaults EXACTLY as before (a preset == today →
+        // harness-neutral). Primaries (bed/motif/texture/beat) activate the absent
+        // slot, else add another instance (+1); the rest are extras-only. The old
+        // "✦ Custom — compose your own" entry was retired with the axis pickers —
+        // you now start from a preset and tweak, not assemble a layer from scratch.
+        const PRIMARY = { bed: 1, motif: 1, texture: 1, beat: 1 };
+        const FAMILIES = [
+          ['Pads & drones', [['bed', 'Bed'], ['texture', 'Texture'], ['drone', 'Drone']]],
+          ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
+          ['Rhythm', [['beat', 'Beat'], ['bass', 'Bass'], ['pedal', 'Pedal']]],
+          ['Sampler', [['sample', 'Sample']]],
+        ];
+        const actions = [];
+        FAMILIES.forEach((fam) => {
+          actions.push({ label: fam[0], disabled: true });
+          fam[1].forEach((it) => {
+            const type = it[0], name = it[1];
+            if (type === 'sample') { actions.push({ label: name, fn: () => _ambAddSampleLayer(E) }); return; }
+            if (PRIMARY[type]) {
+              const primaryAbsent = !!(cfg[type] && cfg[type].present === false);
+              actions.push({ label: name + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, type) : _ambAddExtra(E, type)) });
+            } else {
+              actions.push({ label: name, fn: () => _ambAddExtra(E, type) });
+            }
+          });
         });
-        // Shape: a generative wheel layer (extras-only, no primary slot).
-        // (Shape layer removed — use the master Shapes section in Grow.)
-        // Arp: arpeggiates through a built series of scales/chords (extras-only).
-        actions.push({ label: 'Arp', fn: () => _ambAddExtra(E, 'arp') });
-        // Bass: low euclidean phrase locked to BPM (extras-only).
-        actions.push({ label: 'Bass', fn: () => _ambAddExtra(E, 'bass') });
-        // Run: a fixed random note run that loops every N bars (extras-only).
-        actions.push({ label: 'Riff', fn: () => _ambAddExtra(E, 'run') });
-        // Pedal: a simple root-note pedal-point loop (extras-only).
-        actions.push({ label: 'Pedal', fn: () => _ambAddExtra(E, 'pedal') });
-        // Drone: holds a note/chord, re-struck every N units (extras-only).
-        actions.push({ label: 'Drone', fn: () => _ambAddExtra(E, 'drone') });
-        // Sample: one entry that adds an empty Sample layer; the user imports its
-        // source (file or Drive) with the Import buttons in the layer card.
-        actions.push({ label: 'Sample', fn: () => _ambAddSampleLayer(E) });
         // User-saved presets (from the ★ Save‑as‑preset button) — reusable across
         // projects. Clicking adds; a "Remove a preset…" sub-menu deletes.
         const _presets = _ambLoadLayerPresets();

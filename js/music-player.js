@@ -3,6 +3,10 @@
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
 
 class MusicPlayer {
+    // Bump on every deploy so the "diag ready · build …" line proves whether
+    // the browser loaded the fresh script or a cached old one.
+    static BUILD = '20260708a';
+
     constructor(gDrive, blobCache = null) {
         this.gDrive = gDrive;
         this.blobCache = blobCache;
@@ -26,6 +30,17 @@ class MusicPlayer {
         this.initializeElements();
         this.bindEvents();
         this.setVolume(this.volume);
+
+        // Boot confirmation for the on-screen diagnostics. ?diag=1 also STICKS
+        // (persisted to localStorage) so it survives navigation; ?diag=0 clears
+        // it. If you added ?diag=1 and see this "diag ready" line, the new
+        // music-player.js is live and diag is on. If you see NOTHING at all,
+        // the page is running a CACHED old script — hard-refresh the page.
+        try {
+            if (/[?&]diag=1\b/.test(location.search)) localStorage.setItem('sbDiag', '1');
+            if (/[?&]diag=0\b/.test(location.search)) localStorage.removeItem('sbDiag');
+        } catch (e) {}
+        if (this._diagOn()) this._diag('diag ready · build ' + MusicPlayer.BUILD + ' · tap to clear');
     }
 
     initializeElements() {

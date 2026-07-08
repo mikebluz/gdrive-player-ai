@@ -123,7 +123,7 @@ class MusicPlayer {
 
             const token = this.gDrive.accessToken;
             if (!token) return 'skipped';
-            const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
+            const url = this._driveMediaUrl(track.id);
             const response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
             if (!response.ok) return 'failed';
             const blob = await response.blob();
@@ -185,7 +185,7 @@ class MusicPlayer {
                 // Not in memory — fetch from Drive
                 const token = this.gDrive.accessToken;
                 if (!token) return;
-                const url = `https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`;
+                const url = this._driveMediaUrl(track.id);
                 const response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
                 if (!response.ok) return;
                 await this.blobCache.store(track.id, await response.blob());
@@ -204,6 +204,16 @@ class MusicPlayer {
     async clearCaches() {
         this.clearPrefetchCache();
         if (this.blobCache) { try { await this.blobCache.clear(); } catch (e) {} }
+    }
+
+    // Drive media URL with a unique cache-buster. `cache:'no-store'` alone doesn't
+    // reliably stop iOS Safari / the Drive CDN from serving a stale or cross-track
+    // response (the real "right title, wrong audio" cause once the app caches are
+    // empty) — a unique query param guarantees each request is a fresh download.
+    // Drive ignores the extra param. The app's own blob caches still handle reuse.
+    _driveMediaUrl(trackId) {
+        const nonce = Date.now().toString(36) + Math.floor(Math.random() * 1e9).toString(36);
+        return `https://www.googleapis.com/drive/v3/files/${trackId}?alt=media&_cb=${nonce}`;
     }
 
     isPrefetched(trackId) {
@@ -268,7 +278,7 @@ class MusicPlayer {
                         this.playPauseBtn.textContent = '⏳';
                         this.playPauseBtn.disabled = true;
 
-                        const url = `https://www.googleapis.com/drive/v3/files/${wantId}?alt=media`;
+                        const url = this._driveMediaUrl(wantId);
                         let response = await fetch(url, {
                             cache: 'no-store',
                             headers: { Authorization: `Bearer ${this.gDrive.accessToken}` }

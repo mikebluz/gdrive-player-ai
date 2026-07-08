@@ -10244,6 +10244,7 @@
             else if (act === 'dl') _ambDownloadBankItem(it);
             else if (act === 'up') _ambUploadBankItem(it);
             else if (act === 'master') { it.mastered = !it.mastered; _ambRenderCaptureBank(); }
+            else if (act === 'proc') _ambOpenProcessModal(it);
             else if (act === 'del') _ambRemoveBankItem(id);
           });
         }
@@ -10255,6 +10256,7 @@
             '<span class="ambient-cap-meta">' + Math.round(it.durSec) + 's · ' + fmtBytes(it.bytes) + '</span>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-master' + (it.mastered ? ' on' : '') + '" data-act="master" title="Master this take — preview + Download/Upload run through the Mastering chain above">' + (it.mastered ? '★' : '☆') + '</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="play" title="Preview' + (it.mastered ? ' (mastered)' : '') + '">▶</button>' +
+            '<button type="button" class="ambient-cap-btn" data-act="proc" title="Process — reverse / pitch / glide → new take">⚙</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="ren" title="Rename">✎</button>' +
             '<button type="button" class="ambient-cap-btn" data-act="dl" title="Download to this device">⤓</button>' +
             '<button type="button" class="ambient-cap-btn ambient-cap-up" data-act="up" title="Upload to Google Drive">⬆ Upload</button>' +
@@ -10262,6 +10264,151 @@
           '</div>').join('');
       });
       try { _ambWireHarvestMaster(); } catch (e) {}
+    }
+
+    // ================= Harvest capture PROCESSING (feature A) =================
+    // Reusable offline-render engine: decode a capture → apply ops → new WAV blob.
+    // The same primitives assemble the slice-rearrange master (feature C).
+    function _ambProcOfflineCtx(channels, length, sampleRate) {
+      const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      return new OAC(Math.max(1, channels), Math.max(1, Math.ceil(length)), sampleRate);
+    }
+    async function _ambDecodeBlob(blob) {
+      const ab = await blob.arrayBuffer();
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AC();
+      try { return await ctx.decodeAudioData(ab.slice(0)); }
+      finally { try { ctx.close(); } catch (e) {} }
+    }
+    // Reverse (sample-level; no render).
+    function _ambProcReverse(buf) {
+      const ctx = _ambProcOfflineCtx(buf.numberOfChannels, buf.length, buf.sampleRate);
+      const out = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const s = buf.getChannelData(c), d = out.getChannelData(c), n = s.length;
+        for (let i = 0; i < n; i++) d[i] = s[n - 1 - i];
+      }
+      return out;
+    }
+    // Pitch via RESAMPLE (varispeed): pitch AND length change together. A ramp
+    // glides playbackRate from `semis`→`toSemis` over the clip. Output length for a
+    // linear rate ramp r0→r1: T = 2·dur/(r0+r1) (so the whole buffer is consumed).
+    async function _ambProcResample(buf, semis, toSemis) {
+      const r0 = Math.pow(2, (semis || 0) / 12);
+      const r1 = (toSemis != null) ? Math.pow(2, toSemis / 12) : r0;
+      const T = 2 * buf.duration / (r0 + r1);
+      const ctx = _ambProcOfflineCtx(buf.numberOfChannels, T * buf.sampleRate, buf.sampleRate);
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      src.playbackRate.setValueAtTime(r0, 0);
+      if (toSemis != null && r1 !== r0) src.playbackRate.linearRampToValueAtTime(r1, T);
+      src.connect(ctx.destination); src.start(0);
+      return await ctx.startRendering();
+    }
+    // Pitch SHIFT (length preserved): granular overlap-add. Each output grain reads
+    // the source at `ratio` within a Hann window; read+write advance by the same hop
+    // so time is kept while pitch scales. A ramp varies ratio across the clip.
+    // Quality is "granular-basic" (mild warble) — good for takes, flag for ear-check.
+    function _ambProcPitchShift(buf, semis, toSemis) {
+      const sr = buf.sampleRate, N = buf.length;
+      const ratio0 = Math.pow(2, (semis || 0) / 12);
+      const ratio1 = (toSemis != null) ? Math.pow(2, toSemis / 12) : ratio0;
+      const G = Math.max(256, Math.round(0.05 * sr));   // ~50ms grains
+      const H = Math.max(1, Math.round(G / 4));          // 75% overlap
+      const win = new Float32Array(G);
+      for (let i = 0; i < G; i++) win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (G - 1)));
+      const ctx = _ambProcOfflineCtx(buf.numberOfChannels, N, sr);
+      const out = ctx.createBuffer(buf.numberOfChannels, N, sr);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const s = buf.getChannelData(c), d = out.getChannelData(c);
+        const norm = new Float32Array(N);
+        for (let w = 0; w < N; w += H) {
+          const ratio = ratio0 + (ratio1 - ratio0) * (w / Math.max(1, N));
+          for (let k = 0; k < G && (w + k) < N; k++) {
+            const idx = w + k * ratio;                   // resample within the grain
+            const i0 = Math.floor(idx); if (i0 < 0 || i0 + 1 >= N) continue;
+            const f = idx - i0;
+            const smp = s[i0] * (1 - f) + s[i0 + 1] * f;
+            d[w + k] += smp * win[k];
+            norm[w + k] += win[k];
+          }
+        }
+        for (let i = 0; i < N; i++) if (norm[i] > 1e-4) d[i] /= norm[i];
+      }
+      return out;
+    }
+    // Apply an op set to a decoded buffer → processed buffer. op:
+    //   { reverse:bool, pitch:{ mode:'resample'|'shift', semis:number, toSemis:number|null } }
+    async function _ambProcessBuffer(buf, op) {
+      let b = buf;
+      if (op && op.reverse) b = _ambProcReverse(b);
+      if (op && op.pitch && (op.pitch.semis || op.pitch.toSemis != null)) {
+        const p = op.pitch, to = (p.toSemis != null && p.toSemis !== p.semis) ? p.toSemis : null;
+        b = (p.mode === 'shift') ? _ambProcPitchShift(b, p.semis || 0, to) : await _ambProcResample(b, p.semis || 0, to);
+      }
+      return b;
+    }
+    // Decode → process → encode WAV → add as a NEW capture in the bank.
+    async function _ambProcessCaptureItem(it, op, suffix) {
+      const src = await _ambDecodeBlob(it.blob);
+      const outBuf = await _ambProcessBuffer(src, op);
+      const blob = audioBufferToWav(outBuf);
+      const id = (_ambCaptureBank.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1) || 1;
+      const url = URL.createObjectURL(blob);
+      _ambCaptureBank.push({ id, name: it.name + (suffix || ' (proc)'), ext: 'wav', mime: 'audio/wav',
+        folder: it.folder || 'bloops/exports', durSec: outBuf.duration, bytes: blob.size, blob, url,
+        uploaded: false, source: it.source || 'Harvest' });
+      _ambRenderCaptureBank();
+      return id;
+    }
+    function _ambCloseProcModal() { const h = document.getElementById('ambient-proc-modal'); if (h) h.style.setProperty('display', 'none', 'important'); }
+    // Per-capture Process panel: Reverse · Pitch (Resample / Pitch-shift) · Glide.
+    // Apply renders a NEW take into the bank (non-destructive).
+    function _ambOpenProcessModal(it) {
+      let host = document.getElementById('ambient-proc-modal');
+      if (!host) {
+        host = document.createElement('div'); host.id = 'ambient-proc-modal'; host.className = 'ambient-proc-modal';
+        document.body.appendChild(host);
+        host.addEventListener('click', (e) => { if (e.target === host) _ambCloseProcModal(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && host.style.display !== 'none') _ambCloseProcModal(); });
+      }
+      const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      host.innerHTML =
+        '<div class="ambient-proc-box">' +
+          '<div class="ambient-proc-title">Process — ' + esc(it.name) + '</div>' +
+          '<div class="ambient-proc-row"><label>Reverse</label><button type="button" class="ambient-seg" id="proc-reverse">Off</button></div>' +
+          '<div class="ambient-proc-row"><label for="proc-pitchmode">Pitch</label><select id="proc-pitchmode" class="ambient-select"><option value="resample">Resample (varispeed — length changes)</option><option value="shift">Pitch-shift (keep length)</option></select></div>' +
+          '<div class="ambient-proc-row"><label for="proc-semis">Semitones</label><input type="range" id="proc-semis" min="-24" max="24" step="1" value="0"><span class="ambient-proc-val" id="proc-semis-v">0</span></div>' +
+          '<div class="ambient-proc-row"><label>Glide</label><button type="button" class="ambient-seg" id="proc-glide" title="Ramp the pitch from Semitones → Glide-to over the clip">Off</button></div>' +
+          '<div class="ambient-proc-row" id="proc-glide-row" hidden><label for="proc-tosemis">Glide to</label><input type="range" id="proc-tosemis" min="-24" max="24" step="1" value="0"><span class="ambient-proc-val" id="proc-tosemis-v">0</span></div>' +
+          '<div class="ambient-proc-hint">Renders a NEW take in the bank (the original is kept).</div>' +
+          '<div class="ambient-proc-actions"><button type="button" class="ambient-seg" id="proc-cancel">Cancel</button><button type="button" class="ambient-regen" id="proc-apply">Apply → new take</button></div>' +
+        '</div>';
+      const $ = (id) => host.querySelector('#' + id);
+      let reverse = false, glide = false;
+      const revB = $('proc-reverse'); revB.addEventListener('click', () => { reverse = !reverse; revB.textContent = reverse ? 'On' : 'Off'; revB.classList.toggle('active', reverse); });
+      const glideB = $('proc-glide'); glideB.addEventListener('click', () => { glide = !glide; glideB.textContent = glide ? 'On' : 'Off'; glideB.classList.toggle('active', glide); $('proc-glide-row').hidden = !glide; });
+      const semis = $('proc-semis'); semis.addEventListener('input', () => { $('proc-semis-v').textContent = semis.value; });
+      const toS = $('proc-tosemis'); toS.addEventListener('input', () => { $('proc-tosemis-v').textContent = toS.value; });
+      $('proc-cancel').addEventListener('click', _ambCloseProcModal);
+      $('proc-apply').addEventListener('click', async () => {
+        const applyBtn = $('proc-apply'); applyBtn.disabled = true; applyBtn.textContent = 'Processing…';
+        const sv = parseInt(semis.value, 10) || 0, tv = glide ? (parseInt(toS.value, 10) || 0) : null;
+        const op = { reverse: reverse, pitch: { mode: $('proc-pitchmode').value, semis: sv, toSemis: tv } };
+        const parts = [];
+        if (reverse) parts.push('rev');
+        if (sv || tv != null) parts.push((op.pitch.mode === 'shift' ? '♪' : '⇄') + (sv > 0 ? '+' : '') + sv + (tv != null ? '→' + tv : ''));
+        const suffix = parts.length ? ' (' + parts.join(' ') + ')' : ' (proc)';
+        try {
+          await _ambProcessCaptureItem(it, op, suffix);
+          _ambCloseProcModal();
+          if (typeof showToast === 'function') showToast('Processed take added to the bank.');
+        } catch (e) {
+          console.error('Capture processing failed', e);
+          applyBtn.disabled = false; applyBtn.textContent = 'Apply → new take';
+          if (typeof showToast === 'function') showToast('Processing failed: ' + (e.message || e));
+        }
+      });
+      host.style.setProperty('display', 'flex', 'important');
     }
 
     // ---- Visual (analyser-bound waveform; animates only while playing) --

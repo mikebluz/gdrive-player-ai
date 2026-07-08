@@ -11146,3 +11146,21 @@
     }
     @keyframes bloops-saving-spin { to { transform: rotate(360deg); } }
     .bloops-saving-text { color: #e2e0ec; font-size: 0.95rem; font-weight: 600; letter-spacing: 0.02em; }
+    /* Harvest capture Process panel (reverse / pitch / glide). */
+    .ambient-proc-modal {
+      display: none; position: fixed; inset: 0; z-index: 100001;
+      align-items: center; justify-content: center;
+      background: rgba(10, 10, 18, 0.66); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    }
+    .ambient-proc-box {
+      width: min(420px, 92vw); display: flex; flex-direction: column; gap: 10px;
+      padding: 18px 20px; border-radius: 14px; background: #16161f; border: 1px solid #2d2d3f;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5); font-family: 'Segoe UI', sans-serif; color: #e2e0ec;
+    }
+    .ambient-proc-title { font-weight: 700; font-size: 0.95rem; color: #d6bcfa; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-proc-row { display: flex; align-items: center; gap: 10px; }
+    .ambient-proc-row > label { flex: 0 0 84px; font-size: 0.8rem; color: #a0aec0; }
+    .ambient-proc-row .ambient-select, .ambient-proc-row input[type=range] { flex: 1 1 auto; min-width: 0; }
+    .ambient-proc-val { flex: 0 0 34px; text-align: right; font: 600 0.8rem 'JetBrains Mono', monospace; color: #7fd6c4; }
+    .ambient-proc-hint { font-size: 0.72rem; color: #6a6a8a; }
+    .ambient-proc-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }

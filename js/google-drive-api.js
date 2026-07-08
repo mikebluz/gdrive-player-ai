@@ -230,7 +230,7 @@ class GoogleDriveAPI {
         // videoMediaMetadata is also populated for many audio files
         // (Drive probes them as media regardless of MIME) — use it to
         // compute a playlist running-time without decoding each blob.
-        fields: "nextPageToken, files(id, name, size, mimeType, videoMediaMetadata)",
+        fields: "nextPageToken, files(id, name, size, mimeType, videoMediaMetadata, modifiedTime)",
         pageToken,
       });
 
@@ -242,6 +242,8 @@ class GoogleDriveAPI {
             name: this.cleanFileName(file.name),
             size: file.size,
             durationMs: durMs,
+            modifiedTime: file.modifiedTime || null,
+            modifiedMs: file.modifiedTime ? Date.parse(file.modifiedTime) : 0,
             downloadUrl: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
           });
         }

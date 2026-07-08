@@ -14,6 +14,7 @@ class PlaylistManager {
         // #loop-btn inside the unified page.
         this.shuffleBtn = document.getElementById('sb-shuffle-btn');
         this.loopBtn    = document.getElementById('sb-loop-btn');
+        this.sortSelect = document.getElementById('sb-sort-select');
         this.loopMode = 'off'; // 'off' | 'track' | 'playlist'
 
         this.bindEvents();
@@ -22,6 +23,7 @@ class PlaylistManager {
     bindEvents() {
         this.shuffleBtn.addEventListener('click', () => this.toggleShuffle());
         this.loopBtn?.addEventListener('click', () => this.cycleLoopMode());
+        this.sortSelect?.addEventListener('change', (e) => { const m = e.target.value; if (m) this.sortTracks(m); e.target.value = ''; });
 
         // Listen for player events
         document.addEventListener('trackEnded', () => this.onTrackEnded());
@@ -205,6 +207,33 @@ class PlaylistManager {
         }
 
         this.playTrack(prevIndex);
+    }
+
+    // Sort the playlist by name or modified date. Becomes the new base order
+    // (originalOrder), turns off shuffle, and keeps the playing track selected.
+    sortTracks(mode) {
+        if (!this.tracks.length) return;
+        const curId = (this.currentIndex >= 0 && this.tracks[this.currentIndex]) ? this.tracks[this.currentIndex].id : null;
+        const byName = (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        const byDate = (a, b) => (a.modifiedMs || 0) - (b.modifiedMs || 0);
+        const cmp = {
+            'name':      byName,
+            'name-desc': (a, b) => byName(b, a),
+            'date':      (a, b) => byDate(b, a),   // newest first
+            'date-asc':  byDate,                   // oldest first
+        }[mode];
+        if (!cmp) return;
+        this.tracks.sort(cmp);
+        this.originalOrder = [...this.tracks];   // an explicit sort is the new base order
+        if (this.shuffled) {                     // sorting overrides shuffle
+            this.shuffled = false;
+            this.shuffleBtn.textContent = '🔀 Shuffle';
+            this.shuffleBtn.style.background = '';
+            this.shuffleBtn.style.color = '';
+        }
+        this.currentIndex = curId ? this.tracks.findIndex(t => t.id === curId) : -1;
+        this.renderPlaylist();
+        this.updatePlaylistInfo();
     }
 
     toggleShuffle() {

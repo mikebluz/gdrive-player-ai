@@ -10887,6 +10887,7 @@
         if (npHtml) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: npHtml }); }
       });
       _ambRenderNowPlaying(E, rows, playing);
+      try { _ambRefreshSeedModes(E); } catch (e) {}   // Task 4: keep Generate/Author active state fresh
       // If the open note editor's target note no longer exists (unlocked, deleted,
       // panel rebuilt), dismiss the popover.
       if (_ambNoteEd && _ambNoteEd.E === E) {
@@ -11357,6 +11358,29 @@
         events.push({ t: Math.max(0, rel), freq: n.freq, dur: n.dur, params: n.params });
       }
       return { events, loopLen: P };
+    }
+    // Task 4: per-layer Seed mode toggle — Generate (engine improvises) vs Author
+    // (a composed, hand-editable seed phrase). Author reuses the seed-preview →
+    // promote → lockState path; Generate reverts to live generation. Wired by
+    // delegation (one handler for primary + extras cards) via data-seedkey.
+    function _ambSeedModeHtml(lk) {
+      return '<div class="ambient-ctrl ambient-seedmode" title="Seed source — Generate (the engine improvises this layer live) or Author (compose a fixed seed phrase you can hand-edit on the 🎹 roll). Reversible.">' +
+        '<label>Seed</label>' +
+        '<span class="ambient-seg-row">' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="generate" data-seedkey="' + _ambEscText(lk) + '">Generate</button>' +
+          '<button type="button" class="ambient-seg amb-seedmode" data-seedmode="author" data-seedkey="' + _ambEscText(lk) + '">Author</button>' +
+        '</span><span class="ambient-hint">improvise / compose</span></div>';
+    }
+    function _ambRefreshSeedModes(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-seedmode').forEach(row => {
+        const gen = row.querySelector('[data-seedmode="generate"]'), auth = row.querySelector('[data-seedmode="author"]');
+        const key = gen && gen.dataset.seedkey; if (!key) return;
+        let authored = false;
+        try { const L = _ambLayerByKey(E, key); authored = !!(L && L.lockState && L.lockState.seedEdit); } catch (e) {}
+        if (gen) gen.classList.toggle('active', !authored);
+        if (auth) auth.classList.toggle('active', authored);
+      });
     }
     // Promote the cached seed preview into a REAL lock so the roll edit lands
     // in the standard machinery: lockState (persisted, replayed on Play via
@@ -13550,21 +13574,21 @@
     // header they sit under.
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
-        ['grp', 'Seed'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Generator'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
-        ['grp', 'Seed'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
+        ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Seed'], ['sl', 'register', 'Register', 3, 7, 'octave'],
+        ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 3, 7, 'octave'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
@@ -13581,7 +13605,7 @@
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
-        ['grp', 'Seed'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
+        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
@@ -13590,7 +13614,7 @@
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
-        ['grp', 'Seed'], ['sl', 'register', 'Register', 1, 4, 'octave'],
+        ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 4, 'octave'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
@@ -13599,7 +13623,7 @@
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
-        ['grp', 'Seed'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
+        ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
@@ -13607,7 +13631,7 @@
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
-        ['grp', 'Seed'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
+        ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Generator'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
@@ -13616,7 +13640,7 @@
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
-        ['grp', 'Seed'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
@@ -14025,6 +14049,7 @@
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +
         '</div></div>';
       if (k === 'rate') return _ambRateSel(p + '-rate');
+      if (k === 'seedmode') return _ambSeedModeHtml(lk);
       if (k === 'home') return '<div class="ambient-ctrl"><label for="' + p + '-home" title="Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).">Home</label><select id="' + p + '-home" class="ambient-select"><option value="floor">Floor</option><option value="center">Center</option><option value="ceiling">Ceiling</option></select><span class="ambient-hint">Register sits at\u2026</span></div>';
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
@@ -16307,6 +16332,31 @@
         const fl = e.target && e.target.closest && e.target.closest('.ambient-freezelock-btn');
         if (fl) { e.stopPropagation(); try { const L = _ambLayerByKey(E, fl.dataset.flkey); if (L) { L.freezeLock = !L.freezeLock; fl.classList.toggle('active', !!L.freezeLock); if (typeof persistWorkspace === 'function') persistWorkspace(); } } catch (err) { console.warn('Lock toggle failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
+        // Task 4: Seed mode toggle (Generate / Author) — one delegated handler for
+        // primary + extras cards (key from data-seedkey).
+        const sm = e.target && e.target.closest && e.target.closest('.amb-seedmode');
+        if (sm) {
+          e.stopPropagation();
+          const key = sm.dataset.seedkey, mode = sm.dataset.seedmode;
+          try {
+            if (mode === 'generate') { _ambSeedRevert(E, key); }
+            else {
+              const L = _ambLayerByKey(E, key);
+              if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }
+              // Reveal the 🎹 piano so the authored roll is visible + editable.
+              const h2 = document.getElementById(E.hostId);
+              const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+              if (pe && !pe.classList.contains('open')) {
+                const r = _ambPianoRangeFor(E, key); _ambBuildPiano(pe, r.LO, r.HI); pe.classList.add('open');
+                const tog = h2.querySelector('.ambient-piano-toggle[data-pkey="' + key + '"]'); if (tog) tog.classList.add('active');
+              }
+              try { _ambUpdateNotesLive(E); } catch (e2) {}
+            }
+            _ambRefreshSeedModes(E);
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          } catch (err) { console.warn('Seed mode toggle failed', err); }
+          return;
+        }
         const pb = e.target && e.target.closest && e.target.closest('.ambient-piano-toggle');
         if (pb) {
           e.stopPropagation();

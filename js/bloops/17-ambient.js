@@ -1156,7 +1156,7 @@
                panMode: 'spread', space: 0, attack: 120, decay: 120, sustain: 70, release: 600, fine: 0,
                level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
-               unitMode: 'single', units: [], keyMaster: false, harmony: 'fixed', ..._ambDefaultFx() };
+               unitMode: 'single', units: [], keyMaster: false, harmony: 'fixed', chordMode: 'poly', ..._ambDefaultFx() };
     }
     function _ambValidUnit(u) {
       return !!(u && typeof u === 'object' && Array.isArray(u.events) && u.events.length > 0);
@@ -1189,6 +1189,9 @@
       // pre-B4). 'diatonic' transposes to the current key root + snaps into its
       // scale. ('chordlock' is a later slice; not offered in the UI yet.)
       if (s.harmony !== 'diatonic' && s.harmony !== 'chordlock') s.harmony = 'fixed';
+      // B5: chord realization for multi-note events — 'poly' (default, stack all),
+      // 'arp' (strum across the slot), 'monoRoot'/'monoTop' (fold to lowest/highest).
+      if (['poly', 'arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) < 0) s.chordMode = 'poly';
       if (!Array.isArray(s.units)) s.units = [];
       s.units = s.units.filter(_ambValidUnit);
       // Per-section fields: iterations before switching + a display name.
@@ -6195,10 +6198,23 @@
     // Emit ONE realized event at an absolute time. dest/dmod resolved fresh so
     // a mod-chain rebuild between ticks can't strand a phrase on a dead node.
     function _ambEmitSeqEvent(ctx, ev, atAbs, st) {
-      // B4: remap the captured pitches per the seq's Harmony mode (Fixed = untouched).
-      const freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, ctx.seq, atAbs);
-      if (!freqs || !freqs.length) return;
       const seq = ctx.seq;
+      // B4: remap the captured pitches per the seq's Harmony mode (Fixed = untouched).
+      let freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, seq, atAbs);
+      if (!freqs || !freqs.length) return;
+      // B5: chord realization for a multi-note event — 'poly' (default) stacks all
+      // voices (byte-identical). 'monoRoot'/'monoTop' fold to the lowest/highest
+      // note. 'arp' strums the voices across the slot (a per-voice onset stagger).
+      const cmode = seq.chordMode || 'poly';
+      if ((cmode === 'monoRoot' || cmode === 'monoTop') && freqs.length > 1) {
+        const top = (cmode === 'monoTop');
+        freqs = [freqs.reduce((a, b) => (top ? Math.max(a, b) : Math.min(a, b)))];
+      }
+      // Per-voice onset stagger: 0 for poly/mono (grid-direct stays sample-exact),
+      // a musical strum spread across the slot for arp.
+      const strumStep = (cmode === 'arp' && freqs.length > 1)
+        ? Math.min(0.09, Math.max(0.012, (Math.max(20, ev.durMs | 0) / 1000) * 0.4 / freqs.length))
+        : 0;
       const dest = _ambLayerDest(ctx.key), dmod = _ambLayerDetuneMod(ctx.key);
       const durMs = ev.durMs, padStyle = ev.padStyle, sounds = ev.sounds;
       const base = ctx.base, type = ctx.type, layerSet = ctx.layerSet, seqEnsLock = ctx.seqEnsLock;
@@ -6226,7 +6242,7 @@
             if (seqEnsLock) p0._ensembleForceStack = true;
             else p0._ensembleMemberIdx = _ensPick++;
           }
-          try { playNote(f, p0, durMs, atAbs, dst, undefined, _E.laneIdx()); } catch (e) {}
+          try { playNote(f, p0, durMs, atAbs + vi * strumStep, dst, undefined, _E.laneIdx()); } catch (e) {}
         });
         if (st) st._ensPick = _ensPick;
         return;
@@ -6245,7 +6261,7 @@
           else p._ensembleMemberIdx = _ensPick++;          // unlocked: one member per note, rotating
         }
         if (dmod) p._detuneMod = dmod;
-        try { playNote(f, p, durMs, atAbs + vi * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+        try { playNote(f, p, durMs, atAbs + vi * (strumStep || 0.006), dest, undefined, _E.laneIdx()); } catch (e) {}
       });
       if (st) st._ensPick = _ensPick; // carry the unlocked-ensemble rotation across fires
     }
@@ -12731,7 +12747,11 @@
           // phrase to the current key + snaps it into scale (follows key changes).
           '<div class="ambient-ctrl"><label for="' + p + 'harmony">Harmony</label><select id="' + p + 'harmony" class="ambient-select">' +
             opts([['fixed', 'Fixed'], ['diatonic', 'Diatonic'], ['chordlock', 'Chord-locked']], (s.harmony === 'diatonic' || s.harmony === 'chordlock') ? s.harmony : 'fixed') +
-            '</select><span class="ambient-hint">fixed / follow key / lock to chord</span></div>' + gpe() +
+            '</select><span class="ambient-hint">fixed / follow key / lock to chord</span></div>' +
+          // B5: how a multi-note (chord) event is realized — stack, strum, or fold.
+          '<div class="ambient-ctrl"><label for="' + p + 'chordmode">Chords</label><select id="' + p + 'chordmode" class="ambient-select">' +
+            opts([['poly', 'Poly (stack)'], ['arp', 'Arp (strum)'], ['monoRoot', 'Mono — low'], ['monoTop', 'Mono — high']], ['arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) >= 0 ? s.chordMode : 'poly') +
+            '</select><span class="ambient-hint">stack / strum / fold</span></div>' + gpe() +
         grp('Timing') +
           // Loop length: Auto (one pass == the played sequence's own length) vs
           // Manual (the Interval knob below). Auto greys out / ignores Interval.
@@ -12843,7 +12863,7 @@
         // blank default — updated live to the playing step during playback.
         try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
       }
-      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony');
+      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony'); bindStr('chordmode', 'chordMode');
       // Output routing (grid-direct ↔ bloom blend) — store 'grid' or clear.
       { const o = el('out'); if (o) o.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; if (o.value === 'grid') sq.out = 'grid'; else delete sq.out; persist(); }); }
       const secBtn = el('sections');

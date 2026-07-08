@@ -5,7 +5,7 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAI
 class MusicPlayer {
     // Bump on every deploy so the "diag ready · build …" line proves whether
     // the browser loaded the fresh script or a cached old one.
-    static BUILD = '20260708b';
+    static BUILD = '20260708c';
 
     constructor(gDrive, blobCache = null) {
         this.gDrive = gDrive;
@@ -264,7 +264,7 @@ class MusicPlayer {
     // likely remaining cause is a scrambled playlist mapping — the displayed name
     // paired with a DIFFERENT file's id. This is the authoritative check: same id,
     // one file. Async + non-blocking; prints when Drive answers.
-    async _diagVerifyFile(id, shownName) {
+    async _diagVerifyFile(id, shownName, heldBlob) {
         if (!this._diagOn() || !id) return;
         try {
             const token = this.gDrive && this.gDrive.accessToken;
@@ -279,9 +279,41 @@ class MusicPlayer {
             const mism = norm(real) !== norm(shown);
             this._diag('VERIFY id=' + this._short(id) + ' drive="' + real + '" shown="' + shown + '"' +
                 (mism ? '  ← ID POINTS TO WRONG FILE' : '  ✓ id matches title'), mism);
+            // Content check: does the number of bytes we HOLD match the file's real
+            // size on Drive? A mismatch means the blob under this (correct) id carries
+            // the WRONG file's bytes — bad content, not a bad pointer.
+            if (heldBlob && meta.size) {
+                const driveKB = Math.round(Number(meta.size) / 1024);
+                const heldKB = Math.round(heldBlob.size / 1024);
+                const sizeBad = Math.abs(driveKB - heldKB) > 2;
+                this._diag('  bytes held=' + heldKB + 'KB drive=' + driveKB + 'KB' +
+                    (sizeBad ? '  ← BLOB CONTENT IS THE WRONG FILE' : '  ✓ bytes match Drive'), sizeBad);
+            }
         } catch (e) {
             this._diag('verify err: ' + (e && e.message || e), true);
         }
+    }
+
+    // Decode the EXACT bytes we're about to play (independent of the <audio>
+    // element) and report their true duration. If this differs from the track's
+    // expected length, the blob content itself is the wrong song — even though
+    // every pointer (id/blob/src) is correct.
+    _diagProbeBytes(blob, expSec) {
+        if (!this._diagOn() || !blob) return;
+        try {
+            const url = URL.createObjectURL(blob);
+            const a = new Audio();
+            a.preload = 'metadata';
+            a.addEventListener('loadedmetadata', () => {
+                const d = Math.round(a.duration || 0);
+                const bad = expSec > 0 && d > 0 && Math.abs(d - expSec) > 2;
+                this._diag('  bytes decode to ' + d + 's (expected ' + expSec + 's)' +
+                    (expSec > 0 ? (bad ? '  ← BYTES ARE WRONG SONG' : '  ✓ bytes are right song') : ''), bad);
+                try { URL.revokeObjectURL(url); } catch {}
+            }, { once: true });
+            a.addEventListener('error', () => { try { URL.revokeObjectURL(url); } catch {} }, { once: true });
+            a.src = url;
+        } catch (e) {}
     }
 
     isPrefetched(trackId) {
@@ -405,8 +437,11 @@ class MusicPlayer {
                 let others = 0;
                 document.querySelectorAll('audio,video').forEach(m => { if (m !== this.audio && !m.paused && !m.ended && m.currentTime > 0) others++; });
                 this._diag('  src.attr ' + (heldOurs ? 'ours ✓' : '≠ ours ⚠') + (others ? '  · ' + others + ' OTHER media playing ⚠' : ''), !heldOurs || others > 0);
-                // Authoritative: is this id really the file the title claims?
-                this._diagVerifyFile(wantId, this.currentTrack.name);
+                // Authoritative: is this id really the file the title claims, and do
+                // the bytes we hold match that file's real size on Drive?
+                this._diagVerifyFile(wantId, this.currentTrack.name, this._blob);
+                // And what do the exact bytes decode to? (content, not pointer)
+                this._diagProbeBytes(this._blob, _exp);
             }
             await this.audio.play();
         } catch (error) {

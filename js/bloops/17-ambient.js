@@ -9522,6 +9522,21 @@
       try { if (_masterEng.inited || switched) _ambRebuildMaster(); } catch (e) {}
       try { if (typeof persistWorkspace === 'function') persistWorkspace(); } catch (e) {}
     }
+    // B3: send a saved sequence to Bloom AS A CHORD PAD — extract its chords onto
+    // ONE new Bed layer (a per-layer KEY override, keyOv prog) instead of the
+    // area-global progression, so the rest of the area is untouched. Complements
+    // "As Progression (global chords)" (which sets cfg.prog for every layer).
+    function _ambSendSavedToBloomAsPad(seqIndex, areaIdx) {
+      const saved = (typeof savedSequences !== 'undefined') ? savedSequences[seqIndex] : null;
+      if (!saved || !Array.isArray(saved.steps)) return;
+      const chords = _ambProgFromSteps(saved.steps);
+      if (!chords.length) { try { alert('That sequence has no chords/notes to make a progression.'); } catch (e) {} return; }
+      if (typeof snapshotForUndo === 'function') snapshotForUndo('Send to Bloom (chord pad)');
+      const switched = _ambSendTargetArea(areaIdx);
+      const name = (saved.name && saved.name.trim()) ? saved.name.trim() : 'Progression';
+      _ambAddPadForProg(_masterEng, chords, name);   // adds a Bed with keyOv prog + renders + persists
+      try { if (_masterEng.inited || switched) _ambRebuildMaster(); } catch (e) {}
+    }
     // Build a unit from a LANE's own steps (+ workspace key/tempo).
     function _ambUnitFromLane(laneIdx) {
       const lane = (typeof lanes !== 'undefined') ? lanes[laneIdx] : null;

@@ -1344,6 +1344,9 @@
           if (typeof _ambSendSavedToBloomAsProg === 'function') {
             sub.push('hr');
             sub.push({ label: '⇶ As Progression (global chords)', fn: () => _ambSendSavedToBloomAsProg(seqIndex, areaIdx) });
+            // New-model routing: the chords on ONE pad layer (its own KEY override),
+            // leaving the rest of the area alone.
+            if (typeof _ambSendSavedToBloomAsPad === 'function') sub.push({ label: '⇶ As chord pad (own layer)', fn: () => _ambSendSavedToBloomAsPad(seqIndex, areaIdx) });
           }
           // If this sequence's voice is a single-buffer sample, also offer the
           // raw Sample layer (chopped/whole) on the master Bloom.

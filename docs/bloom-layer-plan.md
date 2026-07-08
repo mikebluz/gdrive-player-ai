@@ -42,6 +42,16 @@ when empty, wired into the B2 KEY chip ("✎ Author / edit chords…"). Area edi
 still additive): roman-numeral display in the editor; Send-to-Bloom part-vs-progression
 routing; "promote part → progression"; "add a pad playing this progression".
 
+**B4 slice 1 DONE (`b0512b7`).** Seq Harmony toggle: `seq.harmony` = 'fixed' (default,
+byte-identical) | 'diatonic' (transpose the captured phrase to the current key root +
+snap into its scale → follows key changes). Degrees derived live from the unit's stored
+capture key (`unit.scale`/`rootIdx`) — no migration. Remap in `_ambEmitSeqEvent` via
+`_ambSeqHarmonizeFreqs`; Harmony select on the Seq card. Harness byte-identical (Fixed
+default; Seq isn't in the battery anyway → wants an ear-check). **B4 remaining slices**:
+'chordlock' (degrees → current chord); user re-voicing (Smooth/Reset/Preserve); missing-
+tone borrow; per-unit (vs per-layer) granularity. **Then B5** — chords-in-sequences
+realization (poly-stack / arp-spread / mono-fold); **Track C** — SEED fold + cleanups.
+
 Audit context — the cascading KEY frame was largely in place at the DATA level
 already before B1:
 - Area KEY: `cfg.keyRoot`/`cfg.keyScale`/`cfg.keyOn`/`cfg.keyFollow`

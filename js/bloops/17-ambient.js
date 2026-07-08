@@ -2688,6 +2688,7 @@
         '<div class="pe-qrow"><label>Set quality</label>' + qButtons + '</div>' +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
+          '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
           '<button type="button" class="pe-apply" data-pe="save">Save as new</button></div>';
       const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
       const ln = host.querySelector('#pe-len');
@@ -2697,6 +2698,22 @@
         else { const f = _ambParseBpc(v); if (f != null) ed.chords[ed.sel].bars = f; }
         _ambPeRender();
       });
+    }
+    // B3: spawn a Bed pad layer that plays a progression (a chord array), via a
+    // per-layer KEY override (keyOv prog) — reuses the verified bed+prog generation.
+    // Closes the author→hear loop from the chord editor.
+    function _ambAddPadForProg(E, chords, name) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !Array.isArray(chords) || !chords.length) return;
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      const L = _ambDefaultLayer('bed', newId);
+      L.label = (name ? (name + ' pad') : 'Chord pad');
+      L.keyOv = { mode: 'prog', name: name || 'Progression', chords: chords.map(_ambCloneChord) };
+      cfg.extras.push(L);
+      try { _ambRenderExtras(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Added a pad on “' + (name || 'Progression') + '”');
     }
     function _ambPeAct(act, el) {
       const ed = _ambProgEd; if (!ed) return;
@@ -2713,6 +2730,11 @@
       else if (op === 'trup' || op === 'trdn') { const d = (op === 'trup') ? 1 : -1; ch.root = (((ch.root + d) % 12) + 12) % 12; }
       else if (op === 'inv') { const ns = _ambPeNotes(ch); if (ns.length > 1) { const newRoot = (((ch.root + ch.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, false); ch.root = newRoot; ch.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
       else if (op === 'cancel') { _ambPeClose(); return; }
+      else if (op === 'pad') {
+        const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
+        _ambAddPadForProg(ed.E, chords, (ed.name || '').trim());
+        return;   // keep the editor open so you can keep tweaking
+      }
       else if (op === 'save') {
         const E = ed.E;
         const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });

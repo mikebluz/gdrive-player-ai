@@ -2609,6 +2609,12 @@
     }
     .ambient-master-menu[open] > .ambient-master-summary::after { transform: rotate(180deg); }
     .ambient-master-summary:hover { color: #f5d0fe; }
+    /* Configure-header KEY indicator — grey when following the workspace key, amber
+       when this Area overrides it (a custom key / progression / chromatic-while-keyed). */
+    .ambient-cfg-keyind { font-weight: 600; font-size: 0.78rem; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .ambient-cfg-keyind.is-ws { color: #7c85a0; }
+    .ambient-cfg-keyind.is-override { color: #e6b450; }
+    .ambient-cfg-keyind:empty { display: none; }
     .ambient-master-menu-body {
       display: flex; flex-direction: column; gap: 12px;
       padding: 4px 12px 12px; border-top: 1px solid #23233a;

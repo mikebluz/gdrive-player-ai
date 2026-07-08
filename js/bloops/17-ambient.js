@@ -15876,6 +15876,18 @@
           rk.mode === 'chromatic' ? 'free — no key constraint'
           : rk.mode === 'key' ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
           : (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's') + (cfg.keyOn ? ' · in ' + kName + ' ' + kQual : '')) : 'pick a progression'));
+        // Configure-header indicator: current Area KEY at a glance, coloured grey when
+        // it follows the workspace, amber when overridden for this Area.
+        const kind = document.getElementById(tr('ambient-cfg-keyind'));
+        if (kind) {
+          let txt, override;
+          if (rk.mode === 'progression') { txt = '⇶ ' + ((p.name && p.name.trim()) || 'Progression') + (cfg.keyOn ? ' · ' + kName + ' ' + kQual : ''); override = true; }
+          else if (rk.mode === 'key') { txt = '♪ ' + kName + ' ' + kQual; override = !follow; }
+          else { txt = '∅ Chromatic'; override = true; }   // Free while the workspace may carry a key → a divergence
+          kind.textContent = txt;
+          kind.classList.toggle('is-override', !!override);
+          kind.classList.toggle('is-ws', !override);
+        }
       }
       set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
       set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
@@ -16054,7 +16066,7 @@
         // Everything above the first layer (viz + global Bloom settings) lives in
         // one collapsible menu so the panel opens straight onto the layer stack.
         '<details class="ambient-master-menu">' +
-        '<summary class="ambient-master-summary">⚙ Configure</summary>' +
+        '<summary class="ambient-master-summary">⚙ Configure<span class="ambient-cfg-keyind" id="ambient-cfg-keyind" title="Current Area KEY (grey = following the workspace key · amber = overridden for this Area)"></span></summary>' +
         '<div class="ambient-master-menu-body">' +
         // Master (Mixer) Bloom drops the spectrum visualizer; the main + shape panels keep it.
         (E.idPrefix === 'mix-bloom' ? '' : '<canvas id="ambient-viz" class="ambient-viz"></canvas>') +

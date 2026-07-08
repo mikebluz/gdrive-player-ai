@@ -52,6 +52,17 @@ default; Seq isn't in the battery anyway → wants an ear-check). **B4 remaining
 tone borrow; per-unit (vs per-layer) granularity. **Then B5** — chords-in-sequences
 realization (poly-stack / arp-spread / mono-fold); **Track C** — SEED fold + cleanups.
 
+**B4 slice 2 DONE (`8252898`).** Harmony 'Chord-locked' — transpose to key + snap each
+note onto the CURRENT chord's tones at its onset (from the seq's effective progression;
+scale-snap fallback with no prog). `_ambSnapMidiToPcs` + onset-time threading. Harness
+byte-identical. The Harmony toggle is now complete (Fixed / Diatonic / Chord-locked).
+
+**B3 slice 2 DONE (`d7d5b2a`).** Roman-numeral labels in the chord editor (I, ii, V7,
+vii°, ♭III…), relative to the current key. Pure display, harness byte-identical.
+
+⚠️ **B4 Diatonic + Chord-locked change AUDIO and Seq isn't harness-covered → they want
+an ear-check before B5 piles more realization on top.**
+
 Audit context — the cascading KEY frame was largely in place at the DATA level
 already before B1:
 - Area KEY: `cfg.keyRoot`/`cfg.keyScale`/`cfg.keyOn`/`cfg.keyFollow`

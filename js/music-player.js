@@ -5,7 +5,7 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAI
 class MusicPlayer {
     // Bump on every deploy so the "diag ready · build …" line proves whether
     // the browser loaded the fresh script or a cached old one.
-    static BUILD = '20260708c';
+    static BUILD = '20260708d';
 
     constructor(gDrive, blobCache = null) {
         this.gDrive = gDrive;
@@ -316,6 +316,36 @@ class MusicPlayer {
         } catch (e) {}
     }
 
+    async _sha(blob) {
+        const buf = await blob.arrayBuffer();
+        const d = await crypto.subtle.digest('SHA-256', buf);
+        return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // THE definitive content check: hash the bytes we're about to play against a
+    // FRESH fetch of the same id from Drive. Size and duration are unreliable
+    // fingerprints (same-bitrate exports of equal length match by coincidence);
+    // a hash is not. If they differ, the cache holds the WRONG song's bytes under
+    // a correct id — poisoned cache, the real "wrong song plays" cause.
+    async _diagContentCheck(id, heldBlob) {
+        if (!this._diagOn() || !id || !heldBlob) return;
+        try {
+            const token = this.gDrive && this.gDrive.accessToken;
+            if (!token) { this._diag('content: no token', true); return; }
+            const r = await fetch(this._driveMediaUrl(id),
+                { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+            if (!r.ok) { this._diag('content: drive HTTP ' + r.status, true); return; }
+            const fresh = await r.blob();
+            const [h1, h2] = await Promise.all([this._sha(heldBlob), this._sha(fresh)]);
+            const same = h1 === h2;
+            this._diag('  CONTENT held#' + h1.slice(0, 8) + ' drive#' + h2.slice(0, 8) +
+                ' (' + Math.round(fresh.size / 1024) + 'KB)' +
+                (same ? '  ✓ same bytes' : '  ← CACHE HAS WRONG BYTES (poisoned)'), !same);
+        } catch (e) {
+            this._diag('content err: ' + (e && e.message || e), true);
+        }
+    }
+
     isPrefetched(trackId) {
         return this._prefetchCache.has(trackId);
     }
@@ -442,6 +472,9 @@ class MusicPlayer {
                 this._diagVerifyFile(wantId, this.currentTrack.name, this._blob);
                 // And what do the exact bytes decode to? (content, not pointer)
                 this._diagProbeBytes(this._blob, _exp);
+                // Definitive: hash held bytes vs a fresh Drive fetch (size/duration
+                // are fooled by same-bitrate same-length songs; a hash is not).
+                this._diagContentCheck(wantId, this._blob);
             }
             await this.audio.play();
         } catch (error) {

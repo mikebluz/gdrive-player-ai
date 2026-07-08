@@ -10766,10 +10766,17 @@
         // Now Playing row: the CURRENT unit only, ONE compact horizontal line per
         // layer — no lookahead "next", no vertical note stacks (those made it a
         // gigantic list). names: null = no unit (skip); [] = REST ("–"); [..] notes.
+        // Cap the notes shown on one Now-Playing line: a Seq "unit" is a whole
+        // phrase (dozens of notes) and used to flood the row. Show the first N and
+        // a "+K" overflow tag so the readout stays one compact glanceable line.
+        const NP_MAX = 10;
         const npSeg = (names) => {
           if (names == null) return '';
           if (!names.length) return '<span class="ambient-np-rest">–</span>';
-          return '<span class="ambient-np-cur" style="color:' + colorFor(names) + '">' + names.join(' ') + '</span>';
+          const extra = names.length - NP_MAX;
+          const shown = (extra > 0) ? names.slice(0, NP_MAX) : names;
+          return '<span class="ambient-np-cur" style="color:' + colorFor(names) + '">' + shown.join(' ') +
+            (extra > 0 ? ' <span class="ambient-np-more">+' + extra + '</span>' : '') + '</span>';
         };
         let curNames = null;   // current unit's note names → the Now Playing row
         if (lockEd) {

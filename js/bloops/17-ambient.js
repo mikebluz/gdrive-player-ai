@@ -10346,8 +10346,46 @@
       }
       return out;
     }
+    // Offline reverb: render the buffer through a convolver with a synthesized
+    // exponentially-decaying-noise impulse; amount (0..1) sets wet level + tail.
+    async function _ambProcReverb(buf, amount) {
+      amount = Math.max(0, Math.min(1, amount || 0));
+      if (amount <= 0) return buf;
+      const sr = buf.sampleRate;
+      const tail = Math.ceil((1.0 + amount * 2.5) * sr);
+      const ctx = _ambProcOfflineCtx(2, buf.length + tail, sr);
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const ir = ctx.createBuffer(2, tail, sr);
+      for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < tail; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / tail, 2.5); }
+      const conv = ctx.createConvolver(); conv.buffer = ir;
+      const wet = ctx.createGain(); wet.gain.value = amount;
+      const dry = ctx.createGain(); dry.gain.value = 1 - amount * 0.4;
+      src.connect(dry).connect(ctx.destination);
+      src.connect(conv); conv.connect(wet).connect(ctx.destination);
+      src.start(0);
+      return await ctx.startRendering();
+    }
+    // Offline feedback delay: time (s), feedback (0..0.95), mix (0..1).
+    async function _ambProcDelay(buf, timeSec, feedback, mix) {
+      timeSec = Math.max(0.01, timeSec || 0.3);
+      feedback = Math.max(0, Math.min(0.95, feedback || 0));
+      mix = Math.max(0, Math.min(1, mix || 0));
+      if (mix <= 0) return buf;
+      const sr = buf.sampleRate;
+      const tail = Math.min(sr * 8, Math.ceil(timeSec / (1 - feedback + 0.02) * 4 * sr));
+      const ctx = _ambProcOfflineCtx(2, buf.length + tail, sr);
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const dl = ctx.createDelay(Math.max(1, timeSec + 0.2)); dl.delayTime.value = timeSec;
+      const fb = ctx.createGain(); fb.gain.value = feedback;
+      const wet = ctx.createGain(); wet.gain.value = mix;
+      src.connect(ctx.destination);                 // dry
+      src.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet).connect(ctx.destination);
+      src.start(0);
+      return await ctx.startRendering();
+    }
     // Apply an op set to a decoded buffer → processed buffer. op:
-    //   { reverse:bool, pitch:{ mode:'resample'|'shift', semis:number, toSemis:number|null } }
+    //   { reverse:bool, pitch:{ mode:'resample'|'shift', semis, toSemis },
+    //     reverb:0..1, delay:{ time, feedback, mix } }
     async function _ambProcessBuffer(buf, op) {
       let b = buf;
       if (op && op.reverse) b = _ambProcReverse(b);
@@ -10355,6 +10393,8 @@
         const p = op.pitch, to = (p.toSemis != null && p.toSemis !== p.semis) ? p.toSemis : null;
         b = (p.mode === 'shift') ? _ambProcPitchShift(b, p.semis || 0, to) : await _ambProcResample(b, p.semis || 0, to);
       }
+      if (op && op.reverb) b = await _ambProcReverb(b, op.reverb);
+      if (op && op.delay && op.delay.mix) b = await _ambProcDelay(b, op.delay.time, op.delay.feedback, op.delay.mix);
       return b;
     }
     // Grid metadata stamped on every capture (feature B): the tempo the take was
@@ -10421,6 +10461,9 @@
           '<div class="ambient-proc-row"><label for="proc-semis">Semitones</label><input type="range" id="proc-semis" min="-24" max="24" step="1" value="0"><span class="ambient-proc-val" id="proc-semis-v">0</span></div>' +
           '<div class="ambient-proc-row"><label>Glide</label><button type="button" class="ambient-seg" id="proc-glide" title="Ramp the pitch from Semitones → Glide-to over the clip">Off</button></div>' +
           '<div class="ambient-proc-row" id="proc-glide-row" hidden><label for="proc-tosemis">Glide to</label><input type="range" id="proc-tosemis" min="-24" max="24" step="1" value="0"><span class="ambient-proc-val" id="proc-tosemis-v">0</span></div>' +
+          '<div class="ambient-proc-row"><label for="proc-reverb">Reverb</label><input type="range" id="proc-reverb" min="0" max="100" step="1" value="0"><span class="ambient-proc-val" id="proc-reverb-v">0</span></div>' +
+          '<div class="ambient-proc-row"><label for="proc-delay">Delay</label><input type="range" id="proc-delay" min="0" max="100" step="1" value="0"><span class="ambient-proc-val" id="proc-delay-v">0</span></div>' +
+          '<div class="ambient-proc-row" id="proc-delay-adv" hidden><label>· time / fb</label><input type="range" id="proc-delaytime" min="30" max="900" step="10" value="300" title="Delay time (ms)"><input type="range" id="proc-delayfb" min="0" max="90" step="1" value="35" title="Feedback %"></div>' +
           '<div class="ambient-proc-hint">Renders a NEW take in the bank (the original is kept).</div>' +
           '<div class="ambient-proc-actions"><button type="button" class="ambient-seg" id="proc-cancel">Cancel</button><button type="button" class="ambient-regen" id="proc-apply">Apply → new take</button></div>' +
         '</div>';
@@ -10430,14 +10473,20 @@
       const glideB = $('proc-glide'); glideB.addEventListener('click', () => { glide = !glide; glideB.textContent = glide ? 'On' : 'Off'; glideB.classList.toggle('active', glide); $('proc-glide-row').hidden = !glide; });
       const semis = $('proc-semis'); semis.addEventListener('input', () => { $('proc-semis-v').textContent = semis.value; });
       const toS = $('proc-tosemis'); toS.addEventListener('input', () => { $('proc-tosemis-v').textContent = toS.value; });
+      const reverbEl = $('proc-reverb'); reverbEl.addEventListener('input', () => { $('proc-reverb-v').textContent = reverbEl.value; });
+      const delayEl = $('proc-delay'); delayEl.addEventListener('input', () => { $('proc-delay-v').textContent = delayEl.value; $('proc-delay-adv').hidden = (parseInt(delayEl.value, 10) || 0) <= 0; });
       $('proc-cancel').addEventListener('click', _ambCloseProcModal);
       $('proc-apply').addEventListener('click', async () => {
         const applyBtn = $('proc-apply'); applyBtn.disabled = true; applyBtn.textContent = 'Processing…';
         const sv = parseInt(semis.value, 10) || 0, tv = glide ? (parseInt(toS.value, 10) || 0) : null;
-        const op = { reverse: reverse, pitch: { mode: $('proc-pitchmode').value, semis: sv, toSemis: tv } };
+        const rv = parseInt(reverbEl.value, 10) || 0, dl = parseInt(delayEl.value, 10) || 0;
+        const op = { reverse: reverse, pitch: { mode: $('proc-pitchmode').value, semis: sv, toSemis: tv },
+          reverb: rv / 100, delay: { time: (parseInt($('proc-delaytime').value, 10) || 300) / 1000, feedback: (parseInt($('proc-delayfb').value, 10) || 0) / 100, mix: dl / 100 } };
         const parts = [];
         if (reverse) parts.push('rev');
         if (sv || tv != null) parts.push((op.pitch.mode === 'shift' ? '♪' : '⇄') + (sv > 0 ? '+' : '') + sv + (tv != null ? '→' + tv : ''));
+        if (rv) parts.push('verb' + rv);
+        if (dl) parts.push('dly' + dl);
         const suffix = parts.length ? ' (' + parts.join(' ') + ')' : ' (proc)';
         try {
           await _ambProcessCaptureItem(it, op, suffix);

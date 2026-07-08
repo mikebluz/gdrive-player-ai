@@ -2564,6 +2564,30 @@
       ch.intervals = uniq.map(p => (((p - base) % 12) + 12) % 12).sort((a, b) => a - b);
     }
     function _ambPeChLabel(ch) { return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
+    // B3: roman-numeral for a chord relative to a key (root pc + scale name). Degree
+    // from the major-scale reference (chromatic roots get ♭/♯); case + symbol from
+    // the chord quality (upper = major/aug, lower = minor/dim, °=dim, +=aug, 7 tags).
+    // Returns '' when there's no key context.
+    function _ambPeRoman(ch, keyRoot, keyScale) {
+      if (!ch || !Number.isFinite(keyRoot)) return '';
+      const R = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+      const MAJ = [0, 2, 4, 5, 7, 9, 11];
+      const rel = (((((ch.root | 0) - (keyRoot | 0)) % 12) + 12) % 12);
+      let deg = MAJ.indexOf(rel), acc = '';
+      if (deg < 0) {
+        // Prefer flats for chromatic roots (♭III, ♭VI, ♭VII…): find the major degree
+        // one semitone ABOVE first; only fall back to ♯ if none matches.
+        for (let i = 0; i < 7; i++) { if (MAJ[i] === (rel + 1) % 12) { deg = i; acc = '♭'; break; } }
+        if (deg < 0) for (let i = 0; i < 7; i++) { if (MAJ[i] === (((rel - 1) % 12) + 12) % 12) { deg = i; acc = '♯'; break; } }
+        if (deg < 0) return '';
+      }
+      const iv = (ch.intervals || []).map(x => (((x | 0) % 12) + 12) % 12);
+      const has = (x) => iv.indexOf(x) >= 0;
+      const minor = has(3) && !has(4), dim = has(3) && has(6) && !has(7), aug = has(4) && has(8) && !has(7);
+      let num = R[deg]; if (minor || dim) num = num.toLowerCase();
+      let sym = dim ? '°' : (aug ? '+' : ''); if (has(10)) sym += '7'; else if (has(11)) sym += 'maj7';
+      return acc + num + sym;
+    }
     function _ambPeClose() { const h = document.getElementById('ambient-prog-editor'); if (h) h.style.setProperty('display', 'none', 'important'); _ambProgEd = null; }
     const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; };
     // Publish a chord-array progression to the shared registry (the prog pickers'
@@ -2630,8 +2654,11 @@
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
       const gcfg = ed.E.getCfg();
       const gbpcStr = (gcfg && (gcfg.barsPerChordStr || _ambFmtBpc(gcfg.barsPerChord))) || '1';
-      const chordsRow = ed.chords.map((c, i) =>
-        '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + '">' + (i + 1) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em></button>').join('') +
+      // Roman numerals relative to the current key (area key the progression sits in).
+      const kRoot = gcfg ? _ambKeyRootPc(gcfg) : 0, kScale = gcfg ? _ambKeyScaleName(gcfg) : 'major';
+      const chordsRow = ed.chords.map((c, i) => {
+        const rn = _ambPeRoman(c, kRoot, kScale);
+        return '<button type="button" class="pe-chord' + (i === sel ? ' sel' : '') + '" data-pe="sel:' + i + '" title="' + esc(_ambPeChLabel(c)) + (rn ? ' (' + esc(rn) + ')' : '') + '">' + (rn ? '<b class="pe-rn">' + esc(rn) + '</b>' : (i + 1)) + '<small>' + esc(_ambPeChLabel(c)) + '</small><em>' + esc((c.bars > 0 ? _ambFmtBpc(c.bars) : gbpcStr) + ' bar' + ((c.bars > 0 ? c.bars : gcfg && gcfg.barsPerChord) === 1 ? '' : 's')) + '</em></button>'; }).join('') +
         '<button type="button" class="pe-chord pe-add" data-pe="addchord" title="Add a chord (copy of the selected)">＋</button>';
       const notes = _ambPeNotes(ch).slice().sort((a, b) => a - b);
       const noteChips = notes.map((p, ni) =>

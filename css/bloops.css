@@ -2736,6 +2736,8 @@
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }
     .pe-x { color: #fc8181 !important; }
     .pe-chord em { font-style: normal; font-size: 0.58rem; color: #c9a8ec; }
+    /* B3: roman-numeral header on each chord (relative to the key). */
+    .pe-chord .pe-rn { font-size: 0.86rem; font-weight: 800; color: #e2c9ff; letter-spacing: 0.02em; }
     .pe-lenrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.85rem; color: #a0aec0; }
     .pe-lenrow input { width: 84px; min-width: 0; box-sizing: border-box; padding: 5px 8px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; text-align: center; }
     .pe-lenrow input:focus { outline: none; border-color: #9f7aea; }

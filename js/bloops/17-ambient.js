@@ -1156,7 +1156,7 @@
                panMode: 'spread', space: 0, attack: 120, decay: 120, sustain: 70, release: 600, fine: 0,
                level: 70, accent: 0, ensembleLock: true, tone: '', scale: '', mod: _ambDefaultMod(),
                varyMode: 'pitch', varyDepth: 40, returnMode: 'everyN', returnN: 4, returnChance: 25,
-               unitMode: 'single', units: [], keyMaster: false, ..._ambDefaultFx() };
+               unitMode: 'single', units: [], keyMaster: false, harmony: 'fixed', ..._ambDefaultFx() };
     }
     function _ambValidUnit(u) {
       return !!(u && typeof u === 'object' && Array.isArray(u.events) && u.events.length > 0);
@@ -1184,6 +1184,11 @@
       if (s.unitMode === 'interleave') s.unitMode = 'random';
       if (s.unitMode !== 'single' && s.unitMode !== 'sequence' && s.unitMode !== 'random') s.unitMode = 'single';
       if (typeof s.keyMaster !== 'boolean') s.keyMaster = false;
+      // B4: Harmony toggle — how the captured phrase relates to the current key.
+      // 'fixed' (default) plays the absolute captured pitches (byte-identical to
+      // pre-B4). 'diatonic' transposes to the current key root + snaps into its
+      // scale. ('chordlock' is a later slice; not offered in the UI yet.)
+      if (s.harmony !== 'diatonic' && s.harmony !== 'chordlock') s.harmony = 'fixed';
       if (!Array.isArray(s.units)) s.units = [];
       s.units = s.units.filter(_ambValidUnit);
       // Per-section fields: iterations before switching + a display name.
@@ -6009,6 +6014,29 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg());
       if (cfg) { cfg.keyRoot = due.root; cfg.keyScale = due.scale; }
     }
+    // B4: apply a seq's Harmony mode to a captured phrase's frequencies. 'fixed'
+    // returns them untouched (byte-identical). 'diatonic' transposes each note by
+    // the interval from the unit's CAPTURED key root to the CURRENT key root
+    // (nearest direction), then snaps into the current key scale — so an authored
+    // phrase follows key changes. ('chordlock' falls back to diatonic until its
+    // own slice.) Preserves note count + order, so per-voice params stay aligned.
+    function _ambSeqHarmonizeFreqs(freqs, unit, seq) {
+      const mode = (seq && seq.harmony) || 'fixed';
+      if (mode === 'fixed' || !Array.isArray(freqs) || !freqs.length) return freqs;
+      const cfg = _ambKeyCfg(); if (!cfg) return freqs;
+      const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+      const toMidi = (f) => 69 + 12 * Math.log2(f / A);
+      const toFreq = (m) => A * Math.pow(2, (m - 69) / 12);
+      const capRoot = (unit && Number.isFinite(unit.rootIdx)) ? ((((unit.rootIdx | 0) % 12) + 12) % 12) : _ambKeyRootPc(cfg);
+      const curRoot = _ambKeyRootPc(cfg);
+      let d = (((curRoot - capRoot) % 12) + 12) % 12; if (d > 6) d -= 12;   // nearest transpose
+      return freqs.map(f => {
+        if (!(f > 0)) return f;
+        let m = Math.round(toMidi(f)) + d;
+        m = _ambKeyQuantizeMidi(m, cfg);   // snap into the current key scale (diatonic / chordlock-fallback)
+        return toFreq(m);
+      });
+    }
     function _ambRealizeSeqPhrase(at, seq, space, st, keyOverride) {
       _ambKeyTime = null;   // Seq variance uses the normal cfg/global key, not a stale generative note-time
       if (!Array.isArray(seq.units) || !seq.units.length) return null;
@@ -6051,7 +6079,7 @@
       // rotating). dest/dmod are resolved per-event at emit time (the mod chain
       // can rebuild between ticks), so only the stable bits live in ctx.
       const seqEnsLock = (seq.ensembleLock !== false);
-      const ctx = { seq, key, base, type, layerSet, seqEnsLock };
+      const ctx = { seq, key, base, type, layerSet, seqEnsLock, unit };   // unit → B4 Harmony remap at emit
       // Verbatim (return-to-original) decision for THIS cycle.
       let verbatim;
       if (seq.returnMode === 'chance') {
@@ -6108,7 +6136,8 @@
     // Emit ONE realized event at an absolute time. dest/dmod resolved fresh so
     // a mod-chain rebuild between ticks can't strand a phrase on a dead node.
     function _ambEmitSeqEvent(ctx, ev, atAbs, st) {
-      const freqs = ev.freqs;
+      // B4: remap the captured pitches per the seq's Harmony mode (Fixed = untouched).
+      const freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, ctx.seq);
       if (!freqs || !freqs.length) return;
       const seq = ctx.seq;
       const dest = _ambLayerDest(ctx.key), dmod = _ambLayerDetuneMod(ctx.key);
@@ -12638,7 +12667,12 @@
         grp('Generator') +
           '<div class="ambient-ctrl"><label>Sections</label>' +
             '<button type="button" id="' + p + 'sections" class="ambient-seg ambient-seq-sections">' + _ambSeqSectionsBtnLabel(s) + '</button>' +
-            '<span class="ambient-hint">edit ▸</span></div>' + gpe() +
+            '<span class="ambient-hint">edit ▸</span></div>' +
+          // B4: Harmony — Fixed plays the captured pitches; Diatonic transposes the
+          // phrase to the current key + snaps it into scale (follows key changes).
+          '<div class="ambient-ctrl"><label for="' + p + 'harmony">Harmony</label><select id="' + p + 'harmony" class="ambient-select">' +
+            opts([['fixed', 'Fixed'], ['diatonic', 'Diatonic']], (s.harmony === 'diatonic' ? 'diatonic' : 'fixed')) +
+            '</select><span class="ambient-hint">fixed pitch / follow key</span></div>' + gpe() +
         grp('Timing') +
           // Loop length: Auto (one pass == the played sequence's own length) vs
           // Manual (the Interval knob below). Auto greys out / ignores Interval.
@@ -12750,7 +12784,7 @@
         // blank default — updated live to the playing step during playback.
         try { toneSel.value = _ambSeqStepTone(s, 0); } catch (e) {}
       }
-      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode');
+      bindStr('tone', 'tone', () => _ambSeqEnsLockVis(E, id)); bindStr('vary', 'varyMode'); bindStr('harmony', 'harmony');
       // Output routing (grid-direct ↔ bloom blend) — store 'grid' or clear.
       { const o = el('out'); if (o) o.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; if (o.value === 'grid') sq.out = 'grid'; else delete sq.out; persist(); }); }
       const secBtn = el('sections');

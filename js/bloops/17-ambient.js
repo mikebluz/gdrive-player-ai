@@ -1202,6 +1202,7 @@
       _ambNormalizeModObj(s, d.mod);
       _ambNormalizeFx(s);
       _ambNormalizeNotes(s);
+      _ambNormalizeKeyOv(s);   // B3-sync: a Seq can carry a keyOv prog (its own chords) for Prog-sync
       _ambNormalizeSpread(s);
       _ambNormalizeUnit(s);
       return s;
@@ -12807,6 +12808,11 @@
           '<div class="ambient-ctrl"><label for="' + p + 'chordmode">Chords</label><select id="' + p + 'chordmode" class="ambient-select">' +
             opts([['poly', 'Poly (stack)'], ['arp', 'Arp (strum)'], ['monoRoot', 'Mono — low'], ['monoTop', 'Mono — high']], ['arp', 'monoRoot', 'monoTop'].indexOf(s.chordMode) >= 0 ? s.chordMode : 'poly') +
             '</select><span class="ambient-hint">stack / strum / fold</span></div>' +
+          // B3-sync: lock this Seq's chords to the shared progression clock so it
+          // stays in sync with a Pad / area Progression of the same chords. Reversible.
+          '<div class="ambient-ctrl"><label>Prog sync</label>' +
+            '<button type="button" id="' + p + 'progsync" class="ambient-seg" title="Lock this Seq to the shared chord clock (barsPerChord, anchored at play start) so its chord changes stay in sync with a Pad / area Progression of the same chords. Reversible — turning it off restores the captured timing.">Off</button>' +
+            '<span class="ambient-hint">sync chord changes</span></div>' +
           // B3: escape hatch — extract this part's chords into a reusable progression.
           '<div class="ambient-ctrl"><label>Promote</label>' +
             '<button type="button" id="' + p + 'promote" class="ambient-seg" title="Extract this part’s chords into a reusable progression (appears in every KEY menu)">→ Progression</button>' +
@@ -12927,6 +12933,34 @@
       { const o = el('out'); if (o) o.addEventListener('change', () => { _E = E; const sq = getSq(); if (!sq) return; if (o.value === 'grid') sq.out = 'grid'; else delete sq.out; persist(); }); }
       const secBtn = el('sections');
       if (secBtn) secBtn.addEventListener('click', () => { _E = E; _ambShowSeqSectionsMenu(E, id, secBtn); });
+      // B3-sync: Prog-sync toggle. ON → stamp the part's own chords as a keyOv prog
+      // + Chord-lock, so the Seq rides the shared _ambProgStepAt clock (same as a
+      // keyOv Pad / area Progression of those chords). OFF → back to Fixed, keyOv
+      // cleared. Reversible.
+      const syncBtn = el('progsync');
+      const refreshSync = () => {
+        const sq = getSq(); if (!sq || !syncBtn) return;
+        const on = (sq.harmony === 'chordlock' && sq.keyOv && sq.keyOv.mode === 'prog');
+        syncBtn.textContent = on ? 'On' : 'Off';
+        syncBtn.classList.toggle('active', !!on);
+      };
+      if (syncBtn) syncBtn.addEventListener('click', () => {
+        _E = E; const sq = getSq(); if (!sq) return;
+        const on = (sq.harmony === 'chordlock' && sq.keyOv && sq.keyOv.mode === 'prog');
+        if (on) { sq.harmony = 'fixed'; delete sq.keyOv; }
+        else {
+          const chords = _ambSeqPartToChords(sq);
+          if (!chords.length) { try { if (typeof showToast === 'function') showToast('This Seq has no chords to sync.'); } catch (e) {} return; }
+          sq.keyOv = { mode: 'prog', name: _ambLayerLabel(sq, 'Seq') + ' chords', chords: chords };
+          sq.harmony = 'chordlock';
+        }
+        refreshSync();
+        // Reflect the Harmony select too (sync drives it).
+        const hsel = el('harmony'); if (hsel) hsel.value = sq.harmony;
+        if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+        persist();
+      });
+      if (syncBtn) refreshSync();
       const promoteBtn = el('promote');
       if (promoteBtn) promoteBtn.addEventListener('click', () => {
         _E = E; const sq = getSq(); if (!sq) return;

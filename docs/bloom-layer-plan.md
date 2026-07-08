@@ -67,10 +67,15 @@ they compose; "Chords" select on the Seq card. Harness byte-identical.
 
 ## Track B CORE COMPLETE
 
-B1 (KEY axis) · B2 (layer KEY override) · B3 (scope editor + roman numerals) · B4
-(Harmony: Fixed/Diatonic/Chord-locked) · B5 (Poly/Arp/Mono). Remaining B work is minor
-polish (B3: Send-to-Bloom part-vs-prog routing, promote-part, pad-from-prog; B4:
-re-voicing Smooth/Reset/Preserve, missing-tone borrow, per-unit; B5: strum shape).
+B1 (KEY axis) · B2 (layer KEY override) · B3 (scope editor + roman numerals + ＋Pad
+`a2d7f1f` + promote-part `6c3309f`) · B4 (Harmony: Fixed/Diatonic/Chord-locked) · B5
+(Poly/Arp/Mono).
+
+Remaining B items, by what they need:
+- **Send-to-Bloom part-vs-progression routing** — the last substantive safe B3 item;
+  more involved (touches the grid→Bloom send flow). Not yet started.
+- **B4 re-voicing (Smooth/Reset/Preserve), missing-tone borrow; B5 strum shape** — audio
+  refinements → compound the unverified B4/B5 audio, want the ear-check first.
 
 ⚠️ **Two gates before more:**
 1. **B4 + B5 change AUDIO and Seq isn't harness-covered** — Diatonic/Chord-locked/Arp/

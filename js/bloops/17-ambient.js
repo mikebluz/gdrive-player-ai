@@ -1866,6 +1866,31 @@
       const q = (c && typeof c.keyScale === 'string' && c.keyScale) ? c.keyScale : 'major';
       return (typeof SCALES !== 'undefined' && SCALES[q]) ? q : 'major';
     }
+    // ---- KEY axis (unified read model) ----------------------------------
+    // The single accessor for the layer model's KEY axis (docs/bloom-layer-model.md
+    // — Instrument · KEY · Seed · Timing · Variance · FX). Resolves the current
+    // harmonic frame for a scope from the EXISTING area fields (keyOn/keyFollow/
+    // keyRoot/keyScale + prog) — additive, no new persisted state. Mode is derived
+    // and mutually exclusive for DISPLAY (prog wins), but the underlying keyOn and
+    // prog.on stay independent, so a progression can still be diatonic to a key
+    // (keyOn true under 'progression'). `scope` is a cfg object; defaults to the
+    // current play/edit area via _ambKeyCfg. (B1: cascade workspace→area is already
+    // in _ambKeyRootPc/_ambKeyScaleName's follow logic; layer-level override is B2.)
+    function _ambResolveKey(scope) {
+      const c = (scope && typeof scope === 'object') ? scope : _ambKeyCfg();
+      if (!c) return { mode: 'chromatic', keyOn: false, follow: false, root: 0, scale: 'major', prog: null };
+      // Display MODE follows the prog.on TOGGLE (so the selector reflects the choice
+      // and the picker shows even before chords are added); the resolved harmonic
+      // FRAME (`prog`) requires chords, matching _ambGlobalProg's generation rule
+      // (an empty progression doesn't override anything).
+      const progOn = !!(c.prog && c.prog.on);
+      const progFrame = (progOn && Array.isArray(c.prog.chords) && c.prog.chords.length)
+        ? { name: c.prog.name || 'Progression', chords: c.prog.chords } : null;
+      const keyOn = !!c.keyOn;
+      const follow = keyOn && c.keyFollow !== false;
+      const mode = progOn ? 'progression' : (keyOn ? 'key' : 'chromatic');
+      return { mode: mode, keyOn: keyOn, follow: follow, root: _ambKeyRootPc(c), scale: _ambKeyScaleName(c), prog: progFrame };
+    }
     // ---- Colour sets (Phase 4) ------------------------------------------
     // Named, deterministic chromatic colours, each a fixed set of degree
     // alterations (semitones from the tonic). A layer opts into any number of
@@ -15347,40 +15372,47 @@
         if (qOn) { qOn.classList.toggle('active', !!cfg.queueMode); qOn.textContent = cfg.queueMode ? 'On' : 'Off'; } }
       { const qT = document.getElementById(tr('ambient-queue-tails'));
         if (qT) qT.classList.toggle('active', !!cfg.tails); }
-      { const follow = !!cfg.keyOn && cfg.keyFollow !== false;
-        const kOn = document.getElementById(tr('ambient-key-on'));
-        if (kOn) kOn.classList.toggle('active', !!cfg.keyOn);
-        const kFree = document.getElementById(tr('ambient-key-free'));
-        if (kFree) kFree.classList.toggle('active', !cfg.keyOn);
+      // KEY axis — one section, three modes (Chromatic | Key | Progression),
+      // derived from the existing fields via _ambResolveKey. Mode selector active
+      // state + adaptive sub-control visibility; underlying keyOn/prog.on unchanged.
+      { const rk = _ambResolveKey(cfg);
+        const p = (cfg.prog && typeof cfg.prog === 'object') ? cfg.prog : { on: false, chords: [] };
+        const follow = rk.follow;
+        [['chromatic', 'chromatic'], ['key', 'key'], ['progression', 'prog']].forEach((m) => {
+          const b = document.getElementById(tr('ambient-keymode-' + m[1]));
+          if (b) b.classList.toggle('active', rk.mode === m[0]);
+        });
+        const keySub = document.getElementById(tr('ambient-key-sub'));
+        if (keySub) keySub.style.display = (rk.mode === 'key') ? '' : 'none';
+        const progSub = document.getElementById(tr('ambient-prog-sub'));
+        if (progSub) progSub.style.display = (rk.mode === 'progression') ? '' : 'none';
+        // Key sub-controls. Effective key: workspace when following, stored custom otherwise.
         const kFol = document.getElementById(tr('ambient-key-follow'));
         if (kFol) { kFol.classList.toggle('active', follow); kFol.disabled = !cfg.keyOn; }
-        // Effective key: workspace when following, the stored custom key otherwise.
         const effRoot = follow ? _ambKeyRootPc(cfg) : (cfg.keyRoot | 0);
         const effScale = follow ? _ambKeyScaleName(cfg) : cfg.keyScale;
         set('ambient-key-root', effRoot);
         set('ambient-key-scale', effScale);
-        // Following → the pickers are redundant (the workspace key picker is the
-        // UI); hide them. Custom → show + enable as before.
+        // Following → the pickers are redundant (the workspace key picker is the UI); hide them.
         const kSel = document.getElementById(tr('ambient-key-root'));
         if (kSel) { kSel.disabled = !cfg.keyOn; kSel.style.display = follow ? 'none' : ''; }
         const kqSel = document.getElementById(tr('ambient-key-scale'));
         if (kqSel) { kqSel.disabled = !cfg.keyOn; kqSel.style.display = follow ? 'none' : ''; }
         const kMode = document.getElementById(tr('ambient-key-mode'));
         if (kMode) { kMode.textContent = (cfg.keyMode === 'quantize') ? 'Quantize' : 'Transpose'; kMode.disabled = !cfg.keyOn; kMode.classList.toggle('active', !!cfg.keyOn); }
-        const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[effRoot | 0]) || '';
-        const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(effScale) : effScale;
-        hint('ambient-key-hint', cfg.keyOn
-          ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
-          : 'free — no key constraint'); }
-      { const p = (cfg.prog && typeof cfg.prog === 'object') ? cfg.prog : { on: false, chords: [] };
-        const pOn = document.getElementById(tr('ambient-prog-on'));
-        if (pOn) pOn.classList.toggle('active', !!p.on);
+        // Progression sub-controls.
         const pPick = document.getElementById(tr('ambient-prog-pick'));
         if (pPick) pPick.textContent = (Array.isArray(p.chords) && p.chords.length) ? (p.name || 'Progression') : '— pick —';
         const nCh = (Array.isArray(p.chords) ? p.chords.length : 0);
-        hint('ambient-prog-hint', p.on ? (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's')) : 'pick a progression') : 'off');
         const pEdit = document.getElementById(tr('ambient-prog-edit'));
         if (pEdit) pEdit.disabled = !(nCh > 0);   // editable only when a progression is selected
+        // Unified hint reflects the resolved mode.
+        const kName = (typeof CHROMATIC !== 'undefined' && CHROMATIC[effRoot | 0]) || '';
+        const kQual = (typeof prettyScaleName === 'function') ? prettyScaleName(effScale) : effScale;
+        hint('ambient-key-hint',
+          rk.mode === 'chromatic' ? 'free — no key constraint'
+          : rk.mode === 'key' ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
+          : (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's') + (cfg.keyOn ? ' · in ' + kName + ' ' + kQual : '')) : 'pick a progression'));
       }
       set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
       set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
@@ -15582,26 +15614,34 @@
           '<button type="button" class="ambient-seg" id="ambient-queue-tails" title="Tails — when a queued STOP cuts a layer, let its reverb keep feeding past the boundary so the wet tail rings out (off = cut the reverb send with the gate)">Tails</button>' +
           '<span class="ambient-hint" id="ambient-queue-hint">toggles snap to each layer&#39;s loop</span>' +
         '</div>' +
-        // Instance Key — when on, every layer roots its scales/wraps/chords at
-        // the chosen root and snaps chord/wrap tones to that key's scale.
+        // KEY axis (docs/bloom-layer-model.md) — one section unifying the area's
+        // harmonic frame. Mode selector: Chromatic (no constraint) | Key (root +
+        // scale, optionally following the workspace) | Progression (a shared chord
+        // sequence). The selector drives the existing keyOn / prog.on fields, which
+        // stay independent underneath (a Progression can be diatonic to a Key).
+        // Progression is master-only (lanes have no area progression).
         '<div class="ambient-row ambient-key">' +
-          '<button type="button" class="ambient-seg" id="ambient-key-on" title="Key mode — constrain every layer to one key; only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
-          '<button type="button" class="ambient-seg" id="ambient-key-free" title="Free — no key constraint for this Area (the header Key pill greys out in Grow)">Free</button>' +
-          '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Off = this Area keeps its own custom key via the root/scale pickers.">= Workspace</button>' +
-          '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
-          '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
-          '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
+          '<span class="ambient-hint ambient-key-lbl">Key</span>' +
+          '<span class="ambient-seg-row ambient-keymode-seg">' +
+            '<button type="button" class="ambient-seg amb-keymode" data-keymode="chromatic" id="ambient-keymode-chromatic" title="Chromatic — no key constraint for this Area; every layer plays its own note-source freely (the header Key pill greys out in Grow)">Chromatic</button>' +
+            '<button type="button" class="ambient-seg amb-keymode" data-keymode="key" id="ambient-keymode-key" title="Key — constrain every layer to one key (root + scale); only in-key scales/chords (plus borrowed &amp; passing tones) are selectable">Key</button>' +
+            (E.isLane ? '' : '<button type="button" class="ambient-seg amb-keymode" data-keymode="progression" id="ambient-keymode-prog" title="Progression — every layer follows a shared chord progression (the per-layer Notes chip is read-only while on)">Progression</button>') +
+          '</span>' +
+          // Key sub-controls (shown in Key mode).
+          '<span class="ambient-key-sub" id="ambient-key-sub">' +
+            '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Off = this Area keeps its own custom key via the root/scale pickers.">= Workspace</button>' +
+            '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
+            '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
+            '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
+          '</span>' +
+          // Progression sub-controls (shown in Progression mode; master-only).
+          (E.isLane ? '' :
+            '<span class="ambient-prog-sub" id="ambient-prog-sub">' +
+              '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
+              '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
+            '</span>') +
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
         '</div>' +
-        // Global progression (Phase 2) — chords every default-scale layer follows.
-        // Override a layer via its Notes button. Bars/chord is the bar-aligned rate.
-        (E.isLane ? '' :
-          '<div class="ambient-row ambient-prog">' +
-            '<button type="button" class="ambient-seg" id="ambient-prog-on" title="Area progression — while on, EVERY layer&#39;s Notes lock to these chords (the per-layer Notes chip is read-only). Turn off to restore per-layer sources.">Prog</button>' +
-            '<button type="button" class="ambient-select ambient-prog-pick" id="ambient-prog-pick" title="Pick a chord progression for all layers">— pick —</button>' +
-            '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
-            '<span class="ambient-hint" id="ambient-prog-hint">off</span>' +
-          '</div>') +
         // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
         // "Global FX" subsection (below the faders) — see _globalFxHtml.
         '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
@@ -16278,15 +16318,22 @@
         });
       }
 
-      { const kOn = G('ambient-key-on');
-        if (kOn) kOn.addEventListener('click', () => {
+      // KEY axis mode selector — Chromatic | Key | Progression. Each mode sets the
+      // canonical (keyOn, prog.on) pair; the fields stay independent so switching to
+      // Progression keeps any active Key (a progression diatonic to a key), and
+      // switching to Key/Chromatic just deactivates the prog (its chords are retained).
+      { const setKeyMode = (m) => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
-          cfg.keyOn = true; _ambSyncControls(E); persist();
-        });
-        const kFree = G('ambient-key-free');
-        if (kFree) kFree.addEventListener('click', () => {
-          _E = E; const cfg = cfg0(); if (!cfg) return;
-          cfg.keyOn = false; _ambSyncControls(E); persist();
+          if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
+          if (m === 'chromatic') { cfg.keyOn = false; cfg.prog.on = false; }
+          else if (m === 'key') { cfg.keyOn = true; cfg.prog.on = false; }
+          else { cfg.prog.on = true; if (typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} } }
+          _ambSyncControls(E); try { _ambRefreshSrcChips(E); } catch (e) {}   // lock/unlock the per-layer Notes chips
+          persist();
+        };
+        ['chromatic', 'key', 'prog'].forEach((suf) => {
+          const b = G('ambient-keymode-' + suf);
+          if (b) b.addEventListener('click', () => setKeyMode(suf === 'prog' ? 'progression' : suf));
         });
         const kFol = G('ambient-key-follow');
         if (kFol) kFol.addEventListener('click', () => {
@@ -16319,17 +16366,9 @@
           });
         }
       }
-      // Global Progression (Configure) — toggle + chord picker.
-      { const pOn = G('ambient-prog-on');
-        if (pOn) pOn.addEventListener('click', () => {
-          _E = E; const cfg = cfg0(); if (!cfg) return;
-          if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
-          cfg.prog.on = !cfg.prog.on;
-          if (cfg.prog.on && typeof _ambAutoSyncFreeForProg === 'function') { try { _ambAutoSyncFreeForProg(E, cfg); } catch (e) {} }   // Phase 2c
-          _ambSyncControls(E); try { _ambRefreshSrcChips(E); } catch (e) {}   // lock/unlock the per-layer Notes chips
-          persist();
-        });
-        const pPick = G('ambient-prog-pick');
+      // Progression sub-controls (chord picker + editor) — the on/off toggle now
+      // lives in the KEY axis mode selector above (Progression mode).
+      { const pPick = G('ambient-prog-pick');
         if (pPick) pPick.addEventListener('click', () => {
           _E = E; const r = pPick.getBoundingClientRect();
           _ambOpenGlobalProgMenu(E, r.left, r.bottom);

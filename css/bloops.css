@@ -2614,17 +2614,18 @@
       padding: 4px 12px 12px; border-top: 1px solid #23233a;
     }
     .ambient-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    /* Key controls — keep the Key button + Root/Scale selects + Transpose all on one row,
-       shrinking the selects/hint to fit rather than wrapping. */
-    .ambient-row.ambient-key { flex-wrap: nowrap; gap: 6px; }
-    .ambient-row.ambient-key .ambient-select { flex: 1 1 0; min-width: 0; }
+    /* KEY axis — mode selector (Chromatic | Key | Progression) + adaptive
+       sub-controls on one row. Wraps rather than overflowing (only one sub shows at
+       a time; the visible sub + its selects shrink to fit). */
+    .ambient-row.ambient-key { flex-wrap: wrap; gap: 6px; }
+    .ambient-row.ambient-key .ambient-key-lbl { flex: 0 0 auto; font-weight: 600; }
+    .ambient-row.ambient-key .ambient-keymode-seg { flex: 0 0 auto; display: inline-flex; gap: 4px; }
+    .ambient-row.ambient-key .ambient-key-sub,
+    .ambient-row.ambient-key .ambient-prog-sub { display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+    .ambient-row.ambient-key .ambient-select,
+    .ambient-row.ambient-key .ambient-prog-pick { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-row.ambient-key .ambient-seg { flex: 0 0 auto; }
     .ambient-row.ambient-key .ambient-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* Prog controls — Prog button + Pick + Edit all on one row, same approach as Key. */
-    .ambient-row.ambient-prog { flex-wrap: nowrap; gap: 6px; }
-    .ambient-row.ambient-prog .ambient-prog-pick { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ambient-row.ambient-prog .ambient-seg { flex: 0 0 auto; }
-    .ambient-row.ambient-prog .ambient-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ambient-regen {
       padding: 8px 16px; border: 1px solid #2d2d3f; border-radius: 20px;
       background: transparent; color: #a0aec0; font-family: 'Segoe UI', sans-serif;

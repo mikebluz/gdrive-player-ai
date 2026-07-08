@@ -25,8 +25,18 @@ harness byte-identical. Underlying keyOn/prog.on stay independent (a progression
 still be diatonic to a key). One deferred UX nicety: while in Progression mode the
 diatonic key isn't directly editable (shown in the hint as "· in C Dorian"); switch
 to Key mode to edit it (which deactivates the prog; chords retained). Revisit if it
-bites. **Next: B2** — first-class per-layer KEY override (fold the per-layer
-"Progression" note-source into a layer KEY override). NEEDS save/load sign-off.
+bites.
+
+**B2 DONE (`29e70f7`) — ⏳ AWAITING SAVE/LOAD SIGN-OFF.** Per-layer KEY override chip
+(Inherit / Key / Progression) on every pitched, source-editable layer; new optional
+`layer.keyOv` field (additive, kept out of defaults, coerced in `_ambNormalizeKeyOv`),
+resolved in `_ambNotesOf` after the area-prog check (precedence preserved). "⇶
+Progression" retired from the Notes menu. Harness byte-identical; legacy per-layer prog
+note-sources still play (not migrated). **GATE: first per-layer-persistence stage —
+needs a real-project load→play→save→reload→reload-stable check before B3.** **Next:
+B3** — dedicated progression authoring surface (an `_ambOpenProgEditor` already exists
+for area prog; B3 makes a purpose-built chord/region timeline writing to KEY at area OR
+layer scope, + Send-to-Bloom part-vs-progression routing + promote-part).
 
 Audit context — the cascading KEY frame was largely in place at the DATA level
 already before B1:

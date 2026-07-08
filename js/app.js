@@ -20,6 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const blobCache = new BlobCache();
   const cacheBtn = document.getElementById("cache-btn");
   const cachePlaylistBtn = document.getElementById("cache-playlist-btn");
+  const clearCacheBtn = document.getElementById("clear-cache-btn");
   const addToTrackBtn = document.getElementById("add-to-track-btn");
   const cacheBtnContainer = cacheBtn?.closest(".cache-btn-container");
 
@@ -168,6 +169,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     updateCacheBtn(track);
     playlist?.refreshCacheIndicators();
+  });
+
+  // Clear ALL cached audio (prefetch + persistent blob cache). Recovers from a
+  // poisoned cache where the right title shows but the wrong song plays. The
+  // currently-playing track keeps playing; everything else re-downloads.
+  clearCacheBtn?.addEventListener("click", async () => {
+    if (typeof confirm === "function" && !confirm("Clear all cached audio?\n\nUse this if the wrong song plays for the right title. Tracks re-download from Drive on next play.")) return;
+    const orig = clearCacheBtn.textContent;
+    clearCacheBtn.disabled = true;
+    clearCacheBtn.textContent = "Clearing…";
+    try {
+      if (player && typeof player.clearCaches === "function") await player.clearCaches();
+      else { try { blobCache.clear(); } catch (e) {} }
+      playlist?.refreshCacheIndicators();
+      clearCacheBtn.textContent = "Cleared ✓";
+    } catch (e) {
+      console.error("Clear cache failed", e);
+      clearCacheBtn.textContent = "Clear failed";
+    }
+    setTimeout(() => { clearCacheBtn.textContent = orig; clearCacheBtn.disabled = false; }, 1600);
   });
 
   function updateCacheBtn(track) {

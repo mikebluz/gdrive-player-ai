@@ -169,7 +169,10 @@ class MusicPlayer {
         if (await this.blobCache.has(track.id)) return;
 
         let blob = null;
-        if (this.currentTrack?.id === track.id && this._blob) {
+        // Only reuse the in-memory _blob when it PROVABLY belongs to this track
+        // (_blobTrackId, not just currentTrack.id) — otherwise a stale _blob would
+        // get stored under track.id and poison the cache: right title, wrong audio.
+        if (this._blobTrackId === track.id && this._blob) {
             blob = this._blob;
         } else if (this._prefetchCache.has(track.id)) {
             blob = this._prefetchCache.get(track.id);
@@ -192,6 +195,15 @@ class MusicPlayer {
 
     clearPrefetchCache() {
         this._prefetchCache.clear(); // blobs are GC'd automatically, no URLs to revoke
+    }
+
+    // Wipe ALL cached audio — the in-memory prefetch cache AND the persistent
+    // IndexedDB blob cache. Use to recover from a poisoned cache ("right title,
+    // wrong audio"). The currently-loaded track keeps playing (its blob is held
+    // on the audio element); everything else re-downloads on next play.
+    async clearCaches() {
+        this.clearPrefetchCache();
+        if (this.blobCache) { try { await this.blobCache.clear(); } catch (e) {} }
     }
 
     isPrefetched(trackId) {

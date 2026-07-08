@@ -5,7 +5,7 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAI
 class MusicPlayer {
     // Bump on every deploy so the "diag ready · build …" line proves whether
     // the browser loaded the fresh script or a cached old one.
-    static BUILD = '20260708a';
+    static BUILD = '20260708b';
 
     constructor(gDrive, blobCache = null) {
         this.gDrive = gDrive;
@@ -259,6 +259,31 @@ class MusicPlayer {
     }
     _short(id) { return id ? ('…' + String(id).slice(-6)) : '∅'; }
 
+    // Ask Drive for the REAL filename of an id and compare it to the title we're
+    // showing. If the diag says "right song" but the wrong song sounds, the most
+    // likely remaining cause is a scrambled playlist mapping — the displayed name
+    // paired with a DIFFERENT file's id. This is the authoritative check: same id,
+    // one file. Async + non-blocking; prints when Drive answers.
+    async _diagVerifyFile(id, shownName) {
+        if (!this._diagOn() || !id) return;
+        try {
+            const token = this.gDrive && this.gDrive.accessToken;
+            if (!token) { this._diag('verify: no token', true); return; }
+            const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name,size&_cb=${Date.now().toString(36)}`,
+                { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+            if (!r.ok) { this._diag('verify HTTP ' + r.status + ' for ' + this._short(id), true); return; }
+            const meta = await r.json();
+            const real = (meta.name || '').slice(0, 28);
+            const shown = (shownName || '').slice(0, 28);
+            const norm = s => s.replace(/\.[a-z0-9]+$/i, '').trim().toLowerCase();
+            const mism = norm(real) !== norm(shown);
+            this._diag('VERIFY id=' + this._short(id) + ' drive="' + real + '" shown="' + shown + '"' +
+                (mism ? '  ← ID POINTS TO WRONG FILE' : '  ✓ id matches title'), mism);
+        } catch (e) {
+            this._diag('verify err: ' + (e && e.message || e), true);
+        }
+    }
+
     isPrefetched(trackId) {
         return this._prefetchCache.has(trackId);
     }
@@ -373,6 +398,16 @@ class MusicPlayer {
             const _exp = Math.round((this.currentTrack.durationMs || 0) / 1000);
             this._diagWant = { id: wantId, name: _n, exp: _exp };   // for the loadedmetadata check
             this._diag('PLAY "' + _n + '" id=' + this._short(wantId) + ' blob=' + this._short(this._blobTrackId) + ' via=' + src + ' ' + _kb + ' exp=' + _exp + 's');
+            // Does the element actually hold OUR blob URL? (catches a src that
+            // never took / got reverted) and count any OTHER media still sounding.
+            if (this._diagOn()) {
+                const heldOurs = this.audio.src && this._blobUrl && this.audio.src === this._blobUrl;
+                let others = 0;
+                document.querySelectorAll('audio,video').forEach(m => { if (m !== this.audio && !m.paused && !m.ended && m.currentTime > 0) others++; });
+                this._diag('  src.attr ' + (heldOurs ? 'ours ✓' : '≠ ours ⚠') + (others ? '  · ' + others + ' OTHER media playing ⚠' : ''), !heldOurs || others > 0);
+                // Authoritative: is this id really the file the title claims?
+                this._diagVerifyFile(wantId, this.currentTrack.name);
+            }
             await this.audio.play();
         } catch (error) {
             console.error('Error playing audio:', error);
@@ -434,8 +469,14 @@ class MusicPlayer {
             const act = Math.round(this.audio.duration || 0);
             const w = this._diagWant || {};
             const exp = w.exp || 0;
+            // exp===0 (Drive gave no duration) makes the ✓ meaningless — say so.
             const bad = exp > 0 && act > 0 && Math.abs(act - exp) > 2;
-            this._diag('LOADED "' + (w.name || '') + '" actual=' + act + 's expected=' + exp + 's' + (bad ? '  ← WRONG FILE' : '  ✓'), bad);
+            const verdict = exp > 0 ? (bad ? '  ← WRONG FILE' : '  ✓') : '  (no expected dur — can\'t compare)';
+            this._diag('LOADED "' + (w.name || '') + '" actual=' + act + 's expected=' + exp + 's' + verdict, bad);
+            // The element's ACTUALLY-selected resource vs the blob URL we assigned.
+            const sel = this.audio.currentSrc || '';
+            const ours = this._blobUrl && sel === this._blobUrl;
+            if (!ours) this._diag('  currentSrc ≠ our blob ⚠  (' + (sel ? sel.slice(-12) : 'empty') + ')', true);
         }
         // Surface the decoded duration so the playlist can backfill its
         // total-running-time tally for tracks Drive didn't report metadata

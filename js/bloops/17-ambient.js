@@ -16335,7 +16335,17 @@
           e.stopPropagation();
           const key = sm.dataset.seedkey, mode = sm.dataset.seedmode;
           try {
-            if (mode === 'generate') { _ambSeedRevert(E, key); }
+            if (mode === 'generate') {
+              _ambSeedRevert(E, key);
+              // Author auto-opened the 🎹; Generate auto-closes it (roll is piano-gated).
+              const h2 = document.getElementById(E.hostId);
+              const pe = h2 && h2.querySelector('.ambient-piano[data-pkey="' + key + '"]');
+              if (pe && pe.classList.contains('open')) {
+                pe.classList.remove('open');
+                const tog = h2.querySelector('.ambient-piano-toggle[data-pkey="' + key + '"]'); if (tog) tog.classList.remove('active');
+              }
+              try { _ambUpdateNotesLive(E); } catch (e2) {}
+            }
             else {
               const L = _ambLayerByKey(E, key);
               if (!(L && L.lockState && L.lockState.seedEdit)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }

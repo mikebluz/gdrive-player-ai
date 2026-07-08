@@ -75,11 +75,20 @@ B1 (KEY axis) · B2 (layer KEY override) · B3 (scope editor + roman numerals + 
 progression = ⇶ As Progression (area-global, pre-existing) OR ⇶ As chord pad (own
 layer, new-model keyOv). Plus ＋Pad + promote-part + roman numerals.
 
-**All safe, non-audio-refinement B work is now done.** What remains needs YOU:
-- **Audio refinements** (B4 re-voicing Smooth/Reset/Preserve + missing-tone borrow; B5
-  strum shape) — compound the unverified B4/B5 audio → want the ear-check first.
-- **Track C** — deliberate harness re-baseline (C1) + IRREVERSIBLE cleanups (C2). Needs
-  an explicit go + real-project regression.
+**Audio refinements DONE** (ear-check passed "all sounds good"):
+- B4 re-voicing `d3e5198` — Smooth / Preserve / Reset + missing-tone scale-borrow.
+- B5 strum shape `3311041` — Arp ↑ / ↓ by pitch.
+- Plus: reversible Seq "Prog sync" (`d014782`) and the Tone-dropdown fix (`ce53c00`).
+
+**Only Track C remains.** It is REFACTORING/CLEANUP, not new capability — and it's the
+riskiest work against the "don't break" rule:
+- **C1** — unify walk/riff/mutate into one Melody generator + variation mode. The ONE
+  deliberate harness re-baseline (changes generation output; re-baseline in the same
+  commit). Reversible via git, but changes working/verified behavior for internal
+  cleanliness only.
+- **C2** — ONE-WAY: retire the hardcoded bed/motif/texture/beat templates, drop
+  `cfg.prog` / per-layer prog fields (now in KEY), remove dead dispatch. `schemaVersion`
+  bump; could touch saved projects. Needs heavy real-project regression.
 
 ⚠️ **Two gates before more:**
 1. **B4 + B5 change AUDIO and Seq isn't harness-covered** — Diatonic/Chord-locked/Arp/

@@ -8,9 +8,21 @@ class BlobCache {
     async _open() {
         if (this._db) return this._db;
         return new Promise((resolve, reject) => {
-            const req = indexedDB.open(this._dbName, 1);
+            // DB version 2: a PRE-FIX persistTrack could store a blob under the
+            // WRONG track id — poisoning the cache so the right title showed but a
+            // different song played. Those bad entries are indistinguishable by size
+            // (same-bitrate exports of equal length match byte-for-byte in size), so
+            // they can't be selectively detected — WIPE the store once on the version
+            // bump. Clean bytes re-download from Drive on next play, and every current
+            // writer keys by the correct id, so it stays clean. Auto-heals every
+            // device on first load with this build; no user action needed.
+            const req = indexedDB.open(this._dbName, 2);
             req.onupgradeneeded = e => {
-                e.target.result.createObjectStore(this._storeName);
+                const db = e.target.result;
+                if (db.objectStoreNames.contains(this._storeName)) {
+                    db.deleteObjectStore(this._storeName);   // drop poisoned entries
+                }
+                db.createObjectStore(this._storeName);
             };
             req.onsuccess = e => {
                 this._db = e.target.result;

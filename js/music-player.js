@@ -5,7 +5,7 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAI
 class MusicPlayer {
     // Bump on every deploy so the "diag ready · build …" line proves whether
     // the browser loaded the fresh script or a cached old one.
-    static BUILD = '20260708d';
+    static BUILD = '20260708e';
 
     constructor(gDrive, blobCache = null) {
         this.gDrive = gDrive;

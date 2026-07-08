@@ -15246,6 +15246,19 @@
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
     }
+    // Clear ALL layers from the current area: mark primaries absent + empty the
+    // extras / seqs / samples. Keeps the area frame (name, KEY/prog, BPM, fades).
+    function _ambClearArea(E) {
+      _E = E; const cfg = E.getCfg(); if (!cfg) return;
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) { cfg[k].present = false; cfg[k].on = false; } });
+      cfg.extras = []; cfg.seqs = []; cfg.samples = [];
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }   // tear down the removed layers' chains
+      try {
+        if (E === _masterEng) { _ambRebuildMaster(); }
+        else { _ambSyncControls(E); try { _ambRenderExtras(E); } catch (e) {} try { _ambRenderSeqLayers(E); } catch (e) {} try { _ambRenderSampleLayers(E); } catch (e) {} }
+      } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+    }
     // ---- Custom layer PRESETS (user-saved compositions, global via localStorage) ----
     // A preset = { name, type, cfg } where cfg is a deep copy of a composed layer.
     // Saved presets appear in the Add-layer menu, so a composition becomes a
@@ -17118,6 +17131,15 @@
               const r2 = addLayerBtn.getBoundingClientRect();
               if (typeof showCtxMenu === 'function') showCtxMenu(r2.left, r2.bottom + 4, del);
             }, 0);
+          } });
+        }
+        // Clear area — remove every layer at once (keeps the area's key/tempo/name).
+        // Only offered when there's something to clear. Danger + confirm.
+        { const c = cfg0();
+          const hasLayers = !!(c && (['bed', 'motif', 'texture', 'beat'].some(k => c[k] && c[k].present !== false) || (Array.isArray(c.extras) && c.extras.length) || (Array.isArray(c.seqs) && c.seqs.length) || (Array.isArray(c.samples) && c.samples.length)));
+          if (hasLayers) actions.push('hr', { label: '✕ Clear area — remove all layers', danger: true, fn: () => {
+            if (typeof confirm === 'function' && !confirm('Remove ALL layers from this area?\n\nThe area itself (name, key/progression, tempo) is kept. This can’t be undone.')) return;
+            _ambClearArea(E);
           } });
         }
         const r = addLayerBtn.getBoundingClientRect();

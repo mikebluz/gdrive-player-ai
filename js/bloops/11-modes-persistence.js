@@ -975,6 +975,33 @@
       };
     }
 
+    // Full-page "Saving…" overlay — freezes interaction while a project save runs
+    // (the async Drive upload can take seconds). Body-attached, shown via inline
+    // !important so the view-mode hide rules can't suppress it (see CLAUDE.md).
+    function _bloopsSavingModalEl() {
+      let el = document.getElementById('bloops-saving-modal');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'bloops-saving-modal';
+        el.className = 'bloops-saving-modal';
+        el.innerHTML = '<div class="bloops-saving-box"><div class="bloops-saving-spinner" aria-hidden="true"></div>' +
+          '<div class="bloops-saving-text" id="bloops-saving-text">Saving…</div></div>';
+        document.body.appendChild(el);
+      }
+      return el;
+    }
+    function _bloopsShowSavingModal(msg) {
+      const el = _bloopsSavingModalEl();
+      const t = el.querySelector('#bloops-saving-text'); if (t && msg) t.textContent = msg;
+      el.style.setProperty('display', 'flex', 'important');
+    }
+    function _bloopsSetSavingModal(msg) {
+      const t = document.getElementById('bloops-saving-text'); if (t && msg) t.textContent = msg;
+    }
+    function _bloopsHideSavingModal() {
+      const el = document.getElementById('bloops-saving-modal'); if (el) el.style.setProperty('display', 'none', 'important');
+    }
+
     async function saveProjectToDrive(btn) {
       // Default to the loaded project's name (if any) so re-saving the same
       // project is a one-tap flow even when the user hasn't changed anything.
@@ -986,9 +1013,10 @@
       const projectBase = filename.replace(/\.json$/i, '');
 
       const origText = btn ? btn.textContent : '';
-      const setBtn = (text) => { if (btn) btn.textContent = text; };
+      const setBtn = (text) => { if (btn) btn.textContent = text; _bloopsSetSavingModal(text); };
       if (btn) btn.disabled = true;
       let saved = false;
+      _bloopsShowSavingModal('Building…');   // freeze the page for the duration of the save
       try {
         setBtn('Building…');
         const snapshot = buildProjectSnapshot();
@@ -1122,6 +1150,7 @@
         console.error(e);
         alert(`Save failed: ${e.message || e}`);
       } finally {
+        _bloopsHideSavingModal();
         if (btn) setTimeout(() => { btn.disabled = false; btn.textContent = origText; }, 1200);
       }
       return saved;

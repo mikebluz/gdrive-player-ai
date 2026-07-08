@@ -1,7 +1,39 @@
 # Bloom Layer Model — Implementation Plan
 
 Companion to `bloom-layer-model.md` (the spec). Branch: `bloops-layers`.
-Not started.
+
+## Progress + audit findings (2026-07)
+
+**Track A — DONE.**
+- A1 slice 1 (`5612158`): dropped the Voice/Gen axis-swap pickers from the layer
+  cards → static readout tags. This was the actual felt clutter.
+- A2 (`2c43c98`): reframed the Add-layer menu as curated preset families (Pads &
+  drones / Melody / Rhythm / Sampler); retired the "✦ Custom — compose your own"
+  entry (its job was assembling a layer via the now-removed axis pickers).
+- A1 "mode-aware cards" — **already implemented, no work needed.** Audit found the
+  visibility discipline the plan imagined already exists and is thorough:
+  `_ambUnitSyncViz` hides Interval when synced / Rate when free for every timed
+  layer; `_ambBeatGenVis` handles Beat euclid/random/drum-lanes; `_ambArpEuclidVis`
+  handles Arp series↔euclid. Modeless layers (bed/motif/texture/run/pedal/drone)
+  have no inapplicable controls to hide. Inventing new hide-rules would risk the
+  "don't break" contract for no real gain, so this is deliberately NOT done.
+
+**Track B — foundation already exists; B1 is smaller than written.** Audit found the
+cascading KEY frame is largely in place at the DATA level already:
+- Area KEY: `cfg.keyRoot`/`cfg.keyScale`/`cfg.keyOn`/`cfg.keyFollow`
+  (`_ambKeyRootPc`/`_ambKeyScaleName`) — with a workspace-follow that reads the
+  grid's `rootIdx`/`currentScale`. That IS workspace→area cascade.
+- Area progression `cfg.prog` already overrides EVERY layer's note-source via
+  `_ambGlobalProg()`+`_ambNotesOf` — "area KEY = progression" already behaves this
+  way. So B1's data work is mostly done; what remains is CONCEPTUAL/UI: unify the
+  separate Key + Prog controls into one KEY axis (chromatic|key|progression) and add
+  a `_ambResolveKey(scope)` accessor. The load-bearing NEW capability is in B2–B5
+  (first-class layer KEY override, progression authoring surface, degree-based
+  phrases, chords-in-sequences).
+
+Net: the plan was written before a full code audit; reality is further along. Tracks
+below are the ORIGINAL plan, kept for reference — see the progress notes above for
+what's actually left.
 
 ## Ground rules (non-negotiable — the "don't break anything" contract)
 

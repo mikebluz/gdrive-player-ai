@@ -16784,6 +16784,19 @@
           '<button type="button" id="ambient-play-btn" class="ambient-play" title="Play / stop">▶</button>' +
         '</div></div>';
       host.innerHTML = _ambNamespaceHtml(E, html);
+      // Relocate the ⚙ Configure menu INTO the Area section, below the Lock
+      // controls (master Mix Bloom only — lanes/Shape have no area block, so the
+      // menu stays at the top there). Placed as the last child of .ambient-areas,
+      // after the (collapsible) orchestration body, so it renders directly beneath
+      // the Bars/Lock row when the area body is expanded and stays visible when
+      // it's collapsed. Moved before wiring so the id-based binds still find it.
+      try {
+        if (E === _masterEng) {
+          const areas = host.querySelector('.ambient-areas');
+          const cfgMenu = host.querySelector('.ambient-master-menu');
+          if (areas && cfgMenu) areas.appendChild(cfgMenu);
+        }
+      } catch (e) {}
       // Tint this panel's layer highlights with the ACTIVE area's accent (master
       // only — lane/Shape Bloom have no areas, so they keep the CSS purple default).
       try {

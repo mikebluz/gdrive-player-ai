@@ -4756,11 +4756,14 @@
     // Kill switch (default OFF → old per-type emitters, byte-identical). Flip on
     // to A/B the unified step-grid path for an ear-check before it's promoted.
     function _ambStepGridOn() {
+      // Default ON (promoted D2, ear-checked). Kill switch: bloomStepGrid(false)
+      // / localStorage 'bloomStepGrid'==='0' reverts Texture to the old free
+      // per-step scanner (_ambEmitTexture), kept until D4's real-project regression.
       try {
-        if (typeof window === 'undefined') return false;
+        if (typeof window === 'undefined') return true;
         if (window.__bloomStepGrid != null) return !!window.__bloomStepGrid;
-        return localStorage.getItem('bloomStepGrid') === '1';
-      } catch (e) { return false; }
+        return localStorage.getItem('bloomStepGrid') !== '0';
+      } catch (e) { return true; }
     }
     if (typeof window !== 'undefined') {
       window.bloomStepGrid = function (on) {

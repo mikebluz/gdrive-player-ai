@@ -226,7 +226,7 @@
       const BASELINE = {
         'bed':           { hash: '1d8eacee', count: 12 },
         'motif':         { hash: '8e39cc63', count: 9 },
-        'texture':       { hash: 'b766f5dc', count: 3 },
+        'texture':       { hash: '2c80e9bc', count: 25 },   // Track D/D2: unified step-grid emitter (grid-synced shimmer) — deliberate re-baseline, ear-checked. Old free-scanner baseline was b766f5dc/3; revert via bloomStepGrid(false).
         'beat-random':   { hash: '872e5741', count: 19 },
         'beat-euclid':   { hash: 'c2c8241b', count: 19 },
         'arp':           { hash: 'd5cc969a', count: 52 },
@@ -235,7 +235,7 @@
         'pedal':         { hash: 'e788032c', count: 26 },
         'drone':         { hash: '45a97025', count: 2 },
         'seq-pitch':     { hash: '64b0939b', count: 38 },
-        'combo':         { hash: 'ad0b1f59', count: 53 },
+        'combo':         { hash: '5801b9eb', count: 63 },   // Track D/D2: includes the texture layer, so it re-baselines with texture (was ad0b1f59/53).
         // Phase 1 — Key transpose/quantize (G major). Locks the new behavior.
         'key-transpose': { hash: '56adac6e', count: 18 },
         'key-quantize':  { hash: 'dc3ce346', count: 18 },

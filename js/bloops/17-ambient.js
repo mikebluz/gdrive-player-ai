@@ -4815,7 +4815,10 @@
           if (at < tFrom || at >= tTo) continue;             // only within this tick's window
           _ambKeyTime = at;
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);
-          const deg = Math.floor(rnd() * N);
+          // Pitch pick (D3): 'random' = uniform over the source tones (default,
+          // scatter) · 'low' = root-weighted (rnd² biases toward degree 0 → a
+          // grounded, tonal shimmer). Default/absent → uniform (byte-identical).
+          const deg = (inst.pitchSeed === 'low') ? Math.floor(rnd() * rnd() * N) : Math.floor(rnd() * N);
           const oct = center + (rnd() < 0.3 ? 1 : 0);
           const f = _ambDegreeFreq(deg, oct, notes);
           if (isProg) _ambProgStepOverride = null;
@@ -13233,6 +13236,10 @@
     // the density/pulse count in both. Pitch source is unchanged (random-degree).
     const _ambRhythmSeedSel = (stem) =>
       '<div class="ambient-ctrl"><label for="' + stem + '" title="How the on/off pattern is generated. Fill = stochastic (each slot on by probability, re-rolled each cycle). Euclid = evenly-spread pulses (Fill sets the pulse count of 16). Pitch stays random-degree either way.">Rhythm</label><select id="' + stem + '" class="ambient-select"><option value="fill">Fill (stochastic)</option><option value="euclid">Euclid (even)</option></select><span class="ambient-hint">pattern seed</span></div>';
+    // Step-grid PITCH pick (D3) — how each grain's degree is chosen from the note
+    // source. 'random' (uniform scatter, default) | 'low' (root-weighted → tonal).
+    const _ambPitchSeedSel = (stem) =>
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="How each grain’s pitch is picked from the note source. Random = uniform over the tones (a scattered shimmer). Grounded = weighted toward the root / lower tones (warmer, more tonal).">Pitch</label><select id="' + stem + '" class="ambient-select"><option value="random">Random (scatter)</option><option value="low">Grounded (root-weighted)</option></select><span class="ambient-hint">degree pick</span></div>';
     const _ambHoldSel = (stem, inst) =>
       '<div class="ambient-ctrl"><label for="' + stem + '" title="How long each chord/note holds, measured in UNITS (the Unit above). It re-fires every Hold units and the base Unit stays the regular sync grid — so you keep a fine unit to sync to while events last as long as you like. Overrides the ms Length when set; wash/overlap is the envelope Release.">Hold</label><select id="' + stem + '" class="ambient-select">' +
       _AMB_HOLD_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
@@ -14221,7 +14228,7 @@
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
@@ -14686,6 +14693,7 @@
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
+      if (k === 'pitchseed') return _ambPitchSeedSel(p + '-pitchseed');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
       // → never free → no fader at all. Other types keep it (disabled live when synced).
@@ -14996,6 +15004,7 @@
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
           else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
           else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
+          else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
           else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }

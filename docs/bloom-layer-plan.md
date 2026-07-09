@@ -233,6 +233,12 @@ here.
 So unification is a real generative refactor — **same HIGH-risk class as Track C** (do not
 start D1+ autonomously; explicit go + real-project regression, per the gates below).
 
+**Progress:** D0 ✅ (`198e0f1`) · D1 slice 1 ✅ (`462c509`, texture folded, flag-gated) ·
+D2 ✅ (`7ca37cd`, promoted to default + ear-checked re-baseline texture b766f5dc→2c80e9bc,
+combo→5801b9eb; kill switch `bloomStepGrid(false)` reverts). **Remaining: D1 for the
+euclid types (fold their renderCycles into `_ambEmitStepGrid`) · D3 unified card · D4
+retire old emitters.** Texture now runs on the unified emitter by default.
+
 **Staged, additive, harness-gated:**
 - **D0 — reclassify (safe, harness-neutral).** Correct texture's derivation label/tag from
   the melody-`mutate` family to the step-grid family (`_ambGeneratorOf` is a UI/tag label,

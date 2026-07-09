@@ -4799,10 +4799,18 @@
       // 16 sixteenth-note slots over `bars` bar(s); pulses/rotate unused (the
       // rhythm seed here is stochastic-fill, not euclidean).
       const gridInst = Object.assign({}, inst, { steps: 16, bars: Math.max(1, Math.min(8, (inst.bars | 0) || 1)), pulses: 1, rotate: 0, rhythmVar: 0, restProb: 0 });
+      // Rhythm seed (D3): 'fill' = stochastic (default, per-cycle re-rolled) ·
+      // 'euclid' = evenly-spread pulses (Fill sets the pulse count). Pitch stays
+      // random-degree either way. Default/absent → 'fill' (byte-identical).
+      const rSeed = (inst.rhythmSeed === 'euclid') ? 'euclid' : 'fill';
+      const euPat = (rSeed === 'euclid' && typeof euclideanPattern === 'function')
+        ? euclideanPattern(Math.max(0, Math.min(16, Math.round(fill * 16))), 16, Math.max(0, inst.rotate | 0))
+        : null;
       _ambEmitEuclidCore(E, gridInst, key, now, horizon, lead, space, cfg, 'runPhase', (ctx) => {
         const { steps, slotSec, cStart, rnd, tFrom, tTo } = ctx;
         for (let s = 0; s < steps; s++) {
-          if (rnd() >= fill * 0.6) continue;                 // stochastic fill (per-cycle seeded)
+          if (euPat) { if (!euPat[s]) continue; }             // euclid: deterministic on-steps
+          else if (rnd() >= fill * 0.6) continue;             // fill: stochastic (per-cycle seeded)
           const at = cStart + s * slotSec;
           if (at < tFrom || at >= tTo) continue;             // only within this tick's window
           _ambKeyTime = at;
@@ -13220,6 +13228,11 @@
     // '' = Off (use the ms Length instead / legacy). A number = chord length AND
     // re-voice interval = that many units, so the base Unit stays the sync grid.
     const _AMB_HOLD_OPTS = [['', 'Off (use Length)'], ['0.25', '¼'], ['0.5', '½'], ['0.75', '¾'], ['1', '1'], ['1.5', '1½'], ['2', '2'], ['3', '3'], ['4', '4'], ['6', '6'], ['8', '8']];
+    // Step-grid RHYTHM seed picker (D3) — how the on/off pattern is generated.
+    // 'fill' (stochastic, default) | 'euclid' (evenly-spread pulses). Fill sets
+    // the density/pulse count in both. Pitch source is unchanged (random-degree).
+    const _ambRhythmSeedSel = (stem) =>
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="How the on/off pattern is generated. Fill = stochastic (each slot on by probability, re-rolled each cycle). Euclid = evenly-spread pulses (Fill sets the pulse count of 16). Pitch stays random-degree either way.">Rhythm</label><select id="' + stem + '" class="ambient-select"><option value="fill">Fill (stochastic)</option><option value="euclid">Euclid (even)</option></select><span class="ambient-hint">pattern seed</span></div>';
     const _ambHoldSel = (stem, inst) =>
       '<div class="ambient-ctrl"><label for="' + stem + '" title="How long each chord/note holds, measured in UNITS (the Unit above). It re-fires every Hold units and the base Unit stays the regular sync grid — so you keep a fine unit to sync to while events last as long as you like. Overrides the ms Length when set; wash/overlap is the envelope Release.">Hold</label><select id="' + stem + '" class="ambient-select">' +
       _AMB_HOLD_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
@@ -14208,7 +14221,7 @@
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
@@ -14672,6 +14685,7 @@
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
+      if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
       // → never free → no fader at all. Other types keep it (disabled live when synced).
@@ -14981,6 +14995,7 @@
           else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
           else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
+          else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
           else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }

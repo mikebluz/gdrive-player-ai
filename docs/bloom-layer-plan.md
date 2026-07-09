@@ -233,11 +233,14 @@ here.
 So unification is a real generative refactor — **same HIGH-risk class as Track C** (do not
 start D1+ autonomously; explicit go + real-project regression, per the gates below).
 
-**Progress:** D0 ✅ (`198e0f1`) · D1 slice 1 ✅ (`462c509`, texture folded, flag-gated) ·
-D2 ✅ (`7ca37cd`, promoted to default + ear-checked re-baseline texture b766f5dc→2c80e9bc,
-combo→5801b9eb; kill switch `bloomStepGrid(false)` reverts). **Remaining: D1 for the
-euclid types (fold their renderCycles into `_ambEmitStepGrid`) · D3 unified card · D4
-retire old emitters.** Texture now runs on the unified emitter by default.
+**Progress:** D0 ✅ · D1 ✅ (texture + euclid family through `_ambEmitStepGrid`) · D2 ✅
+(texture default + ear-checked re-baseline b766f5dc→2c80e9bc, combo→5801b9eb) · D3 ✅
+(Texture Rhythm Fill/Euclid + Pitch Random/Grounded pickers) · D4 ✅ (`e51b3a6` — committed
+to the unified path; retired the flag/kill switch + the dead free-scanner `_ambEmitTexture`/
+`_ambTexMutate` + the `_ambEmitBass`/`_ambEmitBeatEuclid` wrappers; byte-identical, golden
+75/75). **Remaining (optional):** fold `_ambEmitArpEuclid`'s renderCycle in (a full
+renderer, still delegated); bring the Rhythm/Pitch pickers to the euclid layers (mostly
+redundant — Beat already has random↔euclid). Track D is effectively complete.
 
 **Staged, additive, harness-gated:**
 - **D0 — reclassify (safe, harness-neutral).** Correct texture's derivation label/tag from

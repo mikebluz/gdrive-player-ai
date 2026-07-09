@@ -3200,6 +3200,17 @@
       const b = _ambRateBeats(lc && lc.rate);
       return b > 0 ? b * (60 / _ambBpm()) : Math.max(0.05, ((lc && lc.intervalMs) | 0) / 1000);
     }
+    // Bed HOLD (units): a bed can hold each chord across N units — its onset
+    // interval AND note length both scale by `hold`, while the base UNIT that
+    // Sync / Bar Lock / other layers reference stays put (the "regular unit to
+    // sync to"). `hold` is a whole number OR clean fraction of the unit, so every
+    // chord change still lands on a unit boundary. Absent/≤0 → 1, so a bed with no
+    // hold is byte-identical to before (harness-safe). Bed-only for now.
+    function _ambHoldMult(key, L) {
+      if (String(key).split(':')[0] !== 'bed') return 1;
+      const h = L && L.hold;
+      return (Number.isFinite(h) && h > 0) ? Math.max(0.05, Math.min(64, h)) : 1;
+    }
     // Length Vary: at 0 every note is exactly `baseMs` (homebase); above 0 each
     // note's length jitters around it (±~75% at 100). GATED — vary 0 returns the
     // base and consumes NO RNG (keeps the default stream byte-identical). Pass a
@@ -3982,8 +3993,20 @@
       const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key);
       if (_bedProg) _ambProgStepOverride = null;
       if (!voicing.length) { _ambRecordUnit(_E, key, at, []); return; }
-      const durMs = Math.max(80, bed.lengthMs | 0);
-      const overlap = durMs / Math.max(1, bed.intervalMs | 0);
+      // HOLD mode: each chord's length = Hold × the base UNIT (Sync-scaled), which
+      // equals the onset interval (chords change every Hold units), so a chord
+      // fills its hold span and the ADSR release rings past. Absent hold → the
+      // legacy path: durMs = Length (ms), onset = Interval — byte-identical.
+      let durMs = Math.max(80, bed.lengthMs | 0);
+      let effIntervalMs = Math.max(1, bed.intervalMs | 0);
+      if (Number.isFinite(bed.hold) && bed.hold > 0) {
+        const _cfg = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
+        let _sc = 1; try { _sc = _ambLayerScale(_E, key, bed, _cfg); } catch (e) {}
+        const unitSec = Math.max(0.05, _ambEffIntervalSec(bed)) * _sc;
+        durMs = Math.max(80, Math.round(Math.max(0.05, Math.min(64, bed.hold)) * unitSec * 1000));
+        effIntervalMs = durMs;   // onset interval == the hold span (one chord at a time)
+      }
+      const overlap = durMs / Math.max(1, effIntervalMs);
       const pans = _ambLayerPans(bed, voicing.length);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const n = voicing.length;
@@ -3991,7 +4014,7 @@
       // (0 = a near-simultaneous pad, 100 = arpeggiated across the whole cycle),
       // in an order shaped by Strum Fidelity.
       const strumAmt = Math.max(0, Math.min(100, bed.strum || 0));
-      const spanSec = (strumAmt / 100) * Math.max(0, (bed.intervalMs | 0) / 1000);
+      const spanSec = (strumAmt / 100) * Math.max(0, effIntervalMs / 1000);
       const order = _ambStrumOrder(n, bed.strumFidelity || 0);
       // Choke (default off): clamp each note's duration AND release so the chord
       // is silent by the next unit boundary, instead of overlapping/ringing past
@@ -7437,7 +7460,7 @@
       // BPM-sync the snapped≠raw gap made the pattern a few % long and the layer
       // drifted out of phase with the others over time.
       if (type === 'texture') return Math.max(0.03, _ambStepSecFor(L, 0.03, cfg)) * 16;
-      return Math.max(0.05, _ambEffIntervalSec(L)); // bed/motif/beat (random) — continuous stream
+      return Math.max(0.05, _ambEffIntervalSec(L)) * _ambHoldMult(key, L); // bed/motif/beat (random) — continuous stream (bed ×Hold)
     }
     // Ensure a layer's Unit-Sync descriptor exists (default FREE). `unit` =
     // { mode:'free'|'sync', ref, num, den }. Free is the default everywhere.
@@ -8102,7 +8125,7 @@
           // instead of the previous notes lingering.
           else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
           I[key] = (I[key] | 0) + 1;
-          C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc);   // floor so a fast Sync can't flood
+          C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
         }
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
@@ -13098,10 +13121,21 @@
     // — NOT "Free", which is the Unit-Sync mode's word and collided confusingly
     // when Unit said Sync while Rate said Free).
     const _AMB_RATE_OPTS = [['', 'Interval (ms)'], ['1/1', '1/1'], ['1/2', '1/2'], ['1/4', '1/4'], ['1/4T', '1/4T'], ['1/8', '1/8'], ['1/8T', '1/8T'], ['1/16', '1/16'], ['1/16T', '1/16T'], ['1/32', '1/32']];
+    // The layer's UNIT — the regular grid it cycles on. A bar-fraction (÷ global
+    // BPM, so 1/8 = 1/8 of a bar and tracks tempo) or the raw ms Interval. This is
+    // what Sync / Bar Lock / other layers reference. (Field key stays `rate`.)
     const _ambRateSel = (stem) =>
-      '<div class="ambient-ctrl"><label for="' + stem + '">Rate</label><select id="' + stem + '" class="ambient-select">' +
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="The layer’s UNIT — the regular grid it cycles on. A bar-fraction (÷ global BPM: 1/8 = an eighth of a bar, tracks tempo) or the raw ms Interval. This is the thing Sync and other layers lock to.">Unit</label><select id="' + stem + '" class="ambient-select">' +
       _AMB_RATE_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
-      '</select><span class="ambient-hint">vs global BPM</span></div>';
+      '</select><span class="ambient-hint">unit size</span></div>';
+    // Bed HOLD selector — how long each chord holds, in UNITS (the Unit above).
+    // '' = Off (use the ms Length instead / legacy). A number = chord length AND
+    // re-voice interval = that many units, so the base Unit stays the sync grid.
+    const _AMB_HOLD_OPTS = [['', 'Off (use Length)'], ['0.25', '¼'], ['0.5', '½'], ['0.75', '¾'], ['1', '1'], ['1.5', '1½'], ['2', '2'], ['3', '3'], ['4', '4'], ['6', '6'], ['8', '8']];
+    const _ambHoldSel = (stem, inst) =>
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="How long each chord holds, measured in UNITS (the Unit above). The chord re-voices every Hold units and the base Unit stays the regular sync grid — so you keep a fine unit to sync to while chords last as long as you like. Overrides the ms Length when set; wash/overlap is the envelope Release.">Hold</label><select id="' + stem + '" class="ambient-select">' +
+      _AMB_HOLD_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+      '</select><span class="ambient-hint">× unit</span></div>';
     // A layer's display label: the user-set name if present, else the type
     // fallback ('Bed', 'Seq1', …). Stored in layer.label so it never collides
     // with seq.name (seed name) or sample.name (source name).
@@ -14076,7 +14110,7 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
@@ -14548,6 +14582,7 @@
       if (k === 'droneedit') return _ambDroneEditHtml(p);
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
+      if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
       // → never free → no fader at all. Other types keep it (disabled live when synced).
@@ -14856,6 +14891,7 @@
           else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
           else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
+          else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
           else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }

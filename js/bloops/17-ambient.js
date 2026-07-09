@@ -1665,16 +1665,16 @@
     function _ambEmitDescriptor(L, type) {
       const t = type || (L && L.type);
       switch (t) {
-        case 'bass':    return { mode: 'window', store: 'bassPhase', emit: _ambEmitBass };
+        case 'bass':    return { mode: 'window', store: 'bassPhase', emit: _ambStepGridOn() ? _ambEmitStepGrid : _ambEmitBass };
         case 'run':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitRun };
         case 'pedal':   return { mode: 'window', store: 'runPhase',  emit: _ambEmitPedal };
         case 'drone':   return { mode: 'window', store: 'runPhase',  emit: _ambEmitDrone };
         case 'arp':     return (L && L.euclid)
-          ? { mode: 'window', store: 'runPhase', emit: _ambEmitArpEuclid }
+          ? { mode: 'window', store: 'runPhase', emit: _ambStepGridOn() ? _ambEmitStepGrid : _ambEmitArpEuclid }
           : { mode: 'window', store: 'arpState', emit: _ambEmitArpWindow,
               init: (tt) => ({ entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: tt, lastAt: null }) };
         case 'beat':    return (L && L.gen === 'euclid')
-          ? { mode: 'window', store: 'runPhase', emit: _ambEmitBeatEuclid }
+          ? { mode: 'window', store: 'runPhase', emit: _ambStepGridOn() ? _ambEmitStepGrid : _ambEmitBeatEuclid }
           : { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
         case 'bed':     return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBed };
         case 'motif':   return { mode: 'step', gm: 16, ms: 0.04, emit: _ambEmitMotif };
@@ -4780,7 +4780,15 @@
     // per-cycle seed IS the evolve (each cycle re-rolls fill+degrees), so it's
     // grid-synced now — a deliberate re-baseline vs the free scanner (D2 gate).
     function _ambEmitStepGrid(E, inst, key, now, horizon, lead, space, cfg) {
-      if (String(key).split(':')[0] !== 'texture') return;   // slice 1: texture only
+      const _t = String(key).split(':')[0];
+      // Euclid family: ONE family dispatch entry. Delegates to the existing
+      // voice-aware emitters (byte-identical — they already share
+      // _ambEmitEuclidCore). This single seam is what D3 (unified card) and D4
+      // (retire the old emitters, moving their renderCycles in) build on.
+      if (_t === 'bass') return _ambEmitBass(E, inst, key, now, horizon, lead, space, cfg);
+      if (_t === 'arp')  return _ambEmitArpEuclid(E, inst, key, now, horizon, lead, space, cfg);
+      if (_t === 'beat') return _ambEmitBeatEuclid(E, inst, key, now, horizon, lead, space, cfg);
+      if (_t !== 'texture') return;   // texture rendered inline below; others handled above
       const notes = _ambNotesOf(inst);
       const isProg = _ambAsNotes(notes).type === 'prog';
       const N = Math.max(1, _ambScaleIntervals(notes).length);
@@ -8234,7 +8242,7 @@
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
       if (_ambStepGridOn()) windowLayer('texture', cfg.texture, 'runPhase', _ambEmitStepGrid);
       else stepLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
-      if (cfg.beat && cfg.beat.gen === 'euclid') windowLayer('beat', cfg.beat, 'runPhase', _ambEmitBeatEuclid);
+      if (cfg.beat && cfg.beat.gen === 'euclid') windowLayer('beat', cfg.beat, 'runPhase', _ambStepGridOn() ? _ambEmitStepGrid : _ambEmitBeatEuclid);
       else stepLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
       // Seq layers (dynamic list). Auto mode WINDOWS each phrase: only the
       // events falling inside the 1.2 s horizon are scheduled per tick, and the

@@ -3200,14 +3200,15 @@
       const b = _ambRateBeats(lc && lc.rate);
       return b > 0 ? b * (60 / _ambBpm()) : Math.max(0.05, ((lc && lc.intervalMs) | 0) / 1000);
     }
-    // Bed HOLD (units): a bed can hold each chord across N units — its onset
+    // HOLD (units): a bed/motif can hold each event across N units — its onset
     // interval AND note length both scale by `hold`, while the base UNIT that
     // Sync / Bar Lock / other layers reference stays put (the "regular unit to
     // sync to"). `hold` is a whole number OR clean fraction of the unit, so every
-    // chord change still lands on a unit boundary. Absent/≤0 → 1, so a bed with no
-    // hold is byte-identical to before (harness-safe). Bed-only for now.
+    // event still lands on a unit boundary. Absent/≤0 → 1, so a layer with no hold
+    // is byte-identical to before (harness-safe). Bed + Motif (chord/note streams).
     function _ambHoldMult(key, L) {
-      if (String(key).split(':')[0] !== 'bed') return 1;
+      const t = String(key).split(':')[0];
+      if (t !== 'bed' && t !== 'motif') return 1;
       const h = L && L.hold;
       return (Number.isFinite(h) && h > 0) ? Math.max(0.05, Math.min(64, h)) : 1;
     }
@@ -4633,7 +4634,17 @@
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;
       if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) { _ambRecordUnit(_E, key, at, []); return; }
-      const lenMs = Math.max(60, motif.lengthMs | 0);
+      // HOLD mode: each note's length = Hold × the base UNIT (Sync-scaled), which
+      // equals the onset interval (a new note every Hold units), so the line holds
+      // legato across units with the ADSR release ringing past. Absent hold → the
+      // legacy path: lenMs = Length (ms) — byte-identical (harness-safe).
+      let lenMs = Math.max(60, motif.lengthMs | 0);
+      if (Number.isFinite(motif.hold) && motif.hold > 0) {
+        const _cfg = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
+        let _sc = 1; try { _sc = _ambLayerScale(_E, key, motif, _cfg); } catch (e) {}
+        const unitSec = Math.max(0.05, _ambEffIntervalSec(motif)) * _sc;
+        lenMs = Math.max(60, Math.round(Math.max(0.05, Math.min(64, motif.hold)) * unitSec * 1000));
+      }
       // Twist: 0 = a single note per fire (steady cadence). As it rises, the
       // chance AND size of a quick note-burst grow — a flurry of walk-steps
       // packed into a tight window, so the line stutters into runs.
@@ -13133,7 +13144,7 @@
     // re-voice interval = that many units, so the base Unit stays the sync grid.
     const _AMB_HOLD_OPTS = [['', 'Off (use Length)'], ['0.25', '¼'], ['0.5', '½'], ['0.75', '¾'], ['1', '1'], ['1.5', '1½'], ['2', '2'], ['3', '3'], ['4', '4'], ['6', '6'], ['8', '8']];
     const _ambHoldSel = (stem, inst) =>
-      '<div class="ambient-ctrl"><label for="' + stem + '" title="How long each chord holds, measured in UNITS (the Unit above). The chord re-voices every Hold units and the base Unit stays the regular sync grid — so you keep a fine unit to sync to while chords last as long as you like. Overrides the ms Length when set; wash/overlap is the envelope Release.">Hold</label><select id="' + stem + '" class="ambient-select">' +
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="How long each chord/note holds, measured in UNITS (the Unit above). It re-fires every Hold units and the base Unit stays the regular sync grid — so you keep a fine unit to sync to while events last as long as you like. Overrides the ms Length when set; wash/overlap is the envelope Release.">Hold</label><select id="' + stem + '" class="ambient-select">' +
       _AMB_HOLD_OPTS.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
       '</select><span class="ambient-hint">× unit</span></div>';
     // A layer's display label: the user-set name if present, else the type
@@ -14116,7 +14127,7 @@
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Interval', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['hold'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [

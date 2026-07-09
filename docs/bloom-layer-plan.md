@@ -88,6 +88,12 @@ layer, new-model keyOv). Plus ＋Pad + promote-part + roman numerals.
 - B5 strum shape `3311041` — Arp ↑ / ↓ by pitch.
 - Plus: reversible Seq "Prog sync" (`d014782`) and the Tone-dropdown fix (`ce53c00`).
 
+**Track C — SKIPPED (re-confirmed 2026-07-09, after Track D completed).** Revisited when
+D4 finished and explicitly decided to skip again: it's cleanup-only (no new capability),
+C1 changes working audio for tidiness, and C2 is one-way + needs real-project load/save
+regression. The model works fully without it; the redundant old code carries cheaply.
+Original bookmark note below stands.
+
 **Track C — BOOKMARKED / DEFERRED (2026-07, decided not to pursue now).** The
 additive-first migration left the old code + new model coexisting cleanly, so C's
 cleanup turned out cheap to CARRY and expensive to PAY (changes working audio, drops

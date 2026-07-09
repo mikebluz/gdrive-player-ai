@@ -1610,7 +1610,7 @@
       switch (t) {
         case 'bed':     return 'pad';
         case 'motif':   return 'walk';
-        case 'texture': return 'mutate';
+        case 'texture': return 'stepgrid';   // step-grid family (stochastic-fill) — NOT the melody-walk 'mutate' (spec §5.1). Kept out of the capturable set (line ~715).
         case 'beat':    return (L.gen === 'euclid') ? 'euclid' : 'random';
         case 'arp':     return L.euclid ? 'euclid' : 'series';
         case 'bass':    return 'euclid';    // mono euclidean line
@@ -14247,7 +14247,7 @@
     // the anchor the coming voice/source/generator swap pickers will replace. Pure
     // display (no audio, no state), so it's harness-neutral.
     const _AMB_VOICE_LBL = { synth: 'Synth', kit: 'Kit', sample: 'Sample' };
-    const _AMB_GEN_LBL = { pad: 'Pad', walk: 'Walk', mutate: 'Mutate', euclid: 'Euclid',
+    const _AMB_GEN_LBL = { pad: 'Pad', walk: 'Walk', mutate: 'Step-grid', stepgrid: 'Step-grid', euclid: 'Euclid',
       random: 'Random', series: 'Series', riff: 'Riff', pedal: 'Pedal', held: 'Held',
       sequence: 'Sequence', sampleChop: 'Sample chop' };
     const _AMB_SRC_LBL = { scale: 'Scale', chord: 'Chord', wrap: 'Wrap', prog: 'Prog', degree: 'Degree', none: '' };
@@ -14410,7 +14410,8 @@
       }
       // B2: per-layer KEY override chip (Inherit / Key / Progression).
       if (_ambSourceEditable(type)) bits.push(_ambKeyChipHtml('ambient-' + type, L));
-      if (gen === 'riff' || gen === 'mutate') { bits.push(_ambComposeField('Gen', tag('Riff'))); bits.push(_ambComposeField('Var', tag(gen === 'mutate' ? 'Evolve' : 'Re-roll'))); }
+      if (gen === 'riff') { bits.push(_ambComposeField('Gen', tag('Riff'))); bits.push(_ambComposeField('Var', tag('Re-roll'))); }
+      else if (gen === 'stepgrid' || gen === 'mutate') { bits.push(_ambComposeField('Gen', tag('Step-grid'))); bits.push(_ambComposeField('Var', tag('Evolve'))); }   // texture = stochastic-fill step grid + evolve (was mislabeled "Riff")
       else bits.push(_ambComposeField('Gen', tag(_AMB_GEN_LBL[gen] || gen)));
       return '<div class="ambient-compose" title="Voice · Note-source · Generator (built-in layer)">' +
         bits.join('') + '</div>';

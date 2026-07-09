@@ -4,6 +4,14 @@ Companion to `bloom-layer-model.md` (the spec). Branch: `bloops-layers`.
 
 ## Progress + audit findings (2026-07)
 
+**Tracks A + B COMPLETE; C bookmarked. Latest (branch `bloom-layer-model`):** TIMING-axis
+increments shipped on the way here — Rate control relabeled **Unit** + the ms Interval
+folded into it (one Unit control: bar-fraction or ms); **Hold (× unit)** added to Bed and
+Motif (chord/note length in units while the base Unit stays the sync grid); gated → harness
+byte-identical, golden 75/75. The **texture ≈ stochastic-euclid** insight (spec §5.1) opened
+**Track D — step-grid unification** (below), which corrects C1's texture slotting. Track D
+is the current frontier and is HIGH-risk/gated (D1+ needs explicit go).
+
 **Track A — DONE.**
 - A1 slice 1 (`5612158`): dropped the Voice/Gen axis-swap pickers from the layer
   cards → static readout tags. This was the actual felt clutter.
@@ -205,6 +213,46 @@ into it. Each sub-stage additive + sign-off.*
   drop `cfg.prog`/per-layer prog fields (now in KEY), remove dead dispatch/wiring.
   `schemaVersion` bump; one-way from here. *Risk: HIGH. Gate: heavy real-project
   regression + sign-off.*
+
+## Track D — Step-grid unification (Texture ↔ Euclid)  *(new 2026-07, branch `bloom-layer-model`)*
+
+**Insight (spec §5.1).** Texture, Beat (euclid/authored), Bass, and Arp-euclid are ONE
+structure — a **step grid** firing a note per "on" step — differing only on SEED (rhythm
+generator + pitch source) and VARIANCE (mutate). This **corrects C1's slotting**: C1 filed
+texture with the Melody walk/riff family, but texture has no melodic-walk logic (no
+proximity/step-size) — it's a stochastic-fill step grid. So **texture unifies with the
+euclid family, not the melody family.** C1 shrinks to walk↔riff (Motif/Riff); texture moves
+here.
+
+**Code reality (audit 2026-07).** They do NOT share an emit path today:
+- Euclid (bass / beat-euclid / arp-euclid): `mode:'window'`, phase-anchored (`runPhase`),
+  rendered by `_ambEmitEuclidCore` (+ per-type voice render); deterministic pattern via
+  `_ambEuclidPat`, editable grid override, pages, per-step FX.
+- Texture: `mode:'step'`, a per-step scanner (`_ambEmitTexture` advancing `texStep` over a
+  16-slot `texPattern`), stochastic `fill` + `mutateRate`, random degree.
+So unification is a real generative refactor — **same HIGH-risk class as Track C** (do not
+start D1+ autonomously; explicit go + real-project regression, per the gates below).
+
+**Staged, additive, harness-gated:**
+- **D0 — reclassify (safe, harness-neutral).** Correct texture's derivation label/tag from
+  the melody-`mutate` family to the step-grid family (`_ambGeneratorOf` is a UI/tag label,
+  off the emit hot path — dispatch uses `_ambEmitDescriptor`). Spec/plan already updated
+  (§2 SEED, §5.1). UI-label only; emit untouched → harness byte-identical.
+- **D1 — unified emitter behind a flag.** Build `_ambEmitStepGrid` rendering any
+  {rhythm-seed ∈ euclidean|authored|stochastic-fill, pitch-seed ∈ chord-degree|authored|
+  random-degree|drum, variance ∈ none|mutate}. Prove it reproduces each EUCLID preset
+  byte-for-byte vs the harness; existing emitters stay wired (kill switch). Texture is
+  stochastic → snapshot its RNG stream as the new baseline.
+- **D2 — flip presets one at a time**, each its own commit + harness/ear check. Euclid
+  configs stay byte-identical; **texture is the deliberate re-baseline** (its RNG draw
+  order changes) — the one intentional bump here.
+- **D3 — expose unified SEED controls** as the step-grid card (rhythm generator + pitch
+  source pickers); the four presets become coordinates. Additive UI.
+- **D4 — retire the separate texture/beat/bass/arp emitters** (one-way, last), once proven
+  on real projects. `schemaVersion` bump.
+
+**Recommended first slice: D0** (safe, aligns code labels with the recorded model), then
+**D1 behind a flag** proving euclid byte-identical — no preset flip until that holds.
 
 ## Recommended sequence
 

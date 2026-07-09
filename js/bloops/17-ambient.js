@@ -1678,7 +1678,9 @@
           : { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
         case 'bed':     return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBed };
         case 'motif':   return { mode: 'step', gm: 16, ms: 0.04, emit: _ambEmitMotif };
-        case 'texture': return { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitTexture };
+        case 'texture': return _ambStepGridOn()
+          ? { mode: 'window', store: 'runPhase', emit: _ambEmitStepGrid }
+          : { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitTexture };
         default:        return null;
       }
     }
@@ -4748,6 +4750,66 @@
       const mr = Math.max(0, Math.min(100, texture.mutateRate | 0));
       if (!_E.texMutateAt) _E.texMutateAt = at + (6 - mr / 100 * 5);
       if (at >= _E.texMutateAt) { _ambTexMutate(texture); _E.texMutateAt = at + (6 - mr / 100 * 5); }
+    }
+
+    // ---- Unified STEP-GRID emitter (Track D — behind window.bloomStepGrid) ----
+    // Kill switch (default OFF → old per-type emitters, byte-identical). Flip on
+    // to A/B the unified step-grid path for an ear-check before it's promoted.
+    function _ambStepGridOn() {
+      try {
+        if (typeof window === 'undefined') return false;
+        if (window.__bloomStepGrid != null) return !!window.__bloomStepGrid;
+        return localStorage.getItem('bloomStepGrid') === '1';
+      } catch (e) { return false; }
+    }
+    if (typeof window !== 'undefined') {
+      window.bloomStepGrid = function (on) {
+        try { window.__bloomStepGrid = !!on; localStorage.setItem('bloomStepGrid', on ? '1' : '0'); } catch (e) {}
+        return _ambStepGridOn();
+      };
+    }
+    // One WINDOWED emitter for the step-grid family (Texture · euclid Beat/Bass/
+    // Arp are one structure — spec §5.1). Slice 1: TEXTURE, rebuilt on the euclid
+    // windowing engine (bar-anchored, per-cycle seeded RNG) as a 16-step
+    // stochastic-fill / random-degree shimmer — replacing the free per-step
+    // scanner. Reuses _ambEmitEuclidCore for correct phrase anchoring / cycle
+    // iteration / When gating; renderCycle supplies the texture flavor. The
+    // per-cycle seed IS the evolve (each cycle re-rolls fill+degrees), so it's
+    // grid-synced now — a deliberate re-baseline vs the free scanner (D2 gate).
+    function _ambEmitStepGrid(E, inst, key, now, horizon, lead, space, cfg) {
+      if (String(key).split(':')[0] !== 'texture') return;   // slice 1: texture only
+      const notes = _ambNotesOf(inst);
+      const isProg = _ambAsNotes(notes).type === 'prog';
+      const N = Math.max(1, _ambScaleIntervals(notes).length);
+      const center = Math.max(1, Math.min(8, (inst.register | 0) || 6));
+      const fill = Math.max(0, Math.min(100, inst.fill | 0)) / 100;
+      const lenMs = Math.max(60, inst.lengthMs | 0);
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      // 16 sixteenth-note slots over `bars` bar(s); pulses/rotate unused (the
+      // rhythm seed here is stochastic-fill, not euclidean).
+      const gridInst = Object.assign({}, inst, { steps: 16, bars: Math.max(1, Math.min(8, (inst.bars | 0) || 1)), pulses: 1, rotate: 0, rhythmVar: 0, restProb: 0 });
+      _ambEmitEuclidCore(E, gridInst, key, now, horizon, lead, space, cfg, 'runPhase', (ctx) => {
+        const { steps, slotSec, cStart, rnd, tFrom, tTo } = ctx;
+        for (let s = 0; s < steps; s++) {
+          if (rnd() >= fill * 0.6) continue;                 // stochastic fill (per-cycle seeded)
+          const at = cStart + s * slotSec;
+          if (at < tFrom || at >= tTo) continue;             // only within this tick's window
+          _ambKeyTime = at;
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);
+          const deg = Math.floor(rnd() * N);
+          const oct = center + (rnd() < 0.3 ? 1 : 0);
+          const f = _ambDegreeFreq(deg, oct, notes);
+          if (isProg) _ambProgStepOverride = null;
+          if (f == null) continue;
+          const pan = _ambLayerPan(inst);
+          const tp = _ambApplyAdsr(_ambTexParams(lenMs, pan, inst.tone), inst);
+          if (_ambLastDegTone) tp.type = _ambLastDegTone;
+          _ambApplyDegLevel(tp);
+          tp.volume = _ambApplyLevel(tp.volume, inst.level);
+          if (dmod) tp._detuneMod = dmod;
+          try { playNote(f, tp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, E.laneIdx()); } catch (e) {}
+        }
+      });
     }
 
     // ================= ARP engine ==================================
@@ -8167,7 +8229,8 @@
       };
       stepLayer('bed', cfg.bed, 8, 0.05, (at) => _ambEmitBed(at, cfg.bed, space));
       stepLayer('motif', cfg.motif, 16, 0.04, (at) => _ambEmitMotif(at, cfg.motif, space));
-      stepLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
+      if (_ambStepGridOn()) windowLayer('texture', cfg.texture, 'runPhase', _ambEmitStepGrid);
+      else stepLayer('texture', cfg.texture, 16, 0.03, (at) => _ambEmitTexture(at, cfg.texture, space));
       if (cfg.beat && cfg.beat.gen === 'euclid') windowLayer('beat', cfg.beat, 'runPhase', _ambEmitBeatEuclid);
       else stepLayer('beat', cfg.beat, 16, 0.04, (at) => _ambEmitBeat(at, cfg.beat, space));
       // Seq layers (dynamic list). Auto mode WINDOWS each phrase: only the

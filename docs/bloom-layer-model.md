@@ -71,6 +71,16 @@ the changes": their *rhythm* is a fixed Phrase (euclid) while their *pitch* is *
 (regenerated from the current chord each onset). The Harmony question below only bites
 when the **pitch itself is fixed** (an authored melody).
 
+**The on/off pattern's *generator* is its own spectrum** (this is SEED; the grid it fills
+is TIMING — §8). Which slots fire can be produced by: **euclidean** (`E(k,n,rot)`),
+**authored** (hand-drawn), **locked-random**, or **stochastic-fill** (each slot on with
+probability `fill`). The last is today's **Texture** — a step-grid Phrase whose on/off is
+generated *stochastically* and whose degrees are random, then evolved by VARIANCE
+(`mutate`). So Texture is **not a distinct generator**: it's the *step-grid layer* (same
+TIMING as euclid Beat/Bass/Arp) with a stochastic-fill rhythm seed + random-degree pitch +
+mutate variance — the stochastic end of the same "which slots fire" axis whose deterministic
+end is euclidean. See §5.1.
+
 **Harmony toggle (fixed-pitch phrases only).** Phrase pitches are stored as **degrees**
 (never absolute MIDI, except the Fixed case), so they can re-map to the frame:
 - **Fixed** — absolute pitches; ignore KEY (re-harmonization / pedal / ostinato).
@@ -168,7 +178,7 @@ and every layer already realizes simultaneity (TIMING) and polyphony (INSTRUMENT
 | Pad (Bed) | synth | inherit | Free (chordal) | free, chord-stack, strum | voicing drift |
 | Pad·held (Drone) | synth | inherit | Free (chordal) | held / cycle | — |
 | Melody·walk (Motif) | synth | inherit | Free | free interval | walk rule + roam |
-| Melody·evolve (Texture) | synth | inherit | Phrase | free | evolve |
+| Shimmer (Texture) | synth | inherit | **step-grid · stochastic-fill · random-degree** | **step-grid scan** | evolve (mutate) |
 | Melody·reroll (Riff) | synth | inherit | Phrase (locked-random) | bar | re-roll / static |
 | Pedal | synth | inherit | Phrase (root) | bar | — |
 | Bass | synth (bass) | inherit | Phrase-rhythm · Free-pitch(root) | bar/grid | rhythmVar |
@@ -180,6 +190,45 @@ and every layer already realizes simultaneity (TIMING) and polyphony (INSTRUMENT
 Melody's walk/evolve/re-roll are `SEED-Free/Phrase × VARIANCE-mode`, not three
 generators. Pad/Drone differ only by TIMING (free vs held). Bass = a euclid layer with a
 bass voice + Free-pitch. Every "generator" is emergent from `SEED × TIMING × VARIANCE`.
+
+## 5.1 Zoom: the step-grid layer (Texture ≈ stochastic euclid)
+
+Beat (euclid/authored), Bass, Arp-euclid, **and Texture** are one structure: a **step
+grid** of on/off slots that fires a note on each "on" step. They differ only on SEED
+(how the pattern + pitches are chosen) and VARIANCE (whether it evolves) — *same* TIMING.
+The unified layer's controls, by axis:
+
+- **INSTRUMENT** — Voice: one tone · a **kit** (drum lanes) · sample.
+- **KEY** — inherit (chromatic / key / progression); pitch derives from this.
+- **SEED** — two independent halves:
+  - *Rhythm* (which slots fire): **Euclidean** (Pulses/Steps/Rotate) · **Authored** (draw
+    cells) · **Stochastic** (`Fill` = probability/step) · locked-random.
+  - *Pitch* (what an on-step plays): **Chord/degree** (from KEY per onset — bass/arp follow
+    changes) · **Authored** (degrees drawn per cell) · **Random-degree** (stochastic scale
+    pick) · **Drum** (the lane's kit voice).
+- **TIMING** — **Unit = one step** (bar-fraction/ms — the sync grid) · **Phrase = Steps ×
+  Bars/pages** · per-step **velocity/length/pan/ratchet** (deterministic) · **step-relative
+  note length** (the "grain length in steps" the Texture-Hold discussion surfaced — one
+  shared control here, *not* a Texture one-off) · When/trance gates · drift.
+- **VARIANCE** — per-step **probability** · **mutate/evolve** (flip slots / re-roll degrees
+  over time = Texture's `mutateRate`) · re-roll · humanize.
+- **FX / MIX** — unchanged.
+
+Then the presets are just coordinates in it:
+
+| Preset | Rhythm seed | Pitch seed | Variance |
+|---|---|---|---|
+| **Texture** | Stochastic (`Fill`) | Random-degree | mutate |
+| **Beat** (euclid) | Euclidean | Drum (or single pitch) | prob / rhythmVar |
+| **Beat** (drum-lanes) | Authored, per lane | Drum per lane | per-step prob |
+| **Bass** | Euclidean | Chord-root (Free) | rhythmVar |
+| **Arp** (euclid) | Euclidean | Chord-degree, spread | mutes / evolve |
+
+Consequence for **Hold**: what looked like a Texture-specific "Hold = grain length in
+steps" is just this layer's **step-relative note length**, shared with euclid (which already
+carries per-step `len`). So it's *not* a Texture patch — it lands when the step-grid layer
+is built. Until then, Texture keeps its ms Length; **Hold stays a Bed/Motif feature** (the
+genuine one-event-per-Unit layers, where Hold ≡ length ≡ re-fire).
 
 ## 6. Coverage (verified on paper)
 

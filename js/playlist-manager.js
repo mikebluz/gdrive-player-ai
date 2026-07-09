@@ -44,8 +44,12 @@ class PlaylistManager {
 
     setTracks(tracks) {
         this.musicPlayer.clearPrefetchCache();
-        this.tracks = [...tracks];
-        this.originalOrder = [...tracks];
+        // Default sort: A–Z by track name (natural order, so "Track 2" < "Track 10"),
+        // replacing Drive's arbitrary return order. Users can re-sort via the Sort
+        // dropdown; this is just the initial order (and picks the first auto-play track).
+        const sorted = [...tracks].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }));
+        this.tracks = sorted;
+        this.originalOrder = [...sorted];
         this.currentIndex = -1;
         this.renderPlaylist();
         this.updatePlaylistInfo();

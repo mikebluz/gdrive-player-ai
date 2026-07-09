@@ -72,6 +72,11 @@
         // layers where they are and snap each out-of-key note to the nearest tone
         // of the key scale). Read live during generation; keyOff ignores it.
         keyMode:  'transpose',
+        // Area RELATIVE MODE: re-centre the whole area's KEY onto a modal degree
+        // (0 Ionian/off · 1 Dorian … 5 Aeolian/rel-minor · 6 Locrian). Layers that
+        // inherit the area key pick it up (a per-layer Relative mode overrides it).
+        // 0 = off → byte-identical. Only meaningful when Key is on.
+        keyModeRot: 0,
         progRateMs: 4000,               // ms per chord (LEGACY — superseded by barsPerChord; removed in prog rework 1b)
         barsPerChord: 1,                // bars each chord of a Progression holds (bar-aligned chord clock)
         prog: { on: false, name: '', chords: [] },   // GLOBAL progression (Configure) — inherited by empty-scale layers when on
@@ -1342,6 +1347,7 @@
       if (typeof cfg.keyScale !== 'string' || !cfg.keyScale) cfg.keyScale = d.keyScale;
       if (typeof SCALES !== 'undefined' && SCALES && !SCALES[cfg.keyScale]) cfg.keyScale = d.keyScale;
       if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
+      cfg.keyModeRot = Number.isFinite(cfg.keyModeRot) ? ((((cfg.keyModeRot | 0) % 7) + 7) % 7) : 0;   // area relative mode (0..6)
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -1802,7 +1808,15 @@
       // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
       // new tonic. Only meaningful for scale sources; carried on the descriptor so
       // _ambScaleIntervals / _ambSrcRootPc apply it. Absent/0 → no change (default).
-      const hasMode = !!(layer && (layer.modeRot | 0) && (notes.type === 'scale' || !notes.type));
+      // Effective relative mode: the layer's own modeRot, else the AREA's
+      // keyModeRot (only when the area Key is on) — so an area-wide relative mode
+      // cascades to every inheriting scale layer, and a per-layer mode overrides.
+      // Area default 0 → effMode == layer.modeRot → byte-identical.
+      const _amKc = (typeof _ambKeyCfg === 'function') ? _ambKeyCfg() : null;
+      const _areaMode = (_amKc && _amKc.keyOn) ? ((((_amKc.keyModeRot | 0) % 7) + 7) % 7) : 0;
+      const _layerMode = ((((layer && (layer.modeRot | 0)) | 0) % 7) + 7) % 7;
+      const effMode = _layerMode || _areaMode;
+      const hasMode = !!(effMode && (notes.type === 'scale' || !notes.type));
       const hasColor = !!(layer && Array.isArray(layer.colors) && layer.colors.length && ((layer.colorAmt | 0) > 0));
       // PINNED per-layer root (Notes ▸ Root) — scale sources only. Carried on
       // the descriptor so _ambSrcRootPc / labels / key-fit all see it.
@@ -1811,7 +1825,7 @@
       if (pinned != null && !hasMode && !hasColor) return Object.assign({}, notes, { rootPc: pinned });
       if (hasMode || hasColor) {
         const out = hasMode
-          ? { type: 'scale', scale: notes.scale || '', modeRot: ((layer.modeRot | 0) % 7 + 7) % 7 }
+          ? { type: 'scale', scale: notes.scale || '', modeRot: effMode }
           : Object.assign({}, notes);
         if (pinned != null) out.rootPc = pinned;
         if (hasColor) {
@@ -16492,6 +16506,8 @@
         if (kqSel) { kqSel.disabled = !cfg.keyOn; kqSel.style.display = follow ? 'none' : ''; }
         const kMode = document.getElementById(tr('ambient-key-mode'));
         if (kMode) { kMode.textContent = (cfg.keyMode === 'quantize') ? 'Quantize' : 'Transpose'; kMode.disabled = !cfg.keyOn; kMode.classList.toggle('active', !!cfg.keyOn); }
+        const kModeRot = document.getElementById(tr('ambient-key-moderot'));
+        if (kModeRot) { kModeRot.value = String(((cfg.keyModeRot | 0) % 7 + 7) % 7); kModeRot.disabled = !cfg.keyOn; }
         // Progression sub-controls.
         const pPick = document.getElementById(tr('ambient-prog-pick'));
         if (pPick) pPick.textContent = (Array.isArray(p.chords) && p.chords.length) ? (p.name || 'Progression') : '— pick —';
@@ -16737,6 +16753,12 @@
             '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
             '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
             '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
+            // Area RELATIVE MODE: re-centre the whole area onto a modal degree of
+            // the key (a new tonal root that tracks the key). Cascades to every
+            // inheriting layer; a per-layer Relative mode overrides it.
+            '<select id="ambient-key-moderot" class="ambient-select ambient-key-moderot" title="Relative mode — re-centre the whole Area onto a modal degree of the Key: a new tonal root that TRACKS the key (workspace C + Aeolian = A minor; change to G → E minor). Layers inheriting the Area key follow; a per-layer Relative mode overrides. Off = the key’s own root.">' +
+              ['Ionian (off)', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian', 'Aeolian (rel. min)', 'Locrian'].map((nm, i) => '<option value="' + i + '">' + nm + '</option>').join('') +
+            '</select>' +
           '</span>' +
           // Progression sub-controls (shown in Progression mode; master-only).
           (E.isLane ? '' :
@@ -17498,6 +17520,13 @@
         if (kMode) kMode.addEventListener('click', () => {
           _E = E; const cfg = cfg0(); if (!cfg || !cfg.keyOn) return;
           cfg.keyMode = (cfg.keyMode === 'quantize') ? 'transpose' : 'quantize';
+          _ambSyncControls(E); persist();
+        });
+        const kModeRot = G('ambient-key-moderot');
+        if (kModeRot) kModeRot.addEventListener('change', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.keyModeRot = ((((parseInt(kModeRot.value, 10) || 0) % 7) + 7) % 7);
+          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }   // apply live next iteration
           _ambSyncControls(E); persist();
         });
         const kRoot = G('ambient-key-root');

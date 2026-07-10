@@ -7615,26 +7615,38 @@
       const RL = _ambLayerByKey(E, refKey);
       return RL ? (whole / _ambLayerSubCount(RL, refKey)) : whole;
     }
+    // RATE (relative seed time): the layer's whole unit plays in `speed` × its
+    // normal time — 1 = today (default), ¼ = the seed shrinks and plays in a
+    // quarter of the time, 2 = twice as long. ONE multiplier at the resolved-unit
+    // chokepoint, so every engine (stream advance, euclid barSec, arp), status
+    // bar, queue boundary, and Lock-to reference follows automatically. Absent /
+    // 1 → ×1 (byte-identical; ×1.0 is an exact FP identity anyway).
+    function _ambRateMult(L) {
+      const v = L && L.speed;
+      return (Number.isFinite(v) && v > 0 && v !== 1) ? Math.max(0.05, Math.min(16, v)) : 1;
+    }
     // A layer's RESOLVED unit length — its sync target if synced, else natural.
+    // Both paths scale by Rate (_ambRateMult), so a Lock-to target also shrinks.
     function _ambResolvedUnitSec(E, key, cfg, seen) {
       const L = _ambLayerByKey(E, key);
       if (!L) return (60 / _ambBpm()) * 4;
+      const m = _ambRateMult(L);
       const nat = _ambNaturalUnitSec(E, key, L, cfg);
       const u = L.unit;
-      if (!u || u.mode !== 'sync' || !u.ref) return nat;
-      if (seen && seen.has(key)) return nat;          // break a ref cycle → fall back to natural
+      if (!u || u.mode !== 'sync' || !u.ref) return nat * m;
+      if (seen && seen.has(key)) return nat * m;      // break a ref cycle → fall back to natural
       const s = seen || new Set(); s.add(key);
       const refSec = _ambUnitRefSec(E, u.ref, cfg, s);
-      if (!(refSec > 0)) return nat;
+      if (!(refSec > 0)) return nat * m;
       const r = Math.max(1, u.num | 0) / Math.max(1, u.den | 0);
-      const t = refSec * r;
-      return (t > 0.001) ? t : nat;
+      const t = refSec * r * m;
+      return (t > 0.001) ? t : nat * m;
     }
     // Live time-scale for a layer: 1 when Free, else (synced target / natural).
     // Multiply an engine's base interval / bar length by this to lock its unit.
     function _ambLayerScale(E, key, L, cfg) {
       const u = L && L.unit;
-      if (!u || u.mode !== 'sync' || !u.ref) return 1;   // Free → no scaling, no work
+      if (!u || u.mode !== 'sync' || !u.ref) return _ambRateMult(L);   // Free → just the Rate multiplier (1 by default)
       try {
         const nat = _ambNaturalUnitSec(E, key, L, cfg);
         if (!(nat > 0.001)) return 1;
@@ -13247,6 +13259,12 @@
     // interval, default); else the hits snap to that subdivision.
     const _ambStrumSyncSel = (stem) =>
       '<div class="ambient-ctrl"><label for="' + stem + '" title="Lock the strum’s hits to the BPM. Free = spread the chord evenly across a fraction of the interval (default). 1/8 · 1/16 · 1/32 = snap each hit onto that beat subdivision so the strum lands on the grid (tighter/looser by division).">Strum sync</label><select id="' + stem + '" class="ambient-select"><option value="">Free</option><option value="1/8">1/8</option><option value="1/16">1/16</option><option value="1/32">1/32</option></select><span class="ambient-hint">hits → BPM</span></div>';
+    // RATE — relative seed time. The whole seed/unit plays in this × its normal
+    // time: ×1 = today (default) · ×½/×¼/×⅛ = shrink (speed up) · ×2/×4 = stretch.
+    // Stored as `speed` (number, kept OUT of defaults); rides _ambRateMult at the
+    // resolved-unit chokepoint so engines/readouts/Lock-to all follow.
+    const _ambSpeedSel = (stem) =>
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="Rate — play this layer’s whole seed in a fraction (or multiple) of its normal time. ×¼ = the seed shrinks and plays back in a quarter of the time; ×2 = stretched to twice the time. The Unit stays what you set; Rate rescales the realized time.">Rate</label><select id="' + stem + '" class="ambient-select"><option value="4">×4 (stretch)</option><option value="2">×2</option><option value="" selected>×1 (normal)</option><option value="0.5">×½</option><option value="0.25">×¼</option><option value="0.125">×⅛</option></select><span class="ambient-hint">seed time ×</span></div>';
     // Step-grid PITCH pick (D3) — how each grain's degree is chosen from the note
     // source. 'random' (uniform scatter, default) | 'low' (root-weighted → tonal).
     const _ambPitchSeedSel = (stem) =>
@@ -14233,25 +14251,25 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['hold'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['hold'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
@@ -14261,7 +14279,7 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -14269,7 +14287,7 @@
       bass: { label: 'Bass', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -14277,14 +14295,14 @@
       run: { label: 'Riff', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -14292,7 +14310,7 @@
       drone: { label: 'Drone', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -14710,6 +14728,7 @@
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
       if (k === 'pitchseed') return _ambPitchSeedSel(p + '-pitchseed');
       if (k === 'strumsync') return _ambStrumSyncSel(p + '-strumsync');
+      if (k === 'speed') return _ambSpeedSel(p + '-speed');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
       // → never free → no fader at all. Other types keep it (disabled live when synced).
@@ -15024,6 +15043,7 @@
           else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
           else if (k === 'strumsync') { const e = el('strumsync'); if (e) { e.value = inst.strumSync || ''; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value) L.strumSync = e.value; else delete L.strumSync; sync(); persist(); } }); } }
+          else if (k === 'speed') { const e = el('speed'); if (e) { e.value = (Number.isFinite(inst.speed) && inst.speed !== 1) ? String(inst.speed) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0 && v !== 1) L.speed = v; else delete L.speed; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
@@ -17500,6 +17520,19 @@
       // Schema-carried selects the old bed template didn't wire (Hold / Strum sync).
       { const hs = G('ambient-bed-hold'); if (hs) { const _bc = cfg0(); hs.value = (_bc && _bc.bed && Number.isFinite(_bc.bed.hold)) ? String(_bc.bed.hold) : ''; hs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; const v = parseFloat(hs.value); if (Number.isFinite(v) && v > 0) c.bed.hold = v; else delete c.bed.hold; if (E.timer) { try { _ambSyncMods(); } catch (e) {} } persist(); }); } }
       { const ss = G('ambient-bed-strumsync'); if (ss) { const _bc = cfg0(); ss.value = (_bc && _bc.bed && _bc.bed.strumSync) || ''; ss.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; if (ss.value) c.bed.strumSync = ss.value; else delete c.bed.strumSync; persist(); }); } }
+      // Rate (relative seed time) — primary selects (schema renders them; wire here).
+      ['bed', 'motif', 'texture', 'beat'].forEach(ty => {
+        const e = G('ambient-' + ty + '-speed'); if (!e) return;
+        const c0 = cfg0(); const cur = c0 && c0[ty] && c0[ty].speed;
+        e.value = (Number.isFinite(cur) && cur !== 1) ? String(cur) : '';
+        e.addEventListener('change', () => {
+          _E = E; const c = cfg0(); if (!c || !c[ty]) return;
+          const v = parseFloat(e.value);
+          if (Number.isFinite(v) && v > 0 && v !== 1) c[ty].speed = v; else delete c[ty].speed;
+          if (E.timer) { try { _ambSyncMods(); } catch (x) {} }
+          persist();
+        });
+      });
       // Rate (schema carries it; old bed template didn't).
       { const rs = G('ambient-bed-rate'); if (rs) { const _bc = cfg0(); rs.value = (_bc && _bc.bed && _bc.bed.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; c.bed.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-bed', c.bed); } catch (e) {} persist(); }); } }
       bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-portamento', 'motif', 'portamento');

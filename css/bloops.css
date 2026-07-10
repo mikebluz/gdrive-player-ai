@@ -11261,3 +11261,8 @@
     .ambient-areas { position: sticky; top: 0; z-index: 40; background: #101018; box-shadow: 0 6px 14px rgba(0,0,0,0.35); }
     .ambient-orch-bar-hdr { margin-left: auto; margin-right: 8px; font: 600 0.72rem 'JetBrains Mono', monospace; color: #7fd6c4; white-space: nowrap; }
     .ambient-orch-bar-hdr:empty { display: none; }
+
+    /* Trance-gate step grid: max 8 UNIFORM cells per row, aligned into columns
+       (the shared flex-wrap slice-grid sizes cells by their digits → misaligned). */
+    .ambient-slice-grid.ambient-tg-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
+    .ambient-tg-grid .ambient-slice-cell { min-width: 0; width: auto; height: 22px; padding: 0; overflow: hidden; text-align: center; }

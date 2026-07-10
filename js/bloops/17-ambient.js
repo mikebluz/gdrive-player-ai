@@ -1156,6 +1156,7 @@
       if (!host.tg || typeof host.tg !== 'object') host.tg = { ...d.tg, pattern: d.tg.pattern.slice() };
       else {
         host.tg.on = host.tg.on ? 1 : 0;
+        host.tg.gen = host.tg.gen ? 1 : 0;   // generative: re-roll the pattern each bar (drawn pattern = density)
         host.tg.steps = Math.max(2, Math.min(64, (host.tg.steps | 0) || 16));
         if (!Number.isFinite(host.tg.depth)) host.tg.depth = d.tg.depth;
         if (!Number.isFinite(host.tg.edge)) host.tg.edge = d.tg.edge;
@@ -7905,6 +7906,27 @@
     // on stop/teardown — so the automation timeline can't accumulate across plays). `steps`
     // = steps per bar; each on-step passes (gain 1), each off-step cuts to (1 − depth). The
     // grid is anchored to play start (E._playStartAt) at the cfg tempo so it locks to the bar.
+    // GENERATIVE trance gate: re-roll the step pattern each BAR, seeded by
+    // (layer, project seed, bar index) — deterministic per bar (a Bar-Locked
+    // replay hears the same chops), evolving across bars. The DRAWN pattern
+    // sets the density (its on-count / steps); a fully-silent roll is bumped
+    // so a bar never mutes the layer entirely. No engine RNG consumed.
+    function _ambTgHash(seed, n) {
+      let h = (seed ^ Math.imul(n | 0, 2654435761)) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    }
+    function _ambTgGenPat(layerKey, cfgSeed, bar, steps, drawnPat) {
+      let on = 0; for (let i = 0; i < steps; i++) if (drawnPat[i]) on++;
+      const prob = Math.max(1, on) / steps;
+      let seed = ((cfgSeed | 0) ^ 0x9e3779b9) | 0;
+      const ks = String(layerKey || '');
+      for (let i = 0; i < ks.length; i++) seed = (Math.imul(seed, 31) + ks.charCodeAt(i)) | 0;
+      const out = new Array(steps); let any = 0;
+      for (let i = 0; i < steps; i++) { out[i] = _ambTgHash(seed, bar * 64 + i) < prob ? 1 : 0; any |= out[i]; }
+      if (!any) out[((bar % steps) + steps) % steps] = 1;
+      return out;
+    }
     function _ambScheduleTg(E, layer, e, now, horizon) {
       if (!e || typeof Tone === 'undefined') return;
       // CORE STRIPS: the gate pattern runs inside the core (stateless,
@@ -7920,14 +7942,22 @@
           const barSec0 = (60 / Math.max(20, bpm0)) * 4;
           const steps0 = Math.max(2, Math.min(64, (tg0.steps | 0) || 16));
           const anchor0 = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : now);
+          // Generative: re-roll the mask for the CURRENT bar (swap slightly early
+          // so the new bar's first steps aren't a tick late); sig carries the bar
+          // index so each bar resends exactly once.
+          let pat0 = tg0.pattern, genBar = -1;
+          if (tg0.gen) {
+            genBar = Math.max(0, Math.floor((now + 0.08 - anchor0) / barSec0));
+            pat0 = _ambTgGenPat(layer, (cfg0 && cfg0.seed) | 0, genBar, steps0, tg0.pattern);
+          }
           let lo = 0, hi = 0;
           for (let i = 0; i < steps0 && i < 64; i++) {
-            if (tg0.pattern[i]) { if (i < 32) lo |= (1 << i); else hi |= (1 << (i - 32)); }
+            if (pat0[i]) { if (i < 32) lo |= (1 << i); else hi |= (1 << (i - 32)); }
           }
           const depth0 = Math.max(0, Math.min(100, tg0.depth | 0)) / 100;
           const edge0 = Math.max(0, Math.min(80, tg0.edge | 0)) / 1000;
           args = [e.core.slot, 1, steps0, lo >>> 0, hi >>> 0, depth0, edge0, anchor0, barSec0];
-          sig = args.join('/');
+          sig = args.join('/') + (tg0.gen ? ('/g' + genBar) : '');
         }
         if (e._tgCoreSig !== sig) {
           e._tgCoreSig = sig;
@@ -7967,9 +7997,16 @@
         e._tgNextAt = anchor + k * stepDur;
       }
       let g = 0, prevV = Number.isFinite(e._tgPrevV) ? e._tgPrevV : 1;
+      let _genBar = -1, _genPat = null;   // per-bar cache for generative mode
       while (e._tgNextAt < horizon && g++ < 128) {
         const idx = Math.round((e._tgNextAt - anchor) / stepDur);
-        const v = pat[((idx % steps) + steps) % steps] ? 1 : offGain;
+        let stepOn;
+        if (tg.gen) {
+          const bar = Math.floor(idx / steps);
+          if (bar !== _genBar) { _genBar = bar; _genPat = _ambTgGenPat(layer, (cfg && cfg.seed) | 0, bar, steps, pat); }
+          stepOn = _genPat[((idx % steps) + steps) % steps];
+        } else stepOn = pat[((idx % steps) + steps) % steps];
+        const v = stepOn ? 1 : offGain;
         try {
           if (edge > 0.0005) {
             e.tgSig.setValueAtTime(prevV, e._tgNextAt);
@@ -13223,6 +13260,7 @@
         // continuous LFO; this is a programmable bar-synced on/off step pattern.
         '<div class="ambient-mod-target"><div class="ambient-mod-sub">Trance Gate</div>' +
           _ambSl('On', 'ambient-' + layer + '-fx-tg-on', 0, 1, 0, 'off → on') +
+          _ambSl('Gen', 'ambient-' + layer + '-fx-tg-gen', 0, 1, 0, 'drawn → re-rolled per bar') +
           _ambSl('Steps', 'ambient-' + layer + '-fx-tg-steps', 4, 32, 16, 'per bar') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-tg-depth', 0, 100, 100, 'dip → full cut') +
           _ambSl('Edge', 'ambient-' + layer + '-fx-tg-edge', 0, 80, 6, 'sharp → soft') +
@@ -13244,10 +13282,11 @@
       const grid = el('fx-tg-grid');
       const renderGrid = () => { const L = getL(); if (grid && L && L.tg) grid.innerHTML = _ambTgCells(L.tg); };
       const setSl = (suf, v) => { const e = el('fx-tg-' + suf); if (e && v != null) { e.value = String(v); const rv = el('fx-tg-' + suf + '-v'); if (rv) rv.textContent = String(v) + _ambSlUnit(e.id); } };
-      { const L = getL(); if (L && L.tg) { setSl('on', L.tg.on); setSl('steps', L.tg.steps); setSl('depth', L.tg.depth); setSl('edge', L.tg.edge); } }
+      { const L = getL(); if (L && L.tg) { setSl('on', L.tg.on); setSl('gen', L.tg.gen ? 1 : 0); setSl('steps', L.tg.steps); setSl('depth', L.tg.depth); setSl('edge', L.tg.edge); } }
       renderGrid();
       const bindInt = (suf, fn) => { const e = el('fx-tg-' + suf); if (!e) return; e.addEventListener('input', () => { _E = E; const L = getL(); if (!L || !L.tg) return; const v = parseInt(e.value, 10) || 0; fn(L.tg, v); const rv = el('fx-tg-' + suf + '-v'); if (rv) rv.textContent = String(v) + _ambSlUnit(e.id); persist(); }); };
       bindInt('on', (tg, v) => { tg.on = v ? 1 : 0; });
+      bindInt('gen', (tg, v) => { tg.gen = v ? 1 : 0; });
       bindInt('depth', (tg, v) => { tg.depth = Math.max(0, Math.min(100, v)); });
       bindInt('edge', (tg, v) => { tg.edge = Math.max(0, Math.min(80, v)); });
       { const e = el('fx-tg-steps'); if (e) e.addEventListener('input', () => {

@@ -7239,9 +7239,12 @@
           let p = 0; if (L) { try { p = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {} }
           span.textContent = (L && p > 0) ? (_ambFmtMs(Math.round(p * 1000)) + ' / block') : '';
         });
-        // Unit FIT readout: how the seed is constrained to the unit — natural
-        // material time-scales to fit (windowed layers), or the unit IS the
-        // generation grain (stream layers). Shows "seed A → B (×r)" when scaled.
+        // Unit readout beside the Free/Sync toggle.
+        //  • SYNC → you've SET the length explicitly, so just show it ("4 bars").
+        //    The natural (Free-interval) length is irrelevant once locked, so the
+        //    old "seed A → B (×r)" breakdown is dropped — it only confused.
+        //  • FREE → show the unit's length; only surface "seed A → B (×r)" when
+        //    RATE has actually rescaled it (r ≠ 1), since that IS the seed warping.
         const _fitBpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
         const _fitBar = (60 / Math.max(20, _fitBpm)) * 4;
         const _fitFmt = (sec) => { const b = sec / _fitBar; return (b >= 0.24) ? ((Math.round(b * 100) / 100) + ' bar' + (Math.abs(b - 1) < 0.005 ? '' : 's')) : (Math.round(sec * 1000) + ' ms'); };
@@ -7249,13 +7252,17 @@
           const key = (typeof _ambCardKey === 'function') ? _ambCardKey(span.closest('.ambient-layer')) : null;
           const L = key ? _ambLayerByKey(E, key) : null;
           if (!L) { span.textContent = ''; return; }
-          let nat = 0, res = 0;
-          try { nat = _ambNaturalUnitSec(E, key, L, cfg); res = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
-          if (!(nat > 0.001) || !(res > 0.001)) { span.textContent = ''; return; }
-          const r = res / nat;
+          let res = 0;
+          try { res = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+          if (!(res > 0.001)) { span.textContent = ''; return; }
+          const synced = !!(L.unit && L.unit.mode === 'sync');
+          if (synced) { span.textContent = 'unit ' + _fitFmt(res); return; }
+          // Free: show the length; note the Rate stretch only when it's non-1.
+          let nat = 0; try { nat = _ambNaturalUnitSec(E, key, L, cfg); } catch (e) {}
+          const r = (nat > 0.001) ? (res / nat) : 1;
           span.textContent = (Math.abs(r - 1) < 0.005)
             ? ('unit ' + _fitFmt(res))
-            : ('seed ' + _fitFmt(nat) + ' → ' + _fitFmt(res) + ' (×' + (Math.round(r * 100) / 100) + ')');
+            : ('unit ' + _fitFmt(res) + ' · rate ×' + (Math.round(r * 100) / 100));
         });
         _ambSyncDriftReadouts(E);
         _ambRefreshEuclidGrids(E);   // euclid Pattern grids: bars readout tracks Lock-to / Phrase / Rate

@@ -4038,16 +4038,18 @@
       const spanSec = (strumAmt / 100) * Math.max(0, effIntervalMs / 1000);
       const order = _ambStrumOrder(n, bed.strumFidelity || 0);
       // Strum SYNC (bed.strumSync = '' | '1/8' | '1/16' | '1/32'): lock the per-hit
-      // spacing to a BPM note-division so the strummed chord lands ON the beat grid
-      // instead of an arbitrary fraction of the interval. Absent → 0 → free spacing
-      // (byte-identical). Snap the even spacing to the nearest subdivision (floor 1).
+      // spacing to the chosen BPM note-division. The DIVISION is the spacing unit and
+      // STRUM sets how many divisions between hits (1..8) — so a finer/coarser Sync
+      // directly changes the spacing, and raising Strum widens the arpeggio. (Snapping
+      // to the nearest absolute time made 1/8 and 1/16 collapse to the same value.)
+      // Absent → 0 → free spacing (byte-identical).
       const _strumBeats = (typeof _ambRateBeats === 'function') ? _ambRateBeats(bed.strumSync) : 0;
       const _strumSynced = _strumBeats > 0 && spanSec > 0;
       let hitSpacing = 0;
       if (_strumSynced) {
         const subdiv = _strumBeats * (60 / Math.max(20, _ambBpm()));
-        const even = spanSec / Math.max(1, n);
-        hitSpacing = Math.max(subdiv, Math.round(even / subdiv) * subdiv);   // snap even spacing to the grid (floor 1 subdiv)
+        const steps = Math.max(1, Math.round((strumAmt / 100) * 8));   // Strum 0→100 = 1..8 divisions between hits
+        hitSpacing = steps * subdiv;
       }
       // Choke (default off): clamp each note's duration AND release so the chord
       // is silent by the next unit boundary, instead of overlapping/ringing past

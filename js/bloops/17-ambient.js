@@ -7214,6 +7214,24 @@
           let p = 0; if (L) { try { p = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {} }
           span.textContent = (L && p > 0) ? (_ambFmtMs(Math.round(p * 1000)) + ' / block') : '';
         });
+        // Unit FIT readout: how the seed is constrained to the unit — natural
+        // material time-scales to fit (windowed layers), or the unit IS the
+        // generation grain (stream layers). Shows "seed A → B (×r)" when scaled.
+        const _fitBpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+        const _fitBar = (60 / Math.max(20, _fitBpm)) * 4;
+        const _fitFmt = (sec) => { const b = sec / _fitBar; return (b >= 0.24) ? ((Math.round(b * 100) / 100) + ' bar' + (Math.abs(b - 1) < 0.005 ? '' : 's')) : (Math.round(sec * 1000) + ' ms'); };
+        host.querySelectorAll('.ambient-unit-fit').forEach(span => {
+          const key = (typeof _ambCardKey === 'function') ? _ambCardKey(span.closest('.ambient-layer')) : null;
+          const L = key ? _ambLayerByKey(E, key) : null;
+          if (!L) { span.textContent = ''; return; }
+          let nat = 0, res = 0;
+          try { nat = _ambNaturalUnitSec(E, key, L, cfg); res = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+          if (!(nat > 0.001) || !(res > 0.001)) { span.textContent = ''; return; }
+          const r = res / nat;
+          span.textContent = (Math.abs(r - 1) < 0.005)
+            ? ('unit ' + _fitFmt(res))
+            : ('seed ' + _fitFmt(nat) + ' → ' + _fitFmt(res) + ' (×' + (Math.round(r * 100) / 100) + ')');
+        });
         _ambSyncDriftReadouts(E);
         _ambRefreshEuclidGrids(E);   // euclid Pattern grids: bars readout tracks Lock-to / Phrase / Rate
       } catch (e) {}
@@ -7292,7 +7310,8 @@
         '<span class="ambient-seg-row ambient-usync-seg">' +
           '<button type="button" class="ambient-seg amb-usync-mode" data-usmode="free" id="' + p + '-us-free">Free</button>' +
           '<button type="button" class="ambient-seg amb-usync-mode" data-usmode="sync" id="' + p + '-us-sync">Sync</button>' +
-        '</span></div>' +
+        '</span>' +
+        '<span class="ambient-hint ambient-unit-fit" title="How the seed is CONSTRAINED to the unit: the layer’s natural material is time-scaled to fit exactly — “seed 2 bars → 1 bar (×0.5)” means it plays at double speed to fit. Rate multiplies this."></span></div>' +
         '<div class="ambient-ctrl ambient-usync-lock" id="' + p + '-us-lock">' +
           '<label for="' + p + '-us-ref">Lock to</label>' +
           '<select id="' + p + '-us-ref" class="ambient-select"></select>' +
@@ -17276,6 +17295,7 @@
       } catch (e) {}
       try { _ambWireAreaStrip(E); } catch (e) {}   // area tabs (master only)
       try { _ambSyncFxVis(E); } catch (e) {}       // FX module: show only the added FX
+      try { _ambSyncLayerUnits(E); } catch (e) {}  // unit-fit readouts on first paint
       try { _ambRenderCaptureBank(); } catch (e) {}
 
       // Per-layer expand/collapse: the caret in each layer head folds that

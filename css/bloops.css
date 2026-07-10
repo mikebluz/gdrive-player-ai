@@ -18,6 +18,8 @@
 
     body {
       overscroll-behavior-x: none;
+      /* Reserve the fixed .float-header's height (40px pills) at the top. */
+      padding-top: 40px;
       /* width:100% — NOT 100vw. 100vw is the full viewport INCLUDING the
          vertical scrollbar gutter, so once the page scrolls (content taller
          than the viewport) the body is ~15px wider than the content area and
@@ -10082,9 +10084,14 @@
        (was a floating top-right gear). Still DOM-positioned above .top-bar + exempt
        from the view-mode hide rules, so it shows in every view. */
     .float-header {
-      /* Pinned: stays visible when the page scrolls (views with their own inner
-         scroller sit below it anyway). Solid bg so content can't show through. */
-      position: sticky; top: 0; z-index: 300;
+      /* Pinned: FIXED, not sticky — html/body both carry overflow-x:hidden (the
+         deliberate overscroll containment above), which makes body a non-scrolling
+         scroll container and silently kills position:sticky (it engages against
+         body while the viewport does the scrolling). Fixed pins to the viewport
+         unconditionally; the body padding-top below reserves its 40px of flow.
+         Safe from the fixed-drift gotcha: direct body child, no backdrop-filter
+         ancestor. Exempted (visible) in every view-mode hide rule. */
+      position: fixed; top: 0; left: 0; right: 0; z-index: 300;
       background: #0b0b12; padding: 0;
       display: flex; align-items: stretch;
     }

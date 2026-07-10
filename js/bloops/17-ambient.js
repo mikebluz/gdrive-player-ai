@@ -6941,7 +6941,7 @@
             Math.max(0.001, (dly.timeMs | 0) / 1000), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)));
           e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, c01(apan.mix), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
-          e.revSend.gain.value = c01(lc.revSend);
+          e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
         } catch (x) {}
         try { _ambApplyEq(layer, lc); } catch (x) {}
         return;
@@ -7012,7 +7012,7 @@
           e.autopan.depth.value = Math.max(0, Math.min(1, (apan.depth | 0) / 100));                  // 0 → centre, 1 → full L↔R
           e.autopan.frequency.value = 0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95; // ~0.05–8 Hz
         }
-        if (e.revSend) e.revSend.gain.value = Math.max(0, Math.min(1, (lc.revSend | 0) / 100));
+        if (e.revSend) e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
       } catch (x) {}
       try { _ambApplyEq(layer, lc); } catch (x) {}
       try { _ambNormalizeDistOversample(); } catch (x) {}
@@ -7789,6 +7789,16 @@
     // Schedule the layer's reverb send to `val` (0..1) over `dur` ending at `at`.
     // Queue STOP with tails OFF ramps it to 0 with the gate (cut the wet feed);
     // cancel restores it to the layer's configured send level. No-op if unbuilt.
+    // Reverb-send MAKEUP for quiet-staged layers: texture's grains are staged at
+    // ~20% volume with sustain 0 and short lengths, so at an equal Send % its wet
+    // measured ~27% of the bed's (≈ −11 dB → reads as "reverb does nothing").
+    // ×3 puts an equal Send in the same audible ballpark. Send 0 stays 0; the
+    // core strip send param is unclamped (Ramp::at), the node path is a Gain.
+    function _ambRevSendGain(key, revSend) {
+      const t = String(key).split(':')[0];
+      const g = Math.max(0, Math.min(1, (revSend | 0) / 100));
+      return t === 'texture' ? g * 3 : g;
+    }
     function _ambRevSendRamp(E, key, val, at, dur) {
       const e = E.mod && E.mod[key];
       if (!e || !e.revSend || !e.revSend.gain) return;
@@ -7827,7 +7837,7 @@
       if (desired === L.on) {            // toggled back to the live state → cancel
         delete E._queuePending[key];
         if (onB) onB.classList.remove('queued');
-        if (L.on) { _ambGateRamp(E, key, 1, now, 0.02); _ambRevSendRamp(E, key, Math.max(0, Math.min(1, (L.revSend | 0) / 100)), now, 0.02); } // undo a pending STOP fade
+        if (L.on) { _ambGateRamp(E, key, 1, now, 0.02); _ambRevSendRamp(E, key, _ambRevSendGain(key, L.revSend), now, 0.02); } // undo a pending STOP fade
       } else if (desired === false) {    // queued STOP → cut at the next AUDIBLE boundary
         let at;
         try { at = _ambLayerAudibleBoundary(E, key, L, cfg, now); } catch (e) { at = now + (60 / _ambBpm()) * 4; }
@@ -11361,17 +11371,17 @@
               if (pos >= 0) { prog = ((pos % 1) + 1) % 1; active = true; }
             }
           } else if (on && type === 'texture') {
-            // Texture's UNIT is its 16-slot pattern, so the bar fills over the
-            // PATTERN (16 steps), flashing once per pattern — not once per step.
-            // Anchored to step 0's time; stays empty until the first step lands
-            // (the lead) so it doesn't start "near the end" right after Play.
-            const cfg2 = E._cfg || E.getCfg();
-            const next = E.clocks && E.clocks[key];
-            const idx = E.iters && E.iters[key];
-            const step = Math.max(0.02, _ambStepSecFor(layer, 0.02, cfg2) * _ambLayerScale(E, key, layer, cfg2));
-            if (typeof next === 'number' && Number.isFinite(idx) && step > 0) {
-              const stepPos = idx - (next - now) / step;   // continuous step index at `now`
-              if (stepPos >= 0) { prog = (stepPos % 16) / 16; active = true; }   // <0 = before the first step → empty
+            // Texture runs on the WINDOWED step-grid engine since Track D (phase
+            // anchored in runPhase, one cycle = its bars-long phrase) — the old
+            // stepLayer clock (E.clocks) never advances for it anymore, which left
+            // this bar permanently empty. Track the phase anchor like the other
+            // windowed layers.
+            const st = E.runPhase && E.runPhase[key];
+            const P = _ambLayerPeriodSec(E, key, layer, E._cfg || E.getCfg());
+            if (st && st.startAt != null && P > 0 && now >= st.startAt) {
+              prog = (((now - st.startAt) % P) / P + 1) % 1;
+              cyc = Math.floor((now - st.startAt) / P);
+              active = true;
             }
           } else if (on) {
             const next = E.clocks && E.clocks[key];

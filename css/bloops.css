@@ -10082,10 +10082,22 @@
        (was a floating top-right gear). Still DOM-positioned above .top-bar + exempt
        from the view-mode hide rules, so it shows in every view. */
     .float-header {
-      position: static; z-index: 300;
-      background: transparent; padding: 0;
+      /* Pinned: stays visible when the page scrolls (views with their own inner
+         scroller sit below it anyway). Solid bg so content can't show through. */
+      position: sticky; top: 0; z-index: 300;
+      background: #0b0b12; padding: 0;
       display: flex; align-items: stretch;
     }
+    /* Live Bar counter pill — fed by the Bloom bar indicator; hidden when idle. */
+    .bloom-hdr-bar {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+      height: 40px; padding: 0 10px; white-space: nowrap;
+      font: 600 0.72rem 'JetBrains Mono', monospace; letter-spacing: 0.3px; color: #f6ad55;
+      border-bottom: 1px solid rgba(246,173,85,0.3);
+      border-right: 1px solid rgba(246,173,85,0.2);
+      background: rgba(246,173,85,0.06);
+    }
+    .bloom-hdr-bar:empty { display: none; }
     .float-header > * { pointer-events: auto; }
     /* Workspace-key readout — left of the elapsed/BPM strip; same visual
        language, teal accent, sized to its content. Click = key picker. */

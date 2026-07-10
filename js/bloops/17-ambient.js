@@ -11224,7 +11224,8 @@
       const host = document.getElementById(E.hostId); if (!host) return;
       const el = host.querySelector('.ambient-orch-bar'); if (!el) return;
       const hdr = host.querySelector('.ambient-orch-bar-hdr');
-      if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; E._biInit = false; return; }
+      const app = document.getElementById('bloom-hdr-bar');   // app header pill (fixed on scroll)
+      if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; if (app && app.textContent) app.textContent = ''; E._biInit = false; return; }
       // AUDIBLE clock (currentTime − latency, +1 frame), same as the layer status
       // bars — so the counter tracks what you HEAR, not the schedule clock (Tone.now,
       // which runs ~a lookahead ahead and made the counter lead the layer bars).
@@ -11267,6 +11268,7 @@
       }
       if (el.textContent !== txt) el.textContent = txt;
       if (hdr && hdr.textContent !== txt) hdr.textContent = txt;   // header mirror (always visible; strip is sticky)
+      if (app && app.textContent !== txt) app.textContent = txt;    // app-header pill mirror
       // Flash: every bar pulses (alternating colours so consecutive bars read as
       // distinct); an area boundary (the playing area changed) pulses brighter.
       if (E._biInit) {

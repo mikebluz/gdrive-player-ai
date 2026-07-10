@@ -1375,6 +1375,9 @@
       if (cfg.groove != null && typeof cfg.groove !== 'object') cfg.groove = null;           // null = inherit global groove
       if (!cfg.reverb || typeof cfg.reverb !== 'object') cfg.reverb = { ...d.reverb };
       else { if (!Number.isFinite(cfg.reverb.size)) cfg.reverb.size = d.reverb.size; if (!Number.isFinite(cfg.reverb.damp)) cfg.reverb.damp = d.reverb.damp; }
+      // Reverb CHARACTER (per-area space): synthesized-IR variant. Default 'lush'
+      // = the original algorithm (additive; absent in old projects → unchanged).
+      if (['lush','room','hall','cavern','plate','spring','gated','air'].indexOf(cfg.reverb.type) < 0) cfg.reverb.type = 'lush';
       ['bed','motif','texture','beat'].forEach(layer => {
         if (!cfg[layer] || typeof cfg[layer] !== 'object') cfg[layer] = { ...d[layer] };
       });
@@ -6711,8 +6714,8 @@
           _E._revConv = true; _E._revIRKey = '';
           // Set the initial IR synchronously so there's no startup silence.
           const cfg = _E.getCfg(), rv = (cfg && cfg.reverb) ? cfg.reverb : { size: 80, damp: 50 };
-          const decay = _reverbDecaySec(rv.size | 0), tone = _reverbToneNorm(rv.damp | 0);
-          try { _E.reverb.buffer = _makeReverbIR(decay, tone); _E._revIRKey = decay.toFixed(2) + '/' + tone.toFixed(2); } catch (e) {}
+          const decay = _reverbDecaySec(rv.size | 0), tone = _reverbToneNorm(rv.damp | 0), rty = rv.type || 'lush';
+          try { _E.reverb.buffer = _makeReverbIR(decay, tone, rty); _E._revIRKey = decay.toFixed(2) + '/' + tone.toFixed(2) + '/' + rty; } catch (e) {}
         } else {
           _E.reverb = new Tone.Freeverb({ roomSize: 0.8, dampening: 2500, wet: 1 }).connect(_E.busNode());
           _E._revConv = false;
@@ -6744,11 +6747,12 @@
         if (E._revConv) {
           const decay = (typeof _reverbDecaySec === 'function') ? _reverbDecaySec(cfg.reverb.size | 0) : 2;
           const tone  = (typeof _reverbToneNorm === 'function') ? _reverbToneNorm(cfg.reverb.damp | 0) : 0.5;
-          const key = decay.toFixed(2) + '/' + tone.toFixed(2);
+          const rty   = cfg.reverb.type || 'lush';
+          const key = decay.toFixed(2) + '/' + tone.toFixed(2) + '/' + rty;
           if (key !== E._revIRKey) {
             E._revIRKey = key;
             if (E._revIRTimer) clearTimeout(E._revIRTimer);
-            E._revIRTimer = setTimeout(() => { try { if (E.reverb && E._revConv) E.reverb.buffer = _makeReverbIR(decay, tone); } catch (e) {} }, 120);
+            E._revIRTimer = setTimeout(() => { try { if (E.reverb && E._revConv) E.reverb.buffer = _makeReverbIR(decay, tone, rty); } catch (e) {} }, 120);
           }
         } else {
           const size = Math.max(0, Math.min(1, (cfg.reverb.size | 0) / 100));
@@ -16676,7 +16680,7 @@
       set('ambient-master-fadein', cfg.fadeInMs); hint('ambient-master-fadein-v', _ambFmtMs(cfg.fadeInMs));
       set('ambient-master-fadeout', cfg.fadeOutMs); hint('ambient-master-fadeout-v', _ambFmtMs(cfg.fadeOutMs));
       set('ambient-master-fadeshape', cfg.fadeShape);
-      if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); }
+      if (cfg.reverb) { set('ambient-reverb-size', cfg.reverb.size); set('ambient-reverb-damp', cfg.reverb.damp); const rtSel = document.getElementById(tr('ambient-reverb-type')); if (rtSel) rtSel.value = cfg.reverb.type || 'lush'; }
       // Master Warmth (global FX) reflection — master Bloom only; these IDs
       // don't exist on lane Bloom, so the guarded set()/hint() no-op there.
       if (typeof globalFx !== 'undefined' && globalFx) {
@@ -16987,6 +16991,9 @@
                   '<button type="button" class="ambient-seg" id="ambient-clip-on" title="Bypass the final soft-clip ceiling — WARNING: may allow hard clipping">On</button></div>' +
               '</div>') +
             '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
+              '<div class="ambient-ctrl"><label for="ambient-reverb-type" title="The space’s character — all synthesized live (no samples), and every one responds to Size/Damp. Lush = the classic smooth wash. Room/Hall/Cavern = small → vast (Cavern adds sparse irregular echoes). Plate = instant dense + metallic. Spring = boingy band-limited flutter. Gated = 80s hold-then-cut. Air = high-passed shimmery sheen.">Character</label><select id="ambient-reverb-type" class="ambient-select">' +
+                [['lush','Lush (classic)'],['room','Room'],['hall','Hall'],['cavern','Cavern'],['plate','Plate'],['spring','Spring'],['gated','Gated'],['air','Air']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+              '</select><span class="ambient-hint">space type</span></div>' +
               sl('Size', 'ambient-reverb-size', 0, 100, 80, 'small → large') +
               sl('Damp', 'ambient-reverb-damp', 0, 100, 45, 'bright → dark') +
             '</div>' +
@@ -17381,6 +17388,14 @@
         if (el) el.addEventListener('input', () => { _E = E; const c = cfg0(); if (!c) return; const v = parseInt(el.value, 10) || 0; c.fadeOutMs = v; if (vEl) vEl.textContent = _ambFmtMs(v); persist(); }); }
       { const el = G('ambient-master-fadeshape');
         if (el) el.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c) return; c.fadeShape = el.value; persist(); }); }
+      // Reverb Character → regenerate the IR live.
+      { const el = G('ambient-reverb-type');
+        if (el) el.addEventListener('change', () => {
+          _E = E; const cfg = cfg0(); if (!cfg || !cfg.reverb) return;
+          cfg.reverb.type = el.value || 'lush';
+          _ambApplyReverb();
+          persist();
+        }); }
       // Reverb Size / Damp → live reverb node.
       ['size', 'damp'].forEach(key => {
         const el = G('ambient-reverb-' + key); if (!el) return;

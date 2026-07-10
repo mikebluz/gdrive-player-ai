@@ -790,25 +790,62 @@
     //   size%  → 0.30 .. 8.0 s decay   tone% → IR low-pass 0.8 .. 13 kHz
     function _reverbDecaySec(sizePct) { return 0.3 + Math.max(0, Math.min(100, sizePct)) / 100 * 7.7; }
     function _reverbToneNorm(tonePct) { return Math.max(0, Math.min(100, tonePct)) / 100; }
-    function _makeReverbIR(decaySec, toneNorm) {
+    // `type` (optional) selects the space's CHARACTER — all synthesized in the
+    // same loop, so every character stays asset-free and Size/Tone-responsive:
+    //   'lush' (default = the original algorithm) · 'room' (short, early
+    //   reflections) · 'hall' (slow bloom, progressive damping) · 'cavern'
+    //   (huge, sparse irregular echoes, dark tail) · 'plate' (instant dense,
+    //   bright, metallic ring) · 'spring' (band-limited boing + flutter) ·
+    //   'gated' (80s hold-then-cut) · 'air' (high-passed shimmery sheen).
+    function _makeReverbIR(decaySec, toneNorm, type) {
       const ac = Tone.getContext().rawContext;
       const sr = ac.sampleRate || 44100;
-      const len = Math.max(1, Math.floor(Math.max(0.15, decaySec) * sr));
+      const ty = type || 'lush';
+      // Per-character shape parameters.
+      let decMul = 1, buildSec = 0.008, cutMul = 1, hp = 0, flutterHz = 0, chirp = 0, ring = 0, progDamp = 0, gateHold = 0, taps = null;
+      if (ty === 'room')   { decMul = 0.35; buildSec = 0.004; progDamp = 0.5; taps = { n: 6, span: 0.028, amp: 0.7 }; }
+      else if (ty === 'hall')   { buildSec = 0.06; progDamp = 0.6; }
+      else if (ty === 'cavern') { decMul = 1.6; buildSec = 0.03; cutMul = 0.55; progDamp = 0.85; taps = { n: 9, span: 0.42, amp: 0.9 }; }
+      else if (ty === 'plate')  { decMul = 0.8; buildSec = 0.001; cutMul = 1.6; ring = 0.18; }
+      else if (ty === 'spring') { decMul = 0.7; buildSec = 0.002; hp = 300; cutMul = 0.35; flutterHz = 27; chirp = 1; }
+      else if (ty === 'gated')  { gateHold = Math.max(0.12, Math.min(0.6, decaySec * 0.35)); buildSec = 0.002; }
+      else if (ty === 'air')    { decMul = 1.2; buildSec = 0.04; hp = 1800; cutMul = 1.4; }
+      const dec = Math.max(0.15, decaySec * decMul);
+      const irLen = gateHold ? (gateHold + 0.02) : dec;
+      const len = Math.max(1, Math.floor(irLen * sr));
       const buf = ac.createBuffer(2, len, sr);
-      const tau = Math.max(0.05, decaySec) / 6.9;            // -60 dB at decaySec
-      const cut = 800 + Math.max(0, Math.min(1, toneNorm)) * 12200;  // IR damping LP, Hz
-      const a = Math.exp(-2 * Math.PI * cut / sr);           // one-pole LP coef
+      const tau = Math.max(0.05, dec) / 6.9;                 // -60 dB at dec
+      const cut0 = (800 + Math.max(0, Math.min(1, toneNorm)) * 12200) * cutMul;  // IR damping LP, Hz
+      const aHp = hp ? Math.exp(-2 * Math.PI * hp / sr) : 0; // one-pole HP coef
+      // Early echo taps (room / cavern): irregular positions + gains, per-channel
+      // offsets for width. Stochastic by design — every IR build is a new space.
+      const mkTaps = () => taps ? Array.from({ length: taps.n }, (_, i) => ({
+        at: 0.004 + Math.random() * taps.span,
+        g: taps.amp * (0.35 + Math.random() * 0.65) * (i % 2 ? -1 : 1),
+      })) : null;
       let peak = 0;
       for (let ch = 0; ch < 2; ch++) {
         const d = buf.getChannelData(ch);
-        let lp = 0;
+        const chTaps = mkTaps();
+        let lp = 0, hpS = 0;
         for (let i = 0; i < len; i++) {
           const t = i / sr;
-          const n = Math.random() * 2 - 1;
-          lp = (1 - a) * n + a * lp;                         // lowpass the noise (tone)
-          const env = Math.exp(-t / tau);
-          const build = Math.min(1, t / 0.008);              // tiny onset build to avoid a click
-          const v = lp * env * build;
+          let n = Math.random() * 2 - 1;
+          if (chirp) n += Math.sin(2 * Math.PI * (2600 - Math.min(1, t / Math.max(0.05, dec * 0.4)) * 2200) * t) * Math.exp(-t / 0.12) * 0.7;
+          // progressive damping: the cutoff falls across the tail (dark far field)
+          const cut = progDamp ? cut0 * (1 - progDamp * Math.min(1, t / dec)) : cut0;
+          const aLp = Math.exp(-2 * Math.PI * Math.max(120, cut) / sr);
+          lp = (1 - aLp) * n + aLp * lp;                     // lowpass the noise (tone)
+          let sig = lp;
+          if (hp) { hpS = aHp * hpS + (1 - aHp) * sig; sig = (sig - hpS) * 1.4; }   // one-pole HP: subtract the lowpassed part
+          if (ring) sig += (Math.sin(2 * Math.PI * 1730 * t) + Math.sin(2 * Math.PI * 3170 * t)) * ring * Math.exp(-t / (tau * 0.8));
+          let env;
+          if (gateHold) env = (t < gateHold) ? (1 - 0.25 * (t / gateHold)) : Math.max(0, 1 - (t - gateHold) / 0.015);
+          else env = Math.exp(-t / tau);
+          if (flutterHz) env *= 1 + 0.5 * Math.sin(2 * Math.PI * flutterHz * t);
+          const build = Math.min(1, t / buildSec);           // onset build (per character)
+          let v = sig * env * build;
+          if (chTaps) for (const tp of chTaps) { const k = i - Math.floor(tp.at * sr); if (k === 0) v += tp.g * env; }
           d[i] = v;
           const av = v < 0 ? -v : v;
           if (av > peak) peak = av;

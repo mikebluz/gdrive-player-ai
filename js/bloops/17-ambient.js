@@ -77,6 +77,11 @@
         // inherit the area key pick it up (a per-layer Relative mode overrides it).
         // 0 = off → byte-identical. Only meaningful when Key is on.
         keyModeRot: 0,
+        // Area START: % chance a layer's event starts at a RANDOM point mid-unit
+        // (instead of the boundary). Cascades to every layer with a Start control
+        // (bed startVary / motif phraseVary) that hasn't set its OWN value — a
+        // present per-layer value overrides. 0 = off → byte-identical.
+        startVary: 0,
         progRateMs: 4000,               // ms per chord (LEGACY — superseded by barsPerChord; removed in prog rework 1b)
         barsPerChord: 1,                // bars each chord of a Progression holds (bar-aligned chord clock)
         prog: { on: false, name: '', chords: [] },   // GLOBAL progression (Configure) — inherited by empty-scale layers when on
@@ -1348,6 +1353,7 @@
       if (typeof SCALES !== 'undefined' && SCALES && !SCALES[cfg.keyScale]) cfg.keyScale = d.keyScale;
       if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
       cfg.keyModeRot = Number.isFinite(cfg.keyModeRot) ? ((((cfg.keyModeRot | 0) % 7) + 7) % 7) : 0;   // area relative mode (0..6)
+      cfg.startVary = Math.max(0, Math.min(100, cfg.startVary | 0));   // area start cascade (0..100)
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -3226,6 +3232,15 @@
       const h = L && L.hold;
       return (Number.isFinite(h) && h > 0) ? Math.max(0.05, Math.min(64, h)) : 1;
     }
+    // Effective START (% mid-unit random onset): the layer's OWN value when it set
+    // one (present = override), else the AREA cascade (cfg.startVary). Absent own +
+    // area 0 → 0 → no random-start draw → byte-identical.
+    function _ambEffStart(own, areaCfg) {
+      if (Number.isFinite(own)) return Math.max(0, Math.min(100, own));
+      return Math.max(0, Math.min(100, (areaCfg && areaCfg.startVary) | 0));
+    }
+    // Is a layer INHERITING the area Start (no own value)? — for the UI cue.
+    function _ambStartInherits(own) { return !Number.isFinite(own); }
     // Length Vary: at 0 every note is exactly `baseMs` (homebase); above 0 each
     // note's length jitters around it (±~75% at 100). GATED — vary 0 returns the
     // base and consumes NO RNG (keeps the default stream byte-identical). Pass a
@@ -4061,7 +4076,7 @@
       // startVary>0 (0 → no RNG draw → byte-identical). Folds into each note's
       // `offset` below, so playNote onset, the recorded unit, and choke all follow.
       let _startOff = 0;
-      const _startV = Math.max(0, Math.min(100, bed.startVary | 0));
+      const _startV = _ambEffStart(bed.startVary, _E._cfg || (_E.getCfg && _E.getCfg()));   // own else area cascade
       if (_startV > 0 && _ambRand() * 100 < _startV) {
         const _uSec = Math.max(0.05, effIntervalMs / 1000);
         const _strumSpanSec = (spanSec > 0)
@@ -4709,7 +4724,7 @@
       // unit, giving continuity). Default 0 = always on the 1 → no RNG consumed →
       // byte-identical stream (harness-safe).
       let _startOff = 0;
-      const _pv = Math.max(0, Math.min(100, motif.phraseVary | 0));
+      const _pv = _ambEffStart(motif.phraseVary, _E._cfg || (_E.getCfg && _E.getCfg()));   // own else area Start cascade
       if (_pv > 0 && _ambRand() * 100 < _pv) {
         const unitSec = Math.max(0.05, _ambEffIntervalSec(motif));
         const slack = Math.max(0, unitSec - Math.max(0, (count - 1) * burstGap) - 0.02);
@@ -16568,6 +16583,16 @@
           rk.mode === 'chromatic' ? 'free — no key constraint'
           : rk.mode === 'key' ? ((follow ? '= workspace · ' : '') + kName + ' ' + kQual + ' · ' + ((cfg.keyMode === 'quantize') ? 'snap' : 'shift'))
           : (nCh ? (nCh + ' chord' + (nCh === 1 ? '' : 's') + (cfg.keyOn ? ' · in ' + kName + ' ' + kQual : '')) : 'pick a progression'));
+        // Area START slider + per-layer cascade cue: a layer INHERITING (no own
+        // value) shows the area value + an "inherit" cue; an override shows its own.
+        set('ambient-area-startvary', cfg.startVary | 0); hint('ambient-area-startvary-v', String(cfg.startVary | 0));
+        [['bed', 'startVary'], ['motif', 'phraseVary']].forEach(function (pr) {
+          const ty = pr[0], fld = pr[1];
+          const own = (cfg[ty] && typeof cfg[ty] === 'object') ? cfg[ty][fld] : undefined;
+          const inh = !Number.isFinite(own);
+          const sl = document.getElementById(tr('ambient-' + ty + '-' + fld));
+          if (sl) { sl.value = inh ? (cfg.startVary | 0) : (own | 0); const ct = sl.closest('.ambient-ctrl'); if (ct) ct.classList.toggle('ambient-start-inherit', inh); }
+        });
         // Configure-header indicator: current Area KEY at a glance, coloured grey when
         // it follows the workspace, amber when overridden for this Area.
         const kind = document.getElementById(tr('ambient-cfg-keyind'));
@@ -16637,7 +16662,6 @@
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-restProb', cfg.bed.restProb | 0);
-      set('ambient-bed-startVary', cfg.bed.startVary | 0);
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
@@ -16652,7 +16676,6 @@
       set('ambient-motif-intervalMs', cfg.motif.intervalMs); hint('ambient-motif-intervalMs-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-lengthMs', cfg.motif.lengthMs);     hint('ambient-motif-lengthMs-v', _ambFmtMs(cfg.motif.lengthMs));
       set('ambient-motif-drift', cfg.motif.drift); set('ambient-motif-lenVary', cfg.motif.lenVary | 0);
-      set('ambient-motif-phraseVary', cfg.motif.phraseVary | 0);
       setWhen('ambient-motif', cfg.motif.when);
       set('ambient-motif-restProb', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
@@ -16816,6 +16839,15 @@
               '<button type="button" class="ambient-seg ambient-prog-edit" id="ambient-prog-edit" title="Edit the selected progression chord-by-chord and Save As New">Edit</button>' +
             '</span>') +
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
+        '</div>' +
+        // Area START — % chance each layer's event starts at a random point mid-unit.
+        // Cascades to every layer whose Start is set to Inherit (the default); a layer
+        // that sets its own Start overrides. The layer control shows a "↳ area" cue.
+        '<div class="ambient-row ambient-start">' +
+          '<span class="ambient-hint ambient-start-lbl" title="Area Start — % chance each layer starts at a RANDOM point within its unit instead of the boundary. Cascades to every layer set to Inherit; a per-layer Start overrides. A humanize / loosen control.">Start</span>' +
+          '<input type="range" id="ambient-area-startvary" class="ambient-area-start-range" min="0" max="100" step="1" value="0" />' +
+          '<span class="ambient-hint" id="ambient-area-startvary-v">0</span>' +
+          '<span class="ambient-hint">cascades → layers</span>' +
         '</div>' +
         // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
         // "Global FX" subsection (below the faders) — see _globalFxHtml.
@@ -17585,6 +17617,30 @@
           cfg.keyModeRot = ((((parseInt(kModeRot.value, 10) || 0) % 7) + 7) % 7);
           if (E.timer) { try { _ambSyncMods(); } catch (e) {} }   // apply live next iteration
           _ambSyncControls(E); persist();
+        });
+        // Area START slider → cfg.startVary; re-sync so inheriting layers reflect it.
+        const aSV = G('ambient-area-startvary');
+        if (aSV) aSV.addEventListener('input', () => {
+          _E = E; const cfg = cfg0(); if (!cfg) return;
+          cfg.startVary = Math.max(0, Math.min(100, parseInt(aSV.value, 10) || 0));
+          _ambSyncControls(E); persist();
+        });
+        // Per-layer Start label = an Inherit ↔ Override toggle (the manual override +
+        // reset). Inheriting → set own value to the current area Start (start
+        // overriding). Override → delete own value (back to inherit).
+        [['bed', 'startVary'], ['motif', 'phraseVary']].forEach(function (pr) {
+          const ty = pr[0], fld = pr[1];
+          const slEl = G('ambient-' + ty + '-' + fld); if (!slEl) return;
+          const lab = document.querySelector('label[for="' + slEl.id + '"]');
+          if (!lab) return;
+          lab.style.cursor = 'pointer';
+          lab.title = 'Click to toggle Inherit (↳ area Start) ↔ Override for this layer';
+          lab.addEventListener('click', () => {
+            _E = E; const cfg = cfg0(); if (!cfg || !cfg[ty]) return;
+            if (Number.isFinite(cfg[ty][fld])) delete cfg[ty][fld];      // override → inherit
+            else cfg[ty][fld] = Math.max(0, Math.min(100, cfg.startVary | 0));  // inherit → override (from area value)
+            _ambSyncControls(E); persist();
+          });
         });
         const kRoot = G('ambient-key-root');
         if (kRoot) kRoot.addEventListener('change', () => {

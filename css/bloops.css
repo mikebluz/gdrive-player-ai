@@ -11212,3 +11212,10 @@
     .ambient-arr-slicedel { background: none; border: none; color: #8a8aa0; cursor: pointer; font-size: 0.9rem; }
     .ambient-arr-slicedel:hover { color: #fc8181; }
     .ambient-arr-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+
+    /* Area Start cascade — per-layer "inheriting the area Start" cue */
+    .ambient-ctrl.ambient-start-inherit label { color: #4fd1c5; }
+    .ambient-ctrl.ambient-start-inherit label::after { content: ' ↳ area'; font-size: 0.7em; opacity: 0.9; }
+    .ambient-ctrl.ambient-start-inherit input[type=range] { accent-color: #4fd1c5; opacity: 0.75; }
+    .ambient-row.ambient-start .ambient-start-lbl { flex: 0 0 auto; }
+    .ambient-row.ambient-start input[type=range] { flex: 1 1 auto; min-width: 0; }

@@ -13589,6 +13589,7 @@
           _ambSpreadCtrl('ambient-seq-' + id, s) +
           _ambModUi('seq-' + id) +
           _ambFxUi('seq-' + id) + gpe() +
+          _ambLayerRampsHtml('seq:' + id) +
       '</div>';
     }
     // A seq "involves an ensemble" when its layer Tone is an ensemble OR any of
@@ -13890,6 +13891,7 @@
       wrap.innerHTML = _ambNamespaceHtml(E, seqs.map((s, i) => _ambSeqLayerHtml(s, i)).join(''));
       seqs.forEach((s) => _ambWireSeqLayer(E, s));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
+      try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
     }
     function _ambDeleteSeqLayer(E, id) {
       _E = E;
@@ -13971,6 +13973,7 @@
           _ambSpreadCtrl('ambient-samp-' + id, s) +
           _ambModUi('samp-' + id) +
           _ambFxUi('samp-' + id) + gpe() +
+          _ambLayerRampsHtml('samp:' + id) +
       '</div>';
     }
     // "Match unit" — set a sample layer's Interval to another active layer's unit length
@@ -14084,6 +14087,7 @@
       wrap.innerHTML = _ambNamespaceHtml(E, arr.map((s, i) => _ambSampleLayerHtml(s, i)).join(''));
       arr.forEach((s) => _ambWireSampleLayer(E, s));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
+      try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
       // Cap Interval/Length to each sample's length now + keep polling until buffers decode.
       try { _ambSampleMaxPoll(E, 0); } catch (e) {}
     }
@@ -14798,6 +14802,7 @@
         }
       });
       if (grpOpen) html += '</div></div>';
+      html += _ambLayerRampsHtml(type);   // per-layer Ramps (filled by _ambRenderRamps)
       return html;
     }
     function _ambInstCardHtml(inst) {
@@ -14842,6 +14847,7 @@
         }
       });
       if (grpOpen) html += '</div></div>';
+      html += _ambLayerRampsHtml(fkey);   // per-layer Ramps (filled by _ambRenderRamps)
       // Per-layer Reset — restores every group to its default fold state.
       html += '<div class="ambient-grp-resetwrap"><button type="button" class="ambient-grp-reset" id="' + p + '-grp-reset" title="Reset section folds to defaults">↺ Reset sections</button></div>';
       return html + '</div>';
@@ -15748,6 +15754,7 @@
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
       try { _ambRefreshAreaFadeUI(E); } catch (e) {}       // grey out Area fade on capturable layers
+      try { _ambRenderRamps(E); } catch (e) {}             // refill the per-layer Ramps sections
     }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
@@ -15894,6 +15901,14 @@
       // ticked only one) and allow EMPTY (a target-less ramp is simply inert).
       r.targets = Array.from(new Set(r.targets.filter(t => typeof t === 'string' && t.indexOf('.') > 0)));
       delete r.target;
+      // LAYER SCOPE: ramps now live in their layer's card (the layerKey names the
+      // layer head — 'bed' | 'seq:3' | 'arp:2' | 'global'). Lazy-derived for legacy
+      // ramps from the first target; a target-less legacy ramp parks in 'global'
+      // (the Configure block) so it stays findable. Additive — targets unchanged,
+      // runtime (_ambApplyRamps) unchanged, so old projects play identically.
+      if (typeof r.layerKey !== 'string' || !r.layerKey) {
+        r.layerKey = (r.targets.length ? r.targets[0].slice(0, r.targets[0].indexOf('.')) : 'global');
+      }
       if (!Number.isFinite(r.a)) r.a = 0;
       if (!Number.isFinite(r.b)) r.b = 100;
       // Keep 2-decimal precision (not integer): over a wide range like BPM (40–300)
@@ -16193,6 +16208,17 @@
         try { _ambRampSyncABRange(E, r.id); } catch (e) {}
       }
     }
+    // Per-layer Ramps section (bottom of every layer card). `head` names the layer
+    // ('bed' | 'arp:2' | 'seq:3' | 'samp:1' | 'global'); rows are filled by
+    // _ambRenderRamps into the [data-rampkey] list, the ＋ button is wired by a
+    // delegated host listener (cards re-render, the listener survives).
+    function _ambLayerRampsHtml(head) {
+      return '<div class="ambient-layer-ramps" data-rampkey="' + head + '">' +
+        '<div class="ambient-ramps-head-mini"><span class="ambient-mod-sub">Ramps</span>' +
+          '<button type="button" class="ambient-seg ambient-ramp-add" data-rampkey="' + head + '" title="Add a parameter ramp for this layer">＋ Ramp</button></div>' +
+        '<div class="ambient-layer-ramps-list"></div>' +
+      '</div>';
+    }
     function _ambRampRowHtml(r, cfg) {
       const id = r.id, p = 'ambient-ramp-' + id + '-';
       const waveOpts = [['sine','Sine'],['triangle','Triangle'],['saw','Saw'],['square','Square']]
@@ -16304,7 +16330,14 @@
         const r = getR(); if (!r) { close(); return; }
         const cfg = E.getCfg();
         const sel = new Set(Array.isArray(r.targets) ? r.targets : []);
-        const groups = _ambRampTargetGroups(cfg);
+        // Layer-scoped ramps: only THIS layer's params (+ keep already-selected
+        // cross-layer targets from legacy ramps visible so they can be unticked).
+        let groups = _ambRampTargetGroups(cfg);
+        const lk = r.layerKey || 'global';
+        groups = groups.map(g => ({ label: g.label, items: g.items.filter(it => {
+          const head = it.value.slice(0, it.value.indexOf('.'));
+          return head === lk || sel.has(it.value);
+        }) })).filter(g => g.items.length);
         let h = '<div class="keep-sdiv-title">Ramp targets</div><div class="amb-ramptgt-list">';
         groups.forEach(g => {
           h += '<div class="amb-ramptgt-group">' + esc(g.label) + '</div>';
@@ -16370,23 +16403,37 @@
       bindSeq('seqsrc', 'seqSource'); bindSeq('seqinterp', 'seqInterp'); bindSeq('seqrest', 'seqRest');
       const delB = el('del'); if (delB) delB.addEventListener('click', () => _ambDeleteRamp(E, id));
     }
+    // Fill EVERY per-layer Ramps container in the host (each layer card carries a
+    // [data-rampkey] section; 'global' lives in Configure). A ramp renders in the
+    // container whose key === its layerKey; rows/wiring are unchanged (id-based,
+    // location-independent).
     function _ambRenderRamps(E) {
-      const wrap = _ambGet(E, 'ambient-ramps');
-      if (!wrap) return;
+      const host = document.getElementById(E.hostId); if (!host) return;
       const cfg = E.getCfg(); if (!cfg) return;
       if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
-      wrap.innerHTML = _ambNamespaceHtml(E, cfg.ramps.map(r => _ambRampRowHtml(r, cfg)).join(''));
-      cfg.ramps.forEach(r => _ambWireRamp(E, r));
-      cfg.ramps.forEach(r => _ambRampSyncABRange(E, r.id));
+      const wraps = host.querySelectorAll('.ambient-layer-ramps[data-rampkey]');
+      if (!wraps.length) return;
+      const wired = [];
+      wraps.forEach(w => {
+        const head = w.getAttribute('data-rampkey');
+        const list = w.querySelector('.ambient-layer-ramps-list'); if (!list) return;
+        const mine = cfg.ramps.filter(r => (r.layerKey || 'global') === head);
+        list.innerHTML = _ambNamespaceHtml(E, mine.map(r => _ambRampRowHtml(r, cfg)).join(''));
+        // Collapse the section chrome when empty (just the ＋ button row remains).
+        w.classList.toggle('empty', !mine.length);
+        mine.forEach(r => wired.push(r));
+      });
+      wired.forEach(r => _ambWireRamp(E, r));
+      wired.forEach(r => _ambRampSyncABRange(E, r.id));
     }
-    function _ambAddRamp(E) {
+    function _ambAddRamp(E, layerKey) {
       _E = E;
       const cfg = E.getCfg(); if (!cfg) return;
       if (!Array.isArray(cfg.ramps)) cfg.ramps = [];
       const newId = cfg.ramps.reduce((m, r) => Math.max(m, r.id | 0), 0) + 1;
       // Start with NO target so the picker's first selection IS the only target
       // (previously a default 'bed.level' lingered → "2 targets" after one pick).
-      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [], a: 0, b: 100, periodMs: 4000, wave: 'sine' }, newId, cfg));
+      cfg.ramps.push(_normalizeRamp({ id: newId, on: true, targets: [], layerKey: layerKey || 'global', a: 0, b: 100, periodMs: 4000, wave: 'sine' }, newId, cfg));
       _ambRenderRamps(E);
       if (E.timer) { E._cfg = cfg; _ambStartRampClock(E); } // spin up the ramp clock if playing
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -16840,6 +16887,9 @@
             '</span>') +
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
         '</div>' +
+        // Global ramps (BPM etc.) — area-level automation lives here in Configure;
+        // per-layer ramps moved into each layer's card (see _ambLayerRampsHtml).
+        _ambLayerRampsHtml('global') +
         // Area START — % chance each layer's event starts at a random point mid-unit.
         // Cascades to every layer whose Start is set to Inherit (the default); a layer
         // that sets its own Start overrides. The layer control shows a "↳ area" cue.
@@ -16947,12 +16997,8 @@
           '<button type="button" class="ambient-regen ambient-add-layer" id="ambient-add-layer" title="Add a layer">+ Add layer</button>' +
         '</div>' +
         '<div class="ambient-seq-layers" id="ambient-seq-layers"></div>' +
-        // Parameter ramps — LFO automation of a layer param (A→B, period, wave).
-        '<div class="ambient-ramps-section">' +
-          '<div class="ambient-ramps-head"><span class="ambient-mod-sub">Ramps</span>' +
-            '<button type="button" class="ambient-regen ambient-ramp-add" id="ambient-ramp-add" title="Add a parameter ramp">+ Add ramp</button></div>' +
-          '<div class="ambient-ramps" id="ambient-ramps"></div>' +
-        '</div>' +
+        // (The global Ramps section moved INTO each layer's card — see
+        // _ambLayerRampsHtml; global/BPM ramps live in Configure.)
         '<div class="ambient-note">' + (E.isLane ? 'Routes through this lane’s bus — dial in its Reverb send for the full wash.' : 'Plays through the master bus, independent of lanes.') + ' Follows the current Scale &amp; Key. Use “Send to Bloom” on a saved sequence' + (E.isLane ? ' or a lane' : '') + ' to add Seq layers.</div>' +
         // (Capture bank moved to the Harvest section — ⤓ Capture still records
         // into the shared bank, now shown under Harvest.)
@@ -17672,8 +17718,19 @@
         if (pEdit) pEdit.addEventListener('click', () => { _E = E; try { _ambOpenProgEditor(E); } catch (e) {} });
       }
 
-      const addRampBtn = G('ambient-ramp-add');
-      if (addRampBtn) addRampBtn.addEventListener('click', () => _ambAddRamp(E));
+      // ＋ Ramp buttons live inside (re-renderable) layer cards → ONE delegated
+      // listener on the host survives every card rebuild.
+      {
+        const hostEl = document.getElementById(E.hostId);
+        if (hostEl && !hostEl._rampAddWired) {
+          hostEl._rampAddWired = true;
+          hostEl.addEventListener('click', (ev) => {
+            const b = ev.target && ev.target.closest && ev.target.closest('.ambient-ramp-add[data-rampkey]');
+            if (!b || !hostEl.contains(b)) return;
+            _ambAddRamp(E, b.getAttribute('data-rampkey'));
+          });
+        }
+      }
 
       // Add-layer menu — lists the built-in layer types not currently present.
       const addLayerBtn = G('ambient-add-layer');

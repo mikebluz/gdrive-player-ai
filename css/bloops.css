@@ -11219,3 +11219,10 @@
     .ambient-ctrl.ambient-start-inherit input[type=range] { accent-color: #4fd1c5; opacity: 0.75; }
     .ambient-row.ambient-start .ambient-start-lbl { flex: 0 0 auto; }
     .ambient-row.ambient-start input[type=range] { flex: 1 1 auto; min-width: 0; }
+
+    /* Per-layer Ramps section (bottom of every layer card; 'global' in Configure) */
+    .ambient-layer-ramps { margin-top: 8px; padding-top: 6px; border-top: 1px dashed #2d2d3f; }
+    .ambient-ramps-head-mini { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .ambient-ramps-head-mini .ambient-ramp-add { margin-left: auto; font-size: 0.72rem; padding: 2px 8px; }
+    .ambient-layer-ramps.empty { opacity: 0.8; }
+    .ambient-layer-ramps .ambient-ramp-row { margin: 4px 0; }

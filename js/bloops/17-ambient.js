@@ -11208,9 +11208,11 @@
             const idx = E.iters && E.iters[key];
             if (typeof next === 'number' && Number.isFinite(idx) && next > now) {
               // Divide by the SAME interval the engine advances by (snapped in
-              // sync mode, and Unit-Sync time-scaled) so the bar tracks the notes.
+              // sync mode, Unit-Sync time-scaled, AND ×Hold for bed/motif) so the
+              // bar tracks the notes. Omitting ×Hold made a held bed's bar divide
+              // by the base unit → it cycled ~Hold× too fast and stuck ~3/4 full.
               const cfg2 = E._cfg || E.getCfg();
-              const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, cfg2) * _ambLayerScale(E, key, layer, cfg2) || 1);
+              const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, cfg2) * _ambLayerScale(E, key, layer, cfg2) * _ambHoldMult(key, layer) || 1);
               // Continuous iteration index at `now`; <0 = before the first onset, so
               // stay EMPTY instead of rendering ~full ("near the end of a phantom
               // previous cycle") right after Play. (Same guard as the texture branch.)

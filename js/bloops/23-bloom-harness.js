@@ -233,7 +233,7 @@
         'bass':          { hash: '0a287885', count: 32 },
         'run':           { hash: '587c0ec7', count: 46 },
         'pedal':         { hash: 'e788032c', count: 26 },
-        'drone':         { hash: '45a97025', count: 2 },
+        'drone':         { hash: '053bdf7f', count: 1 },   // Drone default Unit 2000→8000 ms (Hold 4 = 32 s cycle) — deliberate: the drone is now the long-hold pad layer. Was 45a97025/2.
         'seq-pitch':     { hash: '64b0939b', count: 38 },
         'combo':         { hash: '5801b9eb', count: 63 },   // Track D/D2: includes the texture layer, so it re-baselines with texture (was ad0b1f59/53).
         // Phase 1 — Key transpose/quantize (G major). Locks the new behavior.

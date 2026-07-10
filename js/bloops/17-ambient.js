@@ -4123,6 +4123,10 @@
         if (voicing._levels && voicing._levels[vi] != null) params.volume = Math.max(0, Math.min(100, Math.round((Number.isFinite(params.volume) ? params.volume : 100) * (voicing._levels[vi] / 100))));   // …and its level
 
         params.volume = _ambApplyLevel(params.volume, bed.level);
+        // Bed holds each chord for its Length; a one-shot SAMPLE voice would end
+        // partway and leave silence, so loop/sustain it (pad path). Synth voices
+        // ignore params.loop → byte-identical for the default bed.
+        params.loop = true;
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
         // strum, space the onsets in play order. Sync on → grid-snapped spacing;
         // off → the exact original even spread (byte-identical).
@@ -4571,7 +4575,7 @@
           const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
           if (f == null) continue;
           const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
-            volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)) };
+            volume: _ambAccentVol(_ambApplyLevel(100, inst.level), inst.accent), pan, detune: Math.max(-1200, Math.min(1200, inst.fine | 0)), loop: true };
           if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
           _ambApplyDegLevel(bp);                          // …and its own level
           if (dmod) bp._detuneMod = dmod;
@@ -14748,11 +14752,13 @@
         bars: 1, density: 4, lengthMs: 400, unitPadMs: 0, restProb: 0, accent: 0, vary: 0, degree: 1,
         attack: 5, decay: 40, sustain: 75, release: 200,
       });
-      // Drone: holds the key root every 4 units (4×2s = 8s) with a soft 200ms
-      // attack + 1.5s release. Pick a chord Notes source to hold a whole chord.
+      // Drone: THE pad layer — holds the key root for a very long unit (default
+      // 8 s Unit × Hold 4 = 32 s) with a soft 200 ms attack + 1.5 s release, and
+      // LOOPS any sample voice (bp.loop below) so a chosen sample rings out
+      // continuously as a pad. Pick a chord Notes source to hold a whole chord.
       if (type === 'drone') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1, density: 1,
-        intervalMs: 2000, hold: 4, attack: 200, decay: 0, sustain: 100, release: 1500,
+        intervalMs: 8000, hold: 4, attack: 200, decay: 0, sustain: 100, release: 1500,
         timeVary: 0, pitchVary: 0, accent: 0,
       });
       return base;

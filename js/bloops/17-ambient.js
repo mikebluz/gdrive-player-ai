@@ -3329,6 +3329,16 @@
       const idx = Math.max(0, Math.min(nSteps - 1, Math.round((drift / 100) * nSteps)));
       return { idx, nSteps, step };
     }
+    // SWING (0-100): delay every OFF-BEAT step (odd absolute step index) — the
+    // groove control that replaced Drift on the grid layers (Drift was a constant
+    // whole-layer phase offset: inaudible solo, kept engine-side for legacy
+    // projects via _ambDriftOffset below). 0 = straight · ~66 = triplet shuffle ·
+    // 100 = hard dotted shuffle (off-beat lands 1.5 slots into the pair).
+    // 0 → exactly 0s added (byte-identical default).
+    function _ambSwingSec(inst, slotSec) {
+      const sw = inst && inst.swing;
+      return (Number.isFinite(sw) && sw > 0) ? Math.min(100, sw) / 100 * slotSec * 0.5 : 0;
+    }
     function _ambDriftOffset(E, key, layer, cfg) {
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
       if (drift <= 0) return 0;
@@ -4269,7 +4279,7 @@
                 }
                 if (!hit) continue;
                 if (restP > 0 && rnd() * 100 < restP) continue;
-                const at = cStart + (bar * steps + slot) * slotSec;
+                const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
                 if (at < tFrom || at >= tTo) continue;
                 // Per-step FX (Drum-lanes only): probability gate, then velocity /
                 // length scaling + ratchet (retrigger N times across the slot).
@@ -4327,7 +4337,7 @@
               }
               if (!hit) continue;
               if (restP > 0 && rnd() * 100 < restP) continue;
-              const at = cStart + (bar * steps + slot) * slotSec;
+              const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
               if (at < tFrom || at >= tTo) continue;
               const bp = _ambApplyAdsr(_ambBassParams(lenMs, pan, tone), inst);
               bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
@@ -4364,7 +4374,7 @@
             }
             if (!hit) continue;
             if (restP > 0 && rnd() * 100 < restP) continue;
-            const at = cStart + (bar * steps + slot) * slotSec;
+            const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
             if (at < tFrom || at >= tTo) continue;
             // Pitch: a proximity-constrained walk anchored to the root. Each
             // cycle starts on the root; when Pitch var fires the walk steps by a
@@ -4471,7 +4481,7 @@
             rest = (restP > 0 && vRnd() * 100 < restP);
           }
           if (rest) continue;
-          const at = cStart + i * slotSec;
+          const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
@@ -4554,7 +4564,7 @@
           // Base degree (the "Note" control, 1 = key root) unless Vary roams it.
           let deg = Math.min(N - 1, Math.max(0, ((inst.degree | 0) || 1) - 1));
           if (cRnd && vary > 0 && cRnd() * 100 < vary) deg = Math.floor(cRnd() * N);
-          const at = cStart + i * slotSec;
+          const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
@@ -4839,7 +4849,7 @@
         for (let s = 0; s < steps; s++) {
           if (euPat) { if (!euPat[s]) continue; }             // euclid: deterministic on-steps
           else if (rnd() >= fill * 0.6) continue;             // fill: stochastic (per-cycle seeded)
-          const at = cStart + s * slotSec;
+          const at = cStart + s * slotSec + ((s & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;             // only within this tick's window
           _ambKeyTime = at;
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);
@@ -5192,7 +5202,7 @@
               // Pitch vary: per-hit ±1-octave drift (gated → no RNG at 0).
               let f = f0;
               if (pVary > 0 && rnd() * 100 < pVary) { const sh = (rnd() < 0.5 ? -1 : 1); const ff = _ambNoteFreq(intervals[deg] | 0, oct + carry + sh, notes); if (ff > 0) f = ff; }
-              hits.push({ at: cStart + (bar * steps + slot) * slotSec, f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd), tone: _ambDegreeToneAt(deg, notes), lvl: _ambDegreeLevelAt(deg, notes) });
+              hits.push({ at: cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(arp, slotSec) : 0), f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd), tone: _ambDegreeToneAt(deg, notes), lvl: _ambDegreeLevelAt(deg, notes) });
             }
           }
         }
@@ -14532,25 +14542,25 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['choke'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
@@ -14560,7 +14570,7 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -14568,7 +14578,7 @@
       bass: { label: 'Bass', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -14576,14 +14586,14 @@
       run: { label: 'Riff', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -17034,7 +17044,7 @@
       set('ambient-bed-spread', cfg.bed.spread);
       set('ambient-bed-intervalMs', cfg.bed.intervalMs); hint('ambient-bed-intervalMs-v', _ambFmtMs(cfg.bed.intervalMs));
       set('ambient-bed-lengthMs', cfg.bed.lengthMs);     hint('ambient-bed-lengthMs-v', _ambFmtMs(cfg.bed.lengthMs));
-      set('ambient-bed-drift', cfg.bed.drift); set('ambient-bed-lenVary', cfg.bed.lenVary | 0);
+      set('ambient-bed-lenVary', cfg.bed.lenVary | 0);
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-restProb', cfg.bed.restProb | 0);
@@ -17051,7 +17061,7 @@
       set('ambient-motif-proximity', cfg.motif.proximity);
       set('ambient-motif-intervalMs', cfg.motif.intervalMs); hint('ambient-motif-intervalMs-v', _ambFmtMs(cfg.motif.intervalMs));
       set('ambient-motif-lengthMs', cfg.motif.lengthMs);     hint('ambient-motif-lengthMs-v', _ambFmtMs(cfg.motif.lengthMs));
-      set('ambient-motif-drift', cfg.motif.drift); set('ambient-motif-lenVary', cfg.motif.lenVary | 0);
+      set('ambient-motif-lenVary', cfg.motif.lenVary | 0);
       setWhen('ambient-motif', cfg.motif.when);
       set('ambient-motif-restProb', cfg.motif.restProb);
       set('ambient-motif-twist', cfg.motif.twist);
@@ -17066,7 +17076,7 @@
       set('ambient-texture-fill', cfg.texture.fill);
       set('ambient-texture-intervalMs', cfg.texture.intervalMs); hint('ambient-texture-intervalMs-v', _ambFmtMs(cfg.texture.intervalMs));
       set('ambient-texture-lengthMs', cfg.texture.lengthMs);     hint('ambient-texture-lengthMs-v', _ambFmtMs(cfg.texture.lengthMs));
-      set('ambient-texture-drift', cfg.texture.drift); set('ambient-texture-lenVary', cfg.texture.lenVary | 0);
+      set('ambient-texture-swing', cfg.texture.swing | 0); set('ambient-texture-lenVary', cfg.texture.lenVary | 0);
       setWhen('ambient-texture', cfg.texture.when);
       set('ambient-texture-mutateRate', cfg.texture.mutateRate);
       set('ambient-texture-level', cfg.texture.level);
@@ -17086,7 +17096,7 @@
       set('ambient-beat-euclidkit', cfg.beat.euclidKit ? '1' : '0');
       set('ambient-beat-lengthMs', cfg.beat.lengthMs);     hint('ambient-beat-lengthMs-v', _ambFmtMs(cfg.beat.lengthMs));
       set('ambient-beat-rhythmVar', cfg.beat.rhythmVar);
-      set('ambient-beat-drift', cfg.beat.drift); set('ambient-beat-lenVary', cfg.beat.lenVary | 0);
+      set('ambient-beat-swing', cfg.beat.swing | 0); set('ambient-beat-lenVary', cfg.beat.lenVary | 0);
       setWhen('ambient-beat', cfg.beat.when);
       set('ambient-beat-restProb', cfg.beat.restProb);
       set('ambient-beat-level', cfg.beat.level);
@@ -17882,7 +17892,6 @@
       { const ck = G('ambient-bed-choke'); if (ck) ck.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.choke = (ck.value === '1'); persist(); }); }
       bindTime('ambient-bed-intervalMs', 'bed', 'intervalMs');
       bindTime('ambient-bed-lengthMs', 'bed', 'lengthMs');
-      bind('ambient-bed-drift', 'bed', 'drift');
       bind('ambient-bed-lenVary', 'bed', 'lenVary');
       bind('ambient-bed-motion', 'bed', 'motion');
       bind('ambient-bed-strum', 'bed', 'strum');
@@ -17915,7 +17924,6 @@
       bind('ambient-motif-proximity', 'motif', 'proximity');
       bindTime('ambient-motif-intervalMs', 'motif', 'intervalMs');
       bindTime('ambient-motif-lengthMs', 'motif', 'lengthMs');
-      bind('ambient-motif-drift', 'motif', 'drift');
       bind('ambient-motif-lenVary', 'motif', 'lenVary');
       bind('ambient-motif-phraseVary', 'motif', 'phraseVary');
       bind('ambient-motif-restProb', 'motif', 'restProb');
@@ -17930,7 +17938,7 @@
       bind('ambient-texture-fill', 'texture', 'fill');
       bindTime('ambient-texture-intervalMs', 'texture', 'intervalMs');
       bindTime('ambient-texture-lengthMs', 'texture', 'lengthMs');
-      bind('ambient-texture-drift', 'texture', 'drift');
+      bind('ambient-texture-swing', 'texture', 'swing');
       bind('ambient-texture-lenVary', 'texture', 'lenVary');
       bind('ambient-texture-mutateRate', 'texture', 'mutateRate');
       bind('ambient-texture-level', 'texture', 'level');
@@ -17955,7 +17963,7 @@
       _ambWireEuclidGrid(E, (suf) => G('ambient-beat-' + suf), () => { const c = cfg0(); return c ? c.beat : null; },
         persist, () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } }, 'beat', 'beat');
       bind('ambient-beat-rhythmVar', 'beat', 'rhythmVar');
-      bind('ambient-beat-drift', 'beat', 'drift');
+      bind('ambient-beat-swing', 'beat', 'swing');
       bind('ambient-beat-lenVary', 'beat', 'lenVary');
       bind('ambient-beat-restProb', 'beat', 'restProb');
       bind('ambient-beat-level', 'beat', 'level');

@@ -181,7 +181,7 @@ pub(crate) static mut PARAMS: [f32; PARAMS_LEN] = [0.0; PARAMS_LEN];
 
 // Bumped on every DSP change — surfaced in the worklet-ready log so a stale
 // cached .wasm is immediately visible.
-const CORE_REV: u32 = 8;
+const CORE_REV: u32 = 9;
 
 #[no_mangle]
 pub extern "C" fn core_rev() -> u32 {

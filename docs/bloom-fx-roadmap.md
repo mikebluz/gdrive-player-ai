@@ -55,6 +55,16 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
   hash-seeded value noise (one new target per period, cosine-eased), drifts
   forever without repeating, deterministic per ramp id (Bar-Lock replays the
   same drift), consumes no engine RNG.
+- **FX module** (per-layer): one registry (`_AMB_FX_DEFS`), layers carry an
+  `fxChain` — cards render only ADDED effects + an "＋ Add FX" picker; legacy
+  chains derive from engagement. Engine untouched.
+- **Distortion flavors** (Tier A — the first core-DSP addition): `strip_dist`
+  gains a `dist_mode` — Classic (the original curve, default, golden-covered
+  byte-identical) · Overdrive (warm tanh) · Fuzz (asymmetric clip + crossover
+  sputter) · Wavefold (triangle fold) · Crush (bit-depth quantize). Per-layer
+  Type select in the Distortion FX block; `dist.flavor` (absent = classic).
+  Node-fallback engine keeps the classic curve. CORE_REV 9; golden 75/75
+  WITHOUT re-baseline (the default path is untouched).
 
 ## 3. Feasibility catalog (ranked cheap → expensive)
 
@@ -62,7 +72,7 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
 |---|---|---|---|
 | **Reverb characters** | B | IR synthesis variants | ✅ shipped |
 | **Drifting reverb** (generative) | B | re-roll the IR every N bars (the debounced `_revIRKey` regen machinery already exists) | risk: audible click on live Convolver buffer swap — needs a 2-convolver crossfade |
-| **Distortion flavors** (overdrive/fuzz/fold) | B (master) / A (per-layer) | different waveshaper curves — tanh (overdrive), hard asymmetric + gate (fuzz), triangle-fold (wavefolder) | per-layer version = new curve tables in the core `strip_dist`; master version is trivial |
+| **Distortion flavors** (overdrive/fuzz/fold/crush) | A | ✅ shipped — `dist_mode` in the core `strip_dist`, additive/golden-safe | |
 | **Vinyl simulator** | B (master) | noise bed + crackle impulses (Poisson-timed) + wow/flutter (slow Vibrato) + LP + rumble | all stock Tone nodes; crackle density/age as the knob; naturally stochastic |
 | **Harmonic phaser** | B (master) | allpass stages tuned to HARMONIC ratios of the area KEY root (retune on key change) | distinctive: an FX that reads the harmonic frame — very "Bloom" |
 | **Grain delay** | C first, then B | offline: chop the tail into grains, re-scatter with jitter/pitch; realtime: AudioBufferSourceNode grain cloud fed by a tap recorder | realtime version is a mini-engine; prove musically in Harvest first |

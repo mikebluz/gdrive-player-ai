@@ -1133,6 +1133,8 @@
       else ['mix', 'timeMs', 'feedback', 'ping'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
       else ['mix', 'amount'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
+      // Distortion FLAVOR: coerce when present; ABSENT = classic (additive).
+      if (host.dist.flavor != null && ['overdrive', 'fuzz', 'fold', 'crush'].indexOf(host.dist.flavor) < 0) delete host.dist.flavor;
       if (!host.chorus || typeof host.chorus !== 'object') host.chorus = { ...d.chorus };
       else ['mix', 'depth', 'rate'].forEach(k => { if (!Number.isFinite(host.chorus[k])) host.chorus[k] = d.chorus[k]; });
       if (!host.phaser || typeof host.phaser !== 'object') host.phaser = { ...d.phaser };
@@ -6917,7 +6919,7 @@
       if (e.core) {
         const sl = e.core.slot, c01 = (v) => Math.max(0, Math.min(1, (v | 0) / 100));
         try {
-          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), c01(dst.mix));
+          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), c01(dst.mix), _ambDistModeIdx(dst.flavor));   // flavor → dist_mode (node fallback keeps the classic curve)
           e.core.cmd('strip_chorus', sl, wantChorus ? 1 : 0, c01(cho.mix), c01(cho.depth),
             0.1 + Math.max(0, Math.min(100, cho.rate | 0)) / 100 * 4.9);
           e.core.cmd('strip_phaser', sl, wantPhaser ? 1 : 0, c01(pha.mix),
@@ -13197,6 +13199,9 @@
     // clusters bind as before) and engagement semantics (mix>0 splices the DSP)
     // are unchanged — membership is presentation + intent. Legacy projects
     // derive their chain from what's ENGAGED, so nothing disappears.
+    // Distortion flavor ↔ core dist_mode index (0 classic default).
+    const _AMB_DIST_FLAVORS = [['', 'Classic'], ['overdrive', 'Overdrive'], ['fuzz', 'Fuzz'], ['fold', 'Wavefold'], ['crush', 'Crush']];
+    const _ambDistModeIdx = (flavor) => Math.max(0, _AMB_DIST_FLAVORS.findIndex(f => f[0] === (flavor || '')));
     const _AMB_FX_DEFS = [
       { id: 'filter',  label: 'Filter',      engaged: (lc) => ((Number.isFinite(lc.cutoff) ? lc.cutoff : 100) < 100) || ((lc.reso | 0) > 0), off: (lc) => { lc.cutoff = 100; lc.reso = 0; }, zero: [['fx-cutoff', 100], ['fx-reso', 0]] },
       { id: 'rev',     label: 'Reverb send', engaged: (lc) => (lc.revSend | 0) > 0,                    off: (lc) => { lc.revSend = 0; },                zero: [['fx-rev', 0]] },
@@ -13238,6 +13243,8 @@
         if (sum) sum.textContent = 'FX' + (chain.length ? ' · ' + chain.length + ' active' : ' · none (＋ add)');
         const addB = det.querySelector('.ambient-fx-add');
         if (addB) addB.style.display = (chain.length >= _AMB_FX_DEFS.length) ? 'none' : '';
+        const fl = det.querySelector('.ambient-fx-dist-flavor');
+        if (fl) fl.value = (lc.dist && lc.dist.flavor) || '';
       });
     }
     const _ambFxItem = (id, label, inner) =>
@@ -13270,6 +13277,7 @@
           _ambSl('Depth', 'ambient-' + layer + '-fx-apan-depth', 0, 100, 100, 'centre → full L↔R') +
           _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast')) +
         _ambFxItem('dist', 'Distortion',
+          '<div class="ambient-ctrl"><label title="Distortion character. Classic = the original curve. Overdrive = smooth warm tanh. Fuzz = hard asymmetric clip with a sputtery crossover gate. Wavefold = triangle folding (west-coast). Crush = bit-depth quantize.">Type</label><select class="ambient-select ambient-fx-dist-flavor">' + _AMB_DIST_FLAVORS.map(f => '<option value="' + f[0] + '">' + f[1] + '</option>').join('') + '</select><span class="ambient-hint">character</span></div>' +
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
           _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet')) +
         '<div class="ambient-fx-addrow"><button type="button" class="ambient-seg ambient-fx-add" title="Add an effect to this layer">＋ Add FX</button></div>' +
@@ -17915,6 +17923,16 @@
             const b = ev.target && ev.target.closest && ev.target.closest('.ambient-ramp-add[data-rampkey]');
             if (!b || !hostEl.contains(b)) return;
             _ambAddRamp(E, b.getAttribute('data-rampkey'));
+          });
+          // Distortion flavor — ONE delegated change listener for every card.
+          hostEl.addEventListener('change', (ev) => {
+            const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-dist-flavor');
+            if (!sel || !hostEl.contains(sel)) return;
+            const key = _ambCardKey(sel.closest('.ambient-layer')); if (!key) return;
+            _E = E; const lc = _ambLayerByKey(E, key); if (!lc || !lc.dist) return;
+            if (sel.value) lc.dist.flavor = sel.value; else delete lc.dist.flavor;
+            if (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E)) { try { _ambApplyLayerFx(key, lc); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           // FX MODULE add/remove — same delegated pattern (cards re-render).
           hostEl.addEventListener('click', (ev) => {

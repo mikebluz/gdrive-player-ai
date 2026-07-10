@@ -218,6 +218,7 @@ pub(crate) struct Strip {
     dist_on: bool,
     dist_k: f32,
     dist_wet: f32,
+    dist_mode: u32,
     cho_on: bool,
     cho_wet: f32,
     cho_depth: f32,
@@ -271,6 +272,7 @@ pub(crate) const STRIP0: Strip = Strip {
     dist_on: false,
     dist_k: 40.0,
     dist_wet: 0.0,
+    dist_mode: 0,
     cho_on: false,
     cho_wet: 0.0,
     cho_depth: 0.5,
@@ -382,17 +384,41 @@ fn tg_val(st: &Strip, t: f64) -> f32 {
 
 // ---- FX blocks (each processes the slot buffer in place) --------------------
 
+// Distortion FLAVORS (dist_mode): 0 = classic (the ORIGINAL curve — must stay
+// byte-identical, it's the golden-covered default) · 1 = overdrive (smooth
+// symmetric tanh, warm) · 2 = fuzz (pre-gain + asymmetric hard clip + crossover
+// gate sputter) · 3 = wavefold (triangle fold) · 4 = crush (bit-depth quantize).
 fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &Strip, frames: usize) {
     let (cd, cw) = xfade(st.dist_wet);
     let k = st.dist_k;
     let scale = 20.0 * PI / 180.0;
+    let mode = st.dist_mode;
+    let tanhf = |v: f32| { let e = (2.0 * v).exp(); (e - 1.0) / (e + 1.0) };
     for ch in buf.iter_mut() {
         for x in ch.iter_mut().take(frames) {
             let xc = x.clamp(-1.0, 1.0);
-            let y = if xc.abs() < 0.001 {
-                0.0
-            } else {
-                (3.0 + k) * xc * scale / (PI + k * xc.abs())
+            let y = match mode {
+                1 => {
+                    let g = 1.0 + k * 0.12;
+                    tanhf(g * xc) / tanhf(g)
+                }
+                2 => {
+                    let g = 1.0 + k * 0.30;
+                    let v = (g * xc).clamp(-0.9, 0.6) * 1.25;
+                    if xc.abs() < 0.0002 * k { v * 0.25 } else { v }
+                }
+                3 => {
+                    let g = 1.0 + k * 0.07;
+                    let ph = (g * xc * 0.25 + 0.25).rem_euclid(1.0);
+                    4.0 * (ph - 0.5).abs() - 1.0
+                }
+                4 => {
+                    let lv = ((8.0 - k * 0.06) * core::f32::consts::LN_2).exp();
+                    (xc * lv).floor() / lv
+                }
+                _ => {
+                    if xc.abs() < 0.001 { 0.0 } else { (3.0 + k) * xc * scale / (PI + k * xc.abs()) }
+                }
             };
             *x = *x * cd + y * cw;
         }
@@ -832,12 +858,13 @@ pub extern "C" fn strip_tg(
 }
 
 #[no_mangle]
-pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32) {
+pub extern "C" fn strip_dist(slot: u32, on: u32, amount: f32, wet: f32, mode: u32) {
     unsafe {
         let st = &mut STRIPS[(slot as usize) % SLOTS];
         st.dist_on = on != 0;
         st.dist_k = amount.clamp(0.0, 1.0) * 100.0;
         st.dist_wet = wet.clamp(0.0, 1.0);
+        st.dist_mode = mode % 5;   // 0 classic · 1 overdrive · 2 fuzz · 3 fold · 4 crush
     }
 }
 

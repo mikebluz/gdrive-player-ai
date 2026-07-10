@@ -11293,3 +11293,8 @@
        (the shared flex-wrap slice-grid sizes cells by their digits → misaligned). */
     .ambient-slice-grid.ambient-tg-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
     .ambient-tg-grid .ambient-slice-cell { min-width: 0; width: auto; height: 22px; padding: 0; overflow: hidden; text-align: center; }
+
+    /* Unified Loop row (Off / Hold / Write) + the ❄ button's Write-cycling state */
+    .ambient-loop-ctrl .ambient-seg-row { display: inline-flex; gap: 2px; }
+    .ambient-loop-ctrl .ambient-loop-mode.active { background: rgba(79,209,197,0.18); border-color: #5e9ead; color: #9fe0ef; }
+    .ambient-freeze-btn.write-cycling { color: #f6ad55; border-color: rgba(246,173,85,0.5); }

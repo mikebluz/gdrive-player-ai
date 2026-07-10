@@ -42,6 +42,19 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
   per-AREA via `cfg.reverb.type` (Configure → Global FX → Reverb → Character).
   Cavern/room bake **stochastic early reflections** — every IR build is a
   slightly different space.
+- **Vinyl simulator** (Tier B, master stage in 03): synthesized 4 s looping
+  crackle/hiss/rumble bed (Poisson pops — every bed unique), wow (0.45 Hz) +
+  flutter (6.4 Hz) pitch wobble via a modulated delay, and Age-scaled wear
+  darkening. `globalFx.vinyl*`; UI in Bloom Global FX (On/Amount/Age).
+  Neutral-off: delayTime 0 = no latency.
+- **Tape echo** (Tier B, master stage): a feedback delay with degradation IN
+  the loop — each repeat re-saturated (tanh), darkened (4.2 kHz LP), and
+  wobbled — which the stock FeedbackDelay can't do. Off starves the loop so
+  the tail rings out. `globalFx.tape*`; UI On/Mix/Time/Feedback/Wobble.
+- **Chaos ramps** (generative): `wave: 'random'` on any per-layer ramp — smooth
+  hash-seeded value noise (one new target per period, cosine-eased), drifts
+  forever without repeating, deterministic per ramp id (Bar-Lock replays the
+  same drift), consumes no engine RNG.
 
 ## 3. Feasibility catalog (ranked cheap → expensive)
 

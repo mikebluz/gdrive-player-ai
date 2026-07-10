@@ -15957,7 +15957,7 @@
       // (= B for a full-range ramp → the old peak-hold behavior).
       if (!Number.isFinite(r.holdVal)) r.holdVal = 100;
       r.holdVal = Math.max(0, Math.min(100, Math.round(r.holdVal * 100) / 100));
-      if (['sine','triangle','saw','square','seq'].indexOf(r.wave) < 0) r.wave = 'sine';
+      if (['sine','triangle','saw','square','seq','random'].indexOf(r.wave) < 0) r.wave = 'sine';
       // Sequence-as-waveform fields (only meaningful when wave === 'seq').
       if (!Number.isFinite(r.seqRef)) r.seqRef = 0;
       if (['pitch','velocity','gate'].indexOf(r.seqSource) < 0) r.seqSource = 'velocity';
@@ -16144,6 +16144,14 @@
     }
     // Called each tick: write every active ramp's current value into cfg.
     // `elapsedSec` is the time since PLAY START, so phase 0 (= A) lands on play.
+    // Hash-based smooth value noise for the 'random' ramp wave. x is in periods;
+    // value at integer k = hash(id,k) in [0,1], cosine-interpolated between ks.
+    function _ambRampNoise(id, x) {
+      const h = (k) => { let n = (id * 374761393 + k * 668265263) | 0; n = (n ^ (n >> 13)) | 0; n = Math.imul(n, 1274126177); n = (n ^ (n >> 16)) >>> 0; return n / 4294967296; };
+      const k = Math.floor(x), t = x - k;
+      const e = 0.5 - 0.5 * Math.cos(Math.PI * t);   // cosine ease
+      return h(k) + (h(k + 1) - h(k)) * e;
+    }
     function _ambApplyRamps(cfg, elapsedSec) {
       if (!cfg || !Array.isArray(cfg.ramps) || !cfg.ramps.length) return;
       const eMs = Math.max(0, elapsedSec) * 1000;
@@ -16174,6 +16182,12 @@
         if (r.wave === 'seq') {
           const c = _seqRefCurve(r);
           f = c ? _seqCurveAt(c, phase, (r.seqInterp === 'smooth') ? 'smooth' : 'step') : 0;
+        } else if (r.wave === 'random') {
+          // CHAOS: smooth value-noise that drifts forever — one new random target
+          // per period, cosine-eased between them. Hash-seeded by (ramp id, cycle
+          // index): deterministic (Bar-Lock replays the same drift), never repeats
+          // a cycle, and consumes NO engine RNG (the note stream is untouched).
+          f = _ambRampNoise(r.id | 0, eMs / period);
         } else {
           f = _ambRampFactor(r.wave, phase);
         }
@@ -16245,7 +16259,7 @@
     }
     function _ambRampRowHtml(r, cfg) {
       const id = r.id, p = 'ambient-ramp-' + id + '-';
-      const waveOpts = [['sine','Sine'],['triangle','Triangle'],['saw','Saw'],['square','Square']]
+      const waveOpts = [['sine','Sine'],['triangle','Triangle'],['saw','Saw'],['square','Square'],['random','Random (drift)']]
         .map(w => '<option value="' + w[0] + '"' + (r.wave === w[0] ? ' selected' : '') + '>' + w[1] + '</option>').join('');
       // Saved sequences as selectable waveforms (value 'seq:<idx>').
       const _seqList = (typeof savedSequences !== 'undefined' && Array.isArray(savedSequences)) ? savedSequences : [];
@@ -16690,6 +16704,17 @@
         { const w = (masterBloomAreas && masterBloomAreas.width) || {}; set('ambient-width-mix', w.mix); hint('ambient-width-mix-v', (w.mix | 0) + '%'); set('ambient-width-depth', w.depth); hint('ambient-width-depth-v', (w.depth | 0) + '%'); set('ambient-width-rate', w.rate); hint('ambient-width-rate-v', (w.rate | 0) + '%'); }
         const wOn = document.getElementById(tr('ambient-warmth-on'));
         if (wOn) { const on = globalFx.warmthOn !== false; wOn.classList.toggle('active', on); wOn.textContent = on ? 'On' : 'Off'; }
+        // Vinyl / Tape (global FX) reflection.
+        set('ambient-vinyl-amount', globalFx.vinylAmount); hint('ambient-vinyl-amount-v', (globalFx.vinylAmount | 0) + '%');
+        set('ambient-vinyl-age', globalFx.vinylAge); hint('ambient-vinyl-age-v', (globalFx.vinylAge | 0) + '%');
+        const vOn = document.getElementById(tr('ambient-vinyl-on'));
+        if (vOn) { const on = globalFx.vinylOn === true; vOn.classList.toggle('active', on); vOn.textContent = on ? 'On' : 'Off'; }
+        set('ambient-tape-mix', globalFx.tapeMix); hint('ambient-tape-mix-v', (globalFx.tapeMix | 0) + '%');
+        set('ambient-tape-time', globalFx.tapeTime); hint('ambient-tape-time-v', (globalFx.tapeTime | 0) + ' ms');
+        set('ambient-tape-feedback', globalFx.tapeFeedback); hint('ambient-tape-feedback-v', (globalFx.tapeFeedback | 0) + '%');
+        set('ambient-tape-wobble', globalFx.tapeWobble); hint('ambient-tape-wobble-v', (globalFx.tapeWobble | 0) + '%');
+        const tpOn = document.getElementById(tr('ambient-tape-on'));
+        if (tpOn) { const on = globalFx.tapeOn === true; tpOn.classList.toggle('active', on); tpOn.textContent = on ? 'On' : 'Off'; }
         // Master Dynamics reflection (master Bloom only).
         const dseg = (id, on) => { const el = document.getElementById(tr(id)); if (el) { el.classList.toggle('active', !!on); el.textContent = on ? 'On' : 'Off'; } };
         set('ambient-comp-thresh', globalFx.compThresh); hint('ambient-comp-thresh-v', (globalFx.compThresh | 0) + ' dB');
@@ -16989,6 +17014,24 @@
                 sl('Ceiling', 'ambient-limit-ceil', -24, 0, -2, 'dBFS') +
                 '<div class="ambient-dyn-row"><span class="ambient-dyn-name">Soft clip</span>' +
                   '<button type="button" class="ambient-seg" id="ambient-clip-on" title="Bypass the final soft-clip ceiling — WARNING: may allow hard clipping">On</button></div>' +
+              '</div>') +
+            (E.isLane ? '' :
+              '<div class="ambient-warmth">' +
+                '<div class="ambient-warmth-head"><span class="ambient-mod-sub">Vinyl</span>' +
+                  '<button type="button" class="ambient-seg" id="ambient-vinyl-on" title="Vinyl simulator — crackle + hiss bed, wow/flutter pitch wobble, and wear darkening on the whole mix. All synthesized, naturally stochastic (every crackle bed is unique).">Off</button>' +
+                  '<span class="ambient-hint">global · all output</span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-vinyl-amount">Amount</label><input type="range" id="ambient-vinyl-amount" min="0" max="100" step="1" value="35" /><span class="ambient-hint" id="ambient-vinyl-amount-v"></span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-vinyl-age">Age</label><input type="range" id="ambient-vinyl-age" min="0" max="100" step="1" value="50" /><span class="ambient-hint" id="ambient-vinyl-age-v"></span></div>' +
+              '</div>') +
+            (E.isLane ? '' :
+              '<div class="ambient-warmth">' +
+                '<div class="ambient-warmth-head"><span class="ambient-mod-sub">Tape echo</span>' +
+                  '<button type="button" class="ambient-seg" id="ambient-tape-on" title="Tape echo — a feedback delay whose repeats degrade IN the loop (re-saturated, darkened, wobbled each pass), like a worn tape machine. Turning it off starves the loop so the tail rings out.">Off</button>' +
+                  '<span class="ambient-hint">global · all output</span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-tape-mix">Mix</label><input type="range" id="ambient-tape-mix" min="0" max="100" step="1" value="35" /><span class="ambient-hint" id="ambient-tape-mix-v"></span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-tape-time">Time</label><input type="range" id="ambient-tape-time" min="20" max="1500" step="10" value="280" /><span class="ambient-hint" id="ambient-tape-time-v"></span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-tape-feedback">Feedback</label><input type="range" id="ambient-tape-feedback" min="0" max="90" step="1" value="45" /><span class="ambient-hint" id="ambient-tape-feedback-v"></span></div>' +
+                '<div class="ambient-ctrl"><label for="ambient-tape-wobble">Wobble</label><input type="range" id="ambient-tape-wobble" min="0" max="100" step="1" value="35" /><span class="ambient-hint" id="ambient-tape-wobble-v"></span></div>' +
               '</div>') +
             '<div class="ambient-reverb"><div class="ambient-mod-sub">Reverb</div>' +
               '<div class="ambient-ctrl"><label for="ambient-reverb-type" title="The space’s character — all synthesized live (no samples), and every one responds to Size/Damp. Lush = the classic smooth wash. Room/Hall/Cavern = small → vast (Cavern adds sparse irregular echoes). Plate = instant dense + metallic. Spring = boingy band-limited flutter. Gated = 80s hold-then-cut. Air = high-passed shimmery sheen.">Character</label><select id="ambient-reverb-type" class="ambient-select">' +
@@ -17406,6 +17449,40 @@
           persist();
         });
       });
+      // Vinyl / Tape (global FX) — same pattern as Warmth: write globalFx,
+      // apply the master stage live, persist. Master Bloom only (G() null on lanes).
+      { const wireStage = (stem, key, unit, apply) => {
+          const el = G(stem); if (!el) return;
+          const vEl = G(stem + '-v');
+          el.addEventListener('input', () => {
+            const v = parseInt(el.value, 10) || 0;
+            if (typeof globalFx !== 'undefined' && globalFx) globalFx[key] = v;
+            if (vEl) vEl.textContent = v + (unit || '%');
+            try { apply(); } catch (e) {}
+            try { persistGlobalFx(); } catch (e) {}
+          });
+        };
+        const wireOn = (id, key, apply) => {
+          const b = G(id); if (!b) return;
+          b.addEventListener('click', () => {
+            if (typeof globalFx === 'undefined' || !globalFx) return;
+            globalFx[key] = !(globalFx[key] === true);
+            b.classList.toggle('active', globalFx[key]); b.textContent = globalFx[key] ? 'On' : 'Off';
+            try { apply(); } catch (e) {}
+            try { persistGlobalFx(); } catch (e) {}
+          });
+        };
+        const aV = () => { if (typeof applyMasterVinyl === 'function') applyMasterVinyl(); };
+        const aT = () => { if (typeof applyMasterTape === 'function') applyMasterTape(); };
+        wireOn('ambient-vinyl-on', 'vinylOn', aV);
+        wireStage('ambient-vinyl-amount', 'vinylAmount', '%', aV);
+        wireStage('ambient-vinyl-age', 'vinylAge', '%', aV);
+        wireOn('ambient-tape-on', 'tapeOn', aT);
+        wireStage('ambient-tape-mix', 'tapeMix', '%', aT);
+        wireStage('ambient-tape-time', 'tapeTime', ' ms', aT);
+        wireStage('ambient-tape-feedback', 'tapeFeedback', '%', aT);
+        wireStage('ambient-tape-wobble', 'tapeWobble', '%', aT);
+      }
       // Master Warmth (global FX). Writes globalFx and drives the master-chain
       // warmth stage — same target as the FX panel's Warmth section, so this is
       // a second view onto one global setting (affects all output, not only

@@ -949,6 +949,104 @@
     masterBus.connect(masterDCBlock);       // now masterBus → DC/HPF → warmth → masterCompressor
     masterDCBlock.connect(masterWarmthLow);
 
+    // ---- Master VINYL stage (FX roadmap Tier B) -------------------------------
+    // warmthCut → wobble delay (wow+flutter pitch wobble) → age lowpass →
+    // compressor, plus an ADDITIVE looping crackle/hiss bed. Neutral when off:
+    // delayTime 0, LFO depths 0, LP wide, crackle gain 0 — identity, no latency.
+    const vinylWobble = new Tone.Delay(0, 0.05);
+    const vinylLP = new Tone.Filter({ type: 'lowpass', frequency: 20000, Q: 0.4 });
+    masterWarmthCut.disconnect();           // was warmthCut → masterCompressor
+    masterWarmthCut.connect(vinylWobble);
+    vinylWobble.connect(vinylLP);
+    vinylLP.connect(masterCompressor);
+    const vinylWow = new Tone.Oscillator(0.45, 'sine');
+    const vinylWowG = new Tone.Gain(0); vinylWow.connect(vinylWowG); vinylWowG.connect(vinylWobble.delayTime);
+    const vinylFlut = new Tone.Oscillator(6.4, 'sine');
+    const vinylFlutG = new Tone.Gain(0); vinylFlut.connect(vinylFlutG); vinylFlutG.connect(vinylWobble.delayTime);
+    try { vinylWow.start(); vinylFlut.start(); } catch (e) {}
+    const vinylCrackleG = new Tone.Gain(0); vinylCrackleG.connect(masterCompressor);
+    let _vinylSrc = null, _vinylSrcAge = -1;
+    // Synthesized 4 s looping side-bed: hiss (dark filtered noise) + Poisson-timed
+    // crackle pops (density/sharpness scale with Age) + a faint 33⅓ rpm rumble.
+    function _makeVinylBed(age01) {
+      const ac = Tone.getContext().rawContext, sr = ac.sampleRate || 44100;
+      const len = Math.floor(4 * sr), buf = ac.createBuffer(2, len, sr);
+      const pops = Math.floor(8 + age01 * 90);               // pops per 4 s
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        let lp = 0, rum = 0;
+        const aH = Math.exp(-2 * Math.PI * 3500 / sr), aR = Math.exp(-2 * Math.PI * 45 / sr);
+        for (let i = 0; i < len; i++) {
+          const n = Math.random() * 2 - 1;
+          lp = (1 - aH) * n + aH * lp;                       // hiss (dark)
+          rum = (1 - aR) * n + aR * rum;                     // rumble (very low)
+          d[i] = lp * 0.16 + rum * 0.5;
+        }
+        for (let k = 0; k < pops; k++) {                     // crackle: sparse decaying bursts
+          const at = Math.floor(Math.random() * (len - 200));
+          const amp = (0.25 + Math.random() * 0.75) * (Math.random() < 0.5 ? 1 : -1);
+          const dur = 6 + Math.floor(Math.random() * 60 * (0.4 + age01));
+          for (let j = 0; j < dur; j++) d[at + j] += amp * Math.exp(-j / (dur * 0.25)) * (Math.random() * 0.6 + 0.4);
+        }
+      }
+      return buf;
+    }
+    let _vinylBedTimer = null;
+    function _rebuildVinylBed(age01) {
+      if (_vinylBedTimer) clearTimeout(_vinylBedTimer);
+      _vinylBedTimer = setTimeout(() => {
+        try {
+          if (_vinylSrc) { try { _vinylSrc.stop(); _vinylSrc.dispose(); } catch (e) {} _vinylSrc = null; }
+          const src = new Tone.BufferSource({ url: _makeVinylBed(age01), loop: true });
+          src.connect(vinylCrackleG); src.start();
+          _vinylSrc = src; _vinylSrcAge = Math.round(age01 * 20);
+        } catch (e) {}
+      }, 150);
+    }
+    function applyMasterVinyl() {
+      try {
+        const on = globalFx.vinylOn === true;
+        const amt = Math.max(0, Math.min(100, globalFx.vinylAmount || 0)) / 100;
+        const age = Math.max(0, Math.min(100, globalFx.vinylAge || 0)) / 100;
+        vinylWobble.delayTime.rampTo(on ? 0.01 : 0, 0.2);          // 10 ms wobble center (0 = no latency when off)
+        vinylWowG.gain.rampTo(on ? 0.0004 + age * 0.0022 : 0, 0.2); // wow depth 0.4–2.6 ms
+        vinylFlutG.gain.rampTo(on ? 0.00015 + age * 0.0004 : 0, 0.2);
+        vinylLP.frequency.rampTo(on ? (14000 - age * 8500) : 20000, 0.2);   // wear darkens
+        vinylCrackleG.gain.rampTo(on ? amt * 0.5 : 0, 0.2);
+        if (on && (!_vinylSrc || _vinylSrcAge !== Math.round(age * 20))) _rebuildVinylBed(age);
+        if (!on && _vinylSrc) { try { _vinylSrc.stop(); _vinylSrc.dispose(); } catch (e) {} _vinylSrc = null; _vinylSrcAge = -1; }
+      } catch (e) {}
+    }
+
+    // ---- Master TAPE ECHO stage (FX roadmap Tier B) ---------------------------
+    // A PARALLEL wet path off the vinyl output with degradation IN the loop —
+    // each repeat is re-saturated and re-wobbled (true tape character; the
+    // stock FeedbackDelay can't do in-loop processing). tapeIn gain 0 when off
+    // starves the loop (tail rings out naturally).
+    const tapeIn = new Tone.Gain(0);
+    const tapeDly = new Tone.Delay(0.28, 1.6);
+    const tapeSat = new Tone.WaveShaper((() => { const n = 1024, c = new Float32Array(n); for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(1.6 * x) / Math.tanh(1.6); } return c; })(), 1024);
+    const tapeTone = new Tone.Filter({ type: 'lowpass', frequency: 4200, Q: 0.3 });  // repeats darken
+    const tapeFb = new Tone.Gain(0.45);
+    const tapeWet = new Tone.Gain(0);
+    vinylLP.connect(tapeIn);
+    tapeIn.connect(tapeDly); tapeDly.connect(tapeSat); tapeSat.connect(tapeTone);
+    tapeTone.connect(tapeFb); tapeFb.connect(tapeDly);        // the degrading loop
+    tapeTone.connect(tapeWet); tapeWet.connect(masterCompressor);
+    const tapeWob = new Tone.Oscillator(0.9, 'sine');
+    const tapeWobG = new Tone.Gain(0); tapeWob.connect(tapeWobG); tapeWobG.connect(tapeDly.delayTime);
+    try { tapeWob.start(); } catch (e) {}
+    function applyMasterTape() {
+      try {
+        const on = globalFx.tapeOn === true;
+        tapeIn.gain.rampTo(on ? 1 : 0, 0.05);
+        tapeWet.gain.rampTo(on ? Math.max(0, Math.min(100, globalFx.tapeMix || 0)) / 100 : 0, 0.1);
+        tapeDly.delayTime.rampTo(Math.max(0.02, Math.min(1.5, (globalFx.tapeTime || 280) / 1000)), 0.15);
+        tapeFb.gain.rampTo(Math.max(0, Math.min(0.9, (globalFx.tapeFeedback || 0) / 100)), 0.1);
+        tapeWobG.gain.rampTo(on ? Math.max(0, Math.min(100, globalFx.tapeWobble || 0)) / 100 * 0.004 : 0, 0.1);
+      } catch (e) {}
+    }
+
     // ---- Master-bus oscilloscope ----
     // Single Tone.Analyser tapped on masterBus (post all sources, pre
     // compressor / FX / volume / limiter). Draws a thin waveform in the
@@ -1115,6 +1213,14 @@
     // Persisted global effect mix — applied to every voice via the master
     // chain above. Loaded from localStorage so settings stick across reloads.
     const GLOBAL_FX_DEFAULTS = {
+      vinylOn:            false,
+      vinylAmount:        35,   // crackle + hiss level
+      vinylAge:           50,   // wear: wobble depth + darkness + crackle density
+      tapeOn:             false,
+      tapeTime:           280,  // ms
+      tapeFeedback:       45,   // %
+      tapeWobble:         35,   // %
+      tapeMix:            35,   // %
       reverb:             0,
       reverbSize:         70,
       reverbTone:         50,
@@ -1180,7 +1286,7 @@
       // Drives both the master chain and per-note chains in playNote.
       fxOrder:            FX_NAMES.slice(),
     };
-    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'limitOn', 'clipOn'];
+    const FX_ON_KEYS = ['reverbOn', 'delayOn', 'distortionOn', 'chorusOn', 'vibratoOn', 'tremoloOn', 'phaserOn', 'autoFilterOn', 'pingPongOn', 'autoPanOn', 'warmthOn', 'compOn', 'limitOn', 'clipOn', 'vinylOn', 'tapeOn'];
     // Keys reset by the Dynamics "Reset" button.
     const DYN_KEYS = ['compOn', 'compThresh', 'compRatio', 'compAttack', 'compRelease', 'compKnee', 'limitOn', 'limitCeil', 'clipOn'];
     const globalFx = (() => {
@@ -1317,6 +1423,9 @@
     }
     // Apply the persisted/default warmth now so sounds come up rounded on boot.
     try { applyMasterWarmth(); } catch (e) {}
+    // Vinyl / Tape stages boot from persisted globalFx too (defaults: off/neutral).
+    try { applyMasterVinyl(); } catch (e) {}
+    try { applyMasterTape(); } catch (e) {}
     function persistGlobalFx() {
       localStorage.setItem('sounds-global-fx', JSON.stringify(globalFx));
       if (typeof persistWorkspace === 'function') persistWorkspace();

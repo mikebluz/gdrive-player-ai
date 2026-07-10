@@ -13384,9 +13384,18 @@
     // The layer's FX chain: its own list when set, else DERIVED from engagement
     // (legacy projects show exactly the FX that are audible). Not persisted until
     // the user first adds/removes (kept out of defaults — the normalize trap).
+    // Reverb send + Filter are ALWAYS-shown core sends — never hidden behind the
+    // ＋ Add FX picker (hiding the reverb send by default read as "reverb doesn't
+    // work on this layer"). An explicit fxChain still wins, but these are folded
+    // in so they can't go missing on a freshly-added layer.
+    const _AMB_FX_ALWAYS = ['filter', 'rev'];
     function _ambFxChainOf(lc) {
-      if (lc && Array.isArray(lc.fxChain)) return lc.fxChain.filter(id => _AMB_FX_DEFS.some(d => d.id === id));
-      return _AMB_FX_DEFS.filter(d => { try { return lc && d.engaged(lc); } catch (e) { return false; } }).map(d => d.id);
+      let chain;
+      if (lc && Array.isArray(lc.fxChain)) chain = lc.fxChain.filter(id => _AMB_FX_DEFS.some(d => d.id === id));
+      else chain = _AMB_FX_DEFS.filter(d => { try { return lc && d.engaged(lc); } catch (e) { return false; } }).map(d => d.id);
+      // Ensure the always-on sends are present, in registry order (rev after filter).
+      _AMB_FX_ALWAYS.forEach(id => { if (chain.indexOf(id) < 0) chain.push(id); });
+      return _AMB_FX_DEFS.map(d => d.id).filter(id => chain.indexOf(id) >= 0);
     }
     // Layer key from a card element (extras data-inst · primary [data-phkey] ·
     // seq data-seq-id · samp data-samp-id) — the shared resolution pattern.
@@ -13419,7 +13428,9 @@
     }
     const _ambFxItem = (id, label, inner) =>
       '<div class="ambient-fx-item" data-fx="' + id + '"><div class="ambient-mod-target"><div class="ambient-mod-sub">' + label +
-        '<button type="button" class="ambient-fx-del" data-fx="' + id + '" title="Remove this effect (turns it off)">✕</button></div>' + inner + '</div></div>';
+        // Always-on core sends (Filter / Reverb) can't be removed — just set to 0.
+        (_AMB_FX_ALWAYS.indexOf(id) >= 0 ? '' : '<button type="button" class="ambient-fx-del" data-fx="' + id + '" title="Remove this effect (turns it off)">✕</button>') +
+        '</div>' + inner + '</div></div>';
     const _ambFxUi = (layer) =>
       '<details class="ambient-mod ambient-fxmod"><summary class="ambient-mod-head">FX</summary>' +
         // Live per-layer low-pass filter — Cutoff sweeps the whole layer (tails

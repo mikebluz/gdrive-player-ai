@@ -16619,6 +16619,7 @@
       set('ambient-bed-drift', cfg.bed.drift); set('ambient-bed-lenVary', cfg.bed.lenVary | 0);
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
+      set('ambient-bed-restProb', cfg.bed.restProb | 0);
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
@@ -17396,8 +17397,12 @@
       bind('ambient-bed-motion', 'bed', 'motion');
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strumFidelity', 'bed', 'strumFidelity');
+      bind('ambient-bed-restProb', 'bed', 'restProb');
       bind('ambient-bed-level', 'bed', 'level');
       bindTime('ambient-bed-areaFadeMs', 'bed', 'areaFadeMs');
+      // Schema-carried selects the old bed template didn't wire (Hold / Strum sync).
+      { const hs = G('ambient-bed-hold'); if (hs) { const _bc = cfg0(); hs.value = (_bc && _bc.bed && Number.isFinite(_bc.bed.hold)) ? String(_bc.bed.hold) : ''; hs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; const v = parseFloat(hs.value); if (Number.isFinite(v) && v > 0) c.bed.hold = v; else delete c.bed.hold; if (E.timer) { try { _ambSyncMods(); } catch (e) {} } persist(); }); } }
+      { const ss = G('ambient-bed-strumsync'); if (ss) { const _bc = cfg0(); ss.value = (_bc && _bc.bed && _bc.bed.strumSync) || ''; ss.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; if (ss.value) c.bed.strumSync = ss.value; else delete c.bed.strumSync; persist(); }); } }
       // Rate (schema carries it; old bed template didn't).
       { const rs = G('ambient-bed-rate'); if (rs) { const _bc = cfg0(); rs.value = (_bc && _bc.bed && _bc.bed.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.bed) return; c.bed.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-bed', c.bed); } catch (e) {} persist(); }); } }
       bind('ambient-motif-attack', 'motif', 'attack'); bind('ambient-motif-decay', 'motif', 'decay'); bind('ambient-motif-sustain', 'motif', 'sustain'); bind('ambient-motif-release', 'motif', 'release'); bind('ambient-motif-fine', 'motif', 'fine'); bind('ambient-motif-portamento', 'motif', 'portamento');
@@ -17429,6 +17434,9 @@
       // Rate (free/sync) — the schema carries it for texture; the old hardcoded
       // template didn't, so wire it now that the card renders from the schema.
       { const rs = G('ambient-texture-rate'); if (rs) { const _tc = cfg0(); rs.value = (_tc && _tc.texture && _tc.texture.rate) || ''; rs.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.texture) return; c.texture.rate = rs.value || ''; try { _ambUnitSyncViz(E, 'ambient-texture', c.texture); } catch (e) {} persist(); }); } }
+      // Schema-carried selects the old texture template didn't wire (D3 Rhythm / Pitch seed).
+      { const rss = G('ambient-texture-rhythmseed'); if (rss) { const _tc = cfg0(); rss.value = (_tc && _tc.texture && _tc.texture.rhythmSeed) || 'fill'; rss.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.texture) return; if (rss.value === 'euclid') c.texture.rhythmSeed = 'euclid'; else delete c.texture.rhythmSeed; persist(); }); } }
+      { const pss = G('ambient-texture-pitchseed'); if (pss) { const _tc = cfg0(); pss.value = (_tc && _tc.texture && _tc.texture.pitchSeed) || 'random'; pss.addEventListener('change', () => { _E = E; const c = cfg0(); if (!c || !c.texture) return; if (pss.value === 'low') c.texture.pitchSeed = 'low'; else delete c.texture.pitchSeed; persist(); }); } }
       bind('ambient-beat-attack', 'beat', 'attack'); bind('ambient-beat-decay', 'beat', 'decay'); bind('ambient-beat-sustain', 'beat', 'sustain'); bind('ambient-beat-release', 'beat', 'release'); bind('ambient-beat-fine', 'beat', 'fine'); bind('ambient-beat-portamento', 'beat', 'portamento');
       bindTime('ambient-beat-intervalMs', 'beat', 'intervalMs');
       bindTime('ambient-beat-lengthMs', 'beat', 'lengthMs');

@@ -3547,6 +3547,14 @@
     /* Keep an empty unit readout (e.g. Sample layers) as a transparent flex spacer so
        the head buttons stay right-justified, instead of collapsing it with display:none. */
     .ambient-layer-unit:empty { margin-left: 0; }
+    /* Bar-length chip — loop length in bars, right of the on/off toggle. */
+    .ambient-layer-bars {
+      flex: 0 0 auto; margin-left: 8px; padding: 1px 6px; border-radius: 4px;
+      font: 600 0.64rem 'JetBrains Mono', monospace; color: #7fd6c4; white-space: nowrap;
+      background: rgba(79,209,197,0.08); border: 1px solid rgba(79,209,197,0.2);
+      pointer-events: none;
+    }
+    .ambient-layer-bars:empty { display: none; }
     /* Unit "Match" row — set this layer's unit length to another's. */
     .ambient-umatch-btn {
       flex: 0 0 auto; padding: 4px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap;

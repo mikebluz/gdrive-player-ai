@@ -7194,6 +7194,25 @@
       }
       return _ambFmtMs(Math.round(period * 1000));
     }
+    // Pretty bar count: integers "2 bars", common fractions "½ bar", else 2-dp.
+    function _ambBarsPretty(bars) {
+      if (!(bars > 0)) return '';
+      const r = Math.round(bars * 1000) / 1000;
+      if (r >= 1 && Math.abs(r - Math.round(r)) < 0.01) { const n = Math.round(r); return n + ' bar' + (n === 1 ? '' : 's'); }
+      const fr = [[0.5, '½'], [0.25, '¼'], [0.75, '¾'], [1 / 3, '⅓'], [2 / 3, '⅔'], [0.125, '⅛']];
+      for (const f of fr) if (Math.abs(r - f[0]) < 0.008) return f[1] + ' bar';
+      return (Math.round(bars * 100) / 100) + ' bars';
+    }
+    // A layer's loop/unit length expressed in BARS (always) — for the header chip.
+    function _ambLayerBarsText(E, key, L, cfg) {
+      if (!L) return '';
+      let period = 0;
+      try { period = _ambLayerPeriodSec(E, key, L, cfg); } catch (e) {}
+      if (!(period > 0)) return '';
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      if (!(bpm > 0)) return '';
+      return _ambBarsPretty(period / ((60 / bpm) * 4));
+    }
     // Refresh every layer header's unit readout in this engine's panel.
     function _ambSyncLayerUnits(E) {
       try {
@@ -7203,6 +7222,11 @@
           const key = span.getAttribute('data-ukey');
           const L = _ambLayerByKey(E, key);
           span.textContent = L ? _ambLayerUnitText(E, key, L, cfg) : '';
+        });
+        host.querySelectorAll('.ambient-layer-bars[data-barkey]').forEach(span => {
+          const key = span.getAttribute('data-barkey');
+          const L = _ambLayerByKey(E, key);
+          span.textContent = L ? _ambLayerBarsText(E, key, L, cfg) : '';
         });
         // One-block reminder beside each When dropdown: one step gates one whole
         // unit, so a block lasts exactly the layer's period. Key comes from the
@@ -13519,6 +13543,9 @@
     const _ambEscText = (s) => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
     const _ambHead = (label, onId, delId, freezeKey, afterHead) =>
       '<div class="ambient-layer-head"><button type="button" class="ambient-toggle" id="' + onId + '"><span class="ambient-layer-name">' + _ambEscText(label) + '</span></button>' +
+      // Bar-length chip — the layer's loop length in bars, immediately right of
+      // the on/off toggle (filled by _ambSyncLayerUnits).
+      (freezeKey ? '<span class="ambient-layer-bars" data-barkey="' + freezeKey + '" title="Loop length in bars"></span>' : '') +
       // Live unit-length readout (filled by _ambSyncLayerUnits) — shows the layer's
       // unit/loop length and the formula that produces it, so you know what to tweak.
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
@@ -14143,6 +14170,7 @@
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
       try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
+      try { _ambSyncLayerUnits(E); } catch (e) {} // header unit + bar-length readouts
     }
     function _ambDeleteSeqLayer(E, id) {
       _E = E;
@@ -14340,6 +14368,7 @@
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
       try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
+      try { _ambSyncLayerUnits(E); } catch (e) {} // header unit + bar-length readouts
       // Cap Interval/Length to each sample's length now + keep polling until buffers decode.
       try { _ambSampleMaxPoll(E, 0); } catch (e) {}
     }
@@ -16011,6 +16040,7 @@
       try { _ambRefreshAreaFadeUI(E); } catch (e) {}       // grey out Area fade on capturable layers
       try { _ambRenderRamps(E); } catch (e) {}             // refill the per-layer Ramps sections
       try { _ambSyncFxVis(E); } catch (e) {}               // FX module: show only the added FX
+      try { _ambSyncLayerUnits(E); } catch (e) {}          // header unit + bar-length readouts
     }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;

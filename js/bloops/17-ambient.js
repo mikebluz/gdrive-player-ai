@@ -4055,6 +4055,21 @@
       // is silent by the next unit boundary, instead of overlapping/ringing past
       // it — useful for the Chords/Monk modes where you want distinct chords.
       const unitSec = bed.choke ? _ambLayerPeriodSec(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())) : 0;
+      // Start vary: with `startVary`% chance, shift the WHOLE chord's onset to a
+      // RANDOM point within the unit (a mid-unit start) instead of the boundary —
+      // leaving room for the strum span so the chord still fits. DRAW-GATED on
+      // startVary>0 (0 → no RNG draw → byte-identical). Folds into each note's
+      // `offset` below, so playNote onset, the recorded unit, and choke all follow.
+      let _startOff = 0;
+      const _startV = Math.max(0, Math.min(100, bed.startVary | 0));
+      if (_startV > 0 && _ambRand() * 100 < _startV) {
+        const _uSec = Math.max(0.05, effIntervalMs / 1000);
+        const _strumSpanSec = (spanSec > 0)
+          ? (_strumSynced ? ((n - 1) * hitSpacing) : ((n - 1) / Math.max(1, n)) * spanSec)
+          : 0;
+        const slack = Math.max(0, _uSec - _strumSpanSec - 0.02);
+        if (slack > 0.02) _startOff = _ambRand() * slack;
+      }
       const _unit = [];
       order.forEach((vi, pos) => {
         const f = voicing[vi];
@@ -4066,9 +4081,9 @@
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
         // strum, space the onsets in play order. Sync on → grid-snapped spacing;
         // off → the exact original even spread (byte-identical).
-        const offset = (spanSec > 0)
+        const offset = _startOff + ((spanSec > 0)
           ? (_strumSynced ? (pos * hitSpacing) : (pos / Math.max(1, n)) * spanSec)
-          : (pos * 0.012);
+          : (pos * 0.012));
         let noteMs = _ambVaryLen(durMs, bed.lenVary);   // Len var: jitter each voice's length around Length
         if (bed.choke && unitSec > 0.05) {
           noteMs = Math.max(60, Math.min(durMs, Math.round((unitSec - offset - 0.012) * 1000)));
@@ -14198,7 +14213,7 @@
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
@@ -16620,6 +16635,7 @@
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-restProb', cfg.bed.restProb | 0);
+      set('ambient-bed-startVary', cfg.bed.startVary | 0);
       set('ambient-bed-strum', cfg.bed.strum);
       set('ambient-bed-strumFidelity', cfg.bed.strumFidelity);
       set('ambient-bed-level', cfg.bed.level);
@@ -17398,6 +17414,7 @@
       bind('ambient-bed-strum', 'bed', 'strum');
       bind('ambient-bed-strumFidelity', 'bed', 'strumFidelity');
       bind('ambient-bed-restProb', 'bed', 'restProb');
+      bind('ambient-bed-startVary', 'bed', 'startVary');
       bind('ambient-bed-level', 'bed', 'level');
       bindTime('ambient-bed-areaFadeMs', 'bed', 'areaFadeMs');
       // Schema-carried selects the old bed template didn't wire (Hold / Strum sync).

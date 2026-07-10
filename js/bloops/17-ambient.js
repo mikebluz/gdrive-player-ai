@@ -1133,6 +1133,16 @@
       else ['mix', 'timeMs', 'feedback', 'ping'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
       else ['mix', 'amount'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
+      // WRITE (X bars × Y plays): coerce when present; ABSENT = off (additive,
+      // kept out of defaults — the normalize trap).
+      if (host.write != null) {
+        if (typeof host.write !== 'object') delete host.write;
+        else {
+          host.write.on = host.write.on === true;
+          host.write.bars = Math.max(1, Math.min(8, host.write.bars | 0)) || 2;
+          host.write.times = Math.max(1, Math.min(32, host.write.times | 0)) || 4;
+        }
+      }
       // Distortion FLAVOR: coerce when present; ABSENT = classic (additive).
       if (host.dist.flavor != null && ['overdrive', 'fuzz', 'fold', 'crush'].indexOf(host.dist.flavor) < 0) delete host.dist.flavor;
       if (!host.chorus || typeof host.chorus !== 'object') host.chorus = { ...d.chorus };
@@ -8473,6 +8483,8 @@
       if (_qChanged && typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
       // Bar Lock (Areas): arm the capturable layers once, now they've anchored.
       try { _ambBarLockSync(E, now); } catch (e) {}
+      // Write (X bars × Y plays): drive each write-enabled layer's phrase cycle.
+      try { _ambWriteSync(E, now); } catch (e) {}
       _ambKeyTime = null;   // clear the per-note key-time stamp after the tick
     }
     // Dedicated 40 Hz ramp clock — runs ONLY while the engine is playing AND
@@ -8919,6 +8931,67 @@
     // sync with the live layers — bStart = the first LCM boundary ≥ now on that grid.
     // The window plays generatively (captured), then loops verbatim — seamless handoff.
     // >~31 s exceeds the rolling capture buffer → stay live.
+    // ---- WRITE (X bars × Y plays) ------------------------------------------
+    // Per-layer phrase looping for generative layers: generate X bars live
+    // (roll-captured as always), LOCK that phrase and replay it until it has
+    // played Y times total, then thaw → generate a fresh X-bar phrase → repeat.
+    // Rides the proven Bar-Lock arm/engage/thaw machinery (_ambBarLockArm →
+    // _ambFreezeGate → pendingThawAt), so loops are EPHEMERAL (never persisted,
+    // cleared on stop) and the thaw re-anchors clocks/phases correctly. The
+    // state machine is SELF-HEALING: it re-arms whenever a write-enabled layer
+    // has no loop in flight, so stop/area clears just start a new cycle.
+    function _ambWriteSync(E, now) {
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
+      if (cfg.barLock && E === _masterEng) return;   // the area Bar Lock owns loops
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const one = (L, key) => {
+        if (!L || typeof L !== 'object') return;
+        const w = L.write;
+        const fs = (E.freeze && E.freeze[key]) || null;
+        const mine = !!(fs && fs._write);
+        // Toggle-off / layer-off teardown: release our loop, leave user freezes alone.
+        if (!w || !w.on || L.present === false || !L.on) {
+          if (mine) {
+            if (fs.frozen) { if (fs.pendingThawAt == null) fs.pendingThawAt = fs.anchor + Math.max(1, Math.ceil((now - fs.anchor) / Math.max(0.05, fs.loopLen))) * fs.loopLen; }
+            else { fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; }
+            fs._write = false; fs._writeRearmAt = null;
+          }
+          return;
+        }
+        const loopSec = Math.max(1, w.bars | 0) * barSec;
+        if (loopSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Write: ' + w.bars + '-bar phrase exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
+        const st = _ambFreezeState(E, key);
+        // Respect a USER freeze / recording / foreign lock — stand down until it clears.
+        if ((st.frozen || st.recording || st.pendingFreezeAt != null) && !st._write) return;
+        if (st.frozen && st._write) {
+          // Replaying our phrase: schedule the thaw once — anchor (= replay start,
+          // after 1 live play) + (Y−1) more plays → each phrase plays Y times total.
+          if (st.pendingThawAt == null) {
+            st.pendingThawAt = st.anchor + Math.max(0, (Math.max(1, w.times | 0) - 1)) * st.loopLen;
+            st._writeRearmAt = st.pendingThawAt;
+            if (st.pendingThawAt <= st.anchor + 0.001) {   // Y = 1 → no replay: thaw at the first boundary
+              st.pendingThawAt = st.anchor + st.loopLen; st._writeRearmAt = st.pendingThawAt;
+            }
+          }
+          return;
+        }
+        if (st.pendingFreezeAt != null && st._write) return;   // armed, window still filling
+        // Idle → arm the next X-bar window. First cycle: the next BAR boundary on
+        // the engine's grid; re-arm after a thaw: exactly at the thaw boundary.
+        let bStart;
+        if (st._write && st._writeRearmAt != null) { bStart = st._writeRearmAt; st._writeRearmAt = null; }
+        else {
+          const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : (now + 0.3);
+          bStart = anchor + Math.max(0, Math.ceil((now - anchor) / barSec)) * barSec;
+        }
+        if (bStart < now - 0.05) bStart = now + 0.05;   // stale re-arm (long pause) → start fresh
+        _ambBarLockArm(E, key, bStart, loopSec);
+        st._write = true;
+      };
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => one(cfg[k], k));
+      (Array.isArray(cfg.extras) ? cfg.extras : []).forEach(L => { if (L && L.type !== 'seq' && L.type !== 'samp' && _AMB_LAYER_SCHEMA[L.type]) one(L, L.type + ':' + (L.id | 0)); });
+    }
     function _ambBarLockSync(E, now) {
       if (E !== _masterEng || E._barLockArmed) return;
       const cfg = E._cfg; if (!cfg || !cfg.barLock) return;
@@ -13324,6 +13397,22 @@
     // the density/pulse count in both. Pitch source is unchanged (random-degree).
     const _ambRhythmSeedSel = (stem) =>
       '<div class="ambient-ctrl"><label for="' + stem + '" title="How the on/off pattern is generated. Fill = stochastic (each slot on by probability, re-rolled each cycle). Euclid = evenly-spread pulses (Fill sets the pulse count of 16). Pitch stays random-degree either way.">Rhythm</label><select id="' + stem + '" class="ambient-select"><option value="fill">Fill (stochastic)</option><option value="euclid">Euclid (even)</option></select><span class="ambient-hint">pattern seed</span></div>';
+    // WRITE (X bars × Y plays) — phrase looping for a generative layer: generate
+    // X bars, loop that phrase until it has played Y times, then write a new one.
+    // Class-based controls wired by ONE delegated host listener (cards re-render);
+    // values render from the layer so no separate sync pass is needed.
+    function _ambWriteCtrl(inst) {
+      const w = (inst && inst.write && typeof inst.write === 'object') ? inst.write : null;
+      const on = !!(w && w.on);
+      return '<div class="ambient-ctrl ambient-write-ctrl"><label title="Write — phrase looping: generate X bars live, then LOOP that exact phrase until it has played Y times total, then write a fresh X-bar phrase and repeat. Off = fully continuous generation (today’s behavior).">Write</label>' +
+        '<span class="ambient-write-box">' +
+          '<button type="button" class="ambient-seg ambient-write-on' + (on ? ' active' : '') + '">' + (on ? 'On' : 'Off') + '</button>' +
+          '<span class="ambient-write-xy"' + (on ? '' : ' style="display:none"') + '>' +
+            '<input type="number" class="ambient-write-x" min="1" max="8" step="1" value="' + ((w && w.bars) || 2) + '" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
+            '<input type="number" class="ambient-write-y" min="1" max="32" step="1" value="' + ((w && w.times) || 4) + '" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
+          '</span>' +
+        '</span><span class="ambient-hint">phrase loop</span></div>';
+    }
     // Strum SYNC — lock the strummed chord's per-hit spacing to a BPM note-division
     // so the arpeggiated hits land on the beat grid. '' = Free (spread across the
     // interval, default); else the hits snap to that subdivision.
@@ -14324,25 +14413,25 @@
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variation'], ['write'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['hold'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variation'], ['write'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variation'], ['write'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variation'], ['write'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
@@ -14352,7 +14441,7 @@
         ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['write'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
@@ -14360,7 +14449,7 @@
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['write'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
@@ -14368,14 +14457,14 @@
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
-        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['write'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
-        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variation'], ['write'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
@@ -14383,7 +14472,7 @@
         ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
+        ['grp', 'Variation'], ['write'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
@@ -14800,6 +14889,7 @@
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
       if (k === 'pitchseed') return _ambPitchSeedSel(p + '-pitchseed');
       if (k === 'strumsync') return _ambStrumSyncSel(p + '-strumsync');
+      if (k === 'write') return _ambWriteCtrl(inst);
       if (k === 'speed') return _ambSpeedSel(p + '-speed');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
@@ -17923,6 +18013,32 @@
             const b = ev.target && ev.target.closest && ev.target.closest('.ambient-ramp-add[data-rampkey]');
             if (!b || !hostEl.contains(b)) return;
             _ambAddRamp(E, b.getAttribute('data-rampkey'));
+          });
+          // Write (X×Y) — delegated: toggle + X/Y inputs on every card type.
+          const _writeOf = (el) => {
+            const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null;
+            _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return null;
+            if (!lc.write || typeof lc.write !== 'object') lc.write = { on: false, bars: 2, times: 4 };
+            return lc.write;
+          };
+          hostEl.addEventListener('click', (ev) => {
+            const b = ev.target && ev.target.closest && ev.target.closest('.ambient-write-on');
+            if (!b || !hostEl.contains(b)) return;
+            const w = _writeOf(b); if (!w) return;
+            w.on = !w.on;
+            b.classList.toggle('active', w.on); b.textContent = w.on ? 'On' : 'Off';
+            const xy = b.parentElement && b.parentElement.querySelector('.ambient-write-xy');
+            if (xy) xy.style.display = w.on ? '' : 'none';
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          hostEl.addEventListener('input', (ev) => {
+            const inp = ev.target && ev.target.closest && ev.target.closest('.ambient-write-x, .ambient-write-y');
+            if (!inp || !hostEl.contains(inp)) return;
+            const w = _writeOf(inp); if (!w) return;
+            const v = parseInt(inp.value, 10);
+            if (inp.classList.contains('ambient-write-x')) w.bars = Math.max(1, Math.min(8, Number.isFinite(v) ? v : 2));
+            else w.times = Math.max(1, Math.min(32, Number.isFinite(v) ? v : 4));
+            if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           // Distortion flavor — ONE delegated change listener for every card.
           hostEl.addEventListener('change', (ev) => {

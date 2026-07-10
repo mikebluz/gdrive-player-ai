@@ -11250,3 +11250,8 @@
     .ambient-fx-del:hover { color: #fc8181; }
     .ambient-fx-addrow { padding: 2px 8px 8px; }
     .ambient-fx-addrow .ambient-fx-add { font-size: 0.75rem; padding: 3px 10px; }
+
+    /* Write (X bars × Y plays) — phrase-loop control */
+    .ambient-write-box { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+    .ambient-write-xy { display: inline-flex; align-items: center; gap: 4px; }
+    .ambient-write-x, .ambient-write-y { width: 44px; background: #0f0f16; color: #e2e0ec; border: 1px solid #2d2d3f; border-radius: 5px; padding: 2px 5px; }

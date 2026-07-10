@@ -11227,9 +11227,26 @@
     .ambient-layer-ramps.empty { opacity: 0.8; }
     .ambient-layer-ramps .ambient-ramp-row { margin: 4px 0; }
 
-    /* FX module — per-layer add/remove effect chain */
-    .ambient-fxmod .ambient-mod-sub { display: flex; align-items: center; }
+    /* FX module — per-layer add/remove effect chain. Each added effect is a
+       BOUNDED card (full border + radius + padding) with clear spacing between
+       them. (The old `.ambient-mod > .ambient-mod-target` left-border style
+       stopped applying once blocks got .ambient-fx-item wrappers — direct-child
+       selector — so the blocks were unbounded; this replaces it here.) */
+    .ambient-fxmod .ambient-fx-item { margin: 0 8px 10px; }
+    .ambient-fxmod .ambient-fx-item:first-of-type { margin-top: 4px; }
+    .ambient-fxmod .ambient-fx-item > .ambient-mod-target {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 8px 10px; margin: 0;
+      background: rgba(45, 45, 63, 0.22);
+      border: 1px solid #2d2d3f; border-left: 2px solid #4a4a66;
+      border-radius: 8px;
+    }
+    .ambient-fxmod .ambient-fx-item .ambient-mod-sub {
+      display: flex; align-items: center;
+      padding-bottom: 4px; margin-bottom: 2px;
+      border-bottom: 1px dashed rgba(74, 74, 102, 0.55);
+    }
     .ambient-fx-del { margin-left: auto; background: none; border: none; color: #8a8aa0; cursor: pointer; font-size: 0.8rem; padding: 0 2px; }
     .ambient-fx-del:hover { color: #fc8181; }
-    .ambient-fx-addrow { padding: 6px 2px 2px; }
+    .ambient-fx-addrow { padding: 2px 8px 8px; }
     .ambient-fx-addrow .ambient-fx-add { font-size: 0.75rem; padding: 3px 10px; }

@@ -16277,12 +16277,32 @@
     // Per-layer FX params are rampable too. They live nested (delay.*, dist.*)
     // and need a live node push (handled in _ambRampResolve). Append to every
     // layer type except the global group.
-    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.amount','Distortion',0,100],['dist.mix','Distortion mix',0,100]];
+    const _AMB_FX_RAMP = [['revSend','Reverb send',0,100],['cutoff','Filter cutoff',0,100],['reso','Filter reso',0,100],['delay.mix','Delay mix',0,100],['delay.timeMs','Delay time (ms)',1,1000],['delay.feedback','Delay feedback',0,95],['dist.mix','Distortion mix',0,100],['dist.amount','Distortion drive',0,100],['chorus.mix','Chorus mix',0,100],['chorus.depth','Chorus depth',0,100],['chorus.rate','Chorus rate',0,100],['phaser.mix','Phaser mix',0,100],['phaser.depth','Phaser depth',0,100],['phaser.rate','Phaser rate',0,100],['autopan.mix','Auto-pan mix',0,100],['autopan.depth','Auto-pan depth',0,100],['autopan.rate','Auto-pan rate',0,100]];
     // Stereo (the Spread/Pan fader, stored in `space`) is rampable on every layer.
     // Range spans the full Pan field (-100..100); in Spread mode the engine reads
     // the magnitude, so the positive half (0..100) is the spread amount.
     const _AMB_STEREO_RAMP = [['space','Spread / Pan',-100,100]];
     Object.keys(_AMB_RAMP_PARAMS).forEach(k => { if (k !== 'global') _AMB_RAMP_PARAMS[k] = _AMB_RAMP_PARAMS[k].concat(_AMB_STEREO_RAMP, _AMB_FX_RAMP); });
+    // AUTO-DERIVED targets: every numeric control in _AMB_LAYER_SCHEMA
+    // (['sl'|'tm', key, label, min, max, …] tokens) becomes a ramp target for
+    // its layer type automatically — ADSR, Swing, Rests, Start, euclid knobs,
+    // everything. Hand-tuned entries above win on key conflicts (curated
+    // ranges/labels); schema types missing from the hand table get created.
+    // ⚠ Params NOT expressed as schema sl/tm tokens (selects, toggles, seq/samp
+    // hand-built cards, nested FX) still need manual entries — see CLAUDE.md.
+    if (typeof _AMB_LAYER_SCHEMA !== 'undefined') {
+      Object.keys(_AMB_LAYER_SCHEMA).forEach(t => {
+        const rows = (_AMB_LAYER_SCHEMA[t] && _AMB_LAYER_SCHEMA[t].ctrls) || [];
+        const list = _AMB_RAMP_PARAMS[t] || (_AMB_RAMP_PARAMS[t] = []);
+        rows.forEach(c => {
+          if (!Array.isArray(c) || (c[0] !== 'sl' && c[0] !== 'tm')) return;
+          const key = c[1], label = c[2], mn = c[3], mx = c[4];
+          if (typeof key !== 'string' || !Number.isFinite(mn) || !Number.isFinite(mx)) return;
+          if (list.some(pp => pp[0] === key)) return;   // hand-tuned wins
+          list.push([key, String(label || key), mn, mx]);
+        });
+      });
+    }
     // Live-write the global tempo from a ramp (cheap: just the inputs + the
     // top-bar readout — no digit rebuild / persist at 40 Hz; engines read
     // tempoInput.value live).
@@ -16396,6 +16416,15 @@
           if (key === 'revSend') { obj.revSend = v; }
           else { const di = key.indexOf('.'); const grp = key.slice(0, di), sub = key.slice(di + 1); if (!obj[grp] || typeof obj[grp] !== 'object') obj[grp] = {}; obj[grp][sub] = v; }
           if (_ambLiveApplyOK(_E)) { try { _ambApplyLayerFx(head, obj); } catch (e) {} }   // skip if editing a non-playing area
+        } };
+      }
+      // Filter cutoff/reso: write the field, then push to the live filter (the
+      // engine applies these on slider input, not per tick — without the push a
+      // ramped cutoff would be silent).
+      if (key === 'cutoff' || key === 'reso') {
+        return { min: spec[2], max: spec[3], set: function (v) {
+          obj[key] = v;
+          if (_ambLiveApplyOK(_E)) { try { _ambApplyLayerFilter(head, obj); } catch (e) {} }
         } };
       }
       // Stereo: write `space`, and in Pan mode push the position to the live

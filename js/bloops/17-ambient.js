@@ -4031,6 +4031,18 @@
       const strumAmt = Math.max(0, Math.min(100, bed.strum || 0));
       const spanSec = (strumAmt / 100) * Math.max(0, effIntervalMs / 1000);
       const order = _ambStrumOrder(n, bed.strumFidelity || 0);
+      // Strum SYNC (bed.strumSync = '' | '1/8' | '1/16' | '1/32'): lock the per-hit
+      // spacing to a BPM note-division so the strummed chord lands ON the beat grid
+      // instead of an arbitrary fraction of the interval. Absent → 0 → free spacing
+      // (byte-identical). Snap the even spacing to the nearest subdivision (floor 1).
+      const _strumBeats = (typeof _ambRateBeats === 'function') ? _ambRateBeats(bed.strumSync) : 0;
+      const _strumSynced = _strumBeats > 0 && spanSec > 0;
+      let hitSpacing = 0;
+      if (_strumSynced) {
+        const subdiv = _strumBeats * (60 / Math.max(20, _ambBpm()));
+        const even = spanSec / Math.max(1, n);
+        hitSpacing = Math.max(subdiv, Math.round(even / subdiv) * subdiv);   // snap even spacing to the grid (floor 1 subdiv)
+      }
       // Choke (default off): clamp each note's duration AND release so the chord
       // is silent by the next unit boundary, instead of overlapping/ringing past
       // it — useful for the Chords/Monk modes where you want distinct chords.
@@ -4044,8 +4056,11 @@
 
         params.volume = _ambApplyLevel(params.volume, bed.level);
         // No strum → keep the tiny 12 ms stagger that de-phases the pad; with
-        // strum, space the onsets evenly across spanSec in play order.
-        const offset = (spanSec > 0) ? (pos / Math.max(1, n)) * spanSec : (pos * 0.012);
+        // strum, space the onsets in play order. Sync on → grid-snapped spacing;
+        // off → the exact original even spread (byte-identical).
+        const offset = (spanSec > 0)
+          ? (_strumSynced ? (pos * hitSpacing) : (pos / Math.max(1, n)) * spanSec)
+          : (pos * 0.012);
         let noteMs = _ambVaryLen(durMs, bed.lenVary);   // Len var: jitter each voice's length around Length
         if (bed.choke && unitSec > 0.05) {
           noteMs = Math.max(60, Math.min(durMs, Math.round((unitSec - offset - 0.012) * 1000)));
@@ -13187,6 +13202,11 @@
     // the density/pulse count in both. Pitch source is unchanged (random-degree).
     const _ambRhythmSeedSel = (stem) =>
       '<div class="ambient-ctrl"><label for="' + stem + '" title="How the on/off pattern is generated. Fill = stochastic (each slot on by probability, re-rolled each cycle). Euclid = evenly-spread pulses (Fill sets the pulse count of 16). Pitch stays random-degree either way.">Rhythm</label><select id="' + stem + '" class="ambient-select"><option value="fill">Fill (stochastic)</option><option value="euclid">Euclid (even)</option></select><span class="ambient-hint">pattern seed</span></div>';
+    // Strum SYNC — lock the strummed chord's per-hit spacing to a BPM note-division
+    // so the arpeggiated hits land on the beat grid. '' = Free (spread across the
+    // interval, default); else the hits snap to that subdivision.
+    const _ambStrumSyncSel = (stem) =>
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="Lock the strum’s hits to the BPM. Free = spread the chord evenly across a fraction of the interval (default). 1/8 · 1/16 · 1/32 = snap each hit onto that beat subdivision so the strum lands on the grid (tighter/looser by division).">Strum sync</label><select id="' + stem + '" class="ambient-select"><option value="">Free</option><option value="1/8">1/8</option><option value="1/16">1/16</option><option value="1/32">1/32</option></select><span class="ambient-hint">hits → BPM</span></div>';
     // Step-grid PITCH pick (D3) — how each grain's degree is chosen from the note
     // source. 'random' (uniform scatter, default) | 'low' (root-weighted → tonal).
     const _ambPitchSeedSel = (stem) =>
@@ -14169,7 +14189,7 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
         ['grp', 'Variation'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
@@ -14645,6 +14665,7 @@
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
       if (k === 'pitchseed') return _ambPitchSeedSel(p + '-pitchseed');
+      if (k === 'strumsync') return _ambStrumSyncSel(p + '-strumsync');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
       // → never free → no fader at all. Other types keep it (disabled live when synced).
@@ -14956,6 +14977,7 @@
           else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
           else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
+          else if (k === 'strumsync') { const e = el('strumsync'); if (e) { e.value = inst.strumSync || ''; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value) L.strumSync = e.value; else delete L.strumSync; sync(); persist(); } }); } }
           else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }

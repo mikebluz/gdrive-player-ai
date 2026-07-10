@@ -11255,3 +11255,9 @@
     .ambient-write-box { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
     .ambient-write-xy { display: inline-flex; align-items: center; gap: 4px; }
     .ambient-write-x, .ambient-write-y { width: 44px; background: #0f0f16; color: #e2e0ec; border: 1px solid #2d2d3f; border-radius: 5px; padding: 2px 5px; }
+
+    /* Sticky Bloom header (master): the Areas strip stays visible on scroll, and
+       the always-visible orch row carries a live Bar counter mirror. */
+    .ambient-areas { position: sticky; top: 0; z-index: 40; background: #101018; box-shadow: 0 6px 14px rgba(0,0,0,0.35); }
+    .ambient-orch-bar-hdr { margin-left: auto; margin-right: 8px; font: 600 0.72rem 'JetBrains Mono', monospace; color: #7fd6c4; white-space: nowrap; }
+    .ambient-orch-bar-hdr:empty { display: none; }

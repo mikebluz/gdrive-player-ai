@@ -523,6 +523,7 @@
           '<button type="button" class="ambient-orch-mode' + (seq ? ' on' : '') + '" title="Single = play this area only. Sequence = play each area for Plays×Bars, then advance to the next.">' + (seq ? 'Sequence' : 'Single') + '</button>' +
           '<button type="button" class="ambient-orch-shuffle' + (s.orch.shuffle ? ' on' : '') + '"' + (seq ? '' : ' disabled') + ' title="Randomize the area order each cycle">Shuffle</button>' +
           '<span class="ambient-areas-label">Areas</span>' +
+          '<span class="ambient-orch-bar-hdr" aria-live="polite" title="Current bar (and play) — always visible; the strip is sticky on scroll"></span>' +
           '<button type="button" class="ambient-orch-clear" title="Delete ALL areas and start over with one empty area">Clear</button>' +
         '</div>' +
         // Header (always visible): area chips + add + collapse toggle (far right).
@@ -7261,7 +7262,7 @@
       if (rate) { const c = rate.closest('.ambient-ctrl'); if (c) c.style.display = (euclid || unitLocked) ? 'none' : ''; }
     }
     // ----- Unit-Sync control (Free / Sync = Reference × Ratio) --------------
-    const _AMB_RATIOS = [[1,4,'×¼'],[1,3,'×⅓'],[1,2,'×½'],[2,3,'×⅔'],[3,4,'×¾'],[1,1,'×1'],[3,2,'×1½'],[2,1,'×2'],[3,1,'×3'],[4,1,'×4']];
+    const _AMB_RATIOS = [[1,16,'×¹⁄₁₆'],[1,12,'×¹⁄₁₂ (⅛T)'],[1,8,'×⅛'],[1,6,'×⅙ (¼T)'],[1,4,'×¼'],[1,3,'×⅓'],[1,2,'×½'],[2,3,'×⅔'],[3,4,'×¾'],[1,1,'×1'],[3,2,'×1½'],[2,1,'×2'],[3,1,'×3'],[4,1,'×4'],[6,1,'×6'],[8,1,'×8']];
     // Reference options for a layer: Bar/Beat grid + every OTHER present layer
     // (its whole unit, and a sub-unit when it divides — one chord/bar/step/hold).
     function _ambRefOptions(E, selfKey) {
@@ -7286,7 +7287,7 @@
       return sub ? (nm + ' ' + _ambLayerSubLabel(RL, refKey)) : nm;
     }
     function _ambUnitSyncHtml(p) {
-      return '<div class="ambient-ctrl ambient-unitsync" title="Unit length — Free (its own length) or Sync (lock to a reference × ratio)">' +
+      return '<div class="ambient-ctrl ambient-unitsync" title="UNIT length — the layer’s cycle. Free = a raw duration (set with the Unit (ms) slider below). Sync = a musical length in BARS: lock to Bar × ratio (×⅛ bar … ×8 bars — triplets included), or to another layer’s unit.">' +
         '<label>Unit</label>' +
         '<span class="ambient-seg-row ambient-usync-seg">' +
           '<button type="button" class="ambient-seg amb-usync-mode" data-usmode="free" id="' + p + '-us-free">Free</button>' +
@@ -11166,7 +11167,8 @@
       if (E !== _masterEng) return;
       const host = document.getElementById(E.hostId); if (!host) return;
       const el = host.querySelector('.ambient-orch-bar'); if (!el) return;
-      if (!E.timer) { if (el.textContent) el.textContent = ''; E._biInit = false; return; }
+      const hdr = host.querySelector('.ambient-orch-bar-hdr');
+      if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; E._biInit = false; return; }
       // AUDIBLE clock (currentTime − latency, +1 frame), same as the layer status
       // bars — so the counter tracks what you HEAR, not the schedule clock (Tone.now,
       // which runs ~a lookahead ahead and made the counter lead the layer bars).
@@ -11208,11 +11210,12 @@
         txt = 'Bar ' + (barsElapsed + 1);
       }
       if (el.textContent !== txt) el.textContent = txt;
+      if (hdr && hdr.textContent !== txt) hdr.textContent = txt;   // header mirror (always visible; strip is sticky)
       // Flash: every bar pulses (alternating colours so consecutive bars read as
       // distinct); an area boundary (the playing area changed) pulses brighter.
       if (E._biInit) {
-        if (seq && playArea !== E._biArea) _ambFlashEl(el, 'amb-area-flash');
-        else if (barsElapsed !== E._biBar) _ambFlashEl(el, (barsElapsed % 2) ? 'amb-bar-flash-b' : 'amb-bar-flash-a');
+        if (seq && playArea !== E._biArea) { _ambFlashEl(el, 'amb-area-flash'); if (hdr) _ambFlashEl(hdr, 'amb-area-flash'); }
+        else if (barsElapsed !== E._biBar) { const c = (barsElapsed % 2) ? 'amb-bar-flash-b' : 'amb-bar-flash-a'; _ambFlashEl(el, c); if (hdr) _ambFlashEl(hdr, c); }
       }
       E._biBar = barsElapsed; E._biArea = playArea; E._biInit = true;
     }
@@ -13423,7 +13426,7 @@
     // Stored as `speed` (number, kept OUT of defaults); rides _ambRateMult at the
     // resolved-unit chokepoint so engines/readouts/Lock-to all follow.
     const _ambSpeedSel = (stem) =>
-      '<div class="ambient-ctrl"><label for="' + stem + '" title="Rate — play this layer’s whole seed in a fraction (or multiple) of its normal time. ×¼ = the seed shrinks and plays back in a quarter of the time; ×2 = stretched to twice the time. The Unit stays what you set; Rate rescales the realized time.">Rate</label><select id="' + stem + '" class="ambient-select"><option value="4">×4 (stretch)</option><option value="2">×2</option><option value="" selected>×1 (normal)</option><option value="0.5">×½</option><option value="0.25">×¼</option><option value="0.125">×⅛</option></select><span class="ambient-hint">seed time ×</span></div>';
+      '<div class="ambient-ctrl"><label for="' + stem + '" title="Rate — play this layer’s whole seed in a fraction (or multiple) of its normal time. ×¼ = the seed shrinks and plays back in a quarter of the time; ×2 = stretched to twice the time. The Unit stays what you set; Rate rescales the realized time.">Rate</label><select id="' + stem + '" class="ambient-select"><option value="4">×4 (stretch)</option><option value="2">×2</option><option value="" selected>×1 (normal)</option><option value="0.5">×½</option><option value="0.25">×¼</option><option value="0.125">×⅛</option></select><span class="ambient-hint">×¼ = 4 per unit · ×2 = ½ per unit</span></div>';
     // Step-grid PITCH pick (D3) — how each grain's degree is chosen from the note
     // source. 'random' (uniform scatter, default) | 'low' (root-weighted → tonal).
     const _ambPitchSeedSel = (stem) =>
@@ -14412,25 +14415,25 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['hold'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['choke'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['hold'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
@@ -14440,7 +14443,7 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'drift', 'Drift', 0, 99, 'phase offset'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -14448,7 +14451,7 @@
       bass: { label: 'Bass', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -14456,14 +14459,14 @@
       run: { label: 'Riff', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
@@ -14471,7 +14474,7 @@
       drone: { label: 'Drone', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['rate'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['write'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };

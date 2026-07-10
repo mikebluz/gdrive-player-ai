@@ -1123,6 +1123,9 @@
     // Backfill a layer's FX block in place (preserves objects across reload).
     function _ambNormalizeFx(host) {
       const d = _ambDefaultFx();
+      // FX MODULE chain: coerce when present (array of known ids); ABSENT is
+      // meaningful (= derive from engagement), so never backfill it.
+      if (host.fxChain != null && !Array.isArray(host.fxChain)) delete host.fxChain;
       if (!Number.isFinite(host.cutoff)) host.cutoff = d.cutoff;
       if (!Number.isFinite(host.reso)) host.reso = d.reso;
       if (!Number.isFinite(host.revSend)) host.revSend = d.revSend;
@@ -13186,35 +13189,90 @@
       });
     }
     // Per-layer FX (Reverb send + Delay + Distortion), collapsible like Mod.
+    // ---- FX MODULE (registry) --------------------------------------------
+    // One catalog of the per-layer effects. A layer carries `fxChain` — the FX
+    // the user ADDED (order = display) — and its card renders ONLY those, plus
+    // an "＋ Add FX" picker, instead of the old always-there wall of 7. The
+    // underlying engine is untouched: blocks keep their ids (the 4 wiring
+    // clusters bind as before) and engagement semantics (mix>0 splices the DSP)
+    // are unchanged — membership is presentation + intent. Legacy projects
+    // derive their chain from what's ENGAGED, so nothing disappears.
+    const _AMB_FX_DEFS = [
+      { id: 'filter',  label: 'Filter',      engaged: (lc) => ((Number.isFinite(lc.cutoff) ? lc.cutoff : 100) < 100) || ((lc.reso | 0) > 0), off: (lc) => { lc.cutoff = 100; lc.reso = 0; }, zero: [['fx-cutoff', 100], ['fx-reso', 0]] },
+      { id: 'rev',     label: 'Reverb send', engaged: (lc) => (lc.revSend | 0) > 0,                    off: (lc) => { lc.revSend = 0; },                zero: [['fx-rev', 0]] },
+      { id: 'delay',   label: 'Delay',       engaged: (lc) => !!(lc.delay && (lc.delay.mix | 0) > 0),  off: (lc) => { if (lc.delay) lc.delay.mix = 0; }, zero: [['fx-dly-mix', 0]] },
+      { id: 'chorus',  label: 'Chorus',      engaged: (lc) => !!(lc.chorus && (lc.chorus.mix | 0) > 0), off: (lc) => { if (lc.chorus) lc.chorus.mix = 0; }, zero: [['fx-cho-mix', 0]] },
+      { id: 'phaser',  label: 'Phaser',      engaged: (lc) => !!(lc.phaser && (lc.phaser.mix | 0) > 0), off: (lc) => { if (lc.phaser) lc.phaser.mix = 0; }, zero: [['fx-pha-mix', 0]] },
+      { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) lc.autopan.mix = 0; }, zero: [['fx-apan-mix', 0]] },
+      { id: 'dist',    label: 'Distortion',  engaged: (lc) => !!(lc.dist && (lc.dist.mix | 0) > 0),    off: (lc) => { if (lc.dist) lc.dist.mix = 0; },   zero: [['fx-dist-mix', 0]] },
+    ];
+    // The layer's FX chain: its own list when set, else DERIVED from engagement
+    // (legacy projects show exactly the FX that are audible). Not persisted until
+    // the user first adds/removes (kept out of defaults — the normalize trap).
+    function _ambFxChainOf(lc) {
+      if (lc && Array.isArray(lc.fxChain)) return lc.fxChain.filter(id => _AMB_FX_DEFS.some(d => d.id === id));
+      return _AMB_FX_DEFS.filter(d => { try { return lc && d.engaged(lc); } catch (e) { return false; } }).map(d => d.id);
+    }
+    // Layer key from a card element (extras data-inst · primary [data-phkey] ·
+    // seq data-seq-id · samp data-samp-id) — the shared resolution pattern.
+    function _ambCardKey(card) {
+      if (!card) return null;
+      let k = card.getAttribute('data-inst');
+      if (!k) { const ph = card.querySelector('[data-phkey]'); k = ph && ph.getAttribute('data-phkey'); }
+      if (!k) { const sq = card.getAttribute('data-seq-id'); if (sq != null && sq !== '') k = 'seq:' + sq; }
+      if (!k) { const sp = card.getAttribute('data-samp-id'); if (sp != null && sp !== '') k = 'samp:' + sp; }
+      return k || null;
+    }
+    // Sync every FX module's visible blocks to its layer's chain.
+    function _ambSyncFxVis(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('details.ambient-fxmod').forEach(det => {
+        const card = det.closest('.ambient-layer');
+        const key = _ambCardKey(card); if (!key) return;
+        const lc = _ambLayerByKey(E, key); if (!lc) return;
+        const chain = _ambFxChainOf(lc);
+        det.querySelectorAll('.ambient-fx-item').forEach(w => {
+          w.style.display = (chain.indexOf(w.getAttribute('data-fx')) >= 0) ? '' : 'none';
+        });
+        const sum = det.querySelector('.ambient-mod-head');
+        if (sum) sum.textContent = 'FX' + (chain.length ? ' · ' + chain.length + ' active' : ' · none (＋ add)');
+        const addB = det.querySelector('.ambient-fx-add');
+        if (addB) addB.style.display = (chain.length >= _AMB_FX_DEFS.length) ? 'none' : '';
+      });
+    }
+    const _ambFxItem = (id, label, inner) =>
+      '<div class="ambient-fx-item" data-fx="' + id + '"><div class="ambient-mod-target"><div class="ambient-mod-sub">' + label +
+        '<button type="button" class="ambient-fx-del" data-fx="' + id + '" title="Remove this effect (turns it off)">✕</button></div>' + inner + '</div></div>';
     const _ambFxUi = (layer) =>
-      '<details class="ambient-mod"><summary class="ambient-mod-head">FX · Filter / Reverb / Delay / Chorus / Distortion</summary>' +
+      '<details class="ambient-mod ambient-fxmod"><summary class="ambient-mod-head">FX</summary>' +
         // Live per-layer low-pass filter — Cutoff sweeps the whole layer (tails
         // included) in real time; Resonance peaks at the cutoff. Cutoff 100 = open.
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Filter</div>' +
+        _ambFxItem('filter', 'Filter',
           _ambSl('Cutoff', 'ambient-' + layer + '-fx-cutoff', 0, 100, 100, 'dark → open') +
-          _ambSl('Reso', 'ambient-' + layer + '-fx-reso', 0, 100, 0, 'flat → peak') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Reverb</div>' +
-          _ambSl('Send', 'ambient-' + layer + '-fx-rev', 0, 100, 0, 'to verb') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Delay</div>' +
+          _ambSl('Reso', 'ambient-' + layer + '-fx-reso', 0, 100, 0, 'flat → peak')) +
+        _ambFxItem('rev', 'Reverb',
+          _ambSl('Send', 'ambient-' + layer + '-fx-rev', 0, 100, 0, 'to verb')) +
+        _ambFxItem('delay', 'Delay',
           _ambSl('Mix', 'ambient-' + layer + '-fx-dly-mix', 0, 100, 0, 'dry → wet') +
           _ambTm('Time', 'ambient-' + layer + '-fx-dly-time', 20, 1500, 5, 300) +
           _ambSl('Feedback', 'ambient-' + layer + '-fx-dly-fb', 0, 95, 35, '%') +
-          _ambSl('Ping-Pong', 'ambient-' + layer + '-fx-dly-ping', 0, 1, 0, 'normal → bounce L/R') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Chorus</div>' +
+          _ambSl('Ping-Pong', 'ambient-' + layer + '-fx-dly-ping', 0, 1, 0, 'normal → bounce L/R')) +
+        _ambFxItem('chorus', 'Chorus',
           _ambSl('Mix', 'ambient-' + layer + '-fx-cho-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-cho-depth', 0, 100, 50, 'subtle → deep') +
-          _ambSl('Rate', 'ambient-' + layer + '-fx-cho-rate', 0, 100, 30, 'slow → fast') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Phaser</div>' +
+          _ambSl('Rate', 'ambient-' + layer + '-fx-cho-rate', 0, 100, 30, 'slow → fast')) +
+        _ambFxItem('phaser', 'Phaser',
           _ambSl('Mix', 'ambient-' + layer + '-fx-pha-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-pha-depth', 0, 100, 50, 'narrow → wide') +
-          _ambSl('Rate', 'ambient-' + layer + '-fx-pha-rate', 0, 100, 30, 'slow → fast') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Auto-Pan</div>' +
+          _ambSl('Rate', 'ambient-' + layer + '-fx-pha-rate', 0, 100, 30, 'slow → fast')) +
+        _ambFxItem('autopan', 'Auto-Pan',
           _ambSl('Mix', 'ambient-' + layer + '-fx-apan-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-apan-depth', 0, 100, 100, 'centre → full L↔R') +
-          _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast') + '</div>' +
-        '<div class="ambient-mod-target"><div class="ambient-mod-sub">Distortion</div>' +
+          _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast')) +
+        _ambFxItem('dist', 'Distortion',
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
-          _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') + '</div>' +
+          _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet')) +
+        '<div class="ambient-fx-addrow"><button type="button" class="ambient-seg ambient-fx-add" title="Add an effect to this layer">＋ Add FX</button></div>' +
       '</details>' + _ambEqUi();
     // Per-layer 3-band EQ subsection (#1) — lives inside the Mix group (after FX).
     // The layer key is read from the closest .ambient-layer at interaction time, so
@@ -13914,6 +13972,7 @@
       seqs.forEach((s) => _ambWireSeqLayer(E, s));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
+      try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
     }
     function _ambDeleteSeqLayer(E, id) {
       _E = E;
@@ -14110,6 +14169,7 @@
       arr.forEach((s) => _ambWireSampleLayer(E, s));
       try { _ambRenderMixer(E); } catch (e) {}   // keep the mixer in sync on add/delete
       try { _ambRenderRamps(E); } catch (e) {}   // refill the per-layer Ramps sections
+      try { _ambSyncFxVis(E); } catch (e) {}     // FX module: show only the added FX
       // Cap Interval/Length to each sample's length now + keep polling until buffers decode.
       try { _ambSampleMaxPoll(E, 0); } catch (e) {}
     }
@@ -15779,6 +15839,7 @@
       try { _ambSyncSliderReadouts(wrap); } catch (e) {}   // reflect synced mod/fx values
       try { _ambRefreshAreaFadeUI(E); } catch (e) {}       // grey out Area fade on capturable layers
       try { _ambRenderRamps(E); } catch (e) {}             // refill the per-layer Ramps sections
+      try { _ambSyncFxVis(E); } catch (e) {}               // FX module: show only the added FX
     }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
@@ -17113,6 +17174,7 @@
         }
       } catch (e) {}
       try { _ambWireAreaStrip(E); } catch (e) {}   // area tabs (master only)
+      try { _ambSyncFxVis(E); } catch (e) {}       // FX module: show only the added FX
       try { _ambRenderCaptureBank(); } catch (e) {}
 
       // Per-layer expand/collapse: the caret in each layer head folds that
@@ -17853,6 +17915,36 @@
             const b = ev.target && ev.target.closest && ev.target.closest('.ambient-ramp-add[data-rampkey]');
             if (!b || !hostEl.contains(b)) return;
             _ambAddRamp(E, b.getAttribute('data-rampkey'));
+          });
+          // FX MODULE add/remove — same delegated pattern (cards re-render).
+          hostEl.addEventListener('click', (ev) => {
+            const addB = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-add');
+            const delB = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-del');
+            if ((!addB && !delB)) return;
+            const card = (addB || delB).closest('.ambient-layer');
+            const key = _ambCardKey(card); if (!key) return;
+            _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return;
+            if (!Array.isArray(lc.fxChain)) lc.fxChain = _ambFxChainOf(lc);   // materialize on first edit
+            if (addB) {
+              const missing = _AMB_FX_DEFS.filter(dd => lc.fxChain.indexOf(dd.id) < 0);
+              if (!missing.length) return;
+              const doAdd = (id) => { lc.fxChain.push(id); _ambSyncFxVis(E); if (typeof persistWorkspace === 'function') persistWorkspace(); };
+              if (typeof showCtxMenu === 'function') {
+                const r = addB.getBoundingClientRect();
+                showCtxMenu(r.left, r.bottom, missing.map(dd => ({ label: dd.label, fn: () => doAdd(dd.id) })));
+              } else doAdd(missing[0].id);
+            } else {
+              const id = delB.getAttribute('data-fx');
+              const def = _AMB_FX_DEFS.find(dd => dd.id === id); if (!def) return;
+              lc.fxChain = lc.fxChain.filter(x => x !== id);
+              try { def.off(lc); } catch (e) {}                                // disengage the audio
+              // reflect the zeroed engagement on the (now hidden) sliders
+              const wrap = delB.closest('.ambient-fx-item');
+              (def.zero || []).forEach(z => { const inp = wrap && wrap.querySelector('input[id$="-' + z[0] + '"]'); if (inp) inp.value = String(z[1]); });
+              if (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E)) { try { _ambApplyLayerFx(key, lc); } catch (e) {} }
+              _ambSyncFxVis(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            }
           });
         }
       }

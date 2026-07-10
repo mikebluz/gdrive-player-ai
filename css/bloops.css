@@ -11226,3 +11226,10 @@
     .ambient-ramps-head-mini .ambient-ramp-add { margin-left: auto; font-size: 0.72rem; padding: 2px 8px; }
     .ambient-layer-ramps.empty { opacity: 0.8; }
     .ambient-layer-ramps .ambient-ramp-row { margin: 4px 0; }
+
+    /* FX module — per-layer add/remove effect chain */
+    .ambient-fxmod .ambient-mod-sub { display: flex; align-items: center; }
+    .ambient-fx-del { margin-left: auto; background: none; border: none; color: #8a8aa0; cursor: pointer; font-size: 0.8rem; padding: 0 2px; }
+    .ambient-fx-del:hover { color: #fc8181; }
+    .ambient-fx-addrow { padding: 6px 2px 2px; }
+    .ambient-fx-addrow .ambient-fx-add { font-size: 0.75rem; padding: 3px 10px; }

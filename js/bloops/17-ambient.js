@@ -11355,11 +11355,46 @@
       }
       E._biBar = barsElapsed; E._biArea = playArea; E._biInit = true;
     }
+    // Trance-gate GEN visualization: overlay the CURRENT bar's generated pattern
+    // on the Pattern chips (.gen-hit, amber) while the drawn density pattern stays
+    // the editable .on state — so with Gen engaged you SEE each bar's chops as
+    // they're rolled. Stopped → previews bar 0 (immediate feedback when toggling
+    // Gen). Recomputes only when (bar · steps · drawn pattern) changes.
+    function _ambTgGenViz(E) {
+      const host = document.getElementById(E.hostId); if (!host) return;
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
+      const playing = !!E.timer;
+      const grids = host.querySelectorAll('.ambient-tg-grid'); if (!grids.length) return;
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : (typeof _ambBpm === 'function' ? _ambBpm() : 120);
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const now = playing ? (((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow()
+        : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016) : 0;
+      const anchor = Number.isFinite(E._playStartAt) ? E._playStartAt : (Number.isFinite(E._progAnchor) ? E._progAnchor : 0);
+      grids.forEach(grid => {
+        const key = (typeof _ambCardKey === 'function') ? _ambCardKey(grid.closest('.ambient-layer')) : null;
+        const L = key ? _ambLayerByKey(E, key) : null;
+        const tg = L && L.tg;
+        if (!(tg && tg.on && tg.gen)) {
+          if (grid._genSig != null) { grid._genSig = null; grid.classList.remove('gen-live'); grid.querySelectorAll('.gen-hit').forEach(c => c.classList.remove('gen-hit')); }
+          return;
+        }
+        const steps = Math.max(2, Math.min(64, (tg.steps | 0) || 16));
+        const drawn = Array.isArray(tg.pattern) ? tg.pattern : [];
+        const bar = playing ? Math.max(0, Math.floor((now - anchor) / barSec)) : 0;
+        const sig = bar + '/' + steps + '/' + drawn.join('');
+        if (grid._genSig === sig) return;
+        grid._genSig = sig;
+        grid.classList.add('gen-live');
+        const pat = _ambTgGenPat(key, (cfg.seed | 0), bar, steps, drawn);
+        grid.querySelectorAll('.ambient-slice-cell').forEach((c, i) => c.classList.toggle('gen-hit', !!pat[i]));
+      });
+    }
     function _ambUpdatePlayheads(E) {
       const host = document.getElementById(E.hostId); if (!host) return;
       // Elapsed-time readout lives in the global float-header (top), driven by the
       // always-on _ambStartHeaderTicker (live on Seed / Grow / Harvest) — not here.
       try { _ambUpdateBarIndicator(E); } catch (e) {}
+      try { _ambTgGenViz(E); } catch (e) {}
       const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
       // Areas are fully separated: when the master is playing a DIFFERENT area than the
       // one on screen, the panel shows an INACTIVE area — its live readouts (cursors,

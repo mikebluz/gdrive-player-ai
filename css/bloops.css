@@ -11298,3 +11298,8 @@
     .ambient-loop-ctrl .ambient-seg-row { display: inline-flex; gap: 2px; }
     .ambient-loop-ctrl .ambient-loop-mode.active { background: rgba(79,209,197,0.18); border-color: #5e9ead; color: #9fe0ef; }
     .ambient-freeze-btn.write-cycling { color: #f6ad55; border-color: rgba(246,173,85,0.5); }
+
+    /* Trance-gate GEN overlay: the current bar's generated chops (amber) over
+       the editable drawn density pattern (teal .on). */
+    .ambient-tg-grid .ambient-slice-cell.gen-hit { box-shadow: inset 0 0 0 2px rgba(246,173,85,0.75); color: #f6ad55; }
+    .ambient-tg-grid.gen-live .ambient-slice-cell.on:not(.gen-hit) { opacity: 0.55; }

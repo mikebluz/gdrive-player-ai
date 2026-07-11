@@ -1142,6 +1142,18 @@
           host.write.on = host.write.on === true;
           host.write.bars = Math.max(1, Math.min(8, host.write.bars | 0)) || 2;
           host.write.times = Math.max(1, Math.min(32, host.write.times | 0)) || 4;
+          // STOCHASTIC Write: vary the phrase length + repeat count each cycle,
+          // random in [min, max]. Fields default only when present (absent =
+          // fixed X×Y, unchanged).
+          host.write.stochastic = host.write.stochastic === true;
+          const cb = (v, d) => Number.isFinite(v) ? Math.max(1, Math.min(8, v | 0)) : d;
+          const ct = (v, d) => Number.isFinite(v) ? Math.max(1, Math.min(32, v | 0)) : d;
+          host.write.barsMin = cb(host.write.barsMin, 1);
+          host.write.barsMax = cb(host.write.barsMax, 4);
+          host.write.timesMin = ct(host.write.timesMin, 2);
+          host.write.timesMax = ct(host.write.timesMax, 8);
+          if (host.write.barsMax < host.write.barsMin) { const t = host.write.barsMin; host.write.barsMin = host.write.barsMax; host.write.barsMax = t; }
+          if (host.write.timesMax < host.write.timesMin) { const t = host.write.timesMin; host.write.timesMin = host.write.timesMax; host.write.timesMax = t; }
         }
       }
       // Distortion FLAVOR: coerce when present; ABSENT = classic (additive).
@@ -9052,6 +9064,15 @@
     // cleared on stop) and the thaw re-anchors clocks/phases correctly. The
     // state machine is SELF-HEALING: it re-arms whenever a write-enabled layer
     // has no loop in flight, so stop/area clears just start a new cycle.
+    // Deterministic int in [lo,hi] for a Write cycle, seeded by (layer id, cycle
+    // index, project seed, salt) — so a stochastic Write's structure is
+    // reproducible per seed yet varies cycle-to-cycle. Consumes no engine RNG.
+    function _ambWriteRandInt(id, cyc, seed, salt, lo, hi) {
+      if (hi <= lo) return lo;
+      let h = (((id | 0) * 2654435761) ^ ((cyc + 1) * 2246822519) ^ ((seed | 0) * 40503) ^ (salt | 0)) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177); h = (h ^ (h >>> 16)) >>> 0;
+      return lo + (h % (hi - lo + 1));
+    }
     function _ambWriteSync(E, now) {
       const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
       if (cfg.barLock && E === _masterEng) return;   // the area Bar Lock owns loops
@@ -9071,8 +9092,11 @@
           }
           return;
         }
-        const loopSec = Math.max(1, w.bars | 0) * barSec;
-        if (loopSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Write: ' + w.bars + '-bar phrase exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
+        const _sto = !!w.stochastic;
+        const _id = (String(key).split(':')[1] | 0);
+        const _seed = (cfg && cfg.seed) | 0;
+        const _maxBars = _sto ? Math.max(1, w.barsMax | 0) : Math.max(1, w.bars | 0);
+        if (_maxBars * barSec > 31) { if (fs && !fs._writeWarned) { fs._writeWarned = true; try { if (typeof showToast === 'function') showToast('Write: ' + _maxBars + '-bar phrase exceeds the ~31 s capture limit at this tempo — playing live.'); } catch (e) {} } return; }
         const st = _ambFreezeState(E, key);
         // Respect a USER freeze / recording / foreign lock — stand down until it clears.
         if ((st.frozen || st.recording || st.pendingFreezeAt != null) && !st._write) return;
@@ -9080,7 +9104,8 @@
           // Replaying our phrase: schedule the thaw once — anchor (= replay start,
           // after 1 live play) + (Y−1) more plays → each phrase plays Y times total.
           if (st.pendingThawAt == null) {
-            st.pendingThawAt = st.anchor + Math.max(0, (Math.max(1, w.times | 0) - 1)) * st.loopLen;
+            const nTimes = _sto ? _ambWriteRandInt(_id, st._writeCyc | 0, _seed, 0x2222, Math.max(1, w.timesMin | 0), Math.max(1, w.timesMax | 0)) : Math.max(1, w.times | 0);
+            st.pendingThawAt = st.anchor + Math.max(0, nTimes - 1) * st.loopLen;
             st._writeRearmAt = st.pendingThawAt;
             if (st.pendingThawAt <= st.anchor + 0.001) {   // Y = 1 → no replay: thaw at the first boundary
               st.pendingThawAt = st.anchor + st.loopLen; st._writeRearmAt = st.pendingThawAt;
@@ -9098,7 +9123,9 @@
           bStart = anchor + Math.max(0, Math.ceil((now - anchor) / barSec)) * barSec;
         }
         if (bStart < now - 0.05) bStart = now + 0.05;   // stale re-arm (long pause) → start fresh
-        _ambBarLockArm(E, key, bStart, loopSec);
+        st._writeCyc = (st._writeCyc | 0) + 1;   // new cycle → new seeded structure
+        const nBars = _sto ? _ambWriteRandInt(_id, st._writeCyc, _seed, 0x1111, Math.max(1, w.barsMin | 0), Math.max(1, w.barsMax | 0)) : Math.max(1, w.bars | 0);
+        _ambBarLockArm(E, key, bStart, nBars * barSec);
         st._write = true;
       };
       ['bed', 'motif', 'texture', 'beat'].forEach(k => one(cfg[k], k));
@@ -13610,9 +13637,18 @@
             '<button type="button" class="ambient-seg ambient-loop-mode" data-lmode="hold">Hold</button>' +
             '<button type="button" class="ambient-seg ambient-loop-mode' + (on ? ' active' : '') + '" data-lmode="write">Write</button>' +
           '</span>' +
-          '<span class="ambient-write-xy"' + (on ? '' : ' style="display:none"') + '>' +
+          // Vary (stochastic) — re-rolls a random phrase length + repeat count in
+          // [min,max] each cycle, so Write becomes evolving structure.
+          '<button type="button" class="ambient-seg ambient-write-vary' + ((w && w.stochastic) ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside your min–max ranges, so the layer loops in evolving chunks instead of a fixed X×Y.">~ Vary</button>' +
+          // Fixed X×Y (Vary off)
+          '<span class="ambient-write-xy ambient-write-fixed"' + (on ? '' : ' style="display:none"') + '>' +
             '<input type="number" class="ambient-write-x" min="1" max="8" step="1" value="' + ((w && w.bars) || 2) + '" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
             '<input type="number" class="ambient-write-y" min="1" max="32" step="1" value="' + ((w && w.times) || 4) + '" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
+          '</span>' +
+          // Min–max ranges (Vary on)
+          '<span class="ambient-write-xy ambient-write-range" style="display:none">' +
+            '<span class="ambient-hint">bars</span> <input type="number" class="ambient-write-bmin" min="1" max="8" step="1" value="' + ((w && w.barsMin) || 1) + '" title="Min phrase length (bars)">–<input type="number" class="ambient-write-bmax" min="1" max="8" step="1" value="' + ((w && w.barsMax) || 4) + '" title="Max phrase length (bars)"> ' +
+            '<span class="ambient-hint">× plays</span> <input type="number" class="ambient-write-tmin" min="1" max="32" step="1" value="' + ((w && w.timesMin) || 2) + '" title="Min repeats before a new phrase">–<input type="number" class="ambient-write-tmax" min="1" max="32" step="1" value="' + ((w && w.timesMax) || 8) + '" title="Max repeats before a new phrase">' +
           '</span>' +
         '</span><span class="ambient-hint ambient-loop-hint">phrase loop</span></div>';
     }
@@ -13632,9 +13668,16 @@
           b.classList.toggle('active', b.getAttribute('data-lmode') === mode);
           if (b.getAttribute('data-lmode') === 'hold') b.textContent = (fs && fs.recording && !writing) ? '◉ Rec' : 'Hold';
         });
-        const xy = row.querySelector('.ambient-write-xy'); if (xy) xy.style.display = writing ? '' : 'none';
+        // Vary state: show the fixed X×Y or the min–max ranges (only in Write mode).
+        const sto = !!(L.write && L.write.stochastic);
+        const varyBtn = row.querySelector('.ambient-write-vary');
+        if (varyBtn) { varyBtn.classList.toggle('active', sto); varyBtn.style.display = writing ? '' : 'none'; }
+        const fixed = row.querySelector('.ambient-write-fixed'); if (fixed) fixed.style.display = (writing && !sto) ? '' : 'none';
+        const range = row.querySelector('.ambient-write-range'); if (range) range.style.display = (writing && sto) ? '' : 'none';
         const hint = row.querySelector('.ambient-loop-hint');
-        if (hint) hint.textContent = writing ? 'auto: write → loop ×' + ((L.write && L.write.times) || 4) + ' → rewrite'
+        if (hint) hint.textContent = writing
+            ? (sto ? ('vary: ' + ((L.write && L.write.barsMin) || 1) + '–' + ((L.write && L.write.barsMax) || 4) + ' bars × ' + ((L.write && L.write.timesMin) || 2) + '–' + ((L.write && L.write.timesMax) || 8) + ' plays')
+                   : ('auto: write → loop ×' + ((L.write && L.write.times) || 4) + ' → rewrite'))
           : (fs && fs.recording) ? 'recording — press Hold again to set the loop'
           : (fs && fs.frozen) ? 'held loop — Off/❄ to thaw'
           : 'phrase loop';
@@ -18277,6 +18320,16 @@
             return lc.write;
           };
           hostEl.addEventListener('click', (ev) => {
+            // Vary (stochastic) toggle — a sibling seg, not a mode; flips
+            // L.write.stochastic and re-syncs (fixed X×Y ↔ min–max ranges).
+            const vb = ev.target && ev.target.closest && ev.target.closest('.ambient-write-vary');
+            if (vb && hostEl.contains(vb)) {
+              const w = _writeOf(vb); if (!w) return;
+              w.stochastic = !w.stochastic;
+              try { _ambFreezeSyncAll(E); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const b = ev.target && ev.target.closest && ev.target.closest('.ambient-loop-mode');
             if (!b || !hostEl.contains(b)) return;
             const key = _ambCardKey(b.closest('.ambient-layer')); if (!key) return;
@@ -18312,12 +18365,19 @@
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           hostEl.addEventListener('input', (ev) => {
-            const inp = ev.target && ev.target.closest && ev.target.closest('.ambient-write-x, .ambient-write-y');
+            const inp = ev.target && ev.target.closest && ev.target.closest('.ambient-write-x, .ambient-write-y, .ambient-write-bmin, .ambient-write-bmax, .ambient-write-tmin, .ambient-write-tmax');
             if (!inp || !hostEl.contains(inp)) return;
             const w = _writeOf(inp); if (!w) return;
             const v = parseInt(inp.value, 10);
-            if (inp.classList.contains('ambient-write-x')) w.bars = Math.max(1, Math.min(8, Number.isFinite(v) ? v : 2));
-            else w.times = Math.max(1, Math.min(32, Number.isFinite(v) ? v : 4));
+            const cl = inp.classList;
+            const cb = (x) => Math.max(1, Math.min(8, Number.isFinite(x) ? x : 1));
+            const ct = (x) => Math.max(1, Math.min(32, Number.isFinite(x) ? x : 1));
+            if (cl.contains('ambient-write-x')) w.bars = cb(v) || 2;
+            else if (cl.contains('ambient-write-y')) w.times = ct(v) || 4;
+            else if (cl.contains('ambient-write-bmin')) w.barsMin = cb(v);
+            else if (cl.contains('ambient-write-bmax')) w.barsMax = cb(v);
+            else if (cl.contains('ambient-write-tmin')) w.timesMin = ct(v);
+            else if (cl.contains('ambient-write-tmax')) w.timesMax = ct(v);
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           // Distortion flavor — ONE delegated change listener for every card.

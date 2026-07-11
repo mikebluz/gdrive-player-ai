@@ -11309,3 +11309,12 @@
     .ambient-write-vary.active { background: rgba(246,173,85,0.18); border-color: #f6ad55; color: #f6ad55; }
     .ambient-write-range { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
     .ambient-write-range input { width: 40px; }
+
+    /* FX reorder buttons + chain-flow diagram */
+    .ambient-fx-move { display: inline-flex; gap: 1px; margin-left: auto; }
+    .ambient-fx-move + .ambient-fx-del { margin-left: 4px; }
+    .ambient-fx-up, .ambient-fx-down { background: none; border: none; color: #8a8aa0; cursor: pointer; font-size: 0.66rem; line-height: 1; padding: 0 2px; }
+    .ambient-fx-up:hover, .ambient-fx-down:hover { color: #b2f5ea; }
+    .ambient-fx-up:disabled, .ambient-fx-down:disabled { opacity: 0.25; cursor: default; }
+    .ambient-fx-chainviz { font: 600 0.66rem 'JetBrains Mono', monospace; color: #7fd6c4; padding: 4px 10px 6px; white-space: nowrap; overflow-x: auto; }
+    .ambient-fx-chainviz:empty { display: none; }

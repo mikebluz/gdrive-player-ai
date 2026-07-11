@@ -219,6 +219,7 @@ pub(crate) struct Strip {
     dist_k: f32,
     dist_wet: f32,
     dist_mode: u32,
+    fx_order: [u8; 5],
     cho_on: bool,
     cho_wet: f32,
     cho_depth: f32,
@@ -291,6 +292,7 @@ pub(crate) const STRIP0: Strip = Strip {
     dly_w: 0,
     ap_on: false,
     ap_wet: 0.0,
+    fx_order: [0, 1, 2, 3, 4],
     ap_depth: 1.0,
     ap_rate: 1.0,
 };
@@ -680,21 +682,20 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                 }
                 i0 += n;
             }
-            // ---- FX chain (node order: dist → chorus → phaser → delay → autopan)
-            if st.dist_on {
-                fx_dist(&mut OUT[slot], st, frames);
-            }
-            if st.cho_on {
-                fx_chorus(slot, st, t_block, frames);
-            }
-            if st.pha_on {
-                fx_phaser(st, &mut OUT[slot], t_block, frames);
-            }
-            if st.dly_on {
-                fx_delay(slot, st, frames);
-            }
-            if st.ap_on {
-                fx_autopan(st, &mut OUT[slot], t_block, frames);
+            // ---- FX chain, processed in the strip's configurable fx_order
+            // (default [0,1,2,3,4] = dist → chorus → phaser → delay → autopan,
+            // byte-identical to the old fixed chain). Order lets a layer put,
+            // e.g., delay BEFORE distortion.
+            let order = st.fx_order;
+            for k in 0..5 {
+                match order[k] {
+                    0 => if st.dist_on { fx_dist(&mut OUT[slot], st, frames); },
+                    1 => if st.cho_on { fx_chorus(slot, st, t_block, frames); },
+                    2 => if st.pha_on { fx_phaser(st, &mut OUT[slot], t_block, frames); },
+                    3 => if st.dly_on { fx_delay(slot, st, frames); },
+                    4 => if st.ap_on { fx_autopan(st, &mut OUT[slot], t_block, frames); },
+                    _ => {}
+                }
             }
         }
     }
@@ -854,6 +855,19 @@ pub extern "C" fn strip_tg(
         st.tg_edge = edge.clamp(0.0, 0.08);
         st.tg_anchor = anchor;
         st.tg_bar = bar.max(0.1);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn strip_fxorder(slot: u32, a: u32, b: u32, c: u32, d: u32, e: u32) {
+    unsafe {
+        let st = &mut STRIPS[(slot as usize) % SLOTS];
+        let want = [a, b, c, d, e];
+        // Validate it's a permutation of 0..5; else keep the identity order.
+        let mut seen = [false; 5];
+        let mut ok = true;
+        for &v in want.iter() { if v > 4 || seen[v as usize] { ok = false; break; } seen[v as usize] = true; }
+        st.fx_order = if ok { [a as u8, b as u8, c as u8, d as u8, e as u8] } else { [0, 1, 2, 3, 4] };
     }
 }
 

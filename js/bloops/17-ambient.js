@@ -6968,12 +6968,19 @@
           e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, c01(apan.mix), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
           e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
+          const _fo = _ambFxCoreOrder(lc);
+          e.core.cmd('strip_fxorder', sl, _fo[0], _fo[1], _fo[2], _fo[3], _fo[4]);   // in-line FX processed in fxChain order
         } catch (x) {}
         try { _ambApplyEq(layer, lc); } catch (x) {}
         return;
       }
       try {
-        if (wantDelay !== !!e.delay || wantDist !== !!e.dist || wantChorus !== !!e.chorus || wantPhaser !== !!e.phaser || wantAutopan !== !!e.autopan || (wantDelay && !!e.delay && e.delayPing !== wantPing)) {
+        const _wantById = { dist: wantDist, chorus: wantChorus, phaser: wantPhaser, delay: wantDelay, autopan: wantAutopan };
+        const _inline = _ambFxInlineEngaged(lc, _wantById);   // engaged in-line FX in fxChain order
+        const _orderSig = _inline.join(',') + '|' + (wantPing ? 1 : 0);
+        const _setChanged = wantDelay !== !!e.delay || wantDist !== !!e.dist || wantChorus !== !!e.chorus || wantPhaser !== !!e.phaser || wantAutopan !== !!e.autopan || (wantDelay && !!e.delay && e.delayPing !== wantPing);
+        if (_setChanged || e._fxOrderSig !== _orderSig) {
+          e._fxOrderSig = _orderSig;
           // delay node type flipped (feedback ↔ ping-pong) — drop the old one so the right type is rebuilt
           if (wantDelay && e.delay && e.delayPing !== wantPing) { try { e.delay.dispose(); } catch (x) {} e.delay = null; }
           const out = _E.busNode();
@@ -6984,32 +6991,17 @@
           if (!wantChorus && e.chorus) { try { e.chorus.dispose(); } catch (x) {} e.chorus = null; }
           if (!wantPhaser && e.phaser) { try { e.phaser.dispose(); } catch (x) {} e.phaser = null; }
           if (!wantAutopan && e.autopan) { try { e.autopan.dispose(); } catch (x) {} e.autopan = null; }
+          // Ensure each engaged node exists (params applied below, unchanged).
+          if (wantAutopan && !e.autopan) { e.autopan = new Tone.AutoPanner({ frequency: 1, depth: 1, wet: 0 }); try { e.autopan.start(); } catch (x) {} }
+          if (wantDelay && !e.delay) { e.delay = wantPing ? new Tone.PingPongDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }) : new Tone.FeedbackDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }); e.delayPing = wantPing; }
+          if (wantPhaser && !e.phaser) { e.phaser = new Tone.Phaser({ frequency: 0.5, octaves: 3, baseFrequency: 350, stages: 10, Q: 8, wet: 0 }); }
+          if (wantChorus && !e.chorus) { e.chorus = new Tone.Chorus({ frequency: 1.5, delayTime: 3.5, depth: 0.7, feedback: 0.15, spread: 180, wet: 0 }); try { e.chorus.start(); } catch (x) {} }
+          if (wantDist && !e.dist) { e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: _ambDistOversample() }); }
+          // Connect the engaged in-line FX in fxChain order: g → fx0 → … → out
+          // (build backward from the bus so the LAST id sits nearest the bus).
+          const _nodeById = { dist: e.dist, chorus: e.chorus, phaser: e.phaser, delay: e.delay, autopan: e.autopan };
           let tail = out;
-          if (wantAutopan) {   // autopan sits last, nearest the bus: … → delay → autopan → bus
-            if (!e.autopan) { e.autopan = new Tone.AutoPanner({ frequency: 1, depth: 1, wet: 0 }); try { e.autopan.start(); } catch (x) {} }
-            try { e.autopan.disconnect(); } catch (x) {}
-            e.autopan.connect(tail); tail = e.autopan;
-          }
-          if (wantDelay) {
-            if (!e.delay) { e.delay = wantPing ? new Tone.PingPongDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }) : new Tone.FeedbackDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }); e.delayPing = wantPing; }
-            try { e.delay.disconnect(); } catch (x) {}
-            e.delay.connect(tail); tail = e.delay;
-          }
-          if (wantPhaser) {   // phaser sits between chorus and delay: g → dist → chorus → phaser → delay → bus
-            if (!e.phaser) e.phaser = new Tone.Phaser({ frequency: 0.5, octaves: 3, baseFrequency: 350, stages: 10, Q: 8, wet: 0 });
-            try { e.phaser.disconnect(); } catch (x) {}
-            e.phaser.connect(tail); tail = e.phaser;
-          }
-          if (wantChorus) {   // chorus sits between dist and phaser: g → dist → chorus → phaser → delay → bus
-            if (!e.chorus) { e.chorus = new Tone.Chorus({ frequency: 1.5, delayTime: 3.5, depth: 0.7, feedback: 0.15, spread: 180, wet: 0 }); try { e.chorus.start(); } catch (x) {} }
-            try { e.chorus.disconnect(); } catch (x) {}
-            e.chorus.connect(tail); tail = e.chorus;
-          }
-          if (wantDist) {
-            if (!e.dist) e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: _ambDistOversample() });
-            try { e.dist.disconnect(); } catch (x) {}
-            e.dist.connect(tail); tail = e.dist;
-          }
+          for (let i = _inline.length - 1; i >= 0; i--) { const nd = _nodeById[_inline[i]]; if (!nd) continue; try { nd.disconnect(); } catch (x) {} nd.connect(tail); tail = nd; }
           g.connect(tail);
           // (reverb send taps the VCA, pre-gate — see _ambBuildMod — so it is
           // not re-routed here.)
@@ -13485,11 +13477,14 @@
     const _AMB_FX_DEFS = [
       { id: 'filter',  label: 'Filter',      engaged: (lc) => ((Number.isFinite(lc.cutoff) ? lc.cutoff : 100) < 100) || ((lc.reso | 0) > 0), off: (lc) => { lc.cutoff = 100; lc.reso = 0; }, zero: [['fx-cutoff', 100], ['fx-reso', 0]] },
       { id: 'rev',     label: 'Reverb send', engaged: (lc) => (lc.revSend | 0) > 0,                    off: (lc) => { lc.revSend = 0; },                zero: [['fx-rev', 0]] },
-      { id: 'delay',   label: 'Delay',       engaged: (lc) => !!(lc.delay && (lc.delay.mix | 0) > 0),  off: (lc) => { if (lc.delay) lc.delay.mix = 0; }, zero: [['fx-dly-mix', 0]] },
+      // In-line FX listed in CORE-INDEX order (dist·chorus·phaser·delay·autopan)
+      // so a DERIVED chain's order == the core's default → no change for existing
+      // engaged-FX layers. An explicit fxChain (user reorder) overrides.
+      { id: 'dist',    label: 'Distortion',  engaged: (lc) => !!(lc.dist && (lc.dist.mix | 0) > 0),    off: (lc) => { if (lc.dist) lc.dist.mix = 0; },   zero: [['fx-dist-mix', 0]] },
       { id: 'chorus',  label: 'Chorus',      engaged: (lc) => !!(lc.chorus && (lc.chorus.mix | 0) > 0), off: (lc) => { if (lc.chorus) lc.chorus.mix = 0; }, zero: [['fx-cho-mix', 0]] },
       { id: 'phaser',  label: 'Phaser',      engaged: (lc) => !!(lc.phaser && (lc.phaser.mix | 0) > 0), off: (lc) => { if (lc.phaser) lc.phaser.mix = 0; }, zero: [['fx-pha-mix', 0]] },
+      { id: 'delay',   label: 'Delay',       engaged: (lc) => !!(lc.delay && (lc.delay.mix | 0) > 0),  off: (lc) => { if (lc.delay) lc.delay.mix = 0; }, zero: [['fx-dly-mix', 0]] },
       { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) lc.autopan.mix = 0; }, zero: [['fx-apan-mix', 0]] },
-      { id: 'dist',    label: 'Distortion',  engaged: (lc) => !!(lc.dist && (lc.dist.mix | 0) > 0),    off: (lc) => { if (lc.dist) lc.dist.mix = 0; },   zero: [['fx-dist-mix', 0]] },
     ];
     // The layer's FX chain: its own list when set, else DERIVED from engagement
     // (legacy projects show exactly the FX that are audible). Not persisted until
@@ -13499,13 +13494,45 @@
     // work on this layer"). An explicit fxChain still wins, but these are folded
     // in so they can't go missing on a freshly-added layer.
     const _AMB_FX_ALWAYS = ['filter', 'rev'];
+    // In-line FX (processed in series) → core dist_mode-style indices. Filter is
+    // pre-chain (VCF) and Reverb is a parallel SEND, so neither is orderable.
+    const _AMB_FX_INLINE = ['dist', 'chorus', 'phaser', 'delay', 'autopan'];   // core idx 0..4
+    // The layer's fx_order for the core (a permutation of 0..4): the in-line FX in
+    // fxChain order, then any missing padded in the default order.
+    function _ambFxCoreOrder(lc) {
+      const chain = _ambFxChainOf(lc), order = [];
+      chain.forEach(id => { const i = _AMB_FX_INLINE.indexOf(id); if (i >= 0 && order.indexOf(i) < 0) order.push(i); });
+      for (let i = 0; i < 5; i++) if (order.indexOf(i) < 0) order.push(i);
+      return order.slice(0, 5);
+    }
+    // Engaged in-line FX ids in fxChain order (node path connection order).
+    function _ambFxInlineEngaged(lc, wantById) {
+      return _ambFxChainOf(lc).filter(id => _AMB_FX_INLINE.indexOf(id) >= 0 && wantById[id]);
+    }
+    // Swap an in-line FX with its in-line neighbour (dir −1 up / +1 down) inside
+    // the layer's fxChain — reorders the signal chain.
+    function _ambFxMove(lc, id, dir) {
+      if (!Array.isArray(lc.fxChain)) lc.fxChain = _ambFxChainOf(lc);
+      const chain = lc.fxChain;
+      const pos = []; chain.forEach((x, i) => { if (_AMB_FX_INLINE.indexOf(x) >= 0) pos.push(i); });
+      const k = chain.indexOf(id); if (k < 0) return false;
+      const pk = pos.indexOf(k), pk2 = pk + dir;
+      if (pk2 < 0 || pk2 >= pos.length) return false;
+      const i1 = pos[pk], i2 = pos[pk2]; const t = chain[i1]; chain[i1] = chain[i2]; chain[i2] = t;
+      return true;
+    }
     function _ambFxChainOf(lc) {
       let chain;
       if (lc && Array.isArray(lc.fxChain)) chain = lc.fxChain.filter(id => _AMB_FX_DEFS.some(d => d.id === id));
       else chain = _AMB_FX_DEFS.filter(d => { try { return lc && d.engaged(lc); } catch (e) { return false; } }).map(d => d.id);
-      // Ensure the always-on sends are present, in registry order (rev after filter).
+      // Ensure the always-on sends are present.
       _AMB_FX_ALWAYS.forEach(id => { if (chain.indexOf(id) < 0) chain.push(id); });
-      return _AMB_FX_DEFS.map(d => d.id).filter(id => chain.indexOf(id) >= 0);
+      // Canonical order: always-on sends first (Filter, then Reverb), then the
+      // rest in the chain's OWN order — so a user's FX reordering is preserved
+      // (the old code re-sorted to registry order, discarding it).
+      const out = _AMB_FX_ALWAYS.filter(id => chain.indexOf(id) >= 0);
+      chain.forEach(id => { if (out.indexOf(id) < 0) out.push(id); });
+      return out;
     }
     // Layer key from a card element (extras data-inst · primary [data-phkey] ·
     // seq data-seq-id · samp data-samp-id) — the shared resolution pattern.
@@ -13528,6 +13555,25 @@
         det.querySelectorAll('.ambient-fx-item').forEach(w => {
           w.style.display = (chain.indexOf(w.getAttribute('data-fx')) >= 0) ? '' : 'none';
         });
+        // Reorder the item cards to match the fxChain (in-line FX are draggable
+        // via ▲▼; Filter/Reverb sit at their chain slots). Items keep their ids.
+        const addRow0 = det.querySelector('.ambient-fx-addrow');
+        chain.forEach(id => { const it = det.querySelector('.ambient-fx-item[data-fx="' + id + '"]'); if (it && addRow0) det.insertBefore(it, addRow0); });
+        // ▲▼ disabled at the ends of the in-line subsequence.
+        const inlineChain = chain.filter(id => _AMB_FX_INLINE.indexOf(id) >= 0);
+        det.querySelectorAll('.ambient-fx-item').forEach(w => {
+          const id = w.getAttribute('data-fx'); const pos = inlineChain.indexOf(id);
+          const up = w.querySelector('.ambient-fx-up'), dn = w.querySelector('.ambient-fx-down');
+          if (up) up.disabled = pos <= 0;
+          if (dn) dn.disabled = pos < 0 || pos >= inlineChain.length - 1;
+        });
+        // Chain-flow diagram: Filter (pre) → in-line FX in order → out · ⟿ Reverb.
+        const viz = det.querySelector('.ambient-fx-chainviz');
+        if (viz) {
+          const nm = { filter: 'Filter', dist: 'Dist', chorus: 'Chorus', phaser: 'Phaser', delay: 'Delay', autopan: 'Pan', rev: 'Reverb' };
+          const flow = ['◦ in', 'Filter'].concat(inlineChain.map(id => nm[id] || id)).concat(['out ◦']).join(' → ');
+          viz.textContent = flow + (chain.indexOf('rev') >= 0 ? '   ⟿ Reverb (send)' : '');
+        }
         const sum = det.querySelector('.ambient-mod-head');
         if (sum) sum.textContent = 'FX' + (chain.length ? ' · ' + chain.length + ' active' : ' · none (＋ add)');
         const addB = det.querySelector('.ambient-fx-add');
@@ -13538,11 +13584,15 @@
     }
     const _ambFxItem = (id, label, inner) =>
       '<div class="ambient-fx-item" data-fx="' + id + '"><div class="ambient-mod-target"><div class="ambient-mod-sub">' + label +
+        // In-line FX (dist/chorus/phaser/delay/autopan) reorder in the chain;
+        // Filter (pre) + Reverb (send) are position-fixed.
+        (_AMB_FX_INLINE.indexOf(id) >= 0 ? '<span class="ambient-fx-move"><button type="button" class="ambient-fx-up" data-fx="' + id + '" title="Move earlier in the signal chain" aria-label="Move up">▲</button><button type="button" class="ambient-fx-down" data-fx="' + id + '" title="Move later in the signal chain" aria-label="Move down">▼</button></span>' : '') +
         // Always-on core sends (Filter / Reverb) can't be removed — just set to 0.
         (_AMB_FX_ALWAYS.indexOf(id) >= 0 ? '' : '<button type="button" class="ambient-fx-del" data-fx="' + id + '" title="Remove this effect (turns it off)">✕</button>') +
         '</div>' + inner + '</div></div>';
     const _ambFxUi = (layer) =>
       '<details class="ambient-mod ambient-fxmod"><summary class="ambient-mod-head">FX</summary>' +
+        '<div class="ambient-fx-chainviz" aria-live="polite" title="Signal chain — Filter (pre) → in-line FX (reorderable) → out, with Reverb as a parallel send"></div>' +
         // Live per-layer low-pass filter — Cutoff sweeps the whole layer (tails
         // included) in real time; Resonance peaks at the cutoff. Cutoff 100 = open.
         _ambFxItem('filter', 'Filter',
@@ -18398,6 +18448,19 @@
             _E = E; const lc = _ambLayerByKey(E, key); if (!lc || !lc.dist) return;
             if (sel.value) lc.dist.flavor = sel.value; else delete lc.dist.flavor;
             if (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E)) { try { _ambApplyLayerFx(key, lc); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          // FX reorder — ▲/▼ move an in-line FX in the chain, then re-apply
+          // (live) so the new signal order takes effect.
+          hostEl.addEventListener('click', (ev) => {
+            const mv = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-up, .ambient-fx-down');
+            if (!mv || !hostEl.contains(mv) || mv.disabled) return;
+            const key = _ambCardKey(mv.closest('.ambient-layer')); if (!key) return;
+            _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return;
+            const dir = mv.classList.contains('ambient-fx-up') ? -1 : 1;
+            if (!_ambFxMove(lc, mv.getAttribute('data-fx'), dir)) return;
+            if (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E)) { try { _ambApplyLayerFx(key, lc); } catch (e) {} }
+            _ambSyncFxVis(E);
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           // FX MODULE add/remove — same delegated pattern (cards re-render).

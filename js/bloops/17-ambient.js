@@ -13680,11 +13680,9 @@
       // unit/loop length and the formula that produces it, so you know what to tweak.
       (freezeKey ? '<span class="ambient-layer-unit" data-ukey="' + freezeKey + '" title="Unit length (tap the named parameters to change it)"></span>' : '') +
       (freezeKey ? '<button type="button" class="ambient-solo-btn" data-skey="' + freezeKey + '" title="Solo — play only soloed layers">S</button>' : '') +
-      // Lock TOGGLE for Freeze: off = Free (arbitrary loop length, two presses);
-      // on = snap the loop to whole unit boundaries. The ❄ Freeze button is the
-      // action; this just sets the snap mode.
-      (freezeKey ? '<button type="button" class="ambient-freezelock-btn" data-flkey="' + freezeKey + '" title="Lock — snap the Freeze loop to whole units (off = free / arbitrary length)" aria-label="Lock freeze to units">🔒</button>' : '') +
-      (freezeKey ? '<button type="button" class="ambient-freeze-btn" data-fkey="' + freezeKey + '" title="Freeze — press to start the loop, press again to set its length (Lock 🔒 snaps to whole units)">❄</button>' : '') +
+      // Freeze/Loop consolidated into the ONE per-layer "Loop" control (Timing
+      // group: Off / Hold / Write). The old header ❄ Freeze + 🔒 Lock buttons
+      // were a second surface for the same thing → removed.
       '<button type="button" class="ambient-collapse" title="Collapse / expand layer" aria-label="Collapse or expand this layer"></button>' +
       (freezeKey ? '<span class="ambient-ph" data-phkey="' + freezeKey + '" aria-hidden="true"><i></i></span>' : '') +
       '</div>' +
@@ -17578,8 +17576,6 @@
         if (pb0) { e.stopPropagation(); try { _ambSaveLayerAsPreset(E, pb0.dataset.savekey); } catch (err) { console.warn('Save preset failed', err); } return; }
         const sb = e.target && e.target.closest && e.target.closest('.ambient-solo-btn');
         if (sb) { e.stopPropagation(); try { _ambToggleSolo(E, sb.dataset.skey); } catch (err) { console.warn('Solo failed', err); } return; }
-        const fl = e.target && e.target.closest && e.target.closest('.ambient-freezelock-btn');
-        if (fl) { e.stopPropagation(); try { const L = _ambLayerByKey(E, fl.dataset.flkey); if (L) { L.freezeLock = !L.freezeLock; fl.classList.toggle('active', !!L.freezeLock); if (typeof persistWorkspace === 'function') persistWorkspace(); } } catch (err) { console.warn('Lock toggle failed', err); } return; }
         // (note-edit chips are handled on pointerdown — see below)
         // Task 4: Seed mode toggle (Generate / Author) — one delegated handler for
         // primary + extras cards (key from data-seedkey).
@@ -17674,10 +17670,6 @@
           } catch (err) { console.warn('Dice randomize failed', err); }
           return;
         }
-        const fb = e.target && e.target.closest && e.target.closest('.ambient-freeze-btn');
-        if (!fb) return;
-        e.stopPropagation();
-        try { _ambFreezeCycle(E, fb.dataset.fkey); } catch (err) { console.warn('Freeze failed', err); }
       });
       // Note-edit chips open the popover on POINTERDOWN (not click): the readout
       // can repaint between press and release, which would drop a click (its
@@ -18307,7 +18299,8 @@
               } else {
                 L.write.on = false;
                 if (fs._write) { fs._write = false; fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; fs._writeRearmAt = null; }
-                _ambFreezeCycle(E, key);   // the ❄ flow: arm recording / commit / stay frozen
+                L.freezeLock = true;       // Hold snaps to whole units by default (old 🔒 behavior; toggle removed)
+                _ambFreezeCycle(E, key);   // arm recording / commit / stay frozen
               }
             } else {   // off
               L.write.on = false;

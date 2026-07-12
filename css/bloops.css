@@ -11332,3 +11332,6 @@
     .ambient-sk-roles { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 6px; }
     .ambient-sk-roles .ambient-sk-role { font-size: 0.68rem; padding: 2px 7px; }
     .ambient-sk-roles .ambient-sk-role.active { background: rgba(79,209,197,0.2); border-color: #5e9ead; color: #9fe0ef; }
+
+    /* Synth-kit macros row */
+    .ambient-sk-macros { border-bottom: 1px dashed rgba(74,74,102,0.5); padding-bottom: 4px; margin-bottom: 4px; }

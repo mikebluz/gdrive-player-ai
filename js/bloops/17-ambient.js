@@ -1194,8 +1194,12 @@
                      tune: Math.max(20, Math.min(4000, v.tune | 0)) || g.tune,
                      decay: Math.max(20, Math.min(2000, v.decay | 0)) || g.decay,
                      noise: Math.max(0, Math.min(100, Number.isFinite(v.noise) ? (v.noise | 0) : g.noise)),
-                     bright: Math.max(200, Math.min(18000, v.bright | 0)) || g.bright };
+                     bright: Math.max(200, Math.min(18000, v.bright | 0)) || g.bright,
+                     drop: Math.max(0, Math.min(24, Number.isFinite(v.drop) ? (v.drop | 0) : g.drop)),
+                     snap: Math.max(0, Math.min(100, Number.isFinite(v.snap) ? (v.snap | 0) : g.snap)) };
           });
+          if (!sk.macros || typeof sk.macros !== 'object') sk.macros = _ambSynthDefaultMacros();
+          else { sk.macros.tune = Math.max(-24, Math.min(24, sk.macros.tune | 0)); sk.macros.decay = Math.max(25, Math.min(400, (sk.macros.decay | 0) || 100)); sk.macros.grit = Math.max(-100, Math.min(100, sk.macros.grit | 0)); }
         }
       }
       // Trance gate.
@@ -5385,14 +5389,14 @@
     // metal=MetalSynth, noise:white, oscillators) → no new DSP, golden-safe.
     // Lane order matches _AMB_VDRUM: 0 Kick·1 Snare·2 Hat·3 Clap·4 Open·5 Tom·6 Crash·7 Perc.
     const _AMB_SYNTH_ROLES = [
-      { name: 'Kick',  bodies: ['kick'],                 tune: [40, 78],  decay: [110, 380], noise: [0, 12],  bright: [3000, 9000] },
-      { name: 'Snare', bodies: ['triangle', 'kick'],     tune: [150, 250], decay: [90, 240],  noise: [45, 82], bright: [2000, 6000] },
-      { name: 'Hat',   bodies: ['metal', 'noise:white'], tune: [400, 950], decay: [22, 80],   noise: [55, 100], bright: [7000, 15000] },
-      { name: 'Clap',  bodies: ['noise:white'],          tune: [300, 620], decay: [80, 190],  noise: [85, 100], bright: [1800, 4800] },
-      { name: 'Open',  bodies: ['metal', 'noise:white'], tune: [400, 950], decay: [180, 520], noise: [55, 100], bright: [6000, 13000] },
-      { name: 'Tom',   bodies: ['kick', 'sine'],         tune: [90, 240],  decay: [140, 400], noise: [0, 22],  bright: [3000, 8000] },
-      { name: 'Crash', bodies: ['metal'],                tune: [280, 720], decay: [500, 1500], noise: [30, 78], bright: [8000, 16000] },
-      { name: 'Perc',  bodies: ['metal', 'sine'],        tune: [200, 900], decay: [55, 230],  noise: [15, 58], bright: [4000, 11000] },
+      { name: 'Kick',  bodies: ['kick'],                 tune: [40, 78],  decay: [110, 380], noise: [0, 12],  bright: [3000, 9000],  drop: [12, 24], snap: [15, 50] },
+      { name: 'Snare', bodies: ['triangle', 'kick'],     tune: [150, 250], decay: [90, 240],  noise: [45, 82], bright: [2000, 6000],  drop: [0, 6],   snap: [40, 80] },
+      { name: 'Hat',   bodies: ['metal', 'noise:white'], tune: [400, 950], decay: [22, 80],   noise: [55, 100], bright: [7000, 15000], drop: [0, 0],   snap: [0, 20] },
+      { name: 'Clap',  bodies: ['noise:white'],          tune: [300, 620], decay: [80, 190],  noise: [85, 100], bright: [1800, 4800],  drop: [0, 0],   snap: [30, 65] },
+      { name: 'Open',  bodies: ['metal', 'noise:white'], tune: [400, 950], decay: [180, 520], noise: [55, 100], bright: [6000, 13000], drop: [0, 0],   snap: [0, 15] },
+      { name: 'Tom',   bodies: ['kick', 'sine'],         tune: [90, 240],  decay: [140, 400], noise: [0, 22],  bright: [3000, 8000],  drop: [8, 18],  snap: [10, 40] },
+      { name: 'Crash', bodies: ['metal'],                tune: [280, 720], decay: [500, 1500], noise: [30, 78], bright: [8000, 16000], drop: [0, 0],   snap: [0, 10] },
+      { name: 'Perc',  bodies: ['metal', 'sine'],        tune: [200, 900], decay: [55, 230],  noise: [15, 58], bright: [4000, 11000], drop: [0, 8],   snap: [20, 55] },
     ];
     const _AMB_SYNTH_BODIES = ['kick', 'metal', 'sine', 'triangle', 'noise:white'];
     // Generate one voice recipe for `role` from `seed` (deterministic per seed+role).
@@ -5403,10 +5407,14 @@
       return {
         body: spec.bodies[Math.floor(rnd() * spec.bodies.length)] || 'sine',
         tune: pick(spec.tune), decay: pick(spec.decay), noise: pick(spec.noise), bright: pick(spec.bright),
+        drop: pick(spec.drop || [0, 0]), snap: pick(spec.snap || [0, 0]),
       };
     }
+    // Neutral global macros (shape the whole kit): tune ± semitones, decay %, grit
+    // (added noise). Default = no effect.
+    function _ambSynthDefaultMacros() { return { tune: 0, decay: 100, grit: 0 }; }
     function _ambGenSynthKit(seed) {
-      return { seed: seed | 0, voices: _AMB_SYNTH_ROLES.map((_, role) => _ambGenSynthVoice(seed, role)) };
+      return { seed: seed | 0, macros: _ambSynthDefaultMacros(), voices: _AMB_SYNTH_ROLES.map((_, role) => _ambGenSynthVoice(seed, role)) };
     }
     // The layer uses the SYNTH kit when its kit id is 'synth'.
     function _ambBeatIsSynth(inst) { return !!(inst && inst.kit === 'synth'); }
@@ -5421,19 +5429,35 @@
     // pitch-drop) layered with a filtered NOISE burst, mixed by `noise`. `role` 0-7.
     function _ambPlaySynthDrum(E, dest, inst, role, at, vol, dmod, pan) {
       const rec = _ambSynthVoiceOf(inst, role); if (!rec) return;
-      const decay = Math.max(20, Math.min(2000, rec.decay | 0));
-      const noise = Math.max(0, Math.min(100, rec.noise | 0));
+      // Global macros shape the whole kit on top of the per-voice recipe.
+      const mac = (inst && inst.synthKit && inst.synthKit.macros) || _ambSynthDefaultMacros();
+      const mTune = Math.max(-24, Math.min(24, mac.tune | 0));
+      const mDecay = Math.max(25, Math.min(400, (mac.decay | 0) || 100)) / 100;
+      const mGrit = Math.max(-100, Math.min(100, mac.grit | 0));
+      const tune = Math.max(20, Math.min(8000, Math.round((rec.tune | 0) * Math.pow(2, mTune / 12))));
+      const decay = Math.max(15, Math.min(3000, Math.round((rec.decay | 0) * mDecay)));
+      const noise = Math.max(0, Math.min(100, (rec.noise | 0) + mGrit));
       const bright = Math.max(200, Math.min(18000, rec.bright | 0));
-      const tune = Math.max(20, Math.min(4000, rec.tune | 0));
+      const drop = Math.max(0, Math.min(24, rec.drop | 0));
+      const snap = Math.max(0, Math.min(100, rec.snap | 0));
+      const body = rec.body === 'noise:white' ? 'triangle' : rec.body;
       const V = Math.max(1, Math.round(vol || 100));
       const mk = (type, freq, lvl, dec, cut) => {
-        const p = { type: type, attack: 1, decay: dec, sustain: 0, release: Math.max(10, Math.round(dec * 0.4)), volume: Math.max(1, Math.round(lvl)), pan: pan | 0 };
+        if (lvl < 1) return;
+        const p = { type: type, attack: 1, decay: dec, sustain: 0, release: Math.max(8, Math.round(dec * 0.4)), volume: Math.max(1, Math.round(lvl)), pan: pan | 0 };
         if (cut) p.filterCutoff = cut;
         if (dmod) p._detuneMod = dmod;
-        try { playNote(freq, p, dec + 20, at, dest, undefined, E.laneIdx()); } catch (e) {}
+        try { playNote(freq, p, dec + 15, at, dest, undefined, E.laneIdx()); } catch (e) {}
       };
-      // Body (tone) — level scaled down as noise rises; noise burst layered on top.
-      if (noise < 100) mk(rec.body === 'noise:white' ? 'triangle' : rec.body, tune, V * (1 - noise / 200), decay, rec.body === 'metal' ? bright : 0);
+      // Body (tone) — level scaled down as noise rises.
+      if (noise < 100) mk(body, tune, V * (1 - noise / 200), decay, rec.body === 'metal' ? bright : 0);
+      // Pitch DROP: a short blip `drop` semitones above, decaying fast into the
+      // body → the classic layered "dow" pitch-drop (no per-hit pitch glide in
+      // the voice engine, so this is the composable approximation).
+      if (drop > 0) mk(body === 'metal' ? 'triangle' : body, Math.min(8000, Math.round(tune * Math.pow(2, drop / 12))), V * 0.55, Math.min(90, Math.max(20, Math.round(decay * 0.30))), 0);
+      // SNAP: a very short bright transient click for attack punch.
+      if (snap > 0) mk('noise:white', 4000, V * (snap / 100), Math.max(12, Math.min(45, 15 + Math.round(snap * 0.2))), Math.max(6000, bright));
+      // Noise burst layered on top.
       if (noise > 0) mk('noise:white', Math.max(200, tune * 2), V * (noise / 100), Math.round(decay * 0.7), bright);
     }
     // Synth-kit editor: 8 role tabs + the active role's params + Regen (re-roll
@@ -5447,10 +5471,17 @@
         '<div class="ambient-ctrl ambient-sk-head"><label title="A drum kit synthesized from scratch (no samples). Regen rolls a fresh kit from a new seed; edit each drum below.">Synth kit</label>' +
           '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed)">↻ Regen voices</button>' +
           '<span class="ambient-hint ambient-sk-seed"></span></div>' +
+        '<div class="ambient-sk-macros">' +
+          '<div class="ambient-ctrl"><label title="Tune the WHOLE kit up/down (semitones).">Tune</label><input type="range" class="ambient-sk-mac-tune" min="-24" max="24" step="1"><span class="ambient-hint ambient-sk-mac-tune-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Scale every voice&#39;s decay kit-wide.">Decay</label><input type="range" class="ambient-sk-mac-decay" min="25" max="400" step="5"><span class="ambient-hint ambient-sk-mac-decay-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Add/remove noise-grit across the whole kit.">Grit</label><input type="range" class="ambient-sk-mac-grit" min="-100" max="100" step="1"><span class="ambient-hint ambient-sk-mac-grit-v"></span></div>' +
+        '</div>' +
         '<div class="ambient-seg-row ambient-sk-roles">' + tabs + '</div>' +
         '<div class="ambient-ctrl"><label>Body</label><select class="ambient-select ambient-sk-body">' + bodyOpts + '</select><span class="ambient-hint">tone source</span></div>' +
         sl({ lab: 'Tune', k: 'tune' }, 20, 4000) +
         sl({ lab: 'Decay', k: 'decay' }, 20, 2000) +
+        sl({ lab: 'Drop', k: 'drop' }, 0, 24) +
+        sl({ lab: 'Snap', k: 'snap' }, 0, 100) +
         sl({ lab: 'Noise', k: 'noise' }, 0, 100) +
         sl({ lab: 'Bright', k: 'bright' }, 200, 18000) +
       '</div>';
@@ -5471,10 +5502,17 @@
         ed.querySelectorAll('.ambient-sk-role').forEach((b, i) => b.classList.toggle('active', i === role));
         const sd = ed.querySelector('.ambient-sk-seed'); if (sd) sd.textContent = 'seed ' + (L.synthKit.seed | 0) + ' · ' + _AMB_SYNTH_ROLES[role].name;
         const bs = ed.querySelector('.ambient-sk-body'); if (bs && document.activeElement !== bs) bs.value = rec.body;
-        [['tune', ''], ['decay', ' ms'], ['noise', '%'], ['bright', ' Hz']].forEach(pr => {
+        [['tune', ''], ['decay', ' ms'], ['drop', ' st'], ['snap', '%'], ['noise', '%'], ['bright', ' Hz']].forEach(pr => {
           const el = ed.querySelector('.ambient-sk-' + pr[0]); const v = ed.querySelector('.ambient-sk-' + pr[0] + '-v');
-          if (el && document.activeElement !== el) el.value = String(rec[pr[0]]);
-          if (v) v.textContent = rec[pr[0]] + pr[1];
+          const rv = rec[pr[0]] | 0;
+          if (el && document.activeElement !== el) el.value = String(rv);
+          if (v) v.textContent = rv + pr[1];
+        });
+        const mac = L.synthKit.macros || _ambSynthDefaultMacros();
+        [['tune', mac.tune | 0, 'st'], ['decay', (mac.decay | 0) || 100, '%'], ['grit', mac.grit | 0, '']].forEach(pr => {
+          const el = ed.querySelector('.ambient-sk-mac-' + pr[0]); const v = ed.querySelector('.ambient-sk-mac-' + pr[0] + '-v');
+          if (el && document.activeElement !== el) el.value = String(pr[1]);
+          if (v) v.textContent = (pr[0] === 'tune' && pr[1] > 0 ? '+' : '') + pr[1] + pr[2];
         });
       });
     }
@@ -18703,16 +18741,21 @@
               const role = Math.max(0, Math.min(7, (ed.getAttribute('data-active') | 0)));
               const rec = L.synthKit.voices[role]; if (!rec) return;
               const cl = el.classList, v = parseInt(el.value, 10);
-              if (cl.contains('ambient-sk-body')) rec.body = el.value;
+              if (cl.contains('ambient-sk-mac-tune')) { L.synthKit.macros = L.synthKit.macros || _ambSynthDefaultMacros(); L.synthKit.macros.tune = Math.max(-24, Math.min(24, Number.isFinite(v) ? v : 0)); }
+              else if (cl.contains('ambient-sk-mac-decay')) { L.synthKit.macros = L.synthKit.macros || _ambSynthDefaultMacros(); L.synthKit.macros.decay = Math.max(25, Math.min(400, v || 100)); }
+              else if (cl.contains('ambient-sk-mac-grit')) { L.synthKit.macros = L.synthKit.macros || _ambSynthDefaultMacros(); L.synthKit.macros.grit = Math.max(-100, Math.min(100, Number.isFinite(v) ? v : 0)); }
+              else if (cl.contains('ambient-sk-body')) rec.body = el.value;
               else if (cl.contains('ambient-sk-tune')) rec.tune = Math.max(20, Math.min(4000, v || 200));
               else if (cl.contains('ambient-sk-decay')) rec.decay = Math.max(20, Math.min(2000, v || 150));
+              else if (cl.contains('ambient-sk-drop')) rec.drop = Math.max(0, Math.min(24, Number.isFinite(v) ? v : 0));
+              else if (cl.contains('ambient-sk-snap')) rec.snap = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 0));
               else if (cl.contains('ambient-sk-noise')) rec.noise = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 30));
               else if (cl.contains('ambient-sk-bright')) rec.bright = Math.max(200, Math.min(18000, v || 6000));
               else return;
               try { _ambSyncSynthKit(E); } catch (e) {}
               if (typeof persistWorkspace === 'function') persistWorkspace();
             };
-            hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-tune, .ambient-sk-decay, .ambient-sk-noise, .ambient-sk-bright'); if (el && hostEl.contains(el)) _skWrite(el); });
+            hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-tune, .ambient-sk-decay, .ambient-sk-drop, .ambient-sk-snap, .ambient-sk-noise, .ambient-sk-bright, .ambient-sk-mac-tune, .ambient-sk-mac-decay, .ambient-sk-mac-grit'); if (el && hostEl.contains(el)) _skWrite(el); });
             hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-body'); if (el && hostEl.contains(el)) _skWrite(el); });
           }
           // Pitch echo controls — delegated input/change, class-based, every card.

@@ -1,6 +1,11 @@
     // ---- Tracks (multi-track sequencer) ----
 
-    let tracks = JSON.parse(localStorage.getItem('sounds-tracks') || '[]');
+    // SAFE-PARSE (see "sounds-saved" in 01-core-state): a corrupt value must not
+    // throw at module scope and black-screen the app. Falls back to no tracks.
+    let tracks = (() => {
+      try { const v = JSON.parse(localStorage.getItem('sounds-tracks') || '[]'); return Array.isArray(v) ? v : []; }
+      catch (e) { try { console.warn('Corrupt "sounds-tracks" in localStorage — resetting.', e); } catch (_) {} return []; }
+    })();
     // Ensure runtime fields on each track (these aren't persisted)
     tracks.forEach(t => {
       t.playing = false;

@@ -750,8 +750,16 @@
     let pendingChord = [];
     const cells = [];
 
-    // Saved sequences — persisted to localStorage
-    let savedSequences = JSON.parse(localStorage.getItem('sounds-saved') || '[]');
+    // Saved sequences — persisted to localStorage. SAFE-PARSE: a corrupt value
+    // (e.g. a write truncated by a quota-exceeded error on WebKit / mobile Safari)
+    // must NOT throw here — this is module-scope in a foundational file, so an
+    // unguarded JSON.parse throw aborts the whole script and black-screens the app
+    // ("header + black" on mobile only, because desktop's larger quota never
+    // corrupts). Falls back to an empty bank; the next save overwrites the bad key.
+    let savedSequences = (() => {
+      try { const v = JSON.parse(localStorage.getItem('sounds-saved') || '[]'); return Array.isArray(v) ? v : []; }
+      catch (e) { try { console.warn('Corrupt "sounds-saved" in localStorage — resetting.', e); } catch (_) {} return []; }
+    })();
     let activeSeqIndex = null;
 
     // Saved wraps — independent bank of recently-committed Wrap steps so

@@ -58,6 +58,15 @@ gain), grain playback (sample slicing), and offline render→WAV→bank.
 - **FX module** (per-layer): one registry (`_AMB_FX_DEFS`), layers carry an
   `fxChain` — cards render only ADDED effects + an "＋ Add FX" picker; legacy
   chains derive from engagement. Engine untouched.
+- **Delay stereo Spread + Dry Kill + layer Wet Only** (Tier A + emit): the core
+  delay gained a `dly_spread` (0–100 → Haas offset on the wet R output tap, on top
+  of Ping-Pong; neutral@0) and a post-send `main` output gain (`strip_mainout`) that
+  the layer **Wet only** toggle drives to 0 — muting the dry/in-line output while the
+  parallel reverb send rings. Per-FX **Dry kill** (Delay/Chorus/Phaser/Dist/Auto-Pan)
+  forces that FX fully wet (`_wet01`); with ≥1 in-line FX, Wet only forces them all
+  wet=1 so the chain carries no dry. **Pitch echo** gained a **Spread** (pans echoes
+  alternately L/R). All default off/0 → CORE_REV 11, golden 75/75 WITHOUT re-baseline.
+  Node fallback honors Dry Kill / Wet-only-via-wet=1; delay Spread is core-only.
 - **Distortion flavors** (Tier A — the first core-DSP addition): `strip_dist`
   gains a `dist_mode` — Classic (the original curve, default, golden-covered
   byte-identical) · Overdrive (warm tanh) · Fuzz (asymmetric clip + crossover

@@ -39,7 +39,11 @@
       // cutoff/reso: the live per-layer FILTER knob (0–100). cutoff 100 = fully
       // open (20 kHz), reso 0 = Butterworth (Q 0.7) — the defaults reproduce the
       // old always-open filter exactly, so they're byte-identical / golden-safe.
-      return { cutoff: 100, reso: 0, revSend: 0, delay: { mix: 0, timeMs: 300, feedback: 35, ping: 0 }, dist: { mix: 0, amount: 40 }, chorus: { mix: 0, depth: 50, rate: 30 }, phaser: { mix: 0, depth: 50, rate: 30 }, autopan: { mix: 0, depth: 100, rate: 30 },
+      // `spread` (0–100) widens the delay's stereo image (Haas offset on the wet,
+      // core only); `dryKill` on any wet FX forces it fully wet (removes its dry).
+      // `wetOnly` (layer) mutes the direct/dry output so only reverb + wet-FX tails
+      // sound. All default off/0 → byte-identical / golden-safe.
+      return { cutoff: 100, reso: 0, revSend: 0, wetOnly: 0, delay: { mix: 0, timeMs: 300, feedback: 35, ping: 0, spread: 0, dryKill: 0 }, dist: { mix: 0, amount: 40, dryKill: 0 }, chorus: { mix: 0, depth: 50, rate: 30, dryKill: 0 }, phaser: { mix: 0, depth: 50, rate: 30, dryKill: 0 }, autopan: { mix: 0, depth: 100, rate: 30, dryKill: 0 },
                // Trance gate: a bar-synced step pattern that chops the layer's output. `steps`
                // = steps per bar (= pattern length); each step on (1) passes, off (0) cuts by
                // `depth`%. `edge` ms softens each transition. Default = an 8th-note gate.
@@ -1130,10 +1134,17 @@
       if (!Number.isFinite(host.cutoff)) host.cutoff = d.cutoff;
       if (!Number.isFinite(host.reso)) host.reso = d.reso;
       if (!Number.isFinite(host.revSend)) host.revSend = d.revSend;
+      // Layer "Wet only" (additive, default 0/off) + per-FX "Dry kill" (0/1) +
+      // delay stereo "Spread" (0–100) — all coerced so a stray value can't break
+      // the apply path. Absent = neutral (off/0).
+      host.wetOnly = host.wetOnly ? 1 : 0;
+      const _dk = (fx) => { if (fx && typeof fx === 'object') fx.dryKill = fx.dryKill ? 1 : 0; };
       if (!host.delay || typeof host.delay !== 'object') host.delay = { ...d.delay };
-      else ['mix', 'timeMs', 'feedback', 'ping'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
+      else ['mix', 'timeMs', 'feedback', 'ping', 'spread'].forEach(k => { if (!Number.isFinite(host.delay[k])) host.delay[k] = d.delay[k]; });
+      host.delay.spread = Math.max(0, Math.min(100, host.delay.spread | 0)); _dk(host.delay);
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
       else ['mix', 'amount'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
+      _dk(host.dist);
       // WRITE (X bars × Y plays): coerce when present; ABSENT = off (additive,
       // kept out of defaults — the normalize trap).
       if (host.write != null) {
@@ -1169,16 +1180,21 @@
           pe.step = Math.max(-7, Math.min(7, Number.isFinite(pe.step) ? (pe.step | 0) : 2));
           if (typeof pe.pattern !== 'string') pe.pattern = '';
           pe.feedback = Math.max(0, Math.min(100, Number.isFinite(pe.feedback) ? (pe.feedback | 0) : 65));
+          pe.spread = Math.max(0, Math.min(100, Number.isFinite(pe.spread) ? (pe.spread | 0) : 0));
+          pe.dryKill = pe.dryKill ? 1 : 0;
         }
       }
       // Distortion FLAVOR: coerce when present; ABSENT = classic (additive).
       if (host.dist.flavor != null && ['overdrive', 'fuzz', 'fold', 'crush'].indexOf(host.dist.flavor) < 0) delete host.dist.flavor;
       if (!host.chorus || typeof host.chorus !== 'object') host.chorus = { ...d.chorus };
       else ['mix', 'depth', 'rate'].forEach(k => { if (!Number.isFinite(host.chorus[k])) host.chorus[k] = d.chorus[k]; });
+      _dk(host.chorus);
       if (!host.phaser || typeof host.phaser !== 'object') host.phaser = { ...d.phaser };
       else ['mix', 'depth', 'rate'].forEach(k => { if (!Number.isFinite(host.phaser[k])) host.phaser[k] = d.phaser[k]; });
+      _dk(host.phaser);
       if (!host.autopan || typeof host.autopan !== 'object') host.autopan = { ...d.autopan };
       else ['mix', 'depth', 'rate'].forEach(k => { if (!Number.isFinite(host.autopan[k])) host.autopan[k] = d.autopan[k]; });
+      _dk(host.autopan);
       // SYNTH KIT: coerce voices when present (absent = generated on demand from
       // the seed; kept out of defaults). Only meaningful when kit === 'synth'.
       if (host.synthKit != null) {
@@ -2492,6 +2508,10 @@
       const step = Math.max(-7, Math.min(7, pe.step | 0));
       const pat = _ambPechoPattern(pe.pattern);
       const fb = Math.max(0, Math.min(100, pe.feedback | 0)) / 100;
+      // Stereo Spread (0–100): pan successive echoes alternately L/R by ±spread so
+      // the repeats scatter across the field (ping-pong feel). 0 = keep the source
+      // note's own pan (untouched).
+      const spread = Math.max(0, Math.min(100, pe.spread | 0));
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const baseVol = Number.isFinite(params.volume) ? params.volume : 100;
       // RE-HARMONIZE across chord boundaries: for a PROGRESSION source, transpose
@@ -2512,6 +2532,7 @@
         if (ev < 2 && fb <= 0) break;   // faded to silence
         const ep = {}; for (const k in params) { if (k === '_detuneMod') continue; ep[k] = params[k]; }
         ep.volume = ev; ep._pecho = true;
+        if (spread > 0) ep.pan = ((i % 2) ? 1 : -1) * spread;   // alternate L/R
         if (dmod) ep._detuneMod = dmod;
         try { playNote(ef, ep, durMs, echoAt, dest, undefined, E.laneIdx()); } catch (e) {}
       }
@@ -4727,11 +4748,23 @@
       if (!E.runPhase) E.runPhase = {};
       const unitSec = Math.max(0.05, _ambEffIntervalSec(inst)) * _ambLayerScale(E, key, inst, cfg);   // Unit-Sync scaled
       const hold = Math.max(1, Math.min(64, inst.hold | 0) || 1);
-      const cycleSec = hold * unitSec;
+      let cycleSec = hold * unitSec;
       if (!(cycleSec > 0.05)) return;
       const reg = Math.max(1, Math.min(7, inst.register | 0) || 3);
       const src = _ambNotesOf(inst);
       const n = _ambAsNotes(src);
+      // FOLLOW THE PROGRESSION: a drone with a long hold re-voices only once per
+      // cycle, so it sits on ONE chord while the area's chords change underneath
+      // (the "drone stuck on the first chord" report). When a progression is
+      // active AND a chord is shorter than the hold, cap the re-voice cycle to the
+      // chord length so the drone re-harmonizes every chord. Non-prog drones are
+      // untouched (byte-identical → harness-safe).
+      const _isProg = (n.type === 'prog');
+      if (_isProg) {
+        const _barSec = (60 / Math.max(20, (cfg && cfg.bpm > 0) ? cfg.bpm : _ambBpm())) * 4;
+        const _chordSec = Math.max(0.05, (Math.max(0.01, (cfg && cfg.barsPerChord) || 1)) * _barSec);
+        if (_chordSec < cycleSec) cycleSec = _chordSec;
+      }
       // Density/Degree voicing: of the current source's tones (chord tones for a
       // chord/wrap/prog, scale degrees for a scale), start at the Degree-th tone
       // (the voicing root) and stack `density` consecutive tones, bumping up an
@@ -4759,7 +4792,7 @@
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
 
-      const isProg = (n.type === 'prog');   // per-layer: one chord per drone cycle
+      const isProg = _isProg;   // per-layer: one chord per drone cycle (re-voice cap applied above)
       const cFrom = Math.max(0, Math.floor((tFrom - st.startAt) / cycleSec));
       const cTo   = Math.floor((tTo - st.startAt) / cycleSec);
       let cap = 0;
@@ -7199,30 +7232,43 @@
       if (!e || !lc) return;
       try { _ambApplyLayerFilter(layer, lc); } catch (x) {}   // live cutoff/reso
       const dly = lc.delay || {}, dst = lc.dist || {}, cho = lc.chorus || {}, pha = lc.phaser || {}, apan = lc.autopan || {};
-      const wantDelay = (dly.mix | 0) > 0;
+      // Dry Kill: a wet FX with dryKill on is ENGAGED even at Mix 0 (it plays fully
+      // wet). Wet Only (layer): forces every engaged in-line FX to fully wet so the
+      // chain carries no dry, and — when no in-line FX is engaged — mutes the layer's
+      // direct output (core strip_mainout) so only the parallel reverb wash sounds.
+      const wetOnly = !!(lc.wetOnly);
+      const dk = (fx) => !!(fx && fx.dryKill);
+      // effective wet (0..1) for an FX given its Mix — 1.0 when its own Dry Kill or
+      // the layer Wet Only is on.
+      const _wet01 = (fx) => (wetOnly || dk(fx)) ? 1 : Math.max(0, Math.min(1, (fx.mix | 0) / 100));
+      const wantDelay = (dly.mix | 0) > 0 || dk(dly);
       const wantPing = (dly.ping | 0) > 0;   // ping-pong vs plain feedback delay
-      const wantDist = (dst.mix | 0) > 0;
-      const wantChorus = (cho.mix | 0) > 0;
-      const wantPhaser = (pha.mix | 0) > 0;
-      const wantAutopan = (apan.mix | 0) > 0;
+      const wantDist = (dst.mix | 0) > 0 || dk(dst);
+      const wantChorus = (cho.mix | 0) > 0 || dk(cho);
+      const wantPhaser = (pha.mix | 0) > 0 || dk(pha);
+      const wantAutopan = (apan.mix | 0) > 0 || dk(apan);
+      const anyInline = wantDelay || wantDist || wantChorus || wantPhaser || wantAutopan;
       // CORE STRIPS: FX run inside the core — push configs (rate/depth maps
       // match the node builders below exactly), no node churn at all.
       if (e.core) {
         const sl = e.core.slot, c01 = (v) => Math.max(0, Math.min(1, (v | 0) / 100));
         try {
-          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), c01(dst.mix), _ambDistModeIdx(dst.flavor));   // flavor → dist_mode (node fallback keeps the classic curve)
-          e.core.cmd('strip_chorus', sl, wantChorus ? 1 : 0, c01(cho.mix), c01(cho.depth),
+          e.core.cmd('strip_dist', sl, wantDist ? 1 : 0, c01(dst.amount), _wet01(dst), _ambDistModeIdx(dst.flavor));   // flavor → dist_mode (node fallback keeps the classic curve)
+          e.core.cmd('strip_chorus', sl, wantChorus ? 1 : 0, _wet01(cho), c01(cho.depth),
             0.1 + Math.max(0, Math.min(100, cho.rate | 0)) / 100 * 4.9);
-          e.core.cmd('strip_phaser', sl, wantPhaser ? 1 : 0, c01(pha.mix),
+          e.core.cmd('strip_phaser', sl, wantPhaser ? 1 : 0, _wet01(pha),
             1 + Math.max(0, Math.min(100, pha.depth | 0)) / 100 * 4,
             0.1 + Math.max(0, Math.min(100, pha.rate | 0)) / 100 * 3.9);
-          e.core.cmd('strip_delay', sl, wantDelay ? 1 : 0, wantPing ? 1 : 0, c01(dly.mix),
-            Math.max(0.001, (dly.timeMs | 0) / 1000), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)));
-          e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, c01(apan.mix), c01(apan.depth),
+          e.core.cmd('strip_delay', sl, wantDelay ? 1 : 0, wantPing ? 1 : 0, _wet01(dly),
+            Math.max(0.001, (dly.timeMs | 0) / 1000), Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100)), c01(dly.spread));
+          e.core.cmd('strip_autopan', sl, wantAutopan ? 1 : 0, _wet01(apan), c01(apan.depth),
             0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95);
           e.revSend.gain.value = _ambRevSendGain(layer, lc.revSend);
           const _fo = _ambFxCoreOrder(lc);
           e.core.cmd('strip_fxorder', sl, _fo[0], _fo[1], _fo[2], _fo[3], _fo[4]);   // in-line FX processed in fxChain order
+          // Wet Only with no in-line FX → mute the dry output (reverb send survives).
+          // With ≥1 in-line FX the wet=1 forcing above already strips the dry.
+          e.core.cmd('strip_mainout', sl, (wetOnly && !anyInline) ? 0 : 1);
         } catch (x) {}
         try { _ambApplyEq(layer, lc); } catch (x) {}
         return;
@@ -7259,27 +7305,30 @@
           // (reverb send taps the VCA, pre-gate — see _ambBuildMod — so it is
           // not re-routed here.)
         }
+        // Node fallback: Dry Kill / Wet Only force a node's wet to 1 via _wet01.
+        // Delay `spread` is a core-only Haas widening (Tone's delay nodes expose no
+        // tap offset) — the node fallback plays the delay without it.
         if (e.dist) {
           e.dist.distortion = Math.max(0, Math.min(1, (dst.amount | 0) / 100));
-          e.dist.wet.value = Math.max(0, Math.min(1, (dst.mix | 0) / 100));
+          e.dist.wet.value = _wet01(dst);
         }
         if (e.delay) {
           e.delay.delayTime.value = Math.max(0.001, (dly.timeMs | 0) / 1000);
           e.delay.feedback.value = Math.max(0, Math.min(0.95, (dly.feedback | 0) / 100));
-          e.delay.wet.value = Math.max(0, Math.min(1, (dly.mix | 0) / 100));
+          e.delay.wet.value = _wet01(dly);
         }
         if (e.chorus) {
-          e.chorus.wet.value = Math.max(0, Math.min(1, (cho.mix | 0) / 100));
+          e.chorus.wet.value = _wet01(cho);
           e.chorus.depth = Math.max(0, Math.min(1, (cho.depth | 0) / 100));
           e.chorus.frequency.value = 0.1 + Math.max(0, Math.min(100, cho.rate | 0)) / 100 * 4.9;   // ~0.1–5 Hz
         }
         if (e.phaser) {
-          e.phaser.wet.value = Math.max(0, Math.min(1, (pha.mix | 0) / 100));
+          e.phaser.wet.value = _wet01(pha);
           e.phaser.octaves = 1 + Math.max(0, Math.min(100, pha.depth | 0)) / 100 * 4;               // 1–5 octaves sweep
           e.phaser.frequency.value = 0.1 + Math.max(0, Math.min(100, pha.rate | 0)) / 100 * 3.9;     // ~0.1–4 Hz
         }
         if (e.autopan) {
-          e.autopan.wet.value = Math.max(0, Math.min(1, (apan.mix | 0) / 100));
+          e.autopan.wet.value = _wet01(apan);
           e.autopan.depth.value = Math.max(0, Math.min(1, (apan.depth | 0) / 100));                  // 0 → centre, 1 → full L↔R
           e.autopan.frequency.value = 0.05 + Math.max(0, Math.min(100, apan.rate | 0)) / 100 * 7.95; // ~0.05–8 Hz
         }
@@ -9143,8 +9192,14 @@
           if (_lc && _lc.pecho && _lc.pecho.on) {
             const _sk = (typeof window !== 'undefined') ? window._ambEmitKey : null;
             const _sa = (typeof window !== 'undefined') ? window._ambEmitAt : null;
+            // Schedule the echoes FIRST (they read params.volume as their base),
+            // THEN — for Dry Kill — mute the source note. This sink runs BEFORE the
+            // voice is created in playNote, so zeroing params.volume silences the
+            // dry while the pitched echoes (already scheduled at the real level)
+            // still sound. The captured copy (arr.push above) kept the true level.
             try { _ambSchedulePitchEcho(E, key, _lc, freq, params, dur, at); } catch (e) {}
             if (typeof window !== 'undefined') { window._ambEmitKey = _sk; window._ambEmitAt = _sa; }
+            if (_lc.pecho.dryKill && params && !window._ambSilentCapture) params.volume = 0;
           }
         }
       };
@@ -13752,7 +13807,7 @@
       { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) lc.autopan.mix = 0; }, zero: [['fx-apan-mix', 0]] },
       // Pitch echo — a GENERATIVE note echo (re-emits pitched notes, not audio),
       // so it's not in the audio chain / not orderable. on materializes on add.
-      { id: 'pecho',   label: 'Pitch echo',  engaged: (lc) => !!(lc.pecho && lc.pecho.on),               off: (lc) => { if (lc.pecho) lc.pecho.on = false; }, zero: [], add: (lc) => { lc.pecho = Object.assign({ on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65 }, lc.pecho || {}, { on: true }); } },
+      { id: 'pecho',   label: 'Pitch echo',  engaged: (lc) => !!(lc.pecho && lc.pecho.on),               off: (lc) => { if (lc.pecho) lc.pecho.on = false; }, zero: [], add: (lc) => { lc.pecho = Object.assign({ on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65, spread: 0, dryKill: 0 }, lc.pecho || {}, { on: true }); } },
     ];
     // The layer's FX chain: its own list when set, else DERIVED from engagement
     // (legacy projects show exactly the FX that are audible). Not persisted until
@@ -13858,6 +13913,12 @@
         setv('.ambient-pecho-step', Number.isFinite(pe.step) ? pe.step : 2); seth('.ambient-pecho-step-v', (Number.isFinite(pe.step) ? pe.step : 2) + ' deg');
         setv('.ambient-pecho-pat', pe.pattern || '');
         setv('.ambient-pecho-fb', Number.isFinite(pe.feedback) ? pe.feedback : 65); seth('.ambient-pecho-fb-v', (Number.isFinite(pe.feedback) ? pe.feedback : 65) + '%');
+        setv('.ambient-pecho-spread', Number.isFinite(pe.spread) ? pe.spread : 0); seth('.ambient-pecho-spread-v', (Number.isFinite(pe.spread) ? pe.spread : 0) + (pe.spread > 0 ? ' L↔R' : ''));
+        // Layer "Wet only" + per-FX "Dry kill" checkboxes reflect the config.
+        const wo = det.querySelector('.ambient-fx-wetonly-cb'); if (wo) wo.checked = !!lc.wetOnly;
+        det.querySelectorAll('.ambient-fx-drykill').forEach(cb => {
+          const fx = lc[cb.getAttribute('data-fx')]; cb.checked = !!(fx && fx.dryKill);
+        });
       });
     }
     const _ambFxItem = (id, label, inner) =>
@@ -13868,9 +13929,19 @@
         // Always-on core sends (Filter / Reverb) can't be removed — just set to 0.
         (_AMB_FX_ALWAYS.indexOf(id) >= 0 ? '' : '<button type="button" class="ambient-fx-del" data-fx="' + id + '" title="Remove this effect (turns it off)">✕</button>') +
         '</div>' + inner + '</div></div>';
+    // Per-FX "Dry kill" — a compact checkbox forcing this effect to 100% wet
+    // (its dry signal removed). Delegated by class + data-fx (mobile-safe, one
+    // listener for every layer). id = the FX object key (delay/dist/…).
+    const _ambFxDk = (id) =>
+      '<label class="ambient-fx-dk" title="Dry Kill — play only this effect’s fully-wet output (removes its dry signal). For Delay = echoes only.">' +
+      '<input type="checkbox" class="ambient-fx-drykill" data-fx="' + id + '"><span>Dry kill</span></label>';
     const _ambFxUi = (layer) =>
       '<details class="ambient-mod ambient-fxmod"><summary class="ambient-mod-head">FX</summary>' +
         '<div class="ambient-fx-chainviz" aria-live="polite" title="Signal chain — Filter (pre) → in-line FX (reorderable) → out, with Reverb as a parallel send"></div>' +
+        // Layer "Wet only": mute the direct/dry output so only the wet tails sound
+        // (reverb wash + any in-line FX, forced fully wet). Classic ambient drench.
+        '<label class="ambient-fx-wetonly" title="Wet only — mute this layer’s dry output so you hear only its wet tails (reverb send + in-line FX forced fully wet).">' +
+        '<input type="checkbox" class="ambient-fx-wetonly-cb"><span>Wet only</span></label>' +
         // Live per-layer low-pass filter — Cutoff sweeps the whole layer (tails
         // included) in real time; Resonance peaks at the cutoff. Cutoff 100 = open.
         _ambFxItem('filter', 'Filter',
@@ -13882,29 +13953,37 @@
           _ambSl('Mix', 'ambient-' + layer + '-fx-dly-mix', 0, 100, 0, 'dry → wet') +
           _ambTm('Time', 'ambient-' + layer + '-fx-dly-time', 20, 1500, 5, 300) +
           _ambSl('Feedback', 'ambient-' + layer + '-fx-dly-fb', 0, 95, 35, '%') +
-          _ambSl('Ping-Pong', 'ambient-' + layer + '-fx-dly-ping', 0, 1, 0, 'normal → bounce L/R')) +
+          _ambSl('Ping-Pong', 'ambient-' + layer + '-fx-dly-ping', 0, 1, 0, 'normal → bounce L/R') +
+          _ambSl('Spread', 'ambient-' + layer + '-fx-dly-spread', 0, 100, 0, 'mono → wide (stereo)') +
+          _ambFxDk('delay')) +
         _ambFxItem('chorus', 'Chorus',
           _ambSl('Mix', 'ambient-' + layer + '-fx-cho-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-cho-depth', 0, 100, 50, 'subtle → deep') +
-          _ambSl('Rate', 'ambient-' + layer + '-fx-cho-rate', 0, 100, 30, 'slow → fast')) +
+          _ambSl('Rate', 'ambient-' + layer + '-fx-cho-rate', 0, 100, 30, 'slow → fast') +
+          _ambFxDk('chorus')) +
         _ambFxItem('phaser', 'Phaser',
           _ambSl('Mix', 'ambient-' + layer + '-fx-pha-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-pha-depth', 0, 100, 50, 'narrow → wide') +
-          _ambSl('Rate', 'ambient-' + layer + '-fx-pha-rate', 0, 100, 30, 'slow → fast')) +
+          _ambSl('Rate', 'ambient-' + layer + '-fx-pha-rate', 0, 100, 30, 'slow → fast') +
+          _ambFxDk('phaser')) +
         _ambFxItem('autopan', 'Auto-Pan',
           _ambSl('Mix', 'ambient-' + layer + '-fx-apan-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-apan-depth', 0, 100, 100, 'centre → full L↔R') +
-          _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast')) +
+          _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast') +
+          _ambFxDk('autopan')) +
         _ambFxItem('pecho', 'Pitch echo',
           '<div class="ambient-ctrl"><label title="Echo spacing. Free ms, or set Sync to lock the repeats to a beat division.">Time</label><input type="number" class="ambient-pecho-time" min="20" max="4000" step="10" title="Echo time (ms)"> <span class="ambient-hint">ms</span> <select class="ambient-select ambient-pecho-sync" title="Sync the echo spacing to a beat division (overrides ms)"><option value="">free</option><option value="1/4">1/4</option><option value="1/8">1/8</option><option value="1/8T">1/8T</option><option value="1/16">1/16</option><option value="1/16T">1/16T</option></select></div>' +
           '<div class="ambient-ctrl"><label title="How many pitched echoes per note.">Repeats</label><input type="range" class="ambient-pecho-reps" min="1" max="12" step="1"><span class="ambient-hint ambient-pecho-reps-v"></span></div>' +
           '<div class="ambient-ctrl"><label title="Scale degrees each echo climbs (+) or falls (−) — relative to the layer&#39;s scale, so it stays in key.">Step</label><input type="range" class="ambient-pecho-step" min="-7" max="7" step="1"><span class="ambient-hint ambient-pecho-step-v"></span></div>' +
           '<div class="ambient-ctrl"><label title="Optional arpeggio: comma-separated scale-degree offsets the echoes cycle through, e.g. 0,4,7 to arpeggiate a chord. Adds on top of Step.">Arp</label><input type="text" class="ambient-pecho-pat ambient-select" placeholder="e.g. 0,4,7" title="Arp pattern of scale-degree offsets"><span class="ambient-hint">degrees</span></div>' +
-          '<div class="ambient-ctrl"><label title="Each echo&#39;s level vs the previous (100 = no decay, 0 = silent).">Feedback</label><input type="range" class="ambient-pecho-fb" min="0" max="100" step="1"><span class="ambient-hint ambient-pecho-fb-v"></span></div>') +
+          '<div class="ambient-ctrl"><label title="Each echo&#39;s level vs the previous (100 = no decay, 0 = silent).">Feedback</label><input type="range" class="ambient-pecho-fb" min="0" max="100" step="1"><span class="ambient-hint ambient-pecho-fb-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Stereo spread — pan successive echoes alternately left/right by this amount so the repeats scatter across the field. 0 keeps the note&#39;s own pan.">Spread</label><input type="range" class="ambient-pecho-spread" min="0" max="100" step="1"><span class="ambient-hint ambient-pecho-spread-v"></span></div>' +
+          _ambFxDk('pecho')) +
         _ambFxItem('dist', 'Distortion',
           '<div class="ambient-ctrl"><label title="Distortion character. Classic = the original curve. Overdrive = smooth warm tanh. Fuzz = hard asymmetric clip with a sputtery crossover gate. Wavefold = triangle folding (west-coast). Crush = bit-depth quantize.">Type</label><select class="ambient-select ambient-fx-dist-flavor">' + _AMB_DIST_FLAVORS.map(f => '<option value="' + f[0] + '">' + f[1] + '</option>').join('') + '</select><span class="ambient-hint">character</span></div>' +
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
-          _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet')) +
+          _ambSl('Mix', 'ambient-' + layer + '-fx-dist-mix', 0, 100, 0, 'dry → wet') +
+          _ambFxDk('dist')) +
         '<div class="ambient-fx-addrow"><button type="button" class="ambient-seg ambient-fx-add" title="Add an effect to this layer">＋ Add FX</button></div>' +
       '</details>' + _ambEqUi();
     // Per-layer 3-band EQ subsection (#1) — lives inside the Mix group (after FX).
@@ -14527,7 +14606,7 @@
       bindFx('rev', (q, v) => { q.revSend = v; });
       bindFx('dly-mix', (q, v) => { q.delay.mix = v; });
       bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
-      bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; });
+      bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
@@ -14552,7 +14631,7 @@
       ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
       setVal('mod-sync', (s.mod && s.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', s.revSend);
-      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); }
+      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
@@ -14821,7 +14900,7 @@
       bindFx('rev', (q, v) => { q.revSend = v; });
       bindFx('dly-mix', (q, v) => { q.delay.mix = v; });
       bindFx('dly-time', (q, v) => { q.delay.timeMs = v; });
-      bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; });
+      bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; });
       bindFx('dist-amt', (q, v) => { q.dist.amount = v; });
       bindFx('dist-mix', (q, v) => { q.dist.mix = v; });
       bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; });
@@ -14857,7 +14936,7 @@
       ['vca', 'vco', 'vcf'].forEach(t => { if (!s.mod || !s.mod[t]) return; setVal('mod-' + t + '-depth', s.mod[t].depth); setVal('mod-' + t + '-rate', s.mod[t].rate); _ambSyncModShapeEl(el, s.mod[t], t); });
       setVal('mod-sync', (s.mod && s.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', s.revSend);
-      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); }
+      if (s.delay) { setVal('fx-dly-mix', s.delay.mix); setVal('fx-dly-time', s.delay.timeMs); const dtv = el('fx-dly-time-v'); if (dtv) dtv.textContent = _ambFmtMs(s.delay.timeMs); setVal('fx-dly-fb', s.delay.feedback); setVal('fx-dly-ping', s.delay.ping); setVal('fx-dly-spread', s.delay.spread || 0); }
       if (s.dist) { setVal('fx-dist-amt', s.dist.amount); setVal('fx-dist-mix', s.dist.mix); }
       if (s.chorus) { setVal('fx-cho-mix', s.chorus.mix); setVal('fx-cho-depth', s.chorus.depth); setVal('fx-cho-rate', s.chorus.rate); }
       if (s.phaser) { setVal('fx-pha-mix', s.phaser.mix); setVal('fx-pha-depth', s.phaser.depth); setVal('fx-pha-rate', s.phaser.rate); }
@@ -15493,7 +15572,12 @@
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +
         '</div></div>';
       if (k === 'rate') return _ambRateSel(p + '-rate');
-      if (k === 'seedmode') return _ambSeedModeHtml(lk);
+      // Seed mode (Generate/Author) carries the CANONICAL layer key so the handler's
+      // _ambLayerByKey/_ambSeedPreview + piano [data-pkey] queries resolve. Primaries
+      // key by bare type (lk === type); extras' `lk` is the DASH id-prefix form
+      // (`run-1`) — convert to the colon form (`run:1`) everything else uses, else
+      // _ambLayerByKey('run-1') → cfg['run-1'] = undefined and Author silently no-ops.
+      if (k === 'seedmode') return _ambSeedModeHtml((lk === type) ? type : (type + ':' + lk.slice(type.length + 1)));
       if (k === 'home') return '<div class="ambient-ctrl"><label for="' + p + '-home" title="Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).">Home</label><select id="' + p + '-home" class="ambient-select"><option value="floor">Floor</option><option value="center">Center</option><option value="ceiling">Ceiling</option></select><span class="ambient-hint">Register sits at\u2026</span></div>';
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
@@ -15859,13 +15943,13 @@
       });
       { const sy = el('mod-sync'); if (sy) sy.addEventListener('change', () => { _E = E; const L = get(); if (!L || !L.mod) return; L.mod.sync = sy.value; sync(); persist(); }); }
       const bindFx = (suf, setter) => { const e = el('fx-' + suf); if (!e) return; const v = el('fx-' + suf + '-v'); e.addEventListener('input', () => { const L = get(); if (!L) return; const val = parseInt(e.value, 10) || 0; setter(L, val); if (v && /time/.test(suf)) v.textContent = _ambFmtMs(val); sync(); persist(); }); };
-      bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; }); bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; }); bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; }); bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
+      bindFx('rev', (q, v) => { q.revSend = v; }); bindFx('dly-mix', (q, v) => { q.delay.mix = v; }); bindFx('dly-time', (q, v) => { q.delay.timeMs = v; }); bindFx('dly-fb', (q, v) => { q.delay.feedback = v; }); bindFx('dly-ping', (q, v) => { q.delay.ping = v; }); bindFx('dly-spread', (q, v) => { q.delay.spread = v; }); bindFx('dist-amt', (q, v) => { q.dist.amount = v; }); bindFx('dist-mix', (q, v) => { q.dist.mix = v; }); bindFx('cho-mix', (q, v) => { q.chorus.mix = v; }); bindFx('cho-depth', (q, v) => { q.chorus.depth = v; }); bindFx('cho-rate', (q, v) => { q.chorus.rate = v; }); bindFx('pha-mix', (q, v) => { q.phaser.mix = v; }); bindFx('pha-depth', (q, v) => { q.phaser.depth = v; }); bindFx('pha-rate', (q, v) => { q.phaser.rate = v; }); bindFx('apan-mix', (q, v) => { q.autopan.mix = v; }); bindFx('apan-depth', (q, v) => { q.autopan.depth = v; }); bindFx('apan-rate', (q, v) => { q.autopan.rate = v; });
       _ambWireTg(E, el, get, persist);
       _ambWireFilter(E, el, get, type + ':' + id, persist);
       ['vca', 'vco', 'vcf'].forEach(t => { if (inst.mod && inst.mod[t]) { setVal('mod-' + t + '-depth', inst.mod[t].depth); setVal('mod-' + t + '-rate', inst.mod[t].rate); _ambSyncModShapeEl(el, inst.mod[t], t); } });
       setVal('mod-sync', (inst.mod && inst.mod.sync === 'sync') ? 'sync' : 'free');
       setVal('fx-rev', inst.revSend);
-      if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); setVal('fx-dly-ping', inst.delay.ping); }
+      if (inst.delay) { setVal('fx-dly-mix', inst.delay.mix); setVal('fx-dly-time', inst.delay.timeMs); const dt = el('fx-dly-time-v'); if (dt) dt.textContent = _ambFmtMs(inst.delay.timeMs); setVal('fx-dly-fb', inst.delay.feedback); setVal('fx-dly-ping', inst.delay.ping); setVal('fx-dly-spread', inst.delay.spread || 0); }
       if (inst.dist) { setVal('fx-dist-amt', inst.dist.amount); setVal('fx-dist-mix', inst.dist.mix); }
       if (inst.chorus) { setVal('fx-cho-mix', inst.chorus.mix); setVal('fx-cho-depth', inst.chorus.depth); setVal('fx-cho-rate', inst.chorus.rate); }
       if (inst.phaser) { setVal('fx-pha-mix', inst.phaser.mix); setVal('fx-pha-depth', inst.phaser.depth); setVal('fx-pha-rate', inst.phaser.rate); }
@@ -17626,7 +17710,7 @@
       ['bed', 'motif', 'texture', 'beat'].forEach(layer => {
         const L = cfg[layer]; if (!L) return;
         set('ambient-' + layer + '-fx-rev', L.revSend);
-        if (L.delay) { set('ambient-' + layer + '-fx-dly-mix', L.delay.mix); set('ambient-' + layer + '-fx-dly-time', L.delay.timeMs); hint('ambient-' + layer + '-fx-dly-time-v', _ambFmtMs(L.delay.timeMs)); set('ambient-' + layer + '-fx-dly-fb', L.delay.feedback); set('ambient-' + layer + '-fx-dly-ping', L.delay.ping); }
+        if (L.delay) { set('ambient-' + layer + '-fx-dly-mix', L.delay.mix); set('ambient-' + layer + '-fx-dly-time', L.delay.timeMs); hint('ambient-' + layer + '-fx-dly-time-v', _ambFmtMs(L.delay.timeMs)); set('ambient-' + layer + '-fx-dly-fb', L.delay.feedback); set('ambient-' + layer + '-fx-dly-ping', L.delay.ping); set('ambient-' + layer + '-fx-dly-spread', L.delay.spread || 0); }
         if (L.dist) { set('ambient-' + layer + '-fx-dist-amt', L.dist.amount); set('ambient-' + layer + '-fx-dist-mix', L.dist.mix); }
         if (L.chorus) { set('ambient-' + layer + '-fx-cho-mix', L.chorus.mix); set('ambient-' + layer + '-fx-cho-depth', L.chorus.depth); set('ambient-' + layer + '-fx-cho-rate', L.chorus.rate); }
         if (L.phaser) { set('ambient-' + layer + '-fx-pha-mix', L.phaser.mix); set('ambient-' + layer + '-fx-pha-depth', L.phaser.depth); set('ambient-' + layer + '-fx-pha-rate', L.phaser.rate); }
@@ -18760,7 +18844,7 @@
           }
           // Pitch echo controls — delegated input/change, class-based, every card.
           {
-            const _pechoOf = (el) => { const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null; _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return null; if (!lc.pecho || typeof lc.pecho !== 'object') lc.pecho = { on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65 }; return lc.pecho; };
+            const _pechoOf = (el) => { const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null; _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return null; if (!lc.pecho || typeof lc.pecho !== 'object') lc.pecho = { on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65, spread: 0, dryKill: 0 }; return lc.pecho; };
             const _pechoWrite = (el) => {
               const pe = _pechoOf(el); if (!pe) return;
               const cl = el.classList, v = parseInt(el.value, 10);
@@ -18770,14 +18854,42 @@
               else if (cl.contains('ambient-pecho-step')) pe.step = Math.max(-7, Math.min(7, Number.isFinite(v) ? v : 2));
               else if (cl.contains('ambient-pecho-pat')) pe.pattern = String(el.value || '');
               else if (cl.contains('ambient-pecho-fb')) pe.feedback = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 65));
+              else if (cl.contains('ambient-pecho-spread')) pe.spread = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 0));
               else return;
-              const row = el.closest('.ambient-fx-item'); if (row) { try { _ambSyncFxVis(E); } catch (e) {} }
+              // Update ONLY the changed slider's readout inline. Do NOT call
+              // _ambSyncFxVis here — it reorders the FX cards (insertBefore) and
+              // re-runs setv over every input, which BLURS a focused Time/Arp text
+              // field mid-type and then overwrites it (the "types one digit, loses
+              // focus, reverts" bug). The chain/order is unaffected by a param edit.
+              const it = el.closest('.ambient-fx-item');
+              const seth = (cls, txt) => { const h = it && it.querySelector(cls); if (h) h.textContent = txt; };
+              if (cl.contains('ambient-pecho-reps')) seth('.ambient-pecho-reps-v', pe.repeats);
+              else if (cl.contains('ambient-pecho-step')) seth('.ambient-pecho-step-v', pe.step + ' deg');
+              else if (cl.contains('ambient-pecho-fb')) seth('.ambient-pecho-fb-v', pe.feedback + '%');
+              else if (cl.contains('ambient-pecho-spread')) seth('.ambient-pecho-spread-v', pe.spread + (pe.spread > 0 ? ' L↔R' : ''));
               if (typeof persistWorkspace === 'function') persistWorkspace();
             };
-            const _pechoSel = '.ambient-pecho-time, .ambient-pecho-sync, .ambient-pecho-reps, .ambient-pecho-step, .ambient-pecho-pat, .ambient-pecho-fb';
+            const _pechoSel = '.ambient-pecho-time, .ambient-pecho-sync, .ambient-pecho-reps, .ambient-pecho-step, .ambient-pecho-pat, .ambient-pecho-fb, .ambient-pecho-spread';
             hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest(_pechoSel); if (el && hostEl.contains(el)) _pechoWrite(el); });
             hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-pecho-sync'); if (el && hostEl.contains(el)) _pechoWrite(el); });
           }
+          // Dry Kill (per-FX) + Wet Only (layer) checkboxes — ONE delegated change
+          // listener for every card (class-based, mobile-safe). Both re-apply the
+          // layer FX live (dry-kill can newly ENGAGE an FX at Mix 0 → node build).
+          hostEl.addEventListener('change', (ev) => {
+            const cb = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-drykill, .ambient-fx-wetonly-cb');
+            if (!cb || !hostEl.contains(cb)) return;
+            const key = _ambCardKey(cb.closest('.ambient-layer')); if (!key) return;
+            _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return;
+            if (cb.classList.contains('ambient-fx-wetonly-cb')) { lc.wetOnly = cb.checked ? 1 : 0; }
+            else {
+              const fx = cb.getAttribute('data-fx');
+              if (!lc[fx] || typeof lc[fx] !== 'object') return;
+              lc[fx].dryKill = cb.checked ? 1 : 0;
+            }
+            if (typeof _ambLiveApplyOK !== 'function' || _ambLiveApplyOK(E)) { try { _ambApplyLayerFx(key, lc); } catch (e) {} }
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
           // Distortion flavor — ONE delegated change listener for every card.
           hostEl.addEventListener('change', (ev) => {
             const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-dist-flavor');

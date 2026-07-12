@@ -11324,6 +11324,25 @@
     .ambient-fx-item[data-fx="pecho"] .ambient-pecho-pat { width: 90px; text-align: center; }
     .ambient-fx-item[data-fx="pecho"] .ambient-pecho-sync { min-width: 56px; }
 
+    /* Per-FX "Dry kill" checkbox (compact, sits under the FX's sliders) + the
+       layer "Wet only" toggle (top of the FX section). Big tap target for mobile. */
+    .ambient-fx-dk, .ambient-fx-wetonly {
+      display: flex; align-items: center; gap: 7px;
+      font: 600 0.72rem 'Segoe UI', sans-serif; color: #a0aec0;
+      cursor: pointer; user-select: none; -webkit-user-select: none;
+      padding: 3px 2px; min-height: 26px; touch-action: manipulation;
+    }
+    .ambient-fx-dk input[type="checkbox"], .ambient-fx-wetonly input[type="checkbox"] {
+      width: 18px; height: 18px; margin: 0; flex: 0 0 auto;
+      accent-color: #9f7aea; cursor: pointer; touch-action: manipulation;
+    }
+    .ambient-fx-dk:hover, .ambient-fx-wetonly:hover { color: #c9b8ef; }
+    .ambient-fx-wetonly {
+      margin: 2px 8px 8px; padding: 6px 10px;
+      border: 1px solid #2d2d3f; border-radius: 8px;
+      background: rgba(94, 158, 173, 0.12); color: #9fe0ef;
+    }
+
     /* Synth-kit editor (Beat) */
     .ambient-synthkit { margin: 4px 0 6px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: rgba(45,45,63,0.18); }
     .ambient-sk-head { display: flex; align-items: center; gap: 8px; }

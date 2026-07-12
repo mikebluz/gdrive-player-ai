@@ -206,6 +206,11 @@ pub(crate) struct Strip {
     // the fader reshapes SOUNDING voices in real time; pan mode drives it to
     // 0 (the node panner's point-source behaviour).
     width: Ramp,
+    // MAIN (dry) output gain, applied to OUT after the whole FX chain but AFTER
+    // the reverb SEND is already tapped (line ~643) — so 0 mutes the layer's
+    // direct/dry+in-line-FX output while the parallel reverb wash keeps ringing.
+    // Drives the per-layer "Wet only" toggle. 1.0 = neutral (skipped, byte-identical).
+    main: f32,
     // trance gate (stateless bar-anchored step pattern)
     tg_on: bool,
     tg_steps: u32,
@@ -236,6 +241,12 @@ pub(crate) struct Strip {
     dly_t: f32,
     dly_fb: f32,
     dly_w: usize,
+    // Stereo SPREAD of the delay wet (0..1): a Haas inter-channel offset on the
+    // OUTPUT tap of the right channel (up to ~30 ms), scaled by spread. 0 = both
+    // channels read at the same tap = byte-identical to the pre-spread delay.
+    // The feedback path always reads at the base tap so the echo timing/decay is
+    // unchanged — only the stereo image of what reaches the bus widens.
+    dly_spread: f32,
     ap_on: bool,
     ap_wet: f32,
     ap_depth: f32,
@@ -263,6 +274,7 @@ pub(crate) const STRIP0: Strip = Strip {
     pan: Ramp::at(0.0),
     pan_mod: SMOD0,
     width: Ramp::at(1.0),
+    main: 1.0,
     tg_on: false,
     tg_steps: 16,
     tg_pat: 0,
@@ -290,6 +302,7 @@ pub(crate) const STRIP0: Strip = Strip {
     dly_t: 0.3,
     dly_fb: 0.35,
     dly_w: 0,
+    dly_spread: 0.0,
     ap_on: false,
     ap_wet: 0.0,
     fx_order: [0, 1, 2, 3, 4],
@@ -503,6 +516,11 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
     // TRUE delay on every read; the feedback edge is one quantum old (see
     // the QUANTUM note) — so echo k lands at k·d + (k−1)·128 samples.
     let d = ((st.dly_t.max(0.001) * sr) as usize).clamp(1, DELAY_LEN - 1);
+    // Haas OUTPUT offset for the right channel (spread 0..1 → 0..~30 ms). The
+    // feedback path stays on `d`; only the R output tap reads `d + haas`, so at
+    // spread 0 (haas 0) every read is `d` and the block is byte-identical.
+    let haas = ((st.dly_spread.clamp(0.0, 1.0) * 0.03 * sr) as usize).min(DELAY_LEN - 1 - d);
+    let dr = (d + haas).min(DELAY_LEN - 1);
     for i in 0..frames {
         let w = st.dly_w;
         let q = w % QUANT;
@@ -510,12 +528,13 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
         unsafe {
             if st.dly_ping {
                 let l_out = rd(&DLINE[slot][0], d);
-                let r_out = rd(&DLINE[slot][1], d);
+                let r_fb = rd(&DLINE[slot][1], d);        // R feedback tap (base)
+                let r_out = rd(&DLINE[slot][1], dr);      // R output tap (Haas-offset)
                 let pre_out = rd(&DPRE[slot], d);
                 let (in_l, in_r) = (OUT[slot][0][i], OUT[slot][1][i]);
                 let (l_old, r_old) = (DFB[slot][0][q], DFB[slot][1][q]);
                 DFB[slot][0][q] = l_out;
-                DFB[slot][1][q] = r_out;
+                DFB[slot][1][q] = r_fb;
                 // cross feedback: L out → R delay input, R out → L delay input
                 DLINE[slot][0][w] = in_l + fb * r_old;
                 DLINE[slot][1][w] = pre_out + fb * l_old;
@@ -524,12 +543,13 @@ fn fx_delay(slot: usize, st: &mut Strip, frames: usize) {
                 OUT[slot][1][i] = in_r * cd + r_out * cw;
             } else {
                 for ch in 0..2 {
-                    let out = rd(&DLINE[slot][ch], d);
+                    let fb_read = rd(&DLINE[slot][ch], d);                 // feedback tap (base)
+                    let out_read = rd(&DLINE[slot][ch], if ch == 1 { dr } else { d }); // R output offset
                     let x = OUT[slot][ch][i];
                     let old = DFB[slot][ch][q];
-                    DFB[slot][ch][q] = out;
+                    DFB[slot][ch][q] = fb_read;
                     DLINE[slot][ch][w] = x + fb * old;
-                    OUT[slot][ch][i] = x * cd + out * cw;
+                    OUT[slot][ch][i] = x * cd + out_read * cw;
                 }
             }
         }
@@ -695,6 +715,17 @@ pub(crate) fn process_strips(t_block: f64, frames: usize) {
                     3 => if st.dly_on { fx_delay(slot, st, frames); },
                     4 => if st.ap_on { fx_autopan(st, &mut OUT[slot], t_block, frames); },
                     _ => {}
+                }
+            }
+            // MAIN/dry output gain (layer "Wet only"): scales the post-FX direct
+            // output. The reverb SEND was tapped pre-FX (above), so it survives a
+            // 0 here — muting the dry while the wash rings. 1.0 = skipped/neutral.
+            if st.main != 1.0 {
+                let g = st.main.clamp(0.0, 1.0);
+                for ch in 0..2 {
+                    for i in 0..frames {
+                        OUT[slot][ch][i] *= g;
+                    }
                 }
             }
         }
@@ -920,7 +951,7 @@ pub extern "C" fn strip_phaser(slot: u32, on: u32, wet: f32, octaves: f32, rate:
 }
 
 #[no_mangle]
-pub extern "C" fn strip_delay(slot: u32, on: u32, ping: u32, wet: f32, time_s: f32, feedback: f32) {
+pub extern "C" fn strip_delay(slot: u32, on: u32, ping: u32, wet: f32, time_s: f32, feedback: f32, spread: f32) {
     unsafe {
         let s = (slot as usize) % SLOTS;
         let st = &mut STRIPS[s];
@@ -945,6 +976,15 @@ pub extern "C" fn strip_delay(slot: u32, on: u32, ping: u32, wet: f32, time_s: f
         st.dly_wet = wet.clamp(0.0, 1.0);
         st.dly_t = time_s.clamp(0.001, (DELAY_LEN - 130) as f32 / SR);
         st.dly_fb = feedback.clamp(0.0, 0.95);
+        st.dly_spread = spread.clamp(0.0, 1.0);
+    }
+}
+
+/// Layer "Wet only": main (dry) output gain, 0..1. 1.0 = neutral. See Strip.main.
+#[no_mangle]
+pub extern "C" fn strip_mainout(slot: u32, gain: f32) {
+    unsafe {
+        STRIPS[(slot as usize) % SLOTS].main = gain.clamp(0.0, 1.0);
     }
 }
 

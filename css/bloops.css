@@ -11318,3 +11318,8 @@
     .ambient-fx-up:disabled, .ambient-fx-down:disabled { opacity: 0.25; cursor: default; }
     .ambient-fx-chainviz { font: 600 0.66rem 'JetBrains Mono', monospace; color: #7fd6c4; padding: 4px 10px 6px; white-space: nowrap; overflow-x: auto; }
     .ambient-fx-chainviz:empty { display: none; }
+
+    /* Pitch-echo FX card controls */
+    .ambient-fx-item[data-fx="pecho"] .ambient-pecho-time { width: 56px; }
+    .ambient-fx-item[data-fx="pecho"] .ambient-pecho-pat { width: 90px; text-align: center; }
+    .ambient-fx-item[data-fx="pecho"] .ambient-pecho-sync { min-width: 56px; }

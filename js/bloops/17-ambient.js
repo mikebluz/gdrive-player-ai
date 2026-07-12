@@ -1156,6 +1156,21 @@
           if (host.write.timesMax < host.write.timesMin) { const t = host.write.timesMin; host.write.timesMin = host.write.timesMax; host.write.timesMax = t; }
         }
       }
+      // PITCH ECHO: coerce when present; ABSENT = off (additive, kept out of
+      // defaults — the normalize trap).
+      if (host.pecho != null) {
+        if (typeof host.pecho !== 'object') delete host.pecho;
+        else {
+          const pe = host.pecho;
+          pe.on = pe.on === true;
+          pe.timeMs = Math.max(20, Math.min(4000, pe.timeMs | 0)) || 300;
+          if (typeof pe.sync !== 'string' || (pe.sync && !(typeof _AMB_RATES !== 'undefined' && _AMB_RATES[pe.sync]))) pe.sync = (pe.sync === undefined ? '' : (pe.sync || ''));
+          pe.repeats = Math.max(1, Math.min(12, pe.repeats | 0)) || 3;
+          pe.step = Math.max(-7, Math.min(7, Number.isFinite(pe.step) ? (pe.step | 0) : 2));
+          if (typeof pe.pattern !== 'string') pe.pattern = '';
+          pe.feedback = Math.max(0, Math.min(100, Number.isFinite(pe.feedback) ? (pe.feedback | 0) : 65));
+        }
+      }
       // Distortion FLAVOR: coerce when present; ABSENT = classic (additive).
       if (host.dist.flavor != null && ['overdrive', 'fuzz', 'fold', 'crush'].indexOf(host.dist.flavor) < 0) delete host.dist.flavor;
       if (!host.chorus || typeof host.chorus !== 'object') host.chorus = { ...d.chorus };
@@ -2415,6 +2430,64 @@
       _ambLastDegTone = _ambDegreeToneAt(deg, src);
       _ambLastDegLevel = _ambDegreeLevelAt(deg, src);
       return _ambNoteFreq(intervals[d], octave, src);
+    }
+
+    // Transpose a played frequency by `nDeg` SCALE DEGREES within `src` (equal
+    // temperament, no RNG / colour / quantize side-effects — echoes stay on the
+    // layer's scale). Finds the note's nearest degree + octave, steps by nDeg
+    // (wrapping octaves), returns the new Hz. For the Pitch-echo FX.
+    function _ambScaleTranspose(freq, nDeg, src) {
+      if (!nDeg || !(freq > 0)) return freq;
+      const iv = _ambScaleIntervals(src); const N = iv.length; if (!N) return freq;
+      const A = (typeof masterFreqA === 'number') ? masterFreqA : 440;
+      const root = _ambSrcRootPc(_ambAsNotes(src));
+      const midi = Math.round(69 + 12 * Math.log2(freq / A));
+      const pc = ((midi % 12) + 12) % 12;
+      let d = 0, best = 99;
+      for (let i = 0; i < N; i++) { const dpc = (((root + iv[i]) % 12) + 12) % 12; let df = Math.abs(dpc - pc); df = Math.min(df, 12 - df); if (df < best) { best = df; d = i; } }
+      const o = Math.round((midi - pc) / 12) - 1;
+      const total = o * N + d + (nDeg | 0);
+      const newO = Math.floor(total / N), newD = ((total % N) + N) % N;
+      const newMidi = 12 * (newO + 1) + (((root + iv[newD]) % 12 + 12) % 12);
+      return A * Math.pow(2, (newMidi - 69) / 12);
+    }
+    // PITCH ECHO: after a note plays, spawn `repeats` echoes spaced by Time (free
+    // ms) or Sync (a beat division), each transposed by Step scale degrees ×
+    // repeat + the repeating Pattern of degree offsets, each quieter by Feedback.
+    // Marked _pecho so echoes don't echo. Uses no engine RNG → the main note
+    // stream is untouched (and off-by-default → harness byte-identical).
+    function _ambSchedulePitchEcho(E, key, lc, freq, params, durMs, at) {
+      const pe = lc && lc.pecho; if (!pe || !pe.on) return;
+      if (!(freq > 0) || typeof at !== 'number') return;
+      const reps = Math.max(1, Math.min(12, pe.repeats | 0));
+      const bpm = (typeof _ambBpm === 'function') ? _ambBpm() : 120;
+      const delay = (pe.sync && typeof _ambRateBeats === 'function' && _ambRateBeats(pe.sync) > 0)
+        ? _ambRateBeats(pe.sync) * (60 / Math.max(20, bpm))
+        : Math.max(0.02, (pe.timeMs | 0) / 1000);
+      if (!(delay > 0)) return;
+      const src = _ambNotesOf(lc);
+      const step = Math.max(-7, Math.min(7, pe.step | 0));
+      const pat = _ambPechoPattern(pe.pattern);
+      const fb = Math.max(0, Math.min(100, pe.feedback | 0)) / 100;
+      const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const baseVol = Number.isFinite(params.volume) ? params.volume : 100;
+      for (let i = 1; i <= reps; i++) {
+        const nDeg = step * i + (pat[(i - 1) % pat.length] | 0);
+        const ef = _ambScaleTranspose(freq, nDeg, src);
+        if (!(ef > 0)) continue;
+        const ev = Math.max(1, Math.round(baseVol * Math.pow(fb || 0.0001, i)));
+        if (ev < 2 && fb <= 0) break;   // faded to silence
+        const ep = {}; for (const k in params) { if (k === '_detuneMod') continue; ep[k] = params[k]; }
+        ep.volume = ev; ep._pecho = true;
+        if (dmod) ep._detuneMod = dmod;
+        try { playNote(ef, ep, durMs, at + i * delay, dest, undefined, E.laneIdx()); } catch (e) {}
+      }
+    }
+    // Parse a Pattern string ("0, 4, 7") → array of degree offsets; [] → [0].
+    function _ambPechoPattern(str) {
+      if (!str || typeof str !== 'string') return [0];
+      const a = str.split(/[\s,]+/).map(x => parseInt(x, 10)).filter(x => Number.isFinite(x));
+      return a.length ? a : [0];
     }
     // Wrap-ensemble: the per-DEGREE tone for a wrap source (parallel to its intervals),
     // captured at publish. Returns null for non-wrap sources or wraps without per-note
@@ -8882,6 +8955,18 @@
         if (typeof freq !== 'number' || typeof at !== 'number') return;
         const p = {}; for (const k in params) { if (k === '_detuneMod') continue; p[k] = params[k]; }
         arr.push({ at: at, freq: freq, dur: dur, params: p });
+        // PITCH ECHO — spawn pitched echoes of this note (not of an echo). Runs
+        // mid-playNote via the tee, so save/restore the emit-tag globals the echo
+        // playNotes clobber, and guard with _pecho against recursion.
+        if (!(params && params._pecho)) {
+          const _lc = _ambLayerByKey(E, key);
+          if (_lc && _lc.pecho && _lc.pecho.on) {
+            const _sk = (typeof window !== 'undefined') ? window._ambEmitKey : null;
+            const _sa = (typeof window !== 'undefined') ? window._ambEmitAt : null;
+            try { _ambSchedulePitchEcho(E, key, _lc, freq, params, dur, at); } catch (e) {}
+            if (typeof window !== 'undefined') { window._ambEmitKey = _sk; window._ambEmitAt = _sa; }
+          }
+        }
       };
     }
     // A capture sink that ONLY tags voices (key + start time) without recording
@@ -13485,6 +13570,9 @@
       { id: 'phaser',  label: 'Phaser',      engaged: (lc) => !!(lc.phaser && (lc.phaser.mix | 0) > 0), off: (lc) => { if (lc.phaser) lc.phaser.mix = 0; }, zero: [['fx-pha-mix', 0]] },
       { id: 'delay',   label: 'Delay',       engaged: (lc) => !!(lc.delay && (lc.delay.mix | 0) > 0),  off: (lc) => { if (lc.delay) lc.delay.mix = 0; }, zero: [['fx-dly-mix', 0]] },
       { id: 'autopan', label: 'Auto-Pan',    engaged: (lc) => !!(lc.autopan && (lc.autopan.mix | 0) > 0), off: (lc) => { if (lc.autopan) lc.autopan.mix = 0; }, zero: [['fx-apan-mix', 0]] },
+      // Pitch echo — a GENERATIVE note echo (re-emits pitched notes, not audio),
+      // so it's not in the audio chain / not orderable. on materializes on add.
+      { id: 'pecho',   label: 'Pitch echo',  engaged: (lc) => !!(lc.pecho && lc.pecho.on),               off: (lc) => { if (lc.pecho) lc.pecho.on = false; }, zero: [], add: (lc) => { lc.pecho = Object.assign({ on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65 }, lc.pecho || {}, { on: true }); } },
     ];
     // The layer's FX chain: its own list when set, else DERIVED from engagement
     // (legacy projects show exactly the FX that are audible). Not persisted until
@@ -13572,7 +13660,7 @@
         if (viz) {
           const nm = { filter: 'Filter', dist: 'Dist', chorus: 'Chorus', phaser: 'Phaser', delay: 'Delay', autopan: 'Pan', rev: 'Reverb' };
           const flow = ['◦ in', 'Filter'].concat(inlineChain.map(id => nm[id] || id)).concat(['out ◦']).join(' → ');
-          viz.textContent = flow + (chain.indexOf('rev') >= 0 ? '   ⟿ Reverb (send)' : '');
+          viz.textContent = flow + (chain.indexOf('rev') >= 0 ? '   ⟿ Reverb (send)' : '') + (chain.indexOf('pecho') >= 0 ? '   ♪ Pitch echo (notes)' : '');
         }
         const sum = det.querySelector('.ambient-mod-head');
         if (sum) sum.textContent = 'FX' + (chain.length ? ' · ' + chain.length + ' active' : ' · none (＋ add)');
@@ -13580,6 +13668,16 @@
         if (addB) addB.style.display = (chain.length >= _AMB_FX_DEFS.length) ? 'none' : '';
         const fl = det.querySelector('.ambient-fx-dist-flavor');
         if (fl) fl.value = (lc.dist && lc.dist.flavor) || '';
+        // Pitch-echo control values from lc.pecho.
+        const pe = lc.pecho || {};
+        const setv = (cls, v) => { const el = det.querySelector(cls); if (el && document.activeElement !== el) el.value = String(v); };
+        const seth = (cls, v) => { const el = det.querySelector(cls); if (el) el.textContent = String(v); };
+        setv('.ambient-pecho-time', Number.isFinite(pe.timeMs) ? pe.timeMs : 300);
+        setv('.ambient-pecho-sync', pe.sync || '');
+        setv('.ambient-pecho-reps', Number.isFinite(pe.repeats) ? pe.repeats : 3); seth('.ambient-pecho-reps-v', Number.isFinite(pe.repeats) ? pe.repeats : 3);
+        setv('.ambient-pecho-step', Number.isFinite(pe.step) ? pe.step : 2); seth('.ambient-pecho-step-v', (Number.isFinite(pe.step) ? pe.step : 2) + ' deg');
+        setv('.ambient-pecho-pat', pe.pattern || '');
+        setv('.ambient-pecho-fb', Number.isFinite(pe.feedback) ? pe.feedback : 65); seth('.ambient-pecho-fb-v', (Number.isFinite(pe.feedback) ? pe.feedback : 65) + '%');
       });
     }
     const _ambFxItem = (id, label, inner) =>
@@ -13617,6 +13715,12 @@
           _ambSl('Mix', 'ambient-' + layer + '-fx-apan-mix', 0, 100, 0, 'dry → wet') +
           _ambSl('Depth', 'ambient-' + layer + '-fx-apan-depth', 0, 100, 100, 'centre → full L↔R') +
           _ambSl('Rate', 'ambient-' + layer + '-fx-apan-rate', 0, 100, 30, 'slow → fast')) +
+        _ambFxItem('pecho', 'Pitch echo',
+          '<div class="ambient-ctrl"><label title="Echo spacing. Free ms, or set Sync to lock the repeats to a beat division.">Time</label><input type="number" class="ambient-pecho-time" min="20" max="4000" step="10" title="Echo time (ms)"> <span class="ambient-hint">ms</span> <select class="ambient-select ambient-pecho-sync" title="Sync the echo spacing to a beat division (overrides ms)"><option value="">free</option><option value="1/4">1/4</option><option value="1/8">1/8</option><option value="1/8T">1/8T</option><option value="1/16">1/16</option><option value="1/16T">1/16T</option></select></div>' +
+          '<div class="ambient-ctrl"><label title="How many pitched echoes per note.">Repeats</label><input type="range" class="ambient-pecho-reps" min="1" max="12" step="1"><span class="ambient-hint ambient-pecho-reps-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Scale degrees each echo climbs (+) or falls (−) — relative to the layer&#39;s scale, so it stays in key.">Step</label><input type="range" class="ambient-pecho-step" min="-7" max="7" step="1"><span class="ambient-hint ambient-pecho-step-v"></span></div>' +
+          '<div class="ambient-ctrl"><label title="Optional arpeggio: comma-separated scale-degree offsets the echoes cycle through, e.g. 0,4,7 to arpeggiate a chord. Adds on top of Step.">Arp</label><input type="text" class="ambient-pecho-pat ambient-select" placeholder="e.g. 0,4,7" title="Arp pattern of scale-degree offsets"><span class="ambient-hint">degrees</span></div>' +
+          '<div class="ambient-ctrl"><label title="Each echo&#39;s level vs the previous (100 = no decay, 0 = silent).">Feedback</label><input type="range" class="ambient-pecho-fb" min="0" max="100" step="1"><span class="ambient-hint ambient-pecho-fb-v"></span></div>') +
         _ambFxItem('dist', 'Distortion',
           '<div class="ambient-ctrl"><label title="Distortion character. Classic = the original curve. Overdrive = smooth warm tanh. Fuzz = hard asymmetric clip with a sputtery crossover gate. Wavefold = triangle folding (west-coast). Crush = bit-depth quantize.">Type</label><select class="ambient-select ambient-fx-dist-flavor">' + _AMB_DIST_FLAVORS.map(f => '<option value="' + f[0] + '">' + f[1] + '</option>').join('') + '</select><span class="ambient-hint">character</span></div>' +
           _ambSl('Drive', 'ambient-' + layer + '-fx-dist-amt', 0, 100, 40, 'amount') +
@@ -18440,6 +18544,26 @@
             else if (cl.contains('ambient-write-tmax')) w.timesMax = ct(v);
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
+          // Pitch echo controls — delegated input/change, class-based, every card.
+          {
+            const _pechoOf = (el) => { const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null; _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return null; if (!lc.pecho || typeof lc.pecho !== 'object') lc.pecho = { on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65 }; return lc.pecho; };
+            const _pechoWrite = (el) => {
+              const pe = _pechoOf(el); if (!pe) return;
+              const cl = el.classList, v = parseInt(el.value, 10);
+              if (cl.contains('ambient-pecho-time')) pe.timeMs = Math.max(20, Math.min(4000, Number.isFinite(v) ? v : 300));
+              else if (cl.contains('ambient-pecho-sync')) pe.sync = el.value || '';
+              else if (cl.contains('ambient-pecho-reps')) pe.repeats = Math.max(1, Math.min(12, Number.isFinite(v) ? v : 3));
+              else if (cl.contains('ambient-pecho-step')) pe.step = Math.max(-7, Math.min(7, Number.isFinite(v) ? v : 2));
+              else if (cl.contains('ambient-pecho-pat')) pe.pattern = String(el.value || '');
+              else if (cl.contains('ambient-pecho-fb')) pe.feedback = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 65));
+              else return;
+              const row = el.closest('.ambient-fx-item'); if (row) { try { _ambSyncFxVis(E); } catch (e) {} }
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            };
+            const _pechoSel = '.ambient-pecho-time, .ambient-pecho-sync, .ambient-pecho-reps, .ambient-pecho-step, .ambient-pecho-pat, .ambient-pecho-fb';
+            hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest(_pechoSel); if (el && hostEl.contains(el)) _pechoWrite(el); });
+            hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-pecho-sync'); if (el && hostEl.contains(el)) _pechoWrite(el); });
+          }
           // Distortion flavor — ONE delegated change listener for every card.
           hostEl.addEventListener('change', (ev) => {
             const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-fx-dist-flavor');
@@ -18475,7 +18599,7 @@
             if (addB) {
               const missing = _AMB_FX_DEFS.filter(dd => lc.fxChain.indexOf(dd.id) < 0);
               if (!missing.length) return;
-              const doAdd = (id) => { lc.fxChain.push(id); _ambSyncFxVis(E); if (typeof persistWorkspace === 'function') persistWorkspace(); };
+              const doAdd = (id) => { lc.fxChain.push(id); const dd = _AMB_FX_DEFS.find(x => x.id === id); if (dd && typeof dd.add === 'function') { try { dd.add(lc); } catch (e) {} } _ambSyncFxVis(E); if (typeof persistWorkspace === 'function') persistWorkspace(); };
               if (typeof showCtxMenu === 'function') {
                 const r = addB.getBoundingClientRect();
                 showCtxMenu(r.left, r.bottom, missing.map(dd => ({ label: dd.label, fn: () => doAdd(dd.id) })));

@@ -1179,6 +1179,25 @@
       else ['mix', 'depth', 'rate'].forEach(k => { if (!Number.isFinite(host.phaser[k])) host.phaser[k] = d.phaser[k]; });
       if (!host.autopan || typeof host.autopan !== 'object') host.autopan = { ...d.autopan };
       else ['mix', 'depth', 'rate'].forEach(k => { if (!Number.isFinite(host.autopan[k])) host.autopan[k] = d.autopan[k]; });
+      // SYNTH KIT: coerce voices when present (absent = generated on demand from
+      // the seed; kept out of defaults). Only meaningful when kit === 'synth'.
+      if (host.synthKit != null) {
+        if (typeof host.synthKit !== 'object') delete host.synthKit;
+        else {
+          const sk = host.synthKit;
+          if (!Number.isFinite(sk.seed)) sk.seed = 1;
+          if (!Array.isArray(sk.voices) || sk.voices.length !== 8) sk.voices = (typeof _ambGenSynthKit === 'function') ? _ambGenSynthKit(sk.seed).voices : [];
+          else sk.voices = sk.voices.map((v, i) => {
+            const g = (typeof _ambGenSynthVoice === 'function') ? _ambGenSynthVoice(sk.seed, i) : { body: 'sine', tune: 200, decay: 150, noise: 30, bright: 6000 };
+            if (!v || typeof v !== 'object') return g;
+            return { body: (typeof _AMB_SYNTH_BODIES !== 'undefined' && _AMB_SYNTH_BODIES.indexOf(v.body) >= 0) ? v.body : g.body,
+                     tune: Math.max(20, Math.min(4000, v.tune | 0)) || g.tune,
+                     decay: Math.max(20, Math.min(2000, v.decay | 0)) || g.decay,
+                     noise: Math.max(0, Math.min(100, Number.isFinite(v.noise) ? (v.noise | 0) : g.noise)),
+                     bright: Math.max(200, Math.min(18000, v.bright | 0)) || g.bright };
+          });
+        }
+      }
       // Trance gate.
       if (!host.tg || typeof host.tg !== 'object') host.tg = { ...d.tg, pattern: d.tg.pattern.slice() };
       else {
@@ -4399,10 +4418,19 @@
                   const rAt = at + (rr / rat) * slotSec;
                   // Per-step pan OVERRIDES the layer/spread pan when set (≠ 0).
                   const stPan = (sfx && sfx.pan) ? Math.max(-100, Math.min(100, sfx.pan)) : vpan;
+                  _ambKeyTime = rAt;
+                  // SYNTH kit: synthesize this lane's drum from its recipe instead of
+                  // a sample. Role = the lane's drum (via _AMB_VDRUM).
+                  if (_ambBeatIsSynth(inst)) {
+                    const _r = Math.max(0, _AMB_VDRUM.indexOf(pc));
+                    const _vol = Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * velS));
+                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, stPan);
+                    ctx.cap++;
+                    continue;
+                  }
                   const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, stPan), inst);
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
-                  _ambKeyTime = rAt;
                   const baseLen = _ambVaryLen(lenMs, inst.lenVary, rnd) * lenS;
                   const noteLen = (rat > 1) ? Math.min(baseLen, (slotSec / rat) * 1000 * 0.95) : baseLen;
                   try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
@@ -5349,6 +5377,109 @@
     // four (Kick/Snare/Hat/Clap) are the legacy VDRUM (unchanged → harness-safe);
     // 5–8 extend the auto-kit so lane counts up to 8 have a sensible default drum.
     const _AMB_VDRUM = [0, 2, 4, 3, 5, 7, 9, 11];
+    // ===== SYNTH KIT (drum voices synthesized from scratch, per-seed) =========
+    // The 8 Beat lanes (Kick…Perc) become SYNTHESIZED drums instead of samples.
+    // Each voice is a layered recipe {body osc + noise burst, tune, decay, noise
+    // mix, brightness}; params are generated per seed (Regen = fresh kit) and
+    // per-voice editable. Built from existing voice types (kick=MembraneSynth,
+    // metal=MetalSynth, noise:white, oscillators) → no new DSP, golden-safe.
+    // Lane order matches _AMB_VDRUM: 0 Kick·1 Snare·2 Hat·3 Clap·4 Open·5 Tom·6 Crash·7 Perc.
+    const _AMB_SYNTH_ROLES = [
+      { name: 'Kick',  bodies: ['kick'],                 tune: [40, 78],  decay: [110, 380], noise: [0, 12],  bright: [3000, 9000] },
+      { name: 'Snare', bodies: ['triangle', 'kick'],     tune: [150, 250], decay: [90, 240],  noise: [45, 82], bright: [2000, 6000] },
+      { name: 'Hat',   bodies: ['metal', 'noise:white'], tune: [400, 950], decay: [22, 80],   noise: [55, 100], bright: [7000, 15000] },
+      { name: 'Clap',  bodies: ['noise:white'],          tune: [300, 620], decay: [80, 190],  noise: [85, 100], bright: [1800, 4800] },
+      { name: 'Open',  bodies: ['metal', 'noise:white'], tune: [400, 950], decay: [180, 520], noise: [55, 100], bright: [6000, 13000] },
+      { name: 'Tom',   bodies: ['kick', 'sine'],         tune: [90, 240],  decay: [140, 400], noise: [0, 22],  bright: [3000, 8000] },
+      { name: 'Crash', bodies: ['metal'],                tune: [280, 720], decay: [500, 1500], noise: [30, 78], bright: [8000, 16000] },
+      { name: 'Perc',  bodies: ['metal', 'sine'],        tune: [200, 900], decay: [55, 230],  noise: [15, 58], bright: [4000, 11000] },
+    ];
+    const _AMB_SYNTH_BODIES = ['kick', 'metal', 'sine', 'triangle', 'noise:white'];
+    // Generate one voice recipe for `role` from `seed` (deterministic per seed+role).
+    function _ambGenSynthVoice(seed, role) {
+      const spec = _AMB_SYNTH_ROLES[role] || _AMB_SYNTH_ROLES[0];
+      const rnd = _ambSeededRand((((seed | 0) * 2654435761) ^ ((role + 1) * 2246822519)) >>> 0);
+      const pick = (r) => Math.round(r[0] + rnd() * (r[1] - r[0]));
+      return {
+        body: spec.bodies[Math.floor(rnd() * spec.bodies.length)] || 'sine',
+        tune: pick(spec.tune), decay: pick(spec.decay), noise: pick(spec.noise), bright: pick(spec.bright),
+      };
+    }
+    function _ambGenSynthKit(seed) {
+      return { seed: seed | 0, voices: _AMB_SYNTH_ROLES.map((_, role) => _ambGenSynthVoice(seed, role)) };
+    }
+    // The layer uses the SYNTH kit when its kit id is 'synth'.
+    function _ambBeatIsSynth(inst) { return !!(inst && inst.kit === 'synth'); }
+    // The recipe for a role — the layer's edited voice, else generated from its seed.
+    function _ambSynthVoiceOf(inst, role) {
+      const sk = inst && inst.synthKit;
+      if (sk && Array.isArray(sk.voices) && sk.voices[role]) return sk.voices[role];
+      const seed = (sk && Number.isFinite(sk.seed)) ? sk.seed : (((inst && inst.id) | 0) * 40503 + 1);
+      return _ambGenSynthVoice(seed, role);
+    }
+    // Play a synthesized drum: a pitched BODY voice (with the type\'s own transient/
+    // pitch-drop) layered with a filtered NOISE burst, mixed by `noise`. `role` 0-7.
+    function _ambPlaySynthDrum(E, dest, inst, role, at, vol, dmod, pan) {
+      const rec = _ambSynthVoiceOf(inst, role); if (!rec) return;
+      const decay = Math.max(20, Math.min(2000, rec.decay | 0));
+      const noise = Math.max(0, Math.min(100, rec.noise | 0));
+      const bright = Math.max(200, Math.min(18000, rec.bright | 0));
+      const tune = Math.max(20, Math.min(4000, rec.tune | 0));
+      const V = Math.max(1, Math.round(vol || 100));
+      const mk = (type, freq, lvl, dec, cut) => {
+        const p = { type: type, attack: 1, decay: dec, sustain: 0, release: Math.max(10, Math.round(dec * 0.4)), volume: Math.max(1, Math.round(lvl)), pan: pan | 0 };
+        if (cut) p.filterCutoff = cut;
+        if (dmod) p._detuneMod = dmod;
+        try { playNote(freq, p, dec + 20, at, dest, undefined, E.laneIdx()); } catch (e) {}
+      };
+      // Body (tone) — level scaled down as noise rises; noise burst layered on top.
+      if (noise < 100) mk(rec.body === 'noise:white' ? 'triangle' : rec.body, tune, V * (1 - noise / 200), decay, rec.body === 'metal' ? bright : 0);
+      if (noise > 0) mk('noise:white', Math.max(200, tune * 2), V * (noise / 100), Math.round(decay * 0.7), bright);
+    }
+    // Synth-kit editor: 8 role tabs + the active role's params + Regen (re-roll
+    // all voices). Shown only when kit === 'synth'. Class-based, delegated wiring;
+    // values filled by _ambSyncSynthKit. data-active holds the edited role (UI).
+    function _ambSynthKitUi(inst) {
+      const tabs = _AMB_SYNTH_ROLES.map((r, i) => '<button type="button" class="ambient-seg ambient-sk-role" data-skrole="' + i + '">' + r.name + '</button>').join('');
+      const bodyOpts = _AMB_SYNTH_BODIES.map(b => '<option value="' + b + '">' + (b === 'noise:white' ? 'noise' : b) + '</option>').join('');
+      const sl = (cls, min, max, unit) => '<div class="ambient-ctrl"><label>' + cls.lab + '</label><input type="range" class="ambient-sk-' + cls.k + '" min="' + min + '" max="' + max + '" step="1"><span class="ambient-hint ambient-sk-' + cls.k + '-v"></span></div>';
+      return '<div class="ambient-synthkit" style="display:none">' +
+        '<div class="ambient-ctrl ambient-sk-head"><label title="A drum kit synthesized from scratch (no samples). Regen rolls a fresh kit from a new seed; edit each drum below.">Synth kit</label>' +
+          '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed)">↻ Regen voices</button>' +
+          '<span class="ambient-hint ambient-sk-seed"></span></div>' +
+        '<div class="ambient-seg-row ambient-sk-roles">' + tabs + '</div>' +
+        '<div class="ambient-ctrl"><label>Body</label><select class="ambient-select ambient-sk-body">' + bodyOpts + '</select><span class="ambient-hint">tone source</span></div>' +
+        sl({ lab: 'Tune', k: 'tune' }, 20, 4000) +
+        sl({ lab: 'Decay', k: 'decay' }, 20, 2000) +
+        sl({ lab: 'Noise', k: 'noise' }, 0, 100) +
+        sl({ lab: 'Bright', k: 'bright' }, 200, 18000) +
+      '</div>';
+    }
+    // Fill every synth-kit editor from its layer; show only for kit === 'synth'.
+    function _ambSyncSynthKit(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-synthkit').forEach(ed => {
+        const card = ed.closest('.ambient-layer');
+        const key = (typeof _ambCardKey === 'function') ? _ambCardKey(card) : null;
+        const L = key ? _ambLayerByKey(E, key) : null; if (!L) return;
+        const isSynth = _ambBeatIsSynth(L);
+        ed.style.display = isSynth ? '' : 'none';
+        if (!isSynth) return;
+        if (!L.synthKit || !Array.isArray(L.synthKit.voices) || L.synthKit.voices.length !== 8) L.synthKit = _ambGenSynthKit((L.synthKit && L.synthKit.seed) | 0 || (((L.id | 0) * 40503 + 1)));
+        const role = Math.max(0, Math.min(7, (ed.getAttribute('data-active') | 0)));
+        const rec = L.synthKit.voices[role];
+        ed.querySelectorAll('.ambient-sk-role').forEach((b, i) => b.classList.toggle('active', i === role));
+        const sd = ed.querySelector('.ambient-sk-seed'); if (sd) sd.textContent = 'seed ' + (L.synthKit.seed | 0) + ' · ' + _AMB_SYNTH_ROLES[role].name;
+        const bs = ed.querySelector('.ambient-sk-body'); if (bs && document.activeElement !== bs) bs.value = rec.body;
+        [['tune', ''], ['decay', ' ms'], ['noise', '%'], ['bright', ' Hz']].forEach(pr => {
+          const el = ed.querySelector('.ambient-sk-' + pr[0]); const v = ed.querySelector('.ambient-sk-' + pr[0] + '-v');
+          if (el && document.activeElement !== el) el.value = String(rec[pr[0]]);
+          if (v) v.textContent = rec[pr[0]] + pr[1];
+        });
+      });
+    }
+
+
     // The drum a euclid Beat lane `v` plays: an explicit per-lane override
     // (inst.euclidDrums[v]) wins; else the fixed kit slot for that lane.
     function _ambLaneDrumPc(inst, v) {
@@ -5582,7 +5713,7 @@
       try { if (_masterEng && _masterEng.inited) _ambRefreshToneSelects(_masterEng); } catch (e) {}
     }
     function _ambDrumKits() {
-      const kits = [];
+      const kits = [{ id: 'synth', name: '⚙ Synth (generated)' }];
       try {
         if (typeof sampleSamplers !== 'undefined') {
           for (const [id, info] of sampleSamplers) {
@@ -14866,7 +14997,7 @@
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
-        ..._ambVoiceCtrls([['kit']], 500, 2000, 2000),
+        ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
@@ -15335,6 +15466,7 @@
       if (k === 'pitchseed') return _ambPitchSeedSel(p + '-pitchseed');
       if (k === 'strumsync') return _ambStrumSyncSel(p + '-strumsync');
       if (k === 'loop') return _ambLoopCtrl(inst);
+      if (k === 'synthkit') return _ambSynthKitUi(inst);
       if (k === 'speed') return _ambSpeedSel(p + '-speed');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
@@ -15643,7 +15775,7 @@
         const k = c[0];
         try {
           if (k === 'tone') { const s = el('tone'); if (s) { populateGroupedToneSelect(s, _ambToneOptions(), _ambGridVoiceOption()); s.value = inst.tone || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.tone = s.value || ''; persist(); } }); } }
-          else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); } }); } }
+          else if (k === 'kit') { const s = el('kit'); if (s) { _ambDrumKits().forEach(kk => { const o = document.createElement('option'); o.value = kk.id; o.textContent = kk.name; s.appendChild(o); }); s.value = inst.kit || 'tr808'; s.addEventListener('change', () => { const L = get(); if (L) { L.kit = s.value || 'tr808'; persist(); try { _ambSyncSynthKit(E); } catch (e) {} } }); } }
           else if (k === 'rate') { const s = el('rate'); if (s) { s.value = inst.rate || ''; s.addEventListener('change', () => { const L = get(); if (L) { L.rate = s.value || ''; _ambUnitSyncViz(E, p, L); sync(); persist(); } }); } }
           else if (k === 'unitmatch') { _ambWireUnitMatch(E, inst, p, get); }
           else if (k === 'unitsync') { _ambWireUnitSync(E, p, get, type + ':' + id); }
@@ -17754,6 +17886,7 @@
       try { _ambWireAreaStrip(E); } catch (e) {}   // area tabs (master only)
       try { _ambSyncFxVis(E); } catch (e) {}       // FX module: show only the added FX
       try { _ambSyncLayerUnits(E); } catch (e) {}  // unit-fit readouts on first paint
+      try { _ambSyncSynthKit(E); } catch (e) {}    // synth-kit editor values + visibility
       try { _ambRenderCaptureBank(); } catch (e) {}
 
       // Per-layer expand/collapse: the caret in each layer head folds that
@@ -17997,7 +18130,7 @@
         });
         kitSel.addEventListener('change', () => {
           _E = E; const cfg = cfg0(); if (!cfg) return;
-          cfg.beat.kit = kitSel.value || 'tr808';
+          cfg.beat.kit = kitSel.value || 'tr808'; try { _ambSyncSynthKit(E); } catch (e) {}
           persist();
         });
       }
@@ -18555,6 +18688,33 @@
             else if (cl.contains('ambient-write-tmax')) w.timesMax = ct(v);
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
+          // Synth-kit editor — role tabs, per-voice params, Regen (delegated).
+          {
+            const _skOf = (el) => { const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null; _E = E; const L = _ambLayerByKey(E, key); if (!L) return null; if (!L.synthKit || !Array.isArray(L.synthKit.voices) || L.synthKit.voices.length !== 8) L.synthKit = _ambGenSynthKit((L.synthKit && L.synthKit.seed) | 0 || (((L.id | 0) * 40503 + 1))); return L; };
+            hostEl.addEventListener('click', (ev) => {
+              const tab = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-role');
+              if (tab && hostEl.contains(tab)) { const ed = tab.closest('.ambient-synthkit'); if (ed) { ed.setAttribute('data-active', tab.getAttribute('data-skrole')); try { _ambSyncSynthKit(E); } catch (e) {} } return; }
+              const rg = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-regen');
+              if (rg && hostEl.contains(rg)) { const L = _skOf(rg); if (!L) return; L.synthKit = _ambGenSynthKit(Math.floor(Math.random() * 1e9)); try { _ambSyncSynthKit(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+            });
+            const _skWrite = (el) => {
+              const L = _skOf(el); if (!L) return;
+              const ed = el.closest('.ambient-synthkit'); if (!ed) return;
+              const role = Math.max(0, Math.min(7, (ed.getAttribute('data-active') | 0)));
+              const rec = L.synthKit.voices[role]; if (!rec) return;
+              const cl = el.classList, v = parseInt(el.value, 10);
+              if (cl.contains('ambient-sk-body')) rec.body = el.value;
+              else if (cl.contains('ambient-sk-tune')) rec.tune = Math.max(20, Math.min(4000, v || 200));
+              else if (cl.contains('ambient-sk-decay')) rec.decay = Math.max(20, Math.min(2000, v || 150));
+              else if (cl.contains('ambient-sk-noise')) rec.noise = Math.max(0, Math.min(100, Number.isFinite(v) ? v : 30));
+              else if (cl.contains('ambient-sk-bright')) rec.bright = Math.max(200, Math.min(18000, v || 6000));
+              else return;
+              try { _ambSyncSynthKit(E); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            };
+            hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-tune, .ambient-sk-decay, .ambient-sk-noise, .ambient-sk-bright'); if (el && hostEl.contains(el)) _skWrite(el); });
+            hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-body'); if (el && hostEl.contains(el)) _skWrite(el); });
+          }
           // Pitch echo controls — delegated input/change, class-based, every card.
           {
             const _pechoOf = (el) => { const key = _ambCardKey(el.closest('.ambient-layer')); if (!key) return null; _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return null; if (!lc.pecho || typeof lc.pecho !== 'object') lc.pecho = { on: true, timeMs: 300, sync: '', repeats: 3, step: 2, pattern: '', feedback: 65 }; return lc.pecho; };

@@ -111,14 +111,30 @@ echo "⬆️  Uploading to $REMOTE_DIR..."
 
 lftp -d -u "$FTP_USER","$FTP_PASS" ftp://"$FTP_HOST" <<EOF
 set ftp:ssl-allow no
-set net:max-retries 1
-set net:timeout 15
-mirror --reverse --verbose "$STAGE_DIR/" "$REMOTE_DIR/"
+# Robust transfer: retry stalled/failed transfers instead of giving up after
+# one attempt (a truncated big file — e.g. the ~1.3 MB js/bloops/17-ambient.js
+# — over a slow/flaky FTP link parse-errors and black-screens the app). Longer
+# timeout + reconnects + always-overwrite so a partial remote file is replaced.
+set net:max-retries 5
+set net:timeout 40
+set net:reconnect-interval-base 5
+set net:persist-retries 5
+set xfer:clobber on
+# --ignore-time: compare by SIZE only (the staged copies all have mtime=now, so
+# a time compare would try to re-send everything; size compare re-sends exactly
+# the files whose bytes changed AND any remote file left truncated by a prior run).
+mirror --reverse --verbose --ignore-time "$STAGE_DIR/" "$REMOTE_DIR/"
 # Force-upload the credentials file explicitly — guarantees js/config.js
 # lands even if the mirror diff ever decides to skip it. Without config.js
 # the deployed app can't sign in to Google Drive.
 mkdir -p "$REMOTE_DIR/js"
 put -O "$REMOTE_DIR/js" "$STAGE_DIR/js/config.js"
+# Post-upload SIZE VERIFICATION of the big JS the app can't boot without —
+# a size mismatch vs the local staged copy means a truncated upload.
+echo "--- remote sizes (verify vs local) ---"
+ls -l "$REMOTE_DIR/js/bloops/17-ambient.js"
+ls -l "$REMOTE_DIR/js/bloops/03-audio-bus-fx.js"
+ls -l "$REMOTE_DIR/js/bloops/core/bloops-dsp.wasm"
 bye
 EOF
 

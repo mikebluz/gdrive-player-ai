@@ -752,7 +752,14 @@
       };
       try {
         localStorage.setItem(WORKSPACE_LS_KEY, JSON.stringify(buildSnap()));
+        // Proactive nudge as we approach the (WebKit ~5 MB) ceiling — before a
+        // write actually fails and risks corrupting a value.
+        try { const u = _lsUsageBytes(); if (u > _LS_BUDGET * 0.9) _bloopsStorageWarn('Storage is ' + Math.round(u / _LS_BUDGET * 100) + '% full — free up space soon so saves don’t fail.'); } catch (w) {}
       } catch (e) {
+        // Quota hit: the slim (audio-stripped) fallback still saves the project
+        // structure, but the user lost the rendered audio from this snapshot —
+        // tell them so they can back up + clean up (see _bloopsStorageOpen).
+        try { _bloopsStorageWarn('Storage full — audio was dropped from the last save to make it fit. Back up and free space to keep everything.'); } catch (w) {}
         try {
           const slim = buildSnap();
           (slim.savedSequences || []).forEach(s => { if (s && s.type === 'audio') delete s.audioDataUrl; });
@@ -781,6 +788,126 @@
         try { _invalidatePlayback(); } catch (e) {}
       }
     }
+
+    // ================= STORAGE MANAGER =====================================
+    // WebKit / mobile Safari caps localStorage at ~5 MB. A heavy Bloom project
+    // with saved/rendered audio can hit it; a write that fails there had been
+    // silently dropping data (and, worse, a truncated value from a failed write
+    // could corrupt a key → the mobile "header + black screen" we hardened the
+    // boot parses against). This surfaces usage, warns before/after a failed
+    // save, and lets the user reclaim space WITHOUT losing their work: download
+    // a full backup first, then remove only what they choose (a restore path is
+    // provided so a backup is actually usable). All localStorage-only; no engine
+    // or note-stream impact (harness/golden untouched).
+    const _LS_BUDGET = 5 * 1024 * 1024;
+    const _lsEsc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    function _lsUsageBytes() {
+      let total = 0;
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); const v = localStorage.getItem(k) || ''; total += ((k ? k.length : 0) + v.length) * 2; } } catch (e) {}
+      return total;   // UTF-16: 2 bytes/char
+    }
+    function _lsItems() {
+      const items = [];
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k == null) continue; const v = localStorage.getItem(k) || ''; items.push({ key: k, bytes: (k.length + v.length) * 2 }); } } catch (e) {}
+      items.sort((a, b) => b.bytes - a.bytes);
+      return items;
+    }
+    const _LS_LABELS = {
+      'bloops-workspace': 'Current workspace (layers, tracks, projects)',
+      'sounds-saved': 'Saved sequences bank',
+      'sounds-tracks': 'Mixdown tracks',
+      'wraps-saved': 'Saved wraps',
+      'wraps-progs': 'Saved progressions',
+      'sounds-global-fx': 'Global FX settings',
+      'sounds-grid-states': 'Grid states',
+    };
+    const _lsLabel = (k) => _LS_LABELS[k] || k;
+    const _lsMB = (b) => (b / 1048576).toFixed(2);
+    // Full backup → a downloadable JSON of EVERY localStorage key, so the user
+    // can clean up (or reset) and lose nothing (restore re-imports it).
+    function _lsDownloadBackup() {
+      const dump = {};
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); dump[k] = localStorage.getItem(k); } } catch (e) {}
+      let url; try { url = URL.createObjectURL(new Blob([JSON.stringify(dump)], { type: 'application/json' })); } catch (e) { return false; }
+      const a = document.createElement('a'); a.href = url;
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      a.download = 'bloops-backup-' + ts + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) {} }, 4000);
+      return true;
+    }
+    function _lsRestoreBackup(file) {
+      const r = new FileReader();
+      r.onload = () => {
+        let obj = null; try { obj = JSON.parse(r.result); } catch (e) {}
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { alert('That doesn’t look like a Bloops backup file.'); return; }
+        if (!confirm('Restore this backup? It replaces your current saved data, then reloads the app.')) return;
+        try { Object.keys(obj).forEach(k => { if (typeof obj[k] === 'string') localStorage.setItem(k, obj[k]); }); } catch (e) { alert('Restore failed — storage may be full. Free space first, then restore.'); return; }
+        location.reload();
+      };
+      r.readAsText(file);
+    }
+    // One dismissible warning banner per session (fixed at the bottom). Uses
+    // inline !important on display because view-mode CSS force-hides body children
+    // that aren't the active view (see CLAUDE.md gotcha).
+    let _lsBannerShown = false;
+    function _bloopsStorageWarn(msg) {
+      if (_lsBannerShown) return;
+      _lsBannerShown = true;
+      let b = document.getElementById('ls-warn-banner');
+      if (!b) { b = document.createElement('div'); b.id = 'ls-warn-banner'; b.className = 'ls-warn-banner'; document.body.appendChild(b); }
+      b.innerHTML = '<span class="ls-warn-msg">⚠️ ' + _lsEsc(msg || 'Storage almost full — recent changes may not have saved.') + '</span>' +
+        '<button type="button" class="ls-warn-manage">Manage storage</button>' +
+        '<button type="button" class="ls-warn-x" title="Dismiss" aria-label="Dismiss">✕</button>';
+      b.style.setProperty('display', 'flex', 'important');
+      b.querySelector('.ls-warn-manage').addEventListener('click', () => { try { b.remove(); } catch (e) {} _bloopsStorageOpen(); });
+      b.querySelector('.ls-warn-x').addEventListener('click', () => { try { b.remove(); } catch (e) {} });
+    }
+    function _bloopsStorageOpen() {
+      const old = document.getElementById('ls-manager-overlay'); if (old) old.remove();
+      const ov = document.createElement('div'); ov.id = 'ls-manager-overlay'; ov.className = 'ls-manager-overlay';
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      const render = () => {
+        const items = _lsItems();
+        const total = items.reduce((s, it) => s + it.bytes, 0);
+        const pct = Math.min(100, Math.round(total / _LS_BUDGET * 100));
+        ov.innerHTML =
+          '<div class="ls-manager" role="dialog" aria-label="Manage storage">' +
+            '<div class="ls-mhead"><span>🗄 Manage storage</span><button type="button" class="ls-mclose" title="Close" aria-label="Close">✕</button></div>' +
+            '<div class="ls-usage"><div class="ls-bar"><div class="ls-bar-fill' + (pct >= 80 ? ' near' : '') + '" style="width:' + pct + '%"></div></div>' +
+              '<div class="ls-usage-txt">' + _lsMB(total) + ' MB used of ~5 MB (' + pct + '%)</div></div>' +
+            '<div class="ls-actions">' +
+              '<button type="button" class="ls-btn ls-primary ls-backup">⬇ Back up everything</button>' +
+              '<button type="button" class="ls-btn ls-restore">⬆ Restore backup</button>' +
+              '<input type="file" accept="application/json,.json" class="ls-file" hidden>' +
+            '</div>' +
+            '<div class="ls-hint">Download a backup first — then you can remove anything below without losing it (restore re-imports the file). Removing reloads the app.</div>' +
+            '<div class="ls-list">' +
+              (items.length ? items.slice(0, 14).map(it =>
+                '<div class="ls-item"><span class="ls-item-label" title="' + _lsEsc(it.key) + '">' + _lsEsc(_lsLabel(it.key)) + '</span>' +
+                '<span class="ls-item-size">' + _lsMB(it.bytes) + ' MB</span>' +
+                '<button type="button" class="ls-item-del" data-k="' + _lsEsc(it.key) + '">Remove</button></div>'
+              ).join('') : '<div class="ls-empty">Nothing stored.</div>') +
+            '</div>' +
+          '</div>';
+        ov.querySelector('.ls-mclose').addEventListener('click', close);
+        ov.querySelector('.ls-backup').addEventListener('click', () => { if (_lsDownloadBackup()) { const h = ov.querySelector('.ls-hint'); if (h) { h.textContent = '✓ Backup downloaded. Now safe to remove items below.'; h.classList.add('ls-ok'); } } });
+        const fileInp = ov.querySelector('.ls-file');
+        ov.querySelector('.ls-restore').addEventListener('click', () => fileInp.click());
+        fileInp.addEventListener('change', () => { if (fileInp.files && fileInp.files[0]) _lsRestoreBackup(fileInp.files[0]); });
+        ov.querySelectorAll('.ls-item-del').forEach(btn => btn.addEventListener('click', () => {
+          const k = btn.getAttribute('data-k');
+          if (!confirm('Remove "' + _lsLabel(k) + '"?\n\nThis frees ' + _lsMB(((k || '').length + (localStorage.getItem(k) || '').length) * 2) + ' MB. Make sure you\'ve downloaded a backup — the app will reload.')) return;
+          try { localStorage.removeItem(k); } catch (e) {}
+          location.reload();
+        }));
+      };
+      render();
+      ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+      document.body.appendChild(ov);
+      ov.style.setProperty('display', 'flex', 'important');
+    }
+    if (typeof window !== 'undefined') { window._bloopsStorageOpen = _bloopsStorageOpen; window._bloopsStorageWarn = _bloopsStorageWarn; }
     // Auto-serialize on tab close. `pagehide` is the reliable event in
     // modern browsers (beforeunload is suppressed in some cases —
     // mobile Safari, bfcache); we listen for both. The pending debounce

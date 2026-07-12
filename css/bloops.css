@@ -1413,6 +1413,70 @@
     .xport-menu #xport-tempo-row::before {
       content: 'BPM'; font-size: 0.72rem; color: #8a8aa8; letter-spacing: 0.5px;
     }
+    /* ---- Manage-storage button + panel + quota banner (11-modes-persistence) ---- */
+    .xport-storage-btn {
+      width: 100%; padding: 9px 12px; min-height: 40px;
+      background: rgba(94,158,173,0.14); border: 1px solid #2d4652; border-radius: 8px;
+      color: #9fe0ef; font: 600 0.82rem 'Segoe UI', sans-serif; cursor: pointer;
+      text-align: left; touch-action: manipulation;
+    }
+    .xport-storage-btn:hover { background: rgba(94,158,173,0.24); }
+    .ls-manager-overlay {
+      position: fixed; inset: 0; z-index: 100000;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(6,6,14,0.72); padding: 16px; box-sizing: border-box;
+    }
+    .ls-manager {
+      width: 100%; max-width: 460px; max-height: 88vh; overflow-y: auto;
+      background: #14141f; border: 1px solid #33334a; border-radius: 14px;
+      padding: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+      -webkit-overflow-scrolling: touch;
+    }
+    .ls-mhead { display: flex; align-items: center; justify-content: space-between;
+      font: 700 1rem 'Segoe UI', sans-serif; color: #e6e6f0; margin-bottom: 12px; }
+    .ls-mclose { background: none; border: none; color: #9a9ab0; font-size: 1.1rem;
+      cursor: pointer; padding: 6px; min-width: 34px; min-height: 34px; touch-action: manipulation; }
+    .ls-mclose:hover { color: #fc8181; }
+    .ls-usage { margin-bottom: 14px; }
+    .ls-bar { height: 12px; border-radius: 6px; background: #262635; overflow: hidden; }
+    .ls-bar-fill { height: 100%; background: linear-gradient(90deg,#5e9ead,#7bc6da); transition: width 0.3s ease; }
+    .ls-bar-fill.near { background: linear-gradient(90deg,#d9a441,#e06c4f); }
+    .ls-usage-txt { margin-top: 5px; font: 600 0.78rem 'Segoe UI', sans-serif; color: #a0aec0; }
+    .ls-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .ls-btn {
+      flex: 1 1 auto; min-width: 130px; min-height: 42px; padding: 9px 12px;
+      border-radius: 9px; border: 1px solid #33334a; background: #20202e;
+      color: #d7d7e6; font: 600 0.82rem 'Segoe UI', sans-serif; cursor: pointer; touch-action: manipulation;
+    }
+    .ls-btn:hover { border-color: #5e9ead; color: #cfeff7; }
+    .ls-btn.ls-primary { background: rgba(94,158,173,0.2); border-color: #5e9ead; color: #bfeaf4; }
+    .ls-hint { font: 0.74rem 'Segoe UI', sans-serif; color: #8a8aa8; margin: 4px 0 12px; line-height: 1.4; }
+    .ls-hint.ls-ok { color: #7fd6a0; }
+    .ls-list { display: flex; flex-direction: column; gap: 6px; }
+    .ls-item { display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; background: rgba(45,45,63,0.35); border: 1px solid #2a2a3c; border-radius: 8px; }
+    .ls-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font: 600 0.78rem 'Segoe UI', sans-serif; color: #c9c9dc; }
+    .ls-item-size { flex: 0 0 auto; font: 700 0.72rem 'Segoe UI', sans-serif; color: #9fe0ef; }
+    .ls-item-del { flex: 0 0 auto; min-height: 34px; padding: 5px 10px; border-radius: 7px;
+      border: 1px solid #5a3140; background: rgba(252,129,129,0.12); color: #fca5a5;
+      font: 600 0.74rem 'Segoe UI', sans-serif; cursor: pointer; touch-action: manipulation; }
+    .ls-item-del:hover { background: rgba(252,129,129,0.24); color: #fecdca; }
+    .ls-empty { color: #8a8aa8; font-size: 0.8rem; padding: 8px; }
+    .ls-warn-banner {
+      position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 100001;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 12px; border-radius: 10px;
+      background: #3a2a16; border: 1px solid #7a5a2a; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+      font: 600 0.8rem 'Segoe UI', sans-serif; color: #f0d9a8;
+    }
+    .ls-warn-msg { flex: 1 1 200px; min-width: 0; }
+    .ls-warn-manage { flex: 0 0 auto; min-height: 40px; padding: 8px 14px; border-radius: 8px;
+      border: 1px solid #c9973f; background: rgba(217,164,65,0.2); color: #ffe6b0;
+      font: 700 0.8rem 'Segoe UI', sans-serif; cursor: pointer; touch-action: manipulation; }
+    .ls-warn-manage:hover { background: rgba(217,164,65,0.34); }
+    .ls-warn-x { flex: 0 0 auto; background: none; border: none; color: #d9c08a; font-size: 1rem;
+      cursor: pointer; padding: 6px; min-width: 34px; min-height: 34px; touch-action: manipulation; }
     /* Load-flash fix: initTransportMenu moves the undo/redo pair, metronome (●)
        and BPM digits from the home bar into the #xport-menu popover. Until that
        JS runs they'd flash in the top bar, so hide them there. Once relocated

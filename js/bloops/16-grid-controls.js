@@ -1581,7 +1581,8 @@
         '<div class="xport-sec"><div class="xport-sec-title">Tempo</div><div class="xport-row" id="xport-tempo-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Volume</div><div class="xport-row" id="xport-vol-row"></div></div>' +
         '<div class="xport-sec"><div class="xport-sec-title">Groove</div><div class="xport-groove" id="xport-groove-row"></div></div>' +
-        '<div class="xport-sec"><div class="xport-sec-title">MIDI</div><div class="xport-row" id="xport-midi-row"></div></div>';
+        '<div class="xport-sec"><div class="xport-sec-title">MIDI</div><div class="xport-row" id="xport-midi-row"></div></div>' +
+        '<div class="xport-sec"><div class="xport-sec-title">Storage</div><div class="xport-row" id="xport-storage-row"></div></div>';
       document.body.appendChild(panel);
 
       // Relocate the live, already-wired controls into the menu.
@@ -1617,6 +1618,16 @@
         panel.querySelector('#xport-midi-row').appendChild(midiBtn);
         midiBtn.addEventListener('click', () => setOpen(false));   // close the menu; the MIDI modal opens (wired in 22-midi.js)
       }
+      // Manage storage — usage + backup + non-destructive cleanup (11-modes-persistence).
+      (function addStorageBtn() {
+        const row = panel.querySelector('#xport-storage-row'); if (!row) return;
+        const sb = document.createElement('button');
+        sb.type = 'button'; sb.id = 'xport-storage-btn'; sb.className = 'xport-storage-btn';
+        sb.textContent = '🗄 Manage storage…';
+        sb.title = 'See what’s using space, back up, and free room without losing your music';
+        sb.addEventListener('click', () => { setOpen(false); try { window._bloopsStorageOpen && window._bloopsStorageOpen(); } catch (e) {} });
+        row.appendChild(sb);
+      })();
       // Homepage link is now the FIRST section of panel.innerHTML above (hardcoded, so
       // it's reliably the top item). The old .home-bar in .xport-sources is removed.
 

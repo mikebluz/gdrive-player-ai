@@ -2471,7 +2471,17 @@
       const fb = Math.max(0, Math.min(100, pe.feedback | 0)) / 100;
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const baseVol = Number.isFinite(params.volume) ? params.volume : 100;
+      // RE-HARMONIZE across chord boundaries: for a PROGRESSION source, transpose
+      // each echo against the chord ACTIVE AT ITS LANDING TIME (at + i·delay), so
+      // an echo that runs past a chord change stays in the new chord instead of
+      // clashing. The prog step is a global override the transpose reads via
+      // _ambScaleIntervals/_ambProgCurrentChord — saved/restored so the rest of
+      // the emit is unaffected. Scale/chord/wrap sources are time-invariant → no-op.
+      const _isProg = ((typeof _ambAsNotes === 'function' ? _ambAsNotes(src) : src) || {}).type === 'prog';
+      const _savedOv = _ambProgStepOverride;
       for (let i = 1; i <= reps; i++) {
+        const echoAt = at + i * delay;
+        if (_isProg) { try { _ambProgStepOverride = _ambProgStepAt(E, echoAt); } catch (e) {} }
         const nDeg = step * i + (pat[(i - 1) % pat.length] | 0);
         const ef = _ambScaleTranspose(freq, nDeg, src);
         if (!(ef > 0)) continue;
@@ -2480,8 +2490,9 @@
         const ep = {}; for (const k in params) { if (k === '_detuneMod') continue; ep[k] = params[k]; }
         ep.volume = ev; ep._pecho = true;
         if (dmod) ep._detuneMod = dmod;
-        try { playNote(ef, ep, durMs, at + i * delay, dest, undefined, E.laneIdx()); } catch (e) {}
+        try { playNote(ef, ep, durMs, echoAt, dest, undefined, E.laneIdx()); } catch (e) {}
       }
+      if (_isProg) _ambProgStepOverride = _savedOv;
     }
     // Parse a Pattern string ("0, 4, 7") → array of degree offsets; [] → [0].
     function _ambPechoPattern(str) {

@@ -8795,11 +8795,13 @@
         if (E.windingDown) return; // Capture finalize: no new iterations (current ones, already scheduled, play out)
         const HZ = hz || horizon;
         // PROG-SYNC: an active area progression overrides a chord layer's own clock
-        // — it steps on the chord grid (chordDur / Subdivision), anchored so sub-
-        // slots line up with chord boundaries. Null → the layer's normal clock.
+        // — it steps on the chord grid (chordDur / Subdivision). The FIRST onset
+        // fires promptly at `lead` (so play starts right away, not a whole chord
+        // later); every onset after that snaps onto the chord grid so sub-slots
+        // line up with boundaries. Null → the layer's normal clock.
         const psi = _ambProgSyncInfo(E, key, lc, cfg);
         if (!C[key] || C[key] < now) {
-          if (psi) { const j = Math.ceil((lead - psi.anchor) / psi.subUnit - 1e-6); C[key] = psi.anchor + Math.max(0, j) * psi.subUnit; }
+          if (psi) C[key] = lead;
           else C[key] = lead + _ambDriftOffset(E, key, lc, cfg);
         }
         const sc = _ambLayerScale(E, key, lc, cfg);   // Unit Sync time-scale (1 = Free)
@@ -8814,8 +8816,15 @@
           // instead of the previous notes lingering.
           else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
           I[key] = (I[key] | 0) + 1;
-          C[key] += psi ? Math.max(minSec, psi.subUnit)
-                        : Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
+          if (psi) {
+            // snap to the next chord-grid slot strictly after C[key] (with a min gap
+            // so a prompt first onset can't sit right on top of the next slot).
+            let ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
+            while (ng < C[key] + minSec) ng += psi.subUnit;
+            C[key] = ng;
+          } else {
+            C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
+          }
         }
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
@@ -13649,6 +13658,36 @@
       '<input type="range" class="ambient-sl" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + val + '" />' +
       '<span class="ambient-hint ambient-sl-v" id="' + id + '-v">' + _ambSlReadout(id, val) + '</span></div>';
     };
+    // STEPPER — a −/value/+ control for DISCRETE integer COUNTS (Register, Density,
+    // Subdivide, Repeat…), where the exact number is the meaning (a 0–100-feeling
+    // slider hides it). The <input> keeps the same id so the existing id-based
+    // binds fire on 'input'; the ± buttons clamp + dispatch 'input'. No readout
+    // span — the value lives in the field. Same value semantics as the slider it
+    // replaces → engine/harness/golden untouched.
+    const _ambStep = (label, id, min, max, val, hint) => {
+      const desc = _ambParamDesc(label, hint);
+      const dt = desc ? ' title="' + String(desc).replace(/"/g, '&quot;') + '"' : '';
+      const v = Number.isFinite(val) ? (val | 0) : (min | 0);
+      return '<div class="ambient-ctrl ambient-ctrl-step"' + dt + '>' +
+      '<label for="' + id + '"' + dt + '>' + label + '</label>' +
+      '<span class="ambient-stepper">' +
+        '<button type="button" class="ambient-step-btn ambient-step-dn" data-step="' + id + '" tabindex="-1" aria-label="Decrease">−</button>' +
+        '<input type="number" inputmode="numeric" class="ambient-step-inp" id="' + id + '" min="' + min + '" max="' + max + '" step="1" value="' + v + '" />' +
+        '<button type="button" class="ambient-step-btn ambient-step-up" data-step="' + id + '" tabindex="-1" aria-label="Increase">+</button>' +
+      '</span>' +
+      (hint ? '<span class="ambient-hint">' + hint + '</span>' : '<span class="ambient-hint"></span>') + '</div>';
+    };
+    // SEGMENTED button row for a small ENUM (Feel: Even|Stochastic, Home:
+    // Floor|Center|Ceiling) — all options visible, one tap, no dropdown hunt.
+    // `field` is the config KEY it writes; one delegated handler + _ambSyncSegs
+    // wire every row by data-field (no per-layer wiring). `opts` = [[val,label]…].
+    const _ambSeg = (label, field, opts, hint, cur, title) => {
+      const t = title ? ' title="' + String(title).replace(/"/g, '&quot;') + '"' : '';
+      return '<div class="ambient-ctrl ambient-ctrl-seg"' + t + '><label>' + label + '</label>' +
+      '<span class="ambient-seg-row ambient-seg-field" data-field="' + field + '">' +
+        opts.map(o => '<button type="button" class="ambient-seg ambient-seg-opt' + (cur === o[0] ? ' active' : '') + '" data-val="' + o[0] + '">' + o[1] + '</button>').join('') +
+      '</span><span class="ambient-hint">' + (hint || '') + '</span></div>';
+    };
     // One delegated listener mirrors every Bloom slider's value into its readout
     // as it's dragged — across all panels (master + lanes), no matter which
     // per-control handler also fires. Capture phase so a stopPropagation can't
@@ -14014,8 +14053,38 @@
       return k || null;
     }
     // Sync every FX module's visible blocks to its layer's chain.
+    // Contextual visibility for the chord-layer progression controls: the
+    // Progression group (Subdivide/Feel/Variety) only matters WITH an area prog,
+    // and Repeat/Times (self-composed phrase) only WITHOUT one — so show exactly
+    // the set that applies and hide the other, killing the "which knob does what?"
+    // confusion. Area-wide (one prog per area), so it keys off cfg.prog.
+    function _ambSyncProgVis(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
+      const progOn = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      host.querySelectorAll('[data-grp="Progression"]').forEach(g => { g.style.display = progOn ? '' : 'none'; });
+      host.querySelectorAll('input[id$="-chordPhraseLen"], input[id$="-chordRepeats"]').forEach(inp => {
+        const ctrl = inp.closest('.ambient-ctrl'); if (ctrl) ctrl.style.display = progOn ? 'none' : '';
+      });
+    }
+    // Mark the active button of every segmented enum row from the layer config.
+    function _ambSyncSegs(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      host.querySelectorAll('.ambient-seg-field').forEach(row => {
+        const field = row.getAttribute('data-field'); if (!field) return;
+        const key = _ambCardKey(row.closest('.ambient-layer')); if (!key) return;
+        const lc = _ambLayerByKey(E, key); if (!lc) return;
+        let val = lc[field];
+        if (field === 'home') { try { val = _ambHomeOf(lc, String(key).split(':')[0]); } catch (e) {} }
+        const first = row.querySelector('.ambient-seg-opt');
+        if (val == null && first) val = first.getAttribute('data-val');
+        row.querySelectorAll('.ambient-seg-opt').forEach(b => b.classList.toggle('active', b.getAttribute('data-val') === String(val)));
+      });
+    }
     function _ambSyncFxVis(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
+      try { _ambSyncProgVis(E); } catch (e) {}
+      try { _ambSyncSegs(E); } catch (e) {}
       host.querySelectorAll('details.ambient-fxmod').forEach(det => {
         const card = det.closest('.ambient-layer');
         const key = _ambCardKey(card); if (!key) return;
@@ -15242,19 +15311,19 @@
     //   header they sit under.
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['grp', 'Feel'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['grp', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times above only apply when there is no Area progression.)'], ['sl', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['grp', 'Feel'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['grp', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times above only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'octave'], ['sl', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['sl', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
@@ -15270,7 +15339,7 @@
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['sl', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
@@ -15278,7 +15347,7 @@
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
@@ -15286,14 +15355,14 @@
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['home'], ['sl', 'register', 'Register', 2, 7, 'base octave'], ['sl', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['sl', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['sl', 'register', 'Register', 1, 7, 'octave'], ['sl', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['sl', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
@@ -15301,10 +15370,10 @@
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
-        ['grp', 'Progression'], ['sl', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
+        ['grp', 'Progression'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -15725,11 +15794,11 @@
       // (`run-1`) — convert to the colon form (`run:1`) everything else uses, else
       // _ambLayerByKey('run-1') → cfg['run-1'] = undefined and Author silently no-ops.
       if (k === 'seedmode') return _ambSeedModeHtml((lk === type) ? type : (type + ':' + lk.slice(type.length + 1)));
-      if (k === 'home') return '<div class="ambient-ctrl"><label for="' + p + '-home" title="Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).">Home</label><select id="' + p + '-home" class="ambient-select"><option value="floor">Floor</option><option value="center">Center</option><option value="ceiling">Ceiling</option></select><span class="ambient-hint">Register sits at\u2026</span></div>';
+      if (k === 'home') return _ambSeg('Home', 'home', [['floor', 'Floor'], ['center', 'Center'], ['ceiling', 'Ceiling']], 'Register sits at\u2026', _ambHomeOf(inst, type), 'Where Register sits in the layer\u2019s pitch span: Floor = lowest octave (Range reaches up), Center = middle (Range reaches \u00b1 around it), Ceiling = top (Range reaches down).');
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
-      if (k === 'progfeel') return '<div class="ambient-ctrl" title="How the per-area-chord voicings are placed: Even = equal sub-slots, variants cycle in order; Stochastic = random onset timing + random variant (seeded, so a Loop replays it)."><label for="' + p + '-progfeel">Feel</label><select id="' + p + '-progfeel" class="ambient-select"><option value="even">Even</option><option value="stochastic">Stochastic</option></select><span class="ambient-hint">placement</span></div>';
+      if (k === 'progfeel') return _ambSeg('Feel', 'progFeel', [['even', 'Even'], ['stochastic', 'Stochastic']], 'placement', (inst && inst.progFeel) || 'even', 'How the per-area-chord voicings are placed: Even = equal sub-slots, variants cycle in order; Stochastic = random onset timing + random variant (seeded, so a Loop replays it).');
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
@@ -15739,6 +15808,7 @@
       if (k === 'synthkit') return _ambSynthKitUi(inst);
       if (k === 'speed') return _ambSpeedSel(p + '-speed');
       if (k === 'sl') return _ambSl(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
+      if (k === 'st') return _ambStep(c[2], p + '-' + c[1], c[3], c[4], inst[c[1]], c[5]);
       // Area fade is FREE-only: bar-native types (bass/run/pedal/shape) always capture
       // → never free → no fader at all. Other types keep it (disabled live when synced).
       if (k === 'tm' && c[1] === 'areaFadeMs' && (type === 'bass' || type === 'run' || type === 'pedal')) return '';
@@ -16059,7 +16129,7 @@
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
           else if (k === 'strumsync') { const e = el('strumsync'); if (e) { e.value = inst.strumSync || ''; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value) L.strumSync = e.value; else delete L.strumSync; sync(); persist(); } }); } }
           else if (k === 'speed') { const e = el('speed'); if (e) { e.value = (Number.isFinite(inst.speed) && inst.speed !== 1) ? String(inst.speed) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0 && v !== 1) L.speed = v; else delete L.speed; sync(); persist(); if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } } }); } }
-          else if (k === 'sl') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { L[c[1]] = parseInt(e.value, 10) || 0; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
+          else if (k === 'sl' || k === 'st') { const e = el(c[1]); if (e) { e.addEventListener('input', () => { const L = get(); if (L) { let v = parseInt(e.value, 10); if (!Number.isFinite(v)) v = c[3] | 0; v = Math.max(c[3] | 0, Math.min(c[4] | 0, v)); L[c[1]] = v; if (c[1] === 'level') _ambSyncLevelUI(E, type + ':' + id, L.level); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'tm') { const e = el(c[1]), v = el(c[1] + '-v'); if (e) { if (v) v.textContent = _ambFmtMs(inst[c[1]]); e.addEventListener('input', () => { const L = get(); if (L) { const val = parseInt(e.value, 10) || 0; L[c[1]] = val; if (v) v.textContent = _ambFmtMs(val); sync(); persist(); } }); if (!_AMB_LIVE_NODE_PARAMS[c[1]]) e.addEventListener('change', () => { if (E.timer) { try { _ambReanchorLayer(E, type + ':' + id); } catch (x) {} } }); } }
           else if (k === 'home') { const s = el('home'); if (s) { s.value = _ambHomeOf(inst, type); s.addEventListener('change', () => { const L = get(); if (!L) return; L.home = s.value || ''; sync(); persist(); try { _ambSeedUiRefresh(E, p, get, type + ':' + id); } catch (e) {} }); } }
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
@@ -19028,6 +19098,38 @@
             hostEl.addEventListener('input', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest(_pechoSel); if (el && hostEl.contains(el)) _pechoWrite(el); });
             hostEl.addEventListener('change', (ev) => { const el = ev.target && ev.target.closest && ev.target.closest('.ambient-pecho-sync'); if (el && hostEl.contains(el)) _pechoWrite(el); });
           }
+          // Stepper −/+ buttons — ONE delegated click listener for every card.
+          // Nudges the target number input ±1 (clamped) and dispatches 'input' so
+          // the existing id-based bind fires. Mobile-safe (no per-button wiring).
+          hostEl.addEventListener('click', (ev) => {
+            const btn = ev.target && ev.target.closest && ev.target.closest('.ambient-step-btn');
+            if (!btn || !hostEl.contains(btn)) return;
+            // Resolve the input as the button's sibling (NOT by id — the master/shape
+            // Bloom rewrite the id prefix, but not data-step, so getElementById fails).
+            const wrap = btn.closest('.ambient-stepper');
+            const inp = wrap && wrap.querySelector('.ambient-step-inp'); if (!inp) return;
+            const min = parseInt(inp.min, 10), max = parseInt(inp.max, 10);
+            let v = parseInt(inp.value, 10); if (!Number.isFinite(v)) v = Number.isFinite(min) ? min : 0;
+            v += btn.classList.contains('ambient-step-up') ? 1 : -1;
+            if (Number.isFinite(min)) v = Math.max(min, v);
+            if (Number.isFinite(max)) v = Math.min(max, v);
+            if (String(v) === inp.value) return;
+            inp.value = String(v);
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+          // Segmented enum rows (Feel / Home…) — ONE delegated click listener,
+          // keyed by the row's data-field (the config key it writes).
+          hostEl.addEventListener('click', (ev) => {
+            const btn = ev.target && ev.target.closest && ev.target.closest('.ambient-seg-field .ambient-seg-opt');
+            if (!btn || !hostEl.contains(btn)) return;
+            const row = btn.closest('.ambient-seg-field'); const field = row && row.getAttribute('data-field'); if (!field) return;
+            const key = _ambCardKey(btn.closest('.ambient-layer')); if (!key) return;
+            _E = E; const lc = _ambLayerByKey(E, key); if (!lc) return;
+            lc[field] = btn.getAttribute('data-val');
+            row.querySelectorAll('.ambient-seg-opt').forEach(b => b.classList.toggle('active', b === btn));
+            if (field === 'home') { try { _ambSyncControls(E); } catch (e) {} }   // Home shifts the seed preview
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
           // Dry Kill (per-FX) + Wet Only (layer) checkboxes — ONE delegated change
           // listener for every card (class-based, mobile-safe). Both re-apply the
           // layer FX live (dry-kill can newly ENGAGE an FX at Mix 0 → node build).

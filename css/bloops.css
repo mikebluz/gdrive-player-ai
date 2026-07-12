@@ -2816,6 +2816,32 @@
     .pe-lenhint { font-size: 0.72rem; color: #718096; }
     .ambient-prog-editor button[disabled] { opacity: 0.4; cursor: default; }
     .ambient-ctrl input[type="range"] { width: 100%; min-width: 0; accent-color: #9f7aea; }
+    /* Stepper (−/value/+) — discrete integer counts. Occupies the slider column. */
+    .ambient-ctrl-step .ambient-stepper {
+      display: inline-flex; align-items: stretch; width: 100%; min-width: 0;
+      border: 1px solid #3a3a52; border-radius: 8px; overflow: hidden; background: rgba(45,45,63,0.35);
+    }
+    .ambient-step-btn {
+      flex: 0 0 auto; width: 34px; min-height: 32px; border: none; cursor: pointer;
+      background: rgba(159,122,234,0.14); color: #c9b8ef; font: 700 1.05rem 'Segoe UI', sans-serif;
+      line-height: 1; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+    }
+    @media (hover: hover) { .ambient-step-btn:hover { background: rgba(159,122,234,0.3); color: #e6def8; } }
+    .ambient-step-btn:active { background: rgba(159,122,234,0.42); }
+    .ambient-step-inp {
+      flex: 1 1 auto; min-width: 0; width: 100%; text-align: center; border: none;
+      background: transparent; color: #e6e6f0; font: 700 0.9rem 'JetBrains Mono', monospace;
+      -moz-appearance: textfield; padding: 4px 2px;
+    }
+    .ambient-step-inp::-webkit-outer-spin-button, .ambient-step-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .ambient-step-inp:focus { outline: none; background: rgba(159,122,234,0.1); }
+    /* Segmented enum row (Feel / Home) — fills the slider column; buttons share width. */
+    .ambient-ctrl-seg .ambient-seg-field { display: inline-flex; width: 100%; min-width: 0; gap: 4px; }
+    .ambient-ctrl-seg .ambient-seg-opt {
+      flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 6px; border-radius: 7px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font: 600 0.74rem 'Segoe UI', sans-serif; touch-action: manipulation;
+    }
     /* Live numeric readout for a slider (third grid column). Fixed min-width +
        right align so values don't shift the slider as digits change. */
     .ambient-sl-v {

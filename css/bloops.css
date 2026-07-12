@@ -10177,6 +10177,17 @@
       background: rgba(246,173,85,0.06);
     }
     .bloom-hdr-bar:empty { display: none; }
+    /* Live progression-chord readout — sits right of the Bar counter, purple
+       accent so it reads as its own field. Hidden when there's no active prog. */
+    .bloom-hdr-chord {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+      height: 40px; padding: 0 11px; white-space: nowrap;
+      font: 700 0.8rem 'JetBrains Mono', monospace; letter-spacing: 0.3px; color: #c9b8ef;
+      border-bottom: 1px solid rgba(159,122,234,0.35);
+      border-right: 1px solid rgba(159,122,234,0.2);
+      background: rgba(159,122,234,0.09);
+    }
+    .bloom-hdr-chord:empty { display: none; }
     .float-header > * { pointer-events: auto; }
     /* Workspace-key readout — left of the elapsed/BPM strip; same visual
        language, teal accent, sized to its content. Click = key picker. */

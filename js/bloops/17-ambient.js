@@ -1514,7 +1514,7 @@
       ['bed','motif','texture','beat'].forEach(layer => {
         Object.keys(d[layer]).forEach(k => {
           if (k === 'on') { if (typeof cfg[layer].on !== 'boolean') cfg[layer].on = d[layer].on; }
-          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when' || k === 'panMode' || k === 'gen') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
+          else if (k === 'kit' || k === 'tone' || k === 'scale' || k === 'when' || k === 'panMode' || k === 'gen' || k === 'progFeel') { if (typeof cfg[layer][k] !== 'string') cfg[layer][k] = d[layer][k]; }
           else if (k === 'mod') { _ambNormalizeModObj(cfg[layer], d[layer].mod); }
           else if (k === 'delay' || k === 'dist' || k === 'chorus' || k === 'phaser' || k === 'autopan' || k === 'tg') { /* objects — handled by _ambNormalizeFx below */ }
           else if (!Number.isFinite(cfg[layer][k])) cfg[layer][k] = d[layer][k];
@@ -2757,6 +2757,29 @@
       ch.intervals = uniq.map(p => (((p - base) % 12) + 12) % 12).sort((a, b) => a - b);
     }
     function _ambPeChLabel(ch) { return _ambPeNotes(ch).slice().sort((a, b) => a - b).map(p => _AMB_CHROM[p]).join(' '); }
+    // Compact chord name for the header readout: root note + quality suffix
+    // (C, Am, G7, D°…). Falls back to just the root for a custom voicing.
+    const _AMB_CH_SYM = { maj: '', min: 'm', dim: '°', aug: '+', sus2: 'sus2', sus4: 'sus4', '7': '7', maj7: 'maj7', min7: 'm7', 'm7♭5': 'm7♭5', dim7: '°7', '6': '6', '9': '9' };
+    function _ambChordShort(ch) {
+      if (!ch || typeof ch !== 'object') return '';
+      const root = _AMB_CHROM[(((ch.root | 0) % 12) + 12) % 12];
+      const norm = (Array.isArray(ch.intervals) ? ch.intervals.map(x => x | 0) : [0]).slice().sort((a, b) => a - b).join(',');
+      for (let i = 0; i < _AMB_PE_QUALITIES.length; i++) {
+        const q = _AMB_PE_QUALITIES[i];
+        if (q[1].slice().sort((a, b) => a - b).join(',') === norm) return root + (q[0] in _AMB_CH_SYM ? _AMB_CH_SYM[q[0]] : q[0]);
+      }
+      return root;
+    }
+    // Current progression chord label for the header ('' when no Area prog plays).
+    function _ambHeaderChord(E) {
+      const cfg = (E && (E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg())))) || null;
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return '';
+      const tnow = ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0)) + 0.016;
+      let step = 0; try { step = _ambProgStepAt(E, tnow) | 0; } catch (e) {}
+      const ch = p.chords[((step % p.chords.length) + p.chords.length) % p.chords.length];
+      return _ambChordShort(ch);
+    }
     // B3: roman-numeral for a chord relative to a key (root pc + scale name). Degree
     // from the major-scale reference (chromatic roots get ♭/♯); case + symbol from
     // the chord quality (upper = major/aug, lower = minor/dim, °=dim, +=aug, 7 tags).
@@ -3998,7 +4021,81 @@
     // for the Bed chord modes.
     const _AMB_CHORDS_STD = ['maj', 'min', 'dom7', 'maj7', 'min7', 'sus2', 'sus4'];
     const _AMB_CHORDS_EXO = ['maj9', 'min9', 'm7b5', 'dim7', 'aug', 'add9'];
-    function _ambPickVoicing(bed, iter, key) {
+    // PROGRESSION SYNC: chord-voicing layers that should lock their chord clock to
+    // an active AREA progression (bed + extra beds + drone). Returns the sub-slot
+    // grid (chord duration / Subdivision, anchored at play start so sub-slots line
+    // up with chord boundaries) or null when there's no active prog / not a chord
+    // layer. Subdivision 1 = one voicing per area chord. Uniform barsPerChord
+    // (per-chord `bars` fall back to the area default for the grid — v1).
+    function _ambProgSyncInfo(E, key, lc, cfg) {
+      cfg = cfg || (E && (E._cfg || (E.getCfg && E.getCfg())));
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return null;
+      const type = String(key || '').split(':')[0];
+      if (type !== 'bed' && type !== 'drone') return null;   // chord-capable layers (v1)
+      const subdiv = Math.max(1, Math.min(16, (lc && lc.progSubdiv | 0) || 1));
+      const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const chordSec = Math.max(0.05, (Math.max(0.01, cfg.barsPerChord || 1)) * barSec);
+      const subUnit = Math.max(0.03, chordSec / subdiv);
+      const anchor = Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0;
+      return { subdiv, chordSec, subUnit, anchor, feel: (lc && lc.progFeel) === 'stochastic' ? 'stochastic' : 'even' };
+    }
+    // Voice the CURRENT area-progression chord with an in-tonality VARIATION for a
+    // given sub-slot. Never leaves the chord: it re-voices (inversion / octave
+    // spread) and — gated by the Chords mode + Variety — adds color (9/11/13
+    // extensions, sus2/sus4, aug). Even feel cycles variants in slot order;
+    // Stochastic picks a seeded-random variant (deterministic per chord+slot, so
+    // Bar-Lock/Loop replay identically). Returns sorted freqs (fit to Density).
+    function _ambVoiceProgChord(bed, notes, progVar) {
+      const base = _ambScaleIntervals(notes);            // current chord's intervals from its root
+      const N = Math.max(1, base.length);
+      const center = Math.max(1, Math.min(8, bed.register | 0));
+      const spread = Math.max(0, Math.min(4, bed.spread | 0));
+      const want = Math.max(1, Math.min(8, bed.density | 0));
+      const mode = bed.chordMode || 'chaos';
+      const variety = Math.max(0, Math.min(100, bed.voiceVariety | 0)) / 100;
+      const seed = (_E && _E._cfg && (_E._cfg.seed | 0)) || 0;
+      // Build the variant menu. Inversions are always available (re-voicing that
+      // stays inside the chord); extensions/sus/aug come in only as the Chords
+      // MODE allows AND Variety opens them up.
+      const variants = [];
+      for (let i = 0; i < N; i++) variants.push({ k: 'inv', n: i });
+      const allowExt = (mode === 'chordsplus' || mode === 'monk');
+      const allowSus = (mode === 'monk');
+      if (variety > 0 && allowExt) { variants.push({ k: 'ext', a: 14 }); variants.push({ k: 'ext', a: 17 }); if (variety >= 0.6) variants.push({ k: 'ext', a: 21 }); }
+      if (variety > 0 && allowSus) { variants.push({ k: 'sus', s: 2 }); variants.push({ k: 'sus', s: 5 }); if (variety >= 0.4) variants.push({ k: 'aug' }); }
+      let vi;
+      if (progVar.feel === 'stochastic') {
+        const rnd = _ambSeededRand(((((progVar.chordStep | 0) + 1) * 2654435761) ^ (((progVar.slot | 0) + 1) * 40503) ^ ((seed * 131) >>> 0)) >>> 0);
+        vi = Math.floor(rnd() * variants.length) % variants.length;
+      } else {
+        vi = (((progVar.slot | 0) % variants.length) + variants.length) % variants.length;
+      }
+      const v = variants[vi] || { k: 'inv', n: 0 };
+      // Base chord tones as {interval-from-root, octave-shift}; apply the variant.
+      let tones = base.map(iv => ({ iv: iv, oct: 0 }));
+      if (v.k === 'inv' && v.n > 0) { for (let i = 0; i < v.n && i < tones.length; i++) tones[i].oct += 1; }        // rotate the bottom n tones up an 8ve
+      else if (v.k === 'ext') { tones.push({ iv: v.a, oct: 0 }); }                                                  // add a 9/11/13 color tone
+      else if (v.k === 'sus') { const t3 = tones.find(t => t.iv === 3 || t.iv === 4); if (t3) t3.iv = v.s; else tones.push({ iv: v.s, oct: 0 }); }  // 3rd → 2nd/4th
+      else if (v.k === 'aug') { const t5 = tones.find(t => t.iv === 7); if (t5) t5.iv = 8; }                        // raise the 5th
+      // Spread lifts the upper half of the tones an octave (voicing width) — 2+
+      // widens once, 3+ widens the top third a second octave.
+      if (spread >= 2) { const half = Math.ceil(tones.length / 2); tones.forEach((t, i) => { if (i >= half) t.oct += 1; if (spread >= 3 && i >= Math.ceil(tones.length * 2 / 3)) t.oct += 1; }); }
+      const out = [];
+      for (const t of tones) { const f = _ambNoteFreq(t.iv, center + t.oct, notes); if (f > 0) out.push(f); }
+      out.sort((a, b) => a - b);
+      // Fit to Density: octave-double from the bottom up if the chord has fewer
+      // tones than Density; trim if more.
+      let g = 0; while (out.length < want && out.length && g++ < 24) out.push(out[(out.length) % Math.max(1, tones.length)] * 2);
+      out.sort((a, b) => a - b);
+      if (out.length > want) out.length = want;
+      return out;
+    }
+    function _ambPickVoicing(bed, iter, key, progVar) {
+      // PROG-SYNC: an active area progression drives the chord — voice IT (with an
+      // in-tonality variation per sub-slot) instead of composing a separate chord.
+      if (progVar) { const nn = _ambNotesOf(bed); if (_ambAsNotes(nn).type === 'prog') return _ambVoiceProgChord(bed, nn, progVar); }
       const notes = _ambNotesOf(bed);
       const intervals = _ambScaleIntervals(notes);
       const N = intervals.length;
@@ -4196,7 +4293,18 @@
       // loop layers. Cleared right after the voicing is picked.
       const _bedProg = (_ambAsNotes(_ambNotesOf(bed)).type === 'prog');
       if (_bedProg) _ambProgStepOverride = _ambProgStepAt(_E, at);
-      const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key);
+      // Prog-sync: which sub-slot of the current area chord is this onset? Drives
+      // the in-chord voicing variation (+ a stochastic onset jitter, below).
+      const _psi = _bedProg ? _ambProgSyncInfo(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())) : null;
+      let _progVar = null, _progJit = 0;
+      if (_psi) {
+        const _sub = Math.round((at - _psi.anchor) / _psi.subUnit);
+        const _cstep = Math.floor(_sub / _psi.subdiv);
+        const _slot = ((_sub % _psi.subdiv) + _psi.subdiv) % _psi.subdiv;
+        _progVar = { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel };
+        if (_psi.feel === 'stochastic') { const _jr = _ambSeededRand((((_cstep + 1) * 40503) ^ ((_slot + 1) * 2654435761) ^ 0x9e3779b9) >>> 0); _progJit = _jr() * 0.4 * _psi.subUnit; }   // up to 40% of a sub-slot
+      }
+      const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key, _progVar);
       if (_bedProg) _ambProgStepOverride = null;
       if (!voicing.length) { _ambRecordUnit(_E, key, at, []); return; }
       // HOLD mode: each chord's length = Hold × the base UNIT (Sync-scaled), which
@@ -4205,7 +4313,13 @@
       // legacy path: durMs = Length (ms), onset = Interval — byte-identical.
       let durMs = Math.max(80, bed.lengthMs | 0);
       let effIntervalMs = Math.max(1, bed.intervalMs | 0);
-      if (Number.isFinite(bed.hold) && bed.hold > 0) {
+      if (_psi) {
+        // Prog-sync: the unit IS the chord sub-slot. Strum / Start-vary / choke and
+        // the note length all scale to it so voicings sit inside their slot (Length
+        // still caps the sustain, so a long pad can ring across sub-slots if you want).
+        effIntervalMs = Math.max(1, Math.round(_psi.subUnit * 1000));
+        durMs = Math.max(80, Math.min(durMs, Math.round(_psi.subUnit * 1000 * 1.5)));
+      } else if (Number.isFinite(bed.hold) && bed.hold > 0) {
         const _cfg = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
         let _sc = 1; try { _sc = _ambLayerScale(_E, key, bed, _cfg); } catch (e) {}
         const unitSec = Math.max(0.05, _ambEffIntervalSec(bed)) * _sc;
@@ -4255,6 +4369,9 @@
         const slack = Math.max(0, _uSec - _strumSpanSec - 0.02);
         if (slack > 0.02) _startOff = _ambRand() * slack;
       }
+      // Prog-sync Stochastic feel: nudge this voicing's onset within its sub-slot
+      // (seeded above → reproducible). Even feel leaves it on the grid.
+      if (_progJit > 0) _startOff += _progJit;
       const _unit = [];
       order.forEach((vi, pos) => {
         const f = voicing[vi];
@@ -4753,18 +4870,14 @@
       const reg = Math.max(1, Math.min(7, inst.register | 0) || 3);
       const src = _ambNotesOf(inst);
       const n = _ambAsNotes(src);
-      // FOLLOW THE PROGRESSION: a drone with a long hold re-voices only once per
-      // cycle, so it sits on ONE chord while the area's chords change underneath
-      // (the "drone stuck on the first chord" report). When a progression is
-      // active AND a chord is shorter than the hold, cap the re-voice cycle to the
-      // chord length so the drone re-harmonizes every chord. Non-prog drones are
-      // untouched (byte-identical → harness-safe).
+      // PROGRESSION SYNC: an active Area progression overrides the drone's own
+      // clock — it re-voices on the chord grid (chord length ÷ Subdivide), so it
+      // follows the changes and (Subdivide > 1) plays several in-chord voicings per
+      // chord instead of sitting on one. Non-prog drones are untouched → byte-
+      // identical / harness-safe. (Superseded the earlier chord-cap fix.)
       const _isProg = (n.type === 'prog');
-      if (_isProg) {
-        const _barSec = (60 / Math.max(20, (cfg && cfg.bpm > 0) ? cfg.bpm : _ambBpm())) * 4;
-        const _chordSec = Math.max(0.05, (Math.max(0.01, (cfg && cfg.barsPerChord) || 1)) * _barSec);
-        if (_chordSec < cycleSec) cycleSec = _chordSec;
-      }
+      const _psi = _ambProgSyncInfo(E, key, inst, cfg);
+      if (_psi) cycleSec = _psi.subUnit;
       // Density/Degree voicing: of the current source's tones (chord tones for a
       // chord/wrap/prog, scale degrees for a scale), start at the Degree-th tone
       // (the voicing root) and stack `density` consecutive tones, bumping up an
@@ -4783,8 +4896,9 @@
       const timeVary = Math.max(0, Math.min(100, inst.timeVary | 0));
       const pitchVary = Math.max(0, Math.min(100, inst.pitchVary | 0));
       // Hold the note across (almost) the whole span so it's continuous; a hair
-      // short so a long release doesn't pile onto the next strike.
-      const lenMs = Math.max(60, Math.round(cycleSec * 1000 * 0.98));
+      // short so a long release doesn't pile onto the next strike. Prog-sync
+      // overlaps (×1.5) so subdivided voicings crossfade like a pad.
+      const lenMs = Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98)));
 
       let st = E.runPhase[key];
       if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
@@ -4818,16 +4932,35 @@
         // buffer is one-shot, so without looping it ends partway and the layer
         // falls silent mid-hold — flag it to loop/sustain via the pad voice path.
         bp.loop = true;
-        // Stack `density` tones from the Degree-th, wrapping +1 octave per pass.
-        for (let i = 0; i < density; i++) {
-          const idx = startIdx + i;
-          const tIv = tones[(((idx % K) + K) % K)];
-          const oct = Math.floor(idx / K);
-          const f = _ambNoteFreq(tIv, reg + regShift + oct, src);
-          if (f == null) continue;
-          const vp = Object.assign({}, bp);
-          if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);   // Harmony colours: lead-in once per onset (root), no-op at default
-          try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+        if (_psi) {
+          // PROG-SYNC: voice the CURRENT chord with an in-tonality variation for
+          // this sub-slot (inversions + — via Variety — 9/11/13 extensions), so a
+          // subdivided drone evolves within the chord. Reuses the Bed's voicer with
+          // a drone shim (its Register/Density; Pitch-vary still drifts the octave).
+          const _cyc = st.startAt + c * cycleSec;
+          const _subSlot = Math.round((_cyc - _psi.anchor) / _psi.subUnit);
+          const _cstep = Math.floor(_subSlot / _psi.subdiv);
+          const _slot = ((_subSlot % _psi.subdiv) + _psi.subdiv) % _psi.subdiv;
+          const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0 };
+          const _freqs = _ambVoiceProgChord(_shim, src, { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel });
+          for (let i = 0; i < _freqs.length; i++) {
+            const f = _freqs[i]; if (!(f > 0)) continue;
+            const vp = Object.assign({}, bp);
+            if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);
+            try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+          }
+        } else {
+          // Stack `density` tones from the Degree-th, wrapping +1 octave per pass.
+          for (let i = 0; i < density; i++) {
+            const idx = startIdx + i;
+            const tIv = tones[(((idx % K) + K) % K)];
+            const oct = Math.floor(idx / K);
+            const f = _ambNoteFreq(tIv, reg + regShift + oct, src);
+            if (f == null) continue;
+            const vp = Object.assign({}, bp);
+            if (i === 0) _ambColourLeadIn(f, vp, at, dest, _E.laneIdx(), src);   // Harmony colours: lead-in once per onset (root), no-op at default
+            try { playNote(f, vp, lenMs, at + i * 0.006, dest, undefined, _E.laneIdx()); } catch (e) {}
+          }
         }
         cap++;
       }
@@ -8661,7 +8794,14 @@
         if (!lc || lc.present === false || _ambFreezeFrozen(E, key)) return;
         if (E.windingDown) return; // Capture finalize: no new iterations (current ones, already scheduled, play out)
         const HZ = hz || horizon;
-        if (!C[key] || C[key] < now) C[key] = lead + _ambDriftOffset(E, key, lc, cfg);
+        // PROG-SYNC: an active area progression overrides a chord layer's own clock
+        // — it steps on the chord grid (chordDur / Subdivision), anchored so sub-
+        // slots line up with chord boundaries. Null → the layer's normal clock.
+        const psi = _ambProgSyncInfo(E, key, lc, cfg);
+        if (!C[key] || C[key] < now) {
+          if (psi) { const j = Math.ceil((lead - psi.anchor) / psi.subUnit - 1e-6); C[key] = psi.anchor + Math.max(0, j) * psi.subUnit; }
+          else C[key] = lead + _ambDriftOffset(E, key, lc, cfg);
+        }
         const sc = _ambLayerScale(E, key, lc, cfg);   // Unit Sync time-scale (1 = Free)
         // Texture's UNIT is its 16-slot pattern, so When gates whole patterns
         // (16 steps), not each step — matching its status bar / step-div display.
@@ -8674,7 +8814,8 @@
           // instead of the previous notes lingering.
           else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
           I[key] = (I[key] | 0) + 1;
-          C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
+          C[key] += psi ? Math.max(minSec, psi.subUnit)
+                        : Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
         }
       };
       // Freeze-aware wrapper: frozen → replay the captured loop; recording →
@@ -11646,7 +11787,12 @@
       const el = host.querySelector('.ambient-orch-bar'); if (!el) return;
       const hdr = host.querySelector('.ambient-orch-bar-hdr');
       const app = document.getElementById('bloom-hdr-bar');   // app header pill (fixed on scroll)
-      if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; if (app && app.textContent) app.textContent = ''; E._biInit = false; return; }
+      const chp = document.getElementById('bloom-hdr-chord');  // live progression-chord readout
+      if (!E.timer) { if (el.textContent) el.textContent = ''; if (hdr && hdr.textContent) hdr.textContent = ''; if (app && app.textContent) app.textContent = ''; if (chp && chp.textContent) chp.textContent = ''; E._biInit = false; return; }
+      // Live current-progression-chord readout in the app header (empty when the
+      // area has no active progression). Same clock the emit reads, so it shows
+      // the chord you're actually hearing — and makes chord motion visible.
+      if (chp) { let cTxt = ''; try { cTxt = _ambHeaderChord(E); } catch (e) {} if (chp.textContent !== cTxt) chp.textContent = cTxt; }
       // AUDIBLE clock (currentTime − latency, +1 frame), same as the layer status
       // bars — so the counter tracks what you HEAR, not the schedule clock (Tone.now,
       // which runs ~a lookahead ahead and made the counter lead the layer bars).
@@ -15098,7 +15244,7 @@
       bed: { label: 'Bed', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['sl', 'register', 'Register', 2, 6, 'octave'], ['sl', 'density', 'Density', 1, 8, 'voices'], ['sl', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['grp', 'Feel'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['grp', 'Feel'], ['sl', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['sl', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['grp', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times above only apply when there is no Area progression.)'], ['sl', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
@@ -15158,6 +15304,7 @@
         ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['sl', 'density', 'Density', 1, 9, 'notes stacked'], ['sl', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['sl', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Progression'], ['sl', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -15171,7 +15318,7 @@
     }
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, mod: _ambDefaultMod(), ..._ambDefaultFx() };
-      if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, ..._AMB_ADSR_DEFAULTS.bed });
+      if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
@@ -15213,7 +15360,7 @@
       if (type === 'drone') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 3, degree: 1, density: 1,
         intervalMs: 8000, hold: 4, attack: 200, decay: 0, sustain: 100, release: 1500,
-        timeVary: 0, pitchVary: 0, accent: 0,
+        timeVary: 0, pitchVary: 0, accent: 0, progSubdiv: 1, progFeel: 'even', voiceVariety: 0,
       });
       return base;
     }
@@ -15582,6 +15729,7 @@
       if (k === 'notes') return _ambNotesButtonHtml(p);
       if (k === 'droneedit') return _ambDroneEditHtml(p);
       if (k === 'chordmode') return '<div class="ambient-ctrl"><label for="' + p + '-chordmode">Chords</label><select id="' + p + '-chordmode" class="ambient-select"><option value="chaos">Chaos</option><option value="chords">Chords</option><option value="chordsplus">Chords+</option><option value="monk">Monk</option></select><span class="ambient-hint">chord source</span></div>';
+      if (k === 'progfeel') return '<div class="ambient-ctrl" title="How the per-area-chord voicings are placed: Even = equal sub-slots, variants cycle in order; Stochastic = random onset timing + random variant (seeded, so a Loop replays it)."><label for="' + p + '-progfeel">Feel</label><select id="' + p + '-progfeel" class="ambient-select"><option value="even">Even</option><option value="stochastic">Stochastic</option></select><span class="ambient-hint">placement</span></div>';
       if (k === 'choke') return '<div class="ambient-ctrl"><label for="' + p + '-choke">Choke</label><select id="' + p + '-choke" class="ambient-select"><option value="0">Off (overlap)</option><option value="1">At boundary</option></select><span class="ambient-hint">release each chord by the next unit</span></div>';
       if (k === 'hold') return _ambHoldSel(p + '-hold', inst);
       if (k === 'rhythmseed') return _ambRhythmSeedSel(p + '-rhythmseed');
@@ -15905,6 +16053,7 @@
           else if (k === 'droneedit') { _ambWireDroneEdit(E, inst, p, get); }
           else if (k === 'chordmode') { const e = el('chordmode'); if (e) { e.value = inst.chordMode || 'chaos'; e.addEventListener('change', () => { const L = get(); if (L) { L.chordMode = e.value || 'chaos'; L.choke = (L.chordMode !== 'chaos'); const ck = el('choke'); if (ck) ck.value = L.choke ? '1' : '0'; sync(); persist(); } }); } }
           else if (k === 'choke') { const e = el('choke'); if (e) { e.value = inst.choke ? '1' : '0'; e.addEventListener('change', () => { const L = get(); if (L) { L.choke = (e.value === '1'); sync(); persist(); } }); } }
+          else if (k === 'progfeel') { const e = el('progfeel'); if (e) { e.value = inst.progFeel || 'even'; e.addEventListener('change', () => { const L = get(); if (L) { L.progFeel = (e.value === 'stochastic') ? 'stochastic' : 'even'; sync(); persist(); } }); } }
           else if (k === 'hold') { const e = el('hold'); if (e) { e.value = (inst.hold != null && Number.isFinite(inst.hold)) ? String(inst.hold) : ''; e.addEventListener('change', () => { const L = get(); if (L) { const v = parseFloat(e.value); if (Number.isFinite(v) && v > 0) L.hold = v; else delete L.hold; sync(); persist(); } }); } }
           else if (k === 'rhythmseed') { const e = el('rhythmseed'); if (e) { e.value = inst.rhythmSeed || 'fill'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'euclid') L.rhythmSeed = 'euclid'; else delete L.rhythmSeed; sync(); persist(); } }); } }
           else if (k === 'pitchseed') { const e = el('pitchseed'); if (e) { e.value = inst.pitchSeed || 'random'; e.addEventListener('change', () => { const L = get(); if (L) { if (e.value === 'low') L.pitchSeed = 'low'; else delete L.pitchSeed; sync(); persist(); } }); } }
@@ -17643,6 +17792,9 @@
       set('ambient-bed-choke', cfg.bed.choke ? '1' : '0');
       set('ambient-bed-chordPhraseLen', (cfg.bed.chordPhraseLen | 0) || 4);
       set('ambient-bed-chordRepeats', (cfg.bed.chordRepeats | 0) || 4);
+      set('ambient-bed-progSubdiv', (cfg.bed.progSubdiv | 0) || 1);
+      set('ambient-bed-voiceVariety', cfg.bed.voiceVariety | 0);
+      set('ambient-bed-progfeel', cfg.bed.progFeel || 'even');
       set('ambient-bed-register', cfg.bed.register);
       set('ambient-bed-spread', cfg.bed.spread);
       set('ambient-bed-intervalMs', cfg.bed.intervalMs); hint('ambient-bed-intervalMs-v', _ambFmtMs(cfg.bed.intervalMs));
@@ -18458,6 +18610,9 @@
       bind('ambient-bed-spread', 'bed', 'spread');
       bind('ambient-bed-chordPhraseLen', 'bed', 'chordPhraseLen');
       bind('ambient-bed-chordRepeats', 'bed', 'chordRepeats');
+      bind('ambient-bed-progSubdiv', 'bed', 'progSubdiv');
+      bind('ambient-bed-voiceVariety', 'bed', 'voiceVariety');
+      { const pf = G('ambient-bed-progfeel'); if (pf) pf.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.progFeel = pf.value === 'stochastic' ? 'stochastic' : 'even'; persist(); }); }
       { const cm = G('ambient-bed-chordmode'); if (cm) cm.addEventListener('change', () => { _E = E; const cfg = cfg0(); if (!cfg || !cfg.bed) return; cfg.bed.chordMode = cm.value || 'chaos'; cfg.bed.choke = (cfg.bed.chordMode !== 'chaos'); const ck = G('ambient-bed-choke'); if (ck) ck.value = cfg.bed.choke ? '1' : '0'; persist(); }); }
       // Per-chord-voice tones (structured modes) — populate, load + bind the 6 voice selects.
       ['0', '1', '2', '3', '4', '5'].forEach(i => {

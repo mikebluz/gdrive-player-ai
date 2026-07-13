@@ -1356,7 +1356,7 @@
     function _ambFmtBpc(v) {
       if (!(v > 0)) return '1';
       if (Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
-      for (const den of [2, 3, 4, 6, 8, 12, 16, 5, 7, 9, 10]) {
+      for (const den of [2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 5, 7, 9, 10]) {   // 24/32/48 → 1/16t, 1/32, 1/32t chord lengths display as clean fractions
         const num = v * den;
         if (Math.abs(num - Math.round(num)) < 1e-4) return Math.round(num) + '/' + den;
       }
@@ -1591,7 +1591,7 @@
         _ambNormalizeKeyOv(x);   // B2 per-layer KEY override (all extra types)
         if (x.type === 'arp') {
           if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
-          const _DIRS = ['up', 'down', 'updown', 'downup', 'random'];
+          const _DIRS = ['up', 'down', 'updown', 'downup', 'ladder', 'converge', 'diverge', 'pedal', 'random'];
           const _layerDir = (_DIRS.indexOf(x.dir) >= 0) ? x.dir : 'up';
           x.steps = x.steps.map(s => {
             const st = (s && typeof s === 'object') ? s : {};
@@ -4038,7 +4038,17 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const chordSec = Math.max(0.05, (Math.max(0.01, cfg.barsPerChord || 1)) * barSec);
       const subUnit = Math.max(0.03, chordSec / subdiv);
-      const anchor = Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0;
+      // Anchor the chord sub-grid on the LAYERS' shared grid (_barGridAnchor =
+      // the first-onset lead) — the same grid unit-synced layers snap to — NOT
+      // _playStartAt. The two differ by the first tick's lead (~60-150 ms), and
+      // anchoring here on playStart while synced layers rode the lead grid kept
+      // a prog-synced Bed a small CONSTANT fraction ahead of a same-unit Arp
+      // (measured 0.039 bar). Chord RESOLUTION (_ambProgStepAt) stays on
+      // _playStartAt: onsets on the lead grid land just AFTER each chord
+      // boundary, resolving cleanly INTO the new chord. Non-master engines (the
+      // harness) never set _barGridAnchor → same playStart fallback as before.
+      const anchor = Number.isFinite(E && E._barGridAnchor) ? E._barGridAnchor
+        : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
       return { subdiv, chordSec, subUnit, anchor, feel: (lc && lc.progFeel) === 'stochastic' ? 'stochastic' : 'even' };
     }
     // Voice the CURRENT area-progression chord with an in-tonality VARIATION for a
@@ -4466,7 +4476,7 @@
       const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
       const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       let st = E[phaseStore][key];
-      if (!st) st = E[phaseStore][key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
+      if (!st) st = E[phaseStore][key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -4729,7 +4739,7 @@
       }
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -4812,7 +4822,7 @@
       const rel = Math.max(0, Math.min(4000, Number.isFinite(inst.release) ? inst.release : 200));
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -4901,7 +4911,7 @@
       const lenMs = Math.max(60, Math.round(cycleSec * 1000 * (_psi ? 1.5 : 0.98)));
 
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -5174,6 +5184,9 @@
     // Pool index for the Nth note of a directional sweep over `len` pitches.
     // Up: 0..len-1; Down: len-1..0; Up-Down / Down-Up: a triangle that visits
     // each endpoint once per cycle (no doubled top/bottom).
+    // Ladder: climbing overlapped pairs 0,2 · 1,3 · 2,4 … (the classic stairs).
+    // Converge: outside-in 0, top, 1, top-1 … Diverge: the same expanded from
+    // the middle out. Pedal: the root between every climbing note 0,1 0,2 0,3 …
     function _ambArpIndexFor(dir, n, len) {
       if (len <= 1) return 0;
       const m = ((n % len) + len) % len;
@@ -5185,13 +5198,27 @@
         if (dir === 'downup') tri = (len - 1) - tri; // mirror → top→0→top
         return tri;
       }
-      return m; // up
+      if (dir === 'ladder' && len >= 3) {
+        const cycle = 2 * (len - 2);               // pairs (i, i+2), i = 0 … len-3
+        const k = ((n % cycle) + cycle) % cycle;
+        return (k >> 1) + ((k & 1) ? 2 : 0);
+      }
+      if (dir === 'converge') return (m & 1) ? (len - 1 - (m >> 1)) : (m >> 1);
+      if (dir === 'diverge') { const k = (len - 1) - m; return (k & 1) ? (len - 1 - (k >> 1)) : (k >> 1); }
+      if (dir === 'pedal' && len >= 2) {
+        const cycle = 2 * (len - 1);               // 0,1 0,2 … 0,top
+        const k = ((n % cycle) + cycle) % cycle;
+        return (k & 1) ? ((k >> 1) + 1) : 0;
+      }
+      return m; // up (and short-pool fallbacks for ladder/pedal)
     }
     // Notes in one full pass (one entry sweep) for a direction over `len` pitches.
     function _ambArpPassLen(dir, len) {
       if (len <= 1) return 1;
       if (dir === 'updown' || dir === 'downup') return 2 * (len - 1);
-      return len; // up / down / random
+      if (dir === 'ladder') return (len >= 3) ? 2 * (len - 2) : len;
+      if (dir === 'pedal') return (len >= 2) ? 2 * (len - 1) : len;
+      return len; // up / down / converge / diverge / random
     }
     // How many notes one Arp series ENTRY plays before advancing to the next:
     // an EXACT `count` when the entry's unit is 'notes' (precise control — the
@@ -5349,7 +5376,7 @@
       const S = E.arpState || (E.arpState = {});
       let st = S[key];
       if (!st) st = S[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: null, lastAt: null };
-      if (st.startAt == null) st.startAt = lead + _ambDriftOffset(E, key, arp, cfg);
+      if (st.startAt == null) st.startAt = _ambUnitGridSnap(E, key, arp, cfg, lead) + _ambDriftOffset(E, key, arp, cfg);
       if (!Number.isFinite(st.idx)) st.idx = 0;
       const sc = _ambLayerScale(E, key, arp, cfg);
       const interval = Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) * sc;
@@ -5456,7 +5483,7 @@
       const baseOct = Math.max(1, Math.min(8, (arp.register | 0) || 4));
       const V = Math.max(1, Math.min(6, (arp.euclidVoices | 0) || 1));
       let st = E.runPhase[key];
-      if (!st) st = E.runPhase[key] = { startAt: lead + _ambDriftOffset(E, key, arp, cfg), lastAt: null };
+      if (!st) st = E.runPhase[key] = { startAt: _ambUnitGridSnap(E, key, arp, cfg, lead) + _ambDriftOffset(E, key, arp, cfg), lastAt: null };
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
@@ -7836,7 +7863,15 @@
     // added layers appear.
     function _ambWireUnitSync(E, p, get, selfKey) {
       const persist = () => { if (typeof persistWorkspace === 'function') persistWorkspace(); };
-      const sync = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };
+      const sync = () => {
+        if (!E.timer) return;
+        try { _ambSyncMods(); } catch (e) {}
+        // A Unit edit while playing re-anchors the layer onto the shared grid
+        // (next tick, via _ambUnitGridSnap) so it comes back IN PHASE with other
+        // synced layers instead of keeping its old private anchor. Sync mode
+        // only — a Free layer has no grid to re-join.
+        try { const L = get(); if (L && L.unit && L.unit.mode === 'sync') _ambUnitReanchor(E, selfKey); } catch (e) {}
+      };
       const refresh = () => { _ambUnitSyncModeVis(E, p, get()); try { _ambUnitSyncViz(E, p, get()); } catch (e) {} try { _ambSyncLayerUnits(E); } catch (e) {} try { _ambRefreshAreaFadeUI(E); } catch (e) {} };
       const ref = _ambGet(E, p + 'us-ref'), ratio = _ambGet(E, p + 'us-ratio');
       const fb = _ambGet(E, p + 'us-free'), sb = _ambGet(E, p + 'us-sync');
@@ -8184,7 +8219,47 @@
     // The layer's effective unit length (Sync-aware) — used by the status bar,
     // unit readout, queue boundaries, and Unit-Match.
     function _ambLayerPeriodSec(E, key, L, cfg) {
+      // PROG-SYNC: the layer's real iteration IS the chord sub-slot, so the period
+      // that drives the status bar / boundary / choke must be the sub-unit — else
+      // the bar fills at the layer's own (unused) unit rate while onsets land on the
+      // chord grid, and the fraction lurches at each onset. Null → normal unit.
+      const psi = _ambProgSyncInfo(E, key, L, cfg);
+      if (psi) return psi.subUnit;
       return _ambResolvedUnitSec(E, key, cfg, new Set());
+    }
+    // UNIT-SYNC SHARED GRID: a unit-synced layer's onsets snap to the play-wide
+    // grid (E._barGridAnchor = the layers' first-onset lead, pinned once per
+    // play) so any two layers locked to the same unit are IN PHASE regardless
+    // of WHEN they (re)anchored. Without this each layer anchored at its own
+    // private `lead`, so flipping Unit-Sync mid-play (or toggling a layer on
+    // later) left a permanent constant phase offset between same-unit layers —
+    // the status bars just exposed it ("Bed slightly ahead of Arp").
+    // At play start `lead === _barGridAnchor` (8742 pins it in the same tick,
+    // before any layer anchors), so this returns t unchanged — the normal case
+    // is byte-identical. Non-master engines (lanes, the harness) never set the
+    // anchor → identity there too. Returns the next grid point ≥ t.
+    function _ambUnitGridSnap(E, key, lc, cfg, t) {
+      const u = lc && lc.unit;
+      if (!u || u.mode !== 'sync' || !u.ref) return t;
+      const G = E._barGridAnchor;
+      if (!Number.isFinite(G) || !(t > G + 1e-6)) return t;
+      let P = 0;
+      try { P = _ambLayerPeriodSec(E, key, lc, cfg); } catch (e) {}
+      if (!(P > 0.001)) return t;
+      return G + Math.ceil((t - G) / P - 1e-6) * P;
+    }
+    // Re-anchor one layer onto the shared grid after a Unit edit while playing:
+    // cancel its not-yet-sounded voices and drop its phase state, so the next
+    // tick re-anchors through the grid-snapped path above (sounding voices ring
+    // out — same pattern as the documented next-iteration edit apply).
+    function _ambUnitReanchor(E, key) {
+      if (!E || !E.timer) return;
+      if (typeof _ambLiveApplyOK === 'function' && !_ambLiveApplyOK(E)) return;   // editing a non-playing area must not disturb the engine
+      try { if (typeof cancelBloomFutureVoices === 'function') cancelBloomFutureVoices(key, Tone.now()); } catch (e) {}
+      if (E.clocks) delete E.clocks[key];
+      if (E.runPhase) delete E.runPhase[key];
+      if (E.bassPhase) delete E.bassPhase[key];
+      if (E.arpState) delete E.arpState[key];
     }
     // Absolute time (Tone seconds) of the NEXT iteration boundary for layer
     // `key`. For a PLAYING layer the engine already tracks the next iteration
@@ -8802,7 +8877,7 @@
         const psi = _ambProgSyncInfo(E, key, lc, cfg);
         if (!C[key] || C[key] < now) {
           if (psi) C[key] = lead;
-          else C[key] = lead + _ambDriftOffset(E, key, lc, cfg);
+          else C[key] = _ambUnitGridSnap(E, key, lc, cfg, lead) + _ambDriftOffset(E, key, lc, cfg);
         }
         const sc = _ambLayerScale(E, key, lc, cfg);   // Unit Sync time-scale (1 = Free)
         // Texture's UNIT is its 16-slot pattern, so When gates whole patterns
@@ -8823,7 +8898,23 @@
             while (ng < C[key] + minSec) ng += psi.subUnit;
             C[key] = ng;
           } else {
-            C[key] += Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
+            const nx = C[key] + Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
+            // UNIT-SYNC heal: when the layer is off the shared grid (a mid-play
+            // Sync flip, or global-Sync's snapped step drifting vs the exact
+            // period), pull the NEXT onset onto the nearest grid point — a
+            // one-time correction, then it stays locked. On-grid runs pass the
+            // tolerance check and keep nx verbatim (byte-identical).
+            const u = lc.unit;
+            if (u && u.mode === 'sync' && u.ref && Number.isFinite(E._barGridAnchor)) {
+              let P = 0; try { P = _ambLayerPeriodSec(E, key, lc, cfg); } catch (e) {}
+              if (P > 0.001) {
+                const drOff = _ambDriftOffset(E, key, lc, cfg);   // legacy drift = a deliberate constant offset — preserve it on the grid
+                let ng = E._barGridAnchor + drOff + Math.round((nx - E._barGridAnchor - drOff) / P) * P;
+                while (ng < C[key] + minSec) ng += P;
+                if (Math.abs(ng - nx) > 0.002) { C[key] = ng; continue; }
+              }
+            }
+            C[key] = nx;
           }
         }
       };
@@ -10359,19 +10450,46 @@
     }
     // Convert a grid sequence's steps into a Bloom PROGRESSION — a list of
     // {root, intervals, bars} chords. Each sounding step becomes a chord (its
-    // pitch-class set → root + intervals, same extraction as _ambPublishWrap);
-    // rests are skipped; consecutive identical chords MERGE into one spanning
-    // `bars` bars (a held chord across N steps = one N-bar chord). Steps are
-    // taken at one bar each (the Bloom prog editor / Bars-per-chord tune timing).
+    // pitch-class set → root + intervals, same extraction as _ambPublishWrap).
+    // RHYTHM IS PRESERVED: a chord's `bars` = the step's own musical length
+    // (stepLengthFactor → bars, where a whole note = 1 bar; fractional supported
+    // end-to-end — _ambProgStepAt walks per-chord lengths, the prog editor edits
+    // them, _ambFmtBpc displays them). Consecutive identical chords MERGE (their
+    // lengths sum), and a REST SUSTAINS the current chord across its own length
+    // (a progression is a continuous harmonic clock — there's always a current
+    // chord — so a rest = the harmony holds, which keeps every downstream chord
+    // change on its original beat). Durations snap to a 1/96-bar grid (LCM of
+    // every grid step value) so quarters/eighths/triplets/16ths/32nds stay exact
+    // through the rest-sustain + merge sums (no FP drift, clean
+    // fraction display). Caveats: a LEADING rest (before any chord) is dropped —
+    // the prog anchors at play start, there's no pre-roll silence; and the
+    // prog-SYNC sub-slot grid (bed/drone re-voicing) still divides by the uniform
+    // cfg.barsPerChord, so with variable-length chords the harmony resolves per
+    // onset correctly but the re-voice sub-slots aren't chord-boundary-aligned.
     function _ambProgFromSteps(steps) {
       if (!Array.isArray(steps)) return [];
-      const raw = [];
+      // 1/96 bar = LCM of every grid step value (finest = 1/32 note = 1/32 bar =
+      // 3/96; 1/32-triplet = 1/48 = 2/96; 1/16-triplet = 1/24 = 4/96) so EVERY
+      // source note lands on the grid exactly — the snap only kills FP drift from
+      // the rest-sustain / merge sums, it never rounds a real step value.
+      const SNAP = 96;
+      const snap = (b) => Math.round(Math.max(0, b) * SNAP) / SNAP;
+      const stepBars = (step) => {
+        let d = 1;
+        try { d = (typeof stepLengthFactor === 'function') ? stepLengthFactor(step) : 1; } catch (e) {}
+        return snap(Number.isFinite(d) && d > 0 ? d : 0);
+      };
+      const chords = [];
       steps.forEach(step => {
         if (!step) return;
+        const d = stepBars(step);
         let freqs = [];
         try { freqs = (typeof collectStepFreqs === 'function') ? (collectStepFreqs(step) || []) : []; } catch (e) {}
         freqs = (freqs || []).filter(f => Number.isFinite(f) && f > 0).sort((a, b) => a - b);
-        if (!freqs.length) return;   // rest → not part of the chord sequence
+        if (!freqs.length) {   // REST → sustain the current chord across it (keeps later changes on-beat)
+          if (chords.length && d > 0) chords[chords.length - 1].bars = snap(chords[chords.length - 1].bars + d);
+          return;             // leading rest (no current chord) → dropped
+        }
         // Root = the BASS note's pitch class (musical root for root-position
         // voicings); intervals are the other pitch classes relative to it.
         const rootMidi = (typeof _freqToMidi === 'function') ? _freqToMidi(freqs[0]) : null;
@@ -10381,17 +10499,16 @@
         const ivSet = new Set();
         freqs.forEach(f => { const m = (typeof _freqToMidi === 'function') ? _freqToMidi(f) : null; if (m != null) ivSet.add((((Math.round(m) - rootM) % 12) + 12) % 12); });
         const intervals = Array.from(ivSet).sort((a, b) => a - b);
-        raw.push({ root, intervals });
-      });
-      const chords = [];
-      raw.forEach(c => {
         const last = chords[chords.length - 1];
-        if (last && last.root === c.root && last.intervals.length === c.intervals.length && last.intervals.every((x, i) => x === c.intervals[i])) {
-          last.bars = (last.bars || 1) + 1;
+        if (last && last.root === root && last.intervals.length === intervals.length && last.intervals.every((x, i) => x === intervals[i])) {
+          last.bars = snap(last.bars + d);
         } else {
-          chords.push({ root: c.root, intervals: c.intervals, bars: 1 });
+          chords.push({ root, intervals, bars: d });
         }
       });
+      // A chord must have positive length or the resolution walk skips it — floor
+      // a zero-length step (e.g. a malformed 0-duration cell) to a 16th note.
+      chords.forEach(c => { if (!(c.bars > 0)) c.bars = 1 / 16; });
       return chords;
     }
     // Send a saved sequence to Bloom AS A PROGRESSION: publish it as a named prog
@@ -11988,12 +12105,16 @@
             const next = E.clocks && E.clocks[key];
             const idx = E.iters && E.iters[key];
             if (typeof next === 'number' && Number.isFinite(idx) && next > now) {
-              // Divide by the SAME interval the engine advances by (snapped in
-              // sync mode, Unit-Sync time-scaled, AND ×Hold for bed/motif) so the
-              // bar tracks the notes. Omitting ×Hold made a held bed's bar divide
-              // by the base unit → it cycled ~Hold× too fast and stuck ~3/4 full.
+              // Divide by the layer's RESOLVED period — the same quantity the
+              // window/seq branches use — so every layer's bar is measured the
+              // same way and Unit-Synced layers stay phase-locked to each other.
+              // _ambLayerPeriodSec already folds in ×Hold (via the natural unit),
+              // the exact synced target (no global-timing snap → no slow drift vs
+              // an Arp on the same unit), and prog subdivision (subUnit) when an
+              // area progression drives the chord clock. In Free timing this equals
+              // the old _ambStepSecFor×scale×Hold, so the common path is unchanged.
               const cfg2 = E._cfg || E.getCfg();
-              const iv = Math.max(0.05, _ambStepSecFor(layer, 0.05, cfg2) * _ambLayerScale(E, key, layer, cfg2) * _ambHoldMult(key, layer) || 1);
+              const iv = Math.max(0.05, _ambLayerPeriodSec(E, key, layer, cfg2) || 1);
               // Continuous iteration index at `now`; <0 = before the first onset, so
               // stay EMPTY instead of rendering ~full ("near the end of a phantom
               // previous cycle") right after Play. (Same guard as the texture branch.)
@@ -12764,10 +12885,17 @@
       host.querySelectorAll('.ambient-seedmode').forEach(row => {
         const gen = row.querySelector('[data-seedmode="generate"]'), auth = row.querySelector('[data-seedmode="author"]');
         const key = gen && gen.dataset.seedkey; if (!key) return;
-        let authored = false;
-        try { const L = _ambLayerByKey(E, key); authored = !!(L && L.lockState && L.lockState.seedEdit); } catch (e) {}
+        let authored = false, L = null;
+        try { L = _ambLayerByKey(E, key); authored = !!(L && L.lockState && L.lockState.seedEdit); } catch (e) {}
         if (gen) gen.classList.toggle('active', !authored);
         if (auth) auth.classList.toggle('active', authored);
+        // Arp Direction is a Generate-mode control (the series sweep) — keep its
+        // visibility in step with the seed mode (and the euclid toggle).
+        try {
+          const card = row.closest('.ambient-layer');
+          const dirRow = card && card.querySelector('.ambient-arpdir');
+          if (dirRow) dirRow.style.display = (authored || (L && L.euclid)) ? 'none' : '';
+        } catch (e) {}
       });
     }
     // Promote the cached seed preview into a REAL lock so the roll edit lands
@@ -13880,6 +14008,9 @@
       const setRow = (suf, show) => { const r = rowOf(suf); if (r) r.style.display = show ? '' : 'none'; };
       ['pulses', 'steps', 'rotate', 'euclidVoices', 'euclidregen', 'euclidgrid', 'maxPitches', 'maxEvents', 'bars', 'rhythmVar'].forEach(s => setRow(s, euclid));
       ['randomness'].forEach(s => setRow(s, !euclid));
+      // Direction = the series sweep (Generate mode): hidden in euclid mode AND
+      // when the seed is authored (a locked roll replays verbatim — no sweep).
+      setRow('dir', !euclid && !(inst && inst.lockState && inst.lockState.seedEdit));
       setRow('rate', !euclid);
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
       if (!euclid && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, stem, inst); } catch (e) {} }
@@ -15339,7 +15470,7 @@
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
@@ -15955,10 +16086,11 @@
       html += '<div class="ambient-grp-resetwrap"><button type="button" class="ambient-grp-reset" id="' + p + '-grp-reset" title="Reset section folds to defaults">↺ Reset sections</button></div>';
       return html + '</div>';
     }
-    // Arp Direction picker.
+    // Arp Direction picker — the series sweep pattern (Generate mode only; an
+    // authored arp replays its roll, and the euclid arp picks pitch per-hit).
     function _ambArpDirHtml(p, inst) {
-      const dirs = [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Down'], ['downup', 'Down-Up'], ['random', 'Random']];
-      return '<div class="ambient-ctrl"><label for="' + p + '-dir">Direction</label>' +
+      const dirs = [['up', 'Up'], ['down', 'Down'], ['updown', 'Up-Down'], ['downup', 'Down-Up'], ['ladder', 'Ladder'], ['converge', 'Converge'], ['diverge', 'Diverge'], ['pedal', 'Pedal'], ['random', 'Random']];
+      return '<div class="ambient-ctrl ambient-arpdir"><label for="' + p + '-dir">Direction</label>' +
         '<select id="' + p + '-dir" class="ambient-select">' +
         dirs.map(d => '<option value="' + d[0] + '">' + d[1] + '</option>').join('') +
         '</select><span class="ambient-hint">order</span></div>';
@@ -16135,7 +16267,14 @@
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
-          else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) { L.dir = s.value || 'up'; _ambResetArp(E, type + ':' + id); sync(); persist(); } }); } }
+          else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
+            L.dir = s.value || 'up';
+            // Propagate to every series ENTRY: normalize stamps each entry with
+            // its own dir at creation (entry.dir || L.dir at emit — entry wins),
+            // so without this the layer select silently does nothing.
+            if (Array.isArray(L.steps)) L.steps.forEach(st2 => { if (st2 && typeof st2 === 'object') st2.dir = L.dir; });
+            _ambResetArp(E, type + ':' + id); sync(); persist();
+          } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) {
             L.gen = s.value || 'random';
             const gk = type + ':' + id;
@@ -16863,11 +17002,21 @@
       try { _ambSyncFxVis(E); } catch (e) {}               // FX module: show only the added FX
       try { _ambSyncLayerUnits(E); } catch (e) {}          // header unit + bar-length readouts
     }
+    // Active area progression → new layers drop in already phase-locked:
+    // Unit=Sync, Lock to=Bar ×1, Rate ×1. The progression is bar-native, so a
+    // free-interval default would sit off the chord grid from its first onset.
+    function _ambProgDefaultUnit(cfg, L) {
+      const p = cfg && cfg.prog;
+      if (!L || !p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return L;
+      L.unit = { mode: 'sync', ref: 'bar', num: 1, den: 1 };
+      L.speed = 1;
+      return L;
+    }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
       const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
-      cfg.extras.push(_ambDefaultLayer(type, newId));
+      cfg.extras.push(_ambProgDefaultUnit(cfg, _ambDefaultLayer(type, newId)));
       _ambRenderExtras(E);
       if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
       if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -19211,11 +19360,14 @@
         // — "old 11 types → presets, no per-scratch assembly"), grouped into families
         // so they read as purpose-built instruments rather than a flat type list.
         // Each fn sets type + defaults EXACTLY as before (a preset == today →
-        // harness-neutral). Primaries (bed/motif/texture/beat) activate the absent
-        // slot, else add another instance (+1); the rest are extras-only. The old
-        // "✦ Custom — compose your own" entry was retired with the axis pickers —
-        // you now start from a preset and tweak, not assemble a layer from scratch.
-        const PRIMARY = { bed: 1, motif: 1, texture: 1, beat: 1 };
+        // harness-neutral). EVERY add goes through _ambAddExtra so the new card
+        // APPENDS BELOW the last layer — re-activating an absent primary slot
+        // (the old behavior for bed/motif/texture/beat) made the new layer pop
+        // in at the primary card's fixed spot at the TOP of the panel. The
+        // primary slots still render/delete normally for projects that carry
+        // them; the Add menu just never re-fills one. The old "✦ Custom —
+        // compose your own" entry was retired with the axis pickers — you now
+        // start from a preset and tweak, not assemble a layer from scratch.
         const FAMILIES = [
           ['Pads & drones', [['bed', 'Bed'], ['texture', 'Texture'], ['drone', 'Drone']]],
           ['Melody', [['motif', 'Motif'], ['run', 'Riff'], ['arp', 'Arp']]],
@@ -19228,12 +19380,7 @@
           fam[1].forEach((it) => {
             const type = it[0], name = it[1];
             if (type === 'sample') { actions.push({ label: name, fn: () => _ambAddSampleLayer(E) }); return; }
-            if (PRIMARY[type]) {
-              const primaryAbsent = !!(cfg[type] && cfg[type].present === false);
-              actions.push({ label: name + (primaryAbsent ? '' : ' (+1)'), fn: () => (primaryAbsent ? _ambAddLayer(E, type) : _ambAddExtra(E, type)) });
-            } else {
-              actions.push({ label: name, fn: () => _ambAddExtra(E, type) });
-            }
+            actions.push({ label: name, fn: () => _ambAddExtra(E, type) });
           });
         });
         // User-saved presets (from the ★ Save‑as‑preset button) — reusable across

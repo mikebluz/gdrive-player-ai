@@ -2806,6 +2806,12 @@
     .pe-save { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
     .pe-save input { flex: 1; min-width: 0; padding: 6px 10px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 6px; color: #e2e8f0; }
     .pe-apply { background: rgba(159,122,234,0.22) !important; border-color: #9f7aea !important; color: #e2d9f5 !important; font-weight: 600; }
+    /* Preview = an audition control → teal accent, distinct from the purple Save/selection. */
+    .pe-preview { color: #7fe4dc !important; border-color: #2b5a57 !important; }
+    .pe-preview.on { background: rgba(79,209,197,0.2) !important; border-color: #4fd1c5 !important; color: #d6fbf6 !important; }
+    /* The chord sounding RIGHT NOW during preview — teal glow, reads apart from
+       the purple .sel (the chord you're editing). Both can apply at once. */
+    .pe-chord.pe-playing { border-color: #4fd1c5; box-shadow: 0 0 0 1px rgba(79,209,197,0.45), 0 0 10px rgba(79,209,197,0.3); }
     .pe-x { color: #fc8181 !important; }
     .pe-chord em { font-style: normal; font-size: 0.58rem; color: #c9a8ec; }
     /* B3: roman-numeral header on each chord (relative to the key). */
@@ -3113,6 +3119,64 @@
       padding: 8px 10px; background: rgba(255,255,255,0.02);
       display: flex; flex-direction: column; gap: 6px;
     }
+    /* ⏱ Scheduler — the per-layer time matrix between Configure and the Mixer.
+       Same frame family as the mixer (border, title, collapse caret). */
+    .ambient-sched {
+      border: 1px solid #20203a; border-radius: 8px;
+      padding: 8px 10px; background: rgba(255,255,255,0.02);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .ambient-sched-head { display: flex; align-items: center; gap: 8px; }
+    .ambient-sched.collapsed .ambient-sched-body { display: none; }
+    .ambient-sched.collapsed .ambient-sched-toggle::before { transform: rotate(-90deg); }
+    .ambient-sched-body { display: flex; flex-direction: column; gap: 8px; }
+    /* STACKED rows — controls on one line, the strip FULL-WIDTH on the next, so
+       the grid gets the whole panel width (the old side-by-side layout squeezed
+       the strips into a sliver on the narrow Bloom column). */
+    .ambient-sched-row { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; padding-bottom: 8px; border-bottom: 1px solid rgba(45,45,63,0.5); }
+    .ambient-sched-row:last-of-type, .ambient-sched-ruler { border-bottom: none; padding-bottom: 0; }
+    .ambient-sched-ctl { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+    .ambient-sched-name { flex: 0 0 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 700; color: #e2e8f0; }
+    /* Micro-label + control pairs — every control is named, no mystery inputs. */
+    .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+    .ambient-sched-lbl { font-size: 0.64rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+    /* Phrase snapped up to the progression cycle — teal (harmony drove it). */
+    .ambient-sched-lbl.snap { color: #7fe4dc; text-transform: none; letter-spacing: 0; }
+    .ambient-sched-unit { flex: 0 0 auto; font-size: 0.76rem; padding: 3px 4px; max-width: 84px; }
+    .ambient-sched-writebtn { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 9px; white-space: nowrap; }
+    .ambient-sched-xy { display: inline-flex; align-items: center; gap: 4px; }
+    .ambient-sched-xy input { width: 40px; padding: 3px 4px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 4px; color: #e2e8f0; font-size: 0.78rem; }
+    /* The strip: unit blocks over the shared 16-bar ruler — full width, tall
+       enough to read. Faint 4-bar gridlines so blocks read against bars. */
+    .ambient-sched-strip { position: relative; width: 100%; min-width: 0; display: flex; height: 30px; border: 1px solid #2a2a46; border-radius: 5px; overflow: hidden;
+      background: repeating-linear-gradient(90deg, rgba(139,155,180,0.14) 0, rgba(139,155,180,0.14) 1px, rgba(255,255,255,0.015) 1px, rgba(255,255,255,0.015) 25%); }
+    .ambient-sched-blk { flex: 0 0 auto; height: 100%; background: rgba(159,122,234,0.42); border-right: 1px solid rgba(10,12,24,0.9); box-sizing: border-box;
+      display: inline-flex; align-items: center; padding-left: 3px; overflow: hidden;
+      font-style: normal; font-size: 0.7rem; color: #e2d9f5; }
+    .ambient-sched-blk.rep { background: rgba(159,122,234,0.14); color: #8b7aa8; }   /* an exact REPEAT of the fresh phrase (dim) */
+    .ambient-sched-blk.rewrite { border-left: 3px solid #4fd1c5; }                    /* ✎ fresh material starts here */
+    /* Ruler: its own compact full-width line ("bars → 1 5 9 13"). */
+    .ambient-sched-ruler { gap: 0; }
+    .ambient-sched-ruler .ambient-sched-strip { border-color: transparent; background: none; height: 16px; overflow: visible; }
+    .ambient-sched-ruler .ambient-sched-ctl { display: none; }
+    .ambient-sched-tick { flex: 1 1 0; min-width: 0; font-size: 0.7rem; color: #8b9bb4; border-left: 1px solid rgba(139,155,180,0.18); padding-left: 3px; overflow: visible; font-style: normal; white-space: nowrap; }
+    .ambient-sched-tick.q { border-left-color: rgba(139,155,180,0.55); font-weight: 700; }
+    .ambient-sched-ph { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: #4fd1c5; box-shadow: 0 0 5px rgba(79,209,197,0.9); display: none; pointer-events: none; }
+    /* Chord lane (area progression) — teal family so it reads as HARMONY, apart
+       from the purple unit blocks; edges = the chord boundaries layers re-voice on. */
+    .ambient-sched-strip.chords { height: 24px; background: rgba(79,209,197,0.04); border-color: rgba(79,209,197,0.35); }
+    .ambient-sched-chblk { flex: 0 0 auto; height: 100%; min-width: 0; overflow: hidden; box-sizing: border-box;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgba(79,209,197,0.14); border-right: 1px solid rgba(79,209,197,0.55);
+      font: 600 0.76rem 'Segoe UI', sans-serif; font-style: normal; color: #7fe4dc; white-space: nowrap; }
+    .ambient-sched-chblk.cyc { border-left: 2px solid rgba(79,209,197,0.8); }   /* the progression restarts here */
+    /* The chord SOUNDING right now (playhead inside it) — the live readout. */
+    .ambient-sched-chblk.playing { background: rgba(79,209,197,0.42); color: #eafffc; box-shadow: inset 0 0 8px rgba(79,209,197,0.5); }
+    /* Legend — names what the strip shows. Inline chips reuse the real classes. */
+    .ambient-sched-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-size: 0.68rem; color: #8b9bb4; padding-top: 2px; }
+    .ambient-sched-legend .lg { position: static; display: inline-block; width: 20px; height: 11px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; padding: 0; font-size: 0; }
+    .ambient-sched-legend .lgtxt { display: inline-flex; align-items: center; gap: 3px; }
+    .ambient-sched-legend .ambient-sched-ph.lg { width: 3px; height: 13px; }
     .ambient-mixer-head { display: flex; align-items: center; gap: 8px; }
     /* Mixer title styled to match the Configure summary (purple, 700) + a faders glyph. */
     .ambient-mixer-title { font: 700 0.9rem 'Segoe UI', sans-serif; color: #d6bcfa; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }

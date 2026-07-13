@@ -248,7 +248,7 @@
         // key-integration change: identical hashes before/after).
         'prog-bass':     { hash: 'c6987a55', count: 32 },
         'prog-global':   { hash: 'c6987a55', count: 32 },
-        'prog-arp':      { hash: '4d144e5a', count: 52 },
+        'prog-arp':      { hash: 'be2ab3a6', count: 52 },   // 2026-07-12: pattern RESTART at each chord change (sweep from the top — classic arp; was 4d144e5a, cursor ran continuously through boundaries = per-bar pattern rotation)
       };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}

@@ -1125,6 +1125,40 @@
         if (!Array.isArray(o.partialRates) || o.partialRates.length < 4) o.partialRates = _ambModPartialRates(o);
       });
     }
+    // Coerce a Write config object in place (layer `L.write` or the area-level
+    // `cfg.writeAll`). Absent = off; `optOut` (layer only) = the layer explicitly
+    // opted out of an active Area Write.
+    function _ambNormalizeWriteObj(host, field) {
+      const w = host[field];
+      if (w == null) return;
+      if (typeof w !== 'object') { delete host[field]; return; }
+      w.on = w.on === true;
+      w.optOut = w.optOut === true;
+      w.bars = Math.max(1, Math.min(8, w.bars | 0)) || 2;
+      w.times = Math.max(1, Math.min(32, w.times | 0)) || 4;
+      // STOCHASTIC Write: vary the phrase length + repeat count each cycle,
+      // random in [min, max]. Fields default only when present (absent =
+      // fixed X×Y, unchanged).
+      w.stochastic = w.stochastic === true;
+      const cb = (v, d) => Number.isFinite(v) ? Math.max(1, Math.min(8, v | 0)) : d;
+      const ct = (v, d) => Number.isFinite(v) ? Math.max(1, Math.min(32, v | 0)) : d;
+      w.barsMin = cb(w.barsMin, 1);
+      w.barsMax = cb(w.barsMax, 4);
+      w.timesMin = ct(w.timesMin, 2);
+      w.timesMax = ct(w.timesMax, 8);
+      if (w.barsMax < w.barsMin) { const t = w.barsMin; w.barsMin = w.barsMax; w.barsMax = t; }
+      if (w.timesMax < w.timesMin) { const t = w.timesMin; w.timesMin = w.timesMax; w.timesMax = t; }
+    }
+    // Effective Write for a layer: the layer's own explicit Write wins (ON, or
+    // opted OUT), else an active AREA Write (Configure) cascades — the same
+    // inherit/override model as Area Start. Returns the write obj or null.
+    function _ambEffWrite(cfg, L) {
+      const w = L && L.write;
+      if (w && w.on) return w;
+      if (w && w.optOut) return null;
+      const aw = cfg && cfg.writeAll;
+      return (aw && aw.on) ? aw : null;
+    }
     // Backfill a layer's FX block in place (preserves objects across reload).
     function _ambNormalizeFx(host) {
       const d = _ambDefaultFx();
@@ -1146,27 +1180,9 @@
       else ['mix', 'amount'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
       _dk(host.dist);
       // WRITE (X bars × Y plays): coerce when present; ABSENT = off (additive,
-      // kept out of defaults — the normalize trap).
-      if (host.write != null) {
-        if (typeof host.write !== 'object') delete host.write;
-        else {
-          host.write.on = host.write.on === true;
-          host.write.bars = Math.max(1, Math.min(8, host.write.bars | 0)) || 2;
-          host.write.times = Math.max(1, Math.min(32, host.write.times | 0)) || 4;
-          // STOCHASTIC Write: vary the phrase length + repeat count each cycle,
-          // random in [min, max]. Fields default only when present (absent =
-          // fixed X×Y, unchanged).
-          host.write.stochastic = host.write.stochastic === true;
-          const cb = (v, d) => Number.isFinite(v) ? Math.max(1, Math.min(8, v | 0)) : d;
-          const ct = (v, d) => Number.isFinite(v) ? Math.max(1, Math.min(32, v | 0)) : d;
-          host.write.barsMin = cb(host.write.barsMin, 1);
-          host.write.barsMax = cb(host.write.barsMax, 4);
-          host.write.timesMin = ct(host.write.timesMin, 2);
-          host.write.timesMax = ct(host.write.timesMax, 8);
-          if (host.write.barsMax < host.write.barsMin) { const t = host.write.barsMin; host.write.barsMin = host.write.barsMax; host.write.barsMax = t; }
-          if (host.write.timesMax < host.write.timesMin) { const t = host.write.timesMin; host.write.timesMin = host.write.timesMax; host.write.timesMax = t; }
-        }
-      }
+      // kept out of defaults — the normalize trap). Shared with the AREA-level
+      // cfg.writeAll (Configure → Write, cascades to every layer).
+      _ambNormalizeWriteObj(host, 'write');
       // PITCH ECHO: coerce when present; ABSENT = off (additive, kept out of
       // defaults — the normalize trap).
       if (host.pecho != null) {
@@ -1442,6 +1458,8 @@
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
       if (!cfg.prog || typeof cfg.prog !== 'object') cfg.prog = { on: false, name: '', chords: [] };
       else { cfg.prog.on = !!cfg.prog.on; if (!Array.isArray(cfg.prog.chords)) cfg.prog.chords = []; if (typeof cfg.prog.name !== 'string') cfg.prog.name = ''; }
+      // AREA Write (Configure) — phrase-cycle EVERY layer; per-layer Loop overrides.
+      _ambNormalizeWriteObj(cfg, 'writeAll');
       if (!Number.isFinite(cfg.fadeInMs)) cfg.fadeInMs = d.fadeInMs;
       cfg.fadeInMs = Math.max(0, Math.min(30000, cfg.fadeInMs | 0));
       if (!Number.isFinite(cfg.fadeOutMs)) cfg.fadeOutMs = d.fadeOutMs;
@@ -1591,6 +1609,12 @@
         _ambNormalizeKeyOv(x);   // B2 per-layer KEY override (all extra types)
         if (x.type === 'arp') {
           if (!Array.isArray(x.steps) || !x.steps.length) x.steps = [{ notes: { type: 'scale', scale: '' }, passes: 1 }];
+          // Synced-arp note RESOLUTION (string field — keep out of the defaults
+          // object, the numeric backfill would clobber it): a fixed musical
+          // division ('16' = 1/16 note) so every Direction plays at the SAME
+          // rate; 'fit' = legacy squeeze-the-whole-cycle-into-the-unit (rate
+          // varies with the direction's pass length). Free mode ignores it.
+          if (['fit', '4', '8', '8t', '16', '16t', '32'].indexOf(x.arpRes) < 0) x.arpRes = '16';
           const _DIRS = ['up', 'down', 'updown', 'downup', 'ladder', 'converge', 'diverge', 'pedal', 'random'];
           const _layerDir = (_DIRS.indexOf(x.dir) >= 0) ? x.dir : 'up';
           x.steps = x.steps.map(s => {
@@ -2804,7 +2828,69 @@
       let sym = dim ? '°' : (aug ? '+' : ''); if (has(10)) sym += '7'; else if (has(11)) sym += 'maj7';
       return acc + num + sym;
     }
-    function _ambPeClose() { const h = document.getElementById('ambient-prog-editor'); if (h) h.style.setProperty('display', 'none', 'important'); _ambProgEd = null; }
+    function _ambPeClose() { if (_ambProgEd) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} } const h = document.getElementById('ambient-prog-editor'); if (h) h.style.setProperty('display', 'none', 'important'); _ambProgEd = null; }
+    // Frequencies of an editor chord, voiced from octave `oct` (C-based) upward —
+    // intervals are absolute semitones from the root, so extensions (9/11/13 =
+    // 14/17/21) keep their register instead of folding into one octave.
+    function _ambPeChordFreqs(ch, oct) {
+      const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+      const o = Number.isFinite(oct) ? oct : 4;
+      const rootMidi = 12 * (o + 1) + ((((ch.root | 0) % 12) + 12) % 12);
+      const ivs = (Array.isArray(ch.intervals) && ch.intervals.length) ? ch.intervals : [0];
+      return ivs.map(iv => A * Math.pow(2, (rootMidi + (iv | 0) - 69) / 12));
+    }
+    function _ambPePreviewStop(ed) {
+      ed = ed || _ambProgEd; if (!ed) return;
+      if (Array.isArray(ed._pvTimers)) ed._pvTimers.forEach(t => { try { clearTimeout(t); } catch (e) {} });
+      ed._pvTimers = []; ed._pvOn = false;
+      const host = document.getElementById('ambient-prog-editor'); if (!host) return;
+      host.querySelectorAll('.pe-chord.pe-playing').forEach(b => b.classList.remove('pe-playing'));
+      const pb = host.querySelector('[data-pe="preview"]'); if (pb) { pb.classList.remove('on'); pb.textContent = '▶ Preview'; }
+    }
+    // Audition the progression through the shared master bus (like ＋ Pad, minus
+    // the layer). Timing is a BRISK proportional preview (BAR_MS per bar × each
+    // chord's own `bars`) so the per-chord rhythm is audible without waiting
+    // through slow real tempos — scheduled via setTimeout so Stop actually halts
+    // pending chords (playNote-scheduled notes couldn't be pulled back). The
+    // sounding chord's button lights (`.pe-playing`); any re-render/close stops it.
+    // NO-POP scheduling: each chord's notes are scheduled at a small FUTURE `at`
+    // (_PE_LEAD) so the onset is sample-aligned (firing at "now" clicks), and the
+    // per-voice BUILDS are staggered a few ms apart so N fresh synths don't build
+    // in one JS tick and starve the audio thread (the documented burst pop) — all
+    // voices share the one future `at`, so the chord still lands tight. The gentle
+    // attack/release + modest volume keep chord-to-chord transitions click-free.
+    function _ambPePreviewStart(ed) {
+      ed = ed || _ambProgEd; if (!ed || !Array.isArray(ed.chords) || !ed.chords.length) return;
+      _ambPePreviewStop(ed);
+      try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+      const host = document.getElementById('ambient-prog-editor'); if (!host) return;
+      const gcfg = (ed.E && ed.E.getCfg) ? ed.E.getCfg() : null;
+      const defBars = (gcfg && Number.isFinite(gcfg.barsPerChord) && gcfg.barsPerChord > 0) ? gcfg.barsPerChord : 1;
+      const BAR_MS = 560;
+      const LEAD = 0.12;                 // s of lead so the note starts on a clean buffer boundary + builds have time
+      const PARAMS = { type: 'triangle', attack: 14, decay: 90, sustain: 70, release: 240, volume: 38 };
+      const btns = Array.prototype.slice.call(host.querySelectorAll('.pe-chords .pe-chord[data-pe^="sel:"]'));
+      const T = (t) => { ed._pvTimers.push(setTimeout(t.fn, t.ms)); };
+      ed._pvTimers = []; ed._pvOn = true;
+      const pb = host.querySelector('[data-pe="preview"]'); if (pb) { pb.classList.add('on'); pb.textContent = '■ Stop'; }
+      let cum = 0;
+      ed.chords.forEach((ch, i) => {
+        const bars = (Number.isFinite(ch.bars) && ch.bars > 0) ? ch.bars : defBars;
+        const durMs = Math.max(150, bars * BAR_MS);
+        const noteMs = Math.max(120, durMs * 0.92);
+        T({ ms: cum, fn: () => {
+          if (_ambProgEd !== ed || typeof playNote !== 'function') return;
+          const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + LEAD;
+          const freqs = _ambPeChordFreqs(ch, 4);
+          freqs.forEach((f, vi) => T({ ms: vi * 6, fn: () => {   // stagger the voice builds; all share `at` → tight chord, no build burst
+            if (_ambProgEd === ed) { try { playNote(f, PARAMS, noteMs, at); } catch (e) {} }
+          } }));
+          T({ ms: LEAD * 1000, fn: () => { if (_ambProgEd === ed) btns.forEach((b, bi) => b.classList.toggle('pe-playing', bi === i)); } });   // light the chord with the sound
+        } });
+        cum += durMs;
+      });
+      T({ ms: cum + LEAD * 1000 + 300, fn: () => { if (_ambProgEd === ed) _ambPePreviewStop(ed); } });
+    }
     const _ambCloneChord = (c) => { const o = { root: (((c.root | 0) % 12) + 12) % 12, intervals: (Array.isArray(c.intervals) ? c.intervals : [0]).slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; };
     // Publish a chord-array progression to the shared registry (the prog pickers'
     // User group). (Distinct from _ambPublishProg, which takes wrap-step BLOCKS.)
@@ -2865,6 +2951,8 @@
     }
     function _ambPeRender() {
       const host = document.getElementById('ambient-prog-editor'); if (!host || !_ambProgEd) return;
+      if (_ambProgEd._pvOn) { try { _ambPePreviewStop(_ambProgEd); } catch (e) {} }   // a full re-render orphans the chord-button refs → halt the preview
+
       const ed = _ambProgEd, sel = Math.max(0, Math.min(ed.chords.length - 1, ed.sel)); ed.sel = sel;
       const ch = ed.chords[sel];
       const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -2901,6 +2989,7 @@
         '<div class="pe-qrow"><label>Set quality</label>' + qButtons + '</div>' +
         '<div class="pe-save"><input type="text" id="pe-name" value="' + esc(ed.name) + '" placeholder="Progression name" />' +
           '<button type="button" data-pe="cancel">Cancel</button>' +
+          '<button type="button" class="pe-preview' + (ed._pvOn ? ' on' : '') + '" data-pe="preview" title="Hear the progression — each chord sounds for its own length">' + (ed._pvOn ? '■ Stop' : '▶ Preview') + '</button>' +
           '<button type="button" data-pe="pad" title="Add a pad layer that plays this progression">＋ Pad</button>' +
           '<button type="button" class="pe-apply" data-pe="save">Save as new</button></div>';
       const nm = host.querySelector('#pe-name'); if (nm) nm.addEventListener('input', () => { ed.name = nm.value; });
@@ -2960,6 +3049,7 @@
       else if (op === 'qual') { const q = _AMB_PE_QUALITIES.find(x => x[0] === arg); if (q) { ch.intervals = q[1].map(iv => ((iv % 12) + 12) % 12); ch.intervals = Array.from(new Set(ch.intervals)).sort((x, y) => x - y); } }
       else if (op === 'trup' || op === 'trdn') { const d = (op === 'trup') ? 1 : -1; ch.root = (((ch.root + d) % 12) + 12) % 12; }
       else if (op === 'inv') { const ns = _ambPeNotes(ch); if (ns.length > 1) { const newRoot = (((ch.root + ch.intervals.slice().sort((x, y) => x - y)[1]) % 12) + 12) % 12; _ambPeSetNotes(ch, ns, false); ch.root = newRoot; ch.intervals = ns.map(p => (((p - newRoot) % 12) + 12) % 12).sort((x, y) => x - y); } }
+      else if (op === 'preview') { if (ed._pvOn) _ambPePreviewStop(ed); else _ambPePreviewStart(ed); return; }
       else if (op === 'cancel') { _ambPeClose(); return; }
       else if (op === 'pad') {
         const chords = ed.chords.map(c => { const o = { root: c.root, intervals: c.intervals.slice() }; if (Number.isFinite(c.bars) && c.bars > 0) o.bars = c.bars; return o; });
@@ -5301,6 +5391,18 @@
       // note jumps to a random pool degree; otherwise it follows Up/Down/etc.
       // 'random' direction is the fully-shuffled extreme (every note random).
       const dir = (entry && entry.dir) || arp.dir || 'up';
+      // PATTERN RESTART at each chord change (prog): begin the new chord's sweep
+      // from the TOP of the pattern — the classic arpeggiator behavior. Without
+      // it the cursor ran CONTINUOUSLY through boundaries, so each chord's bar
+      // started at an arbitrary rotation of the pattern and the pool-wrap leap
+      // landed mid-bar ("sloppy/glitchy transitions" — pattern phase drift, the
+      // pitches themselves were already chord-correct). Also covers the
+      // pool-size change (triad → 7th) that used to jump registers. DELIBERATE
+      // baseline change: prog-arp re-recorded in 23-bloom-harness.js.
+      if (_arpProg) {
+        if (Number.isFinite(st._lastChordIdx) && st._lastChordIdx !== _chordIdx) st.note = 0;
+        st._lastChordIdx = _chordIdx;
+      }
       const rnd = Math.max(0, Math.min(100, arp.randomness | 0)) / 100;
       let idx;
       if (len <= 1) idx = 0;
@@ -5365,6 +5467,21 @@
       try { playNote(f, ap, _ambVaryLen(lenMs, arp.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
       } finally { if (_arpProg) _ambProgStepOverride = null; }
     }
+    // Per-note interval for a SYNCED series arp with a fixed Resolution: the
+    // chosen musical division at the Bloom bpm, so every Direction plays at the
+    // SAME note rate (direction changes order + loop length, not speed). Returns
+    // null when inactive — Free mode (Unit ms × Rate already sets the note rate
+    // directly) or arpRes 'fit' (legacy: the unit-fit scale squeezes the whole
+    // cycle into the locked unit, so pass length drives the rate).
+    const _AMB_ARP_RES_FRAC = { '4': 1 / 4, '8': 1 / 8, '8t': 1 / 12, '16': 1 / 16, '16t': 1 / 24, '32': 1 / 32 };
+    function _ambArpResIvSec(arp, cfg) {
+      const u = arp && arp.unit;
+      if (!u || u.mode !== 'sync' || !u.ref) return null;
+      const fr = _AMB_ARP_RES_FRAC[arp.arpRes];
+      if (!fr) return null;   // 'fit' (or pre-normalize) → legacy unit-fit
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      return Math.max(0.02, (60 / Math.max(20, bpm)) * 4 * fr);
+    }
     // Windowed, phase-anchored Arp scheduler. Each note's time is RE-DERIVED as
     // startAt + idx × interval (no C += step accumulation, no "fell behind →
     // reset to now" jump), so a long-running arp can't drift away from the
@@ -5378,8 +5495,8 @@
       if (!st) st = S[key] = { entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: null, lastAt: null };
       if (st.startAt == null) st.startAt = _ambUnitGridSnap(E, key, arp, cfg, lead) + _ambDriftOffset(E, key, arp, cfg);
       if (!Number.isFinite(st.idx)) st.idx = 0;
-      const sc = _ambLayerScale(E, key, arp, cfg);
-      const interval = Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) * sc;
+      const _riv = _ambArpResIvSec(arp, cfg);   // synced + fixed Resolution → direction-independent note rate
+      const interval = _riv || (Math.max(0.02, _ambStepSecFor(arp, 0.02, cfg)) * _ambLayerScale(E, key, arp, cfg));
       if (!(interval > 0.001)) return;
       const tFrom = Math.max(now, (st.lastAt != null) ? st.lastAt : st.startAt);
       const tTo = _ambBudgetHorizon(now, horizon);
@@ -5478,6 +5595,13 @@
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const entry = (Array.isArray(arp.steps) && arp.steps[0]) ? arp.steps[0] : { notes: { type: 'scale', scale: '' } };
       const notes = _ambNotesOf(entry);
+      // PROG: pitches must resolve per-HIT at the hit's own scheduled time. The
+      // cycle builds a whole phrase ahead of playback, and the module fallback
+      // (_E.progStep) is the chord at BUILD time — so hits scheduled past a
+      // chord boundary carried the PREVIOUS chord ("sloppy" transitions, hit-or
+      // -miss with tick timing). Gated: non-prog sources keep the once-per-voice
+      // pitch below, byte-identical (the per-hit re-resolve consumes no rnd).
+      const _isProg = (notes && notes.type === 'prog');
       const intervals = _ambScaleIntervals(notes);
       const N = Math.max(1, intervals.length);
       const baseOct = Math.max(1, Math.min(8, (arp.register | 0) || 4));
@@ -5524,10 +5648,27 @@
               }
               if (!hit) continue;
               if (restP > 0 && rnd() * 100 < restP) continue;
+              const hitAt = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(arp, slotSec) : 0);
               // Pitch vary: per-hit ±1-octave drift (gated → no RNG at 0).
-              let f = f0;
-              if (pVary > 0 && rnd() * 100 < pVary) { const sh = (rnd() < 0.5 ? -1 : 1); const ff = _ambNoteFreq(intervals[deg] | 0, oct + carry + sh, notes); if (ff > 0) f = ff; }
-              hits.push({ at: cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(arp, slotSec) : 0), f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd), tone: _ambDegreeToneAt(deg, notes), lvl: _ambDegreeLevelAt(deg, notes) });
+              let f = f0, _sh = 0;
+              if (pVary > 0 && rnd() * 100 < pVary) { _sh = (rnd() < 0.5 ? -1 : 1); if (!_isProg) { const ff = _ambNoteFreq(intervals[deg] | 0, oct + carry + _sh, notes); if (ff > 0) f = ff; } }
+              let hTone = _ambDegreeToneAt(deg, notes), hLvl = _ambDegreeLevelAt(deg, notes);
+              if (_isProg) {
+                // Re-voice THIS hit from the chord active at ITS scheduled time
+                // (same per-onset rule as every other prog layer). No rnd used.
+                const _pv = _ambProgStepOverride;
+                _ambProgStepOverride = _ambProgStepAt(E, hitAt);
+                const iv2 = _ambScaleIntervals(notes);
+                const N2 = Math.max(1, iv2.length);
+                const dg = v % N2, oc = baseOct + Math.floor(v / N2);
+                const cy = Math.floor((_ambSrcRootPc(notes) + (iv2[dg] | 0)) / 12);
+                _ambKeyTime = hitAt;
+                const ff = _ambNoteFreq(iv2[dg] | 0, oc + cy + _sh, notes);
+                if (ff > 0) f = ff;
+                hTone = _ambDegreeToneAt(dg, notes); hLvl = _ambDegreeLevelAt(dg, notes);
+                _ambProgStepOverride = _pv;
+              }
+              hits.push({ at: hitAt, f: f, dur: _ambVaryLen(lenMs, arp.lenVary, rnd), tone: hTone, lvl: hLvl });
             }
           }
         }
@@ -7790,6 +7931,10 @@
       // Rate only changes natural) — hide it while synced.
       const rate = _ambGet(E, p + 'rate');
       if (rate) { const c = rate.closest('.ambient-ctrl'); if (c) c.style.display = (euclid || unitLocked) ? 'none' : ''; }
+      // Synced-series-arp note Resolution: only meaningful while Unit-Synced
+      // (Free mode's Unit ms IS the note rate) and only for the series engine.
+      const ares = _ambGet(E, p + 'arpres');
+      if (ares) { const c = ares.closest('.ambient-ctrl'); if (c) c.style.display = (unitLocked && !euclid) ? '' : 'none'; }
     }
     // ----- Unit-Sync control (Free / Sync = Reference × Ratio) --------------
     const _AMB_RATIOS = [[1,16,'×¹⁄₁₆'],[1,12,'×¹⁄₁₂ (⅛T)'],[1,8,'×⅛'],[1,6,'×⅙ (¼T)'],[1,4,'×¼'],[1,3,'×⅓'],[1,2,'×½'],[2,3,'×⅔'],[3,4,'×¾'],[1,1,'×1'],[3,2,'×1½'],[2,1,'×2'],[3,1,'×3'],[4,1,'×4'],[6,1,'×6'],[8,1,'×8']];
@@ -8280,7 +8425,7 @@
           // current cycle, so a queued change lands when the arp restarts its series.
           const info = _ambArpSeriesInfo(L, cfg);
           const st = E.arpState && E.arpState[key];
-          const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg);
+          const ivSc = _ambArpResIvSec(L, cfg) || (Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg));   // fixed Resolution overrides the unit-fit scale (must match the emitter)
           if (st && st.startAt != null && Number.isFinite(st.idx)) {
             const c = st.startAt + st.idx * ivSc;   // windowed next-note time
             const left = info.totalNotes - _ambArpNotesInto(info, st);
@@ -8316,7 +8461,7 @@
       if (type === 'arp' && !euclidArp) {
         const info = _ambArpSeriesInfo(L, cfg);
         const st = E.arpState && E.arpState[key];
-        const ivSc = Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg);
+        const ivSc = _ambArpResIvSec(L, cfg) || (Math.max(0.02, info.interval) * _ambLayerScale(E, key, L, cfg));   // fixed Resolution overrides the unit-fit scale (must match the emitter)
         if (st && st.startAt != null && Number.isFinite(st.idx)) {
           const c = st.startAt + st.idx * ivSc;   // windowed next-note time
           const left = info.totalNotes - _ambArpNotesInto(info, st);
@@ -9626,6 +9771,25 @@
       h = Math.imul(h ^ (h >>> 13), 1274126177); h = (h ^ (h >>> 16)) >>> 0;
       return lo + (h % (hi - lo + 1));
     }
+    // Length of ONE full progression cycle in bars (Σ per-chord bars; 0 = no
+    // active area progression). A REPLAYED Write phrase must span a whole number
+    // of these, or the loop repeats chord-k pitches over different chords.
+    function _ambProgCycleBars(cfg) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return 0;
+      const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+      return p.chords.reduce((s, c) => s + ((c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc), 0);
+    }
+    // Effective Write phrase length: under an active progression (and Y ≥ 2 — a
+    // 1-play window is live, nothing replays) snap the requested bars UP to the
+    // nearest multiple of the progression cycle so every replay covers identical
+    // harmony ("Loop 2 bars" with a 3-bar prog captured C,F and replayed them
+    // over G,C… — out of sync with the chord boundaries).
+    function _ambWriteEffBars(cfg, reqBars, nT) {
+      const cyc = _ambProgCycleBars(cfg);
+      if (!(cyc > 0) || (nT | 0) <= 1) return reqBars;
+      return Math.max(1e-6, Math.ceil(reqBars / cyc - 1e-6)) * cyc;
+    }
     function _ambWriteSync(E, now) {
       const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
       if (cfg.barLock && E === _masterEng) return;   // the area Bar Lock owns loops
@@ -9633,7 +9797,7 @@
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const one = (L, key) => {
         if (!L || typeof L !== 'object') return;
-        const w = L.write;
+        const w = _ambEffWrite(cfg, L);   // layer's own Write, or the cascading Area Write
         const fs = (E.freeze && E.freeze[key]) || null;
         const mine = !!(fs && fs._write);
         // Toggle-off / layer-off teardown: release our loop, leave user freezes alone.
@@ -9656,13 +9820,13 @@
         if (st.frozen && st._write) {
           // Replaying our phrase: schedule the thaw once — anchor (= replay start,
           // after 1 live play) + (Y−1) more plays → each phrase plays Y times total.
+          // The play-count was decided AT ARM (st._writeNT) so a 1-play cycle never
+          // froze at all; the seeded-roll fallback keeps old saves deterministic.
           if (st.pendingThawAt == null) {
-            const nTimes = _sto ? _ambWriteRandInt(_id, st._writeCyc | 0, _seed, 0x2222, Math.max(1, w.timesMin | 0), Math.max(1, w.timesMax | 0)) : Math.max(1, w.times | 0);
-            st.pendingThawAt = st.anchor + Math.max(0, nTimes - 1) * st.loopLen;
+            const nTimes = Number.isFinite(st._writeNT) ? st._writeNT
+              : (_sto ? _ambWriteRandInt(_id, st._writeCyc | 0, _seed, 0x2222, Math.max(1, w.timesMin | 0), Math.max(1, w.timesMax | 0)) : Math.max(1, w.times | 0));
+            st.pendingThawAt = st.anchor + Math.max(1, nTimes - 1) * st.loopLen;
             st._writeRearmAt = st.pendingThawAt;
-            if (st.pendingThawAt <= st.anchor + 0.001) {   // Y = 1 → no replay: thaw at the first boundary
-              st.pendingThawAt = st.anchor + st.loopLen; st._writeRearmAt = st.pendingThawAt;
-            }
           }
           return;
         }
@@ -9670,14 +9834,33 @@
         // Idle → arm the next X-bar window. First cycle: the next BAR boundary on
         // the engine's grid; re-arm after a thaw: exactly at the thaw boundary.
         let bStart;
-        if (st._write && st._writeRearmAt != null) { bStart = st._writeRearmAt; st._writeRearmAt = null; }
+        if (st._write && st._writeRearmAt != null) {
+          if (st._writeRearmAt > now + 1.6) return;   // a LIVE 1-play window is still running — arm the next cycle just before its boundary, not tick-after-tick into the future
+          bStart = st._writeRearmAt; st._writeRearmAt = null;
+        }
         else {
           const anchor = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : (now + 0.3);
           bStart = anchor + Math.max(0, Math.ceil((now - anchor) / barSec)) * barSec;
         }
         if (bStart < now - 0.05) bStart = now + 0.05;   // stale re-arm (long pause) → start fresh
         st._writeCyc = (st._writeCyc | 0) + 1;   // new cycle → new seeded structure
-        const nBars = _sto ? _ambWriteRandInt(_id, st._writeCyc, _seed, 0x1111, Math.max(1, w.barsMin | 0), Math.max(1, w.barsMax | 0)) : Math.max(1, w.bars | 0);
+        let nBars = _sto ? _ambWriteRandInt(_id, st._writeCyc, _seed, 0x1111, Math.max(1, w.barsMin | 0), Math.max(1, w.barsMax | 0)) : Math.max(1, w.bars | 0);
+        // Plays decided AT ARM: Y = 1 means the phrase sounds ONCE — that's the
+        // LIVE pass, so freezing is wrong (the old code forced a full replay,
+        // repeating chord N's captured pitches over chord N+1's bar = "the same
+        // chord two units in a row" under a progression). A 1-play cycle stays
+        // LIVE for its window and just chains the next cycle at its end.
+        const nT = _sto ? _ambWriteRandInt(_id, st._writeCyc, _seed, 0x2222, Math.max(1, w.timesMin | 0), Math.max(1, w.timesMax | 0)) : Math.max(1, w.times | 0);
+        if (nT <= 1) { st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + nBars * barSec; return; }
+        // Active progression → the phrase must cover whole progression cycles or
+        // its replays land on different chords. Snap up; if that blows the ~31 s
+        // capture limit, stay live this cycle (warn once) rather than loop wrong.
+        nBars = _ambWriteEffBars(cfg, nBars, nT);
+        if (nBars * barSec > 31) {
+          if (!st._writeProgWarned) { st._writeProgWarned = true; try { if (typeof showToast === 'function') showToast('Write: phrase snapped to the progression cycle (' + _ambFmtBpc(nBars) + ' bars) exceeds the ~31 s capture limit — playing live.'); } catch (e) {} }
+          st._write = true; st._writeNT = 1; st._writeRearmAt = bStart + nBars * barSec; return;
+        }
+        st._writeNT = nT;
         _ambBarLockArm(E, key, bStart, nBars * barSec);
         st._write = true;
       };
@@ -9748,7 +9931,14 @@
       if (!(st.anchor > 0)) { st.anchor = now; if (!(st.scheduledUpto > now)) st.scheduledUpto = now; }
       const dest = (E.mod[key] && E.mod[key].input) || E.busNode();
       let from = st.scheduledUpto;
-      if (from == null || from < now) from = Math.max(now, st.anchor || now);
+      // Handoff GRACE: at engage, scheduledUpto = anchor = the loop boundary, but
+      // the gate runs on the ~150 ms tick, so `now` is already past it. Clamping
+      // `from` to `now` DROPPED any captured event right at the loop start (t=0 —
+      // the phrase's first chord): its live-generated twin was cancelled at engage
+      // and its replay copy skipped here → the first chord of the first replay
+      // iteration went silent. Fire up to ~one tick late instead — playNote
+      // starts past-due notes immediately, and a ≤0.2 s late attack beats a hole.
+      if (from == null || from < now) from = Math.max(now - 0.22, st.anchor || now);
       const L = st.loopLen, A = st.anchor || now;
       let k = Math.max(0, Math.floor((from - A) / L)), guard = 0;
       // CAPTURE these replay voices like generated ones: _ambCapSink both tags
@@ -12010,6 +12200,7 @@
       // always-on _ambStartHeaderTicker (live on Seed / Grow / Harvest) — not here.
       try { _ambUpdateBarIndicator(E); } catch (e) {}
       try { _ambTgGenViz(E); } catch (e) {}
+      try { _ambSchedCursor(E, ((typeof _shapeAudibleNow === 'function') ? _shapeAudibleNow() : Tone.now())); } catch (e) {}   // ⏱ Scheduler playhead
       const bars = host.querySelectorAll('.ambient-ph'); if (!bars.length) return;
       // Areas are fully separated: when the master is playing a DIFFERENT area than the
       // one on screen, the panel shows an INACTIVE area — its live readouts (cursors,
@@ -14011,6 +14202,8 @@
       // Direction = the series sweep (Generate mode): hidden in euclid mode AND
       // when the seed is authored (a locked roll replays verbatim — no sweep).
       setRow('dir', !euclid && !(inst && inst.lockState && inst.lockState.seedEdit));
+      // Resolution = synced-series note rate: series only, and only while synced.
+      setRow('arpres', !euclid && !!(inst && inst.unit && inst.unit.mode === 'sync'));
       setRow('rate', !euclid);
       const ivRow = rowOf('intervalMs'); if (ivRow) ivRow.style.display = euclid ? 'none' : '';
       if (!euclid && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, stem, inst); } catch (e) {} }
@@ -14420,7 +14613,10 @@
         const key = (typeof _ambCardKey === 'function') ? _ambCardKey(row.closest('.ambient-layer')) : null;
         const L = key ? _ambLayerByKey(E, key) : null; if (!L) return;
         const fs = E.freeze && E.freeze[key];
-        const writing = !!(L.write && L.write.on);
+        const cfgW = E.getCfg && E.getCfg();
+        const effW = _ambEffWrite(cfgW, L);
+        const inherited = !!(effW && !(L.write && L.write.on));   // riding the Area Write
+        const writing = !!effW;
         const holding = !writing && !!(fs && (fs.frozen || fs.recording));
         const mode = writing ? 'write' : (holding ? 'hold' : 'off');
         row.querySelectorAll('.ambient-loop-mode').forEach(b => {
@@ -14428,18 +14624,58 @@
           if (b.getAttribute('data-lmode') === 'hold') b.textContent = (fs && fs.recording && !writing) ? '◉ Rec' : 'Hold';
         });
         // Vary state: show the fixed X×Y or the min–max ranges (only in Write mode).
-        const sto = !!(L.write && L.write.stochastic);
+        const sto = !!(effW && effW.stochastic);
         const varyBtn = row.querySelector('.ambient-write-vary');
-        if (varyBtn) { varyBtn.classList.toggle('active', sto); varyBtn.style.display = writing ? '' : 'none'; }
-        const fixed = row.querySelector('.ambient-write-fixed'); if (fixed) fixed.style.display = (writing && !sto) ? '' : 'none';
-        const range = row.querySelector('.ambient-write-range'); if (range) range.style.display = (writing && sto) ? '' : 'none';
+        // Inherited (Area Write): the settings live in Configure — hide the
+        // per-layer editors and cue the cascade instead of showing dormant fields.
+        if (varyBtn) { varyBtn.classList.toggle('active', sto); varyBtn.style.display = (writing && !inherited) ? '' : 'none'; }
+        const fixed = row.querySelector('.ambient-write-fixed'); if (fixed) fixed.style.display = (writing && !inherited && !sto) ? '' : 'none';
+        const range = row.querySelector('.ambient-write-range'); if (range) range.style.display = (writing && !inherited && sto) ? '' : 'none';
         const hint = row.querySelector('.ambient-loop-hint');
         if (hint) hint.textContent = writing
-            ? (sto ? ('vary: ' + ((L.write && L.write.barsMin) || 1) + '–' + ((L.write && L.write.barsMax) || 4) + ' bars × ' + ((L.write && L.write.timesMin) || 2) + '–' + ((L.write && L.write.timesMax) || 8) + ' plays')
-                   : ('auto: write → loop ×' + ((L.write && L.write.times) || 4) + ' → rewrite'))
+            ? (inherited ? ('↳ area: ' + (sto ? (effW.barsMin + '–' + effW.barsMax + ' bars × ' + effW.timesMin + '–' + effW.timesMax + ' plays') : (effW.bars + ' bars × ' + effW.times + ' plays')))
+              : sto ? ('vary: ' + ((effW && effW.barsMin) || 1) + '–' + ((effW && effW.barsMax) || 4) + ' bars × ' + ((effW && effW.timesMin) || 2) + '–' + ((effW && effW.timesMax) || 8) + ' plays')
+                    : ('auto: write → loop ×' + ((effW && effW.times) || 4) + ' → rewrite'))
           : (fs && fs.recording) ? 'recording — press Hold again to set the loop'
           : (fs && fs.frozen) ? 'held loop — Off/❄ to thaw'
           : 'phrase loop';
+        // Active progression → the X (phrase length) inputs edit in CYCLES (one
+        // full pass through the progression's chords), the only unit a looped
+        // phrase can honestly have (the engine snaps bars up to whole cycles).
+        // dataset.cyc marks the unit for the shared input handler; values are
+        // stored as bars either way. Skip while the field is being typed in.
+        try {
+          const cyc = _ambProgCycleBars(cfgW);
+          const relab = (inp, barsVal, hintTxtCyc, hintTxtBars) => {
+            if (!inp) return;
+            const h = inp.nextElementSibling;
+            if (cyc > 0) {
+              inp.dataset.cyc = String(cyc);
+              inp.max = String(Math.max(1, Math.ceil(8 / cyc)));
+              inp.title = 'Phrase length in progression cycles — 1 cycle = ' + _ambFmtBpc(cyc) + ' bars (one full pass through the chords)';
+              if (document.activeElement !== inp) inp.value = String(Math.max(1, Math.ceil((barsVal || 1) / cyc - 1e-6)));
+              if (h && h.classList && h.classList.contains('ambient-hint')) h.textContent = hintTxtCyc;
+            } else if (inp.dataset.cyc) {
+              delete inp.dataset.cyc; inp.max = '8';
+              inp.title = 'X — phrase length in bars';
+              if (document.activeElement !== inp) inp.value = String(barsVal || 2);
+              if (h && h.classList && h.classList.contains('ambient-hint')) h.textContent = hintTxtBars;
+            }
+          };
+          relab(row.querySelector('.ambient-write-x'), (L.write && L.write.bars) || 2, 'cycles ×', 'bars ×');
+          // Vary ranges: min–max phrase length, same unit swap ("bars" → "cycles").
+          const rangeBox = row.querySelector('.ambient-write-range');
+          if (rangeBox) {
+            const rh = rangeBox.querySelector('.ambient-hint');
+            if (rh) rh.textContent = (cyc > 0) ? 'cycles' : 'bars';
+            const bmin = rangeBox.querySelector('.ambient-write-bmin'), bmax = rangeBox.querySelector('.ambient-write-bmax');
+            [[bmin, (L.write && L.write.barsMin) || 1], [bmax, (L.write && L.write.barsMax) || 4]].forEach(pr => {
+              const inp = pr[0]; if (!inp) return;
+              if (cyc > 0) { inp.dataset.cyc = String(cyc); inp.max = String(Math.max(1, Math.ceil(8 / cyc))); if (document.activeElement !== inp) inp.value = String(Math.max(1, Math.ceil(pr[1] / cyc - 1e-6))); }
+              else if (inp.dataset.cyc) { delete inp.dataset.cyc; inp.max = '8'; if (document.activeElement !== inp) inp.value = String(pr[1]); }
+            });
+          }
+        } catch (e) {}
       });
     }
     // Strum SYNC — lock the strummed chord's per-hit spacing to a BPM note-division
@@ -15089,6 +15325,178 @@
         ch.appendChild(lab);
         strip.appendChild(ch);
       });
+      try { _ambRenderScheduler(E); } catch (e) {}   // the Scheduler mirrors the same layer set
+    }
+    // ================= SCHEDULER (⏱) ==================================
+    // The per-layer TIME matrix between Configure and the Mixer: one row per
+    // present layer over a shared 16-bar ruler. Each block in a row is ONE UNIT
+    // of that layer (width = its resolved unit in bars); when the layer's Write
+    // cycle is on, blocks alternate shading per PHRASE (Loop bars) and a ↻ tick
+    // marks each rewrite point (Loop × Plays). Row editors: Unit size (Free /
+    // bar-locked), Loop (write.bars) and Plays (write.times) — the same fields
+    // the Loop control edits, shown structurally. All rows share the bar grid
+    // (_barGridAnchor), so the playhead line is one global cursor.
+    const _AMB_SCHED_BARS = 16;   // ruler width (bars) when no progression constrains it
+    // Actual view width: with an active progression the window must span a WHOLE
+    // number of progression cycles — the playhead wraps at the window edge, so a
+    // 16-bar window over a 3-bar progression put a truncated extra chord at the
+    // end and drifted out of sync with the real harmony after every wrap.
+    // 3-bar cycle → 15-bar view (5 cycles); 4 → 16; 7 → 14; cycle > 16 → one cycle.
+    function _ambSchedViewBars(cfg) {
+      const cyc = _ambProgCycleBars(cfg);
+      if (!(cyc > 0)) return _AMB_SCHED_BARS;
+      if (cyc >= _AMB_SCHED_BARS) return cyc;
+      return Math.max(1, Math.floor(_AMB_SCHED_BARS / cyc + 1e-6)) * cyc;
+    }
+    function _ambSchedUnitVal(L) {
+      const u = L && L.unit;
+      if (!u || u.mode !== 'sync' || u.ref !== 'bar') return 'free';
+      const r = (Math.max(1, u.num | 0)) / (Math.max(1, u.den | 0));
+      return ([0.25, 0.5, 1, 2, 4, 8].indexOf(r) >= 0) ? String(r) : 'free';
+    }
+    function _ambRenderScheduler(E) {
+      const body = _ambGet(E, 'ambient-sched-body'); if (!body) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      const layers = _ambMixerLayers(cfg);
+      if (!layers.length) { body.innerHTML = '<span class="ambient-hint">No layers yet.</span>'; return; }
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      // View width: whole progression cycles (see _ambSchedViewBars) so the
+      // playhead's wrap point is also a harmony wrap point — no truncated chord
+      // at the end, no drift after wrapping. Stored for the cursor.
+      const VIEW = _ambSchedViewBars(cfg);
+      { const sec = _ambGet(E, 'ambient-sched'); if (sec) sec._schedView = VIEW; }
+      // Bar ruler: a number every 4 bars with a stronger line, explicit per-bar
+      // widths so fractional view lengths (fractional chord cycles) stay exact.
+      let ticks = '';
+      for (let i = 0; i < Math.ceil(VIEW - 1e-6); i++) {
+        const tw = Math.min(1, VIEW - i) / VIEW * 100;
+        ticks += '<i class="ambient-sched-tick' + (i % 4 === 0 ? ' q' : '') + '" style="flex:0 0 ' + tw.toFixed(3) + '%">' + ((i % 4 === 0) ? (i + 1) : '') + '</i>';
+      }
+      let html = '<div class="ambient-sched-row ambient-sched-ruler"><span class="ambient-sched-ctl"><span class="ambient-sched-lbl">bars →</span></span><span class="ambient-sched-strip">' + ticks + '</span></div>';
+      // CHORD lane (area progression active): one labeled block per chord, sized
+      // by its own bars (fractional OK), cycling across the ruler — every layer
+      // strip below shares the same x-scale, so the block edges ARE the chord
+      // boundaries the layers re-voice on.
+      const pg = cfg.prog;
+      if (pg && pg.on && Array.isArray(pg.chords) && pg.chords.length) {
+        const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+        const lens = pg.chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+        let cb = 0, ci = 0, cBlocks = '';
+        while (cb < VIEW - 1e-6 && ci < 96) {
+          const ch = pg.chords[ci % pg.chords.length];
+          const clen = Math.max(0.05, lens[ci % lens.length]);
+          const cw = Math.min(clen, VIEW - cb) / VIEW * 100;
+          const lbl = _ambChordShort(ch);
+          // Label only when the block is wide enough to read it (narrow chords
+          // keep the boundary edge + a hover title instead of clipped garbage).
+          // Label only blocks wide enough in PIXELS (a % threshold means fewer px
+          // on phones — half-bar labels clipped to mush at 390px). Narrow blocks
+          // keep the boundary edge + hover title.
+          const showLbl = cw >= ((typeof window !== 'undefined' && window.innerWidth < 560) ? 6 : 3);
+          cBlocks += '<i class="ambient-sched-chblk' + (ci % pg.chords.length === 0 ? ' cyc' : '') + '" style="width:' + cw.toFixed(3) + '%" title="' + esc(lbl) + ' · ' + _ambFmtBpc(clen) + ' bar' + (clen === 1 ? '' : 's') + '">' + (showLbl ? esc(lbl) : '') + '</i>';
+          cb += clen; ci++;
+        }
+        html += '<div class="ambient-sched-row ambient-sched-chordrow">' +
+          '<span class="ambient-sched-ctl"><span class="ambient-sched-name" title="' + esc(pg.name || 'Progression') + '">' + esc(pg.name || 'Progression') + '</span><span class="ambient-sched-lbl">chords</span></span>' +
+          '<span class="ambient-sched-strip chords">' + cBlocks + '<i class="ambient-sched-ph"></i></span></div>';
+      }
+      layers.forEach(({ name, layer, key }) => {
+        let unitBars = 1;
+        try { const P = _ambLayerPeriodSec(E, key, layer, cfg); if (P > 0.01) unitBars = P / barSec; } catch (e) {}
+        unitBars = Math.max(1 / 32, Math.min(VIEW, unitBars));
+        const w = layer.write, wOn = !!(w && w.on);
+        const uVal = _ambSchedUnitVal(layer);
+        // Effective phrase length: under an active progression Write snaps the
+        // phrase UP to whole progression cycles (replays must cover identical
+        // harmony) — show what will ACTUALLY happen, not the raw input. With a
+        // progression the Loop stepper EDITS IN CYCLES (1 cycle = one full pass
+        // through the progression's chords), since that's the only unit a looped
+        // phrase can honestly have.
+        const cycBars = _ambProgCycleBars(cfg);
+        const effBars = wOn ? _ambWriteEffBars(cfg, Math.max(1, w.bars | 0), Math.max(1, w.times | 0)) : 0;
+        const effCycles = (wOn && cycBars > 0) ? Math.max(1, Math.round(effBars / cycBars)) : 0;
+        const snapped = wOn && Math.abs(effBars - Math.max(1, w.bars | 0)) > 1e-6;
+        // Unit blocks across the ruler. Write on → render the loop's MEANING:
+        // each rewrite cycle = one FRESH phrase (✎ new material, bright) followed
+        // by (plays−1) exact REPEATS of it (↻, dim). The ✎ block is also the
+        // rewrite boundary (new material starts there).
+        let blocks = '', b = 0, n = 0, lastPhrase = -1;
+        while (b < VIEW - 1e-6 && n < 128) {
+          const wPct = Math.min(unitBars, VIEW - b) / VIEW * 100;
+          let cls = 'ambient-sched-blk', glyph = '';
+          if (wOn && (w.times | 0) > 1) {
+            const rc = effBars * Math.max(1, w.times);              // one full write→repeat cycle
+            const posIn = b - Math.floor((b + 1e-6) / rc) * rc;      // position within it
+            const playIdx = Math.floor((posIn + 1e-6) / Math.max(1e-6, effBars));   // 0 = the fresh pass
+            if (playIdx > 0) cls += ' rep';
+            const phraseNo = Math.floor((b + 1e-6) / Math.max(1e-6, effBars));
+            if (phraseNo !== lastPhrase) {                           // first unit block of each phrase → glyph
+              lastPhrase = phraseNo;
+              cls += ' phstart' + (playIdx === 0 ? ' rewrite' : '');
+              glyph = (playIdx === 0) ? '✎' : '↻';
+            }
+          }
+          blocks += '<i class="' + cls + '" style="width:' + wPct.toFixed(3) + '%">' + glyph + '</i>';
+          b += unitBars; n++;
+        }
+        const uOpts = [['free', 'Free'], ['0.25', '¼ bar'], ['0.5', '½ bar'], ['1', '1 bar'], ['2', '2 bars'], ['4', '4 bars'], ['8', '8 bars']]
+          .map(o => '<option value="' + o[0] + '"' + (o[0] === uVal ? ' selected' : '') + '>' + o[1] + '</option>').join('');
+        html += '<div class="ambient-sched-row" data-schkey="' + esc(key) + '">' +
+          '<span class="ambient-sched-ctl">' +
+            '<span class="ambient-sched-name" title="' + esc(name) + '">' + esc(name) + '</span>' +
+            '<span class="ambient-sched-grp" title="Unit size — how long ONE block of this layer lasts. Free = the layer’s own timing; a bar value locks it to the grid.">' +
+              '<span class="ambient-sched-lbl">unit</span>' +
+              '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select></span>' +
+            '<span class="ambient-sched-grp" title="Loop — write a fresh phrase every so often: generate N bars, repeat that exact phrase M times, then write a new one.">' +
+              '<button type="button" class="ambient-seg ambient-sched-writebtn' + (wOn ? ' active' : '') + '">' + (wOn ? '⟳ Loop on' : 'Loop off') + '</button>' +
+              '<span class="ambient-sched-xy"' + (wOn ? '' : ' style="display:none"') + '>' +
+                ((cycBars > 0)
+                  ? ('<input type="number" class="ambient-sched-bars" data-cyc="' + cycBars + '" min="1" max="' + Math.max(1, Math.ceil(8 / cycBars)) + '" step="1" value="' + (effCycles || 1) + '" title="Phrase length in progression CYCLES — 1 cycle = one full pass through the progression’s chords (' + _ambFmtBpc(cycBars) + ' bars here). A looped phrase must span whole cycles so its repeats stay on the same chords."><span class="ambient-sched-lbl">cycle' + (effCycles === 1 ? '' : 's') + ' ×</span>')
+                  : ('<input type="number" class="ambient-sched-bars" min="1" max="8" step="1" value="' + ((w && w.bars) || 2) + '" title="Phrase length in bars"><span class="ambient-sched-lbl">bars ×</span>')) +
+                '<input type="number" class="ambient-sched-times" min="1" max="32" step="1" value="' + ((w && w.times) || 4) + '" title="Times each phrase repeats before a fresh one is written"><span class="ambient-sched-lbl">plays</span>' +
+                ((cycBars > 0 && wOn) ? '<span class="ambient-sched-lbl snap" title="One cycle = one full pass through the progression (' + _ambFmtBpc(cycBars) + ' bars).">= ' + _ambFmtBpc(effBars) + ' bars</span>' : '') + '</span>' +
+            '</span>' +
+          '</span>' +
+          '<span class="ambient-sched-strip">' + blocks + '<i class="ambient-sched-ph"></i></span>' +
+        '</div>';
+      });
+      // Legend — name what the strip shows (block/fresh/repeat/playhead).
+      html += '<div class="ambient-sched-legend">' +
+        '<i class="ambient-sched-blk lg"></i> 1 unit' +
+        '<span class="lgtxt">✎ fresh material is written &amp; plays</span>' +
+        '<span class="lgtxt">↻ <i class="ambient-sched-blk lg rep"></i> that exact phrase repeats</span>' +
+        '<i class="ambient-sched-ph lg"></i> playhead</div>';
+      body.innerHTML = html;
+    }
+    // One global playhead across every row: position on the shared bar grid,
+    // wrapped to the ruler width. Driven each viz frame; cheap when collapsed.
+    function _ambSchedCursor(E, now) {
+      const box = _ambGet(E, 'ambient-sched');
+      if (!box || box.classList.contains('collapsed')) return;
+      const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
+      const G = E._barGridAnchor;
+      const phs = box.querySelectorAll('.ambient-sched-ph'); if (!phs.length) return;
+      if (!E.timer || !Number.isFinite(G)) { phs.forEach(el => { el.style.display = 'none'; }); return; }
+      const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const bars = (now - G) / barSec; if (bars < 0) return;
+      const V = (Number.isFinite(box._schedView) && box._schedView > 0) ? box._schedView : _AMB_SCHED_BARS;   // wrap at the rendered view (whole prog cycles)
+      const fracPct = (bars % V) / V * 100;
+      const pct = fracPct.toFixed(2) + '%';
+      phs.forEach(el => { el.style.display = 'block'; el.style.left = pct; });   // base CSS is display:none — '' would fall back to hidden
+      // Live CHORD readout: light the chord block the playhead is inside, so the
+      // lane shows which chord is sounding right now (matches the header readout).
+      const chs = box.querySelectorAll('.ambient-sched-chblk');
+      if (chs.length) {
+        let acc = 0, hit = -1;
+        for (let i = 0; i < chs.length; i++) { const wp = parseFloat(chs[i].style.width) || 0; if (fracPct >= acc - 1e-6 && fracPct < acc + wp) { hit = i; break; } acc += wp; }
+        if (box._schChIdx !== hit || (hit >= 0 && !chs[hit].classList.contains('playing'))) {   // re-verify: a re-render wipes the class
+          chs.forEach((el, i) => el.classList.toggle('playing', i === hit));
+          box._schChIdx = hit;
+        }
+      }
     }
     function _ambRenderSeqLayers(E) {
       const wrap = _ambGet(E, 'ambient-seq-layers');
@@ -15472,7 +15880,7 @@
       arp: { label: 'Arp', ctrls: [
         ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Unit'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -15950,6 +16358,7 @@
       if (k === 'fx') return _ambFxUi(lk);
       if (k === 'arpseries') return _ambArpSeriesHtml(p, inst);
       if (k === 'arpdir') return _ambArpDirHtml(p, inst);
+      if (k === 'arpres') return _ambArpResHtml(p, inst);
       if (k === 'unitmatch') return _ambUnitMatchHtml(p);
       if (k === 'unitsync') return _ambUnitSyncHtml(p);
       return '';
@@ -16085,6 +16494,16 @@
       // Per-layer Reset — restores every group to its default fold state.
       html += '<div class="ambient-grp-resetwrap"><button type="button" class="ambient-grp-reset" id="' + p + '-grp-reset" title="Reset section folds to defaults">↺ Reset sections</button></div>';
       return html + '</div>';
+    }
+    // Synced-arp note Resolution picker — the fixed per-note division that makes
+    // every Direction play at the same rate. 'Fit unit' = legacy (cycle squeezed
+    // into the locked unit → rate varies with the direction's pass length).
+    function _ambArpResHtml(p, inst) {
+      const opts = [['16', '1/16'], ['32', '1/32'], ['16t', '1/16T'], ['8', '1/8'], ['8t', '1/8T'], ['4', '1/4'], ['fit', 'Fit unit']];
+      return '<div class="ambient-ctrl ambient-arpres"><label for="' + p + '-arpres">Resolution</label>' +
+        '<select id="' + p + '-arpres" class="ambient-select" title="Note rate while Unit-Synced — a fixed division (every Direction plays at this speed), or Fit unit (one full sweep per unit; speed then depends on the Direction’s pass length)">' +
+        opts.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') +
+        '</select><span class="ambient-hint">note rate</span></div>';
     }
     // Arp Direction picker — the series sweep pattern (Generate mode only; an
     // authored arp replays its roll, and the euclid arp picks pitch per-hit).
@@ -16267,6 +16686,14 @@
           else if (k === 'cond') { _ambBindWhen(E, p, get, persist); }
           else if (k === 'spread') { _ambWireSpread(E, 'ambient-' + type + '-' + id, get, persist, sync); }
           else if (k === 'arpseries') { _ambWireArpSeries(E, inst, p, get); }
+          else if (k === 'arpres') { const s = el('arpres'); if (s) { s.value = inst.arpRes || '16'; s.addEventListener('change', () => { const L = get(); if (L) { L.arpRes = s.value || '16'; sync(); persist();
+            // Interval change = the series timeline (startAt + idx×interval)
+            // REBASES around the accumulated idx — _ambReanchorLayer only moves
+            // lastAt, so the cursor lands arbitrarily (skips or long silence).
+            // Restart clean instead: drop the state so the next tick re-anchors
+            // idx 0 on the shared grid (_ambUnitReanchor) → the new rate starts
+            // predictably at the next grid point.
+            if (E.timer) { try { _ambUnitReanchor(E, type + ':' + id); } catch (x) {} } } }); } }
           else if (k === 'arpdir') { const s = el('dir'); if (s) { s.value = inst.dir || 'up'; s.addEventListener('change', () => { const L = get(); if (L) {
             L.dir = s.value || 'up';
             // Propagate to every series ENTRY: normalize stamps each entry with
@@ -17932,6 +18359,7 @@
         // Area START slider + per-layer cascade cue: a layer INHERITING (no own
         // value) shows the area value + an "inherit" cue; an override shows its own.
         set('ambient-area-startvary', cfg.startVary | 0); hint('ambient-area-startvary-v', String(cfg.startVary | 0));
+        try { if (typeof E._awSync === 'function') E._awSync(); } catch (e) {}   // Area Write row (Configure)
         [['bed', 'startVary'], ['motif', 'phraseVary']].forEach(function (pr) {
           const ty = pr[0], fld = pr[1];
           const own = (cfg[ty] && typeof cfg[ty] === 'object') ? cfg[ty][fld] : undefined;
@@ -18212,9 +18640,40 @@
           '<span class="ambient-hint" id="ambient-area-startvary-v">0</span>' +
           '<span class="ambient-hint">cascades → layers</span>' +
         '</div>' +
+        // Area WRITE — phrase-loop EVERY layer (write X bars, loop ×Y, rewrite).
+        // Cascades to all layers; a layer's own Loop (Write/Hold/Off) overrides
+        // (Off = opt-out). Same markup family as the per-layer Loop control.
+        '<div class="ambient-row ambient-area-write">' +
+          '<span class="ambient-hint ambient-start-lbl" title="Area Write — every layer generates X bars, loops that exact phrase until it has played Y times, then writes a fresh one. Cascades to all layers; a layer’s own Loop control overrides (its Write wins, its Off opts out).">Write</span>' +
+          '<span class="ambient-seg-row">' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-off">Off</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-areawrite-on">Write</button>' +
+          '</span>' +
+          '<button type="button" class="ambient-seg" id="ambient-areawrite-vary" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside the min–max ranges." style="display:none">~ Vary</button>' +
+          '<span class="ambient-write-xy" id="ambient-areawrite-fixed" style="display:none">' +
+            '<input type="number" id="ambient-areawrite-x" min="1" max="8" step="1" value="2" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
+            '<input type="number" id="ambient-areawrite-y" min="1" max="32" step="1" value="4" title="Y — total plays of each phrase before a new one is written"> <span class="ambient-hint">plays</span>' +
+          '</span>' +
+          '<span class="ambient-write-xy" id="ambient-areawrite-range" style="display:none">' +
+            '<span class="ambient-hint">bars</span> <input type="number" id="ambient-areawrite-bmin" min="1" max="8" step="1" value="1">–<input type="number" id="ambient-areawrite-bmax" min="1" max="8" step="1" value="4"> ' +
+            '<span class="ambient-hint">× plays</span> <input type="number" id="ambient-areawrite-tmin" min="1" max="32" step="1" value="2">–<input type="number" id="ambient-areawrite-tmax" min="1" max="32" step="1" value="8">' +
+          '</span>' +
+          '<span class="ambient-hint">cascades → layers</span>' +
+        '</div>' +
         // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
         // "Global FX" subsection (below the faders) — see _globalFxHtml.
         '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
+        // ⏱ Scheduler — the per-layer TIME matrix: each present layer is a row;
+        // its row shows the layer's units as blocks on a shared bar ruler, with
+        // per-row Unit size / Loop bars / Plays editors (Loop×Plays = the layer's
+        // Write cycle). Collapsible like the Mixer; rendered by _ambRenderScheduler.
+        '<div class="ambient-sched collapsed" id="ambient-sched">' +
+          '<div class="ambient-sched-head">' +
+            '<span class="ambient-mixer-title">⏱ Scheduler</span>' +
+            '<button type="button" class="ambient-mixer-toggle ambient-sched-toggle" id="ambient-sched-toggle" title="Collapse / expand the scheduler" aria-label="Collapse or expand the scheduler"></button>' +
+          '</div>' +
+          '<div class="ambient-sched-body" id="ambient-sched-body"></div>' +
+        '</div>' +
         // Mixer — one vertical fader per layer for balancing overall levels in
         // one place. Collapsible; the strip is (re)rendered by _ambRenderMixer
         // whenever the layer set changes.
@@ -18402,12 +18861,66 @@
       });
       // Mixer collapse toggle (UI-only; the strip itself is re-rendered by
       // _ambRenderMixer as layers change).
-      { const mxBtn = host.querySelector('.ambient-mixer-toggle');
+      { const mxBtn = host.querySelector('.ambient-mixer-toggle:not(.ambient-sched-toggle)');
         if (mxBtn) mxBtn.addEventListener('click', () => {
           const mx = mxBtn.closest('.ambient-mixer');
           if (mx) mx.classList.toggle('collapsed');   // caret direction handled by CSS (.collapsed)
         });
         try { _ambRenderMixer(E); } catch (e) {}
+      }
+      // ⏱ Scheduler: collapse toggle + ONE delegated editor handler (rows are
+      // re-rendered whenever the layer set changes, so no per-row binds).
+      { const scBtn = host.querySelector('.ambient-sched-toggle');
+        if (scBtn) scBtn.addEventListener('click', () => {
+          const sc = scBtn.closest('.ambient-sched');
+          if (sc) { sc.classList.toggle('collapsed'); if (!sc.classList.contains('collapsed')) { try { _ambRenderScheduler(E); } catch (e) {} } }
+        });
+        const scBody = _ambGet(E, 'ambient-sched-body');
+        const _schedLayer = (el) => { const row = el.closest('[data-schkey]'); const key = row && row.getAttribute('data-schkey'); return key ? { key, L: _ambLayerByKey(E, key) } : null; };
+        if (scBody) {
+          scBody.addEventListener('change', (ev) => {
+            const sel = ev.target.closest('.ambient-sched-unit'); if (!sel) return;
+            _E = E; const t = _schedLayer(sel); if (!t || !t.L) return;
+            if (sel.value === 'free') { _ambNormalizeUnit(t.L); t.L.unit.mode = 'free'; }
+            else {
+              const r = parseFloat(sel.value) || 1;
+              t.L.unit = (r >= 1) ? { mode: 'sync', ref: 'bar', num: Math.round(r), den: 1 } : { mode: 'sync', ref: 'bar', num: 1, den: Math.round(1 / r) };
+              if (E.timer) { try { _ambUnitReanchor(E, t.key); } catch (e) {} }   // rejoin the grid at the next boundary
+            }
+            if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+            try { _ambSyncLayerUnits(E); } catch (e) {}
+            try { _ambSyncControls(E); } catch (e) {}   // the card's Unit control mirrors this edit
+            _ambRenderScheduler(E);
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          scBody.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('.ambient-sched-writebtn'); if (!btn) return;
+            _E = E; const t = _schedLayer(btn); if (!t || !t.L) return;
+            if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
+            t.L.write.on = !t.L.write.on;
+            if (t.L.write.on) delete t.L.write.optOut;
+            else { const c = E.getCfg(); if (c && c.writeAll && c.writeAll.on) t.L.write.optOut = true; }   // explicit off opts out of an Area Write
+            try { _ambFreezeSyncAll(E); } catch (e) {}
+            _ambRenderScheduler(E);
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          scBody.addEventListener('input', (ev) => {
+            const inp = ev.target.closest('.ambient-sched-bars, .ambient-sched-times'); if (!inp) return;
+            _E = E; const t = _schedLayer(inp); if (!t || !t.L) return;
+            if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
+            const v = parseInt(inp.value, 10);
+            if (inp.classList.contains('ambient-sched-bars')) {
+              const cyc = parseFloat(inp.dataset.cyc);   // progression active → the input is in CYCLES; store the equivalent bars (the arm-time snap re-derives whole cycles from it)
+              const bars = (Number.isFinite(cyc) && cyc > 0) ? Math.round(Math.max(1, Number.isFinite(v) ? v : 1) * cyc) : (Number.isFinite(v) ? v : 2);
+              t.L.write.bars = Math.max(1, Math.min(8, bars));
+            }
+            else t.L.write.times = Math.max(1, Math.min(32, Number.isFinite(v) ? v : 4));
+            try { _ambFreezeSyncAll(E); } catch (e) {}
+            // Redraw only the strips (keep the focused input alive): full render on blur.
+            if (typeof persistWorkspace === 'function') persistWorkspace();
+          });
+          scBody.addEventListener('focusout', (ev) => { if (ev.target.closest && ev.target.closest('.ambient-sched-bars, .ambient-sched-times')) { try { _ambRenderScheduler(E); } catch (e) {} } });
+        }
       }
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
@@ -19058,6 +19571,61 @@
           cfg.startVary = Math.max(0, Math.min(100, parseInt(aSV.value, 10) || 0));
           _ambSyncControls(E); persist();
         });
+        // ---- Area WRITE (Configure) — cascades to every layer ----------------
+        // One sync fn drives the row's segments + field visibility from cfg.writeAll;
+        // it also refreshes every layer's Loop row (they show the ↳ area cue).
+        const _awSync = () => {
+          const cfg = cfg0(); const w = cfg && cfg.writeAll; const on = !!(w && w.on), sto = !!(w && w.stochastic);
+          const seg = (id, act) => { const el = G(id); if (el) el.classList.toggle('active', act); };
+          seg('ambient-areawrite-off', !on); seg('ambient-areawrite-on', on);
+          const vb = G('ambient-areawrite-vary'); if (vb) { vb.style.display = on ? '' : 'none'; vb.classList.toggle('active', sto); }
+          const fx = G('ambient-areawrite-fixed'); if (fx) fx.style.display = (on && !sto) ? '' : 'none';
+          const rg = G('ambient-areawrite-range'); if (rg) rg.style.display = (on && sto) ? '' : 'none';
+          if (w) {
+            const setv = (id, v) => { const el = G(id); if (el && document.activeElement !== el) el.value = String(v); };
+            setv('ambient-areawrite-x', w.bars); setv('ambient-areawrite-y', w.times);
+            setv('ambient-areawrite-bmin', w.barsMin); setv('ambient-areawrite-bmax', w.barsMax);
+            setv('ambient-areawrite-tmin', w.timesMin); setv('ambient-areawrite-tmax', w.timesMax);
+            // Active progression → phrase-length inputs edit in CYCLES (stored as
+            // bars; dataset.cyc marks the unit for the handlers — same convention
+            // as the layer cards / Scheduler).
+            const cyc = _ambProgCycleBars(cfg);
+            [['ambient-areawrite-x', w.bars, 'cycles ×', 'bars ×'], ['ambient-areawrite-bmin', w.barsMin, null, null], ['ambient-areawrite-bmax', w.barsMax, null, null]].forEach(pr => {
+              const el = G(pr[0]); if (!el) return;
+              const h = (pr[2] != null) ? el.nextElementSibling : null;
+              if (cyc > 0) {
+                el.dataset.cyc = String(cyc); el.max = String(Math.max(1, Math.ceil(8 / cyc)));
+                if (document.activeElement !== el) el.value = String(Math.max(1, Math.ceil((pr[1] || 1) / cyc - 1e-6)));
+                if (h && h.classList.contains('ambient-hint')) h.textContent = pr[2];
+              } else if (el.dataset.cyc) {
+                delete el.dataset.cyc; el.max = '8';
+                if (document.activeElement !== el) el.value = String(pr[1]);
+                if (h && h.classList.contains('ambient-hint')) h.textContent = pr[3];
+              }
+            });
+            const rr = G('ambient-areawrite-range'); const rh = rr && rr.querySelector('.ambient-hint');
+            if (rh) rh.textContent = (cyc > 0) ? 'cycles' : 'bars';
+          }
+          try { _ambFreezeSyncAll(E); } catch (e) {}
+        };
+        const _awCfg = () => { const cfg = cfg0(); if (!cfg) return null; if (!cfg.writeAll || typeof cfg.writeAll !== 'object') { cfg.writeAll = { on: false, bars: 2, times: 4 }; _ambNormalizeWriteObj(cfg, 'writeAll'); } return cfg.writeAll; };
+        const _awOn = G('ambient-areawrite-on'), _awOff = G('ambient-areawrite-off'), _awVary = G('ambient-areawrite-vary');
+        if (_awOn) _awOn.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = true; _awSync(); persist(); });
+        if (_awOff) _awOff.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.on = false; _awSync(); persist(); });
+        if (_awVary) _awVary.addEventListener('click', () => { _E = E; const w = _awCfg(); if (!w) return; w.stochastic = !w.stochastic; _awSync(); persist(); });
+        [['x', 'bars', 8], ['y', 'times', 32], ['bmin', 'barsMin', 8], ['bmax', 'barsMax', 8], ['tmin', 'timesMin', 32], ['tmax', 'timesMax', 32]].forEach(pr => {
+          const el = G('ambient-areawrite-' + pr[0]); if (!el) return;
+          el.addEventListener('input', () => {
+            _E = E; const w = _awCfg(); if (!w) return;
+            let v = parseInt(el.value, 10);
+            const cyc = parseFloat(el.dataset.cyc);   // input in CYCLES while a progression is active → store bars
+            if (Number.isFinite(cyc) && cyc > 0) v = Math.round(Math.max(1, Number.isFinite(v) ? v : 1) * cyc);
+            w[pr[1]] = Math.max(1, Math.min(pr[2], Number.isFinite(v) ? v : 1));
+            persist(); try { _ambFreezeSyncAll(E); } catch (e) {}
+          });
+        });
+        try { _awSync(); } catch (e) {}
+        E._awSync = _awSync;   // area switches re-sync the row via _ambSyncControls
         // Per-layer Start label = an Inherit ↔ Override toggle (the manual override +
         // reset). Inheriting → set own value to the current area Start (start
         // overriding). Override → delete own value (back to inherit).
@@ -19146,6 +19714,7 @@
               if (fs.frozen && !fs._write) _ambFreezeThaw(E, key);
               if (fs.recording) fs.recording = false;
               L.write.on = true;
+              delete L.write.optOut;   // explicit ON overrides any earlier area opt-out
             } else if (mode === 'hold') {
               if (L.write.on && fs._write && fs.frozen) {
                 // Write is cycling → KEEP this phrase: convert the live loop to a
@@ -19161,6 +19730,9 @@
               }
             } else {   // off
               L.write.on = false;
+              // Explicit Off = an override: while an Area Write is active this
+              // layer opts OUT (the same layer-beats-area model as Start/Key).
+              { const cW = cfg0 && cfg0(); if (cW && cW.writeAll && cW.writeAll.on) L.write.optOut = true; }
               if (fs._write) { fs._write = false; fs._writeRearmAt = null; }
               if (fs.frozen) { if (fs.pendingThawAt == null) _ambFreezeThaw(E, key); }
               else { fs.recording = false; fs.pendingFreezeAt = null; fs._lock = false; fs._lockWin = null; }
@@ -19176,10 +19748,14 @@
             const cl = inp.classList;
             const cb = (x) => Math.max(1, Math.min(8, Number.isFinite(x) ? x : 1));
             const ct = (x) => Math.max(1, Math.min(32, Number.isFinite(x) ? x : 1));
-            if (cl.contains('ambient-write-x')) w.bars = cb(v) || 2;
+            // dataset.cyc = the input is in progression CYCLES (set by
+            // _ambLoopSyncAll while a progression is active) — store bars.
+            const _cyc = parseFloat(inp.dataset.cyc);
+            const inBars = (x) => (Number.isFinite(_cyc) && _cyc > 0) ? Math.round(Math.max(1, Number.isFinite(x) ? x : 1) * _cyc) : x;
+            if (cl.contains('ambient-write-x')) w.bars = cb(inBars(v)) || 2;
             else if (cl.contains('ambient-write-y')) w.times = ct(v) || 4;
-            else if (cl.contains('ambient-write-bmin')) w.barsMin = cb(v);
-            else if (cl.contains('ambient-write-bmax')) w.barsMax = cb(v);
+            else if (cl.contains('ambient-write-bmin')) w.barsMin = cb(inBars(v));
+            else if (cl.contains('ambient-write-bmax')) w.barsMax = cb(inBars(v));
             else if (cl.contains('ambient-write-tmin')) w.timesMin = ct(v);
             else if (cl.contains('ambient-write-tmax')) w.timesMax = ct(v);
             if (typeof persistWorkspace === 'function') persistWorkspace();

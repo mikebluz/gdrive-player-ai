@@ -4408,13 +4408,18 @@
       // Prog-sync: which sub-slot of the current area chord is this onset? Drives
       // the in-chord voicing variation (+ a stochastic onset jitter, below).
       const _psi = _bedProg ? _ambProgSyncInfo(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())) : null;
-      let _progVar = null, _progJit = 0;
+      let _progVar = null, _progJit = 0, _psiSub = _psi ? _psi.subUnit : 0;
       if (_psi) {
-        const _sub = Math.round((at - _psi.anchor) / _psi.subUnit);
-        const _cstep = Math.floor(_sub / _psi.subdiv);
-        const _slot = ((_sub % _psi.subdiv) + _psi.subdiv) % _psi.subdiv;
+        let _slot, _cstep;
+        // MERGE mode: spread the N voicings across the whole chord GROUP (a run of
+        // consecutive identical chords / a multi-bar chord), so slot 0..N-1 covers
+        // the group instead of resetting every bar. _psiSub becomes the group's
+        // sub-slot (also drives the onset interval below → one strike per voicing).
+        const _sp = (bed.progMerge) ? _ambProgSpanAt(_E, bed, (_E._cfg || (_E.getCfg && _E.getCfg())), at) : null;
+        if (_sp) { _slot = _sp.slot; _cstep = _sp.chordStep; _psiSub = _sp.subUnit; }
+        else { const _sub = Math.round((at - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_sub / _psi.subdiv); _slot = ((_sub % _psi.subdiv) + _psi.subdiv) % _psi.subdiv; }
         _progVar = { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel };
-        if (_psi.feel === 'stochastic') { const _jr = _ambSeededRand((((_cstep + 1) * 40503) ^ ((_slot + 1) * 2654435761) ^ 0x9e3779b9) >>> 0); _progJit = _jr() * 0.4 * _psi.subUnit; }   // up to 40% of a sub-slot
+        if (_psi.feel === 'stochastic') { const _jr = _ambSeededRand((((_cstep + 1) * 40503) ^ ((_slot + 1) * 2654435761) ^ 0x9e3779b9) >>> 0); _progJit = _jr() * 0.4 * _psiSub; }   // up to 40% of a sub-slot
       }
       const voicing = _ambPickVoicing(bed, (_E.iters && _E.iters[key]) | 0, key, _progVar);
       if (_bedProg) _ambProgStepOverride = null;
@@ -4429,8 +4434,8 @@
         // Prog-sync: the unit IS the chord sub-slot. Strum / Start-vary / choke and
         // the note length all scale to it so voicings sit inside their slot (Length
         // still caps the sustain, so a long pad can ring across sub-slots if you want).
-        effIntervalMs = Math.max(1, Math.round(_psi.subUnit * 1000));
-        durMs = Math.max(80, Math.min(durMs, Math.round(_psi.subUnit * 1000 * 1.5)));
+        effIntervalMs = Math.max(1, Math.round(_psiSub * 1000));   // _psiSub = the group sub-slot in merge mode, else the uniform sub-slot
+        durMs = Math.max(80, Math.min(durMs, Math.round(_psiSub * 1000 * 1.5)));
       } else if (Number.isFinite(bed.hold) && bed.hold > 0) {
         const _cfg = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
         let _sc = 1; try { _sc = _ambLayerScale(_E, key, bed, _cfg); } catch (e) {}
@@ -5050,9 +5055,13 @@
           // subdivided drone evolves within the chord. Reuses the Bed's voicer with
           // a drone shim (its Register/Density; Pitch-vary still drifts the octave).
           const _cyc = st.startAt + c * cycleSec;
-          const _subSlot = Math.round((_cyc - _psi.anchor) / _psi.subUnit);
-          const _cstep = Math.floor(_subSlot / _psi.subdiv);
-          const _slot = ((_subSlot % _psi.subdiv) + _psi.subdiv) % _psi.subdiv;
+          let _slot, _cstep;
+          // MERGE: the voicing variant follows the chord GROUP (run of the same
+          // chord), so a subdivided drone walks the group's voicings; the drone's
+          // re-voice cadence stays its uniform sub-slot (a sustained pad).
+          const _dsp = inst.progMerge ? _ambProgSpanAt(_E, inst, (_E._cfg || (_E.getCfg && _E.getCfg())), _cyc) : null;
+          if (_dsp) { _slot = _dsp.slot; _cstep = _dsp.chordStep; }
+          else { const _subSlot = Math.round((_cyc - _psi.anchor) / _psi.subUnit); _cstep = Math.floor(_subSlot / _psi.subdiv); _slot = ((_subSlot % _psi.subdiv) + _psi.subdiv) % _psi.subdiv; }
           const _shim = { register: reg + regShift, spread: 0, density: density, chordMode: 'chordsplus', voiceVariety: inst.voiceVariety | 0 };
           const _freqs = _ambVoiceProgChord(_shim, src, { slot: _slot, chordStep: _cstep, subdiv: _psi.subdiv, feel: _psi.feel });
           for (let i = 0; i < _freqs.length; i++) {
@@ -9050,10 +9059,22 @@
           else if (E.units && E.units[key]) _ambRecordUnit(E, key, C[key], []);
           I[key] = (I[key] | 0) + 1;
           if (psi) {
-            // snap to the next chord-grid slot strictly after C[key] (with a min gap
-            // so a prompt first onset can't sit right on top of the next slot).
-            let ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
-            while (ng < C[key] + minSec) ng += psi.subUnit;
+            let ng;
+            if (lc.progMerge) {
+              // MERGE mode: one strike per voicing across the chord GROUP — advance
+              // to the next group sub-slot, or the next group's start at its edge.
+              const _sp = _ambProgSpanAt(E, lc, cfg, C[key] + 1e-4);
+              if (_sp) {
+                ng = (_sp.slot + 1 < _sp.subdiv) ? (_sp.groupStart + (_sp.slot + 1) * _sp.subUnit) : (_sp.groupStart + _sp.groupLen);
+                let guard2 = 0;   // skip any slot that lands inside the min gap (fast subdiv on a short group)
+                while (ng < C[key] + minSec && guard2++ < 64) { const s2 = _ambProgSpanAt(E, lc, cfg, ng + 1e-4); if (!s2) break; ng = (s2.slot + 1 < s2.subdiv) ? (s2.groupStart + (s2.slot + 1) * s2.subUnit) : (s2.groupStart + s2.groupLen); }
+              } else ng = C[key] + minSec;
+            } else {
+              // snap to the next chord-grid slot strictly after C[key] (with a min gap
+              // so a prompt first onset can't sit right on top of the next slot).
+              ng = psi.anchor + (Math.floor((C[key] - psi.anchor) / psi.subUnit) + 1) * psi.subUnit;
+              while (ng < C[key] + minSec) ng += psi.subUnit;
+            }
             C[key] = ng;
           } else {
             const nx = C[key] + Math.max(minSec, _ambStepSecFor(lc, minSec, cfg) * sc * _ambHoldMult(key, lc));   // floor so a fast Sync can't flood; ×Hold lets a bed span N units
@@ -9798,6 +9819,61 @@
     // nearest multiple of the progression cycle so every replay covers identical
     // harmony ("Loop 2 bars" with a 3-bar prog captured C,F and replayed them
     // over G,C… — out of sync with the chord boundaries).
+    // Chord GROUPS for one progression cycle: each chord as {ci, chord, bars}.
+    // mergeIdentical → consecutive identical chords collapse into ONE group (a
+    // chord that "hits twice" / spans multiple bars becomes one harmonic unit),
+    // so a layer can spread its voicings across the whole run. Wrap-merge (last
+    // ≡ first) is intentionally NOT done — it would shift the cycle's phase.
+    function _ambProgChordsSame(a, b) {
+      if (!a || !b || (a.root | 0) !== (b.root | 0)) return false;
+      const ia = (a.intervals || []).map(x => x | 0), ib = (b.intervals || []).map(x => x | 0);
+      if (ia.length !== ib.length) return false;
+      for (let i = 0; i < ia.length; i++) if (ia[i] !== ib[i]) return false;
+      return true;
+    }
+    function _ambProgGroupsCycle(cfg, mergeIdentical) {
+      const p = cfg && cfg.prog;
+      if (!p || !p.on || !Array.isArray(p.chords) || !p.chords.length) return [];
+      const bpc = Math.max(0.01, cfg.barsPerChord || 1);
+      const raw = p.chords.map((c, i) => ({ ci: i, chord: c, bars: (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc }));
+      if (!mergeIdentical) return raw;
+      const out = [];
+      raw.forEach(g => { const last = out[out.length - 1]; if (last && _ambProgChordsSame(last.chord, g.chord)) last.bars += g.bars; else out.push({ ci: g.ci, chord: g.chord, bars: g.bars }); });
+      return out;
+    }
+    // The chord GROUP covering absolute bar position `bar` (progression cycles):
+    // { startBar, lenBars, chord, gi } — gi = group index within the cycle. Used
+    // by the voicing engine (span the group) and the Scheduler group borders.
+    function _ambProgGroupAt(cfg, bar, mergeIdentical) {
+      const groups = _ambProgGroupsCycle(cfg, mergeIdentical);
+      if (!groups.length) return null;
+      const cycle = groups.reduce((s, g) => s + g.bars, 0) || 1;
+      const n = Math.floor(bar / cycle), inCyc = bar - n * cycle;
+      let acc = 0;
+      for (let i = 0; i < groups.length; i++) {
+        if (inCyc < acc + groups[i].bars - 1e-6) return { startBar: n * cycle + acc, lenBars: groups[i].bars, chord: groups[i].chord, gi: i, nGroups: groups.length, cyc: n, cycleBars: cycle };
+        acc += groups[i].bars;
+      }
+      const last = groups[groups.length - 1];
+      return { startBar: n * cycle + acc - last.bars, lenBars: last.bars, chord: last.chord, gi: groups.length - 1, nGroups: groups.length, cyc: n, cycleBars: cycle };
+    }
+    // Group-span prog voicing info at absolute time `atSec` (merge mode): the
+    // chord GROUP's sub-slot grid — subdiv voicings spread across the whole group
+    // (a multi-bar / repeated chord → one run), so slot 0..subdiv-1 covers it.
+    function _ambProgSpanAt(E, lc, cfg, atSec) {
+      const bpm = (cfg && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const anchor = Number.isFinite(E && E._barGridAnchor) ? E._barGridAnchor : (Number.isFinite(E && E._playStartAt) ? E._playStartAt : 0);
+      const grp = _ambProgGroupAt(cfg, Math.max(0, (atSec - anchor) / barSec), true);
+      if (!grp) return null;
+      const subdiv = Math.max(1, Math.min(16, (lc && lc.progSubdiv | 0) || 1));
+      const gStart = anchor + grp.startBar * barSec;
+      const gLen = Math.max(0.05, grp.lenBars * barSec);
+      const subUnit = Math.max(0.03, gLen / subdiv);
+      const slot = Math.max(0, Math.min(subdiv - 1, Math.floor((atSec - gStart) / subUnit + 1e-6)));
+      const chordStep = grp.cyc * grp.nGroups + grp.gi;   // unique per group occurrence (stochastic seed)
+      return { groupStart: gStart, groupLen: gLen, subUnit, subdiv, slot, chordStep, anchor };
+    }
     function _ambWriteEffBars(cfg, reqBars, nT) {
       const cyc = _ambProgCycleBars(cfg);
       if (!(cyc > 0)) return reqBars;
@@ -15475,36 +15551,60 @@
         // Emit unit blocks row by row; a unit crossing a row edge SPLITS (the
         // continuation piece keeps the column grid honest, no glyph/left edge).
         const rowsHtml = [];
-        {
-          let b = 0, n = 0, segIdx = 0, lastSeg = -1;
-          const nRows = Math.round(totalSpan / VIEW);
-          for (let r = 0; r < nRows; r++) {
-            const rowEnd = (r + 1) * VIEW;
-            let rowBlocks = '';
-            while (b < rowEnd - 1e-6 && n < 640) {
-              // width of THIS piece: to the unit's end or the row edge, whichever first
-              const unitEnd = (Math.floor(b / unitBars + 1e-6) + 1) * unitBars;
-              const end = Math.min(unitEnd, rowEnd, totalSpan);
-              const wPct = (end - b) / VIEW * 100;
-              let cls = 'ambient-sched-blk', glyph = '';
-              if (b % unitBars > 1e-6) cls += ' cont';   // continuation of a unit split at the row edge
-              if (segs) {
-                while (segIdx < segs.length - 1 && b >= segs[segIdx].e - 1e-6) segIdx++;
-                const sg = segs[segIdx];
-                if (sg) {
-                  if (!sg.fresh) cls += ' rep';
-                  if (segIdx !== lastSeg) {
-                    lastSeg = segIdx;
-                    cls += ' phstart' + (sg.fresh ? ' rewrite' : '');
-                    glyph = sg.fresh ? '✎' : '↻';
-                  }
-                }
-              }
-              rowBlocks += '<i class="' + cls + '" style="width:' + wPct.toFixed(3) + '%">' + glyph + '</i>';
-              b = end; n++;
-            }
-            rowsHtml.push('<span class="ambient-sched-strip" data-srow="' + r + '">' + rowBlocks + '<i class="ambient-sched-ph"></i></span>');
+        const pgActive = !!(pg && pg.on && Array.isArray(pg.chords) && pg.chords.length);
+        const nRows = Math.round(totalSpan / VIEW);
+        // Block-boundary bar positions. Merge mode: each chord GROUP is split into
+        // `voiSub` equal voicing units (variable width per group) — so the strip
+        // matches the actual onsets. Else: the uniform `unitBars` grid. A Set of
+        // the NATURAL boundaries lets a row-edge split be marked as a continuation.
+        const mergeMode = !!(progSynced && layer.progMerge);
+        const voiSub = Math.max(1, Math.min(16, (layer.progSubdiv | 0) || 1));
+        const natural = [];
+        if (mergeMode) {
+          let bb = 0, gg = 0;
+          while (bb < totalSpan - 1e-6 && gg++ < 2048) {
+            const gp = _ambProgGroupAt(cfg, bb + 1e-6, true);
+            const su = Math.max(1 / 64, gp.lenBars / voiSub);
+            let ne = gp.startBar + (Math.floor((bb - gp.startBar) / su + 1e-6) + 1) * su;
+            if (ne >= gp.startBar + gp.lenBars - 1e-6) ne = gp.startBar + gp.lenBars;
+            ne = Math.min(ne, totalSpan);
+            if (ne <= bb + 1e-9) break;
+            natural.push(ne); bb = ne;
           }
+        } else {
+          for (let bb = unitBars; bb < totalSpan - 1e-6; bb += unitBars) natural.push(bb);
+          natural.push(totalSpan);
+        }
+        const naturalSet = new Set(natural.map(x => x.toFixed(4)));
+        const edgeSet = new Set(natural.map(x => x.toFixed(4)));
+        for (let r = 1; r <= nRows; r++) edgeSet.add((r * VIEW).toFixed(4));
+        const edges = [...edgeSet].map(Number).filter(x => x > 1e-6 && x <= totalSpan + 1e-6).sort((a, b) => a - b);
+        {
+          let b = 0, segIdx = 0, lastSeg = -1, lastGrp = -1;
+          const rowBuf = []; for (let r = 0; r < nRows; r++) rowBuf.push('');
+          for (let ei = 0; ei < edges.length; ei++) {
+            const end = edges[ei];
+            const rIdx = Math.min(nRows - 1, Math.floor((b + 1e-6) / VIEW));
+            const wPct = (end - b) / VIEW * 100;
+            let cls = 'ambient-sched-blk', glyph = '';
+            const naturalStart = (b < 1e-6) || naturalSet.has(b.toFixed(4));   // false → a row-edge continuation
+            if (!naturalStart) cls += ' cont';
+            // CHORD-GROUP tint/border: which chord (or merged run) this block sits in.
+            if (pgActive) {
+              const gp = _ambProgGroupAt(cfg, (b + end) * 0.5, !!layer.progMerge);
+              if (gp) { const gabs = gp.cyc * gp.nGroups + gp.gi; cls += (gabs % 2 ? ' chgrp-b' : ' chgrp-a'); if (gabs !== lastGrp && naturalStart) { lastGrp = gabs; cls += ' chgrp-start'; } }
+            }
+            if (segs && naturalStart) {
+              while (segIdx < segs.length - 1 && b >= segs[segIdx].e - 1e-6) segIdx++;
+              const sg = segs[segIdx];
+              if (sg) { if (!sg.fresh) cls += ' rep'; if (segIdx !== lastSeg) { lastSeg = segIdx; cls += ' phstart' + (sg.fresh ? ' rewrite' : ''); glyph = sg.fresh ? '✎' : '↻'; } }
+            } else if (segs && !naturalStart) {
+              const sg = segs[Math.min(segIdx, segs.length - 1)]; if (sg && !sg.fresh) cls += ' rep';
+            }
+            rowBuf[rIdx] += '<i class="' + cls + '" style="width:' + wPct.toFixed(3) + '%">' + glyph + '</i>';
+            b = end;
+          }
+          for (let r = 0; r < nRows; r++) rowsHtml.push('<span class="ambient-sched-strip" data-srow="' + r + '">' + rowBuf[r] + '<i class="ambient-sched-ph"></i></span>');
         }
         const blocksHtml = rowsHtml.join('') +
           (truncated ? '<span class="ambient-sched-lbl" title="The full write walk is ' + _ambFmtBpc(walkTotal) + ' bars — showing the first ' + _ambFmtBpc(totalSpan) + '.">… ' + _ambFmtBpc(walkTotal) + '-bar loop, first ' + _ambFmtBpc(totalSpan) + ' shown</span>' : '');
@@ -15534,9 +15634,15 @@
         }
         // Timing cluster (Unit + Rate) — the "what/how-fast" group, right of the name.
         const unitHtml = progSynced
-          ? ('<span class="ambient-sched-grp" title="This layer is chord-locked: while the progression is active its clock is the chord grid (chord length ÷ Subdivide — set Subdivide on the layer card). The Unit setting is not used.">' +
-              '<span class="ambient-sched-lbl">unit</span>' +
-              '<span class="ambient-sched-lbl snap">⇶ chord' + (((layer.progSubdiv | 0) || 1) > 1 ? ' ÷ ' + (layer.progSubdiv | 0) : '') + '</span></span>')
+          // Chord-locked (Bed/Drone under a prog): the clock IS the chord grid.
+          // "chord ÷ N" is the VOICINGS-per-chord control — the chord is split
+          // into N units, each a different inversion/voicing of the SAME chord.
+          // Editable right here (each block below is one of those voiced units).
+          ? ('<span class="ambient-sched-grp ambient-sched-voi" title="Voicings per chord — split each area chord into N units, each a different inversion / voicing of the same chord (played in order, or randomized by Feel; Variety adds 9/11/sus colours — both on the layer card).">' +
+              '<span class="ambient-sched-lbl">⇶ chord ÷</span>' +
+              '<input type="number" class="ambient-sched-subdiv" min="1" max="16" step="1" value="' + (((layer.progSubdiv | 0) || 1)) + '">' +
+              '<span class="ambient-sched-lbl snap">voicing' + ((((layer.progSubdiv | 0) || 1) === 1) ? '' : 's') + '</span>' +
+              '<button type="button" class="ambient-seg ambient-sched-mergebtn' + (layer.progMerge ? ' active' : '') + '" title="Merge repeats — treat a run of the SAME chord (a chord that repeats, or spans multiple bars) as ONE chord, so the N voicings spread across the whole run (e.g. 4 voicings over a 2-bar chord = 2 per bar) instead of restarting every bar.">' + (layer.progMerge ? '⊕ merged' : 'merge') + '</button></span>')
           : ('<span class="ambient-sched-grp" title="Unit size — how long ONE block of this layer lasts. Free = the layer’s own timing; a bar value locks it to the grid.">' +
               '<span class="ambient-sched-lbl">unit</span>' +
               '<select class="ambient-select ambient-sched-unit">' + uOpts + '</select></span>');
@@ -15579,7 +15685,13 @@
       const cfg = E._cfg || (E.getCfg && E.getCfg()); if (!cfg) return;
       const G = E._barGridAnchor;
       const phs = box.querySelectorAll('.ambient-sched-ph:not(.lg)'); if (!phs.length) return;   // .lg = the legend's sample chip, never a live cursor
-      if (!E.timer || !Number.isFinite(G)) { phs.forEach(el => { el.style.display = 'none'; }); return; }
+      if (!E.timer || !Number.isFinite(G)) {   // stopped → hide cursors + clear every live highlight
+        phs.forEach(el => { el.style.display = 'none'; });
+        box.querySelectorAll('.ambient-sched-blk.playing, .ambient-sched-chblk.playing, .ambient-sched-tuchip.playing').forEach(el => el.classList.remove('playing'));
+        box.querySelectorAll('.ambient-sched-row[data-schkey]').forEach(r => { r._blkEl = null; });
+        box._schChIdx = undefined;
+        return;
+      }
       const bpm = (Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
       const barSec = (60 / Math.max(20, bpm)) * 4;
       const bars = (now - G) / barSec; if (bars < 0) return;
@@ -15602,17 +15714,37 @@
         if (Math.floor(pos / V) === srow) { el.style.display = 'block'; el.style.left = ((pos % V) / V * 100).toFixed(2) + '%'; }
         else el.style.display = 'none';
       });
-      // Live TUPLE readout: on rows with a Loop sequence, mark the chip whose
-      // write cycle is currently running (arm-time index; ~a lead early at the
-      // handoff, close enough to follow the structure).
+      // Live TUPLE readout + UNIT-BLOCK highlight, per layer row.
       box.querySelectorAll('.ambient-sched-row[data-schkey]').forEach(row => {
+        // Tuple chip currently running (arm-time index; ~a lead early at handoff).
         const chips = row.querySelectorAll('.ambient-sched-tuchip');
-        if (chips.length < 2) return;
-        const fs = E.freeze && E.freeze[row.getAttribute('data-schkey')];
-        const idx = (fs && fs._write) ? ((((fs._writeCyc | 0) - 1) % chips.length) + chips.length) % chips.length : -1;
-        if (row._tuIdx !== idx || (idx >= 0 && !chips[idx].classList.contains('playing'))) {
-          chips.forEach((c, i) => c.classList.toggle('playing', i === idx));
-          row._tuIdx = idx;
+        if (chips.length >= 2) {
+          const fs = E.freeze && E.freeze[row.getAttribute('data-schkey')];
+          const idx = (fs && fs._write) ? ((((fs._writeCyc | 0) - 1) % chips.length) + chips.length) % chips.length : -1;
+          if (row._tuIdx !== idx || (idx >= 0 && !chips[idx].classList.contains('playing'))) {
+            chips.forEach((c, i) => c.classList.toggle('playing', i === idx));
+            row._tuIdx = idx;
+          }
+        }
+        // The unit block the playhead is inside — walk this row's ACTIVE sub-row's
+        // block widths to find it (handles multi-row wrap + row-edge splits).
+        const strips = row.querySelectorAll('.ambient-sched-strip[data-srow]');
+        if (!strips.length) return;
+        const total = parseFloat(row.getAttribute('data-total')) || V;
+        const pos = ((bars % total) + total) % total;
+        const srow = Math.floor(pos / V), pctInRow = (pos % V) / V * 100;
+        let activeBlk = null;
+        for (let s = 0; s < strips.length && !activeBlk; s++) {
+          if ((parseInt(strips[s].getAttribute('data-srow'), 10) | 0) !== srow) continue;
+          const blks = strips[s].querySelectorAll('.ambient-sched-blk');
+          let acc = 0;
+          for (let i = 0; i < blks.length; i++) { const wp = parseFloat(blks[i].style.width) || 0; if (pctInRow >= acc - 1e-6 && pctInRow < acc + wp) { activeBlk = blks[i]; break; } acc += wp; }
+        }
+        if (row._blkEl !== activeBlk || (activeBlk && !activeBlk.classList.contains('playing'))) {
+          const prev = row.querySelectorAll('.ambient-sched-blk.playing');
+          prev.forEach(b => b.classList.remove('playing'));
+          if (activeBlk) activeBlk.classList.add('playing');
+          row._blkEl = activeBlk;
         }
       });
       // Live CHORD readout: light the chord block the playhead is inside, so the
@@ -19053,6 +19185,17 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
               return;
             }
+            // Merge-repeats toggle (prog-synced Bed/Drone) — spread voicings across
+            // runs of the same chord. Engine reads live; re-render for the borders.
+            const mb = ev.target.closest('.ambient-sched-mergebtn');
+            if (mb) {
+              _E = E; const t = _schedLayer(mb); if (!t || !t.L) return;
+              t.L.progMerge = !t.L.progMerge;
+              if (E.timer) { try { _ambUnitReanchor(E, t.key); } catch (e) {} }   // the sub-slot grid changes → re-anchor cleanly
+              _ambRenderScheduler(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const btn = ev.target.closest('.ambient-sched-writebtn'); if (!btn) return;
             const t = _schedLayer(btn); if (!t || !t.L) return;
             if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
@@ -19064,6 +19207,17 @@
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
           scBody.addEventListener('input', (ev) => {
+            // Voicings-per-chord (prog-synced Bed/Drone) — writes progSubdiv; the
+            // engine reads it live (next tick re-subdivides), so no re-anchor.
+            const sub = ev.target.closest('.ambient-sched-subdiv');
+            if (sub) {
+              _E = E; const t = _schedLayer(sub); if (!t || !t.L) return;
+              const v = parseInt(sub.value, 10);
+              t.L.progSubdiv = Math.max(1, Math.min(16, Number.isFinite(v) ? v : 1));
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              try { _ambSyncControls(E); } catch (e) {}   // mirror onto the layer card's Subdivide
+              return;   // strip granularity re-renders on blur (focusout)
+            }
             const inp = ev.target.closest('.ambient-sched-bars, .ambient-sched-times'); if (!inp) return;
             _E = E; const t = _schedLayer(inp); if (!t || !t.L) return;
             if (!t.L.write || typeof t.L.write !== 'object') t.L.write = { on: false, bars: 2, times: 4 };
@@ -19081,7 +19235,7 @@
             // Redraw only the strips (keep the focused input alive): full render on blur.
             if (typeof persistWorkspace === 'function') persistWorkspace();
           });
-          scBody.addEventListener('focusout', (ev) => { if (ev.target.closest && ev.target.closest('.ambient-sched-bars, .ambient-sched-times')) { try { _ambRenderScheduler(E); } catch (e) {} } });
+          scBody.addEventListener('focusout', (ev) => { if (ev.target.closest && ev.target.closest('.ambient-sched-bars, .ambient-sched-times, .ambient-sched-subdiv')) { try { _ambRenderScheduler(E); } catch (e) {} } });
         }
       }
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as

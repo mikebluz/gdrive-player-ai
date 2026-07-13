@@ -3158,6 +3158,8 @@
     .ambient-sched-writebtn { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 11px; white-space: nowrap; }
     .ambient-sched-xy { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 5px; }
     .ambient-sched-xy input { width: 42px; padding: 4px 5px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 4px; color: #e2e8f0; font-size: 0.78rem; text-align: center; }
+    /* Voicings-per-chord input (prog-synced Bed/Drone) — teal accent (harmony). */
+    .ambient-sched-subdiv { width: 42px; padding: 4px 5px; background: #0f0f1e; border: 1px solid #2b5a57; border-radius: 4px; color: #d6fbf6; font-size: 0.78rem; text-align: center; }
     /* Loop tuple chips — the play-through list ("1×2 → 2×1 → …"). Same family
        as the euclid page tabs: selected = .on (edited by the N×M inputs),
        .playing = the write cycle currently running (teal, live). */
@@ -3177,6 +3179,18 @@
     .ambient-sched-blk.rep { background: rgba(159,122,234,0.14); color: #8b7aa8; }   /* an exact REPEAT of the fresh phrase (dim) */
     .ambient-sched-blk.rewrite { border-left: 3px solid #4fd1c5; }                    /* ✎ fresh material starts here */
     .ambient-sched-blk.cont { border-left: none; }                                     /* continuation of a unit split at a row edge */
+    /* The unit block the playhead is inside RIGHT NOW — brighter + a teal edge. */
+    .ambient-sched-blk.playing { background: rgba(159,122,234,0.72); box-shadow: inset 0 0 0 1px rgba(79,209,197,0.7); }
+    .ambient-sched-blk.rep.playing { background: rgba(159,122,234,0.46); }
+    /* Chord-GROUP grouping: alternating teal wash per chord (which units belong
+       to which chord) + a teal divider at each group start. Sits UNDER the purple
+       unit fill (box-shadow inset, so the fill still reads). */
+    .ambient-sched-blk.chgrp-a { box-shadow: inset 0 -3px 0 rgba(79,209,197,0.16); }
+    .ambient-sched-blk.chgrp-b { box-shadow: inset 0 -3px 0 rgba(79,209,197,0.34); }
+    .ambient-sched-blk.chgrp-start { border-left: 2px solid rgba(79,209,197,0.65); }
+    .ambient-sched-blk.chgrp-a.playing, .ambient-sched-blk.chgrp-b.playing { box-shadow: inset 0 0 0 1px rgba(79,209,197,0.7), inset 0 -3px 0 rgba(79,209,197,0.5); }
+    /* Merge-repeats toggle. */
+    .ambient-sched-mergebtn { flex: 0 0 auto; font-size: 0.66rem; padding: 3px 8px; white-space: nowrap; }
     /* Ruler: its own compact full-width line ("bars → 1 5 9 13"). */
     .ambient-sched-ruler { gap: 0; }
     .ambient-sched-ruler .ambient-sched-strip { border-color: transparent; background: none; height: 16px; overflow: visible; }

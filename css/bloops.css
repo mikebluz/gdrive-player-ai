@@ -3133,19 +3133,40 @@
     /* STACKED rows — controls on one line, the strip FULL-WIDTH on the next, so
        the grid gets the whole panel width (the old side-by-side layout squeezed
        the strips into a sliver on the narrow Bloom column). */
-    .ambient-sched-row { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; padding-bottom: 8px; border-bottom: 1px solid rgba(45,45,63,0.5); }
+    .ambient-sched-row { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; padding: 4px 0 10px; border-bottom: 1px solid rgba(45,45,63,0.5); }
     .ambient-sched-row:last-of-type, .ambient-sched-ruler { border-bottom: none; padding-bottom: 0; }
-    .ambient-sched-ctl { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
-    .ambient-sched-name { flex: 0 0 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 700; color: #e2e8f0; }
-    /* Micro-label + control pairs — every control is named, no mystery inputs. */
-    .ambient-sched-grp { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+    /* Control area = two calm tiers stacked above the grid strip:
+         headline  — layer NAME (left) + timing cluster (Unit · Rate, right)
+         loopline  — Loop on/off + phrase (cycles × plays = bars) + tuple chips
+       so nothing is a single crowded wrapping row. The grid strip stays a grid. */
+    .ambient-sched-ctl { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .ambient-sched-headline { display: flex; align-items: baseline; gap: 14px; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+    .ambient-sched-name { flex: 0 0 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; font-weight: 700; color: #e2e8f0; letter-spacing: 0.01em; }
+    .ambient-sched-timing { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+    /* Loop tier — softly boxed so the phrase controls read as one group with room. */
+    .ambient-sched-loopline { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; row-gap: 6px; padding: 5px 9px; border-radius: 7px; background: rgba(159,122,234,0.045); }
+    .ambient-sched-loopline.on { background: rgba(159,122,234,0.1); }
+    .ambient-sched-grp { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .ambient-sched-lbl { font-size: 0.64rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
     /* Phrase snapped up to the progression cycle — teal (harmony drove it). */
     .ambient-sched-lbl.snap { color: #7fe4dc; text-transform: none; letter-spacing: 0; }
-    .ambient-sched-unit { flex: 0 0 auto; font-size: 0.76rem; padding: 3px 4px; max-width: 84px; }
-    .ambient-sched-writebtn { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 9px; white-space: nowrap; }
-    .ambient-sched-xy { display: inline-flex; align-items: center; gap: 4px; }
-    .ambient-sched-xy input { width: 40px; padding: 3px 4px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 4px; color: #e2e8f0; font-size: 0.78rem; }
+    /* Explicit width (not just max-width): the base .ambient-select is width:100%,
+       which inside an auto-sized inline-flex group resolves CIRCULARLY — the group
+       measured the select's intrinsic width but it laid out at the 84px cap,
+       overflowing the group box and sitting under the Loop button next to it. */
+    .ambient-sched-unit { flex: 0 0 auto; font-size: 0.76rem; padding: 3px 4px; width: 84px; max-width: 84px; }
+    .ambient-sched-writebtn { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 11px; white-space: nowrap; }
+    .ambient-sched-xy { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 5px; }
+    .ambient-sched-xy input { width: 42px; padding: 4px 5px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 4px; color: #e2e8f0; font-size: 0.78rem; text-align: center; }
+    /* Loop tuple chips — the play-through list ("1×2 → 2×1 → …"). Same family
+       as the euclid page tabs: selected = .on (edited by the N×M inputs),
+       .playing = the write cycle currently running (teal, live). */
+    .ambient-sched-tuples { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+    .ambient-sched-tuchip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border: 1px solid #2d2d3f; border-radius: 10px; background: #1a1a2e; color: #cbd5e0; cursor: pointer; font-size: 0.68rem; font-weight: 600; }
+    .ambient-sched-tuchip.on { border-color: #9f7aea; background: rgba(159,122,234,0.18); color: #e2d9f5; }
+    .ambient-sched-tuchip.playing { border-color: #4fd1c5; box-shadow: 0 0 0 1px rgba(79,209,197,0.45); }
+    .ambient-sched-tuchip .tux { color: #fc8181; font-size: 0.62rem; line-height: 1; }
+    .ambient-sched-tuadd { padding: 2px 7px; border: 1px solid #2d2d3f; border-radius: 10px; background: #1a1a2e; color: #9f7aea; cursor: pointer; font-size: 0.7rem; font-weight: 700; }
     /* The strip: unit blocks over the shared 16-bar ruler — full width, tall
        enough to read. Faint 4-bar gridlines so blocks read against bars. */
     .ambient-sched-strip { position: relative; width: 100%; min-width: 0; display: flex; height: 30px; border: 1px solid #2a2a46; border-radius: 5px; overflow: hidden;
@@ -3155,6 +3176,7 @@
       font-style: normal; font-size: 0.7rem; color: #e2d9f5; }
     .ambient-sched-blk.rep { background: rgba(159,122,234,0.14); color: #8b7aa8; }   /* an exact REPEAT of the fresh phrase (dim) */
     .ambient-sched-blk.rewrite { border-left: 3px solid #4fd1c5; }                    /* ✎ fresh material starts here */
+    .ambient-sched-blk.cont { border-left: none; }                                     /* continuation of a unit split at a row edge */
     /* Ruler: its own compact full-width line ("bars → 1 5 9 13"). */
     .ambient-sched-ruler { gap: 0; }
     .ambient-sched-ruler .ambient-sched-strip { border-color: transparent; background: none; height: 16px; overflow: visible; }

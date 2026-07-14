@@ -5666,10 +5666,27 @@
       const tTo = _ambBudgetHorizon(now, horizon);
       if (tTo <= tFrom) { st.lastAt = Math.max(st.lastAt || 0, tTo); return; }
       let cap = 0;
+      // Rate var (Variance): stochastically SUBDIVIDE slots — an accelerated
+      // stretch fires 2–3 series notes within one slot (the cursor rushes ahead),
+      // then relaxes back to the base rate. The slot GRID itself never moves, so
+      // the boundary/queue math (the three-sites-must-agree interval) is untouched
+      // and the Timing rate is the guaranteed SLOWEST the arp ever plays. A seeded
+      // momentum walk (one draw per slot) makes it swell/relax — accelerando, not
+      // jitter. Zero draws at 0 → byte-identical (harness 'arp' pinned).
+      const _rv = Math.max(0, Math.min(100, arp.rateVar | 0));
       while (cap < 512) {
         const at = st.startAt + st.idx * interval;
         if (at >= tTo) break;
-        _ambEmitArp(at, arp, space, key, at >= tFrom - 1e-6);   // past notes: silent advance (play=false)
+        const play = at >= tFrom - 1e-6;   // past notes: silent advance (play=false)
+        if (_rv > 0) {
+          const w0 = Number.isFinite(st._rw) ? st._rw : 0;
+          st._rw = Math.max(0, Math.min(1, w0 + (_ambRand() * 2 - 1) * 0.35));
+          const n = 1 + Math.round(st._rw * 2 * (_rv / 100));   // 1..3 notes this slot
+          const sub = interval / n;
+          for (let k2 = 0; k2 < n; k2++) _ambEmitArp(at + k2 * sub, arp, space, key, play);
+        } else {
+          _ambEmitArp(at, arp, space, key, play);
+        }
         st.idx += 1; cap += 1;
       }
       st.lastAt = tTo;
@@ -16867,7 +16884,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
@@ -16921,7 +16938,7 @@
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
       if (type === 'arp') return Object.assign(base, {
         tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1, dir: 'up' }], sel: 0,
-        dir: 'up', randomness: 0, pitchVary: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
+        dir: 'up', randomness: 0, pitchVary: 0, rateVar: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
         lengthMs: 220, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.arp,
       });
       // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls

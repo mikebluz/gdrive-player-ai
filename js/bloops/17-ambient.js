@@ -427,7 +427,12 @@
     function _ambCaptureGlobalsInto(cfg) {   // live global tempo+groove → this area
       if (!cfg) return;
       try { if (typeof getBpm === 'function') { const b = getBpm(); if (b > 0) cfg.bpm = b; } } catch (e) {}
-      try { cfg.groove = _ambGrooveSnapshot(); } catch (e) {}
+      // MERGE, don't replace: the legacy snapshot only carries the old global-
+      // groove fields (swing/swingDiv/humanize/accentEvery/accentAmt); a bare
+      // assign wiped the Area-Groove model (accent/density/ghost/rolls/pushMode/
+      // bypass) on every area advance + persist. The live cfg.groove is the
+      // source of truth (the panel writes it directly), so it wins on overlap.
+      try { cfg.groove = Object.assign({}, _ambGrooveSnapshot(), (cfg.groove && typeof cfg.groove === 'object') ? cfg.groove : {}); } catch (e) {}
     }
     function _ambApplyAreaGlobals(cfg) {     // this area's tempo+groove → global (null = inherit)
       if (!cfg) return;
@@ -1469,7 +1474,7 @@
       // value; pushMode = the unit for per-layer Push (ms / % of unit). All
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
       if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
-      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; }
+      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; if (cfg.groove.bypass != null) cfg.groove.bypass = !!cfg.groove.bypass; }
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -3527,6 +3532,9 @@
     // area 0 → 0 → no random-start draw → byte-identical.
     function _ambEffStart(own, areaCfg) {
       if (Number.isFinite(own)) return Math.max(0, Math.min(100, own));
+      // The area Start cascade IS the Groove "Humanize" macro → bypass silences it
+      // for inheriting layers (a layer's OWN startVary above is untouched).
+      if (areaCfg && areaCfg.groove && areaCfg.groove.bypass) return 0;
       return Math.max(0, Math.min(100, (areaCfg && areaCfg.startVary) | 0));
     }
     // Is a layer INHERITING the area Start (no own value)? — for the UI cue.
@@ -3571,8 +3579,17 @@
     // DENSITY macro (busy → sparse). The rest-check RNG draw is unconditional at
     // every call site, so this only shifts the THRESHOLD — density 0 = the
     // layer's own value = byte-identical (harness runs default groove).
+    // The ACTIVE Area Groove, or null when the Bypass toggle is on. Every groove
+    // reader (swing/accent/density/ghost/rolls + push) funnels through this, so
+    // Bypass silences the whole section in real time — the scheduler re-reads it
+    // each lookahead window. Absent groove / bypass off → unchanged (byte-identical
+    // default; the harness runs default groove with no bypass field).
+    function _ambGroove() {
+      const g = (_E && _E._cfg && _E._cfg.groove) || null;
+      return (g && g.bypass) ? null : g;
+    }
     function _ambEffRest(lc) {
-      const gd = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.density | 0)) || 0;
+      const g = _ambGroove(); const gd = g ? (g.density | 0) : 0;
       return Math.max(0, Math.min(100, ((lc && lc.restProb) | 0) + gd));
     }
     // GHOST notes + ROLLS (Area Groove) — extra notes ADDED alongside a rhythmic
@@ -3582,7 +3599,7 @@
     // replays identically. Neutral (both 0) → returns before any work =
     // byte-identical. Call AFTER the main playNote in a percussive emit.
     function _ambGrooveEmbellish(freq, params, durMs, at, dest, laneIdx) {
-      const gr = (_E && _E._cfg && _E._cfg.groove) || null; if (!gr) return;
+      const gr = _ambGroove(); if (!gr) return;
       const rolls = gr.rolls | 0, ghost = gr.ghost | 0;
       if ((rolls <= 0 && ghost <= 0) || !(freq > 0) || typeof playNote !== 'function') return;
       const li = (laneIdx == null) ? ((_E && _E.laneIdx) ? _E.laneIdx() : -1) : laneIdx;
@@ -3602,7 +3619,7 @@
     function _ambAccentVol(vol, accent) {
       // Area Groove Accent ADDS to the layer's own. Neutral 0 → no RNG draw
       // (byte-identical); the harness runs default groove so it stays pinned.
-      const ga = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.accent | 0)) || 0;
+      const _g = _ambGroove(); const ga = _g ? (_g.accent | 0) : 0;
       const a = Math.max(0, Math.min(100, (accent | 0) + ga)) / 100;
       if (a <= 0) return vol;
       const r = _ambRand();
@@ -3642,7 +3659,7 @@
     // 0 → exactly 0s added (byte-identical default).
     function _ambSwingSec(inst, slotSec) {
       // Area Groove Swing ADDS to the layer's own (both clamped). Neutral 0 → 0.
-      const gsw = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.swing | 0)) || 0;
+      const _g = _ambGroove(); const gsw = _g ? (_g.swing | 0) : 0;
       const sw = Math.max(0, Math.min(100, ((Number.isFinite(inst && inst.swing) ? inst.swing : 0) | 0) + gsw));
       return (sw > 0) ? sw / 100 * slotSec * 0.5 : 0;
     }
@@ -3661,7 +3678,9 @@
       // ahead of the beat, positive = behind. ms (absolute) or % of the layer's
       // unit, per cfg.groove.pushMode. Clamped so the anchor can't fly far past
       // the lead. 0 → adds nothing (byte-identical).
-      const push = Number.isFinite(layer.push) ? Math.max(-200, Math.min(200, layer.push)) : 0;
+      // Bypass zeroes the per-layer push too (it's a Groove-section control).
+      const _grOn = !(cfg && cfg.groove && cfg.groove.bypass);
+      const push = (_grOn && Number.isFinite(layer.push)) ? Math.max(-200, Math.min(200, layer.push)) : 0;
       if (push !== 0) {
         const pct = !!(cfg && cfg.groove && cfg.groove.pushMode === 'pct');
         off += pct ? (Math.max(-90, Math.min(90, push)) / 100) * _ambEffIntervalSec(layer) : (push / 1000);
@@ -4730,9 +4749,10 @@
                   : ((inst.drum != null) ? (inst.drum | 0) : ((V === 1) ? _ambPickDrumPc() : VDRUM[v]));
                 let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
                 const rat = sfx ? sfx.rat : 1;
+                const ratSpace = _ambRatSpacingSec(rat, sfx ? (sfx.ratd | 0) : 0, slotSec, slotSec * steps);
                 const velS = sfx ? sfx.vel / 100 : 1, lenS = sfx ? sfx.len / 100 : 1;
                 for (let rr = 0; rr < rat && ctx.cap < 256; rr++) {
-                  const rAt = at + (rr / rat) * slotSec;
+                  const rAt = at + rr * ratSpace;
                   // Per-step pan OVERRIDES the layer/spread pan when set (≠ 0).
                   const stPan = (sfx && sfx.pan) ? Math.max(-100, Math.min(100, sfx.pan)) : vpan;
                   _ambKeyTime = rAt;
@@ -4749,7 +4769,7 @@
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
                   const baseLen = _ambVaryLen(lenMs, inst.lenVary, rnd) * lenS;
-                  const noteLen = (rat > 1) ? Math.min(baseLen, (slotSec / rat) * 1000 * 0.95) : baseLen;
+                  const noteLen = (rat > 1) ? Math.min(baseLen, ratSpace * 1000 * 0.95) : baseLen;
                   try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                   ctx.cap++;
                 }
@@ -6030,15 +6050,30 @@
     // Stored SPARSE on a page: `pg.fx["v:i"] = {vel,len,rat,prob}` — only for steps
     // the user shaped (a plain on/off step has no entry → these defaults, so the
     // grid + emitter are unchanged for untouched steps).
-    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 };
+    // Ratchet DIVISION (`ratd`): 0 = Even (spread `rat` hits across the step slot,
+    // the classic roll); >0 = a fixed note value per hit (subdivisions per bar), so
+    // the retriggers fire at that rate regardless of step size (a tight burst /
+    // flam). barSec is the scaled bar, so a division tracks tempo + Unit-Sync.
+    const _AMB_RAT_DIVS = [
+      { v: 0,  lbl: 'Even' }, { v: 8,  lbl: '1/8' }, { v: 12, lbl: '1/8T' },
+      { v: 16, lbl: '1/16' }, { v: 24, lbl: '1/16T' }, { v: 32, lbl: '1/32' }, { v: 48, lbl: '1/32T' },
+    ];
+    const _AMB_RAT_DIV_VALS = _AMB_RAT_DIVS.map(d => d.v);
+    // Seconds between ratchet hits: fixed note value when ratd>0, else spread the
+    // `rat` hits evenly across the slot.
+    function _ambRatSpacingSec(rat, ratd, slotSec, barSec) {
+      if (ratd > 0 && barSec > 0) return barSec / ratd;
+      return slotSec / Math.max(1, rat);
+    }
+    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0 };
     function _ambStepFxGet(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0) }
-               : { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 };
+      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, ratd: (e.ratd | 0) || 0, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0) }
+               : { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0 };
     }
     function _ambStepFxCustom(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0)));
+      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || ((e.ratd | 0) > 0) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0)));
     }
     function _ambStepFxSet(pg, v, i, patch) {
       if (!pg) return;
@@ -6046,34 +6081,50 @@
       cur.vel = Math.max(0, Math.min(200, cur.vel | 0));
       cur.len = Math.max(5, Math.min(400, cur.len | 0));
       cur.rat = Math.max(1, Math.min(8, cur.rat | 0));
+      cur.ratd = (_AMB_RAT_DIV_VALS.indexOf(cur.ratd | 0) >= 0) ? (cur.ratd | 0) : 0;
       cur.prob = Math.max(0, Math.min(100, cur.prob | 0));
       cur.pan = Math.max(-100, Math.min(100, cur.pan | 0));
-      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.prob === 100 && cur.pan === 0) { if (pg.fx) delete pg.fx[k]; }
+      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
+    }
+    // Edit-scope resolution — the (lane, step) cells the inspector's sliders act on.
+    // Lane mode: the selected lane × the scoped steps. Column mode: the scoped steps
+    // across ALL lanes. `_editSteps` null/empty = all steps. Default lane 0, all.
+    function _ambEditLane(L) { return Math.max(0, Math.min(_AMB_KIT_LANES - 1, (L && L._editLane | 0) || 0)); }
+    function _ambEditStepSet(L, total) {
+      const s = (L && Array.isArray(L._editSteps) && L._editSteps.length) ? L._editSteps.filter(i => i >= 0 && i < total) : null;
+      return (s && s.length) ? s : null;   // null = ALL
+    }
+    function _ambEditScopeCells(L, d) {
+      const total = d.bars * d.steps;
+      const steps = _ambEditStepSet(L, total) || Array.from({ length: total }, (_, i) => i);
+      const cells = [];
+      if (L && L._editMode === 'column') { for (let v = 0; v < d.V; v++) steps.forEach(i => cells.push({ v, i })); }
+      else { const lane = _ambEditLane(L); steps.forEach(i => cells.push({ v: lane, i })); }
+      return cells;
     }
     // Audition: play the SELECTED lane's drum once (with the selected step's vel/len)
     // — the sequencer's ▶ Play button. Routes through the layer's mod chain if it
     // exists (engine running), else playNote's default bus.
-    function _ambTriggerLaneStep(E, key, L) {
-      if (!L || !L._selStep || typeof playNote !== 'function' || typeof Tone === 'undefined') return;
+    function _ambTriggerLaneStep(E, key, L, laneV) {
+      if (!L || typeof playNote !== 'function' || typeof Tone === 'undefined') return;
       try { if (Tone.start) Tone.start(); } catch (e) {}
-      const v = L._selStep.v | 0, i = L._selStep.i | 0;
-      const lenMs = Math.max(60, L.lengthMs | 0), sfx = _ambStepFxGet(_ambEuclidPage(L), v, i);
-      const _pan = Math.max(-100, Math.min(100, sfx.pan | 0));
+      const v = Number.isFinite(laneV) ? Math.max(0, Math.min(_AMB_KIT_LANES - 1, laneV | 0)) : _ambEditLane(L);
+      const lenMs = Math.max(60, L.lengthMs | 0);
       _E = E;
       const dest0 = (E && E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
       const at0 = (Tone.now ? Tone.now() : 0) + 0.03;
       // SYNTH kit: audition through the same recipe engine the sequencer uses,
       // so the ▶ button previews the real voice (not a missing 'synth' sample).
       if (_ambBeatIsSynth(L)) {
-        const _vol = Math.max(0, Math.round(_ambApplyLevel(100, L.level) * (sfx.vel / 100)));
-        _ambPlaySynthDrum(E, dest0, L, v, at0, _vol, _ambLayerDetuneMod(key), _pan);
+        const _vol = Math.max(0, Math.round(_ambApplyLevel(100, L.level)));
+        _ambPlaySynthDrum(E, dest0, L, v, at0, _vol, _ambLayerDetuneMod(key), 0);
         return;
       }
       let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
-      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, _pan), L);
-      bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level) * (sfx.vel / 100)));
-      try { playNote(f, bp, lenMs * (sfx.len / 100), at0, dest0, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
+      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, 0), L);
+      bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level)));
+      try { playNote(f, bp, lenMs, at0, dest0, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
     }
     // Re-fit every page's rows to the current Steps×Bars (preserves overlapping
     // edits; pads with silence). Run on a Steps/Bars change.
@@ -6494,19 +6545,24 @@
         '<span class="ambient-euclid-barsreadout" aria-label="Pattern length">' + ((bar && bar.label) || '⟳ 1 bar') + '</span>' +
         (edited ? '<span class="ambient-euclid-note">✎ edited — a knob/Regen/Preset resets it</span>' : '') +
         '</div>';
-      // Drum-lanes: page (for per-step FX lookup) + the selected step (inspector).
+      // Drum-lanes: page + the current EDIT scope. Cells are pure on/off toggles;
+      // ALL step shaping happens in the edit panel below, targeting the selected
+      // lane (or all lanes in Column mode) × the chosen step subset.
       const kpage = inst.euclidKit ? _ambEuclidPage(inst) : null;
-      const sel = (inst.euclidKit && inst._selStep) ? inst._selStep : null;
+      const total = d.bars * d.steps;
+      const editLane = _ambEditLane(inst);
+      const editMode = (inst && inst._editMode === 'column') ? 'column' : 'lane';
+      const scopeSteps = _ambEditStepSet(inst, total);   // null = all steps
+      const stepInScope = (i) => !scopeSteps || scopeSteps.indexOf(i) >= 0;
       for (let v = 0; v < d.V; v++) {
         const pat = _ambEuclidPat(inst, d.pulses, d.steps, d.rotate, d.V, v, d.salt);
-        const laneSel = sel && sel.v === v;
-        html += '<div class="ambient-euclid-row' + (inst.euclidKit ? ' ambient-euclid-kitrow' : '') + (laneSel ? ' lane-sel' : '') + '">';
+        const laneEditing = inst.euclidKit && (editMode === 'column' || v === editLane);
+        html += '<div class="ambient-euclid-row' + (inst.euclidKit ? ' ambient-euclid-kitrow' : '') + (laneEditing ? ' lane-editing' : '') + '">';
         if (inst.euclidKit) {
-          // Drum-lanes: each row's label is a SELECTOR — click it to focus the lane
-          // (highlight + show the step FX inspector) without touching the steps.
+          // The lane LABEL selects which lane the edit panel targets (Lane mode).
           const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
           html += '<button type="button" class="ambient-euclid-laneplay" data-laneplay="' + v + '" title="Play the ' + dn + ' (audition)">▶</button>';
-          html += '<button type="button" class="ambient-euclid-drumlbl' + (laneSel ? ' on' : '') + '" data-lane="' + v + '" title="Select the ' + dn + ' lane">' + dn + '</button>';
+          html += '<button type="button" class="ambient-euclid-drumlbl' + ((editMode === 'lane' && v === editLane) ? ' on' : '') + '" data-lane="' + v + '" title="Edit the ' + dn + ' lane">' + dn + '</button>';
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
         }
@@ -6517,9 +6573,10 @@
             const on = pat[idx % pat.length] === 1;
             const barStart = (slot === 0);
             const hasFx = kpage && _ambStepFxCustom(kpage, v, idx);
-            const isSel = sel && sel.v === v && sel.i === idx;
+            // `in-scope` marks the cells the edit panel is currently pointed at.
+            const scoped = inst.euclidKit && kpage && stepInScope(idx) && (editMode === 'column' || v === editLane);
             html += '<button type="button" class="ambient-slice-cell ambient-euclid-cell' + (on ? ' on' : '') + (barStart && b > 0 ? ' barstart' : '') +
-              (hasFx ? ' has-fx' : '') + (isSel ? ' sel' : '') +
+              (hasFx ? ' has-fx' : '') + (scoped ? ' in-scope' : '') +
               '" data-ev="' + v + '" data-ei="' + idx + '"' + (on ? ' aria-pressed="true"' : '') +
               (barStart && nBars > 1 ? ' data-bar="' + (b + 1) + '"' : '') +
               ' aria-label="Voice ' + (v + 1) + ' bar ' + (b + 1) + ' step ' + (slot + 1) + '">' + (slot + 1) + '</button>';
@@ -6527,28 +6584,51 @@
         }
         html += '</div></div>';
       }
-      // Per-step inspector (Drum-lanes): shape the SELECTED step — velocity, length,
-      // ratchet (retrigger N times), probability (chance to fire). Long-press / right-
-      // click a step to select without toggling; a plain click selects too.
-      if (inst.euclidKit && sel && kpage) {
-        const fx = _ambStepFxGet(kpage, sel.v, sel.i);
-        const drum = _AMB_DRUM_NAMES[_AMB_VDRUM[sel.v]] || ('Drum ' + sel.v);
-        const stepNo = (sel.i % d.steps) + 1, barNo = Math.floor(sel.i / d.steps) + 1;
+      // Edit panel (Drum-lanes): Lane/Column mode · step scope (All / subset / one) ·
+      // then shape every step in scope — vel / length / ratchet (count + rate) /
+      // probability / pan. Values shown come from the first step in scope.
+      if (inst.euclidKit && kpage) {
+        const scopeCells = _ambEditScopeCells(inst, d);
+        const rep = scopeCells[0] || { v: editLane, i: 0 };
+        const fx = _ambStepFxGet(kpage, rep.v, rep.i);
+        const mixed = scopeCells.length > 1;
+        const drum = _AMB_DRUM_NAMES[_AMB_VDRUM[editLane]] || ('Drum ' + editLane);
+        const tgtLbl = (editMode === 'column') ? 'All lanes' : drum;
+        const nSel = scopeSteps ? scopeSteps.length : total;
+        const scopeLbl = scopeSteps ? (nSel === 1 ? ('step ' + ((scopeSteps[0] % d.steps) + 1)) : (nSel + ' steps')) : 'all steps';
         const sfxRow = (lbl, key, min, max, val, unit, hint) =>
           '<div class="ambient-step-fx-ctrl" title="' + hint + '"><label>' + lbl + '</label>' +
           '<input type="range" class="ambient-step-fx-sl" data-sfx="' + key + '" min="' + min + '" max="' + max + '" value="' + val + '">' +
           '<span class="ambient-step-fx-v" data-sfxv="' + key + '">' + val + (unit || '') + '</span></div>';
+        const ratOpts = _AMB_RAT_DIVS.map(rd => '<option value="' + rd.v + '"' + (rd.v === fx.ratd ? ' selected' : '') + '>' + rd.lbl + '</option>').join('');
+        let stepBtns = '<button type="button" class="ambient-stepscope-btn ambient-stepscope-all' + (scopeSteps ? '' : ' on') + '" data-scopeall="1" title="Edit every step">All</button>';
+        for (let i = 0; i < total; i++) stepBtns += '<button type="button" class="ambient-stepscope-btn' + ((scopeSteps && stepInScope(i)) ? ' on' : '') + (i % d.steps === 0 && i > 0 ? ' barstart' : '') + '" data-scopestep="' + i + '" title="Toggle step ' + ((i % d.steps) + 1) + (d.bars > 1 ? ' (bar ' + (Math.floor(i / d.steps) + 1) + ')' : '') + ' in the edit scope">' + ((i % d.steps) + 1) + '</button>';
         html += '<div class="ambient-step-fx">' +
-          '<div class="ambient-step-fx-head"><span class="ambient-step-fx-lbl">' + drum + ' · step ' + stepNo + (d.bars > 1 ? ' · bar ' + barNo : '') + '</span>' +
+          '<div class="ambient-step-fx-head">' +
+            '<span class="ambient-seg-row ambient-stepedit-mode">' +
+              '<button type="button" class="ambient-seg ambient-stepmode' + (editMode === 'lane' ? ' active' : '') + '" data-emode="lane" title="Edit steps within the selected drum lane">Lane</button>' +
+              '<button type="button" class="ambient-seg ambient-stepmode' + (editMode === 'column' ? ' active' : '') + '" data-emode="column" title="Edit the chosen step(s) across ALL lanes">Column</button>' +
+            '</span>' +
+            '<span class="ambient-step-fx-lbl">' + tgtLbl + ' · ' + scopeLbl + (mixed ? ' <span class="ambient-step-fx-mixed">shared</span>' : '') + '</span>' +
             '<span class="ambient-step-fx-btns">' +
-              '<select class="ambient-step-fx-fill" title="Auto-fill THIS lane with an evenly-spread (euclidean) rhythm at the current Steps">' + _ambEuclidFillOptions(d.steps) + '</select>' +
-              '<button type="button" class="ambient-step-fx-trig" title="Play this drum (audition)">▶ Play</button>' +
-              '<button type="button" class="ambient-step-fx-clear" title="Reset this step to defaults">Reset</button></span></div>' +
-          sfxRow('Vel', 'vel', 0, 200, fx.vel, '%', 'Velocity — this step’s loudness (100 = normal)') +
-          sfxRow('Length', 'len', 5, 400, fx.len, '%', 'Note length for this step (100 = the layer’s length)') +
-          sfxRow('Ratchet', 'rat', 1, 8, fx.rat, '×', 'Retrigger this step N times across its slot (a roll)') +
+              '<select class="ambient-step-fx-fill" title="Auto-fill the selected lane with an evenly-spread (euclidean) rhythm">' + _ambEuclidFillOptions(d.steps) + '</select>' +
+              '<button type="button" class="ambient-step-fx-trig" title="Play the selected drum (audition)">▶</button>' +
+              '<button type="button" class="ambient-step-fx-clear" title="Reset the steps in scope to defaults">Reset</button>' +
+            '</span>' +
+          '</div>' +
+          '<div class="ambient-stepscope-row" title="Which steps these edits apply to — click numbers to build a subset, or All.">' + stepBtns + '</div>' +
+          sfxRow('Vel', 'vel', 0, 200, fx.vel, '%', 'Velocity — loudness (100 = normal)') +
+          sfxRow('Length', 'len', 5, 400, fx.len, '%', 'Note length (100 = the layer’s length)') +
+          '<div class="ambient-step-fx-ctrl ambient-step-fx-ratrow" title="Ratchet — retrigger each step. Count = how many hits; Rate = Even spreads them across the step, or a note value fixes the hit size (1/16, 1/32…).">' +
+            '<label>Ratchet</label>' +
+            '<span class="ambient-step-fx-ratwrap">' +
+              '<input type="range" class="ambient-step-fx-sl ambient-step-fx-ratcount" data-sfx="rat" min="1" max="8" value="' + fx.rat + '">' +
+              '<span class="ambient-step-fx-v ambient-step-fx-ratv" data-sfxv="rat">' + fx.rat + '×</span>' +
+              '<select class="ambient-select ambient-step-fx-ratd" title="Ratchet rate — Even spreads Count across the step; a note value fixes the hit size.">' + ratOpts + '</select>' +
+            '</span>' +
+          '</div>' +
           sfxRow('Prob', 'prob', 0, 100, fx.prob, '%', 'Probability this step fires each pass (100 = always)') +
-          sfxRow('Pan', 'pan', -100, 100, fx.pan, '', 'Stereo position for this step (−100 = hard left, +100 = hard right)') +
+          sfxRow('Pan', 'pan', -100, 100, fx.pan, '', 'Stereo position (−100 = hard left, +100 = hard right)') +
         '</div>';
       }
       return html;
@@ -6582,28 +6662,19 @@
           render(); persist();
           if (E.timer) { try { sync && sync(); } catch (e) {} }
         }); }
-      // Long-press / right-click a Drum-lanes step SELECTS it (for the per-step FX
-      // inspector) WITHOUT toggling; a plain click toggles AND selects.
-      let _lpTimer = null, _lpFired = false;
-      const _selectStep = (c) => { const L = getL(); if (!L || !L.euclidKit) return; _E = E; L._selStep = { v: parseInt(c.dataset.ev, 10), i: parseInt(c.dataset.ei, 10) }; render(); };
-      const _clearLp = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
-      grid.addEventListener('pointerdown', (ev) => {
-        const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
-        const L = getL(); if (!L || !L.euclidKit) return;
-        _lpFired = false; _clearLp();
-        _lpTimer = setTimeout(() => { _lpFired = true; _selectStep(c); }, 450);
-      });
-      grid.addEventListener('pointerup', _clearLp);
-      grid.addEventListener('pointermove', _clearLp);
-      grid.addEventListener('pointerleave', _clearLp);
-      grid.addEventListener('contextmenu', (ev) => {
-        const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
-        const L = getL(); if (!L || !L.euclidKit) return;
-        ev.preventDefault(); _selectStep(c);
-      });
+      // Refresh the has-fx dot on every cell in the current edit scope (called after
+      // a slider/select edit, since those don't re-render — keeps the drag alive).
+      const markScopeFx = (L, d, pg) => {
+        _ambEditScopeCells(L, d).forEach(({ v, i }) => {
+          const cell = grid.querySelector('.ambient-euclid-cell[data-ev="' + v + '"][data-ei="' + i + '"]');
+          if (cell) cell.classList.toggle('has-fx', _ambStepFxCustom(pg, v, i));
+        });
+      };
+      // Cells are pure on/off toggles now — no long-press/right-click select. A click
+      // flips the step; the edit panel below targets whatever lane/scope is chosen
+      // there, so you never disable a step to shape it.
       grid.addEventListener('click', (ev) => {
         const c = ev.target.closest && ev.target.closest('.ambient-euclid-cell'); if (!c) return;
-        if (_lpFired) { _lpFired = false; return; }   // long-press already selected — don't toggle
         _E = E; const L = getL(); if (!L) return;
         const v = parseInt(c.dataset.ev, 10), i = parseInt(c.dataset.ei, 10);   // i = absolute index into the phrase
         const d = _ambEuclidGridDims(L, type); if (!d || !Number.isFinite(v) || !Number.isFinite(i)) return;
@@ -6631,36 +6702,39 @@
         ov[v][i] = ov[v][i] ? 0 : 1;
         if (ov[v][i]) { c.classList.add('on'); c.setAttribute('aria-pressed', 'true'); }
         else { c.classList.remove('on'); c.removeAttribute('aria-pressed'); }
-        if (L.euclidKit) { L._selStep = { v, i }; render(); }   // select the step → per-step FX inspector
-        else if (!grid.querySelector('.ambient-euclid-note')) render();   // first edit: add the "edited" note
+        if (!L.euclidKit && !grid.querySelector('.ambient-euclid-note')) render();   // first edit → add the "edited" note
         persist();
       });
-      // Per-step FX inspector: live-update the selected step's vel/len/ratchet/prob.
+      // Edit-panel SLIDERS → apply live to EVERY step in scope (lane or column × the
+      // chosen subset). No re-render on input, so the drag never resets mid-way.
       grid.addEventListener('input', (ev) => {
         const sl = ev.target.closest && ev.target.closest('.ambient-step-fx-sl'); if (!sl) return;
-        _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit) return;
+        const d = _ambEuclidGridDims(L, type); if (!d) return;
         const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx, val = parseInt(sl.value, 10);
-        _ambStepFxSet(pg, L._selStep.v, L._selStep.i, { [sfxKey]: val });
+        _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { [sfxKey]: val }));
         const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : (sfxKey === 'pan' ? '' : '%'));
-        const cell = grid.querySelector('.ambient-euclid-cell[data-ev="' + L._selStep.v + '"][data-ei="' + L._selStep.i + '"]');
-        if (cell) cell.classList.toggle('has-fx', _ambStepFxCustom(pg, L._selStep.v, L._selStep.i));
-        persist();
+        markScopeFx(L, d, pg); persist();
       });
-      grid.addEventListener('click', (ev) => {
-        const cl = ev.target.closest && ev.target.closest('.ambient-step-fx-clear'); if (!cl) return;
-        _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) return;
-        _ambStepFxSet(_ambEuclidPage(L), L._selStep.v, L._selStep.i, { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 });
-        render(); persist();
-      });
-      // Euclid Fill ▾ (delegated → survives re-render): fill the selected lane with
-      // an even rhythm. Value is the pulse count (0 = clear); '' = the placeholder.
+      // Ratchet-rate + Fill <select> (delegated change).
       grid.addEventListener('change', (ev) => {
-        const f = ev.target.closest && ev.target.closest('.ambient-step-fx-fill'); if (!f) return;
-        _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) { f.value = ''; return; }
+        const tgt = ev.target;
+        const rd = tgt.closest && tgt.closest('.ambient-step-fx-ratd');
+        const f = tgt.closest && tgt.closest('.ambient-step-fx-fill');
+        if (!rd && !f) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit) { if (f) f.value = ''; return; }
+        const d = _ambEuclidGridDims(L, type); if (!d) return;
+        if (rd) {   // ratchet rate → apply to scope (no re-render; the select holds its value)
+          const pg = _ambEuclidPage(L), rv = parseInt(rd.value, 10) || 0;
+          _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { ratd: rv }));
+          markScopeFx(L, d, pg); persist();
+          if (E.timer) { try { sync && sync(); } catch (e) {} }
+          return;
+        }
+        // Fill ▾ → euclid-fill the SELECTED lane (value = pulse count, 0 = clear).
         if (f.value === '') return;
-        const v = L._selStep.v | 0, k = parseInt(f.value, 10) || 0;
-        _ambEuclidFillLane(L, type, v, k);
-        f.value = '';
+        const k = parseInt(f.value, 10) || 0; f.value = '';
+        _ambEuclidFillLane(L, type, _ambEditLane(L), k);
         render(); persist();
         if (E.timer) { try { sync && sync(); } catch (e) {} }
       });
@@ -6706,23 +6780,37 @@
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig, .ambient-step-fx-clear, .ambient-stepmode, .ambient-stepscope-btn'); if (!t) return;
         if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
-        if (t.classList.contains('ambient-step-fx-trig')) { _ambTriggerLaneStep(E, key, L); return; }   // audition — no state change / re-render
-        // Per-lane ▶: audition that drum without moving the inspector's selection.
-        if (t.classList.contains('ambient-euclid-laneplay')) {
-          const lv = parseInt(t.dataset.laneplay, 10) | 0, saved = L._selStep;
-          L._selStep = { v: lv, i: (saved && saved.i) || 0 };
-          try { _ambTriggerLaneStep(E, key, L); } catch (e) {}
-          L._selStep = saved; return;
+        const d = _ambEuclidGridDims(L, type); const total = d ? d.bars * d.steps : 0;
+        // ▶ auditions — no state change / re-render.
+        if (t.classList.contains('ambient-step-fx-trig')) { _ambTriggerLaneStep(E, key, L, _ambEditLane(L)); return; }
+        if (t.classList.contains('ambient-euclid-laneplay')) { _ambTriggerLaneStep(E, key, L, parseInt(t.dataset.laneplay, 10) | 0); return; }
+        // Reset the steps in scope to default FX.
+        if (t.classList.contains('ambient-step-fx-clear')) {
+          const pg = _ambEuclidPage(L);
+          _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0 }));
+          render(); persist(); if (E.timer) { try { sync && sync(); } catch (e) {} } return;
+        }
+        // Lane ↔ Column edit mode.
+        if (t.classList.contains('ambient-stepmode')) { L._editMode = (t.getAttribute('data-emode') === 'column') ? 'column' : 'lane'; render(); persist(); return; }
+        // Step scope: All (whole lane) or build/toggle a subset.
+        if (t.classList.contains('ambient-stepscope-btn')) {
+          if (t.getAttribute('data-scopeall') != null) { L._editSteps = null; }
+          else {
+            const si = parseInt(t.dataset.scopestep, 10) | 0, cur = _ambEditStepSet(L, total);
+            if (!cur) { L._editSteps = [si]; }   // from All → just this step
+            else { const c = cur.slice(), at = c.indexOf(si); if (at >= 0) c.splice(at, 1); else c.push(si); c.sort((a, b) => a - b); L._editSteps = (c.length === 0 || c.length === total) ? null : c; }
+          }
+          render(); persist(); return;
         }
         if (t.classList.contains('ambient-euclid-tab-add')) _ambEuclidAddPage(L);
         else if (t.classList.contains('ambient-euclid-pagedel')) _ambEuclidDelPage(L);
         else if (t.dataset.page != null) L.euclidPageIdx = parseInt(t.dataset.page, 10) | 0;
         else if (t.dataset.seq != null) L.euclidSeq = t.dataset.seq === '1';
         else if (t.dataset.plays != null) { const pg = _ambEuclidPage(L); pg.plays = Math.max(1, Math.min(8, (pg.plays | 0 || 1) + parseInt(t.dataset.plays, 10))); }
-        else if (t.dataset.lane != null) { const d = _ambEuclidGridDims(L, type), lv = parseInt(t.dataset.lane, 10) | 0; const i = (L._selStep && L._selStep.i < d.bars * d.steps) ? L._selStep.i : 0; L._selStep = { v: lv, i }; }
+        else if (t.dataset.lane != null) { L._editLane = parseInt(t.dataset.lane, 10) | 0; L._editMode = 'lane'; }   // lane label → target this lane
         render(); persist();
         if (E.timer) { try { sync && sync(); } catch (e) {} }
       });
@@ -16099,7 +16187,15 @@
       // Preset picker — a named feel (sets the macros + per-type Push).
       const presetOpts = '<option value="">— feel —</option>' +
         _AMB_GROOVE_PRESETS.map((pr, i) => '<option value="' + i + '">' + esc(pr.name) + '</option>').join('');
-      let html = '<div class="ambient-groove-presetrow">' +
+      // Bypass = A/B the whole section in real time. Keeps every setting; just
+      // stops applying them so you can hear the groove's effect on/off.
+      const byp = !!g.bypass;
+      let html = '<div class="ambient-groove-bypassrow">' +
+        '<button type="button" class="ambient-seg ambient-groove-bypass' + (byp ? ' on' : '') + '" aria-pressed="' + (byp ? 'true' : 'false') + '" title="Bypass the whole Groove section so you can A/B the feel. Real-time; your settings are kept.">' +
+          (byp ? '⏻ Groove bypassed — click to enable' : '⏻ Groove active — click to bypass') +
+        '</button>' +
+        '</div>';
+      html += '<div class="ambient-groove-presetrow">' +
         '<span class="ambient-sched-lbl">preset</span>' +
         '<select class="ambient-select ambient-groove-preset" title="Apply a named groove feel — sets Swing / Accent / Humanize and a per-layer Push template. Then tweak the sliders or Evolve.">' + presetOpts + '</select>' +
         '<button type="button" class="ambient-seg ambient-groove-evolve" title="Evolve — nudge the current groove slightly for a fresh variation on the same feel.">↝ Evolve</button>' +
@@ -16145,6 +16241,7 @@
         '<button type="button" class="ambient-groove-tappad' + (tp.times.length ? ' armed' : '') + '" title="' + (tp.mode === 'tempo' ? 'Tap in time — 2+ taps set the tempo.' : 'Tap a rhythm — the first tap starts a ' + (tp.bars | 0 || 2) + '-bar window; taps quantize to the grid and become the Beat pattern.') + '">🖐 ' + esc(tapLbl) + '</button>' +
         '</div>';
       body.innerHTML = html;
+      body.classList.toggle('ambient-groove-bypassed', byp);   // dim the controls when off
     }
     function _ambRenderSeqLayers(E) {
       const wrap = _ambGet(E, 'ambient-seq-layers');
@@ -19584,6 +19681,15 @@
           });
           grBody.addEventListener('click', (ev) => {
             _E = E;
+            // Bypass — A/B the whole groove in real time. Re-anchor every layer so
+            // the change snaps in at each one's next unit boundary (phase-aligned,
+            // so nothing jumps) instead of waiting out the scheduler lookahead.
+            const bp = ev.target.closest('.ambient-groove-bypass');
+            if (bp) { const c = _grCfg(); if (!c) return;
+              c.groove.bypass = !c.groove.bypass;
+              if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambReanchorLayer(E, key)); _ambSyncMods(); } catch (e) {} }
+              _ambRenderGroove(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             const tm = ev.target.closest('.ambient-groove-tapmode');
             if (tm) { const t = _ambTapState(E); t.mode = (tm.getAttribute('data-tapmode') === 'rhythm') ? 'rhythm' : 'tempo'; t.times = []; if (t.timer) { clearTimeout(t.timer); t.timer = null; } _ambRenderGroove(E); return; }
             const md = ev.target.closest('.ambient-groove-mode');

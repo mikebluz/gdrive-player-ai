@@ -3130,6 +3130,16 @@
     /* 🕺 Groove — reuses the .ambient-sched frame. Macro sliders + push rows. */
     .ambient-groove.collapsed .ambient-sched-body { display: none; }
     .ambient-groove.collapsed .ambient-groove-toggle::before { transform: rotate(-90deg); }
+    /* Groove Bypass — A/B toggle. Green = active (applying), amber = bypassed. */
+    .ambient-groove-bypassrow { margin-bottom: 10px; }
+    .ambient-groove-bypass { width: 100%; padding: 7px 12px; font-size: 0.78rem; font-weight: 600;
+      color: #7fe0b0; border-color: #2f5c48; background: rgba(47,92,72,0.16); }
+    @media (hover: hover) { .ambient-groove-bypass:hover { border-color: #4fd090; color: #b6f5d6; } }
+    .ambient-groove-bypass.on { color: #f0b866; border-color: #6a4f28; background: rgba(106,79,40,0.22); }
+    @media (hover: hover) { .ambient-groove-bypass.on:hover { border-color: #e0a24a; color: #ffd699; } }
+    /* When bypassed, dim the (still-editable) macro + push controls to signal they're inert. */
+    .ambient-groove-bypassed .ambient-groove-macros,
+    .ambient-groove-bypassed .ambient-groove-push { opacity: 0.4; }
     .ambient-groove-presetrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
     .ambient-groove-preset { flex: 0 1 180px; min-width: 0; font-size: 0.78rem; }
     .ambient-groove-evolve, .ambient-groove-roll { flex: 0 0 auto; font-size: 0.74rem; padding: 4px 11px; }
@@ -3396,8 +3406,15 @@
       background: transparent; border: none; padding: 2px 4px 2px 0; border-radius: 4px; cursor: pointer; transition: color 0.12s ease, background 0.12s ease; }
     @media (hover: hover) { .ambient-euclid-drumlbl:hover { color: #e6ddff; } }
     .ambient-euclid-drumlbl.on { color: #12121c; background: #9f7aea; padding-right: 5px; }
-    .ambient-euclid-row.lane-sel .ambient-euclid-cell { border-color: #4a3f66; }
-    .ambient-euclid-row.lane-sel .ambient-euclid-cell.on { border-color: #9f7aea; }
+    /* The row whose lane the edit panel is targeting (Lane mode). */
+    .ambient-euclid-row.lane-editing .ambient-euclid-drumlbl { color: #e6ddff; }
+    /* Bolder on/off — drum steps should read at a glance, not as faint chips.
+       ON = solid fill; OFF = clearly empty/recessed. */
+    .ambient-euclid-cell { background: rgba(255,255,255,0.03); color: #6a6a86; }
+    .ambient-euclid-cell.on { border-color: #6fe0c0; color: #06210f; background: #4fd1a5; font-weight: 700; box-shadow: 0 0 6px rgba(79,209,165,0.35); }
+    @media (hover: hover) { .ambient-euclid-cell.on:hover { background: #67e0ba; border-color: #9df5d8; color: #06210f; } }
+    /* Cells the edit panel is currently pointed at (selected lane × step scope). */
+    .ambient-euclid-cell.in-scope { outline: 1.5px solid rgba(159,122,234,0.85); outline-offset: 1px; }
     /* Per-lane audition ▶ — sits left of each drum label. */
     .ambient-euclid-laneplay { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; line-height: 1;
       display: inline-flex; align-items: center; justify-content: center; font-size: 0.56rem;
@@ -3462,7 +3479,6 @@
     /* Per-step FX: a corner dot marks a shaped step; a ring marks the selected one. */
     .ambient-euclid-cell.has-fx { position: relative; overflow: visible; }
     .ambient-euclid-cell.has-fx::before { content: ''; position: absolute; top: 1px; right: 1px; width: 4px; height: 4px; border-radius: 50%; background: #e0b062; }
-    .ambient-euclid-cell.sel { outline: 2px solid #9f7aea; outline-offset: 1px; }
     /* Live playhead: the column currently sounding. OFF cells get a faint tint; a
        firing (ON) cell flashes bright so you see the hit land. */
     .ambient-euclid-cell.playing { background: rgba(159,122,234,0.22); border-color: #8f78c8; }
@@ -3481,6 +3497,24 @@
     .ambient-step-fx-ctrl label { color: #a0aec0; font: 600 0.62rem 'Segoe UI', sans-serif; }
     .ambient-step-fx-sl { width: 100%; min-width: 0; accent-color: #9f7aea; }
     .ambient-step-fx-v { text-align: right; color: #9fe0ef; font: 600 0.62rem 'Segoe UI', sans-serif; }
+    /* Lane/Column mode segment + the "(shared)" tag when >1 step is in scope. */
+    .ambient-stepedit-mode { display: inline-flex; gap: 2px; }
+    .ambient-stepedit-mode .ambient-stepmode { padding: 2px 9px; font-size: 0.66rem; }
+    .ambient-step-fx-mixed { color: #e0b062; font-weight: 600; font-size: 0.58rem; opacity: 0.9; }
+    /* Step-scope selector: All + one button per step; .on = in the edit scope. */
+    .ambient-stepscope-row { display: flex; flex-wrap: wrap; gap: 3px; margin: 2px 0 8px; padding-bottom: 7px; border-bottom: 1px dashed rgba(74,74,102,0.5); }
+    .ambient-stepscope-btn { min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid #2d2d3f; border-radius: 4px; background: transparent; color: #8a8aa6; font: 600 0.6rem 'Segoe UI', sans-serif; cursor: pointer; transition: all 0.1s ease; }
+    @media (hover: hover) { .ambient-stepscope-btn:hover { border-color: #9f7aea; color: #c9b8ef; } }
+    .ambient-stepscope-btn.on { border-color: #9f7aea; color: #12121c; background: #9f7aea; }
+    .ambient-stepscope-btn.barstart { margin-left: 7px; }
+    .ambient-stepscope-all { color: #cdf0fa; border-color: #3d5560; }
+    .ambient-stepscope-all.on { background: #4fd1a5; border-color: #6fe0c0; color: #06210f; }
+    /* Ratchet row: count slider + value + rate <select> share the value column. */
+    .ambient-step-fx-ratrow .ambient-step-fx-ratwrap { display: flex; align-items: center; gap: 8px; grid-column: 2 / 4; min-width: 0; }
+    .ambient-step-fx-ratrow .ambient-step-fx-ratcount { flex: 1 1 auto; min-width: 0; }
+    .ambient-step-fx-ratrow .ambient-step-fx-ratv { flex: 0 0 auto; width: 26px; }
+    .ambient-step-fx-ratd { flex: 0 0 auto; width: 68px; padding: 1px 4px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #c9b8ef; background: #1a1a26; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
+    @media (hover: hover) { .ambient-step-fx-ratd:hover { border-color: #9f7aea; color: #e6ddff; } }
     .ambient-layer-head { display: flex; align-items: center; flex-wrap: wrap; position: relative; }
     /* Read-only live notes line — wraps to its own full-width row under the head
        buttons. Hidden by default; while the layer is active it's RESERVED (a

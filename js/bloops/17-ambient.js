@@ -1469,7 +1469,7 @@
       // value; pushMode = the unit for per-layer Push (ms / % of unit). All
       // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
       if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
-      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; }
+      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.ghost = Math.max(0, Math.min(100, cfg.groove.ghost | 0)); cfg.groove.rolls = Math.max(0, Math.min(100, cfg.groove.rolls | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; }
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -3574,6 +3574,30 @@
     function _ambEffRest(lc) {
       const gd = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.density | 0)) || 0;
       return Math.max(0, Math.min(100, ((lc && lc.restProb) | 0) + gd));
+    }
+    // GHOST notes + ROLLS (Area Groove) — extra notes ADDED alongside a rhythmic
+    // hit: a roll = 1-2 quick soft retriggers within the note; a ghost = one quiet
+    // note halfway through the slot. Uses a SEEDED rng keyed on the onset time, so
+    // it never perturbs the global RNG stream (other layers unchanged) and a Loop
+    // replays identically. Neutral (both 0) → returns before any work =
+    // byte-identical. Call AFTER the main playNote in a percussive emit.
+    function _ambGrooveEmbellish(freq, params, durMs, at, dest, laneIdx) {
+      const gr = (_E && _E._cfg && _E._cfg.groove) || null; if (!gr) return;
+      const rolls = gr.rolls | 0, ghost = gr.ghost | 0;
+      if ((rolls <= 0 && ghost <= 0) || !(freq > 0) || typeof playNote !== 'function') return;
+      const li = (laneIdx == null) ? ((_E && _E.laneIdx) ? _E.laneIdx() : -1) : laneIdx;
+      const durS = Math.max(0.03, (durMs || 120) / 1000);
+      const baseVol = Number.isFinite(params && params.volume) ? params.volume : 100;
+      const rnd = _ambSeededRand(((Math.round((at || 0) * 1000) * 2654435761) ^ ((Math.round(freq) | 0) * 40503) ^ 0x5bd1e995) >>> 0);
+      if (rolls > 0 && rnd() * 100 < rolls * 0.55) {
+        const extra = 1 + ((rolls > 55 && rnd() < 0.5) ? 1 : 0);   // 1-2 quick retriggers
+        const sub = durS / (extra + 1);
+        for (let i = 1; i <= extra; i++) { const rp = Object.assign({}, params); rp.volume = Math.max(0, Math.round(baseVol * 0.72)); try { playNote(freq, rp, Math.max(35, durMs * 0.45), at + i * sub, dest, undefined, li); } catch (e) {} }
+      }
+      if (ghost > 0 && rnd() * 100 < ghost * 0.5) {
+        const gp = Object.assign({}, params); gp.volume = Math.max(0, Math.round(baseVol * 0.32));
+        try { playNote(freq, gp, Math.max(35, durMs * 0.32), at + durS * 0.5, dest, undefined, li); } catch (e) {}
+      }
     }
     function _ambAccentVol(vol, accent) {
       // Area Groove Accent ADDS to the layer's own. Neutral 0 → no RNG draw
@@ -5733,6 +5757,7 @@
           if (dmod) ap._detuneMod = dmod;
           _ambKeyTime = hh.at;
           try { playNote(hh.f, ap, hh.dur, hh.at, dest, undefined, _E.laneIdx()); } catch (e) {}
+          _ambGrooveEmbellish(hh.f, ap, hh.dur, hh.at, dest, _E.laneIdx());   // Groove ghost/rolls (gated at 0)
           cap++; if (cap >= 256) break;
         }
       }
@@ -6189,7 +6214,9 @@
       const bp = _ambApplyAdsr(_ambBeatParams(beat.kit, lenMs, pan), beat);
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
-      try { playNote(f, bp, _ambVaryLen(lenMs, beat.lenVary), at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+      { const _bdur = _ambVaryLen(lenMs, beat.lenVary);   // compute once (avoid a 2nd lenVary rng draw)
+        try { playNote(f, bp, _bdur, at, _ambLayerDest(key), undefined, _E.laneIdx()); } catch (e) {}
+        _ambGrooveEmbellish(f, bp, _bdur, at, _ambLayerDest(key), _E.laneIdx()); }   // Groove ghost/rolls (gated at 0)
     }
     // One euclidean voice's pattern. salt 0 → deterministic: voice 0 = the base
     // params; extra voices spread pulses/rotation to interlock. salt != 0 (a Regen
@@ -15821,8 +15848,8 @@
       { name: 'Half swing',     swing: 50, accent: 16, humanize: 6,  push: {} },
       { name: 'Triplet swing',  swing: 58, accent: 26, humanize: 10, push: {} },
       { name: 'Laid-back',      swing: 20, accent: 30, humanize: 14, density: 12, push: { bass: 18, motif: 12, run: 12 } },
-      { name: 'Pushed / driving', swing: 10, accent: 42, humanize: 6, density: 0, push: { bass: -16, beat: -8, bass_euclid: -16 } },
-      { name: 'Loose / human',  swing: 33, accent: 26, humanize: 45, density: 16, push: {} },
+      { name: 'Pushed / driving', swing: 10, accent: 42, humanize: 6, density: 0, rolls: 22, push: { bass: -16, beat: -8, bass_euclid: -16 } },
+      { name: 'Loose / human',  swing: 33, accent: 26, humanize: 45, density: 16, ghost: 30, push: {} },
       { name: 'Tight / machine', swing: 0,  accent: 10, humanize: 0,  push: { bed: 0, motif: 0, bass: 0, beat: 0, run: 0, pedal: 0, drone: 0, arp: 0, texture: 0 } },
     ];
     function _ambApplyGroovePreset(E, cfg, preset) {
@@ -15831,6 +15858,8 @@
       cfg.groove.swing = Math.max(0, Math.min(100, preset.swing | 0));
       cfg.groove.accent = Math.max(0, Math.min(100, preset.accent | 0));
       cfg.groove.density = Math.max(0, Math.min(100, preset.density | 0));
+      cfg.groove.ghost = Math.max(0, Math.min(100, preset.ghost | 0));
+      cfg.groove.rolls = Math.max(0, Math.min(100, preset.rolls | 0));
       cfg.startVary = Math.max(0, Math.min(100, preset.humanize | 0));
       const pmax = (cfg.groove.pushMode === 'pct') ? 90 : 200;
       _ambMixerLayers(cfg).forEach(({ key }) => {
@@ -15869,6 +15898,8 @@
         macro('accent', 'Accent', g.accent, 'flat → dynamic') +
         macro('humanize', 'Humanize', cfg.startVary, 'tight → loose') +
         macro('density', 'Sparse', g.density, 'full → sparse (drops hits)') +
+        macro('ghost', 'Ghost', g.ghost, 'quiet in-between notes') +
+        macro('rolls', 'Rolls', g.rolls, 'retrigger / roll chance') +
         '</div>';
       // Per-layer Push/Pull rows.
       const layers = _ambMixerLayers(cfg);
@@ -19322,6 +19353,8 @@
               c.groove.swing = nudge(c.groove.swing, 10, 100);
               c.groove.accent = nudge(c.groove.accent, 12, 100);
               c.groove.density = nudge(c.groove.density, 10, 100);
+              c.groove.ghost = nudge(c.groove.ghost, 12, 100);
+              c.groove.rolls = nudge(c.groove.rolls, 12, 100);
               c.startVary = nudge(c.startVary, 8, 100);
               const pmax = (c.groove.pushMode === 'pct') ? 20 : 40;
               _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (!L) return; const cur = Number.isFinite(L.push) ? L.push : 0; L.push = Math.max(-pmax, Math.min(pmax, cur + (Math.floor(Math.random() * 17) - 8))); });
@@ -19337,6 +19370,8 @@
               c.groove.swing = [0, 0, 33, 50, 58, 66][R(5)];      // mostly some shuffle
               c.groove.accent = 20 + R(50);
               c.groove.density = [0, 0, 0, 10, 20, 30][R(5)];     // usually full, sometimes sparse
+              c.groove.ghost = [0, 0, 15, 30, 45][R(4)];
+              c.groove.rolls = [0, 0, 0, 20, 35][R(4)];
               c.startVary = R(35);
               const pmax = (c.groove.pushMode === 'pct') ? 20 : 40;
               _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (L) L.push = (R(pmax * 2) - pmax); });

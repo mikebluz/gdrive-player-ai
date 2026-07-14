@@ -16583,39 +16583,43 @@
         ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],
       ]);
     }
-    // Card subsections match the layer MODEL's axes (docs/bloom-layer-model.md):
+    // Card subsections match the layer MODEL's axes (docs/bloom-layer-model.md),
+    // now in axis order with the timing/realization controls MERGED into one group:
     //   Voice (Instrument: sound + ADSR) · Seed (the deterministic material —
-    //   pitch source, register/range, AND how it's generated: density/proximity/
-    //   fill/euclid pulses·steps·rotate·grid; "euclidean = SEED") · Timing (when it
-    //   fires: unit/interval/bars/length/drift/When) · Variation (stochastic
-    //   per-repeat deviation) · Mix (shared). There is deliberately NO "Generator"
-    //   group — the old Generator params folded into Seed (deterministic) so the
-    //   generative split is the meaningful one: Seed = the pattern, Variation = the
-    //   randomness on top. Render-only: tokens/ids/wiring unchanged, only the group
-    //   header they sit under.
+    //   pitch source, register/range, generation: density/proximity/fill/euclid
+    //   pulses·steps·rotate·grid; "euclidean = SEED"; Bed/Drone fold the
+    //   Progression sub-block in here — harmony is material context) · Timing (all
+    //   realization: unit/interval/bars/length, swing/strum feel, Loop, When —
+    //   what used to be four separate Unit/Feel/Loop/Scheduling groups) · Variation
+    //   (stochastic per-repeat deviation) · Mix (shared). Voice leads every type so
+    //   the cards read consistently (what the layer IS, then what it plays). There
+    //   is deliberately NO "Generator" group — the old Generator params folded into
+    //   Seed. Render-only: tokens/ids/wiring unchanged, only the group header they
+    //   sit under (a merge drops the intermediate ['grp',…] markers).
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['grp', 'Feel'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['grp', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times above only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
-        ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
@@ -16623,41 +16627,41 @@
       // Arp: arpeggiates through a user-built SERIES of scales/chords (per-row
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Unit'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
-        ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
-        ['grp', 'Progression'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
+        ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['sub', 'Progression', 'When an Area progression is set: the drone plays voicings of the current chord.'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['loop'], ['cond'],
         ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
@@ -17045,6 +17049,9 @@
     // of a control's markup, so a schema change renders identically everywhere.
     function _ambCtrlHtml(c, p, lk, inst, type) {
       const k = c[0];
+      // Light divider label inside a group (merged sub-block, e.g. Progression
+      // folded into Seed). Non-interactive; no wiring branch needed.
+      if (k === 'sub') return '<div class="ambient-grp-sub"' + (c[2] ? ' title="' + String(c[2]).replace(/"/g, '&quot;') + '"' : '') + '>' + c[1] + '</div>';
       if (k === 'tone') {
         const toneSel = '<div class="ambient-ctrl"><label for="' + p + '-tone" title="' + _ambTitleAttr('Tone', 'voice') + '">Tone</label><select id="' + p + '-tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>';
         // Bed: the "Tones [Single|Per-voice]" MODE selector comes FIRST (it decides

@@ -3959,6 +3959,13 @@
     .ambient-grp.open .ambient-grp-caret::before { transform: rotate(0deg); }
     .ambient-grp-body { display: none; flex-direction: column; gap: 10px; padding: 2px 0 8px; }
     .ambient-grp.open > .ambient-grp-body { display: flex; }
+    /* Light non-collapsible divider label inside a merged group (e.g. the
+       "Progression" sub-block folded into Seed). Quieter than a group head. */
+    .ambient-grp-sub {
+      font-family: 'Segoe UI', sans-serif; font-size: 0.62rem; font-weight: 600;
+      letter-spacing: 0.05em; text-transform: uppercase; color: #5f5f7d;
+      padding: 4px 2px 0; margin-top: 2px; border-top: 1px dashed #1c1c2e;
+    }
     /* Per-layer Reset-sections button. */
     .ambient-grp-resetwrap { display: flex; justify-content: flex-end; margin-top: 8px; }
     .ambient-grp-reset {

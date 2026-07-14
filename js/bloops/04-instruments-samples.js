@@ -4242,3 +4242,36 @@
       _registerVoiceAtStart(voiceEntry, synthLeadMs);
     }
 
+
+    // ---- Cold-start warm-up ------------------------------------------------
+    // The first Play after a long idle is glitchy for ~1-2 s, then smooth for
+    // the rest of the session: the audio render thread's priority ramp, the
+    // wasm worklet hot loop, the voice-construction paths and Tone's node JS
+    // all JIT/warm on first use — and nothing exercises them until real notes
+    // hit. Pre-exercise them ONCE per page at the FIRST user gesture (well
+    // before Play), with inaudible (volume 0) throwaway voices. One-shot and
+    // gesture-gated, so the warm path is never touched and there is no cost
+    // after the first tap. If the glitch persists, diagnose with
+    // window.__bloomHealthLog right after a cold Play ([bloom-health] gotcha).
+    let _bloopsWarmed = false;
+    function _bloopsWarmup() {
+      if (_bloopsWarmed) return; _bloopsWarmed = true;
+      try {
+        if (typeof Tone === 'undefined' || typeof playNote !== 'function') return;
+        const go = () => {
+          try {
+            const at = (Tone.now ? Tone.now() : 0) + 0.06;
+            // A few distinct voice types → JITs the oscillator + synth paths and
+            // leaves warm pooled bodies for the first real Play.
+            ['sine', 'sawtooth', 'triangle'].forEach((t, i) => {
+              try { playNote(220 + i * 110, { type: t, volume: 0, attack: 1, decay: 12, sustain: 0, release: 12 }, 40, at + i * 0.03); } catch (e) {}
+            });
+          } catch (e) {}
+        };
+        (Tone.start ? Tone.start() : Promise.resolve()).then(go, go);
+      } catch (e) {}
+    }
+    document.addEventListener('pointerdown', function _bloopsWarmOnce() {
+      document.removeEventListener('pointerdown', _bloopsWarmOnce, true);
+      try { _bloopsWarmup(); } catch (e) {}
+    }, { once: true, capture: true });

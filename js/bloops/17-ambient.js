@@ -4690,6 +4690,13 @@
           // the viewed page when looping / single page. Non-kit uses _ambEuclidPat.
           const kitPage = inst.euclidKit ? _ambEuclidActivePage(inst, ctx.c) : null;
           const kitPat = kitPage ? kitPage.pat : null;
+          // Drum-lanes (Program) plays EXACTLY the drawn grid: the stochastic
+          // Rests/Rhythm-var gates are for generated patterns and silently mangled
+          // programmed beats (default restProb 25 dropped drawn hits; a leftover
+          // rhythmVar added ghosts on unselected lanes). Chance in Program mode is
+          // the per-step Prob control. Non-kit euclid keeps both.
+          const rVarEff = kitPat ? 0 : rVar;
+          const restEff = kitPat ? 0 : restP;
           for (let v = 0; v < V && ctx.cap < 256; v++) {
             const vpat = kitPat
               ? ((Array.isArray(kitPat[v]) && kitPat[v].length) ? kitPat[v] : new Array(steps).fill(0))
@@ -4702,12 +4709,12 @@
             for (let bar = 0; bar < bars; bar++) {
               for (let slot = 0; slot < steps; slot++) {
                 let hit = vpat[(bar * steps + slot) % vpat.length] === 1;   // per-bar when the override spans the phrase; else repeats
-                if (rVar > 0) {
-                  if (hit) { if (rnd() * 100 < rVar * 0.40) hit = false; }   // drop a seed hit
-                  else      { if (rnd() * 100 < rVar * 0.22) hit = true; }   // add a ghost hit
+                if (rVarEff > 0) {
+                  if (hit) { if (rnd() * 100 < rVarEff * 0.40) hit = false; }   // drop a seed hit
+                  else      { if (rnd() * 100 < rVarEff * 0.22) hit = true; }   // add a ghost hit
                 }
                 if (!hit) continue;
-                if (restP > 0 && rnd() * 100 < restP) continue;
+                if (restEff > 0 && rnd() * 100 < restEff) continue;
                 const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
                 if (at < tFrom || at >= tTo) continue;
                 // Per-step FX (Drum-lanes only): probability gate, then velocity /
@@ -4765,7 +4772,7 @@
         let f; try { f = Tone.Frequency(60 + (inst.samplePitch | 0), 'midi').toFrequency(); } catch (e) { f = 261.63; }
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
-          const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, 0);   // single pattern (override row 0 or generated)
+          const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // single pattern (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
               let hit = pat[(bar * steps + slot) % pat.length] === 1;
@@ -4801,7 +4808,7 @@
       const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per phrase cycle
       _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
         const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
-        const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, 0);   // base euclidean seed (override row 0 or generated)
+        const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
         for (let bar = 0; bar < bars; bar++) {
           for (let slot = 0; slot < steps; slot++) {
@@ -6724,7 +6731,9 @@
       // fixed drum lanes, so those knobs don't apply. Steps (resolution) + Phrase
       // stay. Shared by the toggle handler and the initial wire.
       const kitVis = (on) => {
-        ['pulses', 'rotate', 'euclidregen', 'euclidVoices', 'drumpick'].forEach(suf => {
+        // rhythmVar/restProb: the drum-lanes emitter ignores the stochastic gates
+        // (the grid plays as drawn) — hide their rows so dead controls don't show.
+        ['pulses', 'rotate', 'euclidregen', 'euclidVoices', 'drumpick', 'rhythmVar', 'restProb'].forEach(suf => {
           const e = el(suf); const row = e && e.closest && e.closest('.ambient-ctrl');
           if (row) row.style.display = on ? 'none' : '';
         });
@@ -8287,9 +8296,9 @@
         const steps = Math.max(2, Math.min(32, (L.steps | 0) || 8)), pulses = Math.max(1, Math.min(steps, (L.pulses | 0) || 1)), rotate = Math.max(0, L.rotate | 0), bars = Math.max(1, Math.min(8, (L.bars | 0) || 1));
         // Voice-0 pattern — honour a hand-edited grid override so the readout
         // matches what plays (falls back to the generated pattern otherwise).
-        const pat = (typeof euclideanPattern === 'function') ? _ambEuclidPat(L, pulses, steps, rotate, 1, 0, 0) : [], totalS = bars * steps;
+        const pat = (typeof euclideanPattern === 'function') ? _ambEuclidPat(L, pulses, steps, rotate, 1, 0, L.euclidRegen | 0) : [], totalS = bars * steps;
         const cFrac = bars * (60 / _ambBpm()) * 4 / period;
-        for (let b = 0; b < bars; b++) for (let s = 0; s < steps; s++) if (pat[s] === 1) evs.push({ at: ((b * steps + s) / totalS) * cFrac, dur: durFrac, label: '' });
+        for (let b = 0; b < bars; b++) for (let s = 0; s < steps; s++) if (pat[(b * steps + s) % pat.length] === 1) evs.push({ at: ((b * steps + s) / totalS) * cFrac, dur: durFrac, label: '' });
       } else if (type === 'run') {
         const bars = Math.max(1, (L.bars | 0) || 1), dens = Math.max(1, Math.min(16, (L.density | 0) || 8)), total = bars * dens;
         const cFrac = bars * (60 / _ambBpm()) * 4 / period;
@@ -14507,7 +14516,11 @@
       // generator knobs (Pulses/Rotate/Regen/Voices) and the single-drum "Drum"
       // picker don't apply; hide them in that mode (Steps + Phrase stay).
       const kit = euclid && !!(inst && inst.euclidKit);
-      if (kit) ['pulses', 'rotate', 'euclidregen', 'euclidVoices'].forEach(s => setRow(s, false));
+      // Program (drum-lanes) also hides the stochastic Rests / Rhythm var — the
+      // emitter ignores them there (the grid plays exactly as drawn; chance =
+      // the per-step Prob). Rests must be re-shown on every non-kit mode.
+      if (kit) ['pulses', 'rotate', 'euclidregen', 'euclidVoices', 'rhythmVar'].forEach(s => setRow(s, false));
+      setRow('restProb', !kit);
       { const dp = _ambGet(E, stem + 'drumpick'); const dpr = dp && dp.closest && dp.closest('.ambient-ctrl');
         if (dpr) dpr.style.display = kit ? 'none' : ''; }
       if (euclid) { setIntervalRow(false); }
@@ -17110,7 +17123,10 @@
         if (c[0] === 'grp') {
           if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
           grpOpen = false;
-          if (kitVoice && c[1] === 'Seed') { skipGroup = true; return; }
+          // Beat is exempt: its Seed group IS the rhythm generator (Mode toggle,
+          // euclid knobs, the Pattern grid) — not pitch material. Dropping it left
+          // the extras Beat card with no way to reach Program/euclid at all.
+          if (kitVoice && c[1] === 'Seed' && type !== 'beat') { skipGroup = true; return; }
           skipGroup = false;
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +

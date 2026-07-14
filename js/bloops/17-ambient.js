@@ -14995,7 +14995,9 @@
       const host = E && document.getElementById(E.hostId); if (!host) return;
       const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || null;
       const progOn = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
-      host.querySelectorAll('[data-grp="Progression"]').forEach(g => { g.style.display = progOn ? '' : 'none'; });
+      // Post-B the Progression block is a SUB-BLOCK inside Seed (data-sub), not
+      // its own group; keep the old selector too for any straggler markup.
+      host.querySelectorAll('[data-grp="Progression"], [data-sub="Progression"]').forEach(g => { g.style.display = progOn ? '' : 'none'; });
       host.querySelectorAll('input[id$="-chordPhraseLen"], input[id$="-chordRepeats"]').forEach(inp => {
         const ctrl = inp.closest('.ambient-ctrl'); if (ctrl) ctrl.style.display = progOn ? 'none' : '';
       });
@@ -15567,7 +15569,7 @@
       const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-seq-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Seq' + (i + 1)), p + 'on', p + 'del', 'seq:' + id, _ambComposeReadonlyHtml([['Voice','Synth'],['Seed','Sequence']], 'Voice · Seed (an authored sequence)')) +
-        grp('Voice') +
+        grp('Instrument') +
           '<div class="ambient-ctrl"><label for="' + p + 'tone">Tone</label><select id="' + p + 'tone" class="ambient-select"></select><span class="ambient-hint">voice</span></div>' +
           _ambSl('Attack', p + 'attack', 0, 4000, s.attack, 'ms') +
           _ambSl('Decay', p + 'decay', 0, 2000, s.decay, 'ms') +
@@ -15623,13 +15625,13 @@
           _ambTm('Length', p + 'length', 300, 16000, 100, s.lengthMs) +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
           _ambWhenCtrl(p) + gpe() +
-        grp('Variation') +
+        grp('Variance') +
           '<div class="ambient-ctrl"><label for="' + p + 'vary">Vary</label><select id="' + p + 'vary" class="ambient-select">' + opts([['pitch', 'Pitch'], ['rhythm', 'Pitch + rhythm'], ['pad', 'Pad re-voice']], s.varyMode) + '</select><span class="ambient-hint">style</span></div>' +
           _ambSl('Amount', p + 'depth', 0, 100, s.varyDepth, 'subtle → wild') +
           '<div class="ambient-ctrl"><label for="' + p + 'return">Return</label><select id="' + p + 'return" class="ambient-select">' + opts([['everyN', 'Every N'], ['chance', 'Chance %']], s.returnMode) + '</select><span class="ambient-hint">to original</span></div>' +
           _ambSl('Every N', p + 'returnN', 1, 16, s.returnN, 'cycles') +
           _ambSl('Chance %', p + 'returnChance', 0, 100, s.returnChance, 'verbatim') + gpe() +
-        grp('Mix') +
+        grp('FX / Mix') +
           // Output routing: Grid direct = faithful Seed replay (captured
           // per-step params straight to the grid bus — the Send-to-Bloom
           // default); Bloom blend = the layer chain (mods/FX/spread, sits
@@ -16484,7 +16486,7 @@
       const grp = (name) => _ambLayerGrpOpen(s, name), gpe = _ambLayerGrpEnd;
       return '<div class="ambient-layer collapsed" data-samp-id="' + id + '">' +
         _ambHead(_ambLayerLabel(s, 'Sample' + (i + 1)), p + 'on', p + 'del', 'samp:' + id, _ambComposeReadonlyHtml([['Voice','Sample'],['Gen','Chop']], 'Voice · Generator (buffer chopper)')) +
-        grp('Voice') +
+        grp('Instrument') +
           '<div class="ambient-ctrl"><label>Source</label><span class="ambient-hint ambient-samp-srcname" id="' + p + 'srcname" style="margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nm + '</span></div>' +
           '<div class="ambient-ctrl ambient-samp-srcbtns">' +
             '<button type="button" class="ambient-srcbtn" id="' + p + 'import" title="Replace this layer’s sample with an audio file">+ Import…</button>' +
@@ -16514,7 +16516,7 @@
           '<div class="ambient-ctrl ambient-samp-match"><label>Match unit</label><button type="button" class="ambient-srcbtn" id="' + p + 'matchunit" title="Set this sample’s Interval to another layer’s unit length (rhythmic lock). Length past the unit is cut at the boundary.">⇄ Match to layer…</button></div>' +
           _ambSl('Drift', p + 'drift', 0, 99, s.drift, 'phase offset') +
           _ambWhenCtrl(p) + gpe() +
-        grp('Mix') +
+        grp('FX / Mix') +
           _ambSl('Level', p + 'level', 0, 100, s.level, 'soft → boost') +
           _ambTm('Fade out', p + 'boundaryfade', 0, 8000, 50, s.boundaryFadeMs) +
           _ambSpreadCtrl('ambient-samp-' + id, s) +
@@ -16758,11 +16760,11 @@
     // and mirrors the engine's Voice × Source × Generator × Timing × Mix model.
     // The Mix group is byte-identical across every layer (Area fade is hidden at
     // render for bar-native types via _ambCtrlHtml, not omitted here).
-    const _AMB_MIX = [['grp', 'Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']];
+    const _AMB_MIX = [['grp', 'FX / Mix'], ['sl', 'level', 'Level', 0, 100, 'soft → boost'], ['tm', 'areaFadeMs', 'Area fade', 0, 4000, 50], ['spread'], ['mod'], ['fx']];
     // Shared Voice group — same controls everywhere, only the voice token(s)
     // (tone / kit+gen) and the ADSR ranges vary, passed per layer.
     function _ambVoiceCtrls(voiceToks, atkMax, decMax, relMax) {
-      return [['grp', 'Voice']].concat(voiceToks, [
+      return [['grp', 'Instrument']].concat(voiceToks, [
         ['sl', 'attack', 'Attack', 0, atkMax, 'ms'], ['sl', 'decay', 'Decay', 0, decMax, 'ms'],
         ['sl', 'sustain', 'Sustain', 0, 100, '%'], ['sl', 'release', 'Release', 0, relMax, 'ms'],
         ['sl', 'fine', 'Fine', -100, 100, 'cents'], ['sl', 'portamento', 'Portamento', 0, 300, 'ms glide'],
@@ -16784,28 +16786,28 @@
     const _AMB_LAYER_SCHEMA = {
       bed: { label: 'Bed', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['chordmode'], ['home'], ['st', 'register', 'Register', 2, 6, 'octave'], ['st', 'density', 'Density', 1, 8, 'voices'], ['st', 'spread', 'Spread', 0, 3, '± oct'],
         ['sub', 'Progression', 'When an Area progression is set: the layer locks to it and plays voicings of the current chord. (Repeat/Times in Timing only apply when there is no Area progression.)'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 200, 12000, 50], ['speed'], ['tm', 'lengthMs', 'Length', 300, 16000, 100], ['choke'], ['st', 'chordPhraseLen', 'Repeat', 1, 16, 'chords / phrase'], ['st', 'chordRepeats', 'Times', 1, 16, 'phrase repeats'], ['sl', 'strum', 'Strum', 0, 100, 'chord → arp'], ['sl', 'strumFidelity', 'Fidelity', 0, 100, 'in order → random'], ['strumsync'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['sl', 'restProb', 'Rests', 0, 100, '% units skipped'], ['sl', 'startVary', 'Start', 0, 100, 'on the 1 → mid-unit'], ['sl', 'motion', 'Motion', 0, 100, 'detune'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       motif: { label: 'Motif', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
-        ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
+        ['grp', 'Variance'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
@@ -16813,41 +16815,41 @@
       // Direction); Randomness deviates from it. Pitch material is the series.
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
         ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
       // long; Rhythm/Pitch var add per-repeat variation.
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
       run: { label: 'Riff', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
-        ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 7, 'octave'], ['st', 'degree', 'Note', 1, 12, 'scale degree (1 = root)'], ['st', 'density', 'Density', 1, 16, 'hits / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'vary', 'Vary', 0, 100, 'root → roam'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Drone: holds a note/chord, re-striking every `hold` units. Time + Pitch
       // vary are independent. A chord Notes source holds the whole chord.
       drone: { label: 'Drone', ctrls: [
         ..._ambVoiceCtrls([['tone']], 8000, 4000, 12000),
-        ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
+        ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['droneedit'], ['st', 'density', 'Density', 1, 9, 'notes stacked'], ['st', 'degree', 'Degree', 1, 9, 'chord tone = voicing root'], ['st', 'register', 'Register', 1, 6, 'octave'],
         ['sub', 'Progression', 'When an Area progression is set: the drone plays voicings of the current chord.'], ['st', 'progSubdiv', 'Subdivide', 1, 16, 'voicings / area chord'], ['progfeel'], ['sl', 'voiceVariety', 'Variety', 0, 100, 'plain → colorful'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit', 200, 8000, 50], ['speed'], ['sl', 'hold', 'Hold', 1, 16, 'units held before re-strike'], ['loop'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
+        ['grp', 'Variance'], ['sl', 'timeVary', 'Time vary', 0, 100, 'strike-timing wobble'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave / degree drift'],
         ..._AMB_MIX] },
     };
     // Default-open groups; the rest start collapsed. Remembered per layer in
@@ -17263,6 +17265,39 @@
           '<div class="ambient-euclid-presetrow"><select id="' + p + '-euclidpreset" class="ambient-select ambient-euclid-preset" title="Load a rhythm preset (world / rock / African / clave) into the step grid">' + _ambEuclidPresetOptions() + '</select></div>' +
           '<div class="ambient-euclid-grid" id="' + p + '-euclidgrid"></div>' +
         '</div></div>';
+      // KEY group (Option C): surface the per-layer KEY override (layer.keyOv —
+      // engine support pre-existed; this is its card UI). Inherit = the area's
+      // frame (key or global prog); Key = this layer pins its own root+scale;
+      // Progression = this layer follows its OWN changes (the ✎ editor writes
+      // keyOv via _ambOpenProgEditor scope:'layer'). All controls carry
+      // data-kokey (canonical colon key) and wire DELEGATED on the host — one
+      // handler covers primaries + extras (no per-card bind; the seedmode
+      // pattern, which also dodges the primary-bind gotcha). The scale select
+      // is populated LAZILY on first pointerdown (the grouped catalog needs a
+      // live DOM node).
+      if (k === 'keyov') {
+        const kk = (lk === type) ? type : (type + ':' + lk.slice(type.length + 1));
+        const ko = (inst && inst.keyOv) || null;
+        const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog')) ? ko.mode : '';
+        const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const root = (ko && ko.mode === 'key') ? ((((ko.root | 0) % 12) + 12) % 12) : (((typeof rootIdx === 'number' ? rootIdx : 0) % 12) + 12) % 12;
+        const scale = (ko && ko.mode === 'key' && ko.scale) ? ko.scale : 'major';
+        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes' };
+        return '<div class="ambient-ctrl"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
+          '<select class="ambient-select amb-keyov-mode" data-kokey="' + kk + '" title="The layer’s harmonic frame: Inherit = the Area’s key / progression; Key = pin this layer to its own root + scale; Progression = this layer follows its own chord changes">' +
+            '<option value=""' + (mode === '' ? ' selected' : '') + '>Inherit</option>' +
+            '<option value="key"' + (mode === 'key' ? ' selected' : '') + '>Key</option>' +
+            '<option value="prog"' + (mode === 'prog' ? ' selected' : '') + '>Progression</option>' +
+          '</select><span class="ambient-hint amb-keyov-hint" data-kokey="' + kk + '">' + hints[mode] + '</span></div>' +
+          '<div class="ambient-ctrl amb-keyov-keyrow" data-kokey="' + kk + '"' + (mode === 'key' ? '' : ' hidden') + '><label>Root · Scale</label>' +
+            '<span class="ambient-seg-row amb-keyov-pair">' +
+              '<select class="ambient-select amb-keyov-root" data-kokey="' + kk + '">' + NOTE.map((n, i) => '<option value="' + i + '"' + (i === root ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>' +
+              '<select class="ambient-select amb-keyov-scale" data-kokey="' + kk + '" data-cur="' + scale + '"><option value="' + scale + '" selected>' + scale + '</option></select>' +
+            '</span></div>' +
+          '<div class="ambient-ctrl amb-keyov-progrow" data-kokey="' + kk + '"' + (mode === 'prog' ? '' : ' hidden') + '><label>Chords</label>' +
+            '<button type="button" class="ambient-regen amb-keyov-edit" data-kokey="' + kk + '">✎ Edit</button>' +
+            '<span class="ambient-hint amb-keyov-pname">' + ((ko && ko.mode === 'prog' && ko.name) ? ko.name : '') + '</span></div>';
+      }
       if (k === 'rate') return _ambRateSel(p + '-rate');
       // Seed mode (Generate/Author) carries the CANONICAL layer key so the handler's
       // _ambLayerByKey/_ambSeedPreview + piano [data-pkey] queries resolve. Primaries
@@ -17364,23 +17399,31 @@
     function _ambPrimaryCardBody(type, inst) {
       const sch = _AMB_LAYER_SCHEMA[type]; if (!sch) return '';
       const p = 'ambient-' + type, lk = type; inst = inst || {};
-      let html = '', grpOpen = false;
+      let html = '', grpOpen = false, subOpen = false;
       // Kit-voice drum picker (the schema carries no single-drum control) —
       // mirrors the extras card injection. For a Beat, no Voices row (its schema
       // already has euclidVoices).
       if (_ambVoiceOf(inst, type) === 'kit') html += _ambDrumPickHtml(inst, p, type !== 'beat');
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
+          if (subOpen) { html += '</div>'; subOpen = false; }
           if (grpOpen) html += '</div></div>';
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
             '<button type="button" class="ambient-grp-head" data-grp="' + name + '">' + name +
             '<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">';
           grpOpen = true;
+        } else if (c[0] === 'sub') {
+          // A sub-block WRAPS its rows (until the next grp/sub) so visibility
+          // gates can target the whole block (e.g. _ambSyncProgVis).
+          if (subOpen) html += '</div>';
+          html += '<div class="ambient-subblk" data-sub="' + c[1] + '">' + _ambCtrlHtml(c, p, lk, inst, type);
+          subOpen = true;
         } else {
           html += _ambCtrlHtml(c, p, lk, inst, type);
         }
       });
+      if (subOpen) html += '</div>';
       if (grpOpen) html += '</div></div>';
       html += _ambLayerRampsHtml(type);   // per-layer Ramps (filled by _ambRenderRamps)
       return html;
@@ -17402,20 +17445,23 @@
       // in the schema open each one). If a schema has no markers, controls fall
       // into an implicit ungrouped bucket that's always shown.
       let grpOpen = false;        // is a group <div> currently open?
+      let subOpen = false;        // is a sub-block <div> currently open?
       const ctrlHtml = (c) => _ambCtrlHtml(c, p, lk, inst, type);
       // A Kit or Sample voice has no scale/pitch material: hide the synth instrument
-      // (`tone`) and the whole Seed group (notes/register/…), so the card
-      // shows only what that render uses.
+      // (`tone`) and the whole Seed group (notes/register/…) — and the Key group
+      // (no harmonic frame to inherit) — so the card shows only what that render uses.
       const kitVoice = ['kit', 'sample'].indexOf(_ambVoiceOf(inst, type)) >= 0;
       let skipGroup = false;
       sch.ctrls.forEach(c => {
         if (c[0] === 'grp') {
+          if (subOpen) { html += '</div>'; subOpen = false; }
           if (grpOpen) html += '</div></div>';   // close prior group body + wrapper
           grpOpen = false;
           // Beat is exempt: its Seed group IS the rhythm generator (Mode toggle,
           // euclid knobs, the Pattern grid) — not pitch material. Dropping it left
           // the extras Beat card with no way to reach Program/euclid at all.
-          if (kitVoice && c[1] === 'Seed' && type !== 'beat') { skipGroup = true; return; }
+          // (Key has no such exemption — a kit layer has no harmonic frame.)
+          if (kitVoice && ((c[1] === 'Seed' && type !== 'beat') || c[1] === 'Key')) { skipGroup = true; return; }
           skipGroup = false;
           const name = c[1], open = _ambGroupOpen(inst, name);
           html += '<div class="ambient-grp' + (open ? ' open' : '') + '" data-grp="' + name + '">' +
@@ -17423,12 +17469,20 @@
             '<span class="ambient-grp-caret" aria-hidden="true"></span></button>' +
             '<div class="ambient-grp-body">';
           grpOpen = true;
+        } else if (c[0] === 'sub') {
+          if (skipGroup) return;
+          // A sub-block WRAPS its rows (until the next grp/sub) so visibility
+          // gates can target the whole block (e.g. _ambSyncProgVis).
+          if (subOpen) html += '</div>';
+          html += '<div class="ambient-subblk" data-sub="' + c[1] + '">' + ctrlHtml(c);
+          subOpen = true;
         } else {
           if (skipGroup) return;
           if (kitVoice && c[0] === 'tone') return;
           html += ctrlHtml(c);
         }
       });
+      if (subOpen) html += '</div>';
       if (grpOpen) html += '</div></div>';
       html += _ambLayerRampsHtml(fkey);   // per-layer Ramps (filled by _ambRenderRamps)
       // Per-layer Reset — restores every group to its default fold state.
@@ -20047,6 +20101,76 @@
           if (typeof persistWorkspace === 'function') persistWorkspace();
           try { _ambUpdateNotesLive(E); } catch (e2) {}
         } catch (err) { console.warn('Harmony change failed', err); }
+      });
+      // KEY-group (keyOv) delegated wiring — one set of handlers for primaries +
+      // extras (controls carry data-kokey). Mutations persist, refresh the row
+      // states in place, and re-anchor the layer live so the frame change lands
+      // on the next unit.
+      const _koLayer = (kk) => _ambLayerByKey(E, kk);
+      const _koRefresh = (kk) => {
+        const L = _koLayer(kk); const ko = (L && L.keyOv) || null;
+        const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog')) ? ko.mode : '';
+        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes' };
+        host.querySelectorAll('.amb-keyov-mode[data-kokey="' + kk + '"]').forEach(s => { if (document.activeElement !== s) s.value = mode; });
+        host.querySelectorAll('.amb-keyov-hint[data-kokey="' + kk + '"]').forEach(h => { h.textContent = hints[mode]; });
+        host.querySelectorAll('.amb-keyov-keyrow[data-kokey="' + kk + '"]').forEach(r => { r.hidden = (mode !== 'key'); });
+        host.querySelectorAll('.amb-keyov-progrow[data-kokey="' + kk + '"]').forEach(r => {
+          r.hidden = (mode !== 'prog');
+          const nm = r.querySelector('.amb-keyov-pname'); if (nm) nm.textContent = (ko && ko.mode === 'prog' && ko.name) ? ko.name : '';
+        });
+      };
+      const _koApply = (kk) => {
+        if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e2) {} }
+        if (E.timer) { try { _ambReanchorLayer(E, kk); } catch (e2) {} }
+        _koRefresh(kk);
+      };
+      // Lazy-populate the grouped scale catalog on first open (pointerdown fires
+      // before the native dropdown builds, so the options are ready in time).
+      host.addEventListener('pointerdown', (e) => {
+        const sel = e.target && e.target.closest && e.target.closest('.amb-keyov-scale');
+        if (!sel || sel.options.length > 1) return;
+        const cur = sel.dataset.cur || 'major';
+        try { sel.innerHTML = ''; populateGroupedScaleSelect(sel); sel.value = cur; if (sel.value !== cur) sel.value = 'major'; } catch (e2) {}
+      });
+      host.addEventListener('change', (e) => {
+        const t = e.target;
+        const md = t && t.closest && t.closest('.amb-keyov-mode');
+        if (md) {
+          const kk = md.dataset.kokey; const L = _koLayer(kk); if (!L) return;
+          _E = E;
+          if (md.value === 'key') {
+            const row = host.querySelector('.amb-keyov-keyrow[data-kokey="' + kk + '"]');
+            const rs = row && row.querySelector('.amb-keyov-root'), ss = row && row.querySelector('.amb-keyov-scale');
+            L.keyOv = { mode: 'key', root: rs ? (rs.value | 0) : 0, scale: (ss && ss.value) || 'major' };
+            _koApply(kk);
+          } else if (md.value === 'prog') {
+            // Don't write an empty prog override (normalize would drop it) —
+            // the editor's apply writes keyOv; a cancel falls back to reality.
+            try { _ambOpenProgEditor(E, { scope: 'layer', getLayer: () => _koLayer(kk), after: () => _koApply(kk) }); } catch (e2) {}
+            setTimeout(() => _koRefresh(kk), 250);
+          } else {
+            delete L.keyOv;
+            _koApply(kk);
+          }
+          return;
+        }
+        const rt = t && t.closest && t.closest('.amb-keyov-root, .amb-keyov-scale');
+        if (rt) {
+          const kk = rt.dataset.kokey; const L = _koLayer(kk); if (!L) return;
+          _E = E;
+          if (!L.keyOv || L.keyOv.mode !== 'key') return;
+          if (rt.classList.contains('amb-keyov-root')) L.keyOv.root = (rt.value | 0);
+          else L.keyOv.scale = rt.value || 'major';
+          _koApply(kk);
+        }
+      });
+      host.addEventListener('click', (e) => {
+        const eb = e.target && e.target.closest && e.target.closest('.amb-keyov-edit');
+        if (!eb) return;
+        e.stopPropagation();
+        const kk = eb.dataset.kokey;
+        _E = E;
+        try { _ambOpenProgEditor(E, { scope: 'layer', getLayer: () => _koLayer(kk), after: () => _koApply(kk) }); } catch (err) { console.warn('Layer prog edit failed', err); }
       });
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).

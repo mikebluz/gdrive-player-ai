@@ -3556,6 +3556,11 @@
        self-overflows inside an auto-sized flex row); pushes right beside ↺. */
     .ambient-roll-harm { width: 108px; margin-left: auto; font-size: 0.62rem; padding: 1px 4px; }
     .ambient-roll-harm:not([hidden]) ~ .ambient-roll-revert { margin-left: 0; }
+    /* KEY group Root·Scale pair — explicit widths (same self-overflow trap). */
+    .amb-keyov-pair { display: inline-flex; gap: 6px; min-width: 0; }
+    .amb-keyov-pair .amb-keyov-root { width: 58px; }
+    .amb-keyov-pair .amb-keyov-scale { width: 128px; min-width: 0; }
+    .amb-keyov-keyrow[hidden], .amb-keyov-progrow[hidden] { display: none !important; }
     .ambient-roll-bar [hidden] { display: none !important; }
     .ambient-roll-pager[hidden], .ambient-roll-revert[hidden] { display: none !important; }
     /* Vertical roll (layers with a piano): time flows DOWN inside a scrolling

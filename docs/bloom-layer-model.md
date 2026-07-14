@@ -122,6 +122,15 @@ event). Bed's Monk-voicing and a hand-drawn chord are the same kind of object.
 `level`, `pan/space`, `mod` (VCA/VCO/VCF + shapes), `fx` (reverb/delay/dist/chorus/
 phaser/autopan), `tg` (trance gate), `areaFadeMs`, `portamento`, `fine`, `when`.
 
+*Card UI landed (2026-07-14):* every layer card now reads in axis order —
+**Instrument · Key · Seed · Timing · Variance · FX / Mix** (renamed from
+Voice/Variation/Mix). The **Key** group surfaces the pre-existing `layer.keyOv`:
+Inherit (the Area's frame) / Key (own root+scale, grouped scale catalog) /
+Progression (✎ opens the layer prog editor, whose apply writes keyOv). Hidden for
+kit/sample-voice extras (no harmonic frame). The Bed/Drone Progression sub-block
+(inside Seed) is gated by `_ambSyncProgVis` on the area prog, via the `sub`-token
+wrapper (`data-sub`).
+
 ## 3. Progressions vs parts (authoring)
 
 A "chord progression" is a **narrow, specific** kind of material (a clear series of

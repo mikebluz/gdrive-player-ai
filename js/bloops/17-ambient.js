@@ -4747,7 +4747,10 @@
                 // Beat (explicit single drum, random-per-hit at V=1, or auto-kit slot).
                 const pc = inst.euclidKit ? _ambLaneDrumPc(inst, v)
                   : ((inst.drum != null) ? (inst.drum | 0) : ((V === 1) ? _ambPickDrumPc() : VDRUM[v]));
-                let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { continue; }
+                // Per-step Pitch: absolute semitone tune of this hit (atonal — a
+                // fixed offset, not progression-aware). 0 → same freq as before.
+                const stPitch = sfx ? (sfx.pitch | 0) : 0;
+                let f; try { f = Tone.Frequency(36 + pc + stPitch, 'midi').toFrequency(); } catch (e) { continue; }
                 const rat = sfx ? sfx.rat : 1;
                 const ratSpace = _ambRatSpacingSec(rat, sfx ? (sfx.ratd | 0) : 0, slotSec, slotSec * steps);
                 const velS = sfx ? sfx.vel / 100 : 1, lenS = sfx ? sfx.len / 100 : 1;
@@ -4761,7 +4764,7 @@
                   if (_ambBeatIsSynth(inst)) {
                     const _r = Math.max(0, _AMB_VDRUM.indexOf(pc));
                     const _vol = Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * velS));
-                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, stPan);
+                    _ambPlaySynthDrum(_E, dest, inst, _r, rAt, _vol, dmod, stPan, stPitch);
                     ctx.cap++;
                     continue;
                   }
@@ -5862,7 +5865,7 @@
     }
     // Play a synthesized drum: a pitched BODY voice (with the type\'s own transient/
     // pitch-drop) layered with a filtered NOISE burst, mixed by `noise`. `role` 0-7.
-    function _ambPlaySynthDrum(E, dest, inst, role, at, vol, dmod, pan) {
+    function _ambPlaySynthDrum(E, dest, inst, role, at, vol, dmod, pan, stPitch) {
       const rec = _ambSynthVoiceOf(inst, role); if (!rec) return;
       // Record the hit (role + scheduled time) so the synth-kit editor can flash
       // the voice as it plays. Kept short — a rolling window, pruned to 32.
@@ -5876,7 +5879,10 @@
       const mTune = Math.max(-24, Math.min(24, mac.tune | 0));
       const mDecay = Math.max(25, Math.min(400, (mac.decay | 0) || 100)) / 100;
       const mGrit = Math.max(-100, Math.min(100, mac.grit | 0));
-      const tune = Math.max(20, Math.min(8000, Math.round((rec.tune | 0) * Math.pow(2, mTune / 12))));
+      // Per-step semitone offset (Drum-lanes step Pitch) rides on the kit macro
+      // tune — 0 → identical to before, so untouched steps are byte-identical.
+      const sTune = Math.max(-24, Math.min(24, stPitch | 0));
+      const tune = Math.max(20, Math.min(8000, Math.round((rec.tune | 0) * Math.pow(2, (mTune + sTune) / 12))));
       const decay = Math.max(15, Math.min(3000, Math.round((rec.decay | 0) * mDecay)));
       const noise = Math.max(0, Math.min(100, (rec.noise | 0) + mGrit));
       const bright = Math.max(200, Math.min(18000, rec.bright | 0));
@@ -6065,15 +6071,18 @@
       if (ratd > 0 && barSec > 0) return barSec / ratd;
       return slotSec / Math.max(1, rat);
     }
-    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0 };
+    // `pitch` = per-step semitone offset (± st) applied ABSOLUTELY to the drum's
+    // MIDI note (a tuned kick / pitched tom), NOT degree/progression-aware — drums
+    // are atonal, so a step tune is a fixed offset, not a scale move.
+    const _AMB_STEP_FX_DEF = { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0, pitch: 0 };
     function _ambStepFxGet(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, ratd: (e.ratd | 0) || 0, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0) }
-               : { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0 };
+      return e ? { vel: (e.vel != null ? e.vel : 100), len: (e.len != null ? e.len : 100), rat: (e.rat | 0) || 1, ratd: (e.ratd | 0) || 0, prob: (e.prob != null ? e.prob : 100), pan: (e.pan != null ? e.pan : 0), pitch: (e.pitch | 0) || 0 }
+               : { vel: 100, len: 100, rat: 1, ratd: 0, prob: 100, pan: 0, pitch: 0 };
     }
     function _ambStepFxCustom(pg, v, i) {
       const e = pg && pg.fx && pg.fx[v + ':' + i];
-      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || ((e.ratd | 0) > 0) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0)));
+      return !!(e && ((e.vel != null && e.vel !== 100) || (e.len != null && e.len !== 100) || ((e.rat | 0) > 1) || ((e.ratd | 0) > 0) || (e.prob != null && e.prob !== 100) || (e.pan != null && e.pan !== 0) || ((e.pitch | 0) !== 0)));
     }
     function _ambStepFxSet(pg, v, i, patch) {
       if (!pg) return;
@@ -6084,7 +6093,8 @@
       cur.ratd = (_AMB_RAT_DIV_VALS.indexOf(cur.ratd | 0) >= 0) ? (cur.ratd | 0) : 0;
       cur.prob = Math.max(0, Math.min(100, cur.prob | 0));
       cur.pan = Math.max(-100, Math.min(100, cur.pan | 0));
-      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0) { if (pg.fx) delete pg.fx[k]; }
+      cur.pitch = Math.max(-24, Math.min(24, cur.pitch | 0));
+      if (cur.vel === 100 && cur.len === 100 && cur.rat === 1 && cur.ratd === 0 && cur.prob === 100 && cur.pan === 0 && cur.pitch === 0) { if (pg.fx) delete pg.fx[k]; }
       else { if (!pg.fx) pg.fx = {}; pg.fx[k] = cur; }
     }
     // Edit-scope resolution — the (lane, step) cells the inspector's sliders act on.
@@ -6376,7 +6386,8 @@
                 if (e.rat != null) e.rat = Math.max(1, Math.min(8, e.rat | 0));
                 if (e.prob != null) e.prob = Math.max(0, Math.min(100, e.prob | 0));
                 if (e.pan != null) e.pan = Math.max(-100, Math.min(100, e.pan | 0));
-                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100) && (e.pan == null || e.pan === 0)) delete pg.fx[k];
+                if (e.pitch != null) e.pitch = Math.max(-24, Math.min(24, e.pitch | 0));
+                if ((e.vel == null || e.vel === 100) && (e.len == null || e.len === 100) && ((e.rat | 0) <= 1) && (e.prob == null || e.prob === 100) && (e.pan == null || e.pan === 0) && ((e.pitch | 0) === 0)) delete pg.fx[k];
               }
               if (!Object.keys(pg.fx).length) delete pg.fx;
             } else if (pg.fx != null) delete pg.fx;
@@ -6629,6 +6640,7 @@
           '</div>' +
           sfxRow('Prob', 'prob', 0, 100, fx.prob, '%', 'Probability this step fires each pass (100 = always)') +
           sfxRow('Pan', 'pan', -100, 100, fx.pan, '', 'Stereo position (−100 = hard left, +100 = hard right)') +
+          sfxRow('Pitch', 'pitch', -24, 24, fx.pitch, ' st', 'Tune this hit up/down in semitones (0 = the drum’s natural pitch). Absolute — not tied to key or progression.') +
         '</div>';
       }
       return html;
@@ -6713,7 +6725,7 @@
         const d = _ambEuclidGridDims(L, type); if (!d) return;
         const pg = _ambEuclidPage(L), sfxKey = sl.dataset.sfx, val = parseInt(sl.value, 10);
         _ambEditScopeCells(L, d).forEach(({ v, i }) => _ambStepFxSet(pg, v, i, { [sfxKey]: val }));
-        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : (sfxKey === 'pan' ? '' : '%'));
+        const rv = grid.querySelector('.ambient-step-fx-v[data-sfxv="' + sfxKey + '"]'); if (rv) rv.textContent = val + (sfxKey === 'rat' ? '×' : (sfxKey === 'pitch' ? ' st' : (sfxKey === 'pan' ? '' : '%')));
         markScopeFx(L, d, pg); persist();
       });
       // Ratchet-rate + Fill <select> (delegated change).

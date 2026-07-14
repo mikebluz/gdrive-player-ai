@@ -135,6 +135,66 @@
               ] }, passes: 1, dir: 'up' }];
               c.extras = [L]; c.barsPerChord = 1;
           }) },
+          // ---- KEY-axis pins (added pre-migration, 2026-07-14): lock the existing
+          // keyOv / keyModeRot / variable-bars / seq-harmony behavior BEFORE the
+          // degree-storage migration (Option C) touches any of these paths. ----
+          // Per-layer KEY override, mode 'key': a riff pinned to D minor while the
+          // area stays on the default key — pins the keyOv 'key' branch of _ambNotesOf.
+          { name: 'keyov-key', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('run', 1);
+              L.keyOv = { mode: 'key', root: 2, scale: 'minor' };
+              c.extras = [L];
+          }) },
+          // Per-layer KEY override, mode 'prog': a riff following its OWN I-IV
+          // progression — pins the keyOv 'prog' branch (a per-layer moving key).
+          { name: 'keyov-prog', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('run', 1);
+              L.keyOv = { mode: 'prog', name: 'I-IV', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] },
+              ] };
+              c.extras = [L]; c.barsPerChord = 1;
+          }) },
+          // AREA-level relative mode (keyModeRot) cascading to inheriting layers —
+          // the area-side twin of mode-relminor (which sets per-layer modeRot).
+          { name: 'key-modrot-area', cfg: mk((c) => {
+              c.bed.on = true; c.motif.on = true;
+              c.keyOn = true; c.keyFollow = false; c.keyRoot = 0; c.keyScale = 'major';
+              c.keyModeRot = 5;
+          }) },
+          // Variable-length chords: per-chord `bars` (2 + 1 + 0.5) on the GLOBAL
+          // prog — pins the cumulative lens[] walk in _ambProgStepAt (vs the
+          // uniform fast path). NOTE: `bars` only engages on cfg.prog today —
+          // _ambProgStepAt reads cfg.prog.chords for lengths, so a per-LAYER
+          // prog's `bars` are silently uniform (found while pinning, 2026-07-14;
+          // the KEY consolidation should unify this).
+          { name: 'prog-varbars', cfg: mk((c) => {
+              c.bed.on = false;
+              c.extras = [_ambDefaultLayer('bass', 1)];   // default notes {scale:''} → inherits the global prog
+              c.barsPerChord = 1;
+              c.prog = { on: true, name: 'varbars', chords: [
+                { root: 0, intervals: [0, 4, 7], bars: 2 }, { root: 5, intervals: [0, 4, 7], bars: 1 }, { root: 7, intervals: [0, 4, 7], bars: 0.5 },
+              ] };
+          }) },
+          // Seq Harmony 'diatonic' under a detached G-major area key — pins the
+          // capture-root→current-root transpose + scale snap in _ambSeqHarmonizeFreqs.
+          { name: 'seq-diatonic', cfg: mk((c) => {
+              c.bed.on = false;
+              const s = _defaultSeqLayer(1); s.units = [seqUnit()]; s.on = true; s.harmony = 'diatonic';
+              c.seqs = [s];
+              c.keyOn = true; c.keyFollow = false; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'transpose';
+          }) },
+          // Seq Harmony 'chordlock' following its own I-IV-V keyOv progression —
+          // pins the chord-tone snap + missing-tone borrow (default revoice smooth).
+          { name: 'seq-chordlock', cfg: mk((c) => {
+              c.bed.on = false;
+              const s = _defaultSeqLayer(1); s.units = [seqUnit()]; s.on = true; s.harmony = 'chordlock';
+              s.keyOv = { mode: 'prog', name: 'I-IV-V', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
+              ] };
+              c.seqs = [s]; c.barsPerChord = 1;
+          }) },
         ];
       }
 
@@ -249,6 +309,14 @@
         'prog-bass':     { hash: 'c6987a55', count: 32 },
         'prog-global':   { hash: 'c6987a55', count: 32 },
         'prog-arp':      { hash: 'be2ab3a6', count: 52 },   // 2026-07-12: pattern RESTART at each chord change (sweep from the top — classic arp; was 4d144e5a, cursor ran continuously through boundaries = per-bar pattern rotation)
+        // KEY-axis pins (2026-07-14, recorded pre-migration) — lock keyOv/keyModeRot/
+        // variable-bars/seq-harmony behavior before the degree-storage migration.
+        'keyov-key':       { hash: '40aa0745', count: 46 },
+        'keyov-prog':      { hash: '0c078c11', count: 46 },
+        'key-modrot-area': { hash: '9eedc324', count: 18 },
+        'prog-varbars':    { hash: '5b83b2e3', count: 32 },
+        'seq-diatonic':    { hash: 'e31a6dbb', count: 38 },
+        'seq-chordlock':   { hash: 'c90d8daf', count: 38 },
       };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}

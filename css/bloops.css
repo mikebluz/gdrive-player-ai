@@ -3552,6 +3552,10 @@
     .ambient-roll-btn:hover { color: #e2e8f0; border-color: #4a5568; }
     .ambient-roll-revert { margin-left: auto; color: #ffd479; border-color: rgba(255, 212, 121, 0.4); }
     .ambient-roll-revert:hover { color: #ffe4a8; border-color: rgba(255, 212, 121, 0.7); }
+    /* Harmony select — explicit width (an .ambient-select is width:100%, which
+       self-overflows inside an auto-sized flex row); pushes right beside ↺. */
+    .ambient-roll-harm { width: 108px; margin-left: auto; font-size: 0.62rem; padding: 1px 4px; }
+    .ambient-roll-harm:not([hidden]) ~ .ambient-roll-revert { margin-left: 0; }
     .ambient-roll-bar [hidden] { display: none !important; }
     .ambient-roll-pager[hidden], .ambient-roll-revert[hidden] { display: none !important; }
     /* Vertical roll (layers with a piano): time flows DOWN inside a scrolling

@@ -2653,6 +2653,10 @@
     // never clobbers it. Coerced here; an invalid/empty override drops to Inherit.
     function _ambNormalizeKeyOv(layer) {
       if (!layer || typeof layer !== 'object') return;
+      // Option C: per-layer Harmony (locked/authored phrases). Additive — kept
+      // OUT of layer defaults (backfill trap); absent = Fixed. 'fixed' is kept
+      // (seq layers default to it explicitly); anything else invalid drops.
+      if (layer.harmony != null && layer.harmony !== 'fixed' && layer.harmony !== 'diatonic' && layer.harmony !== 'chordlock') delete layer.harmony;
       const ko = layer.keyOv;
       if (!ko || typeof ko !== 'object') { if ('keyOv' in layer) delete layer.keyOv; return; }
       if (ko.mode === 'prog') {
@@ -3755,11 +3759,13 @@
       const st = E && E.unit && E.unit[key];
       if (!st || !st.lock || !Array.isArray(st.notes) || !st.notes.length) return false;
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
+      const lyr = _ambLayerByKey(E, key);   // Harmony remap (fixed/absent → passthrough)
       st.notes.forEach(nt => {
         if (!(nt.freq > 0)) return;
         const params = Object.assign({}, nt.params);
         if (dmod) params._detuneMod = dmod;
-        try { playNote(nt.freq, params, nt.durMs, at + (nt.off || 0), dest, undefined, _E.laneIdx()); } catch (e) {}
+        const f = _ambLockHarmonizeFreq(lyr, st.keyCtx, nt.freq, at + (nt.off || 0));
+        try { playNote(f, params, nt.durMs, at + (nt.off || 0), dest, undefined, _E.laneIdx()); } catch (e) {}
       });
       // Record the replay too, so on UNLOCK the readout keeps showing this (still
       // sounding) locked unit until it ends, then picks up freshly generated units.
@@ -3948,7 +3954,7 @@
         return false;
       }
       if (!E.unit) E.unit = {};
-      E.unit[key] = { lock: true, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+      E.unit[key] = { lock: true, keyCtx: _ambCurKeyCtx(E), notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
       return true;
     }
     // Update every Drift slider's readout within E's panel (step-div in Sync,
@@ -7170,6 +7176,37 @@
         });
       });
     }
+    // The key frame a lock/authored phrase is captured IN (the area's effective
+    // key at capture time) — snapshotted onto the lock store so Harmony remap
+    // has a stable transposition/degree anchor across key changes and reloads.
+    function _ambCurKeyCtx(E) {
+      try {
+        const cfg = (E && (E._cfg || (E.getCfg && E.getCfg()))) || _ambKeyCfg();
+        if (!cfg) return null;
+        return { root: _ambKeyRootPc(cfg), scale: _ambKeyScaleName(cfg) };
+      } catch (e) { return null; }
+    }
+    // Per-onset Harmony remap for LOCKED/AUTHORED phrase notes (Option C, doc §2 —
+    // "a fixed-pitch phrase carries a Harmony toggle"). Reuses the seq machinery:
+    // keyCtx = the key snapshotted when the phrase was locked (the capture frame);
+    // L.harmony = fixed (absent → passthrough, byte-identical) / diatonic /
+    // chordlock, resolved against the layer's own effective notes source
+    // (_ambNotesOf → keyOv / global prog), so a chordlocked phrase comps the
+    // layer's changes. Degrees are derived ON THE FLY from freq+keyCtx — never
+    // stored on lock notes, because the roll editors mutate n.freq in place and
+    // stored degrees would go stale at every edit site. Locks without keyCtx
+    // (pre-feature captures) pass through untouched — lossless by construction.
+    function _ambLockHarmonizeFreq(L, keyCtx, freq, atSec) {
+      const mode = (L && L.harmony) || 'fixed';
+      if (mode !== 'diatonic' && mode !== 'chordlock') return freq;
+      if (!(freq > 0) || !keyCtx || !Number.isFinite(keyCtx.root)) return freq;
+      try {
+        const u = { events: [{ freqs: [freq] }], rootIdx: keyCtx.root, scale: keyCtx.scale || '' };
+        _ambSeqDeriveDegs(u);
+        const out = _ambSeqHarmonizeFreqs([freq], u, L, atSec, u.events[0].degs);
+        return (out && out[0] > 0) ? out[0] : freq;
+      } catch (e) { return freq; }
+    }
     // B4: apply a seq's Harmony mode to a captured phrase's frequencies. 'fixed'
     // returns them untouched (byte-identical). All others first transpose each note
     // by the interval from the unit's CAPTURED key root to the CURRENT key root
@@ -10111,6 +10148,7 @@
       if (!win.length) { st.pendingFreezeAt = null; st._lock = false; st._lockWin = null; return false; }
       st.events = win.map(e => ({ t: Math.max(0, e.at - w.bStart), freq: e.freq, dur: e.dur, params: e.params }));
       st.loopLen = w.loopLen;
+      st.keyCtx = _ambCurKeyCtx(E);   // the capture frame — anchors any later Harmony remap
       // Bar-Lock: anchor the loop at the captured window's END and cancel the layer's
       // pre-scheduled (lookahead) generated voices past it, so the verbatim loop takes
       // over with NO gap and NO doubled generated+looped notes at the handoff. (User
@@ -10414,13 +10452,14 @@
       // left locked layers dark and empty-rolled.
       const prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : null;
       if (typeof window !== 'undefined') window._ambCaptureSink = _ambCapSink(E, key);
+      const lyr = _ambLayerByKey(E, key);   // Harmony remap (fixed/absent → passthrough)
       try {
         while (guard++ < 4096) {
           const base = A + k * L;
           if (base >= horizon) break;
           for (const e of st.events) {
             const at = base + e.t;
-            if (at >= from && at < horizon) { try { playNote(e.freq, e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
+            if (at >= from && at < horizon) { try { playNote(_ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at), e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
           }
           k++;
         }
@@ -13026,6 +13065,9 @@
               '<span class="ambient-roll-plabel"></span>' +
               '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-next" data-rkey="' + key + '" title="Next unit">▶</span>' +
             '</span>' +
+            '<select class="ambient-select ambient-roll-harm" data-hkey="' + key + '" hidden title="Harmony — how this phrase relates to the key and chords: Fixed = the exact captured pitches; Diatonic = follows key changes by scale degree; Chord-locked = re-anchors each degree to the current chord (needs a progression)">' +
+              '<option value="">Fixed</option><option value="diatonic">Diatonic</option><option value="chordlock">Chord-locked</option>' +
+            '</select>' +
             '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-revert" data-rkey="' + key + '" hidden title="Discard the edited phrase — back to live generation">↺ Original</span>' +
           '</div>' +
           (_hasPiano
@@ -13080,6 +13122,18 @@
           if (tag) tag.textContent = (el._mode === 'seedroll') ? 'seed' : (seedEdited ? 'edited seed' : 'frozen');
           const rv = el.querySelector('.ambient-roll-revert');
           if (rv) rv.hidden = !seedEdited;
+          // Harmony select (Option C): pickable on any editable roll — a seed
+          // preview promotes on change (which stamps keyCtx); a pre-keyCtx lock
+          // can't remap, so hide it there. Live-readout guard: don't stomp an
+          // open pick (the select-as-readout gotcha).
+          const hs = el.querySelector('.ambient-roll-harm');
+          if (hs) {
+            const kc = (E.freeze && E.freeze[key] && E.freeze[key].keyCtx) || (E.unit && E.unit[key] && E.unit[key].keyCtx) || null;
+            hs.hidden = (el._mode === 'lockroll' && !kc);
+            const L3 = _ambLayerByKey(E, key);
+            const hv = (L3 && (L3.harmony === 'diatonic' || L3.harmony === 'chordlock')) ? L3.harmony : '';
+            if (hs.value !== hv && document.activeElement !== hs) hs.value = hv;
+          }
           if (cv && !playing) { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
         }
         const npHtml = npSeg(curNames);
@@ -13596,7 +13650,7 @@
       const pv = E.seedPv && E.seedPv[key];
       if (!pv || !Array.isArray(pv.events) || !pv.events.length) return false;
       const layer = _ambLayerByKey(E, key); if (!layer) return false;
-      layer.lockState = { kind: 'loop', seedEdit: true, loopLen: pv.loopLen || 1,
+      layer.lockState = { kind: 'loop', seedEdit: true, loopLen: pv.loopLen || 1, keyCtx: _ambCurKeyCtx(E),
         notes: pv.events.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })) };
       try { _ambRestoreLocks(E); } catch (e) {}
       delete E.seedPv[key];
@@ -13654,14 +13708,14 @@
       // layer's lock is a frozen loop → save as 'loop'. Branch on the live store.
       const u = E.unit && E.unit[key];
       if (u && u.lock && Array.isArray(u.notes) && u.notes.length) {
-        layer.lockState = { kind: 'unit', notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+        layer.lockState = { kind: 'unit', keyCtx: u.keyCtx || null, notes: u.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
         return;
       }
       const fs = E.freeze && E.freeze[key];
       if (fs && fs.frozen && fs._lock && Array.isArray(fs.events) && fs.events.length) {
         // seedEdit marks a lock created by editing the SEED PREVIEW (not a live
         // freeze) — it drives the "↺ Original" revert affordance across reloads.
-        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
+        layer.lockState = { kind: 'loop', loopLen: fs.loopLen || 0, seedEdit: !!fs._seedEdit, keyCtx: fs.keyCtx || null, notes: fs.events.map(e => ({ freq: e.freq, t: e.t, dur: e.dur, params: Object.assign({}, e.params) })) };
         return;
       }
       delete layer.lockState;
@@ -13680,11 +13734,11 @@
         if (ls.kind === 'unit') {                                      // single Bed/Motif unit
           if (E.unit && E.unit[key] && E.unit[key].lock) return;       // runtime wins
           E.unit = E.unit || {};
-          E.unit[key] = { lock: true, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
+          E.unit[key] = { lock: true, keyCtx: ls.keyCtx || null, notes: ls.notes.map(n => ({ freq: n.freq, off: n.off, durMs: n.durMs, params: Object.assign({}, n.params) })) };
         } else {                                                       // frozen loop (multi-unit / other layers)
           if (E.freeze && E.freeze[key] && E.freeze[key].frozen) return; // runtime wins
           E.freeze = E.freeze || {};
-          E.freeze[key] = { frozen: true, _lock: true, _seedEdit: !!ls.seedEdit, recording: false, recStart: 0,
+          E.freeze[key] = { frozen: true, _lock: true, _seedEdit: !!ls.seedEdit, keyCtx: ls.keyCtx || null, recording: false, recStart: 0,
             events: ls.notes.map(n => ({ t: n.t, freq: n.freq, dur: n.dur, params: Object.assign({}, n.params) })),
             loopLen: ls.loopLen || 0, anchor: 0, scheduledUpto: 0, pendingThawAt: null, pendingFreezeAt: null, _lockWin: null };
         }
@@ -19976,6 +20030,24 @@
           scBody.addEventListener('focusout', (ev) => { if (ev.target.closest && ev.target.closest('.ambient-sched-bars, .ambient-sched-times, .ambient-sched-subdiv')) { try { _ambRenderScheduler(E); } catch (e) {} } });
         }
       }
+      // Roll-bar Harmony select (Option C) — delegated change so it survives
+      // re-renders. Picking a mode on an unpromoted seed preview PROMOTES it
+      // first (same as an edit would), which stamps the keyCtx capture frame.
+      host.addEventListener('change', (e) => {
+        const hs = e.target && e.target.closest && e.target.closest('.ambient-roll-harm');
+        if (!hs) return;
+        const key = hs.dataset.hkey;
+        try {
+          _E = E;
+          if (!_ambLockMeta(E, key)) { _ambSeedPreview(E, key); _ambSeedPromote(E, key); }
+          const L = _ambLayerByKey(E, key); if (!L) return;
+          const v = hs.value;
+          if (v === 'diatonic' || v === 'chordlock') L.harmony = v; else delete L.harmony;
+          try { _ambReemitLockedNext(E, key); } catch (e2) {}   // apply on the next iteration
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+          try { _ambUpdateNotesLive(E); } catch (e2) {}
+        } catch (err) { console.warn('Harmony change failed', err); }
+      });
       // Per-layer Freeze button — one delegated handler (buttons get rebuilt as
       // dynamic layers re-render; data-fkey carries the layer key).
       host.addEventListener('click', (e) => {

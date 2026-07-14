@@ -271,6 +271,16 @@ unmappable feature → migration can be additive.
     legacy) and no-prog fall back to the Hz snap. CAVEAT the re-baseline exposed: the
     borrow walk reads the KEY scale, so a harness config pinning it must DETACH its
     key (keyFollow=false) — the original pin followed the live workspace scale.
+  - *Locked/authored phrases too (2026-07-14):* every lock store (`layer.lockState`,
+    `E.unit[key]`, `E.freeze[key]`) now snapshots `keyCtx {root, scale}` — the area's
+    effective key at capture — and any layer's locked/authored phrase carries the
+    same Harmony toggle (a select in the roll bar; picking a mode on an unpromoted
+    seed preview promotes it first). Replay remaps per onset via
+    `_ambLockHarmonizeFreq` → the shared seq machinery, resolving chordlock against
+    the layer's own effective source (keyOv / global prog). Degrees are derived ON
+    THE FLY from freq+keyCtx — deliberately NOT stored on lock notes, because the
+    roll editors mutate `n.freq` in place (stored degrees would go stale at every
+    edit site). Pre-feature locks have no keyCtx → permanently Fixed (lossless).
 - **Presets**: the Add-menu offers the 11 as presets; legacy layers show as their matched
   preset (or "Custom (from X)").
 - Every load path funnels through `_normalizeAmbientCfg` (the one migration chokepoint).

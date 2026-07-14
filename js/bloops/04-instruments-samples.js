@@ -3919,13 +3919,30 @@
           modulationEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
         }).connect(chainHead);
       } else if (type === 'kick') {
-        synth = new Tone.MembraneSynth({
+        // Synth drum kit (_drumKit flag): drive the body decay from the note's
+        // own decay param so the Decay control actually bites and voices sound
+        // distinct. Every other kick use keeps the fixed 0.4/1.4 envelope
+        // (golden-safe — no behaviour change off the drum-kit path).
+        synth = new Tone.MembraneSynth(params._drumKit ? {
+          pitchDecay: 0.032,
+          octaves: 10,
+          envelope: { attack: 0.001, decay: Math.max(0.03, env.decay), sustain: 0.001, release: Math.max(0.03, env.decay * 0.5) },
+        } : {
           pitchDecay: 0.05,
           octaves: 10,
           envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 },
         }).connect(chainHead);
       } else if (type === 'metal') {
-        synth = new Tone.MetalSynth({
+        // Synth drum kit: decay from the note param + resonance from the note's
+        // filterCutoff so Tune/Decay/Brightness controls bite. Fixed config off
+        // the drum-kit path stays byte-identical.
+        synth = new Tone.MetalSynth(params._drumKit ? {
+          harmonicity: 5.1,
+          modulationIndex: 32,
+          resonance: (Number.isFinite(params.filterCutoff) ? Math.max(200, Math.min(8000, params.filterCutoff)) : 4000),
+          octaves: 1.5,
+          envelope: { attack: 0.001, decay: Math.max(0.03, env.decay), release: Math.max(0.03, env.decay * 0.3) },
+        } : {
           harmonicity: 5.1,
           modulationIndex: 32,
           resonance: 4000,

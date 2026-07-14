@@ -5837,6 +5837,13 @@
     // pitch-drop) layered with a filtered NOISE burst, mixed by `noise`. `role` 0-7.
     function _ambPlaySynthDrum(E, dest, inst, role, at, vol, dmod, pan) {
       const rec = _ambSynthVoiceOf(inst, role); if (!rec) return;
+      // Record the hit (role + scheduled time) so the synth-kit editor can flash
+      // the voice as it plays. Kept short — a rolling window, pruned to 32.
+      if (inst && Number.isFinite(at)) {
+        const hits = inst._synthHits || (inst._synthHits = []);
+        hits.push({ role: role & 7, at: +at });
+        if (hits.length > 32) hits.splice(0, hits.length - 32);
+      }
       // Global macros shape the whole kit on top of the per-voice recipe.
       const mac = (inst && inst.synthKit && inst.synthKit.macros) || _ambSynthDefaultMacros();
       const mTune = Math.max(-24, Math.min(24, mac.tune | 0));
@@ -5852,7 +5859,7 @@
       const V = Math.max(1, Math.round(vol || 100));
       const mk = (type, freq, lvl, dec, cut) => {
         if (lvl < 1) return;
-        const p = { type: type, attack: 1, decay: dec, sustain: 0, release: Math.max(8, Math.round(dec * 0.4)), volume: Math.max(1, Math.round(lvl)), pan: pan | 0 };
+        const p = { type: type, attack: 1, decay: dec, sustain: 0, release: Math.max(8, Math.round(dec * 0.4)), volume: Math.max(1, Math.round(lvl)), pan: pan | 0, _drumKit: 1 };
         if (cut) p.filterCutoff = cut;
         if (dmod) p._detuneMod = dmod;
         try { playNote(freq, p, dec + 15, at, dest, undefined, E.laneIdx()); } catch (e) {}
@@ -5877,6 +5884,7 @@
       const sl = (cls, min, max, unit) => '<div class="ambient-ctrl"><label>' + cls.lab + '</label><input type="range" class="ambient-sk-' + cls.k + '" min="' + min + '" max="' + max + '" step="1"><span class="ambient-hint ambient-sk-' + cls.k + '-v"></span></div>';
       return '<div class="ambient-synthkit" style="display:none">' +
         '<div class="ambient-ctrl ambient-sk-head"><label title="A drum kit synthesized from scratch (no samples). Regen rolls a fresh kit from a new seed; edit each drum below.">Synth kit</label>' +
+          '<button type="button" class="ambient-seg ambient-sk-hear" title="Play the selected drum so you can hear it">▶ Hear</button>' +
           '<button type="button" class="ambient-seg ambient-sk-regen" title="Roll a new random kit (new seed)">↻ Regen voices</button>' +
           '<span class="ambient-hint ambient-sk-seed"></span></div>' +
         '<div class="ambient-sk-macros">' +
@@ -6043,14 +6051,22 @@
       if (!L || !L._selStep || typeof playNote !== 'function' || typeof Tone === 'undefined') return;
       try { if (Tone.start) Tone.start(); } catch (e) {}
       const v = L._selStep.v | 0, i = L._selStep.i | 0;
-      let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, L.lengthMs | 0), sfx = _ambStepFxGet(_ambEuclidPage(L), v, i);
-      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, Math.max(-100, Math.min(100, sfx.pan | 0))), L);
-      bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level) * (sfx.vel / 100)));
+      const _pan = Math.max(-100, Math.min(100, sfx.pan | 0));
       _E = E;
-      const dest = (E && E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
-      const at = (Tone.now ? Tone.now() : 0) + 0.03;
-      try { playNote(f, bp, lenMs * (sfx.len / 100), at, dest, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
+      const dest0 = (E && E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
+      const at0 = (Tone.now ? Tone.now() : 0) + 0.03;
+      // SYNTH kit: audition through the same recipe engine the sequencer uses,
+      // so the ▶ button previews the real voice (not a missing 'synth' sample).
+      if (_ambBeatIsSynth(L)) {
+        const _vol = Math.max(0, Math.round(_ambApplyLevel(100, L.level) * (sfx.vel / 100)));
+        _ambPlaySynthDrum(E, dest0, L, v, at0, _vol, _ambLayerDetuneMod(key), _pan);
+        return;
+      }
+      let f; try { f = Tone.Frequency(36 + _ambLaneDrumPc(L, v), 'midi').toFrequency(); } catch (e) { return; }
+      const bp = _ambApplyAdsr(_ambBeatParams(L.kit, lenMs, _pan), L);
+      bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, L.level) * (sfx.vel / 100)));
+      try { playNote(f, bp, lenMs * (sfx.len / 100), at0, dest0, undefined, (E && E.laneIdx) ? E.laneIdx() : -1); } catch (e) {}
     }
     // Re-fit every page's rows to the current Steps×Bars (preserves overlapping
     // edits; pads with silence). Run on a Steps/Bars change.
@@ -6211,6 +6227,17 @@
       try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { return; }
       const lenMs = Math.max(60, beat.lengthMs | 0);
       const pan = _ambLayerPan(beat);
+      // SYNTH kit: synthesize the drum from its recipe (was only wired into the
+      // euclid path — in random mode kit:'synth' built a nonexistent sample).
+      // Role = the picked drum (via _AMB_VDRUM). dmod computed below.
+      if (_ambBeatIsSynth(beat)) {
+        const _role = Math.max(0, _AMB_VDRUM.indexOf(pc));
+        const _dm = _ambLayerDetuneMod(key);
+        const _vol = Math.max(0, Math.round(_ambAccentVol(_ambApplyLevel(100, beat.level), beat.accent)));
+        _ambPlaySynthDrum(_E, _ambLayerDest(key), beat, _role, at, _vol, _dm, pan);
+        _ambGrooveEmbellish(f, { volume: _vol, pan: pan | 0 }, _ambVaryLen(lenMs, beat.lenVary), at, _ambLayerDest(key), _E.laneIdx());
+        return;
+      }
       const bp = _ambApplyAdsr(_ambBeatParams(beat.kit, lenMs, pan), beat);
       bp.volume = _ambApplyLevel(bp.volume, beat.level);
       const dmod = _ambLayerDetuneMod(key); if (dmod) bp._detuneMod = dmod;
@@ -6365,6 +6392,36 @@
       }
       return pr;
     }
+    // Euclidean auto-fill for ONE drum lane: write `k` evenly-spread pulses across
+    // the lane's phrase (bars×steps), tiling the one-bar euclidean pattern. k = 0
+    // clears the lane. Respects the lane's current Steps so it always cell-aligns.
+    function _ambEuclidFillLane(L, type, v, k) {
+      const d = _ambEuclidGridDims(L, type); if (!d) return false;
+      const steps = d.steps, total = steps * d.bars;
+      const pg = _ambEuclidPage(L); if (!pg || !Array.isArray(pg.pat)) return false;
+      while (pg.pat.length < _AMB_KIT_LANES) pg.pat.push(new Array(total).fill(0));
+      const kk = Math.max(0, Math.min(steps, k | 0));
+      const one = (kk > 0 && typeof euclideanPattern === 'function')
+        ? euclideanPattern(kk, steps, Math.max(0, (L.rotate | 0)) % steps)
+        : new Array(steps).fill(0);
+      const row = new Array(total).fill(0);
+      for (let i = 0; i < total; i++) row[i] = one[i % steps] ? 1 : 0;
+      pg.pat[v] = row;
+      return true;
+    }
+    // The Fill ▾ options for the per-lane inspector — even euclidean densities that
+    // fit the current Steps, plus Clear. Named/clave presets stay whole-grid (top
+    // Preset picker) since they imply their own step count.
+    function _ambEuclidFillOptions(steps) {
+      const s = Math.max(2, steps | 0);
+      const ks = [2, 3, 4, 5, 6, 8, 12, 16].filter(k => k < s);
+      return '<option value="">Fill…</option>' +
+        '<optgroup label="Even (euclid)">' +
+          ks.map(k => '<option value="' + k + '">' + k + ' hits</option>').join('') +
+          '<option value="' + s + '">every step</option>' +
+        '</optgroup>' +
+        '<option value="0">Clear lane</option>';
+    }
     // Readout for the Pattern grid. The grid now spans the whole PHRASE — `bars`
     // (Phrase) bars of `steps` cells each — so the bar count IS Phrase and it
     // grows as you raise Phrase. Lock-to is a SEPARATE axis: it time-scales the
@@ -6441,6 +6498,7 @@
           // Drum-lanes: each row's label is a SELECTOR — click it to focus the lane
           // (highlight + show the step FX inspector) without touching the steps.
           const dn = _AMB_DRUM_NAMES[_AMB_VDRUM[v]] || ('Drum ' + v);
+          html += '<button type="button" class="ambient-euclid-laneplay" data-laneplay="' + v + '" title="Play the ' + dn + ' (audition)">▶</button>';
           html += '<button type="button" class="ambient-euclid-drumlbl' + (laneSel ? ' on' : '') + '" data-lane="' + v + '" title="Select the ' + dn + ' lane">' + dn + '</button>';
         } else if (d.V > 1) {
           html += '<span class="ambient-euclid-vlab" aria-hidden="true">' + (v + 1) + '</span>';
@@ -6476,6 +6534,7 @@
         html += '<div class="ambient-step-fx">' +
           '<div class="ambient-step-fx-head"><span class="ambient-step-fx-lbl">' + drum + ' · step ' + stepNo + (d.bars > 1 ? ' · bar ' + barNo : '') + '</span>' +
             '<span class="ambient-step-fx-btns">' +
+              '<select class="ambient-step-fx-fill" title="Auto-fill THIS lane with an evenly-spread (euclidean) rhythm at the current Steps">' + _ambEuclidFillOptions(d.steps) + '</select>' +
               '<button type="button" class="ambient-step-fx-trig" title="Play this drum (audition)">▶ Play</button>' +
               '<button type="button" class="ambient-step-fx-clear" title="Reset this step to defaults">Reset</button></span></div>' +
           sfxRow('Vel', 'vel', 0, 200, fx.vel, '%', 'Velocity — this step’s loudness (100 = normal)') +
@@ -6586,6 +6645,18 @@
         _ambStepFxSet(_ambEuclidPage(L), L._selStep.v, L._selStep.i, { vel: 100, len: 100, rat: 1, prob: 100, pan: 0 });
         render(); persist();
       });
+      // Euclid Fill ▾ (delegated → survives re-render): fill the selected lane with
+      // an even rhythm. Value is the pulse count (0 = clear); '' = the placeholder.
+      grid.addEventListener('change', (ev) => {
+        const f = ev.target.closest && ev.target.closest('.ambient-step-fx-fill'); if (!f) return;
+        _E = E; const L = getL(); if (!L || !L.euclidKit || !L._selStep) { f.value = ''; return; }
+        if (f.value === '') return;
+        const v = L._selStep.v | 0, k = parseInt(f.value, 10) || 0;
+        _ambEuclidFillLane(L, type, v, k);
+        f.value = '';
+        render(); persist();
+        if (E.timer) { try { sync && sync(); } catch (e) {} }
+      });
       // Drum-lanes PAGE tabs + orchestration (delegated → survive grid re-renders).
       // Drag-reorder the page tabs (pointer-based → works on touch + desktop). A
       // horizontal drag past a small threshold reorders the pages (= the play
@@ -6628,10 +6699,17 @@
       // re-render can never cancel a half-open native <select> — the "Sequence never
       // sticks" bug.
       grid.addEventListener('click', (ev) => {
-        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-step-fx-trig'); if (!t) return;
+        const t = ev.target.closest && ev.target.closest('.ambient-euclid-tab, .ambient-euclid-pagedel, .ambient-euclid-segbtn, .ambient-euclid-playsbtn, .ambient-euclid-drumlbl, .ambient-euclid-laneplay, .ambient-step-fx-trig'); if (!t) return;
         if (_suppressTabClick) { _suppressTabClick = false; if (t.dataset.page != null) return; }   // a drag just reordered — don't also select
         _E = E; const L = getL(); if (!L || !L.euclidKit) return;
         if (t.classList.contains('ambient-step-fx-trig')) { _ambTriggerLaneStep(E, key, L); return; }   // audition — no state change / re-render
+        // Per-lane ▶: audition that drum without moving the inspector's selection.
+        if (t.classList.contains('ambient-euclid-laneplay')) {
+          const lv = parseInt(t.dataset.laneplay, 10) | 0, saved = L._selStep;
+          L._selStep = { v: lv, i: (saved && saved.i) || 0 };
+          try { _ambTriggerLaneStep(E, key, L); } catch (e) {}
+          L._selStep = saved; return;
+        }
         if (t.classList.contains('ambient-euclid-tab-add')) _ambEuclidAddPage(L);
         else if (t.classList.contains('ambient-euclid-pagedel')) _ambEuclidDelPage(L);
         else if (t.dataset.page != null) L.euclidPageIdx = parseInt(t.dataset.page, 10) | 0;
@@ -12138,6 +12216,38 @@
       host.querySelectorAll('.ambient-euclid-cell.playing, .ambient-euclid-tab.playing').forEach(c => c.classList.remove('playing'));
       host.querySelectorAll('.ambient-euclid-tab.up-next').forEach(t => t.classList.remove('up-next'));
       host.querySelectorAll('.ambient-euclid-grid').forEach(g => { g._phStep = -1; g._phPage = -1; g._phNext = -1; });
+      host.querySelectorAll('.ambient-sk-role.voice-hit').forEach(t => t.classList.remove('voice-hit'));
+      host.querySelectorAll('.ambient-synthkit').forEach(ed => { ed._voiceMask = 0; });
+    }
+    // Synth-kit voice indicator: flash each role tab as its drum fires. Reads the
+    // rolling hit log left by _ambPlaySynthDrum; a role is "hot" while its most
+    // recent hit is within a short window of now. Works in random + euclid modes.
+    function _ambSynthVoicePlayheads(E) {
+      const host = E && document.getElementById(E.hostId); if (!host) return;
+      const eds = host.querySelectorAll('.ambient-synthkit'); if (!eds.length) return;
+      const now = (typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0;
+      const WIN = 0.13;   // seconds a tab stays lit after its hit
+      eds.forEach(ed => {
+        if (ed.style.display === 'none') { if (ed._voiceMask) { ed._voiceMask = 0; ed.querySelectorAll('.ambient-sk-role.voice-hit').forEach(t => t.classList.remove('voice-hit')); } return; }
+        const card = ed.closest('.ambient-layer');
+        let key = card && card.getAttribute('data-inst');
+        if (!key) { const ph = card && card.querySelector('[data-phkey]'); key = ph && ph.getAttribute('data-phkey'); }
+        const L = key ? _ambLayerByKey(E, key) : null;
+        const hits = L && Array.isArray(L._synthHits) ? L._synthHits : null;
+        let mask = 0;
+        if (hits) {
+          for (let i = hits.length - 1, seen = 0; i >= 0 && seen < 24; i--, seen++) {
+            const h = hits[i]; if (!h || h.at > now || now - h.at > WIN) continue;
+            mask |= (1 << (h.role & 7));
+          }
+        }
+        if (ed._voiceMask === mask) return;
+        ed._voiceMask = mask;
+        ed.querySelectorAll('.ambient-sk-role').forEach(tab => {
+          const on = !!(mask & (1 << ((tab.getAttribute('data-skrole') | 0) & 7)));
+          if (on !== tab.classList.contains('voice-hit')) tab.classList.toggle('voice-hit', on);
+        });
+      });
     }
     function _ambVizFrame(E) {
       if (!E.viz) return;
@@ -12165,6 +12275,7 @@
       }
       try { _ambUpdatePlayheads(E); } catch (e) {}
       try { _ambEuclidStepPlayheads(E); } catch (e) {}
+      try { _ambSynthVoicePlayheads(E); } catch (e) {}
       if (E.timer && !document.hidden) E.viz.raf = requestAnimationFrame(() => _ambVizFrame(E));
       else E.viz.raf = 0;
     }
@@ -14347,10 +14458,38 @@
     const _ambCondCtrl = (layer) => _ambWhenCtrl('ambient-' + layer + '-');
     // Beat "Gen" mode select: Random (one hit per Interval) vs Euclidean (a
     // BPM-locked euclidean pattern over N bars). `stem` ends with '-'.
-    const _ambGenSel = (stem) =>
-      '<div class="ambient-ctrl" title="' + _ambTitleAttr('Gen', 'pattern') + '"><label for="' + stem + 'gen">Gen</label>' +
-      '<select id="' + stem + 'gen" class="ambient-select"><option value="random">Random</option><option value="euclid">Euclidean</option></select>' +
-      '<span class="ambient-hint">pattern</span></div>';
+    // Beat mode: a plain Random | Program segment. "Program" = the euclid engine
+    // with the 8-lane drum GRID surfaced immediately (the gen handlers auto-enable
+    // drum-lanes on the switch) — the intuitive "populate a bar with hits" path.
+    // The native <select> stays (hidden) so ALL existing gen wiring is reused: the
+    // segment just drives it. `inst` sets the initial active button.
+    const _ambGenSel = (stem, inst) => {
+      const euclid = !!(inst && inst.gen === 'euclid');
+      return '<div class="ambient-ctrl ambient-beatmode-ctrl" title="' + _ambTitleAttr('Mode', 'random hits or a programmable drum grid') + '"><label>Mode</label>' +
+        '<div class="ambient-seg-row ambient-beatmode-seg">' +
+          '<button type="button" class="ambient-seg ambient-beatmode-btn' + (euclid ? '' : ' active') + '" data-gen="random" title="Auto-generated random hits">Random</button>' +
+          '<button type="button" class="ambient-seg ambient-beatmode-btn' + (euclid ? ' active' : '') + '" data-gen="euclid" title="Program your own beat on a drum grid">Program</button>' +
+        '</div>' +
+        '<select id="' + stem + 'gen" class="ambient-select ambient-beatmode-select"><option value="random">Random</option><option value="euclid">Euclidean</option></select>' +
+        '<span class="ambient-hint">random → program a grid</span></div>';
+    };
+    // One document-level listener drives every Beat mode segment (primary + extras,
+    // different hosts) — set once. The button just flips the hidden gen select and
+    // dispatches change, so the existing per-card gen handler does all the real work.
+    let _ambBeatModeWired = false;
+    function _ambWireBeatModeOnce() {
+      if (_ambBeatModeWired || typeof document === 'undefined') return;
+      _ambBeatModeWired = true;
+      document.addEventListener('click', (ev) => {
+        const btn = ev.target && ev.target.closest && ev.target.closest('.ambient-beatmode-btn');
+        if (!btn) return;
+        const ctrl = btn.closest('.ambient-beatmode-ctrl'); if (!ctrl) return;
+        const sel = ctrl.querySelector('.ambient-beatmode-select'); if (!sel) return;
+        const gen = btn.getAttribute('data-gen') || 'random';
+        ctrl.querySelectorAll('.ambient-beatmode-btn').forEach(b => b.classList.toggle('active', b === btn));
+        if (sel.value !== gen) { sel.value = gen; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      });
+    }
     // Beat Gen visibility: Euclidean shows Pulses/Steps/Rotate/Phrase + Rhythm
     // var and hides the free Interval/Rate; Random does the opposite. `stem` is
     // the id prefix ending in '-'; `p` (extras only) lets Random defer Interval
@@ -16366,8 +16505,8 @@
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
-        ['grp', 'Unit'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
-        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['grp', 'Feel'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['grp', 'Loop'], ['loop'], ['grp', 'Scheduling'], ['cond'],
+        ['grp', 'Variation'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
@@ -16804,7 +16943,7 @@
         return (type === 'bed') ? (_ambBedCvtHead(p) + toneSel + _ambBedCvtSelects(p)) : toneSel;
       }
       if (k === 'kit') return '<div class="ambient-ctrl"><label for="' + p + '-kit" title="' + _ambTitleAttr('Kit', 'drums') + '">Kit</label><select id="' + p + '-kit" class="ambient-select"></select><span class="ambient-hint">drums</span></div>';
-      if (k === 'gen') return _ambGenSel(p + '-');
+      if (k === 'gen') { _ambWireBeatModeOnce(); return _ambGenSel(p + '-', inst); }
       if (k === 'arpeuclid') return '<div class="ambient-ctrl"><label for="' + p + '-euclid">Mode</label><select id="' + p + '-euclid" class="ambient-select"><option value="0">Series</option><option value="1">Euclid (poly)</option></select><span class="ambient-hint">arp engine</span></div>';
       if (k === 'euclidregen') return '<div class="ambient-ctrl"><label for="' + p + '-euclidregen">Pattern</label><button type="button" id="' + p + '-euclidregen" class="ambient-regen">↻ Regen</button><span class="ambient-hint">re-roll voices (next unit)</span></div>';
       // Drum-lanes toggle: turn each voice into its own drum lane (a drum picker +
@@ -17200,6 +17339,9 @@
           } }); } }
           else if (k === 'gen') { const s = el('gen'); if (s) { s.value = inst.gen || 'random'; s.addEventListener('change', () => { const L = get(); if (L) {
             L.gen = s.value || 'random';
+            // Program mode surfaces the drum grid: enable drum-lanes + seed a
+            // backbeat BEFORE the re-render below so it draws an editable grid.
+            if (L.gen === 'euclid' && !L.euclidKit) { L.euclidKit = true; try { _ambSeedDrumLanes(L); } catch (e) {} }
             const gk = type + ':' + id;
             if (E.runPhase) delete E.runPhase[gk]; if (E.clocks) delete E.clocks[gk];
             // Cancel the OLD mode's scheduled-ahead voices so the switch is clean —
@@ -19811,6 +19953,13 @@
         _E = E; const cfg = cfg0(); if (!cfg) return;
         cfg.beat.gen = beatGenSel.value || 'random';
         _ambBeatGenVis(E, 'ambient-beat-', cfg.beat);   // primary: no UnitSyncViz p
+        // Program mode = the drum GRID up front: if drum-lanes are off, turn them
+        // on (its handler seeds a backbeat + redraws) so switching to Program shows
+        // an editable grid immediately, not the bare euclidean knobs.
+        if (cfg.beat.gen === 'euclid' && !cfg.beat.euclidKit) {
+          const kt = G('ambient-beat-euclidkit');
+          if (kt) { kt.value = '1'; kt.dispatchEvent(new Event('change', { bubbles: true })); }
+        }
         if (E.runPhase) delete E.runPhase['beat']; if (E.clocks) delete E.clocks['beat'];
         // Clean switch (drop the old mode's lookahead voices) + sync the header
         // compose tag, which the visibility toggle alone left stale.
@@ -20422,6 +20571,24 @@
               if (tab && hostEl.contains(tab)) { const ed = tab.closest('.ambient-synthkit'); if (ed) { ed.setAttribute('data-active', tab.getAttribute('data-skrole')); try { _ambSyncSynthKit(E); } catch (e) {} } return; }
               const rg = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-regen');
               if (rg && hostEl.contains(rg)) { const L = _skOf(rg); if (!L) return; L.synthKit = _ambGenSynthKit(Math.floor(Math.random() * 1e9)); try { _ambSyncSynthKit(E); } catch (e) {} if (E.timer) { try { _ambSyncMods(); } catch (e) {} } if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+              // ▶ Hear — audition the SELECTED role's drum through the real recipe.
+              const hr = ev.target && ev.target.closest && ev.target.closest('.ambient-sk-hear');
+              if (hr && hostEl.contains(hr)) {
+                const L = _skOf(hr); if (!L) return;
+                const ed = hr.closest('.ambient-synthkit');
+                const role = ed ? Math.max(0, Math.min(7, (ed.getAttribute('data-active') | 0))) : 0;
+                try { if (typeof Tone !== 'undefined' && Tone.start) Tone.start(); } catch (e) {}
+                const key = _ambCardKey(hr.closest('.ambient-layer'));
+                const dest = (key && E && E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
+                const at = ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0) + 0.03;
+                const vol = Math.max(0, Math.round(_ambApplyLevel(100, L.level)));
+                _E = E;
+                try { _ambPlaySynthDrum(E, dest, L, role, at, vol, key ? _ambLayerDetuneMod(key) : 0, _ambLayerPan(L)); } catch (e) {}
+                // Direct flash — the viz rAF (which drives the live indicator) only
+                // runs during playback, so nudge the tab here for a stopped audition.
+                if (ed) { const t = ed.querySelector('.ambient-sk-role[data-skrole="' + role + '"]'); if (t) { t.classList.add('voice-hit'); setTimeout(() => t.classList.remove('voice-hit'), 150); } }
+                return;
+              }
             });
             const _skWrite = (el) => {
               const L = _skOf(el); if (!L) return;

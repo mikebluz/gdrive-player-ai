@@ -3398,6 +3398,14 @@
     .ambient-euclid-drumlbl.on { color: #12121c; background: #9f7aea; padding-right: 5px; }
     .ambient-euclid-row.lane-sel .ambient-euclid-cell { border-color: #4a3f66; }
     .ambient-euclid-row.lane-sel .ambient-euclid-cell.on { border-color: #9f7aea; }
+    /* Per-lane audition ▶ — sits left of each drum label. */
+    .ambient-euclid-laneplay { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center; font-size: 0.56rem;
+      color: #9f7aea; background: transparent; border: 1px solid #3a3550; border-radius: 4px;
+      cursor: pointer; transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease; }
+    @media (hover: hover) { .ambient-euclid-laneplay:hover { color: #e6ddff; background: rgba(159,122,234,0.22); border-color: #9f7aea; } }
+    .ambient-euclid-laneplay:active { background: rgba(159,122,234,0.4); }
+    .ambient-euclid-kitrow .ambient-euclid-laneplay { margin-top: 4px; }
     /* Drum-lanes full-width layout: break out of the .ambient-ctrl 3-col grid so the
        lane labels sit in the same left gutter as the "Pattern" label and the step
        cells get the full row width. */
@@ -3463,7 +3471,9 @@
     .ambient-step-fx { margin-top: 8px; padding: 8px 10px; border: 1px solid #34344a; border-radius: 7px; background: #17172470; }
     .ambient-step-fx-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
     .ambient-step-fx-lbl { color: #cdf0fa; font: 700 0.66rem 'Segoe UI', sans-serif; }
-    .ambient-step-fx-btns { display: inline-flex; gap: 6px; }
+    .ambient-step-fx-btns { display: inline-flex; gap: 6px; align-items: center; }
+    .ambient-step-fx-fill { padding: 2px 6px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #c9b8ef; background: #1a1a26; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
+    @media (hover: hover) { .ambient-step-fx-fill:hover { border-color: #9f7aea; color: #e6ddff; } }
     .ambient-step-fx-clear, .ambient-step-fx-trig { padding: 2px 8px; font: 600 0.6rem 'Segoe UI', sans-serif; color: #b0a0c8; background: transparent; border: 1px solid #34344a; border-radius: 4px; cursor: pointer; }
     .ambient-step-fx-trig { color: #7fe0b0; border-color: #2f5c48; }
     @media (hover: hover) { .ambient-step-fx-clear:hover { border-color: #9f7aea; color: #d9cbff; } .ambient-step-fx-trig:hover { border-color: #4fd090; color: #b6f5d6; } }
@@ -11581,11 +11591,21 @@
     /* Synth-kit editor (Beat) */
     .ambient-synthkit { margin: 4px 0 6px; padding: 6px 8px; border: 1px solid #2d2d3f; border-radius: 8px; background: rgba(45,45,63,0.18); }
     .ambient-sk-head { display: flex; align-items: center; gap: 8px; }
+    /* Beat mode segment (Random | Program) — the native select is kept for
+       wiring reuse but hidden; the segment buttons drive it. */
+    .ambient-beatmode-select { display: none !important; }
+    .ambient-beatmode-seg { display: inline-flex; gap: 2px; }
+    .ambient-beatmode-seg .ambient-beatmode-btn { padding: 3px 12px; font-size: 0.72rem; }
     .ambient-sk-regen { font-size: 0.72rem; }
+    .ambient-sk-hear { font-size: 0.72rem; }
+    .ambient-sk-hear:hover { border-color: #5e9ead; color: #9fe0ef; }
+    .ambient-sk-hear:active { background: rgba(79,209,197,0.28); }
     .ambient-sk-seed { margin-left: auto; font: 600 0.64rem 'JetBrains Mono', monospace; color: #7fd6c4; }
     .ambient-sk-roles { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 6px; }
-    .ambient-sk-roles .ambient-sk-role { font-size: 0.68rem; padding: 2px 7px; }
+    .ambient-sk-roles .ambient-sk-role { font-size: 0.68rem; padding: 2px 7px; transition: box-shadow 60ms linear, background 60ms linear; }
     .ambient-sk-roles .ambient-sk-role.active { background: rgba(79,209,197,0.2); border-color: #5e9ead; color: #9fe0ef; }
+    /* Live voice indicator — the role tab lights up as its drum fires. */
+    .ambient-sk-roles .ambient-sk-role.voice-hit { background: rgba(79,209,197,0.5); border-color: #7fe0ef; color: #eafffb; box-shadow: 0 0 8px rgba(79,209,197,0.75); }
 
     /* Synth-kit macros row */
     .ambient-sk-macros { border-bottom: 1px dashed rgba(74,74,102,0.5); padding-bottom: 4px; margin-bottom: 4px; }

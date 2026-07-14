@@ -3124,6 +3124,9 @@
 
     function playNote(freq, params = {}, durationMs, startTime, destination, trackIdx, laneIdx) {
       if (typeof params === 'string') params = { type: params };
+      // Humanize (Bloom Variance): per-onset timing jitter from _ambApplyAdsr.
+      // Scheduled notes only (a live press has no startTime to shift).
+      if (Number.isFinite(params._humanSec) && params._humanSec && Number.isFinite(startTime)) { startTime = Math.max(0, startTime + params._humanSec); }
       // "User" Design patches: resolve to the patch's stored voice (base
       // oscillator/sample + amp env + filter + design blocks), letting any
       // incoming step-level overrides (bend/pan/volume/detune from the

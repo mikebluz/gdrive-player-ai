@@ -1465,6 +1465,11 @@
       if (cfg.keyMode !== 'transpose' && cfg.keyMode !== 'quantize') cfg.keyMode = d.keyMode;
       cfg.keyModeRot = Number.isFinite(cfg.keyModeRot) ? ((((cfg.keyModeRot | 0) % 7) + 7) % 7) : 0;   // area relative mode (0..6)
       cfg.startVary = Math.max(0, Math.min(100, cfg.startVary | 0));   // area start cascade (0..100)
+      // AREA GROOVE (live macros): global Swing/Accent ADD to every layer's own
+      // value; pushMode = the unit for per-layer Push (ms / % of unit). All
+      // neutral (0) by default → byte-identical. Humanize reuses cfg.startVary.
+      if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
+      else { cfg.groove.swing = Math.max(0, Math.min(100, cfg.groove.swing | 0)); cfg.groove.accent = Math.max(0, Math.min(100, cfg.groove.accent | 0)); cfg.groove.density = Math.max(0, Math.min(100, cfg.groove.density | 0)); cfg.groove.pushMode = (cfg.groove.pushMode === 'pct') ? 'pct' : 'ms'; }
       if (!Number.isFinite(cfg.progRateMs)) cfg.progRateMs = d.progRateMs;
       if (!Number.isFinite(cfg.barsPerChord) || cfg.barsPerChord <= 0) cfg.barsPerChord = d.barsPerChord;   // fractional allowed (e.g. 1/2, 8/7 of a bar)
       if (typeof cfg.barsPerChordStr !== 'string' || !cfg.barsPerChordStr) cfg.barsPerChordStr = _ambFmtBpc(cfg.barsPerChord);
@@ -3562,8 +3567,19 @@
     // Stochastic Accent (0..100): randomly widen a layer's note-to-note
     // dynamics. 0 = flat (every note at its level). As it rises, more notes pop
     // louder and a few drop to ghost-notes, so the line breathes. Per-note call.
+    // Effective rest probability = the layer's own restProb + the Area Groove
+    // DENSITY macro (busy → sparse). The rest-check RNG draw is unconditional at
+    // every call site, so this only shifts the THRESHOLD — density 0 = the
+    // layer's own value = byte-identical (harness runs default groove).
+    function _ambEffRest(lc) {
+      const gd = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.density | 0)) || 0;
+      return Math.max(0, Math.min(100, ((lc && lc.restProb) | 0) + gd));
+    }
     function _ambAccentVol(vol, accent) {
-      const a = Math.max(0, Math.min(100, accent | 0)) / 100;
+      // Area Groove Accent ADDS to the layer's own. Neutral 0 → no RNG draw
+      // (byte-identical); the harness runs default groove so it stays pinned.
+      const ga = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.accent | 0)) || 0;
+      const a = Math.max(0, Math.min(100, (accent | 0) + ga)) / 100;
       if (a <= 0) return vol;
       const r = _ambRand();
       if (r < a * 0.45) return Math.max(0, Math.min(100, Math.round(vol * (1 + a * 0.6))));   // accented
@@ -3601,19 +3617,30 @@
     // 100 = hard dotted shuffle (off-beat lands 1.5 slots into the pair).
     // 0 → exactly 0s added (byte-identical default).
     function _ambSwingSec(inst, slotSec) {
-      const sw = inst && inst.swing;
-      return (Number.isFinite(sw) && sw > 0) ? Math.min(100, sw) / 100 * slotSec * 0.5 : 0;
+      // Area Groove Swing ADDS to the layer's own (both clamped). Neutral 0 → 0.
+      const gsw = (_E && _E._cfg && _E._cfg.groove && (_E._cfg.groove.swing | 0)) || 0;
+      const sw = Math.max(0, Math.min(100, ((Number.isFinite(inst && inst.swing) ? inst.swing : 0) | 0) + gsw));
+      return (sw > 0) ? sw / 100 * slotSec * 0.5 : 0;
     }
     function _ambDriftOffset(E, key, layer, cfg) {
+      let off = 0;
       const drift = Number.isFinite(layer.drift) ? Math.max(0, Math.min(99, layer.drift)) : 0;
-      if (drift <= 0) return 0;
-      const ds = _ambDriftSteps(E, key, layer, cfg);
-      if (ds) return ds.idx * ds.step;
-      const intervalSec = _ambEffIntervalSec(layer);
-      let off = (drift / 100) * intervalSec;
-      if (cfg && cfg.timing === 'sync') {
-        const step = _ambStepSec();
-        off = Math.round(off / step) * step;
+      if (drift > 0) {
+        const ds = _ambDriftSteps(E, key, layer, cfg);
+        if (ds) off = ds.idx * ds.step;
+        else {
+          off = (drift / 100) * _ambEffIntervalSec(layer);
+          if (cfg && cfg.timing === 'sync') { const step = _ambStepSec(); off = Math.round(off / step) * step; }
+        }
+      }
+      // PUSH/PULL (Area Groove): a SIGNED per-layer groove offset — negative =
+      // ahead of the beat, positive = behind. ms (absolute) or % of the layer's
+      // unit, per cfg.groove.pushMode. Clamped so the anchor can't fly far past
+      // the lead. 0 → adds nothing (byte-identical).
+      const push = Number.isFinite(layer.push) ? Math.max(-200, Math.min(200, layer.push)) : 0;
+      if (push !== 0) {
+        const pct = !!(cfg && cfg.groove && cfg.groove.pushMode === 'pct');
+        off += pct ? (Math.max(-90, Math.min(90, push)) / 100) * _ambEffIntervalSec(layer) : (push / 1000);
       }
       return off;
     }
@@ -4398,7 +4425,7 @@
       // RANDOM units of the grid (varied cadence, unit-locked) — the held pad rings
       // through the gaps. DRAW-GATED on restProb>0 so the default consumes no RNG →
       // byte-identical (kept out of the bed defaults; harness-neutral).
-      const _bedRestP = Math.max(0, Math.min(100, bed.restProb | 0));
+      const _bedRestP = _ambEffRest(bed);
       if (_bedRestP > 0 && _ambRand() * 100 < _bedRestP) { _ambRecordUnit(_E, key, at, []); return; }
       // Progression: resolve the chord at THIS iteration's bar-aligned onset (was the
       // global ms clock), so a prog-driven bed follows the changes per bar like the
@@ -4580,7 +4607,7 @@
       const rotate = Math.max(0, inst.rotate | 0);
       const slotSec = barSec / steps;
       const rVar   = Math.max(0, Math.min(100, inst.rhythmVar | 0));
-      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const restP  = _ambEffRest(inst);
       const dest   = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       let st = E[phaseStore][key];
       if (!st) st = E[phaseStore][key] = { startAt: _ambUnitGridSnap(E, key, inst, cfg, lead) + _ambDriftOffset(E, key, inst, cfg), lastAt: null };
@@ -4819,7 +4846,7 @@
       const slotSec = barSec / perBar;
       const lenMs  = Math.max(40, inst.lengthMs | 0);
       const vary   = Math.max(0, Math.min(100, inst.vary | 0));
-      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const restP  = _ambEffRest(inst);
       const lenVary = Math.max(0, Math.min(100, inst.lenVary | 0));   // note-length distribution (0 = uniform)
       const reg    = Math.max(2, Math.min(7, inst.register | 0) || 5);
       const range  = Math.max(1, Math.min(4, inst.range | 0) || 2);
@@ -4910,7 +4937,7 @@
       const totalSlots = bars * perBar;
       const slotSec = barSec / perBar;
       const lenMs  = Math.max(40, inst.lengthMs | 0);
-      const restP  = Math.max(0, Math.min(100, inst.restProb | 0));
+      const restP  = _ambEffRest(inst);
       const vary   = Math.max(0, Math.min(100, inst.vary | 0));   // % of hits that roam off the root
       const reg    = Math.max(1, Math.min(7, inst.register | 0) || 4);
       const src    = _ambNotesOf(inst);
@@ -5145,7 +5172,7 @@
       key = key || 'motif';
       if (_ambEmitLocked(_E, key, at)) return;   // unit locked → replay it, no generation
       _ambKeyTime = at;
-      if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) { _ambRecordUnit(_E, key, at, []); return; }
+      if (_ambRand() * 100 < _ambEffRest(motif)) { _ambRecordUnit(_E, key, at, []); return; }
       // HOLD mode: each note's length = Hold × the base UNIT (Sync-scaled), which
       // equals the onset interval (a new note every Hold units), so the line holds
       // legato across units with the ADSR release ringing past. Absent hold → the
@@ -5452,7 +5479,7 @@
       // Skip the note (cursor already advanced, so timing stays steady) on a Rest,
       // a Sequence-tab muted step, a When-silenced loop, or a windowed past-note
       // catch-up (play === false).
-      const _rested = (_ambRand() * 100 < Math.max(0, Math.min(100, arp.restProb | 0)));
+      const _rested = (_ambRand() * 100 < _ambEffRest(arp));
       // Step mutes are per-chord (Sequence tab shows every progression chord as
       // its own block): entry.stepMutes[chordIdx][stepIdx]. chordIdx is the
       // bar-aligned chord at this note, or 0 for a single chord/scale.
@@ -5613,7 +5640,7 @@
       const rotate = Math.max(0, arp.rotate | 0);
       const slotSec = barSec / steps;
       const lenMs = Math.max(40, arp.lengthMs | 0);
-      const restP = Math.max(0, Math.min(100, arp.restProb | 0));
+      const restP = _ambEffRest(arp);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const entry = (Array.isArray(arp.steps) && arp.steps[0]) ? arp.steps[0] : { notes: { type: 'scale', scale: '' } };
       const notes = _ambNotesOf(entry);
@@ -6138,7 +6165,7 @@
     }
     function _ambEmitBeat(at, beat, space, key) {
       key = key || 'beat';
-      if (_ambRand() * 100 < Math.max(0, Math.min(100, beat.restProb | 0))) return;
+      if (_ambRand() * 100 < _ambEffRest(beat)) return;
       // Sample voice: trigger the chosen sample one-shot per hit instead of a drum
       // (a random sample sequencer). A beat with no voice field derives to 'kit'
       // → the drum render below (harness byte-identical).
@@ -10638,7 +10665,7 @@
           if (f) slot.push({ f, pan: 0, tone: cfg.texture.tone });
         }
         if (cfg.beat && cfg.beat.on && (i % beatEvery === 0)
-            && !(_ambRand() * 100 < Math.max(0, Math.min(100, cfg.beat.restProb | 0)))) {
+            && !(_ambRand() * 100 < _ambEffRest(cfg.beat))) {
           const pc = _ambPickDrumPc();
           let f; try { f = Tone.Frequency(36 + pc, 'midi').toFrequency(); } catch (e) { f = null; }
           if (f) slot.push({ f, pan: 0, params: _ambApplyAdsr(_ambBeatParams(cfg.beat.kit, Math.max(60, cfg.beat.lengthMs | 0), 0), cfg.beat) });
@@ -10964,7 +10991,7 @@
       const range = Math.max(1, Math.min(4, motif.range | 0));
       const lo = (center - range) * N, hi = (center + range) * N;
       if (_E.motifDeg == null) _E.motifDeg = center * N;
-      if (_ambRand() * 100 < Math.max(0, Math.min(100, motif.restProb | 0))) return null;
+      if (_ambRand() * 100 < _ambEffRest(motif)) return null;
       const leap = _ambRand() < 0.18;
       const mag = leap ? 3 + Math.floor(_ambRand() * 3) : 1 + Math.floor(_ambRand() * 2);
       const dir = _ambRand() < 0.5 ? -1 : 1;
@@ -13684,6 +13711,30 @@
       }
       el.innerHTML = html;
     }
+    // Audition a single MIDI note in a LAYER'S voice (its tone + ADSR + level,
+    // routed through its mod chain when built so FX apply) — fires when a piano
+    // key is pressed. A quick pluck-length note; cold-starts the AudioContext.
+    function _ambAuditionNote(E, key, midi) {
+      if (typeof playNote !== 'function' || typeof Tone === 'undefined') return;
+      const L = _ambLayerByKey(E, key); if (!L) return;
+      // Dedupe: the host pointerdown handler can be bound more than once (panel
+      // rebuilds), so one key press dispatches N identical auditions ~ms apart —
+      // a flam. Ignore a repeat of the same key+note inside a short window.
+      const _nm = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+      if (E._audLast && E._audLast.k === key && E._audLast.m === midi && (_nm - E._audLast.t) < 70) return;
+      E._audLast = { k: key, m: midi, t: _nm };
+      _E = E;
+      try { if (Tone.start) Tone.start(); } catch (e) {}
+      let f; try { f = Tone.Frequency(midi, 'midi').toFrequency(); } catch (e) { f = 440 * Math.pow(2, (midi - 69) / 12); }
+      if (!(f > 0)) return;
+      const lenMs = 520;
+      const pan = (typeof _ambLayerPan === 'function') ? (_ambLayerPan(L) | 0) : 0;
+      let p; try { p = _ambApplyAdsr(_ambMotifParams(lenMs, pan, L.tone), L); } catch (e) { p = { type: 'triangle', attack: 8, decay: 120, sustain: 70, release: 280, volume: 60, pan: pan }; }
+      try { p.volume = _ambApplyLevel(p.volume, L.level); } catch (e) {}
+      const dest = (E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;   // route through the layer chain if it exists (FX), else the dry bus
+      const at = ((typeof Tone.now === 'function') ? Tone.now() : 0) + 0.03;
+      try { playNote(f, p, lenMs, at, dest, undefined, (E.laneIdx ? E.laneIdx() : -1)); } catch (e) {}
+    }
     // Key geometry shared by the keyboard AND the vertical roll — the same
     // layout math as _ambBuildPiano (in px over a given width) so roll columns
     // land exactly on their keys.
@@ -15434,6 +15485,7 @@
         strip.appendChild(ch);
       });
       try { _ambRenderScheduler(E); } catch (e) {}   // the Scheduler mirrors the same layer set
+      try { const gb = _ambGet(E, 'ambient-groove'); if (gb && !gb.classList.contains('collapsed')) _ambRenderGroove(E); } catch (e) {}   // Groove push rows track the layer set
     }
     // ================= SCHEDULER (⏱) ==================================
     // The per-layer TIME matrix between Configure and the Mixer: one row per
@@ -15758,6 +15810,83 @@
           box._schChIdx = hit;
         }
       }
+    }
+    // ================= GROOVE (🕺) ====================================
+    // Named groove TEMPLATES — one click sets the area macros + a per-layer-TYPE
+    // Push feel (ahead/behind). `push` is keyed by layer type (bass/beat/…), ms
+    // in ms-mode, else read as % (the mode toggle interprets it). '' = leave alone.
+    const _AMB_GROOVE_PRESETS = [
+      { name: 'Straight',       swing: 0,  accent: 0,  humanize: 0,  push: {} },
+      { name: 'Swing (shuffle)', swing: 66, accent: 22, humanize: 8,  push: {} },
+      { name: 'Half swing',     swing: 50, accent: 16, humanize: 6,  push: {} },
+      { name: 'Triplet swing',  swing: 58, accent: 26, humanize: 10, push: {} },
+      { name: 'Laid-back',      swing: 20, accent: 30, humanize: 14, density: 12, push: { bass: 18, motif: 12, run: 12 } },
+      { name: 'Pushed / driving', swing: 10, accent: 42, humanize: 6, density: 0, push: { bass: -16, beat: -8, bass_euclid: -16 } },
+      { name: 'Loose / human',  swing: 33, accent: 26, humanize: 45, density: 16, push: {} },
+      { name: 'Tight / machine', swing: 0,  accent: 10, humanize: 0,  push: { bed: 0, motif: 0, bass: 0, beat: 0, run: 0, pedal: 0, drone: 0, arp: 0, texture: 0 } },
+    ];
+    function _ambApplyGroovePreset(E, cfg, preset) {
+      if (!cfg || !preset) return;
+      if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
+      cfg.groove.swing = Math.max(0, Math.min(100, preset.swing | 0));
+      cfg.groove.accent = Math.max(0, Math.min(100, preset.accent | 0));
+      cfg.groove.density = Math.max(0, Math.min(100, preset.density | 0));
+      cfg.startVary = Math.max(0, Math.min(100, preset.humanize | 0));
+      const pmax = (cfg.groove.pushMode === 'pct') ? 90 : 200;
+      _ambMixerLayers(cfg).forEach(({ key }) => {
+        const L = _ambLayerByKey(E, key); if (!L) return;
+        const type = String(key).split(':')[0];
+        if (Object.prototype.hasOwnProperty.call(preset.push || {}, type)) L.push = Math.max(-pmax, Math.min(pmax, preset.push[type] | 0));
+        else L.push = 0;   // a preset defines the whole feel → clear un-named types
+      });
+    }
+    // Live feel macros. GLOBAL Swing/Accent/Humanize cascade to all layers (add
+    // to each layer's own); per-layer Push/Pull nudges a layer ahead/behind the
+    // beat (relative timing = groove). Edits apply live; 🎲 rolls a fresh feel.
+    function _ambRenderGroove(E) {
+      const body = _ambGet(E, 'ambient-groove-body'); if (!body) return;
+      const cfg = E.getCfg(); if (!cfg) return;
+      if (!cfg.groove || typeof cfg.groove !== 'object') cfg.groove = { swing: 0, accent: 0, pushMode: 'ms' };
+      const g = cfg.groove;
+      const esc = (s) => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      const pctMode = g.pushMode === 'pct';
+      const macro = (id, label, val, hint) =>
+        '<div class="ambient-groove-macro"><label>' + label + '</label>' +
+          '<input type="range" class="ambient-groove-mac" data-gm="' + id + '" min="0" max="100" step="1" value="' + (val | 0) + '">' +
+          '<span class="ambient-groove-val" data-gv="' + id + '">' + (val | 0) + '</span>' +
+          '<span class="ambient-sched-lbl">' + hint + '</span></div>';
+      // Preset picker — a named feel (sets the macros + per-type Push).
+      const presetOpts = '<option value="">— feel —</option>' +
+        _AMB_GROOVE_PRESETS.map((pr, i) => '<option value="' + i + '">' + esc(pr.name) + '</option>').join('');
+      let html = '<div class="ambient-groove-presetrow">' +
+        '<span class="ambient-sched-lbl">preset</span>' +
+        '<select class="ambient-select ambient-groove-preset" title="Apply a named groove feel — sets Swing / Accent / Humanize and a per-layer Push template. Then tweak the sliders or Evolve.">' + presetOpts + '</select>' +
+        '<button type="button" class="ambient-seg ambient-groove-evolve" title="Evolve — nudge the current groove slightly for a fresh variation on the same feel.">↝ Evolve</button>' +
+        '<button type="button" class="ambient-seg ambient-groove-roll" title="Generate — roll a fresh random groove (Swing / Accent / Humanize + per-layer Push).">🎲 Generate</button>' +
+        '</div>';
+      html += '<div class="ambient-groove-macros">' +
+        macro('swing', 'Swing', g.swing, 'straight → shuffle') +
+        macro('accent', 'Accent', g.accent, 'flat → dynamic') +
+        macro('humanize', 'Humanize', cfg.startVary, 'tight → loose') +
+        macro('density', 'Sparse', g.density, 'full → sparse (drops hits)') +
+        '</div>';
+      // Per-layer Push/Pull rows.
+      const layers = _ambMixerLayers(cfg);
+      html += '<div class="ambient-groove-push"><div class="ambient-groove-pushhead"><span class="ambient-sched-lbl">push / pull — ahead ← beat → behind</span>' +
+        '<span class="ambient-seg-row ambient-groove-modeseg">' +
+          '<button type="button" class="ambient-seg ambient-groove-mode' + (pctMode ? '' : ' active') + '" data-gmode="ms">ms</button>' +
+          '<button type="button" class="ambient-seg ambient-groove-mode' + (pctMode ? ' active' : '') + '" data-gmode="pct">% unit</button>' +
+        '</span></div>';
+      const pmax = pctMode ? 90 : 200;
+      layers.forEach(({ name, key, layer }) => {
+        const pv = Number.isFinite(layer.push) ? Math.max(-pmax, Math.min(pmax, layer.push)) : 0;
+        html += '<div class="ambient-groove-row" data-gkey="' + esc(key) + '">' +
+          '<span class="ambient-groove-name" title="' + esc(name) + '">' + esc(name) + '</span>' +
+          '<input type="range" class="ambient-groove-pushsl" min="' + (-pmax) + '" max="' + pmax + '" step="1" value="' + pv + '">' +
+          '<span class="ambient-groove-pv">' + (pv > 0 ? '+' : '') + pv + (pctMode ? '%' : 'ms') + '</span></div>';
+      });
+      html += '</div>';
+      body.innerHTML = html;
     }
     function _ambRenderSeqLayers(E) {
       const wrap = _ambGet(E, 'ambient-seq-layers');
@@ -18924,6 +19053,17 @@
         // Warmth / Width / Dynamics / Reverb moved from here to the Mixer →
         // "Global FX" subsection (below the faders) — see _globalFxHtml.
         '</div></details>' +   // end .ambient-master-menu-body / .ambient-master-menu
+        // 🕺 Groove — live macros that reshape the FEEL of everything playing:
+        // global Swing / Accent / Humanize (cascade to every layer), and a
+        // per-layer Push/Pull (ahead/behind the beat). Collapsible; rendered by
+        // _ambRenderGroove.
+        '<div class="ambient-sched ambient-groove collapsed" id="ambient-groove">' +
+          '<div class="ambient-sched-head">' +
+            '<span class="ambient-mixer-title">🕺 Groove</span>' +
+            '<button type="button" class="ambient-mixer-toggle ambient-groove-toggle" id="ambient-groove-toggle" title="Collapse / expand groove" aria-label="Collapse or expand groove"></button>' +
+          '</div>' +
+          '<div class="ambient-sched-body" id="ambient-groove-body"></div>' +
+        '</div>' +
         // ⏱ Scheduler — the per-layer TIME matrix: each present layer is a row;
         // its row shows the layer's units as blocks on a shared bar ruler, with
         // per-row Unit size / Loop bars / Plays editors (Loop×Plays = the layer's
@@ -19131,9 +19271,86 @@
       }
       // ⏱ Scheduler: collapse toggle + ONE delegated editor handler (rows are
       // re-rendered whenever the layer set changes, so no per-row binds).
+      // 🕺 Groove section — collapse toggle + delegated handlers (macros, mode,
+      // per-layer push, 🎲 roll). Live: edits apply on the next onset; push
+      // re-anchors the layer so the new offset lands cleanly.
+      { const grBtn = host.querySelector('.ambient-groove-toggle');
+        if (grBtn) grBtn.addEventListener('click', () => {
+          const gr = grBtn.closest('.ambient-groove');
+          if (gr) { gr.classList.toggle('collapsed'); if (!gr.classList.contains('collapsed')) { try { _ambRenderGroove(E); } catch (e) {} } }
+        });
+        const grBody = _ambGet(E, 'ambient-groove-body');
+        const _grCfg = () => { const c = cfg0(); if (!c) return null; if (!c.groove || typeof c.groove !== 'object') c.groove = { swing: 0, accent: 0, pushMode: 'ms' }; return c; };
+        const _grPushKey = (el) => { const r = el.closest('[data-gkey]'); return r && r.getAttribute('data-gkey'); };
+        const _grLiveSwing = () => { if (E.timer) { try { _ambSyncMods(); } catch (e) {} } };   // swing/accent read live at emit; nudge mods for good measure
+        if (grBody) {
+          grBody.addEventListener('input', (ev) => {
+            _E = E;
+            const mac = ev.target.closest('.ambient-groove-mac');
+            if (mac) { const c = _grCfg(); if (!c) return; const gm = mac.getAttribute('data-gm'), v = Math.max(0, Math.min(100, parseInt(mac.value, 10) || 0));
+              if (gm === 'humanize') c.startVary = v; else c.groove[gm] = v;
+              const vo = grBody.querySelector('[data-gv="' + gm + '"]'); if (vo) vo.textContent = v;
+              if (gm === 'humanize') { try { _ambSyncControls(E); } catch (e) {} } _grLiveSwing();
+              if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+            const psl = ev.target.closest('.ambient-groove-pushsl');
+            if (psl) { const key = _grPushKey(psl); const L = key && _ambLayerByKey(E, key); if (!L) return;
+              const c = _grCfg(); const pct = c && c.groove.pushMode === 'pct'; const v = parseInt(psl.value, 10) || 0;
+              L.push = v; const pv = psl.parentElement.querySelector('.ambient-groove-pv'); if (pv) pv.textContent = (v > 0 ? '+' : '') + v + (pct ? '%' : 'ms');
+              if (E.timer) { try { _ambUnitReanchor(E, key); } catch (e) {} }   // re-anchor so the new offset applies at the next boundary
+              if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+          });
+          // Preset apply (select) — sets the whole feel, then re-anchors + syncs.
+          grBody.addEventListener('change', (ev) => {
+            const sel = ev.target.closest('.ambient-groove-preset'); if (!sel) return;
+            _E = E; const c = _grCfg(); if (!c) return;
+            const i = parseInt(sel.value, 10);
+            if (Number.isFinite(i) && _AMB_GROOVE_PRESETS[i]) {
+              _ambApplyGroovePreset(E, c, _AMB_GROOVE_PRESETS[i]);
+              if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambUnitReanchor(E, key)); _ambSyncMods(); _ambSyncControls(E); } catch (e) {} }
+              _ambRenderGroove(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+            }
+          });
+          grBody.addEventListener('click', (ev) => {
+            _E = E;
+            const md = ev.target.closest('.ambient-groove-mode');
+            if (md) { const c = _grCfg(); if (!c) return; c.groove.pushMode = (md.getAttribute('data-gmode') === 'pct') ? 'pct' : 'ms'; _ambRenderGroove(E); if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+            const evb = ev.target.closest('.ambient-groove-evolve');
+            if (evb) {
+              const c = _grCfg(); if (!c) return;
+              const nudge = (v, amt, hi) => Math.max(0, Math.min(hi, (v | 0) + (Math.floor(Math.random() * (amt * 2 + 1)) - amt)));
+              c.groove.swing = nudge(c.groove.swing, 10, 100);
+              c.groove.accent = nudge(c.groove.accent, 12, 100);
+              c.groove.density = nudge(c.groove.density, 10, 100);
+              c.startVary = nudge(c.startVary, 8, 100);
+              const pmax = (c.groove.pushMode === 'pct') ? 20 : 40;
+              _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (!L) return; const cur = Number.isFinite(L.push) ? L.push : 0; L.push = Math.max(-pmax, Math.min(pmax, cur + (Math.floor(Math.random() * 17) - 8))); });
+              if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambUnitReanchor(E, key)); _ambSyncMods(); _ambSyncControls(E); } catch (e) {} }
+              _ambRenderGroove(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
+            const roll = ev.target.closest('.ambient-groove-roll');
+            if (roll) {
+              const c = _grCfg(); if (!c) return;
+              const R = (n) => Math.floor(Math.random() * (n + 1));
+              c.groove.swing = [0, 0, 33, 50, 58, 66][R(5)];      // mostly some shuffle
+              c.groove.accent = 20 + R(50);
+              c.groove.density = [0, 0, 0, 10, 20, 30][R(5)];     // usually full, sometimes sparse
+              c.startVary = R(35);
+              const pmax = (c.groove.pushMode === 'pct') ? 20 : 40;
+              _ambMixerLayers(c).forEach(({ key }) => { const L = _ambLayerByKey(E, key); if (L) L.push = (R(pmax * 2) - pmax); });
+              if (E.timer) { try { _ambMixerLayers(c).forEach(({ key }) => _ambUnitReanchor(E, key)); _ambSyncMods(); _ambSyncControls(E); } catch (e) {} }
+              _ambRenderGroove(E);
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
+          });
+        }
+      }
       { const scBtn = host.querySelector('.ambient-sched-toggle');
         if (scBtn) scBtn.addEventListener('click', () => {
-          const sc = scBtn.closest('.ambient-sched');
+          const sc = scBtn.closest('.ambient-sched:not(.ambient-groove)');
           if (sc) { sc.classList.toggle('collapsed'); if (!sc.classList.contains('collapsed')) { try { _ambRenderScheduler(E); } catch (e) {} } }
         });
         const scBody = _ambGet(E, 'ambient-sched-body');
@@ -19349,19 +19566,21 @@
       // down/up targets must match). Pointerdown fires on the press, before any
       // repaint, so the editor reliably opens.
       host.addEventListener('pointerdown', (e) => {
-        // Piano key + open note editor → set the selected note's pitch to the
-        // clicked key (any open piano works; the editor popover is the intent).
-        // Without an open editor the piano stays a read-only visualizer.
+        // Piano key press → SOUND the note in the layer's voice (always), AND if
+        // the note editor is open, set the selected note's pitch to that key.
         const pk = e.target && e.target.closest && e.target.closest('.ampk');
-        if (pk && _ambNoteEd) {
+        if (pk) {
           e.preventDefault(); e.stopPropagation();
           try {
             const m = parseInt(pk.dataset.m, 10);
-            if (Number.isFinite(m) && _ambNoteEditSetMidi(m)) {
+            if (Number.isFinite(m)) {
+              const piano = pk.closest('.ambient-piano'); const pkey = piano && piano.dataset.pkey;
+              if (pkey) { try { _ambAuditionNote(E, pkey, m); } catch (e2) {} }
+              if (_ambNoteEd) { try { _ambNoteEditSetMidi(m); } catch (e2) {} }
               pk.classList.add('lit');
               setTimeout(() => { try { pk.classList.remove('lit'); } catch (e2) {} }, 250);
             }
-          } catch (err) { console.warn('Piano set-pitch failed', err); }
+          } catch (err) { console.warn('Piano key failed', err); }
           return;
         }
         const nn = e.target && e.target.closest && e.target.closest('.ambient-np-note');

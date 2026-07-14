@@ -3127,6 +3127,27 @@
       display: flex; flex-direction: column; gap: 6px;
     }
     .ambient-sched-head { display: flex; align-items: center; gap: 8px; }
+    /* 🕺 Groove — reuses the .ambient-sched frame. Macro sliders + push rows. */
+    .ambient-groove.collapsed .ambient-sched-body { display: none; }
+    .ambient-groove.collapsed .ambient-groove-toggle::before { transform: rotate(-90deg); }
+    .ambient-groove-presetrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .ambient-groove-preset { flex: 0 1 180px; min-width: 0; font-size: 0.78rem; }
+    .ambient-groove-evolve, .ambient-groove-roll { flex: 0 0 auto; font-size: 0.74rem; padding: 4px 11px; }
+    .ambient-groove-macros { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; margin-bottom: 10px; }
+    .ambient-groove-macro { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .ambient-groove-macro > label { flex: 0 0 68px; font-size: 0.78rem; font-weight: 600; color: #e2e8f0; }
+    .ambient-groove-macro input[type=range] { flex: 1 1 auto; min-width: 0; accent-color: #9f7aea; }
+    .ambient-groove-val { flex: 0 0 26px; text-align: right; font-size: 0.74rem; color: #d6bcfa; }
+    .ambient-groove-gen { grid-column: 1 / -1; justify-content: flex-start; }
+    .ambient-groove-roll { font-size: 0.76rem; padding: 5px 12px; }
+    .ambient-groove-push { border-top: 1px solid rgba(45,45,63,0.5); padding-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+    .ambient-groove-pushhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .ambient-groove-modeseg .ambient-seg { padding: 2px 9px; font-size: 0.68rem; }
+    .ambient-groove-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .ambient-groove-name { flex: 0 0 74px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; font-weight: 600; color: #cbd5e0; }
+    /* Center-detented push slider: teal (timing/feel), 0 in the middle. */
+    .ambient-groove-pushsl { flex: 1 1 auto; min-width: 0; accent-color: #4fd1c5; }
+    .ambient-groove-pv { flex: 0 0 46px; text-align: right; font-size: 0.72rem; color: #7fe4dc; }
     .ambient-sched.collapsed .ambient-sched-body { display: none; }
     .ambient-sched.collapsed .ambient-sched-toggle::before { transform: rotate(-90deg); }
     .ambient-sched-body { display: flex; flex-direction: column; gap: 8px; }
@@ -3587,7 +3608,7 @@
        (absolute). Heights/widths come from inline styles built in _ambBuildPiano. */
     /* font-size:0 + nowrap kills inline-block gaps/wrap; inline-block (not float)
        so the container keeps its height (floats collapsed it → keyboard cut off). */
-    .ambient-piano { display: none; width: 100%; margin: 4px 0 2px; position: relative; height: 40px; font-size: 0; white-space: nowrap; }
+    .ambient-piano { display: none; width: 100%; margin: 4px 0 2px; position: relative; height: 80px; font-size: 0; white-space: nowrap; cursor: pointer; }
     .ambient-piano.open { display: block; }
     .ampk { box-sizing: border-box; transition: background 0.05s linear; }
     .ampk-w { display: inline-block; vertical-align: top; height: 100%; background: #d7d7e2; border: 1px solid #20202e; border-radius: 0 0 3px 3px; position: relative; /* anchors the .home marker */ }

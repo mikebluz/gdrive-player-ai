@@ -245,8 +245,22 @@ unmappable feature → migration can be additive.
 - Add `voice`/`generator`-style derivation (mostly already done in the old Phase 2).
 - **Progression**: fold the per-layer "Progression" note-source + area `cfg.prog` into
   KEY (area frame; layer override). Save/load-gated, `schemaVersion` bump.
+  - *Known asymmetry (found 2026-07-14, pinned in the harness `prog-varbars` note):*
+    per-chord `bars` only engages on the GLOBAL `cfg.prog` — `_ambProgStepAt` reads
+    lengths from `cfg.prog.chords` only, so a per-layer/keyOv progression's `bars`
+    are silently uniform. The KEY fold should unify this.
 - **Phrases**: store pitches as **degrees** (derive from a sequence's saved scale/root);
   existing Seq layers default **Fixed** so playback is byte-identical.
+  - *Landed for Seq units (2026-07-14):* each seed event carries `degs: [{d,o,a}]`
+    (degree index · octave · accidental) parallel to `freqs`, derived presence-gated
+    in `_ambSeqDeriveDegs` (normalize backfill + fresh capture) — NO schemaVersion
+    bump needed (additive field, the keyOn/prog backfill pattern). Diatonic playback
+    realizes stored degrees in the current key scale (byte-identical when the scales
+    match — harness-proven; degree-true when they differ: a 3rd stays a 3rd).
+    Reconstruction `capRoot + 12·o + capIv[d] + a` is exact, so a mis-guessed capture
+    scale only shifts `a`, never the pitch. Editors that rewrite `ev.freqs` must
+    `delete ev.degs`. Chord-locked still snaps Hz — chord-DEGREE mapping is the next
+    slice and is a deliberate re-baseline of `seq-chordlock` when it lands.
 - **Presets**: the Add-menu offers the 11 as presets; legacy layers show as their matched
   preset (or "Custom (from X)").
 - Every load path funnels through `_normalizeAmbientCfg` (the one migration chokepoint).

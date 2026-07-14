@@ -1329,6 +1329,11 @@
       if (typeof s.chordBorrow !== 'boolean') s.chordBorrow = true;
       if (!Array.isArray(s.units)) s.units = [];
       s.units = s.units.filter(_ambValidUnit);
+      // Option C degree storage: backfill each unit event's degree form (ev.degs
+      // — presence-gated, so this derives once per event and is a no-op after;
+      // additive, old builds ignore it; units without a captured rootIdx are
+      // skipped and keep the legacy Hz path).
+      s.units.forEach(u => { try { _ambSeqDeriveDegs(u); } catch (e) {} });
       // Per-section fields: iterations before switching + a display name.
       s.units.forEach((u, i) => {
         u.reps = Math.max(1, Math.min(64, (u.reps | 0) || 1));
@@ -6948,8 +6953,10 @@
       // be active (critical for the lane-agnostic master Bloom).
       let voice = null;
       try { if (Array.isArray(saved.cellParams) && saved.cellParams[0]) voice = JSON.parse(JSON.stringify(saved.cellParams[0])); } catch (e) {}
-      return { events, voice, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm,
-               name: (typeof saved.name === 'string' && saved.name) ? saved.name : '', reps: 1 };
+      const u = { events, voice, scale: saved.scale || '', rootIdx: saved.rootIdx | 0, baseOctave: saved.baseOctave | 0, bpm,
+                  name: (typeof saved.name === 'string' && saved.name) ? saved.name : '', reps: 1 };
+      try { _ambSeqDeriveDegs(u); } catch (e) {}   // Option C: fresh captures carry their degree form from day one
+      return u;
     }
     // Nudge an absolute freq to a nearby scale degree (seeded random walk).
     // Probability of moving = depth; magnitude 1..(1+2·depth) degrees.
@@ -7125,16 +7132,59 @@
       }
       return m;
     }
+    // ---- Degree storage (Option C / bloom-layer-model §2 Harmony) ------------
+    // Express each captured pitch as {d, o, a} — scale-degree index, octave
+    // offset from the capture root, accidental semitones off that degree —
+    // against the unit's CAPTURED rootIdx + scale. Stored ADDITIVELY per seed
+    // event (`ev.degs`, parallel to ev.freqs; null = rest/invalid slot): old
+    // builds ignore it, Fixed playback never reads it, and the reconstruction
+    // capRoot + 12·o + capIv[d] + a is EXACT (the accidental absorbs any scale
+    // mis-guess), so deriving is always safe. Derived once per event (presence-
+    // gated) at normalize + at fresh capture. INVARIANT: any future editor that
+    // rewrites ev.freqs must `delete ev.degs` so it re-derives.
+    function _ambSeqUnitScaleIv(unit) {
+      const name = (unit && typeof unit.scale === 'string' && unit.scale) ? unit.scale : '';
+      return (typeof SCALES !== 'undefined' && SCALES && SCALES[name]) || [0, 2, 4, 5, 7, 9, 11];
+    }
+    function _ambSeqDeriveDegs(unit) {
+      // No captured root → no stable frame to derive against (the play-time
+      // fallback root is dynamic); leave degs absent so playback keeps the
+      // legacy Hz path for this unit.
+      if (!unit || !Array.isArray(unit.events) || !Number.isFinite(unit.rootIdx)) return;
+      const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+      const capRoot = ((((unit.rootIdx | 0) % 12) + 12) % 12);
+      const iv = _ambSeqUnitScaleIv(unit);
+      unit.events.forEach(ev => {
+        if (!ev || !Array.isArray(ev.freqs) || ev.degs) return;   // presence-gated: derive once
+        ev.degs = ev.freqs.map(f => {
+          if (!(f > 0)) return null;
+          const m = Math.round(69 + 12 * Math.log2(f / A));
+          const rel = m - capRoot;                          // semitones above the capture root
+          const o = Math.floor(rel / 12), pc = rel - 12 * o; // octave index + pc offset 0..11
+          let d = 0, a = pc, best = 99;
+          for (let i = 0; i < iv.length; i++) {
+            const off = pc - (iv[i] % 12), dist = Math.abs(off);
+            if (dist < best) { best = dist; d = i; a = off; }   // nearest degree; tie keeps the lower degree (sharp accidental)
+          }
+          return { d, o, a };
+        });
+      });
+    }
     // B4: apply a seq's Harmony mode to a captured phrase's frequencies. 'fixed'
     // returns them untouched (byte-identical). All others first transpose each note
     // by the interval from the unit's CAPTURED key root to the CURRENT key root
     // (nearest direction), then:
-    //   'diatonic'  → snap into the current key scale (follows key changes).
+    //   'diatonic'  → replay each stored scale DEGREE in the current key scale
+    //                 (degs path; identical to the old transpose+snap whenever the
+    //                 captured and current scales match — in-key by construction —
+    //                 and degree-true when they differ: a 3rd stays a 3rd). Notes
+    //                 without degs (legacy/edited slots) keep the snap path.
     //   'chordlock' → snap onto the CURRENT chord's tones at this onset (atSec),
     //                 from the seq's effective progression; with no progression it
-    //                 falls back to the diatonic scale snap.
+    //                 falls back to the diatonic scale snap. (Chord-DEGREE mapping
+    //                 is the next slice — deliberate re-baseline when it lands.)
     // Preserves note count + order, so per-voice params stay aligned.
-    function _ambSeqHarmonizeFreqs(freqs, unit, seq, atSec) {
+    function _ambSeqHarmonizeFreqs(freqs, unit, seq, atSec, degs) {
       const mode = (seq && seq.harmony) || 'fixed';
       if (mode === 'fixed' || !Array.isArray(freqs) || !freqs.length) return freqs;
       const cfg = _ambKeyCfg(); if (!cfg) return freqs;
@@ -7144,6 +7194,22 @@
       const capRoot = (unit && Number.isFinite(unit.rootIdx)) ? ((((unit.rootIdx | 0) % 12) + 12) % 12) : _ambKeyRootPc(cfg);
       const curRoot = _ambKeyRootPc(cfg);
       let d = (((curRoot - capRoot) % 12) + 12) % 12; if (d > 6) d -= 12;   // nearest transpose
+      // Diatonic degree realization (degs available → degree-true replay).
+      if (mode === 'diatonic' && Array.isArray(degs) && degs.length === freqs.length) {
+        const curIv = (typeof SCALES !== 'undefined' && SCALES && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
+        const Nc = Math.max(1, curIv.length);
+        const pcs = _ambKeyDiatonicPcs(cfg);
+        return freqs.map((f, i) => {
+          if (!(f > 0)) return f;
+          const g = degs[i];
+          if (!g || !Number.isFinite(g.d)) {   // legacy/edited slot → old per-note snap
+            const m = Math.round(toMidi(f)) + d;
+            return toFreq((pcs && pcs.size) ? _ambSnapMidiToPcs(m, pcs) : m);
+          }
+          const dd = Math.max(0, g.d | 0), oo = (g.o | 0) + Math.floor(dd / Nc);
+          return toFreq((capRoot + d) + 12 * oo + curIv[dd % Nc] + (g.a | 0));
+        });
+      }
       // Chord-locked: resolve the current chord's absolute pitch classes at atSec.
       let chordPcs = null, chordRoot = 0;
       if (mode === 'chordlock') {
@@ -7274,6 +7340,7 @@
         const ev = seed.events[i];
         let durMs = Math.max(20, ev.durMs | 0);
         let freqs = ev.freqs;
+        let degs = ev.degs || null;   // stored degrees ride along while pitches are UNCHANGED
         if (!verbatim && seq.varyMode === 'rhythm') {
           if (freqs.length && _ambRand() < 0.12 * depth) { off += durMs; continue; } // drop step
           durMs = Math.max(40, Math.round(durMs * (1 + (_ambRand() * 2 - 1) * 0.6 * depth)));
@@ -7281,8 +7348,9 @@
         if (!verbatim && freqs.length && (seq.varyMode === 'pitch' || seq.varyMode === 'rhythm')) {
           if (_ambRand() < 0.15 * depth) { off += durMs; continue; } // drop note (keep timing)
           freqs = freqs.map(f => _seqNudgeFreq(f, intervals, N, depth, _ambNotesOf(seq)));
+          degs = null;   // nudged pitches → the stored degrees are stale; fall back to the Hz path
         }
-        events.push({ freqs, durMs, vel: ev.vel, sounds: ev.sounds, vp: ev.vp, padStyle: false, offMs: off });   // vp: captured per-voice params (grid-direct replay)
+        events.push({ freqs, durMs, vel: ev.vel, sounds: ev.sounds, vp: ev.vp, padStyle: false, offMs: off, degs });   // vp: captured per-voice params (grid-direct replay)
         off += durMs;
       }
       // RHYTHM mode: occasionally append an extra nudged echo at the phrase tail.
@@ -7299,7 +7367,8 @@
     function _ambEmitSeqEvent(ctx, ev, atAbs, st) {
       const seq = ctx.seq;
       // B4: remap the captured pitches per the seq's Harmony mode (Fixed = untouched).
-      let freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, seq, atAbs);
+      // ev.degs (when the realized event kept the seed pitches) → degree-true Diatonic.
+      let freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, seq, atAbs, ev.degs);
       if (!freqs || !freqs.length) return;
       // B5: chord realization for a multi-note event — 'poly' (default) stacks all
       // voices (byte-identical). 'monoRoot'/'monoTop' fold to the lowest/highest

@@ -254,10 +254,19 @@ unmappable feature → migration can be additive.
 - Add `voice`/`generator`-style derivation (mostly already done in the old Phase 2).
 - **Progression**: fold the per-layer "Progression" note-source + area `cfg.prog` into
   KEY (area frame; layer override). Save/load-gated, `schemaVersion` bump.
-  - *Known asymmetry (found 2026-07-14, pinned in the harness `prog-varbars` note):*
-    per-chord `bars` only engages on the GLOBAL `cfg.prog` — `_ambProgStepAt` reads
-    lengths from `cfg.prog.chords` only, so a per-layer/keyOv progression's `bars`
-    are silently uniform. The KEY fold should unify this.
+  - *Landed (2026-07-14, v4):* `notes.type='prog'` folds into `keyOv {mode:'prog'}`
+    at normalize (idempotent + ungated — an old build writing a notes-prog self-heals
+    on next load; an existing keyOv is never clobbered). The Notes-menu prog picks
+    write keyOv directly; picking a non-prog source clears a prog override (the old
+    replacement UX). The keyOv prog return now carries colour sets (the one
+    decoration the notes path had), keeping the fold lossless. `prog-bass` proves
+    identity: its config migrates through the fold and hashes unchanged.
+  - *Asymmetry FIXED (same change):* `_ambProgStepAt` takes the resolved SOURCE and
+    walks per-chord `bars` from ITS chords (11 emit sites threaded), so variable-
+    length chords work on layer progressions too — `keyov-varbars` pins layer ≡
+    global (identical hashes). The ARP series fold (per-entry passes/dir — richer
+    than a prog) is DEFERRED to its own design pass; series entries still resolve
+    per-entry via `steps[].notes`.
 - **Phrases**: store pitches as **degrees** (derive from a sequence's saved scale/root);
   existing Seq layers default **Fixed** so playback is byte-identical.
   - *Landed for Seq units (2026-07-14):* each seed event carries `degs: [{d,o,a}]`

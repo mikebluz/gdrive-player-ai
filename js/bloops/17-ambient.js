@@ -1447,7 +1447,11 @@
     //        cfg.seqs/cfg.samples entries migrate into extras (idempotent
     //        per-entry copy), then the arrays are DELETED. cfg.extras is the
     //        single home; enumeration stays on _ambSeqList/_ambSampleList.
-    const _AMB_SCHEMA_VERSION = 3;
+    //   v4 — Option C: PROGRESSION lives at KEY — layer notes.type='prog' folds
+    //        into keyOv {mode:'prog'} (idempotent + ungated, see the sweep near
+    //        the stamp). The Notes-menu prog picks write keyOv directly now.
+    //        Arp series entries deferred.
+    const _AMB_SCHEMA_VERSION = 4;
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
@@ -1724,6 +1728,25 @@
         (cfg.extras || []).forEach(x => stampSeed(x, 'random'));
         (cfg.seqs || []).forEach(s => stampSeed(s, 'sequence'));
         (cfg.samples || []).forEach(s => stampSeed(s, 'sample')); }
+      // ---- Option C (v4): PROGRESSION lives at KEY ------------------------
+      // Fold any layer's notes.type='prog' into keyOv {mode:'prog'} — a
+      // progression is the harmonic frame, not note material. IDEMPOTENT and
+      // deliberately UNGATED (not `_fromVer < 4`): an older build can still
+      // write a notes-prog into a v4 project, and the sweep re-folds it on the
+      // next load. An existing keyOv is never clobbered (it outranks notes in
+      // _ambNotesOf anyway, so dropping the notes-prog is lossless either way).
+      // The ARP's series entries (steps[].notes) are NOT folded — that richer
+      // structure (per-entry passes/dir) is deferred to its own design pass.
+      { const foldProg = (L) => {
+          if (!L || typeof L !== 'object') return;
+          const n = L.notes;
+          if (n && n.type === 'prog' && Array.isArray(n.chords) && n.chords.length) {
+            if (!L.keyOv) L.keyOv = { mode: 'prog', name: (typeof n.name === 'string' && n.name) ? n.name : 'Progression', chords: n.chords };
+            L.notes = { type: 'scale', scale: '' };
+          }
+        };
+        ['bed', 'motif', 'texture', 'beat'].forEach(n => foldProg(cfg[n]));
+        (cfg.extras || []).forEach(foldProg); }
       // Stamp the current layer-schema version so version-gated migrations run
       // once and re-normalizing is a no-op. (`_fromVer` above is the pre-migration
       // value for any gated block.)
@@ -1941,7 +1964,15 @@
       if (layer && layer.keyOv && typeof layer.keyOv === 'object') {
         const ko = layer.keyOv;
         if (ko.mode === 'prog' && Array.isArray(ko.chords) && ko.chords.length) {
-          return { type: 'prog', name: ko.name || 'Progression', chords: ko.chords };
+          const out = { type: 'prog', name: ko.name || 'Progression', chords: ko.chords };
+          // Colour sets decorate ANY source (they did on the old notes-prog
+          // path), so the v4 notes.prog→keyOv fold stays lossless for a
+          // colored prog layer.
+          if (layer && Array.isArray(layer.colors) && layer.colors.length && ((layer.colorAmt | 0) > 0)) {
+            out.colors = layer.colors; out.colorAmt = layer.colorAmt | 0;
+            out.colorUsage = (layer.colorUsage === 'approach' || layer.colorUsage === 'enclosure') ? layer.colorUsage : 'landing';
+          }
+          return out;
         }
         if (ko.mode === 'key' && typeof ko.scale === 'string') {
           return { type: 'scale', scale: ko.scale, rootPc: (((ko.root | 0) % 12) + 12) % 12 };
@@ -2015,7 +2046,7 @@
     // progression tight across the ~1.4 s lookahead. `_progAnchor` lets Bar Lock
     // later make this LOOP-relative; until set it falls back to play start.
     // (Phase 1a: defined but NOT yet wired into the emits — that's 1b.)
-    function _ambProgStepAt(E, atSec) {
+    function _ambProgStepAt(E, atSec, src) {
       E = E || _E; if (!E) return 0;
       const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
       const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
@@ -2027,7 +2058,14 @@
       // Per-chord lengths: if any chord carries its own `bars`, walk the cumulative
       // lengths to find the active chord; else the uniform fast path (byte-identical to
       // before → harness-safe). Returns a MONOTONIC step (chord = step mod chords.length).
-      const chords = (cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null;
+      // `src` (optional) = the resolved prog SOURCE this step will pick a chord from
+      // (a layer keyOv prog, an arp series entry, the inherited global…) — its own
+      // chords drive the lens walk, so per-chord `bars` works on LAYER progressions
+      // too, not just cfg.prog (the pre-v4 asymmetry). An inherited source shares
+      // cfg.prog.chords by reference → identical; a src with no `bars` → the same
+      // uniform path as before.
+      const srcCh = (src && src.type === 'prog' && Array.isArray(src.chords) && src.chords.length) ? src.chords : null;
+      const chords = srcCh || ((cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null);
       if (chords && chords.length && chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0)) {
         const lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
         const cycle = lens.reduce((s, v) => s + v, 0) || bpc;
@@ -2575,7 +2613,7 @@
       const _savedOv = _ambProgStepOverride;
       for (let i = 1; i <= reps; i++) {
         const echoAt = at + i * delay;
-        if (_isProg) { try { _ambProgStepOverride = _ambProgStepAt(E, echoAt); } catch (e) {} }
+        if (_isProg) { try { _ambProgStepOverride = _ambProgStepAt(E, echoAt, src); } catch (e) {} }
         const nDeg = step * i + (pat[(i - 1) % pat.length] | 0);
         const ef = _ambScaleTranspose(freq, nDeg, src);
         if (!(ef > 0)) continue;
@@ -3109,7 +3147,18 @@
       const keyTag = keyOn ? (' — in ' + ((typeof CHROMATIC !== 'undefined' && CHROMATIC[_ambKeyRootPc(kcfg)]) || '') + ' ' + _ambKeyScaleName(kcfg)) : '';
       const apply = (notes) => {
         _E = E; const L = getLayer(); if (!L) return;
-        L.notes = notes;
+        // Option C (v4): a PROGRESSION is the harmonic frame, not note material —
+        // it lands in the layer's KEY override (keyOv), never in notes. Picking
+        // any other source clears a prog override (the new pick replaces the
+        // frame, matching the old notes-replacement UX); a keyOv mode:'key'
+        // override is left alone (pre-existing B2 behavior).
+        if (notes && notes.type === 'prog') {
+          L.keyOv = { mode: 'prog', name: notes.name || 'Progression', chords: notes.chords };
+          if (L.notes && L.notes.type === 'prog') L.notes = { type: 'scale', scale: '' };
+        } else {
+          L.notes = notes;
+          if (L.keyOv && L.keyOv.mode === 'prog') delete L.keyOv;
+        }
         if (typeof afterChange === 'function') afterChange();
         if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
         if (typeof persistWorkspace === 'function') persistWorkspace();
@@ -4484,8 +4533,9 @@
       // Progression: resolve the chord at THIS iteration's bar-aligned onset (was the
       // global ms clock), so a prog-driven bed follows the changes per bar like the
       // loop layers. Cleared right after the voicing is picked.
-      const _bedProg = (_ambAsNotes(_ambNotesOf(bed)).type === 'prog');
-      if (_bedProg) _ambProgStepOverride = _ambProgStepAt(_E, at);
+      const _bedSrc = _ambNotesOf(bed);
+      const _bedProg = (_ambAsNotes(_bedSrc).type === 'prog');
+      if (_bedProg) _ambProgStepOverride = _ambProgStepAt(_E, at, _bedSrc);
       // Prog-sync: which sub-slot of the current area chord is this onset? Drives
       // the in-chord voicing variation (+ a stochastic onset jitter, below).
       const _psi = _bedProg ? _ambProgSyncInfo(_E, key, bed, _E._cfg || (_E.getCfg && _E.getCfg())) : null;
@@ -4872,7 +4922,7 @@
             _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
             // Progression chord resolved at THIS note's ONSET (bar-aligned), so a
             // multi-bar bass loop follows the changes instead of holding one chord.
-            if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);
+            if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
             const bp = _ambApplyAdsr(_ambBassParams(lenMs, _ambLayerPan(inst), inst.tone), inst);
@@ -4963,7 +5013,7 @@
           const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
-          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);   // chord at THIS note's onset (per-onset)
           let f = _ambDegreeFreq(deg % N, reg + homeShift + Math.floor(deg / N), src);
           if (f == null) continue;
           f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
@@ -5046,7 +5096,7 @@
           const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;
-          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);   // chord at THIS note's onset (per-onset)
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);   // chord at THIS note's onset (per-onset)
           const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
           if (f == null) continue;
           const bp = { type: vtype, attack: atk, decay: dec, sustain: sus, release: rel,
@@ -5122,7 +5172,7 @@
       try {
       for (let c = cFrom; c <= cTo && cap < 64; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
-        if (isProg) _ambProgStepOverride = _ambProgStepAt(E, st.startAt + c * cycleSec);  // chord at the cycle's bar-aligned onset
+        if (isProg) _ambProgStepOverride = _ambProgStepAt(E, st.startAt + c * cycleSec, src);  // chord at the cycle's bar-aligned onset
         const tones = isProg ? _ambScaleIntervals(src) : tones0;   // prog chord re-resolved per cycle
         const K = Math.max(1, tones.length);
         const cRnd = (timeVary > 0 || pitchVary > 0)
@@ -5274,7 +5324,7 @@
       const _motifProg = (_mnotes && _mnotes.type === 'prog');
       const _unit = [];
       for (let i = 0; i < count; i++) {
-        if (_motifProg) _ambProgStepOverride = _ambProgStepAt(_E, at + _startOff + i * burstGap);   // chord at THIS note's onset (bar-aligned)
+        if (_motifProg) _ambProgStepOverride = _ambProgStepAt(_E, at + _startOff + i * burstGap, _mnotes);   // chord at THIS note's onset (bar-aligned)
         const f = _ambMotifNextNote(motif);
         if (f == null) continue;
         // Sequential single notes can't be "distributed" simultaneously, so
@@ -5363,7 +5413,7 @@
           const at = cStart + s * slotSec + ((s & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;             // only within this tick's window
           _ambKeyTime = at;
-          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at);
+          if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, notes);
           // Pitch pick (D3): 'random' = uniform over the source tones (default,
           // scatter) · 'low' = root-weighted (rnd² biases toward degree 0 → a
           // grounded, tonal shimmer). Default/absent → uniform (byte-identical).
@@ -5491,7 +5541,7 @@
       // its series at its own rate while the chords follow the global bars-per-chord
       // clock like every other layer. (Pool/mutes/evolve all key off this; st._loop
       // stays the structural entry-cursor + queue-sizing index.)
-      const _chordIdx = _arpProg ? _ambProgStepAt(_E, at) : 0;
+      const _chordIdx = _arpProg ? _ambProgStepAt(_E, at, notes) : 0;
       if (_arpProg) _ambProgStepOverride = _chordIdx;
       try {
       const intervals = _ambScaleIntervals(notes);
@@ -5771,7 +5821,7 @@
                 // Re-voice THIS hit from the chord active at ITS scheduled time
                 // (same per-onset rule as every other prog layer). No rnd used.
                 const _pv = _ambProgStepOverride;
-                _ambProgStepOverride = _ambProgStepAt(E, hitAt);
+                _ambProgStepOverride = _ambProgStepAt(E, hitAt, notes);
                 const iv2 = _ambScaleIntervals(notes);
                 const N2 = Math.max(1, iv2.length);
                 const dg = v % N2, oc = baseOct + Math.floor(v / N2);
@@ -7255,7 +7305,7 @@
           const src = _ambNotesOf(seq);
           if (src && src.type === 'prog') {
             const prevOv = _ambProgStepOverride;
-            if (Number.isFinite(atSec)) _ambProgStepOverride = _ambProgStepAt(_E, atSec);
+            if (Number.isFinite(atSec)) _ambProgStepOverride = _ambProgStepAt(_E, atSec, src);
             const ch = _ambProgCurrentChord(src);
             _ambProgStepOverride = prevOv;
             if (ch && Array.isArray(ch.intervals) && ch.intervals.length) {

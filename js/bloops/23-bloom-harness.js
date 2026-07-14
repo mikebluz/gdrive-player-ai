@@ -177,6 +177,18 @@
                 { root: 0, intervals: [0, 4, 7], bars: 2 }, { root: 5, intervals: [0, 4, 7], bars: 1 }, { root: 7, intervals: [0, 4, 7], bars: 0.5 },
               ] };
           }) },
+          // v4 fix: per-chord `bars` on a LAYER progression (keyOv) — pins the
+          // lens walk now that _ambProgStepAt reads the active source's chords
+          // (pre-v4 a layer prog's bars were silently uniform). Same chords as
+          // prog-varbars, so the streams should MATCH it (layer ≡ global).
+          { name: 'keyov-varbars', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('bass', 1);
+              L.keyOv = { mode: 'prog', name: 'varbars', chords: [
+                { root: 0, intervals: [0, 4, 7], bars: 2 }, { root: 5, intervals: [0, 4, 7], bars: 1 }, { root: 7, intervals: [0, 4, 7], bars: 0.5 },
+              ] };
+              c.extras = [L]; c.barsPerChord = 1;
+          }) },
           // Seq Harmony 'diatonic' under a detached G-major area key — pins the
           // capture-root→current-root transpose + scale snap in _ambSeqHarmonizeFreqs.
           { name: 'seq-diatonic', cfg: mk((c) => {
@@ -319,6 +331,7 @@
         'keyov-prog':      { hash: '0c078c11', count: 46 },
         'key-modrot-area': { hash: '9eedc324', count: 18 },
         'prog-varbars':    { hash: '5b83b2e3', count: 32 },
+        'keyov-varbars':   { hash: '5b83b2e3', count: 32 },   // v4: DELIBERATELY identical to prog-varbars — a layer prog's per-chord bars now drive the same lens walk as the global's (the asymmetry fix)
         'seq-diatonic':    { hash: 'e31a6dbb', count: 38 },
         'seq-chordlock':   { hash: '5d9f97e6', count: 38 },   // 2026-07-14: chord-DEGREE comping (re-anchor to each chord root + scale-borrowed tensions) replaced the Hz nearest-snap, AND the config detached its key (the original c90d8daf pin followed the live workspace scale = session-dependent). Verified: all output diatonic, captured C-E motif re-anchors to F-A over IV.
       };

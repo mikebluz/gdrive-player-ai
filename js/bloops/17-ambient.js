@@ -13132,6 +13132,12 @@
               '<span class="ambient-roll-plabel"></span>' +
               '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-next" data-rkey="' + key + '" title="Next unit">▶</span>' +
             '</span>' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-play" data-rkey="' + key + '" hidden title="Audition this phrase once, without starting playback">▶</span>' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-regen" data-rkey="' + key + '" hidden title="Roll a new phrase (Variance settings shape every roll). Sim keeps part of the current phrase.">🎲</span>' +
+            '<select class="ambient-select ambient-roll-sim" data-rkey="' + key + '" hidden title="Regen similarity — how much of the CURRENT phrase each 🎲 keeps (Fresh = all new)">' +
+              '<option value="0">Fresh</option><option value="25">Sim 25%</option><option value="50">Sim 50%</option><option value="75">Sim 75%</option>' +
+            '</select>' +
+            '<span role="button" tabindex="-1" class="ambient-roll-btn ambient-roll-keep" data-rkey="' + key + '" hidden title="Keep this phrase — lock it in as the layer’s part (plays exactly on the next Play)">✓ Keep</span>' +
             '<select class="ambient-select ambient-roll-harm" data-hkey="' + key + '" hidden title="Harmony — how this phrase relates to the key and chords: Fixed = the exact captured pitches; Diatonic = follows key changes by scale degree; Chord-locked = re-anchors each degree to the current chord (needs a progression)">' +
               '<option value="">Fixed</option><option value="diatonic">Diatonic</option><option value="chordlock">Chord-locked</option>' +
             '</select>' +
@@ -13189,6 +13195,17 @@
           if (tag) tag.textContent = (el._mode === 'seedroll') ? 'seed' : (seedEdited ? 'edited seed' : 'frozen');
           const rv = el.querySelector('.ambient-roll-revert');
           if (rv) rv.hidden = !seedEdited;
+          // Studio buttons: ▶ auditions any roll; 🎲/Sim/✓ are seed-preview
+          // affordances (a lock already IS the kept phrase).
+          const isSeed = (el._mode === 'seedroll');
+          const pb2 = el.querySelector('.ambient-roll-play'); if (pb2) pb2.hidden = false;
+          ['.ambient-roll-regen', '.ambient-roll-sim', '.ambient-roll-keep'].forEach(sel2 => {
+            const b2 = el.querySelector(sel2); if (b2) b2.hidden = !isSeed;
+          });
+          const sim2 = el.querySelector('.ambient-roll-sim');
+          if (sim2 && document.activeElement !== sim2) {
+            try { const L4 = _ambLayerByKey(E, key); sim2.value = String((L4 && L4._pvSim) || 0); } catch (e) {}
+          }
           // Harmony select (Option C): pickable on any editable roll — a seed
           // preview promotes on change (which stamps keyCtx); a pre-keyCtx lock
           // can't remap, so hide it there. Live-readout guard: don't stomp an
@@ -13593,6 +13610,12 @@
       const cfg0 = (typeof E.getCfg === 'function') ? E.getCfg() : null; if (!cfg0) return null;
       const cfg = JSON.parse(JSON.stringify(cfg0));   // clone — ticking must not touch the real area
       cfg.playing = false;
+      // 🎲 Regen salt: re-roll THIS preview without reseeding the area. Only the
+      // clone's seed moves, so live playback is untouched — a regen'd phrase is
+      // meant to be KEPT (✓ promotes it to a lock, which replays exactly).
+      { const _L0 = _ambLayerByKey({ getCfg: () => cfg }, key) || null;
+        const _salt = _L0 && (_L0._pvSalt | 0);
+        if (_salt) cfg.seed = (((cfg.seed | 0) ^ Math.imul(0x9e3779b9, _salt)) >>> 0) || 1; }
       const E2 = _makeAmbientEngine({
         getCfg: () => cfg,
         busNode: () => (typeof globalSendTap !== 'undefined' ? globalSendTap : null),
@@ -20155,6 +20178,9 @@
       // re-renders. Picking a mode on an unpromoted seed preview PROMOTES it
       // first (same as an edit would), which stamps the keyCtx capture frame.
       host.addEventListener('change', (e) => {
+        // Studio Sim select — regen similarity, stored transiently on the layer.
+        const sm2 = e.target && e.target.closest && e.target.closest('.ambient-roll-sim');
+        if (sm2) { try { _E = E; const L2 = _ambLayerByKey(E, sm2.dataset.rkey); if (L2) L2._pvSim = (sm2.value | 0); } catch (e2) {} return; }
         const hs = e.target && e.target.closest && e.target.closest('.ambient-roll-harm');
         if (!hs) return;
         const key = hs.dataset.hkey;
@@ -20318,6 +20344,57 @@
               _ambUpdateNotesLive(E);
             }
           } catch (err) { console.warn('Roll pager failed', err); }
+          return;
+        }
+        // Studio: ▶ audition / 🎲 regen (with Sim blend) / ✓ keep — the
+        // select-voice → select-pattern → generate → preview → keep workflow.
+        const rpl = e.target && e.target.closest && e.target.closest('.ambient-roll-play');
+        if (rpl) {
+          e.stopPropagation();
+          try {
+            _E = E; const key = rpl.dataset.rkey;
+            const meta = _ambRollMeta(E, key); if (!meta || !Array.isArray(meta.list) || !meta.list.length) return;
+            try { if (Tone.start) Tone.start(); } catch (e2) {}
+            const dest = (E.mod && E.mod[key]) ? _ambLayerDest(key) : undefined;
+            const t0 = (Tone.now ? Tone.now() : 0) + 0.08;
+            const offK = meta.offKey || 't', durK = meta.durKey || 'dur';
+            meta.list.forEach(n => {
+              if (!(n && n.freq > 0)) return;
+              const durMs = (durK === 'durMs') ? (n.durMs | 0) : (n.dur | 0);
+              try { playNote(n.freq, Object.assign({}, n.params), Math.max(40, durMs || 300), t0 + (+n[offK] || 0), dest, undefined, E.laneIdx ? E.laneIdx() : -1); } catch (e2) {}
+            });
+          } catch (err) { console.warn('Roll preview failed', err); }
+          return;
+        }
+        const rgn = e.target && e.target.closest && e.target.closest('.ambient-roll-regen');
+        if (rgn) {
+          e.stopPropagation();
+          try {
+            _E = E; const key = rgn.dataset.rkey;
+            const L = _ambLayerByKey(E, key); if (!L) return;
+            const old = (E.seedPv && E.seedPv[key] && Array.isArray(E.seedPv[key].events)) ? E.seedPv[key].events.slice() : null;
+            L._pvSalt = ((L._pvSalt | 0) + 1);
+            if (E.seedPv) delete E.seedPv[key];
+            const pv = _ambSeedPreview(E, key);
+            // Sim blend: keep each CURRENT note with prob sim%, drop fresh notes
+            // that collide with a kept one (±60 ms), merge by time. Seeded from
+            // the salted seed, so the same 🎲 press is reproducible.
+            const sim = Math.max(0, Math.min(75, (L._pvSim | 0)));
+            if (pv && old && sim > 0) {
+              const cfg2 = E.getCfg();
+              const rnd = _ambSeededRand(((((cfg2 && cfg2.seed) | 0) ^ Math.imul(0x85ebca6b, L._pvSalt | 0)) >>> 0) || 1);
+              const kept = old.filter(() => rnd() * 100 < sim);
+              const fresh = (pv.events || []).filter(n => !kept.some(k2 => Math.abs((+k2.t || 0) - (+n.t || 0)) < 0.06));
+              pv.events = kept.concat(fresh).sort((a2, b2) => (+a2.t || 0) - (+b2.t || 0));
+            }
+            try { _ambUpdateNotesLive(E); } catch (e2) {}
+          } catch (err) { console.warn('Roll regen failed', err); }
+          return;
+        }
+        const rkp = e.target && e.target.closest && e.target.closest('.ambient-roll-keep');
+        if (rkp) {
+          e.stopPropagation();
+          try { _E = E; _ambSeedPromote(E, rkp.dataset.rkey); _ambUpdateNotesLive(E); } catch (err) { console.warn('Roll keep failed', err); }
           return;
         }
         const rrv = e.target && e.target.closest && e.target.closest('.ambient-roll-revert');

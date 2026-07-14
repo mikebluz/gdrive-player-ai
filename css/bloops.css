@@ -11659,3 +11659,7 @@
 
     /* Synth-kit macros row */
     .ambient-sk-macros { border-bottom: 1px dashed rgba(74,74,102,0.5); padding-bottom: 4px; margin-bottom: 4px; }
+    /* Studio roll-bar controls (seed-phrase workflow). */
+    .ambient-roll-sim { width: 88px; font-size: 0.62rem; padding: 1px 4px; }
+    .ambient-roll-play { color: #8be08b; border-color: rgba(139, 224, 139, 0.35); }
+    .ambient-roll-keep { color: #8be08b; border-color: rgba(139, 224, 139, 0.45); }

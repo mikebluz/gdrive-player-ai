@@ -15869,6 +15869,66 @@
         else L.push = 0;   // a preset defines the whole feel → clear un-named types
       });
     }
+    // ---- TAP input (Phase 4) ---------------------------------------------
+    // One TAP pad, two modes. TEMPO: each tap updates cfg.bpm from a rolling
+    // average of the last few intervals (2 s idle resets). RHYTHM: the first tap
+    // arms + anchors a window (Bars bars at the area tempo); each tap records an
+    // onset; the window auto-finalizes → quantize taps to a Steps grid → apply as
+    // the BEAT layer's euclid pattern. State on E._tap.
+    function _ambTapNow() { return (typeof performance !== 'undefined') ? performance.now() / 1000 : Date.now() / 1000; }
+    function _ambTapState(E) { return E._tap || (E._tap = { mode: 'tempo', times: [], t0: 0, timer: null, bars: 2, steps: 16, bpm: 0 }); }
+    function _ambTapHit(E) {
+      const t = _ambTapState(E); const now = _ambTapNow();
+      if (t.mode === 'tempo') {
+        if (t.times.length && (now - t.times[t.times.length - 1]) > 2) t.times = [];   // long gap → fresh count
+        t.times.push(now); if (t.times.length > 6) t.times.shift();
+        if (t.times.length >= 2) {
+          let s = 0; for (let i = 1; i < t.times.length; i++) s += t.times[i] - t.times[i - 1];
+          const avg = s / (t.times.length - 1);
+          const bpm = Math.max(20, Math.min(320, Math.round(60 / avg)));
+          t.bpm = bpm; const cfg = E.getCfg(); if (cfg) cfg.bpm = bpm;
+          if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        }
+        if (t.timer) clearTimeout(t.timer); t.timer = setTimeout(() => { const tt = E._tap; if (tt) { tt.times = []; try { _ambRenderGroove(E); } catch (e) {} } }, 2200);
+      } else {   // rhythm
+        if (!t.times.length) {
+          t.t0 = now;
+          const cfg = E.getCfg(); const bpm = (cfg && cfg.bpm > 0) ? cfg.bpm : _ambBpm(); const barSec = (60 / Math.max(20, bpm)) * 4;
+          const bars = Math.max(1, Math.min(8, t.bars | 0) || 2);
+          if (t.timer) clearTimeout(t.timer);
+          t.timer = setTimeout(() => _ambTapFinalize(E), Math.round(bars * barSec * 1000) + 60);
+        }
+        t.times.push(now - t.t0);
+      }
+      try { _ambRenderGroove(E); } catch (e) {}
+    }
+    function _ambTapFinalize(E) {
+      const t = E._tap; if (!t || t.mode !== 'rhythm') return;
+      const cfg = E.getCfg(); if (!cfg) { t.times = []; return; }
+      const taps = t.times.slice(); t.times = []; if (t.timer) { clearTimeout(t.timer); t.timer = null; }
+      if (!taps.length) { try { _ambRenderGroove(E); } catch (e) {} return; }
+      const bpm = (cfg.bpm > 0) ? cfg.bpm : _ambBpm(); const barSec = (60 / Math.max(20, bpm)) * 4;
+      const bars = Math.max(1, Math.min(8, t.bars | 0) || 2), steps = Math.max(2, Math.min(32, t.steps | 0) || 16);
+      const total = bars * steps, slotSec = barSec / steps;
+      const row = new Array(total).fill(0);
+      taps.forEach(tt => { const s = Math.round(tt / slotSec); if (s >= 0 && s < total) row[s] = 1; });
+      if (!row.some(x => x)) row[0] = 1;   // guarantee at least one hit
+      // Apply as the BEAT layer's euclid pattern (create/enable it).
+      _E = E;
+      if (!cfg.beat || typeof cfg.beat !== 'object') return;
+      cfg.beat.present = true; cfg.beat.on = true; cfg.beat.gen = 'euclid';
+      cfg.beat.steps = steps; cfg.beat.bars = bars; cfg.beat.pulses = Math.max(1, row.filter(x => x).length);
+      cfg.beat.euclidKit = false; cfg.beat.euclidPattern = [row];
+      try { _ambNormalizeEuclidPattern(cfg.beat); } catch (e) {}
+      // Light refresh (NOT _ambRebuildMaster, which rebuilds the panel and would
+      // collapse this section): unhide/refresh the Beat card + build its chain.
+      try { _ambSyncControls(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      try { _ambRenderGroove(E); } catch (e) {}
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      try { if (typeof showToast === 'function') showToast('Tapped rhythm → Beat (' + row.filter(x => x).length + ' hits over ' + bars + ' bar' + (bars === 1 ? '' : 's') + ')'); } catch (e) {}
+    }
     // Live feel macros. GLOBAL Swing/Accent/Humanize cascade to all layers (add
     // to each layer's own); per-layer Push/Pull nudges a layer ahead/behind the
     // beat (relative timing = groove). Edits apply live; 🎲 rolls a fresh feel.
@@ -15917,6 +15977,21 @@
           '<span class="ambient-groove-pv">' + (pv > 0 ? '+' : '') + pv + (pctMode ? '%' : 'ms') + '</span></div>';
       });
       html += '</div>';
+      // TAP input — tempo (tap the beat → BPM) or rhythm (tap a pattern → Beat).
+      const tp = _ambTapState(E);
+      const tapLbl = (tp.mode === 'tempo')
+        ? (tp.times.length >= 2 && tp.bpm ? tp.bpm + ' BPM' : 'TAP the beat…')
+        : (tp.times.length ? '● ' + tp.times.length + ' taps — keep going…' : 'TAP a rhythm…');
+      html += '<div class="ambient-groove-tap"><div class="ambient-groove-taphead">' +
+        '<span class="ambient-sched-lbl">tap</span>' +
+        '<span class="ambient-seg-row">' +
+          '<button type="button" class="ambient-seg ambient-groove-tapmode' + (tp.mode === 'tempo' ? ' active' : '') + '" data-tapmode="tempo">Tempo</button>' +
+          '<button type="button" class="ambient-seg ambient-groove-tapmode' + (tp.mode === 'rhythm' ? ' active' : '') + '" data-tapmode="rhythm">Rhythm → Beat</button>' +
+        '</span>' +
+        (tp.mode === 'rhythm' ? '<span class="ambient-groove-taprb"><span class="ambient-sched-lbl">bars</span><input type="number" class="ambient-groove-tapbars" min="1" max="8" step="1" value="' + (tp.bars | 0 || 2) + '"><span class="ambient-sched-lbl">steps/bar</span><input type="number" class="ambient-groove-tapsteps" min="2" max="32" step="1" value="' + (tp.steps | 0 || 16) + '"></span>' : '') +
+        '</div>' +
+        '<button type="button" class="ambient-groove-tappad' + (tp.times.length ? ' armed' : '') + '" title="' + (tp.mode === 'tempo' ? 'Tap in time — 2+ taps set the tempo.' : 'Tap a rhythm — the first tap starts a ' + (tp.bars | 0 || 2) + '-bar window; taps quantize to the grid and become the Beat pattern.') + '">🖐 ' + esc(tapLbl) + '</button>' +
+        '</div>';
       body.innerHTML = html;
     }
     function _ambRenderSeqLayers(E) {
@@ -19323,6 +19398,8 @@
               const vo = grBody.querySelector('[data-gv="' + gm + '"]'); if (vo) vo.textContent = v;
               if (gm === 'humanize') { try { _ambSyncControls(E); } catch (e) {} } _grLiveSwing();
               if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
+            const tb = ev.target.closest('.ambient-groove-tapbars, .ambient-groove-tapsteps');
+            if (tb) { const t = _ambTapState(E); const v = parseInt(tb.value, 10) || 0; if (tb.classList.contains('ambient-groove-tapbars')) t.bars = Math.max(1, Math.min(8, v)); else t.steps = Math.max(2, Math.min(32, v)); return; }
             const psl = ev.target.closest('.ambient-groove-pushsl');
             if (psl) { const key = _grPushKey(psl); const L = key && _ambLayerByKey(E, key); if (!L) return;
               const c = _grCfg(); const pct = c && c.groove.pushMode === 'pct'; const v = parseInt(psl.value, 10) || 0;
@@ -19342,8 +19419,15 @@
               if (typeof persistWorkspace === 'function') persistWorkspace();
             }
           });
+          // Tap pad (pointerdown so rapid taps register immediately) + mode/params.
+          grBody.addEventListener('pointerdown', (ev) => {
+            const pad = ev.target.closest('.ambient-groove-tappad');
+            if (pad) { ev.preventDefault(); _E = E; try { _ambTapHit(E); } catch (e) {} }
+          });
           grBody.addEventListener('click', (ev) => {
             _E = E;
+            const tm = ev.target.closest('.ambient-groove-tapmode');
+            if (tm) { const t = _ambTapState(E); t.mode = (tm.getAttribute('data-tapmode') === 'rhythm') ? 'rhythm' : 'tempo'; t.times = []; if (t.timer) { clearTimeout(t.timer); t.timer = null; } _ambRenderGroove(E); return; }
             const md = ev.target.closest('.ambient-groove-mode');
             if (md) { const c = _grCfg(); if (!c) return; c.groove.pushMode = (md.getAttribute('data-gmode') === 'pct') ? 'pct' : 'ms'; _ambRenderGroove(E); if (typeof persistWorkspace === 'function') persistWorkspace(); return; }
             const evb = ev.target.closest('.ambient-groove-evolve');

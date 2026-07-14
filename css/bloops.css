@@ -3148,6 +3148,19 @@
     /* Center-detented push slider: teal (timing/feel), 0 in the middle. */
     .ambient-groove-pushsl { flex: 1 1 auto; min-width: 0; accent-color: #4fd1c5; }
     .ambient-groove-pv { flex: 0 0 46px; text-align: right; font-size: 0.72rem; color: #7fe4dc; }
+    /* TAP input — mode toggle + a big tap pad. */
+    .ambient-groove-tap { border-top: 1px solid rgba(45,45,63,0.5); padding-top: 8px; margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+    .ambient-groove-taphead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .ambient-groove-tapmode { padding: 2px 9px; font-size: 0.68rem; }
+    .ambient-groove-taprb { display: inline-flex; align-items: center; gap: 5px; }
+    .ambient-groove-taprb input { width: 40px; padding: 3px 4px; background: #0f0f1e; border: 1px solid #2d2d3f; border-radius: 4px; color: #e2e8f0; font-size: 0.74rem; text-align: center; }
+    .ambient-groove-tappad {
+      width: 100%; padding: 16px; border: 1px dashed #4a5568; border-radius: 8px;
+      background: rgba(159,122,234,0.06); color: #d6bcfa; font: 700 0.95rem 'Segoe UI', sans-serif;
+      cursor: pointer; user-select: none; touch-action: manipulation; transition: background 0.06s linear, border-color 0.1s;
+    }
+    .ambient-groove-tappad:active { background: rgba(159,122,234,0.28); border-color: #9f7aea; }
+    .ambient-groove-tappad.armed { border-style: solid; border-color: #4fd1c5; color: #7fe4dc; background: rgba(79,209,197,0.08); }
     .ambient-sched.collapsed .ambient-sched-body { display: none; }
     .ambient-sched.collapsed .ambient-sched-toggle::before { transform: rotate(-90deg); }
     .ambient-sched-body { display: flex; flex-direction: column; gap: 8px; }

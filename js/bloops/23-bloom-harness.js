@@ -186,7 +186,10 @@
               c.keyOn = true; c.keyFollow = false; c.keyRoot = 7; c.keyScale = 'major'; c.keyMode = 'transpose';
           }) },
           // Seq Harmony 'chordlock' following its own I-IV-V keyOv progression —
-          // pins the chord-tone snap + missing-tone borrow (default revoice smooth).
+          // pins the chord-DEGREE comping + scale-borrowed tensions (default
+          // revoice smooth). Key DETACHED (C major) like key-transpose above:
+          // the borrow walk reads the key scale, so following the live workspace
+          // key would make the baseline depend on session state.
           { name: 'seq-chordlock', cfg: mk((c) => {
               c.bed.on = false;
               const s = _defaultSeqLayer(1); s.units = [seqUnit()]; s.on = true; s.harmony = 'chordlock';
@@ -194,6 +197,7 @@
                 { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
               ] };
               c.seqs = [s]; c.barsPerChord = 1;
+              c.keyOn = true; c.keyFollow = false; c.keyRoot = 0; c.keyScale = 'major';
           }) },
         ];
       }
@@ -316,7 +320,7 @@
         'key-modrot-area': { hash: '9eedc324', count: 18 },
         'prog-varbars':    { hash: '5b83b2e3', count: 32 },
         'seq-diatonic':    { hash: 'e31a6dbb', count: 38 },
-        'seq-chordlock':   { hash: 'c90d8daf', count: 38 },
+        'seq-chordlock':   { hash: '5d9f97e6', count: 38 },   // 2026-07-14: chord-DEGREE comping (re-anchor to each chord root + scale-borrowed tensions) replaced the Hz nearest-snap, AND the config detached its key (the original c90d8daf pin followed the live workspace scale = session-dependent). Verified: all output diatonic, captured C-E motif re-anchors to F-A over IV.
       };
       function loadBaseline() {
         try { const ls = JSON.parse(localStorage.getItem(BASELINE_KEY) || 'null'); if (ls) return ls; } catch (e) {}

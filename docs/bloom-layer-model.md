@@ -259,8 +259,18 @@ unmappable feature → migration can be additive.
     match — harness-proven; degree-true when they differ: a 3rd stays a 3rd).
     Reconstruction `capRoot + 12·o + capIv[d] + a` is exact, so a mis-guessed capture
     scale only shifts `a`, never the pitch. Editors that rewrite `ev.freqs` must
-    `delete ev.degs`. Chord-locked still snaps Hz — chord-DEGREE mapping is the next
-    slice and is a deliberate re-baseline of `seq-chordlock` when it lands.
+    `delete ev.degs`.
+  - *Chord-locked landed too (2026-07-14, deliberate `seq-chordlock` re-baseline
+    c90d8daf→5d9f97e6):* stored degrees COMP THE CHANGES — each degree re-anchors to
+    the current chord root (even degrees = stacked-third chord tones from the chord
+    itself; odd/missing = the key's degree walked from the chord root, per §2's
+    borrow rule; `chordBorrow=false` snaps tensions into the chord). Register =
+    nearest placement to the transposed capture (smooth); preserve re-roots by the
+    lowest note's degree; reset reuses the chord-tone stacker. Verified: the captured
+    C–E motif plays F–A over IV, all output diatonic. Notes without degs (nudged/
+    legacy) and no-prog fall back to the Hz snap. CAVEAT the re-baseline exposed: the
+    borrow walk reads the KEY scale, so a harness config pinning it must DETACH its
+    key (keyFollow=false) — the original pin followed the live workspace scale.
 - **Presets**: the Add-menu offers the 11 as presets; legacy layers show as their matched
   preset (or "Custom (from X)").
 - Every load path funnels through `_normalizeAmbientCfg` (the one migration chokepoint).

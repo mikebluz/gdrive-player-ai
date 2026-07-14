@@ -7179,10 +7179,11 @@
     //                 captured and current scales match — in-key by construction —
     //                 and degree-true when they differ: a 3rd stays a 3rd). Notes
     //                 without degs (legacy/edited slots) keep the snap path.
-    //   'chordlock' → snap onto the CURRENT chord's tones at this onset (atSec),
-    //                 from the seq's effective progression; with no progression it
-    //                 falls back to the diatonic scale snap. (Chord-DEGREE mapping
-    //                 is the next slice — deliberate re-baseline when it lands.)
+    //   'chordlock' → comp the changes by DEGREE (degs path): each stored degree
+    //                 re-anchors to the CURRENT chord root at this onset (atSec) —
+    //                 chord tones from the chord itself, tensions borrowed from the
+    //                 key's scale (chordBorrow=false → strict snap into the chord).
+    //                 Notes without degs, or no progression → the legacy Hz snap.
     // Preserves note count + order, so per-voice params stay aligned.
     function _ambSeqHarmonizeFreqs(freqs, unit, seq, atSec, degs) {
       const mode = (seq && seq.harmony) || 'fixed';
@@ -7211,7 +7212,7 @@
         });
       }
       // Chord-locked: resolve the current chord's absolute pitch classes at atSec.
-      let chordPcs = null, chordRoot = 0;
+      let chordPcs = null, chordRoot = 0, chordIv = null;
       if (mode === 'chordlock') {
         try {
           const src = _ambNotesOf(seq);
@@ -7223,6 +7224,7 @@
             if (ch && Array.isArray(ch.intervals) && ch.intervals.length) {
               const r = (((ch.root | 0) % 12) + 12) % 12;
               chordRoot = r;
+              chordIv = ch.intervals.map(x => x | 0);
               chordPcs = new Set(ch.intervals.map(iv => (((r + (iv | 0)) % 12) + 12) % 12));
             }
           }
@@ -7232,6 +7234,48 @@
       const targetPcs = (mode === 'chordlock' && chordPcs) ? chordPcs : scalePcs;
       const tm = freqs.map(f => (f > 0) ? (Math.round(toMidi(f)) + d) : null);   // transposed midi (null = rest/invalid)
       if (!targetPcs || !targetPcs.size) return tm.map((m, i) => m == null ? freqs[i] : toFreq(m));
+      // ---- Chord-DEGREE realization (Option C, doc §2) --------------------------
+      // With stored degrees + a resolved chord, comp the changes by DEGREE: a
+      // captured scale degree re-anchors to the current CHORD root — even degrees
+      // are stacked-third chord tones (deg 0→root, 2→3rd, 4→5th, 6→7th) taken from
+      // the chord itself when it has them; odd/missing degrees walk the KEY's scale
+      // from the chord root ("borrow from the scale: use the key's degree, adding
+      // the tension tone"). chordBorrow=false snaps those tensions into the chord
+      // instead (strict lock). The accidental rides along. Register: each target
+      // pc is placed nearest the transposed captured note (smooth voice-leading).
+      // No prog / no degs → the legacy Hz-snap path below (unchanged).
+      const degMode = (mode === 'chordlock') && !!chordPcs && !!chordIv && Array.isArray(degs) && degs.length === freqs.length;
+      let degTarget = null;
+      if (degMode) {
+        const keyIvC = (typeof SCALES !== 'undefined' && SCALES && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
+        const Nk = Math.max(1, keyIvC.length);
+        // The chord root's position in the key scale (nearest pc) — the anchor
+        // for scale-borrowed tensions. A non-diatonic chord root uses the nearest
+        // scale position, keeping the walk anchored on the root itself.
+        const rrel = (((chordRoot - curRoot) % 12) + 12) % 12;
+        let rp = 0, rbest = 99;
+        for (let i2 = 0; i2 < Nk; i2++) {
+          const dd2 = Math.abs(((((keyIvC[i2] % 12) - rrel) % 12) + 18) % 12 - 6);
+          if (dd2 < rbest) { rbest = dd2; rp = i2; }
+        }
+        const borrowD = (seq.chordBorrow !== false);
+        degTarget = (m0, g) => {
+          const dd = Math.max(0, g.d | 0) % Math.max(1, Nk);   // degree within one octave (o carries the rest)
+          let semis;
+          const k = dd >> 1;
+          if ((dd % 2) === 0 && k < chordIv.length) semis = chordIv[k];   // a chord tone the chord HAS
+          else {
+            const step = rp + dd;                                          // the key's degree over the chord root
+            semis = keyIvC[step % Nk] - keyIvC[rp] + 12 * Math.floor(step / Nk);
+          }
+          const targetPc = (((chordRoot + semis) % 12) + 12) % 12;
+          let delta = ((((targetPc - (((m0 % 12) + 12) % 12)) % 12) + 12) % 12);
+          if (delta >= 6) delta -= 12;                                     // nearest placement, ties resolve down
+          let m = m0 + delta + (g.a | 0);
+          if (!borrowD && !chordPcs.has((((m % 12) + 12) % 12))) m = _ambSnapMidiToPcs(m, chordPcs);   // strict lock
+          return m;
+        };
+      }
       // Re-voicing (B4): how notes settle onto the target set.
       //  • smooth  (default) — each note → nearest target tone (minimal movement).
       //  • preserve          — keep the captured intervals; re-root the whole voicing
@@ -7243,15 +7287,21 @@
         let lowIdx = -1, lowVal = Infinity;
         tm.forEach((m, i) => { if (m != null && m < lowVal) { lowVal = m; lowIdx = i; } });
         if (lowIdx < 0) return freqs;
-        const delta = _ambSnapMidiToPcs(lowVal, targetPcs) - lowVal;
+        const g0 = degMode ? degs[lowIdx] : null;
+        const delta = ((g0 && Number.isFinite(g0.d)) ? degTarget(lowVal, g0) : _ambSnapMidiToPcs(lowVal, targetPcs)) - lowVal;
         return tm.map((m, i) => m == null ? freqs[i] : toFreq(m + delta));
       }
       // Missing-tone BORROW (chord-lock only, default on): a note that isn't a chord
       // tone but IS a diatonic scale tone stays put (a legit passing/colour tone over
       // the chord) instead of snapping to the nearest chord tone. Off → strict lock.
+      // (Legacy Hz path only — in degMode the degree selection above decides.)
       const borrow = (mode === 'chordlock') && !!chordPcs && (seq.chordBorrow !== false);
       const snap = (m) => (borrow && scalePcs.has((((m % 12) + 12) % 12))) ? m : _ambSnapMidiToPcs(m, targetPcs);
-      let out = tm.map(m => (m == null) ? null : snap(m));
+      let out = tm.map((m, i) => {
+        if (m == null) return null;
+        const g = degMode ? degs[i] : null;
+        return (g && Number.isFinite(g.d)) ? degTarget(m, g) : snap(m);
+      });
       // Reset = root-position stack of the CHORD tones (chord-lock only; stacking a
       // 7-note scale would just cluster, so for Diatonic 'reset' behaves as smooth).
       // Ascending intervals from the chord ROOT (root, 3rd, 5th, …) stacked from the

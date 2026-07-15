@@ -362,7 +362,7 @@
             chordMask: { steps: [100, 60, 100, 60] },
             _warble: 40, _warbleSet: true });
           a.motif.mod = a.motif.mod || _ambDefaultMod();
-          a.motif.mod.vco = { depth: 14, rate: 24, shape: 'smooth' };
+          a.motif.mod.vco = { depth: 28, rate: 24, shape: 'smooth' };   // ≡ Warble 40 under the x² taper (±7.8 c)
           // Beat — half-time vapor drum lanes (kick / snare-on-3 / quarter hats / perc glints).
           const P = (str) => str.split('').map(ch => ch === 'x' ? 1 : 0);
           const Z = () => new Array(16).fill(0);
@@ -375,6 +375,71 @@
           const hiss = _ambDefaultLayer('drone', 1);
           Object.assign(hiss, { name: 'Tape Hiss', tone: 'user:f-tapehiss', level: 26, revSend: 15, density: 1, register: 3, hold: 8 });
           a.extras = [hiss];
+        } },
+        { name: '🌃 Outrun', hint: 'i-VI-III-VII · driving bass + 16th arp · four-on-floor', build: (a) => {
+          a.name = 'Outrun';
+          const rt = (typeof rootIdx === 'number') ? rootIdx : 0;
+          const T = (r2) => (((r2 + rt) % 12) + 12) % 12;
+          a.reverb = { size: 45, damp: 35, type: 'plate' };
+          a.prog = { on: true, name: 'i-VI-III-VII', chords: [
+            { root: T(9), intervals: [0, 3, 7] }, { root: T(5), intervals: [0, 4, 7] },
+            { root: T(0), intervals: [0, 4, 7] }, { root: T(7), intervals: [0, 4, 7] },
+          ] };
+          a.barsPerChord = 1;
+          Object.assign(a.bed, { present: true, on: true, tone: 'user:f-sunsetgrid', level: 62, revSend: 30, register: 4, density: 4 });
+          a.motif.present = false; a.motif.on = false;
+          a.texture.present = false; a.texture.on = false;
+          const P = (str) => str.split('').map(ch => ch === 'x' ? 1 : 0);
+          const Z = () => new Array(16).fill(0);
+          Object.assign(a.beat, { present: true, on: true, gen: 'euclid', euclidKit: true, kit: 'tr808',
+            steps: 16, bars: 1, level: 62, lengthMs: 180, revSend: 12,
+            euclidPages: [{ plays: 1, pat: [P('x...x...x...x...'), P('....x.......x...'), P('x.x.x.x.x.x.x.x.'), Z(), Z(), Z(), Z(), Z()] }],
+            euclidPageIdx: 0 });
+          const bass = _ambDefaultLayer('bass', 1);
+          Object.assign(bass, { name: 'Drive Bass', tone: 'user:f-undertow', level: 66, revSend: 8,
+            pulses: 8, steps: 8, rotate: 0, bars: 1, lengthMs: 180, register: 2 });
+          const arp = _ambDefaultLayer('arp', 2);
+          Object.assign(arp, { name: 'Grid Arp', tone: 'user:f-neonfog', level: 52, revSend: 25,
+            dir: 'up', octaves: 2, register: 4, rateVar: 20,
+            delay: { mix: 25, timeMs: 375, feedback: 30, ping: 1, spread: 40, dryKill: 0 } });
+          a.extras = [bass, arp];
+        } },
+        { name: '🛋 Mallsoft', hint: 'Royal Road @ 4 bars · Fluid warm pad · sparse e-piano · no drums', build: (a) => {
+          a.name = 'Mallsoft';
+          a.reverb = { size: 90, damp: 60, type: 'cavern' };
+          a.prog = { on: true, name: 'Royal Road', chords: _ambResolveStandard('_lit', 0) };
+          a.barsPerChord = 4;   // glacial changes — the empty-atrium feel
+          Object.assign(a.bed, { present: true, on: true, tone: 'sample:flwarmpad', level: 70, revSend: 55, register: 4, density: 4, attack: 2500, release: 6000 });
+          Object.assign(a.motif, { present: true, on: true, tone: 'sample:flepiano', level: 48, revSend: 45,
+            restProb: 55, humanize: 30, intervalMs: 2400, keyOv: { mode: 'yoke', src: 'bed' } });
+          a.texture.present = false; a.texture.on = false;
+          a.beat.present = false; a.beat.on = false;
+          const hiss = _ambDefaultLayer('drone', 1);
+          Object.assign(hiss, { name: 'Tape Hiss', tone: 'user:f-tapehiss', level: 22, revSend: 20, density: 1, register: 3, hold: 8 });
+          const harm = _ambDefaultLayer('drone', 2);
+          Object.assign(harm, { name: 'Harmonium', tone: 'sample:harmonium', level: 34, revSend: 40, density: 2, register: 3, hold: 4 });
+          a.extras = [hiss, harm];
+        } },
+        { name: '🌫 Ambient Dub', hint: 'im9 vamp · sparse delay bass · syncopated echo texture', build: (a) => {
+          a.name = 'Ambient Dub';
+          const rt = (typeof rootIdx === 'number') ? rootIdx : 0;
+          const T = (r2) => (((r2 + rt) % 12) + 12) % 12;
+          a.reverb = { size: 80, damp: 30, type: 'hall' };
+          a.prog = { on: true, name: 'im9 ↔ IVm9', chords: [
+            { root: T(0), intervals: [0, 3, 7, 10, 2] }, { root: T(5), intervals: [0, 3, 7, 10, 2] },
+          ] };
+          a.barsPerChord = 2;
+          Object.assign(a.bed, { present: true, on: true, tone: 'user:f-velvet', level: 58, revSend: 40, register: 3, density: 3 });
+          Object.assign(a.texture, { present: true, on: true, tone: 'user:f-mothwing', level: 42, revSend: 35,
+            fill: 25, syncop: 70, register: 5,
+            delay: { mix: 45, timeMs: 500, feedback: 55, ping: 1, spread: 60, dryKill: 0 } });
+          a.motif.present = false; a.motif.on = false;
+          a.beat.present = false; a.beat.on = false;
+          const bass = _ambDefaultLayer('bass', 1);
+          Object.assign(bass, { name: 'Dub Bass', tone: 'user:f-undertow', level: 64, revSend: 10,
+            pulses: 3, steps: 8, rotate: 7, bars: 2, lengthMs: 700, register: 2, humanize: 20,
+            delay: { mix: 20, timeMs: 750, feedback: 45, ping: 0, spread: 0, dryKill: 0 } });
+          a.extras = [bass];
         } },
       ];
     }
@@ -8169,7 +8234,12 @@
       const d = Math.max(0, Math.min(100, depth | 0)) / 100;
       if (target === 'vca') return [-d, 0];                              // gain dips 1 → (1−d)
       if (target === 'vcf') { const floor = 20000 * Math.pow(200 / 20000, d); return [floor, 20000]; } // cutoff sweeps floor..20000 (absolute Hz, log-even)
-      return [-d * 100, d * 100]; // vco: ± cents (already centred on 0)
+      // vco: ± cents, SQUARE-LAW tapered — pitch wobble is hypersensitive
+      // (±10 c continuous at 1-3 Hz already reads as full vibrato), so the
+      // linear map went 0→seasick in the first 15% of the slider. x² keeps
+      // the endpoints (0 and ±100 c) but makes the low end fine-grained:
+      // depth 20 → ±4 c (tasteful) · 50 → ±25 c (deep) · 100 → ±100 c.
+      return [-d * d * 100, d * d * 100];
     }
     // (routing moved to _E.busNode())
     function _ambDisposeSrc(src) {
@@ -8567,7 +8637,7 @@
       try {
         const _wantById = { dist: wantDist, chorus: wantChorus, phaser: wantPhaser, delay: wantDelay, autopan: wantAutopan };
         const _inline = _ambFxInlineEngaged(lc, _wantById);   // engaged in-line FX in fxChain order
-        const _orderSig = _inline.join(',') + '|' + (wantPing ? 1 : 0);
+        const _orderSig = _inline.join(',') + '|' + (wantPing ? 1 : 0) + '|' + (dst.flavor === 'crush' ? 'c' : '');   // crush ↔ waveshape = a different node type
         const _setChanged = wantDelay !== !!e.delay || wantDist !== !!e.dist || wantChorus !== !!e.chorus || wantPhaser !== !!e.phaser || wantAutopan !== !!e.autopan || (wantDelay && !!e.delay && e.delayPing !== wantPing);
         if (_setChanged || e._fxOrderSig !== _orderSig) {
           e._fxOrderSig = _orderSig;
@@ -8586,7 +8656,16 @@
           if (wantDelay && !e.delay) { e.delay = wantPing ? new Tone.PingPongDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }) : new Tone.FeedbackDelay({ delayTime: 0.3, feedback: 0.35, wet: 0 }); e.delayPing = wantPing; }
           if (wantPhaser && !e.phaser) { e.phaser = new Tone.Phaser({ frequency: 0.5, octaves: 3, baseFrequency: 350, stages: 10, Q: 8, wet: 0 }); }
           if (wantChorus && !e.chorus) { e.chorus = new Tone.Chorus({ frequency: 1.5, delayTime: 3.5, depth: 0.7, feedback: 0.15, spread: 180, wet: 0 }); try { e.chorus.start(); } catch (x) {} }
-          if (wantDist && !e.dist) { e.dist = new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: _ambDistOversample() }); }
+          // Node fallback honors the CRUSH flavor (a real Tone.BitCrusher —
+          // the other flavors keep the classic curve; the core renders them).
+          const _wantCrush = (dst.flavor === 'crush');
+          if (e.dist && e._distCrush !== _wantCrush) { try { e.dist.dispose(); } catch (x) {} e.dist = null; }
+          if (wantDist && !e.dist) {
+            e.dist = _wantCrush && Tone.BitCrusher
+              ? new Tone.BitCrusher({ bits: 8, wet: 0 })
+              : new Tone.Distortion({ distortion: 0.4, wet: 0, oversample: _ambDistOversample() });
+            e._distCrush = _wantCrush;
+          }
           // Connect the engaged in-line FX in fxChain order: g → fx0 → … → out
           // (build backward from the bus so the LAST id sits nearest the bus).
           const _nodeById = { dist: e.dist, chorus: e.chorus, phaser: e.phaser, delay: e.delay, autopan: e.autopan };
@@ -8600,7 +8679,10 @@
         // Delay `spread` is a core-only Haas widening (Tone's delay nodes expose no
         // tap offset) — the node fallback plays the delay without it.
         if (e.dist) {
-          e.dist.distortion = Math.max(0, Math.min(1, (dst.amount | 0) / 100));
+          if (e._distCrush) {
+            // Amount → bit depth 8 → 2 (matches the core's k·0.06 map).
+            try { e.dist.bits.value = Math.max(2, 8 - Math.max(0, Math.min(100, dst.amount | 0)) * 0.06); } catch (x) {}
+          } else e.dist.distortion = Math.max(0, Math.min(1, (dst.amount | 0) / 100));
           e.dist.wet.value = _wet01(dst);
         }
         if (e.delay) {
@@ -16041,6 +16123,7 @@
       (freezeKey ? '<div class="ambient-layer-topctrls"><button type="button" class="ambient-rename-btn" data-rkey="' + freezeKey + '" title="Rename this layer" aria-label="Rename this layer">✎</button>' +
         (delId ? '<button type="button" class="ambient-seq-del" id="' + delId + '" title="Remove this layer" aria-label="Remove this layer">✕</button>' : '') +
         '<button type="button" class="ambient-clone-btn" data-ckey="' + freezeKey + '" title="Clone — duplicate this layer" aria-label="Clone layer">⧉</button>' +
+        '<button type="button" class="ambient-morph-btn" data-mkey="' + freezeKey + '" title="Re-realize as… — same instrument/key/mix, a different layer type (the material realized as a pad, arp, bassline…)" aria-label="Re-realize layer">⇄</button>' +
         '<button type="button" class="ambient-savepreset-btn" data-savekey="' + freezeKey + '" title="Save as preset — reuse this composition from the Add menu" aria-label="Save as preset">★</button>' +
         (String(freezeKey).split(':')[0] !== 'beat' ? '<button type="button" class="ambient-piano-toggle" data-pkey="' + freezeKey + '" title="Show/hide the note keyboard" aria-label="Toggle keyboard">🎹</button>' : '') +
         (_AMB_LAYER_SCHEMA[String(freezeKey).split(':')[0]] ? '<button type="button" class="ambient-dice-btn" data-dkey="' + freezeKey + '" title="Randomize all of this layer’s parameters" aria-label="Randomize parameters">🎲</button>' : '') +
@@ -19152,6 +19235,51 @@
       L.speed = 1;
       return L;
     }
+    // ---- Re-realize as… (layer type morph) --------------------------------
+    // Convert a layer to another schema type, carrying the SHARED axes —
+    // INSTRUMENT (tone/ADSR/fine/portamento), KEY (keyOv/notes/mode/colors),
+    // universal VARIANCE (humanize/velVar/rests/lenVary/accent/warble), and
+    // FX/MIX (level/pan/fx chain/mod/tg/when/chordMask) — while SEED and TIMING
+    // take the TARGET's idiomatic defaults: re-REALIZATION per the axis model
+    // (the same material as a pad, an arp, a bassline…). A primary source is
+    // silenced (present=false) and the morph lands as a fresh extra; an extra
+    // morphs in place (same slot, fresh id → clean engine key).
+    function _ambMorphLayer(E, key, newType) {
+      _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[newType]) return;
+      const src = _ambLayerByKey(E, key); if (!src) return;
+      const t0 = String(key).split(':')[0];
+      if (newType === t0) return;
+      if (!Array.isArray(cfg.extras)) cfg.extras = [];
+      const newId = cfg.extras.reduce((m, x) => Math.max(m, x.id | 0), 0) + 1;
+      const L = _ambDefaultLayer(newType, newId);
+      const COPY = ['tone', 'fine', 'attack', 'decay', 'sustain', 'release', 'portamento',
+        'level', 'panMode', 'space', 'areaFadeMs', 'when', 'wetOnly',
+        'modeRot', 'rootPc', 'colorAmt', 'colorUsage',
+        'humanize', 'velVar', 'restProb', 'lenVary', 'accent', '_warble', '_warbleSet',
+        'cutoff', 'reso', 'revSend', 'kit'];
+      COPY.forEach(k => { if (src[k] !== undefined) L[k] = src[k]; });
+      ['keyOv', 'notes', 'colors', 'mod', 'chordMask', 'delay', 'dist', 'chorus', 'phaser', 'autopan', 'tg'].forEach(k => {
+        if (src[k] !== undefined) { try { L[k] = JSON.parse(JSON.stringify(src[k])); } catch (e) {} }
+      });
+      if (typeof src.name === 'string' && src.name) L.name = src.name;
+      L.on = (src.on !== false); L.present = true;
+      try { if (typeof snapshotForUndo === 'function') snapshotForUndo('Re-realize layer'); } catch (e) {}
+      if (key.indexOf(':') < 0) {
+        src.present = false; src.on = false;             // primary: silence in place
+        cfg.extras.push(L);
+      } else {
+        const oid = parseInt(key.split(':')[1], 10);
+        const i = cfg.extras.findIndex(x => x && x.type === t0 && x.id === oid);
+        if (i >= 0) cfg.extras.splice(i, 1, L); else cfg.extras.push(L);
+      }
+      if (E.timer) { try { cancelBloomFutureVoices(key); } catch (e) {} }
+      _ambRenderExtras(E);
+      try { _ambSyncControls(E); } catch (e) {}
+      if (E.timer) { try { _ambSyncMods(); } catch (e) {} }
+      if (typeof persistWorkspace === 'function') persistWorkspace();
+      if (typeof showToast === 'function') showToast('Re-realized as ' + (_AMB_LAYER_SCHEMA[newType].label || newType) + '.');
+      return newId;
+    }
     function _ambAddExtra(E, type) {
       _E = E; const cfg = E.getCfg(); if (!cfg || !_AMB_LAYER_SCHEMA[type]) return;
       if (!Array.isArray(cfg.extras)) cfg.extras = [];
@@ -20899,7 +21027,7 @@
         const v = Math.max(0, Math.min(100, wb.value | 0));
         if (!L.mod || typeof L.mod !== 'object') L.mod = _ambDefaultMod();
         if (v > 0) {
-          L.mod.vco = { depth: Math.max(1, Math.round(v * 0.35)), rate: 18 + Math.round(v * 0.14), shape: 'smooth' };
+          L.mod.vco = { depth: Math.max(1, Math.round(v * 0.7)), rate: 18 + Math.round(v * 0.14), shape: 'smooth' };   // vs the x² vco taper: v50 → ±12 c, v100 → ±49 c
           L._warbleSet = true; L._warble = v;
         } else if (L._warbleSet) {
           L.mod.vco = { depth: 0, rate: 20, shape: 'sine' };
@@ -21004,6 +21132,16 @@
       host.addEventListener('click', (e) => {
         const rb = e.target && e.target.closest && e.target.closest('.ambient-rename-btn');
         if (rb) { e.stopPropagation(); try { _ambRenameLayer(E, rb); } catch (err) { console.warn('Rename failed', err); } return; }
+        const mb = e.target && e.target.closest && e.target.closest('.ambient-morph-btn');
+        if (mb) {
+          e.stopPropagation();
+          const key = mb.dataset.mkey, t0 = String(key).split(':')[0];
+          const types = Object.keys(_AMB_LAYER_SCHEMA).filter(t => t !== t0);
+          const r2 = mb.getBoundingClientRect();
+          if (typeof showCtxMenu === 'function') showCtxMenu(r2.left, r2.bottom + 4,
+            [{ label: 'Re-realize as…', disabled: true }].concat(types.map(t => ({ label: _AMB_LAYER_SCHEMA[t].label || t, fn: () => { try { _ambMorphLayer(E, key, t); } catch (err) { console.warn('Morph failed', err); } } }))));
+          return;
+        }
         const cb = e.target && e.target.closest && e.target.closest('.ambient-clone-btn');
         if (cb) { e.stopPropagation(); try { _ambCloneLayer(E, cb.dataset.ckey); } catch (err) { console.warn('Clone failed', err); } return; }
         const pb0 = e.target && e.target.closest && e.target.closest('.ambient-savepreset-btn');
@@ -22138,6 +22276,23 @@
             actions.push({ label: name, fn: () => _ambAddExtra(E, type) });
           });
         });
+        // FACTORY sound presets (presets-as-doors, doc §5): curated points in
+        // the axis space — a type + a voice + a few axis settings, one tap.
+        // Same {type, cfg} shape as user presets → the same _ambAddPreset door.
+        const _FACTORY_LAYER_PRESETS = [
+          { name: '📼 VHS Pad', type: 'bed', cfg: { tone: 'user:f-lagoonvhs', level: 68, revSend: 45, attack: 900, release: 3200 } },
+          { name: '🌒 Night Pad', type: 'bed', cfg: { tone: 'user:f-meadow', level: 66, revSend: 50, attack: 1400, release: 4000 } },
+          { name: '🏬 Mall Keys', type: 'motif', cfg: { tone: 'user:f-mallfountain', level: 55, revSend: 35, restProb: 45, humanize: 25 } },
+          { name: '🕹 Grid Arp', type: 'arp', cfg: { tone: 'user:f-neonfog', level: 52, revSend: 25, dir: 'up', octaves: 2, rateVar: 15,
+            delay: { mix: 22, timeMs: 375, feedback: 30, ping: 1, spread: 40, dryKill: 0 } } },
+          { name: '🌊 Dub Bass', type: 'bass', cfg: { tone: 'user:f-undertow', level: 64, revSend: 10, pulses: 3, steps: 8, rotate: 7, lengthMs: 600, humanize: 20,
+            delay: { mix: 18, timeMs: 750, feedback: 45, ping: 0, spread: 0, dryKill: 0 } } },
+          { name: '🫧 Glass Rain', type: 'texture', cfg: { tone: 'user:f-glasscath', level: 44, revSend: 40, fill: 25, syncop: 60,
+            delay: { mix: 35, timeMs: 500, feedback: 50, ping: 1, spread: 50, dryKill: 0 } } },
+          { name: '🎞 Hiss Bed', type: 'drone', cfg: { tone: 'user:f-tapehiss', level: 24, revSend: 18, density: 1, register: 3, hold: 8 } },
+        ];
+        actions.push('hr', { label: 'Sound presets', disabled: true });
+        _FACTORY_LAYER_PRESETS.forEach((pr) => actions.push({ label: pr.name, fn: () => _ambAddPreset(E, pr) }));
         // User-saved presets (from the ★ Save‑as‑preset button) — reusable across
         // projects. Clicking adds; a "Remove a preset…" sub-menu deletes.
         const _presets = _ambLoadLayerPresets();

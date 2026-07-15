@@ -224,6 +224,8 @@ pub(crate) struct Strip {
     dist_k: f32,
     dist_wet: f32,
     dist_mode: u32,
+    crush_cnt: [f32; 2],
+    crush_hold: [f32; 2],
     fx_order: [u8; 5],
     cho_on: bool,
     cho_wet: f32,
@@ -286,6 +288,8 @@ pub(crate) const STRIP0: Strip = Strip {
     dist_k: 40.0,
     dist_wet: 0.0,
     dist_mode: 0,
+    crush_cnt: [0.0; 2],
+    crush_hold: [0.0; 2],
     cho_on: false,
     cho_wet: 0.0,
     cho_depth: 0.5,
@@ -403,9 +407,29 @@ fn tg_val(st: &Strip, t: f64) -> f32 {
 // byte-identical, it's the golden-covered default) · 1 = overdrive (smooth
 // symmetric tanh, warm) · 2 = fuzz (pre-gain + asymmetric hard clip + crossover
 // gate sputter) · 3 = wavefold (triangle fold) · 4 = crush (bit-depth quantize).
-fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &Strip, frames: usize) {
+fn fx_dist(buf: &mut [[f32; BLOCK]; 2], st: &mut Strip, frames: usize) {
     let (cd, cw) = xfade(st.dist_wet);
     let k = st.dist_k;
+    if st.dist_mode == 4 {
+        // CRUSH: bit-depth quantize + SAMPLE-RATE reduce (zero-order hold),
+        // both coupled to Amount — k 0 → 8 bits @ 1× (near-clean), k 100 →
+        // 2 bits @ ~12× downsample (full lo-fi). Stateful (per-channel hold
+        // register + fractional counter), which is why it can't live in the
+        // stateless waveshape match below.
+        let lv = ((8.0 - k * 0.06) * core::f32::consts::LN_2).exp();
+        let hold = 1.0 + k * 0.11;
+        for (ci, ch) in buf.iter_mut().enumerate() {
+            for x in ch.iter_mut().take(frames) {
+                st.crush_cnt[ci] += 1.0;
+                if st.crush_cnt[ci] >= hold {
+                    st.crush_cnt[ci] -= hold;
+                    st.crush_hold[ci] = (x.clamp(-1.0, 1.0) * lv).floor() / lv;
+                }
+                *x = *x * cd + st.crush_hold[ci] * cw;
+            }
+        }
+        return;
+    }
     let scale = 20.0 * PI / 180.0;
     let mode = st.dist_mode;
     let tanhf = |v: f32| { let e = (2.0 * v).exp(); (e - 1.0) / (e + 1.0) };

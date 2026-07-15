@@ -1727,6 +1727,20 @@
                 }
               }
             } catch (e) {}
+            // v5b: a PROG entry GRADUATES to the layer KEY override — the entry
+            // becomes INHERIT and resolves THROUGH the layer (_ambArpEntrySrc)
+            // to the SAME chords, so playback is byte-identical (prog-arp pins
+            // it). One prog per layer: first wins; an existing keyOv leaves
+            // later prog entries as compat reads. Idempotent + ungated.
+            try {
+              const n3 = st.notes;
+              if (n3 && n3.type === 'prog' && Array.isArray(n3.chords) && n3.chords.length) {
+                if (!x.keyOv) {
+                  x.keyOv = { mode: 'prog', name: (typeof n3.name === 'string' && n3.name) ? n3.name : 'Progression', chords: n3.chords };
+                  st.notes = { type: 'scale', scale: '' };
+                }
+              }
+            } catch (e) {}
             return st;
           });
           x.sel = Math.max(0, Math.min(x.sel | 0, x.steps.length - 1));
@@ -2480,6 +2494,13 @@
         }
       } else if (n.type === 'wrap') { const w = _ambFindWrap(n.id); base = '⊕ ' + (w ? w.name : 'Wrap'); }
       else if (n.type === 'prog') base = '⇶ ' + (n.name || 'Progression');
+      else if (n.type === 'degs') {
+        // arp-series v5: a degree set in the current key — show 1-based degrees
+        // with accidentals; long sets truncate.
+        const ds = Array.isArray(n.degs) ? n.degs : [];
+        const names = ds.slice(0, 6).map(g => ((g.d | 0) + 1) + ((g.a | 0) > 0 ? '♯' : (g.a | 0) < 0 ? '♭' : ''));
+        base = '° ' + (names.join('·') || '—') + (ds.length > 6 ? '…' : '');
+      }
       else {
         base = n.scale ? (typeof prettyScaleName === 'function' ? prettyScaleName(n.scale) : n.scale) : 'Scale';
         if (Number.isFinite(n.rootPc)) {
@@ -3310,6 +3331,29 @@
         if (items.length <= 1) items.push({ label: 'No progressions fit this key', disabled: true });
         showCtxMenu(x, y, items);
       };
+      // Degrees submenu (arp-series v5): toggle a degree SET of the current key
+      // — the native form of a series entry (and legal on any layer; the degs
+      // source flows through the shared resolvers). Toggles reopen the menu for
+      // multi-select; an emptied set reverts to Inherit at normalize.
+      const degsSub = () => {
+        const L0 = getLayer();
+        const cur = (L0 && L0.notes && L0.notes.type === 'degs' && Array.isArray(L0.notes.degs)) ? L0.notes.degs.map(g => g.d | 0) : [];
+        const kIv = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(kcfg)]) || [0, 2, 4, 5, 7, 9, 11];
+        const Nk = Math.max(1, kIv.length);
+        const items = [{ label: 'Degrees of the current key — tap to toggle', disabled: true }];
+        for (let d = 0; d < Nk; d++) {
+          const on = cur.indexOf(d) >= 0;
+          items.push({ label: (on ? '● ' : '　 ') + (d + 1), fn: () => {
+            _E = E; const L = getLayer(); if (!L) return;
+            const set2 = (L.notes && L.notes.type === 'degs' && Array.isArray(L.notes.degs)) ? L.notes.degs.map(g => ({ d: g.d | 0, a: (g.a | 0) || 0 })) : [];
+            const i2 = set2.findIndex(g => g.d === d);
+            if (i2 >= 0) set2.splice(i2, 1); else { set2.push({ d: d, a: 0 }); set2.sort((x2, y2) => x2.d - y2.d); }
+            apply({ type: 'degs', degs: set2 });
+            setTimeout(degsSub, 0);
+          } });
+        }
+        showCtxMenu(x, y, items);
+      };
       // Relative-mode submenu: re-centre a scale source onto another degree (a
       // mode of its own scale; with Key-transpose, a mode of the key). Same pcs.
       const modeSub = () => {
@@ -3380,6 +3424,7 @@
         (keyTag ? { label: 'Key' + keyTag, disabled: true } : null),
         { label: 'Scale ▸', fn: () => setTimeout(scaleSub, 0) },
         { label: '◉ Root ▸', fn: () => setTimeout(rootSub, 0) },
+        { label: '° Degrees ▸', fn: () => setTimeout(degsSub, 0) },
         { label: '♪ Chord…', fn: () => _ambOpenChordPicker(E, getLayer, afterChange) },
         { label: '⊕ Wraps ▸', fn: () => setTimeout(wrapSub, 0) },
         // Progression retired from the Notes (material) menu — it's now a per-layer
@@ -5646,9 +5691,9 @@
       const _st = _E && _E.arpState && _E.arpState['arp:' + (arp.id | 0)];
       const _prevOv = _ambProgStepOverride;
       const entryNotes = steps.map(entry => {
-        const _isProg = _ambAsNotes(_ambNotesOf(entry)).type === 'prog';
+        const _isProg = _ambAsNotes(_ambArpEntrySrc(arp, entry)).type === 'prog';
         if (_isProg) _ambProgStepOverride = (_st ? (_st._loop | 0) : 0);
-        const len = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length) * octs;
+        const len = Math.max(1, _ambScaleIntervals(_ambArpEntrySrc(arp, entry)).length) * octs;
         if (_isProg) _ambProgStepOverride = _prevOv;
         const dir = (entry && entry.dir) || arp.dir || 'up';
         return _ambArpEntryNotes(entry, dir, len);
@@ -5671,6 +5716,18 @@
     // One arp note per fire. Walks the current series entry's pitch pool in the
     // chosen Direction; after `entry.passes` full sweeps, advances to the next
     // entry (looping the series). Cursor state lives on _E.arpState[key].
+    // v5b — entry resolution THROUGH the layer: an INHERIT entry ('' scale, no
+    // per-entry pins) follows the LAYER's frame (keyOv prog/key → area →
+    // workspace), completing the cascade workspace→area→layer→entry. An
+    // explicit entry source resolves as before. Byte-identical when the layer
+    // has no keyOv/colors/rootPc/modeRot: both paths return the same inherit
+    // descriptor + area decorations (prog-arp/arp/arp-series-legacy pin it).
+    function _ambArpEntrySrc(L, entry) {
+      const n = entry && entry.notes;
+      const inherit = (!n || (n.type === 'scale' && !n.scale))
+        && !(entry && (entry.rootPc != null || (entry.modeRot | 0) || (Array.isArray(entry.colors) && entry.colors.length)));
+      return (inherit && L) ? _ambNotesOf(L) : _ambNotesOf(entry);
+    }
     function _ambEmitArp(at, arp, space, key, play) {
       key = key || ('arp:' + (arp.id | 0));
       _ambKeyTime = at;
@@ -5684,7 +5741,7 @@
       // it regardless so the progression keeps moving.
       if ((st.entry | 0) === 0 && (st.note | 0) === 0) st._silent = !_ambCondFires(arp.when, st._loop | 0);
       const entry = steps[Math.min(st.entry, steps.length - 1)];
-      const notes = _ambNotesOf(entry);
+      const notes = _ambArpEntrySrc(arp, entry);
       const _arpProg = (notes && notes.type === 'prog');
       // Bar-aligned chord at THIS note's onset (was st._loop, i.e. one chord per
       // series loop). Decouples the chord from the structural cursor: the arp walks
@@ -5925,7 +5982,7 @@
       const restP = _ambEffRest(arp);
       const dest = _ambLayerDest(key), dmod = _ambLayerDetuneMod(key);
       const entry = (Array.isArray(arp.steps) && arp.steps[0]) ? arp.steps[0] : { notes: { type: 'scale', scale: '' } };
-      const notes = _ambNotesOf(entry);
+      const notes = _ambArpEntrySrc(arp, entry);
       // PROG: pitches must resolve per-HIT at the hit's own scheduled time. The
       // cycle builds a whole phrase ahead of playback, and the module fallback
       // (_E.progStep) is the chord at BUILD time — so hits scheduled past a
@@ -8731,7 +8788,7 @@
       const octs = Math.max(1, Math.min(4, (L.octaves | 0) || 2)), base = Math.max(1, Math.min(8, (L.register | 0) || 4));
       const names = [];
       steps.forEach(entry => {
-        const src = _ambNotesOf(entry), intervals = _ambScaleIntervals(src), N = Math.max(1, intervals.length), len = N * octs;
+        const src = _ambArpEntrySrc(L, entry), intervals = _ambScaleIntervals(src), N = Math.max(1, intervals.length), len = N * octs;
         const dir = (entry && entry.dir) || L.dir || 'up', total = _ambArpEntryNotes(entry, dir, len);
         for (let i = 0; i < total; i++) {
           const idx = _ambArpIndexFor(dir, i, len), d = idx % N, o = Math.floor(idx / N);
@@ -18145,14 +18202,14 @@
         const chs = _ambArpEntryChords(entry);
         let N;
         if (chs && chs[ci]) { const disp = dispOf(chs[ci]); N = Math.max(1, disp.iv.filter(iv => disp.m.indexOf(iv) < 0).length); }
-        else { N = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length); }
+        else { N = Math.max(1, _ambScaleIntervals(_ambArpEntrySrc(getL() || L0, entry)).length); }
         return Math.max(1, _ambArpPassLen(dir, N * octs));
       };
       const renderPhrase = (steps) => {
         let h = '<div class="amb-ce-hint">Tap a note: add → mute → remove. The badge shows plays × total notes per loop.</div><div class="amb-ce-list">';
         steps.forEach((entry, ei) => {
           const chords = _ambArpEntryChords(entry);
-          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</div>';
+          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel">' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambArpEntrySrc(getL() || L0, entry))) + '</div>';
           if (!chords) { h += '<div class="amb-ce-na">Set this row to a Chord or Progression to edit its notes.</div></div>'; return; }
           chords.forEach((o, ci) => {
             const disp = dispOf(o);
@@ -18181,9 +18238,9 @@
         steps.forEach((entry, ei) => {
           const dir = (entry && entry.dir) || Lc.dir || 'up';
           const chords = _ambArpEntryChords(entry);
-          const blocks = chords || [_ambNotesOf(entry)];   // scale/wrap → one block
+          const blocks = chords || [_ambArpEntrySrc(getL() || L0, entry)];   // scale/wrap → one block
           if (!Array.isArray(entry.stepMutes)) entry.stepMutes = [];
-          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel"><span>' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambNotesOf(entry))) + '</span>' +
+          h += '<div class="amb-ce-entry"><div class="amb-ce-elabel"><span>' + (ei + 1) + '. ' + esc(_ambNotesLabel(_ambArpEntrySrc(getL() || L0, entry))) + '</span>' +
             '<button type="button" class="amb-seqtool amb-seqevolve' + (entry.evolve ? ' active' : '') + '" data-act="evolve" data-ei="' + ei + '" title="Re-randomize each chord\'s pattern as the progression passes it">Evolve</button>' +
             '</div>';
           blocks.forEach((src, ci) => {
@@ -18277,7 +18334,7 @@
             const chs = _ambArpEntryChords(entry);
             let N;
             if (chs && chs[ci]) { const disp = dispOf(chs[ci]); N = Math.max(1, disp.iv.filter(iv => disp.m.indexOf(iv) < 0).length); }
-            else { N = Math.max(1, _ambScaleIntervals(_ambNotesOf(entry)).length); }
+            else { N = Math.max(1, _ambScaleIntervals(_ambArpEntrySrc(getL() || L0, entry)).length); }
             const total = _ambArpEntryNotes(entry, dir, N * octs);
             const arr = []; for (let s = 0; s < total; s++) arr[s] = (Math.random() < 0.4);
             entry.stepMutes[ci] = arr;

@@ -295,11 +295,16 @@ unmappable feature → migration can be additive.
     2. **v5 derive** ✓: explicit-scale + plain-chord entries fold to
        `{type:'degs', degs:[{d,a}…]}` against the layer's effective key at load
        (idempotent/ungated; `_AMB_SCHEMA_VERSION` 5). `passes`/`dir` untouched.
-       FOUND while building: prog entries CANNOT graduate to keyOv — entries
-       resolve independently of their layer (`_ambNotesOf(entry)` never sees
-       keyOv), so graduation would break `prog-arp`; they stay compat, with
-       customized chords (eff-intervals/muted) and wraps. Deferred until entry
-       resolution routes through the layer.
+       Prog graduation LANDED (v5b): entry resolution now routes THROUGH the
+       layer — `_ambArpEntrySrc(L, entry)` resolves an INHERIT entry via
+       `_ambNotesOf(L)` (keyOv → area → workspace), completing the cascade
+       workspace→area→layer→entry — so a prog entry graduates to `layer.keyOv`
+       at load (first wins; entry → inherit) and plays byte-identically
+       (`prog-arp` pins it). The arp's progression is now visible in the Key
+       card group. Wraps + customized chords (eff-intervals/muted) remain
+       compat reads BY DESIGN (wrap = note-set + INSTRUMENT tones, not a key
+       concern). Side effect, deliberate: a layer's keyOv/colors/rootPc/modeRot
+       now decorate its inherit entries (they should — the layer's frame).
     3. **Emit switch** ✓ (no emitter change needed): a `degs` source flows through
        `_ambScaleIntervals`/`_ambSrcRootPc` (two new dispatch cases) — realized in
        the CURRENT key, anchored on the key root. Same-key realization is exact

@@ -19707,7 +19707,7 @@
           '</span>' +
           // Key sub-controls (shown in Key mode).
           '<span class="ambient-key-sub" id="ambient-key-sub">' +
-            '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Off = this Area keeps its own custom key via the root/scale pickers.">= Workspace</button>' +
+            '<button type="button" class="ambient-seg" id="ambient-key-follow" title="Follow the workspace key (header pill / key picker) — one source of truth. Click to LOCK: snapshots the current key as this Area’s own (later workspace-key changes can’t re-key it); click again to re-follow.">= Workspace</button>' +
             '<select id="ambient-key-root" class="ambient-select" title="Key root">' + keyOpts + '</select>' +
             '<select id="ambient-key-scale" class="ambient-select" title="Key quality (defines the in-key note set)"></select>' +
             '<button type="button" class="ambient-seg ambient-key-mode" id="ambient-key-mode" title="How Key reshapes the material — Transpose: move every layer wholesale into the key (intervals/voicings intact). Quantize: leave layers where they are and snap each out-of-key note to the nearest key-scale tone.">Transpose</button>' +
@@ -20966,7 +20966,18 @@
         const kFol = G('ambient-key-follow');
         if (kFol) kFol.addEventListener('click', () => {
           _E = E; const cfg = cfg0(); if (!cfg || !cfg.keyOn) return;
-          cfg.keyFollow = (cfg.keyFollow === false);   // toggle
+          if (cfg.keyFollow === false) {
+            cfg.keyFollow = true;              // re-follow the workspace
+          } else {
+            // LOCK: snapshot the CURRENT effective (followed) key into the
+            // area's own root/scale BEFORE detaching — so "follow off" freezes
+            // the key you're hearing, not whatever stale custom pair was stored.
+            // This is the area key-lock: later workspace-key changes can't
+            // re-key this area.
+            cfg.keyRoot = _ambKeyRootPc(cfg);
+            cfg.keyScale = _ambKeyScaleName(cfg);
+            cfg.keyFollow = false;
+          }
           _ambSyncControls(E); persist();
         });
         const kMode = G('ambient-key-mode');

@@ -282,8 +282,10 @@ unmappable feature → migration can be additive.
     modulation timeline, an area needs a 🔒 = snapshot-detach in place: freeze the
     area's key at its CURRENT effective value (copy the followed workspace key into
     keyRoot/keyScale, keyFollow=false) so changing the workspace key for a NEW area
-    can't silently re-key established ones. Unlock = re-follow. Pure sugar over the
-    existing detach path (harness-neutral); not yet built.
+    can't silently re-key established ones. Unlock = re-follow. Plus a GUARD: changing the
+    workspace key while OTHER areas still follow unlocked warns and offers to lock
+    them at their current key first ("Lock other areas / Change all / Cancel").
+    Pure sugar over the existing detach path (harness-neutral); not yet built.
 - **Phrases**: store pitches as **degrees** (derive from a sequence's saved scale/root);
   existing Seq layers default **Fixed** so playback is byte-identical.
   - *Landed for Seq units (2026-07-14):* each seed event carries `degs: [{d,o,a}]`

@@ -59,6 +59,14 @@
         c.seed = SEED;
         if (mutate) mutate(c);
         try { _normalizeAmbientCfg(c); } catch (e) {}
+        // Loop defaults to WRITE (2026-07-15) — but the pins are GENERATION
+        // semantics, not looping: zero the backfilled auto-cycle so every
+        // config's stream stays pure generation (byte-identical to the era
+        // before the default flip).
+        const noW = (L) => { if (L && typeof L === 'object') L.write = { on: false, bars: 2, times: 4 }; };
+        ['bed', 'motif', 'texture', 'beat'].forEach((k) => noW(c[k]));
+        (c.extras || []).forEach(noW);
+        (c.seqs || []).forEach(noW);
         const pin = (L) => { if (L && typeof L === 'object' && L.tone === '') L.tone = 'sine'; };
         ['bed', 'motif', 'texture', 'beat'].forEach((k) => pin(c[k]));
         (c.extras || []).forEach(pin);

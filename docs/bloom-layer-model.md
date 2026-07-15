@@ -139,6 +139,52 @@ event). Bed's Monk-voicing and a hand-drawn chord are the same kind of object.
 - Deterministic generation is NOT here (that's SEED). "Non-deterministic modification"
   is the whole of VARIANCE.
 
+*Phrase gestures landed (2026-07-15, first slice of the phrase-interest plan —
+build order Ornaments → Slide → gesture cells → agogic emphasis → motivic
+sequence):* **Ornament** (Motif/Riff) — tempo-synced pre-beat figures (grace /
+mordent / turn / pralltriller; a flick = a 32nd, in-key neighbors from the
+layer's own source, riff figures cycle-locked to the loop) · **Slide**
+(Motif/Riff) — per-note glide targeting LEAPS ≥ 3 scale steps (the portamento
+machinery, tempo-scaled 60–240 ms). Both gated at 0. Ornament flicks are not
+recorded into unit locks (mains only) — a lock replays the skeleton.
+
+*Second slice — **Phrasing** (Motif):* gesture CELLS replace the uniform burst
+with structured figures — run-up→arrival, dotted, short–LONG pair, late pickup,
+single long arrival — relative onsets/durations over the unit, the ARRIVAL note
+leaned on (+15% vel, agogic emphasis folded in), and with prob .35 the previous
+gesture REPEATS (the classical sequence device; rhythm-identity v1 — pitch still
+walks fresh). Proof: default motif = every note exactly 1000 ms (ONE distinct
+duration); Phrasing 100 = 8 distinct durations 120–576 ms. Gesture rhythms ARE
+recorded into units → locks keep the phrasing.
+
+*Third slice — the plan is COMPLETE:* **Riff Phrasing** — gesture lengths derive
+from the SEED pattern's own shape (a hit before a rest is an ARRIVAL, ~92% of
+its slot; a hit inside a run is quick, ~40%), blended by the slider; fully
+deterministic (ZERO RNG draws — 0 blends to the legacy length exactly), so the
+riff's phrasing is as fixed as the riff. **Motivic sequence v2** — a reused
+motif gesture also replays its melodic INTERVALS, transposed from wherever the
+walk now sits (same rhythm, same contour, new pitch level — the classical
+device in full; proof: transposed unit pairs with identical semitone contours
+10 st apart). **Ornament lock-capture** — motif flicks are pushed into the unit
+recorder, so ✓ Kept phrases replay decorated (riff flicks were already caught
+by freeze capture). All gated at 0; harness 26/26 throughout.
+
+*Loop defaults + Live variance (2026-07-15):* **Loop now defaults to WRITE**
+(2 bars × 4 plays) on every layer — backfilled in normalize ONLY when `write`
+is absent, so an explicit Off persists and old deliberate settings survive; the
+harness zeroes it in mk() (pins = generation semantics). New layers carry it
+from `_ambDefaultLayer`. And the Loop row gained **⚡ Live** (`L.loopVar =
+'live'`, absent = written): a written/held loop normally replays EXACTLY as
+captured (variance baked at write time); Live makes every pass RE-PERFORM the
+phrase — Humanize, Vel var and Ornament re-roll from the layer's CURRENT
+sliders per iteration in `_ambReplayFrozen` (the same unseeded Math.random
+doctrine — zero engine-RNG draws). Structural variance (mutate/rests/rhythm)
+stays as written: the loop remains the loop; the touch varies. Proof: written
+replay = 1 volume/0 flicks over 4 iterations; live = 8 distinct volumes, all
+onsets humanized, fresh in-key flicks (degree derived from the replayed Hz via
+the `_ambScaleTranspose` nearest-degree walk against the layer's current
+source, so flicks follow key changes).
+
 *Landed (2026-07-15):* the axis gained its universal + per-type controls —
 **Humanize** (±20 ms onset jitter) and **Vel var** (±40% level noise) on every type
 (both UNSEEDED Math.random: performance noise, zero engine-RNG draws);

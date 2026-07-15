@@ -1404,10 +1404,18 @@
       if (!host.dist || typeof host.dist !== 'object') host.dist = { ...d.dist };
       else ['mix', 'amount'].forEach(k => { if (!Number.isFinite(host.dist[k])) host.dist[k] = d.dist[k]; });
       _dk(host.dist);
-      // WRITE (X bars × Y plays): coerce when present; ABSENT = off (additive,
-      // kept out of defaults — the normalize trap). Shared with the AREA-level
-      // cfg.writeAll (Configure → Write, cascades to every layer).
+      // WRITE (X bars × Y plays) — LOOP DEFAULTS TO WRITE (2026-07-15): a layer
+      // that has never touched the Loop control gets the auto phrase-cycle
+      // (2 bars × 4 plays). Backfilled ONLY when absent, so an explicit Off
+      // (on:false, object present) persists forever; the invariant harness
+      // zeroes write in mk() (its pins are GENERATION semantics, not looping).
+      // Shared with the AREA-level cfg.writeAll (Configure → Write).
+      if (host.write == null) host.write = { on: true, bars: 2, times: 4 };
       _ambNormalizeWriteObj(host, 'write');
+      // LOOP VARIANCE: 'live' = each loop pass re-performs the captured phrase
+      // (Humanize / Vel var / Ornament re-roll per iteration in _ambReplayFrozen).
+      // Absent = written (the phrase replays exactly as captured). Coerce-only.
+      if (host.loopVar != null && host.loopVar !== 'live') delete host.loopVar;
       // PITCH ECHO: coerce when present; ABSENT = off (additive, kept out of
       // defaults — the normalize trap).
       if (host.pecho != null) {
@@ -5505,6 +5513,7 @@
     // scheduling so it stays sample-accurate and re-reads config at cycle edges.
     function _ambEmitRun(E, inst, key, now, horizon, lead, space, cfg) {
       if (!E.runPhase) E.runPhase = {};
+      let _prevRunDeg = 0;   // Slide: previous slot's degree (leap detection)
       const bpm = _ambBpm();
       const barSec = (60 / bpm) * 4 * _ambLayerScale(E, key, inst, cfg);   // 4/4, Unit-Sync scaled
       const bars   = Math.max(1, Math.min(16, inst.bars | 0) || 2);
@@ -5575,9 +5584,26 @@
           f *= tFactor;   // transpose the whole riff by ±half steps (chromatic)
           // Len var: spread this note's length around Length via the shared helper
           // (returns baseMs with NO rng draw at lenVary=0 → byte-identical default → harness-safe).
-          const noteLen = _ambVaryLen(lenMs, lenVary, vRnd);
+          let noteLen = _ambVaryLen(lenMs, lenVary, vRnd);
+          // Phrasing (Riff): gesture lengths derived from the SEED pattern's own
+          // shape — a slot followed by a rest (or the loop end) is an ARRIVAL
+          // (fills ~92% of its slot); a slot inside a run of consecutive hits is
+          // a quick note (~40%). Blended by the slider; DETERMINISTIC (zero RNG
+          // draws — 0 blends to the legacy length exactly, harness-safe), so the
+          // riff's phrasing is as fixed as the riff.
+          { const _phrR = Math.max(0, Math.min(100, inst.phrasing | 0));
+            if (_phrR > 0) {
+              const _nextRests = (i + 1 >= totalSlots) || !!baseRest[i + 1];
+              const _gest = Math.round(slotSec * 1000 * (_nextRests ? 0.92 : 0.4));
+              noteLen = Math.round(noteLen + (_gest - noteLen) * (_phrR / 100));
+            } }
           const bp = _ambApplyAdsr(_ambMotifParams(noteLen, _ambLayerPan(inst), inst.tone), inst);
           if (_ambLastDegTone) bp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
+          // Phrase gestures (cycle-seeded → the figure locks to the loop).
+          _ambOrnamentFlicks(inst, src, (deg % N + N) % N, reg + homeShift + Math.floor(deg / N), at, bp, noteLen, dest, _E.laneIdx(), vRnd);
+          { const _sl = _ambSlideMs(inst, _prevRunDeg, deg, vRnd);
+            if (_sl) { bp.glideMs = Math.max(bp.glideMs || 0, _sl); bp.glideLayer = inst; }
+            _prevRunDeg = deg; }
           _ambApplyDegLevel(bp);                          // …and its own level
           bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
           if (dmod) bp._detuneMod = dmod;
@@ -5807,6 +5833,50 @@
     }
     // One random-walk step → frequency. Advances _E.motifDeg. Pulled out of
     // _ambEmitMotif so Twist can fire several in quick succession.
+    // ---- Phrase gestures: Ornaments & Slide (Motif/Riff) -------------------
+    // Ornament: with prob ∝ inst.ornament, decorate a note with a TEMPO-SYNCED
+    // pre-beat figure — grace (one neighbor flick) · mordent (main→lower) ·
+    // turn (upper→main→lower) · pralltriller (4 alternating flicks). A flick =
+    // a 32nd at the area BPM (clamped 30–90 ms), volume ×0.65, in-key
+    // neighbors from the layer's OWN source (they follow progressions).
+    // Draws come from the CALLER's stream — motif: the live engine stream;
+    // riff: its cycle-seeded vRnd, so the ornament pattern LOCKS to the loop.
+    // Fully gated at 0 (zero draws → harness byte-identical).
+    function _ambOrnamentFlicks(inst, src, deg, oct, at, baseParams, durMs, dest, laneIdx, rndFn, rec) {
+      const p = Math.max(0, Math.min(100, inst.ornament | 0));
+      if (p <= 0) return;
+      if (rndFn() * 100 >= p * 0.6) return;
+      const N = Math.max(1, _ambScaleIntervals(src).length);
+      const nb = (d2) => _ambDegreeFreq(((d2 % N) + N) % N, oct + Math.floor(d2 / N), src);
+      const bpm = _ambBpm();
+      const flick = Math.max(0.03, Math.min(0.09, (60 / Math.max(20, bpm)) * 4 / 32));
+      const main = nb(deg), up = nb(deg + 1), dn = nb(deg - 1);
+      if (main == null || up == null || dn == null) return;
+      const r = rndFn();
+      let fig;
+      if (r < 0.45)      fig = [(rndFn() < 0.5) ? up : dn];          // grace
+      else if (r < 0.80) fig = [main, dn];                            // mordent
+      else if (r < 0.95) fig = [up, main, dn];                        // turn
+      else               fig = [up, main, up, main];                  // pralltriller
+      const vol = Math.max(1, Math.round((Number.isFinite(baseParams.volume) ? baseParams.volume : 100) * 0.65));
+      for (let k = 0; k < fig.length; k++) {
+        const fp = {}; for (const kk in baseParams) { if (kk === '_detuneMod') continue; fp[kk] = baseParams[kk]; }
+        fp.volume = vol;
+        try { playNote(fig[k], fp, Math.round(flick * 900), at - (fig.length - k) * flick, dest, undefined, laneIdx); } catch (e) {}
+        if (rec) try { rec(fig[k], -(fig.length - k) * flick, Math.round(flick * 900), fp); } catch (e) {}
+      }
+    }
+    // Slide: with prob ∝ inst.slide, approach a LEAP (≥ 3 scale steps) with a
+    // per-note glide — the existing portamento machinery (params.glideMs +
+    // glideLayer), tempo-scaled (~a third of a beat, 60–240 ms). Gated at 0.
+    function _ambSlideMs(inst, prevDeg, deg, rndFn) {
+      const p = Math.max(0, Math.min(100, inst.slide | 0));
+      if (p <= 0) return 0;
+      if (Math.abs((deg | 0) - (prevDeg | 0)) < 3) return 0;
+      if (rndFn() * 100 >= p * 0.7) return 0;
+      const bpm = _ambBpm();
+      return Math.round(Math.max(60, Math.min(240, (60 / Math.max(20, bpm)) * 1000 * 0.35)));
+    }
     function _ambMotifNextNote(motif) {
       const intervals = _ambScaleIntervals(_ambNotesOf(motif));
       const N = intervals.length;
@@ -5882,6 +5952,39 @@
       let count = 1;
       if (tw > 0 && _ambRand() < tw) count = 2 + Math.floor(_ambRand() * (1 + tw * 5)); // 2..~7
       const burstGap = Math.min(0.12, (lenMs / 1000) / Math.max(1, count)); // fast, ≤120 ms apart
+      // Phrasing (gesture cells): with prob ∝ motif.phrasing, this unit's notes
+      // take a GESTURE — relative onsets + durations with an ARRIVAL note
+      // (agogic emphasis: long + leaned-on) — instead of the uniform burst.
+      // With prob .35 the PREVIOUS gesture repeats (the classical sequence
+      // device, rhythm-identity v1 — pitch still walks fresh). Structured
+      // length variation lives here: quick notes exist to reach long ones.
+      // Gated at 0 → zero draws → byte-identical (harness-safe).
+      const _phr = Math.max(0, Math.min(100, motif.phrasing | 0));
+      let _plan = null;
+      if (_phr > 0 && _ambRand() * 100 < _phr) {
+        const _cfg3 = _E._cfg || (_E.getCfg && _E.getCfg()) || {};
+        let _sc3 = 1; try { _sc3 = _ambLayerScale(_E, key, motif, _cfg3); } catch (e) {}
+        const _uSec = Math.max(0.05, _ambEffIntervalSec(motif)) * _sc3;
+        const _CELLS = [
+          [[0, 0.92, 1]],                                                    // arrival — one long note
+          [[0, 0.13, 0], [0.16, 0.13, 0], [0.32, 0.13, 0], [0.48, 0.48, 1]], // run-up → arrival
+          [[0, 0.42, 0], [0.48, 0.13, 0], [0.64, 0.32, 1]],                  // dotted figure
+          [[0, 0.28, 0], [0.5, 0.44, 1]],                                    // short–LONG pair
+          [[0.66, 0.1, 0], [0.8, 0.18, 1]],                                  // late pickup
+        ];
+        const _reuse = _E.motifGesture && _ambRand() < 0.35;
+        const _cell = _reuse ? _E.motifGesture : _CELLS[Math.floor(_ambRand() * _CELLS.length)];
+        _E.motifGesture = _cell;
+        _plan = _cell.map(cn => ({ t: cn[0] * _uSec, d: Math.max(60, Math.round(cn[1] * _uSec * 1000)), arr: !!cn[2] }));
+        count = _plan.length;
+        // Motivic sequence v2: a REUSED gesture also replays its melodic
+        // intervals, transposed from wherever the walk now sits (the classical
+        // device in full — same rhythm, same contour, new pitch level). Fresh
+        // cells record their degrees below; reuse consumes them with a delta.
+        if (_reuse && _E.motifGestureDegs && Number.isFinite(_E.motifGestureDegs[0])) {
+          _plan.seq = { degs: _E.motifGestureDegs, delta: (_E.motifDeg | 0) - _E.motifGestureDegs[0] };
+        } else if (!_reuse) { _E.motifGestureDegs = []; }
+      }
       const dmod = _ambLayerDetuneMod(key);
       const dest = _ambLayerDest(key);
       const _mnotes = _ambNotesOf(motif);   // carries colours + timed usage
@@ -5902,7 +6005,20 @@
       for (let i = 0; i < count; i++) {
         if (_motifProg && !_ambChordGateOK(_E, motif, at + _startOff + i * burstGap, null, _mnotes)) continue;
         if (_motifProg) _ambProgStepOverride = _ambProgStepAt(_E, at + _startOff + i * burstGap, _mnotes);   // chord at THIS note's onset (bar-aligned)
-        const f = _ambMotifNextNote(motif);
+        const _prevDeg = _E.motifDeg | 0;   // for Slide's leap detection
+        // Sequence replay: reuse the recorded degree (transposed) instead of
+        // walking; fresh celled notes record their degree for a later reuse.
+        let f;
+        const _sqd = (_plan && _plan.seq) ? _plan.seq.degs[i] : undefined;
+        if (Number.isFinite(_sqd)) {
+          const _d3 = _sqd + _plan.seq.delta;
+          const _N3 = Math.max(1, _ambScaleIntervals(_mnotes).length);
+          f = _ambDegreeFreq(((_d3 % _N3) + _N3) % _N3, Math.floor(_d3 / _N3), _mnotes);
+          _E.motifDeg = _d3; _ambLastDegTone = null; _ambLastDegLevel = null;
+        } else {
+          f = _ambMotifNextNote(motif);
+          if (_plan && !_plan.seq && _E.motifGestureDegs) _E.motifGestureDegs[i] = _E.motifDeg | 0;
+        }
         if (f == null) continue;
         // Sequential single notes can't be "distributed" simultaneously, so
         // Space spreads them by panning each randomly within ±space.
@@ -5911,8 +6027,16 @@
         if (_ambLastDegTone) mp.type = _ambLastDegTone;   // wrap-ensemble: this degree's own tone
         _ambApplyDegLevel(mp);                          // …and its own level
         mp.volume = _ambAccentVol(_ambApplyLevel(mp.volume, motif.level), motif.accent);
-        const off = _startOff + i * burstGap;
-        const noteMs = _ambVaryLen(lenMs, motif.lenVary);   // Len var: per-note length jitter
+        if (_plan && _plan[i].arr) mp.volume = Math.min(127, Math.round(mp.volume * 1.15));   // agogic lean on the arrival
+        const off = _plan ? (_startOff + _plan[i].t) : (_startOff + i * burstGap);
+        const noteMs = _plan ? _plan[i].d : _ambVaryLen(lenMs, motif.lenVary);   // gesture duration | Len var jitter
+        // Phrase gestures — ornament flicks before the beat, glide into leaps.
+        { const _N2 = Math.max(1, _ambScaleIntervals(_mnotes).length);
+          const _dg = _E.motifDeg | 0;
+          _ambOrnamentFlicks(motif, _mnotes, ((_dg % _N2) + _N2) % _N2, Math.floor(_dg / _N2), at + off, mp, noteMs, dest, _E.laneIdx(), _ambRand,
+            (ff, dsec, dms, fp) => _unit.push({ freq: ff, off: off + dsec, durMs: dms, params: fp }));
+          const _sl = _ambSlideMs(motif, _prevDeg, _dg, _ambRand);
+          if (_sl) { mp.glideMs = Math.max(mp.glideMs || 0, _sl); mp.glideLayer = motif; } }
         const _rp = {}; for (const k in mp) if (k !== '_detuneMod') _rp[k] = mp[k];
         _unit.push({ freq: f, off: off, durMs: noteMs, params: _rp });
         if (dmod) mp._detuneMod = dmod;
@@ -11152,13 +11276,49 @@
       const prevSink = (typeof window !== 'undefined') ? window._ambCaptureSink : null;
       if (typeof window !== 'undefined') window._ambCaptureSink = _ambCapSink(E, key);
       const lyr = _ambLayerByKey(E, key);   // Harmony remap (fixed/absent → passthrough)
+      // LIVE loop variance (L.loopVar === 'live'): each pass RE-PERFORMS the
+      // captured phrase — Humanize / Vel var / Ornament re-roll per iteration
+      // from the layer's CURRENT sliders. Same unseeded performance-jitter
+      // doctrine as _ambApplyAdsr (Math.random — zero engine-RNG draws, so the
+      // generation stream is untouched either way). Structural variance
+      // (mutate/rhythm/rests) was decided when the phrase was written and
+      // stays as written — the loop remains the loop; the touch varies.
+      const _live = !!(lyr && lyr.loopVar === 'live');
+      const _liveOrn = _live ? Math.max(0, Math.min(100, lyr.ornament | 0)) : 0;
       try {
         while (guard++ < 4096) {
           const base = A + k * L;
           if (base >= horizon) break;
           for (const e of st.events) {
             const at = base + e.t;
-            if (at >= from && at < horizon) { try { playNote(_ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at), e.params, e.dur, at, dest, undefined, E.laneIdx()); } catch (x) {} }
+            if (at >= from && at < horizon) { try {
+              const f2 = _ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at);
+              let pp = e.params;
+              if (_live) {
+                pp = Object.assign({}, e.params);
+                if (Number.isFinite(lyr.humanize) && lyr.humanize > 0) pp._humanSec = (Math.random() * 2 - 1) * Math.min(100, lyr.humanize) / 100 * 0.02;
+                if (Number.isFinite(lyr.velVar) && lyr.velVar > 0) {
+                  const b0 = Number.isFinite(pp.volume) ? pp.volume : 100;
+                  pp.volume = Math.max(0, Math.min(127, Math.round(b0 * (1 + (Math.random() * 2 - 1) * Math.min(100, lyr.velVar) / 100 * 0.4))));
+                }
+                if (_liveOrn > 0 && f2 > 0) {
+                  // Fresh in-key flicks each pass: nearest degree in the layer's
+                  // CURRENT source (the _ambScaleTranspose derivation).
+                  try {
+                    const src = _ambNotesOf(lyr);
+                    const iv = _ambScaleIntervals(src), N = iv.length;
+                    const A4 = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+                    const midi = Math.round(69 + 12 * Math.log2(f2 / A4));
+                    const pc = ((midi % 12) + 12) % 12;
+                    const root = _ambSrcRootPc(_ambAsNotes(src));
+                    let d = 0, best = 99;
+                    for (let i2 = 0; i2 < N; i2++) { const dpc = (((root + iv[i2]) % 12) + 12) % 12; let df = Math.abs(dpc - pc); df = Math.min(df, 12 - df); if (df < best) { best = df; d = i2; } }
+                    _ambOrnamentFlicks(lyr, src, d, Math.round((midi - pc) / 12) - 1, at, pp, e.dur, dest, E.laneIdx(), Math.random);
+                  } catch (x2) {}
+                }
+              }
+              playNote(f2, pp, e.dur, at, dest, undefined, E.laneIdx());
+            } catch (x) {} }
           }
           k++;
         }
@@ -16059,6 +16219,7 @@
           // Vary (stochastic) — re-rolls a random phrase length + repeat count in
           // [min,max] each cycle, so Write becomes evolving structure.
           '<button type="button" class="ambient-seg ambient-write-vary' + ((w && w.stochastic) ? ' active' : '') + '" title="Vary — each cycle roll a random phrase length (bars) and repeat count (plays) inside your min–max ranges, so the layer loops in evolving chunks instead of a fixed X×Y.">~ Vary</button>' +
+          '<button type="button" class="ambient-seg ambient-loop-lvar' + ((inst && inst.loopVar === 'live') ? ' active' : '') + '" title="Live variance — off: the loop replays exactly as written (variance baked into the captured phrase). On: every loop pass RE-PERFORMS the phrase — Humanize, Vel var and Ornament re-roll from the layer\'s current sliders each iteration (structural variance stays as written).">⚡ Live</button>' +
           // Fixed X×Y (Vary off)
           '<span class="ambient-write-xy ambient-write-fixed"' + (on ? '' : ' style="display:none"') + '>' +
             '<input type="number" class="ambient-write-x" min="1" max="32" step="1" value="' + ((w && w.bars) || 2) + '" title="X — phrase length in bars"> <span class="ambient-hint">bars ×</span> ' +
@@ -16097,6 +16258,8 @@
         // Inherited (Area Write): the settings live in Configure — hide the
         // per-layer editors and cue the cascade instead of showing dormant fields.
         if (varyBtn) { varyBtn.classList.toggle('active', sto); varyBtn.style.display = (writing && !inherited && !seqOn) ? '' : 'none'; }
+        const lvBtn = row.querySelector('.ambient-loop-lvar');
+        if (lvBtn) { lvBtn.classList.toggle('active', L.loopVar === 'live'); lvBtn.style.display = (writing || holding) ? '' : 'none'; }
         const fixed = row.querySelector('.ambient-write-fixed'); if (fixed) fixed.style.display = (writing && !inherited && !sto && !seqOn) ? '' : 'none';
         const range = row.querySelector('.ambient-write-range'); if (range) range.style.display = (writing && !inherited && sto && !seqOn) ? '' : 'none';
         const hint = row.querySelector('.ambient-loop-hint');
@@ -17652,7 +17815,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'stream → gestures'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
@@ -17690,7 +17853,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'base octave'], ['st', 'range', 'Range', 1, 4, 'octave span'], ['sl', 'transpose', 'Transpose', -24, 24, 'half steps (±2 oct)'], ['st', 'density', 'Density', 1, 16, 'notes / bar'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Bars', 1, 16, 'loop length'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'vary', 'Vary', 0, 100, 'repeat → mutate'], ['sl', 'phrasing', 'Phrasing', 0, 100, 'even → shaped by the pattern'], ['sl', 'ornament', 'Ornament', 0, 100, 'graces → trills'], ['sl', 'slide', 'Slide', 0, 100, 'glide into leaps'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Pedal: a simple pedal-point loop. Note = scale degree, Vary roams off it.
       pedal: { label: 'Pedal', ctrls: [
@@ -17718,9 +17881,9 @@
       return !!_AMB_GROUP_DEFAULT_OPEN[name];
     }
     function _ambDefaultLayer(type, id) {
-      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, mod: _ambDefaultMod(), ..._ambDefaultFx() };
+      const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, write: { on: true, bars: 2, times: 4 }, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
-      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
+      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, phrasing: 0, ornament: 0, slide: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
       if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
       if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
@@ -17745,7 +17908,7 @@
       // dialed up. A light rest % keeps the run from being wall-to-wall.
       if (type === 'run') return Object.assign(base, {
         tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, transpose: 0,
-        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, ..._AMB_ADSR_DEFAULTS.run,
+        bars: 2, density: 8, lengthMs: 220, unitPadMs: 0, vary: 0, restProb: 10, lenVary: 0, accent: 20, phrasing: 0, ornament: 0, slide: 0, ..._AMB_ADSR_DEFAULTS.run,
       });
       // Pedal: 1-bar loop of 4 quarter-note roots — a steady pedal point. Register
       // 4 (C4) + full volume matches a default Shape node so they sound the same.
@@ -20376,6 +20539,9 @@
       set('ambient-motif-gravity', (cfg.motif.gravity != null ? cfg.motif.gravity : 50) | 0);
       set('ambient-motif-contour', cfg.motif.contour | 0);
       set('ambient-motif-stutter', cfg.motif.stutter | 0);
+      set('ambient-motif-ornament', cfg.motif.ornament | 0);
+      set('ambient-motif-phrasing', cfg.motif.phrasing | 0);
+      set('ambient-motif-slide', cfg.motif.slide | 0);
       set('ambient-texture-syncop', cfg.texture.syncop | 0);
       set('ambient-texture-holdSteps', cfg.texture.holdSteps | 0);
       set('ambient-beat-holdSteps', cfg.beat.holdSteps | 0);
@@ -21775,6 +21941,9 @@
       bind('ambient-motif-gravity', 'motif', 'gravity');
       bind('ambient-motif-contour', 'motif', 'contour');
       bind('ambient-motif-stutter', 'motif', 'stutter');
+      bind('ambient-motif-ornament', 'motif', 'ornament');
+      bind('ambient-motif-phrasing', 'motif', 'phrasing');
+      bind('ambient-motif-slide', 'motif', 'slide');
       bind('ambient-texture-syncop', 'texture', 'syncop');
       bind('ambient-texture-holdSteps', 'texture', 'holdSteps');
       bind('ambient-beat-holdSteps', 'beat', 'holdSteps');
@@ -22076,6 +22245,15 @@
           hostEl.addEventListener('click', (ev) => {
             // Vary (stochastic) toggle — a sibling seg, not a mode; flips
             // L.write.stochastic and re-syncs (fixed X×Y ↔ min–max ranges).
+            const lv = ev.target && ev.target.closest && ev.target.closest('.ambient-loop-lvar');
+            if (lv && hostEl.contains(lv)) {
+              const key = _ambCardKey(lv.closest('.ambient-layer')); if (!key) return;
+              _E = E; const Lv = _ambLayerByKey(E, key); if (!Lv) return;
+              if (Lv.loopVar === 'live') delete Lv.loopVar; else Lv.loopVar = 'live';
+              try { _ambFreezeSyncAll(E); } catch (e) {}
+              if (typeof persistWorkspace === 'function') persistWorkspace();
+              return;
+            }
             const vb = ev.target && ev.target.closest && ev.target.closest('.ambient-write-vary');
             if (vb && hostEl.contains(vb)) {
               const w = _writeOf(vb); if (!w) return;

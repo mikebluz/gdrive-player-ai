@@ -4878,6 +4878,24 @@
                   try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                   ctx.cap++;
                 }
+                // Ghosts (Variance): with prob ∝ ghosts, a QUIET pickup hit half a
+                // slot before this one (classic drum ghosting — same drum, ~28%
+                // level). Seeded draw AFTER the slot's existing draws; gated at 0
+                // → zero draws → byte-identical (harness beat configs pinned).
+                { const gP = Math.max(0, Math.min(100, inst.ghosts | 0));
+                  if (gP > 0 && rnd() * 100 < gP * 0.5 && ctx.cap < 256) {
+                    const gAt = at - slotSec * 0.5;
+                    if (_ambBeatIsSynth(inst)) {
+                      const _r2 = Math.max(0, _AMB_VDRUM.indexOf(pc));
+                      _ambPlaySynthDrum(_E, dest, inst, _r2, gAt, Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * 0.28)), dmod, vpan, stPitch);
+                    } else {
+                      const gbp = _ambApplyAdsr(_ambBeatParams(inst.kit, Math.round(lenMs * 0.6), vpan), inst);
+                      gbp.volume = Math.max(0, Math.round(_ambApplyLevel(gbp.volume, inst.level) * 0.28));
+                      if (dmod) gbp._detuneMod = dmod;
+                      try { playNote(f, gbp, Math.max(40, Math.round(lenMs * 0.5)), gAt, dest, undefined, _E.laneIdx()); } catch (e) {}
+                    }
+                    ctx.cap++;
+                  } }
                 if (ctx.cap >= 256) break;
               }
               if (ctx.cap >= 256) break;
@@ -4973,6 +4991,16 @@
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
             try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
             ctx.cap++;
+            // Ghosts (Variance): quiet pickup half a slot before, same pitch —
+            // gated at 0 (no draw) → byte-identical.
+            { const gP = Math.max(0, Math.min(100, inst.ghosts | 0));
+              if (gP > 0 && rnd() * 100 < gP * 0.5 && ctx.cap < 256) {
+                const gbp = _ambApplyAdsr(_ambBassParams(Math.round(lenMs * 0.6), _ambLayerPan(inst), inst.tone), inst);
+                gbp.volume = Math.max(0, Math.round(_ambApplyLevel(Number.isFinite(gbp.volume) ? gbp.volume : 100, inst.level) * 0.30));
+                if (dmod) gbp._detuneMod = dmod;
+                try { playNote(f, gbp, Math.max(40, Math.round(lenMs * 0.5)), at - slotSec * 0.5, dest, undefined, _E.laneIdx()); } catch (e) {}
+                ctx.cap++;
+              } }
             if (ctx.cap >= 256) break;
           }
           if (ctx.cap >= 256) break;
@@ -5301,13 +5329,26 @@
       const lo = ((_home === 'floor') ? center : center - range) * N;
       const hi = ((_home === 'ceiling') ? center : center + range) * N;
       if (_E.motifDeg == null) _E.motifDeg = center * N;
+      // Stutter (Variance): with prob ∝ stutter, REPEAT the current note
+      // instead of walking — insistent held-tone phrasing. Gated at 0 (no
+      // draw → byte-identical); the repeat consumes no further picks, so the
+      // walk resumes from the same place.
+      const _stut = Math.max(0, Math.min(100, motif.stutter | 0));
+      if (_stut > 0 && _ambRand() * 100 < _stut * 0.45) {
+        const dIn = ((_E.motifDeg % N) + N) % N;
+        return _ambDegreeFreq(dIn, Math.floor(_E.motifDeg / N), _ambNotesOf(motif));
+      }
       // Proximity caps how far consecutive notes may leap (in scale degrees).
       // 0 → every step is EXACTLY ±1 (strictly adjacent); higher widens the
       // allowed gap up to ~an octave, picking a random magnitude in [1, maxStep].
       const proximity = Math.max(0, Math.min(100, (motif.proximity != null ? motif.proximity : 35) | 0));
       const maxStep = 1 + Math.round((proximity / 100) * 7);   // 1 (adjacent) … 8
       const mag = 1 + Math.floor(_ambRand() * maxStep);         // 1 … maxStep
-      const dir = _ambRand() < 0.5 ? -1 : 1;
+      // Contour (Variance): walk-direction bias, -100 (falling) … +100 (rising).
+      // Default 0 → threshold exactly 0.5 (byte-identical), and the draw fires
+      // at every setting, so the shared RNG stream never shifts.
+      const _cont = Number.isFinite(motif.contour) ? Math.max(-100, Math.min(100, motif.contour)) : 0;
+      const dir = _ambRand() < (0.5 - _cont / 100 * 0.35) ? -1 : 1;
       let next = _E.motifDeg + dir * mag;
       if (next < lo) next = lo + (lo - next);
       if (next > hi) next = hi - (next - hi);
@@ -5316,7 +5357,12 @@
       const chordSet = [0, 2, 4].filter(d => d < N);
       // Chord-tone magnet — skipped at proximity 0 so strict adjacency holds
       // (snapping to a chord tone could otherwise jump more than one degree).
-      if (proximity > 0 && !chordSet.includes(degInOct) && _ambRand() < 0.45) {
+      // Gravity (Variance): the magnet's strength, 0-100 → 0..0.9 pull
+      // probability. Default 50 ≡ the historical 0.45 (byte-identical), and the
+      // draw happens at EVERY value (at 0 it just never passes), so the shared
+      // RNG stream never shifts regardless of the setting.
+      const _grav = (Number.isFinite(motif.gravity) ? Math.max(0, Math.min(100, motif.gravity)) : 50) / 100 * 0.9;
+      if (proximity > 0 && !chordSet.includes(degInOct) && _ambRand() < _grav) {
         let best = degInOct, bd = 99;
         chordSet.forEach(c => { const dd = Math.min((c - degInOct + N) % N, (degInOct - c + N) % N); if (dd < bd) { bd = dd; best = c; } });
         next += (best - degInOct);
@@ -5450,7 +5496,12 @@
         const { steps, slotSec, cStart, rnd, tFrom, tTo } = ctx;
         for (let s = 0; s < steps; s++) {
           if (euPat) { if (!euPat[s]) continue; }             // euclid: deterministic on-steps
-          else if (rnd() >= fill * 0.6) continue;             // fill: stochastic (per-cycle seeded)
+          // Syncopate (Variance): tilt the stochastic fill toward OFFBEAT slots
+          // (odd indices denser, even sparser). 0 → factor exactly 1 → the
+          // historical uniform fill, byte-identical; the draw fires per slot at
+          // every setting, so the stream never shifts.
+          else { const _syn = Number.isFinite(inst.syncop) ? Math.max(0, Math.min(100, inst.syncop)) : 0;
+                 if (rnd() >= fill * 0.6 * (1 + (_syn / 100) * ((s & 1) ? 0.8 : -0.8))) continue; }   // fill: stochastic (per-cycle seeded)
           const at = cStart + s * slotSec + ((s & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;             // only within this tick's window
           _ambKeyTime = at;
@@ -16926,19 +16977,19 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['home'], ['st', 'register', 'Register', 2, 7, 'octave'], ['st', 'range', 'Range', 1, 4, '± oct'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 100, 4000, 20], ['speed'], ['tm', 'lengthMs', 'Length', 80, 4000, 20], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['sl', 'gravity', 'Gravity', 0, 100, 'free → chord tones'], ['sl', 'contour', 'Contour', -100, 100, 'fall → rise'], ['sl', 'stutter', 'Stutter', 0, 100, 'walk → repeats'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'twist', 'Twist', 0, 100, 'steady → bursts'], ['sl', 'phraseVary', 'Start', 0, 100, 'on the 1 → anywhere'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
         ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
+        ['grp', 'Variance'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
         ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
+        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
       // shapes. Existing shape layers are dropped on load in _normalizeAmbientCfg.)
@@ -16956,7 +17007,7 @@
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
         ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
-        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
+        ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
       // looping; Vary re-rolls; Len var spreads note lengths around Length.
@@ -16994,9 +17045,9 @@
     function _ambDefaultLayer(type, id) {
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
-      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
-      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
-      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
+      if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
+      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
@@ -17012,7 +17063,7 @@
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
         bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
-        rhythmVar: 0, pitchVar: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
+        rhythmVar: 0, pitchVar: 0, ghosts: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
       });
       // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
       // 2 octaves by default; Vary starts at 0 so it repeats verbatim until
@@ -19581,8 +19632,13 @@
       set('ambient-beat-humanize', cfg.beat.humanize | 0);
       set('ambient-bed-velVar', cfg.bed.velVar | 0);
       set('ambient-motif-velVar', cfg.motif.velVar | 0);
+      set('ambient-motif-gravity', (cfg.motif.gravity != null ? cfg.motif.gravity : 50) | 0);
+      set('ambient-motif-contour', cfg.motif.contour | 0);
+      set('ambient-motif-stutter', cfg.motif.stutter | 0);
+      set('ambient-texture-syncop', cfg.texture.syncop | 0);
       set('ambient-texture-velVar', cfg.texture.velVar | 0);
       set('ambient-beat-velVar', cfg.beat.velVar | 0);
+      set('ambient-beat-ghosts', cfg.beat.ghosts | 0);
       setWhen('ambient-bed', cfg.bed.when);
       set('ambient-bed-motion', cfg.bed.motion);
       set('ambient-bed-restProb', cfg.bed.restProb | 0);
@@ -20868,8 +20924,13 @@
       bind('ambient-texture-humanize', 'texture', 'humanize');
       bind('ambient-beat-humanize', 'beat', 'humanize');
       bind('ambient-motif-velVar', 'motif', 'velVar');
+      bind('ambient-motif-gravity', 'motif', 'gravity');
+      bind('ambient-motif-contour', 'motif', 'contour');
+      bind('ambient-motif-stutter', 'motif', 'stutter');
+      bind('ambient-texture-syncop', 'texture', 'syncop');
       bind('ambient-texture-velVar', 'texture', 'velVar');
       bind('ambient-beat-velVar', 'beat', 'velVar');
+      bind('ambient-beat-ghosts', 'beat', 'ghosts');
       bind('ambient-motif-phraseVary', 'motif', 'phraseVary');
       bind('ambient-motif-restProb', 'motif', 'restProb');
       bind('ambient-motif-twist', 'motif', 'twist');

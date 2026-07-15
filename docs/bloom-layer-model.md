@@ -118,6 +118,19 @@ event). Bed's Monk-voicing and a hand-drawn chord are the same kind of object.
 - Deterministic generation is NOT here (that's SEED). "Non-deterministic modification"
   is the whole of VARIANCE.
 
+*Landed (2026-07-15):* the axis gained its universal + per-type controls —
+**Humanize** (±20 ms onset jitter) and **Vel var** (±40% level noise) on every type
+(both UNSEEDED Math.random: performance noise, zero engine-RNG draws);
+**Rate var** (Arp — momentum slot-subdivision accelerando; the Timing rate is the
+structural floor); **Ghosts** (Beat/Bass — ~28%-level pickup hits half a slot early);
+**Gravity** (Motif — the once-hardcoded 0.45 chord-tone magnet as a slider; default
+50 ≡ 0.45 exactly); **Contour** (Motif — walk-direction bias, fall↔rise);
+**Syncopate** (Texture — stochastic fill tilted to offbeat slots); **Stutter**
+(Motif — repeat-instead-of-walk). Two RNG-safety patterns, use them for any new
+control: (a) fully GATED draws (zero draws at 0 — Ghosts/Stutter/Rate var), or
+(b) always-drawn EXACT-DEFAULT arithmetic (the draw fires at every setting so the
+stream never shifts — Gravity/Contour/Syncopate).
+
 ### FX / MIX — unchanged from today
 `level`, `pan/space`, `mod` (VCA/VCO/VCF + shapes), `fx` (reverb/delay/dist/chorus/
 phaser/autopan), `tg` (trance gate), `areaFadeMs`, `portamento`, `fine`, `when`.
@@ -275,9 +288,25 @@ unmappable feature → migration can be additive.
     across a series are managed via AREAS** (each area carries its own KEY; the area
     sequence is the modulation timeline) — never inside the series. Payoff: change
     the area key and the whole arp follows; kills the per-entry scale/key sprawl.
-    Migration TBD: existing entries with explicit scales/keys need a degree
-    conversion (or a legacy compat read), harness-pinned like the v4 fold
-    (`prog-arp` as the identity proof).
+    Migration STAGING PLAN (drafted 2026-07-15, build in a fresh session from a
+    clean tree):
+    1. **Pin first**: battery configs for a series with per-entry scales + one with
+       per-entry dirs/passes (today's shapes), so the migration has identity proofs
+       beyond `prog-arp`.
+    2. **v5 derive**: each series entry's notes fold to DEGREES against the layer's
+       effective key at load (`{d,o,a}` — reuse `_ambSeqDeriveDegs`'s math); the
+       entry keeps `passes`/`dir` untouched. Entries whose notes are a PROG graduate
+       to the layer `keyOv` (one per layer — first wins, rest degrade to degree
+       sets) — same idempotent/ungated pattern as v4. Legacy compat: an entry with
+       underivable notes keeps a `fixed` pitch list (the lock-harmony precedent).
+    3. **Emit switch**: `_ambEmitArp`'s pitch pool reads entry degrees realized in
+       the CURRENT effective key (byte-identical when the key is unchanged since
+       derivation — the harness proof) instead of per-entry `_ambNotesOf`.
+    4. **Editor simplification**: the series row's Notes button becomes a degree-set
+       picker within the current key (no scale/prog submenus); the keyOv Key group
+       (already shipped) is where the frame changes.
+    5. **Areas = modulation**: verify with a two-area config (same series, different
+       area keys) — the series must re-pitch across the boundary with no series edit.
   - *Companion decision (same session): AREA KEY LOCK.* Since areas are the
     modulation timeline, an area needs a 🔒 = snapshot-detach in place: freeze the
     area's key at its CURRENT effective value (copy the followed workspace key into

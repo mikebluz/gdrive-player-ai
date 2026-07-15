@@ -290,18 +290,22 @@ unmappable feature → migration can be additive.
     the area key and the whole arp follows; kills the per-entry scale/key sprawl.
     Migration STAGING PLAN (drafted 2026-07-15, build in a fresh session from a
     clean tree):
-    1. **Pin first**: battery configs for a series with per-entry scales + one with
-       per-entry dirs/passes (today's shapes), so the migration has identity proofs
-       beyond `prog-arp`.
-    2. **v5 derive**: each series entry's notes fold to DEGREES against the layer's
-       effective key at load (`{d,o,a}` — reuse `_ambSeqDeriveDegs`'s math); the
-       entry keeps `passes`/`dir` untouched. Entries whose notes are a PROG graduate
-       to the layer `keyOv` (one per layer — first wins, rest degrade to degree
-       sets) — same idempotent/ungated pattern as v4. Legacy compat: an entry with
-       underivable notes keeps a `fixed` pitch list (the lock-harmony precedent).
-    3. **Emit switch**: `_ambEmitArp`'s pitch pool reads entry degrees realized in
-       the CURRENT effective key (byte-identical when the key is unchanged since
-       derivation — the harness proof) instead of per-entry `_ambNotesOf`.
+    1. **Pin first** ✓ (`arp-series-legacy`, 33952b9c): per-entry scales + mixed
+       dirs/passes.
+    2. **v5 derive** ✓: explicit-scale + plain-chord entries fold to
+       `{type:'degs', degs:[{d,a}…]}` against the layer's effective key at load
+       (idempotent/ungated; `_AMB_SCHEMA_VERSION` 5). `passes`/`dir` untouched.
+       FOUND while building: prog entries CANNOT graduate to keyOv — entries
+       resolve independently of their layer (`_ambNotesOf(entry)` never sees
+       keyOv), so graduation would break `prog-arp`; they stay compat, with
+       customized chords (eff-intervals/muted) and wraps. Deferred until entry
+       resolution routes through the layer.
+    3. **Emit switch** ✓ (no emitter change needed): a `degs` source flows through
+       `_ambScaleIntervals`/`_ambSrcRootPc` (two new dispatch cases) — realized in
+       the CURRENT key, anchored on the key root. Same-key realization is exact
+       (`arp-series-legacy` byte-identical); two-key proof: C→D re-pitches all 52
+       notes exactly +2 st. New explicit-scale picks self-heal (derived on the
+       next normalize), so the editor rework is cosmetic, not correctness.
     4. **Editor simplification**: the series row's Notes button becomes a degree-set
        picker within the current key (no scale/prog submenus); the keyOv Key group
        (already shipped) is where the frame changes.

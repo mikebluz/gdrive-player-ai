@@ -1478,7 +1478,14 @@
     //        into keyOv {mode:'prog'} (idempotent + ungated, see the sweep near
     //        the stamp). The Notes-menu prog picks write keyOv directly now.
     //        Arp series entries deferred.
-    const _AMB_SCHEMA_VERSION = 4;
+    //   v5 — Arp series = SEED in ONE key: entries with an EXPLICIT scale or a
+    //        plain chord derive to {type:'degs'} (degree sets over the layer's
+    //        effective key at load; idempotent + ungated, in the arp extras
+    //        normalize). Realization reads the CURRENT key → areas are the
+    //        modulation timeline. Inherit/wrap/prog + customized-chord entries
+    //        stay as compat reads (prog graduation needs entry-through-layer
+    //        resolution — deferred).
+    const _AMB_SCHEMA_VERSION = 5;
     function _normalizeAmbientCfg(cfg) {
       if (!cfg || typeof cfg !== 'object') return _defaultAmbientConfig();
       const d = _defaultAmbientConfig();
@@ -1687,6 +1694,39 @@
             // Direction is per ENTRY now — migrate the old layer-wide dir onto
             // any entry that lacks one.
             if (_DIRS.indexOf(st.dir) < 0) st.dir = _layerDir;
+            // ---- arp-series v5: entries become DEGREE SETS in the key -------
+            // An entry with an EXPLICIT scale or a chord derives to
+            // {type:'degs'} against the layer's effective key AT LOAD — from
+            // then on it re-pitches with the key (areas = the modulation
+            // timeline). Same-key realization is exact → byte-identical
+            // (arp-series-legacy pins it). Inherit ('' scale) already follows
+            // the key; wrap/prog entries stay as compat reads (prog graduation
+            // needs entry-through-layer resolution — deferred with the doc's
+            // note). Idempotent: degs entries skip.
+            try {
+              const n2 = st.notes;
+              if (n2 && (((n2.type === 'scale') && typeof n2.scale === 'string' && n2.scale) || (n2.type === 'chord' && n2.intervals == null && n2.muted == null))) {
+                const kIv = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(cfg)]) || [0, 2, 4, 5, 7, 9, 11];
+                const kRoot = _ambKeyRootPc(cfg), Nk = Math.max(1, kIv.length);
+                let abs = null;   // ascending semitone offsets over the KEY root
+                if (n2.type === 'scale') {
+                  const eIv = (typeof SCALES !== 'undefined' && SCALES[_ambResolveScale ? _ambResolveScale(n2.scale) : n2.scale]) || null;
+                  if (eIv) abs = eIv.slice();   // scale entries share the key root
+                } else {
+                  const cIv = _ambChordIntervals(n2.form, n2.inversion);
+                  const rRel = ((((n2.root | 0) - kRoot) % 12) + 12) % 12;
+                  abs = cIv.map(iv => rRel + (iv | 0));   // keep carries → sweep order preserved
+                }
+                if (abs && abs.length) {
+                  st.notes = { type: 'degs', degs: abs.map(a0 => {
+                    const o = Math.floor(a0 / 12), pc = a0 - 12 * o;
+                    let d = 0, acc = pc, best = 99;
+                    for (let i2 = 0; i2 < Nk; i2++) { const off = pc - (kIv[i2] % 12), dd2 = Math.abs(off); if (dd2 < best) { best = dd2; d = i2; acc = off; } }
+                    return { d: d + o * Nk, a: acc };
+                  }) };
+                }
+              }
+            } catch (e) {}
             return st;
           });
           x.sel = Math.max(0, Math.min(x.sel | 0, x.steps.length - 1));
@@ -2344,6 +2384,17 @@
     }
     function _ambScaleIntervals(src) {
       const n = _ambAsNotes(src);
+      // 'degs' (arp-series v5): a degree set realized in the CURRENT effective
+      // key — intervals = keyIv[d] + accidental + octave carry. Same-key
+      // realization reproduces the derived source exactly (harness identity);
+      // an area-key change re-pitches the set (the follows-the-key payoff).
+      if (n.type === 'degs') {
+        const kc = _ambKeyCfg();
+        const kIv = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(kc)]) || [0, 2, 4, 5, 7, 9, 11];
+        const Nk = Math.max(1, kIv.length);
+        const ds = Array.isArray(n.degs) ? n.degs : [];
+        return ds.length ? ds.map(g => kIv[((g.d | 0) % Nk + Nk) % Nk] + ((g.a | 0)) + 12 * Math.floor((g.d | 0) / Nk)) : [0];
+      }
       if (n.type === 'chord') { const eff = _ambChordEffIntervals(n); return eff || _ambChordIntervals(n.form, n.inversion); }
       if (n.type === 'wrap') { const w = _ambFindWrap(n.id); return (w && Array.isArray(w.intervals) && w.intervals.length) ? w.intervals : [0, 4, 7]; }
       if (n.type === 'prog') { const ch = _ambProgCurrentChord(n); const eff = ch && _ambChordEffIntervals(ch); return eff || ((ch && Array.isArray(ch.intervals) && ch.intervals.length) ? ch.intervals : [0, 4, 7]); }
@@ -2359,6 +2410,8 @@
       const n = _ambAsNotes(src);
       const kc = _ambKeyCfg();
       const keyOn = !!(kc && kc.keyOn);
+      // 'degs' (arp-series v5): anchored on the key frame itself.
+      if (n.type === 'degs') return keyOn ? _ambKeyRootPc(kc) : ((typeof rootIdx === 'number') ? rootIdx : 0);
       // TRANSPOSE moves every layer wholesale into the key; QUANTIZE leaves roots
       // alone (the snap happens per-note in _ambNoteFreq), so for roots it is
       // identical to keyOff.
@@ -2705,6 +2758,11 @@
         if (!Number.isFinite(n.id)) layer.notes = { type: 'scale', scale: '' };
       } else if (n.type === 'prog') {
         if (!Array.isArray(n.chords) || !n.chords.length) layer.notes = { type: 'scale', scale: '' };
+      } else if (n.type === 'degs') {
+        // arp-series v5: a degree set in the current key. Coerce entries to
+        // {d,a} ints; empty → back to inherit.
+        n.degs = (Array.isArray(n.degs) ? n.degs : []).filter(g => g && Number.isFinite(g.d)).map(g => ({ d: g.d | 0, a: (g.a | 0) || 0 }));
+        if (!n.degs.length) layer.notes = { type: 'scale', scale: '' };
       } else {
         n.type = 'scale';
         if (typeof n.scale !== 'string') n.scale = '';

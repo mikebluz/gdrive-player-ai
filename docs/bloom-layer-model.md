@@ -267,6 +267,17 @@ unmappable feature → migration can be additive.
     global (identical hashes). The ARP series fold (per-entry passes/dir — richer
     than a prog) is DEFERRED to its own design pass; series entries still resolve
     per-entry via `steps[].notes`.
+  - *Arp-series design DECISION (2026-07-14, user-settled):* a series is **pure SEED
+    bound to ONE key** — the layer's effective KEY (workspace → area → layer cascade),
+    the same frame for every entry. Entries stop being arbitrary per-entry
+    note-sources and become degree-based material (chords = degree voicings) within
+    that frame; per-entry `passes`/`dir` stay as SEED/sweep params. **Key changes
+    across a series are managed via AREAS** (each area carries its own KEY; the area
+    sequence is the modulation timeline) — never inside the series. Payoff: change
+    the area key and the whole arp follows; kills the per-entry scale/key sprawl.
+    Migration TBD: existing entries with explicit scales/keys need a degree
+    conversion (or a legacy compat read), harness-pinned like the v4 fold
+    (`prog-arp` as the identity proof).
 - **Phrases**: store pitches as **degrees** (derive from a sequence's saved scale/root);
   existing Seq layers default **Fixed** so playback is byte-identical.
   - *Landed for Seq units (2026-07-14):* each seed event carries `degs: [{d,o,a}]`

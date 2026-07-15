@@ -300,6 +300,31 @@
     }
     // Add a new area, optionally cloned from an existing one (duplicate). Returns
     // its index. Does NOT switch to it (caller decides).
+    // Workspace key-change GUARD (area key-lock companion): called by the grid
+    // root/scale pickers BEFORE the new value applies. If OTHER master Bloom
+    // areas are still following the workspace key unlocked, offer to LOCK them
+    // at the CURRENT (pre-change) key first — so changing the global key for a
+    // new area can't silently re-key established ones. OK → snapshot+detach
+    // each (the same lock the '= Workspace' toggle does); Cancel → change all
+    // together (the old behavior). Silent with <2 areas or no unlocked
+    // followers beyond the active area, so single-area projects never see it.
+    function _ambGuardWorkspaceKeyChange() {
+      try {
+        if (typeof _masterBloomState !== 'function') return;
+        const s = _masterBloomState();
+        const areas = (s && Array.isArray(s.areas)) ? s.areas : [];
+        if (areas.length < 2) return;
+        const act = s.activeIdx | 0;
+        const followers = areas.map((a, i) => ({ a, i })).filter(x => x.i !== act && x.a && x.a.keyOn && x.a.keyFollow !== false);
+        if (!followers.length) return;
+        const names = followers.map(x => { try { return _ambAreaLabel(x.a, x.i); } catch (e) { return 'Area ' + (x.i + 1); } }).join(', ');
+        const lock = window.confirm('Changing the workspace key also re-keys ' + followers.length + ' other Bloom area' + (followers.length > 1 ? 's' : '') + ' still following it (' + names + ').\n\nOK — lock ' + (followers.length > 1 ? 'them' : 'it') + ' at the current key first (safe)\nCancel — change all together');
+        if (lock) {
+          followers.forEach(x => { x.a.keyRoot = _ambKeyRootPc(x.a); x.a.keyScale = _ambKeyScaleName(x.a); x.a.keyFollow = false; });
+          if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e) {} }
+        }
+      } catch (e) {}
+    }
     function _ambAddArea(fromIdx) {
       const s = _masterBloomState();
       let clone;

@@ -448,6 +448,9 @@
       });
       rootSelect.value = String(rootIdx);
       rootSelect.addEventListener('change', () => {
+        // Bloom area key-lock guard: offer to freeze other following areas
+        // at the CURRENT key before this change applies (runs pre-assign).
+        try { if (typeof _ambGuardWorkspaceKeyChange === 'function') _ambGuardWorkspaceKeyChange(); } catch (e) {}
         const _oldRoot = rootIdx;
         rootIdx = parseInt(rootSelect.value) || 0;
         // Explicit root pick re-anchors the scale's tonic too — the
@@ -501,6 +504,7 @@
       populateGroupedScaleSelect(scaleSelect);
       scaleSelect.value = currentScale;
       scaleSelect.addEventListener('change', () => {
+        try { if (typeof _ambGuardWorkspaceKeyChange === 'function') _ambGuardWorkspaceKeyChange(); } catch (e) {}
         const _oldScale = currentScale;
         currentScale = scaleSelect.value;
         if (currentScale && currentScale !== 'chromatic') {

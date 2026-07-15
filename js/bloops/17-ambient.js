@@ -7214,6 +7214,11 @@
           const e = el(suf); const row = e && e.closest && e.closest('.ambient-ctrl');
           if (row) row.style.display = on ? 'none' : '';
         });
+        // The drum picker is the "Kit" group's only row on a native Beat — hide
+        // the empty group shell with it (the swapped-layer variant keeps its
+        // Voices row, so the group stays there).
+        { const dp2 = el('drumpick'); const grp2 = dp2 && dp2.closest && dp2.closest('.ambient-grp');
+          if (grp2 && !grp2.querySelector('input[id$="drumvoices"]')) grp2.style.display = on ? 'none' : ''; }
         // Full-width kit layout: lane labels move into the "Pattern" gutter.
         const ctrl = grid.closest && grid.closest('.ambient-euclid-ctrl');
         if (ctrl) ctrl.classList.toggle('ambient-euclid-kitctrl', !!on);
@@ -11886,7 +11891,8 @@
       const tap = _ambMasterTapNode();
       if (!tap) { alert('Master output unavailable.'); return; }
       E.windingDown = false;
-      try { if (!E.timer) _ambStartGenerator(E); } catch (e) {}    // make sure something is generating
+      let _startedHere = false;
+      try { if (!E.timer) { _ambStartGenerator(E); _startedHere = true; } } catch (e) {}    // make sure something is generating
       // Silence detector — drives Finalize in both capture modes.
       let analyser = null;
       try { analyser = ac.createAnalyser(); analyser.fftSize = 1024; tap.connect(analyser); } catch (e) { analyser = null; }
@@ -11909,29 +11915,45 @@
           // final flush message can land AFTER that (during the dialog) — without the
           // null check it'd `push` on null and throw (the "Save does nothing" bug).
           recNode.port.onmessage = (ev) => { const d = ev.data; if (!d || !d.l || !r.L) return; r.L.push(d.l); r.R.push(d.r); r.frames += d.l.length; };
-          try { Tone.connect(tap, recNode); Tone.connect(recNode, sink); sink.connect(ac.destination); }
-          catch (e) { try { if (analyser) tap.disconnect(analyser); } catch (_) {} alert('Capture failed.'); return; }
-          E.capRec = r;
-          _ambRefreshCaptureBtn(E);
-          if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
-          return;
+          let _wired = false;
+          try { Tone.connect(tap, recNode); Tone.connect(recNode, sink); sink.connect(ac.destination); _wired = true; }
+          catch (e) {
+            // Don't abort — dispose the worklet rig and FALL THROUGH to the
+            // MediaRecorder path below (a hard alert here left the generator
+            // playing with no recording; seen in the field 2026-07-15).
+            try { console.warn('[capture] worklet connect failed — falling back to MediaRecorder', e); } catch (_) {}
+            try { recNode.port.onmessage = null; recNode.disconnect(); } catch (_) {}
+            try { sink.disconnect(); } catch (_) {}
+          }
+          if (_wired) {
+            E.capRec = r;
+            _ambRefreshCaptureBtn(E);
+            if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
+            return;
+          }
         }
       }
       // FALLBACK: MediaRecorder (decoded to WAV/MP3 on finish; raw-saved if the
       // decode fails) — used where the recorder worklet isn't available/ready.
-      if (typeof MediaRecorder === 'undefined') { try { if (analyser) tap.disconnect(analyser); } catch (_) {} alert('This browser cannot record audio output.'); return; }
+      const _bail = (msg, e) => {
+        try { if (analyser) tap.disconnect(analyser); } catch (_) {}
+        if (_startedHere) { try { _ambStopGenerator(E); } catch (_) {} }   // don't leave it playing with no capture
+        try { console.warn('[capture] ' + msg, e || ''); } catch (_) {}
+        alert(msg + (e ? ': ' + ((e && e.message) || e) : ''));
+      };
+      if (typeof MediaRecorder === 'undefined') { _bail('This browser cannot record audio output.'); return; }
       let dest, rec;
       try {
         dest = ac.createMediaStreamDestination(); tap.connect(dest);
         const prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
         const mime = prefs.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
         rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
-      } catch (e) { try { tap.disconnect(dest); } catch (_) {} alert('Capture failed: ' + ((e && e.message) || e)); return; }
+      } catch (e) { try { tap.disconnect(dest); } catch (_) {} _bail('Capture failed', e); return; }
       const chunks = [];
       rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
       rec.onstop = () => _ambCaptureFinish(E);
       E.capRec = { mode: 'mr', rec, dest, analyser, tap, chunks, silentMs: 0, pollTimer: null, finalizing: false };
-      try { rec.start(); } catch (e) { try { tap.disconnect(dest); } catch (_) {} E.capRec = null; alert('Capture failed.'); return; }
+      try { rec.start(); } catch (e) { try { tap.disconnect(dest); } catch (_) {} E.capRec = null; _bail('Capture failed', e); return; }
       _ambRefreshCaptureBtn(E);
       if (typeof showToast === 'function') showToast('Capturing… press Finalize to wind down and end cleanly.');
     }
@@ -15195,7 +15217,11 @@
       if (kit) ['pulses', 'rotate', 'euclidregen', 'euclidVoices', 'rhythmVar'].forEach(s => setRow(s, false));
       setRow('restProb', !kit);
       { const dp = _ambGet(E, stem + 'drumpick'); const dpr = dp && dp.closest && dp.closest('.ambient-ctrl');
-        if (dpr) dpr.style.display = kit ? 'none' : ''; }
+        if (dpr) dpr.style.display = kit ? 'none' : '';
+        // The whole "Kit" group empties in drum-lanes mode on a native Beat
+        // (the Drum picker is its only row) — hide the group shell too.
+        const grp = dp && dp.closest && dp.closest('.ambient-grp');
+        if (grp && !grp.querySelector('input[id$="drumvoices"]')) grp.style.display = kit ? 'none' : ''; }
       if (euclid) { setIntervalRow(false); }
       else { setIntervalRow(true); if (p && typeof _ambUnitSyncViz === 'function') { try { _ambUnitSyncViz(E, p, inst); } catch (e) {} } }
     }
@@ -17582,7 +17608,12 @@
       const voicesRow = includeVoices
         ? '<div class="ambient-ctrl"><label for="' + p + '-drumvoices">Voices</label><input type="range" id="' + p + '-drumvoices" class="ambient-range" min="1" max="4" value="' + Math.max(1, Math.min(4, (inst.euclidVoices | 0) || 1)) + '"><span class="ambient-hint">polyphony (Varied only)</span></div>'
         : '';
-      return '<div class="ambient-grp open" data-grp="Kit"><button type="button" class="ambient-grp-head" data-grp="Kit">Kit<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">' +
+      // Drum-lanes mode owns the drums (one per lane) — the single-drum picker
+      // is this group's only content on a native Beat, so render the whole
+      // group hidden there (an empty "Kit" header otherwise; _ambBeatGenVis
+      // re-shows it live when lanes turn off).
+      const _kitHidden = !includeVoices && !!(inst && inst.euclidKit);
+      return '<div class="ambient-grp open" data-grp="Kit"' + (_kitHidden ? ' style="display:none"' : '') + '><button type="button" class="ambient-grp-head" data-grp="Kit">Kit<span class="ambient-grp-caret" aria-hidden="true"></span></button><div class="ambient-grp-body">' +
         '<div class="ambient-ctrl"><label for="' + p + '-drumpick">Drum</label><select id="' + p + '-drumpick" class="ambient-select">' +
         opts.map(o => '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
         '</select><span class="ambient-hint">Varied = full kit</span></div>' +

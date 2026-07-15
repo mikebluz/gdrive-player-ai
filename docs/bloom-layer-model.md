@@ -165,6 +165,18 @@ kit/sample-voice extras (no harmonic frame). The Bed/Drone Progression sub-block
 (inside Seed) is gated by `_ambSyncProgVis` on the area prog, via the `sub`-token
 wrapper (`data-sub`).
 
+*Chord matrix landed (2026-07-15):* per-layer **chord sequencer** against the
+active progression — `L.chordMask = { steps: [prob 0-100 per chord], part:
+{ size 1-100%, place start|center|end|random } }`, gated per note-onset by
+`_ambChordGateOK` at every emitter (pitched sites piggyback the existing
+per-onset chord resolution; drums gate on the global prog; the series arp
+silences without stalling its cursor). Probability draws once per chord
+INSTANCE and the random partial window re-rolls per instance — both via
+deterministic (step, layer)-keyed hashes: zero shared-RNG draws, absent mask →
+byte-identical (pins `chordmask-steps` 7a4c9c6a · `chordmask-part` fdef4148).
+UI: Configure → a layers × chords grid (tap cells 100→60→30→0%; per-row Part
+size/placement selects), shown only with an Area progression on.
+
 ## 3. Progressions vs parts (authoring)
 
 A "chord progression" is a **narrow, specific** kind of material (a clear series of

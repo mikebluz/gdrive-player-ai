@@ -470,6 +470,11 @@
       { name: 'Son 3-2',  pat: 'x..x..x...x.x...', grp: 4, hint: 'Son clave, 3-2 (Cuba)' },
       { name: 'Son 2-3',  pat: '..x.x...x..x..x.', grp: 4, hint: 'Son clave, 2-3 (Cuba)' },
       { name: 'Rumba',    pat: 'x..x...x..x.x...', grp: 4, hint: 'Rumba clave, 3-2 (Cuba)' },
+      // Vapor — half-time, sparse, mall-sized space between hits.
+      { name: 'Vapor Kick',   pat: 'x.......x.x.....', grp: 5, hint: 'half-time kick, lazy pickup' },
+      { name: 'Vapor Snare',  pat: '........x.......', grp: 5, hint: 'snare on 3 only (gated-verb bait)' },
+      { name: 'Vapor Hat',    pat: 'x...x...x...x..x', grp: 5, hint: 'quarter hats, one drag' },
+      { name: 'Vapor Perc',   pat: '......x.......x.', grp: 5, hint: 'offbeat glints' },
       { name: 'Shiko',    pat: 'x...x.x...x.x...', grp: 4, hint: 'Shiko timeline (West Africa)' },
       { name: 'Gahu',     pat: 'x..x..x...x...x.', grp: 4, hint: 'Gahu bell (Ewe, Ghana)' },
       { name: 'Soukous',  pat: 'x..x..x...xx....', grp: 4, hint: 'Soukous timeline (Congo)' },

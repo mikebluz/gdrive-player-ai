@@ -11666,3 +11666,17 @@
     .ambient-roll-sim { width: 88px; font-size: 0.62rem; padding: 1px 4px; }
     .ambient-roll-play { color: #8be08b; border-color: rgba(139, 224, 139, 0.35); }
     .ambient-roll-keep { color: #8be08b; border-color: rgba(139, 224, 139, 0.45); }
+    /* Chord matrix (per-layer chord sequencer) in Configure → Progression. */
+    .ambient-progmatrix { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 3px; }
+    .ambient-pm-title { font: 600 0.62rem 'Segoe UI', sans-serif; letter-spacing: 0.05em; text-transform: uppercase; color: #7a7a9c; padding: 2px 0; }
+    .ambient-pm-title .ambient-hint { text-transform: none; letter-spacing: 0; margin-left: 8px; }
+    .ambient-pm-head, .ambient-pm-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .ambient-pm-lbl { flex: 0 0 72px; font-size: 0.66rem; color: #9a9ac0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ambient-pm-ch { flex: 1 1 0; min-width: 0; text-align: center; font-size: 0.58rem; color: #6b6b8a; overflow: hidden; }
+    .ambient-pm-cell { flex: 1 1 0; min-width: 0; height: 22px; border: 1px solid #2d2d3f; border-radius: 5px; background: #35c98e; color: #0c1220; font-size: 0.6rem; cursor: pointer; touch-action: manipulation; }
+    .ambient-pm-cell[data-v="60"] { background: rgba(53, 201, 142, 0.55); color: #dfe7f1; }
+    .ambient-pm-cell[data-v="30"] { background: rgba(53, 201, 142, 0.25); color: #9a9ac0; }
+    .ambient-pm-cell[data-v="0"] { background: #1a1a2c; color: #4a4a5e; }
+    .ambient-pm-part { flex: 0 0 118px; display: inline-flex; gap: 3px; }
+    .ambient-pm-size { width: 56px; font-size: 0.6rem; padding: 1px 2px; }
+    .ambient-pm-place { width: 56px; font-size: 0.6rem; padding: 1px 2px; }

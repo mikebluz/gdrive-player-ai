@@ -325,6 +325,73 @@
         }
       } catch (e) {}
     }
+    // ---- AREA PRESETS -----------------------------------------------------
+    // Factory presets are code-defined BUILDERS (they read the live workspace
+    // key, so progressions land transposed); user presets are JSON snapshots of
+    // an area saved to localStorage. Both feed the + (add-area) menu.
+    const _AMB_AREA_PRESET_LS = 'bloomAreaPresets.v1';
+    function _ambAreaPresetsUser() {
+      try { const a = JSON.parse(localStorage.getItem(_AMB_AREA_PRESET_LS) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+    }
+    function _ambSaveAreaPreset(name) {
+      const cur = _ambAreas()[_ambActiveAreaIdx()]; if (!cur) return null;
+      let cfg; try { cfg = JSON.parse(JSON.stringify(cur)); } catch (e) { return null; }
+      const reg = _ambAreaPresetsUser();
+      const id = reg.reduce((m, p2) => Math.max(m, p2.id | 0), 0) + 1;
+      const entry = { id, name: (name || 'Area preset ' + id), cfg };
+      reg.push(entry);
+      try { localStorage.setItem(_AMB_AREA_PRESET_LS, JSON.stringify(reg)); } catch (e) {}
+      return entry;
+    }
+    function _ambDeleteAreaPreset(id) {
+      const reg = _ambAreaPresetsUser().filter(p2 => p2.id !== id);
+      try { localStorage.setItem(_AMB_AREA_PRESET_LS, JSON.stringify(reg)); } catch (e) {}
+    }
+    function _ambFactoryAreaPresets() {
+      return [
+        { name: '🌴 Vapor Plaza', hint: 'Royal Road · Palm Static bed · yoked Mall Fountain · half-time drums · tape hiss', build: (a) => {
+          a.name = 'Vapor Plaza';
+          a.reverb = { size: 75, damp: 55, type: 'cavern' };
+          a.prog = { on: true, name: 'Royal Road', chords: _ambResolveStandard('_lit', 0) };
+          a.barsPerChord = 2;   // slow harmonic drift
+          // Bed — dark detuned pad carrying the changes.
+          Object.assign(a.bed, { present: true, on: true, tone: 'user:f-palmstatic', level: 72, revSend: 45, register: 4, density: 4 });
+          // Motif — e-piano YOKED to the bed, tape warble, thinned by the chord matrix.
+          Object.assign(a.motif, { present: true, on: true, tone: 'user:f-mallfountain', level: 58, revSend: 35,
+            keyOv: { mode: 'yoke', src: 'bed' },
+            chordMask: { steps: [100, 60, 100, 60] },
+            _warble: 40, _warbleSet: true });
+          a.motif.mod = a.motif.mod || _ambDefaultMod();
+          a.motif.mod.vco = { depth: 14, rate: 24, shape: 'smooth' };
+          // Beat — half-time vapor drum lanes (kick / snare-on-3 / quarter hats / perc glints).
+          const P = (str) => str.split('').map(ch => ch === 'x' ? 1 : 0);
+          const Z = () => new Array(16).fill(0);
+          Object.assign(a.beat, { present: true, on: true, gen: 'euclid', euclidKit: true, kit: 'tr808',
+            steps: 16, bars: 1, level: 55, lengthMs: 220, revSend: 25,
+            euclidPages: [{ plays: 1, pat: [P('x.......x.x.....'), P('........x.......'), P('x...x...x...x..x'), Z(), Z(), Z(), Z(), P('......x.......x.')] }],
+            euclidPageIdx: 0 });
+          a.texture.present = false; a.texture.on = false;
+          // Tape hiss underneath — a held noise drone.
+          const hiss = _ambDefaultLayer('drone', 1);
+          Object.assign(hiss, { name: 'Tape Hiss', tone: 'user:f-tapehiss', level: 26, revSend: 15, density: 1, register: 3, hold: 8 });
+          a.extras = [hiss];
+        } },
+      ];
+    }
+    // Create a new area from a preset (factory builder or user snapshot).
+    function _ambAddAreaFromPreset(p) {
+      const i = _ambAddArea();
+      const areas = _ambAreas();
+      if (p.build) {
+        try { p.build(areas[i]); } catch (e) { console.warn('Area preset build failed', e); }
+      } else if (p.cfg) {
+        try { const c = JSON.parse(JSON.stringify(p.cfg)); c.name = p.name; areas[i] = c; if (typeof _masterBloomState === 'function') { const st = _masterBloomState(); if (st.activeIdx === i) masterAmbient = c; } } catch (e) {}
+      }
+      try { _normalizeAmbientCfg(areas[i]); } catch (e) {}
+      _ambSwitchToArea(i);
+      try { persistWorkspace(); } catch (e) {}
+      return i;
+    }
     function _ambAddArea(fromIdx) {
       const s = _masterBloomState();
       let clone;
@@ -624,10 +691,22 @@
         const addRandom = () => { const i = _ambAddArea(); try { _ambRandomizeArea(i); } catch (e) {} _ambSwitchToArea(i); };
         if (typeof showCtxMenu !== 'function') { addManual(); return; }   // fallback
         const r = add.getBoundingClientRect();
+        const presetSub = () => {
+          const items = [{ label: 'Area presets', disabled: true }];
+          _ambFactoryAreaPresets().forEach(p2 => items.push({ label: p2.name, fn: () => _ambAddAreaFromPreset(p2) }));
+          const usr = _ambAreaPresetsUser();
+          if (usr.length) { items.push('hr', { label: 'Saved', disabled: true }); usr.forEach(p2 => items.push({ label: '★ ' + p2.name, fn: () => _ambAddAreaFromPreset(p2) })); }
+          items.push('hr', { label: '＋ Save current area as preset…', fn: () => {
+            let nm = null; try { nm = prompt('Preset name:', (_ambAreas()[_ambActiveAreaIdx()] || {}).name || ''); } catch (e) {}
+            if (nm != null && nm.trim()) { _ambSaveAreaPreset(nm.trim()); if (typeof showToast === 'function') showToast('Area preset saved.'); }
+          } });
+          showCtxMenu(r.left, r.bottom + 4, items);
+        };
         showCtxMenu(r.left, r.bottom + 4, [
           { label: 'New area', disabled: true },
           { label: 'Manual — empty area', fn: addManual },
           { label: 'Random — random layers', fn: addRandom },
+          { label: 'Presets ▸', fn: () => setTimeout(presetSub, 0) },
         ]);
       });
       const dup = host.querySelector('.ambient-area-dup');
@@ -2164,6 +2243,85 @@
       }
       return Math.floor(bars / bpc);
     }
+    // Step + fractional position INSIDE the current chord instance (0..1) —
+    // the same clock math as _ambProgStepAt (uniform fast path + per-chord
+    // lens walk), for the chord-mask PARTIAL window.
+    function _ambProgStepPos(E, atSec, src) {
+      E = E || _E; if (!E) return { step: 0, pos: 0 };
+      const cfg = E._cfg || (typeof _ambPlayCfg === 'function' ? _ambPlayCfg(E) : (E.getCfg && E.getCfg()));
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const bpc = Math.max(0.01, (cfg && cfg.barsPerChord) || 1);
+      const anchor = Number.isFinite(E._progAnchor) ? E._progAnchor : (Number.isFinite(E._playStartAt) ? E._playStartAt : 0);
+      const bars = Math.max(0, atSec - anchor) / barSec;
+      const srcCh = (src && src.type === 'prog' && Array.isArray(src.chords) && src.chords.length) ? src.chords : null;
+      const chords = srcCh || ((cfg && cfg.prog && Array.isArray(cfg.prog.chords)) ? cfg.prog.chords : null);
+      if (chords && chords.length && chords.some(c => c && Number.isFinite(c.bars) && c.bars > 0)) {
+        const lens = chords.map(c => (c && Number.isFinite(c.bars) && c.bars > 0) ? c.bars : bpc);
+        const cycle = lens.reduce((s2, v) => s2 + v, 0) || bpc;
+        const cyc = Math.floor(bars / cycle);
+        let pos = bars - cyc * cycle, i = 0;
+        while (i < lens.length - 1 && pos >= lens[i]) { pos -= lens[i]; i++; }
+        return { step: cyc * chords.length + i, pos: Math.max(0, Math.min(1, pos / Math.max(1e-6, lens[i]))) };
+      }
+      const step = Math.floor(bars / bpc);
+      return { step: step, pos: Math.max(0, Math.min(1, (bars - step * bpc) / bpc)) };
+    }
+    // ---- CHORD MASK (per-layer chord sequencer) ---------------------------
+    // L.chordMask = { steps: [prob 0-100 per chord of the ACTIVE progression],
+    //                 part: { size: 1-100 (% of each chord's span), place:
+    //                        'start'|'center'|'end'|'random' } }.
+    // Gates each NOTE at its onset: steps[chord] = probability the layer plays
+    // during that chord (drawn ONCE per chord INSTANCE — the whole chord is on
+    // or off together); part narrows playing to a sub-window of the chord (the
+    // 'random' place re-rolls the window per instance). Deterministic seeded
+    // hashes keyed by (chord step, layer id) — ZERO shared-RNG draws, and no
+    // mask / no active progression → true, so defaults are byte-identical.
+    function _ambChordHash01(a, b) {
+      const x = Math.abs(Math.sin(a * 127.1 + b * 311.7 + 74.7) * 43758.5453);
+      return x - Math.floor(x);
+    }
+    function _ambChordGateOK(E, L, atSec, cfg, src) {
+      const m = L && L.chordMask; if (!m) return true;
+      const eff = (src && src.type === 'prog') ? src : ((typeof _ambGlobalProg === 'function') ? _ambGlobalProg() : null);
+      if (!eff || !Array.isArray(eff.chords) || !eff.chords.length) return true;
+      const sp = _ambProgStepPos(E, atSec, eff);
+      const N = eff.chords.length, ci = ((sp.step % N) + N) % N;
+      const lid = ((L.id | 0) + 1) * 13 + 7;
+      const steps = Array.isArray(m.steps) ? m.steps : null;
+      if (steps && steps.length) {
+        const pv = steps[ci % steps.length];
+        const p = Number.isFinite(pv) ? Math.max(0, Math.min(100, pv)) : 100;
+        if (p <= 0) return false;
+        if (p < 100 && _ambChordHash01(sp.step + 1, lid) * 100 >= p) return false;
+      }
+      const part = m.part;
+      if (part && Number.isFinite(part.size) && part.size > 0 && part.size < 100) {
+        const frac = part.size / 100;
+        let start = 0;
+        if (part.place === 'end') start = 1 - frac;
+        else if (part.place === 'center') start = (1 - frac) / 2;
+        else if (part.place === 'random') start = _ambChordHash01(sp.step + 1, lid * 3 + 1) * (1 - frac);
+        if (sp.pos < start || sp.pos >= start + frac) return false;
+      }
+      return true;
+    }
+    // Additive validation (kept OUT of layer defaults — the backfill trap).
+    function _ambNormalizeChordMask(L) {
+      if (!L || typeof L !== 'object') return;
+      const m = L.chordMask;
+      if (!m || typeof m !== 'object') { if ('chordMask' in L) delete L.chordMask; return; }
+      let steps = Array.isArray(m.steps) ? m.steps.slice(0, 32).map(v => Number.isFinite(v) ? Math.max(0, Math.min(100, v | 0)) : 100) : null;
+      if (steps && !steps.some(v => v < 100)) steps = null;
+      let part = (m.part && typeof m.part === 'object') ? m.part : null;
+      if (part) {
+        const size = Number.isFinite(part.size) ? Math.max(1, Math.min(100, part.size | 0)) : 100;
+        const place = (['start', 'center', 'end', 'random'].indexOf(part.place) >= 0) ? part.place : 'start';
+        part = (size < 100) ? { size: size, place: place } : null;
+      }
+      if (!steps && !part) { delete L.chordMask; return; }
+      L.chordMask = {}; if (steps) L.chordMask.steps = steps; if (part) L.chordMask.part = part;
+    }
     // ---- Instance "Key" -------------------------------------------------
     // Read the current engine's (already-normalized) cfg cheaply: the tick
     // caches it on E._cfg, so generation reads keyOn/keyRoot without a fresh
@@ -2666,12 +2824,24 @@
     // phrygian, lydian, mixolydian, harmonic/melodic minor) as
     // [familyLabel, [[name, family, steps], …]]. Falls back to the legacy
     // 10-entry list if the catalog isn't available.
+    // Vapor progressions — LITERAL chord tables (family '_lit'), transposed to
+    // the workspace root at resolve. Extended chords (maj7/9/13) are plain
+    // interval arrays, so every consumer (beds, chordlock, yoke, chord matrix)
+    // gets them for free.
+    const _AMB_VAPOR_PROGS = [
+      ['Royal Road', [ { r: 5, iv: [0, 4, 7, 11] }, { r: 7, iv: [0, 4, 7, 10] }, { r: 4, iv: [0, 3, 7, 10] }, { r: 9, iv: [0, 3, 7, 10] } ]],   // IVmaj7 V7 iii7 vi7
+      ['Elevator Drift', [ { r: 0, iv: [0, 4, 7, 11] }, { r: 9, iv: [0, 3, 7, 10, 2] }, { r: 2, iv: [0, 3, 7, 10, 2] }, { r: 7, iv: [0, 4, 7, 10, 2, 9] } ]],   // Imaj7 vi9 ii9 V13
+      ['Lydian Atrium', [ { r: 0, iv: [0, 4, 7, 11, 6] }, { r: 2, iv: [0, 4, 7, 10] } ]],   // Imaj7#11 ↔ II7 vamp
+      ['Mallsoft Loop', [ { r: 0, iv: [0, 4, 7, 11] }, { r: 4, iv: [0, 3, 7, 10] }, { r: 5, iv: [0, 4, 7, 11] }, { r: 5, iv: [0, 3, 7, 10] } ]],   // Imaj7 iii7 IVmaj7 ivm7 (borrowed)
+      ['Neon Nocturne', [ { r: 9, iv: [0, 3, 7, 10, 2] }, { r: 5, iv: [0, 4, 7, 11] }, { r: 7, iv: [0, 4, 7, 10, 9] }, { r: 0, iv: [0, 4, 7, 11] } ]],   // vi9 IVmaj7 V13(no11) Imaj7
+    ];
     function _ambProgFamilies() {
+      const vapor = ['Vapor', _AMB_VAPOR_PROGS.map((row, i) => [row[0], '_lit', i])];
       if (typeof PROGRESSIONS === 'undefined' || !PROGRESSIONS) {
-        return [['Standard', _AMB_PROG_STANDARDS.slice()]];
+        return [['Standard', _AMB_PROG_STANDARDS.slice()], vapor];
       }
       const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-      return Object.keys(PROGRESSIONS).map(f => [cap(f), (PROGRESSIONS[f] || []).map(t => [t.name, f, t.steps])]);
+      return Object.keys(PROGRESSIONS).map(f => [cap(f), (PROGRESSIONS[f] || []).map(t => [t.name, f, t.steps])]).concat([vapor]);
     }
     // PROG blocks ({chordRoot, chordQuality}) → [{ root, intervals }].
     function _ambProgChordsFromBlocks(blocks) {
@@ -2684,6 +2854,12 @@
     }
     function _ambResolveStandard(family, steps) {
       const root = (typeof rootIdx === 'number') ? rootIdx : 0;
+      // '_lit' = a literal chord table (the Vapor family): transpose to the
+      // workspace root; `steps` is the table index.
+      if (family === '_lit') {
+        const row = _AMB_VAPOR_PROGS[steps | 0];
+        return row ? row[1].map(c => ({ root: (((c.r + root) % 12) + 12) % 12, intervals: c.iv.map(x => ((x % 12) + 12) % 12).filter((v, i2, a2) => a2.indexOf(v) === i2).sort((a3, b3) => a3 - b3) })) : [];
+      }
       let blocks = [];
       try { if (typeof _progAutoFillProgression === 'function') blocks = _progAutoFillProgression(root, family, { steps }); } catch (e) {}
       return _ambProgChordsFromBlocks(blocks);
@@ -2876,6 +3052,7 @@
     // never clobbers it. Coerced here; an invalid/empty override drops to Inherit.
     function _ambNormalizeKeyOv(layer) {
       if (!layer || typeof layer !== 'object') return;
+      _ambNormalizeChordMask(layer);   // chord-mask (per-layer chord sequencer) — additive
       // Option C: per-layer Harmony (locked/authored phrases). Additive — kept
       // OUT of layer defaults (backfill trap); absent = Fixed. 'fixed' is kept
       // (seq layers default to it explicitly); anything else invalid drops.
@@ -4771,6 +4948,7 @@
       // loop layers. Cleared right after the voicing is picked.
       const _bedSrc = _ambNotesOf(bed);
       const _bedProg = (_ambAsNotes(_bedSrc).type === 'prog');
+      if (_bedProg && !_ambChordGateOK(_E, bed, at, null, _bedSrc)) { _ambRecordUnit(_E, key, at, []); return; }
       if (_bedProg) _ambProgStepOverride = _ambProgStepAt(_E, at, _bedSrc);
       // Prog-sync: which sub-slot of the current area chord is this onset? Drives
       // the in-chord voicing variation (+ a stochastic onset jitter, below).
@@ -5033,6 +5211,7 @@
                 if (restEff > 0 && rnd() * 100 < restEff) continue;
                 const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
                 if (at < tFrom || at >= tTo) continue;
+                if (!_ambChordGateOK(E, inst, at, cfg, null)) continue;   // chord-mask (drums gate on the GLOBAL prog)
                 // Per-step FX (Drum-lanes only): probability gate, then velocity /
                 // length scaling + ratchet (retrigger N times across the slot).
                 // Default step (vel/len 100, rat 1, prob 100) → one note at full,
@@ -5122,6 +5301,7 @@
               if (restP > 0 && rnd() * 100 < restP) continue;
               const at = cStart + (bar * steps + slot) * slotSec + (((bar * steps + slot) & 1) ? _ambSwingSec(inst, slotSec) : 0);
               if (at < tFrom || at >= tTo) continue;
+              if (!_ambChordGateOK(E, inst, at, cfg, null)) continue;   // chord-mask
               const bp = _ambApplyAdsr(_ambBassParams(lenMs, pan, tone), inst);
               bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
               if (dmod) bp._detuneMod = dmod;
@@ -5176,6 +5356,7 @@
             _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
             // Progression chord resolved at THIS note's ONSET (bar-aligned), so a
             // multi-bar bass loop follows the changes instead of holding one chord.
+            if (isProg && !_ambChordGateOK(E, inst, at, cfg, src)) continue;
             if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);
             const f = _ambDegreeFreq(walkDeg % N, reg + Math.floor(walkDeg / N), src);
             if (f == null) continue;
@@ -5277,6 +5458,7 @@
           const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;   // this slot's key by its play-time (keyMaster sections)
+          if (isProg && !_ambChordGateOK(E, inst, at, cfg, src)) continue;
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);   // chord at THIS note's onset (per-onset)
           let f = _ambDegreeFreq(deg % N, reg + homeShift + Math.floor(deg / N), src);
           if (f == null) continue;
@@ -5360,6 +5542,7 @@
           const at = cStart + i * slotSec + ((i & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;
           _ambKeyTime = at;
+          if (isProg && !_ambChordGateOK(E, inst, at, cfg, src)) continue;
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, src);   // chord at THIS note's onset (per-onset)
           const f = _ambDegreeFreq(deg, reg, src);   // base degree or a roamed degree
           if (f == null) continue;
@@ -5436,6 +5619,7 @@
       try {
       for (let c = cFrom; c <= cTo && cap < 64; c++) {
         if (!_ambCondFires(inst.when, c)) continue;
+        if (isProg && !_ambChordGateOK(E, inst, st.startAt + c * cycleSec, cfg, src)) continue;
         if (isProg) _ambProgStepOverride = _ambProgStepAt(E, st.startAt + c * cycleSec, src);  // chord at the cycle's bar-aligned onset
         const tones = isProg ? _ambScaleIntervals(src) : tones0;   // prog chord re-resolved per cycle
         const K = Math.max(1, tones.length);
@@ -5606,6 +5790,7 @@
       const _motifProg = (_mnotes && _mnotes.type === 'prog');
       const _unit = [];
       for (let i = 0; i < count; i++) {
+        if (_motifProg && !_ambChordGateOK(_E, motif, at + _startOff + i * burstGap, null, _mnotes)) continue;
         if (_motifProg) _ambProgStepOverride = _ambProgStepAt(_E, at + _startOff + i * burstGap, _mnotes);   // chord at THIS note's onset (bar-aligned)
         const f = _ambMotifNextNote(motif);
         if (f == null) continue;
@@ -5700,6 +5885,7 @@
           const at = cStart + s * slotSec + ((s & 1) ? _ambSwingSec(inst, slotSec) : 0);
           if (at < tFrom || at >= tTo) continue;             // only within this tick's window
           _ambKeyTime = at;
+          if (isProg && !_ambChordGateOK(E, inst, at, cfg, notes)) continue;
           if (isProg) _ambProgStepOverride = _ambProgStepAt(E, at, notes);
           // Pitch pick (D3): 'random' = uniform over the source tones (default,
           // scatter) · 'low' = root-weighted (rnd² biases toward degree 0 → a
@@ -5840,6 +6026,7 @@
       // its series at its own rate while the chords follow the global bars-per-chord
       // clock like every other layer. (Pool/mutes/evolve all key off this; st._loop
       // stays the structural entry-cursor + queue-sizing index.)
+      if (_arpProg && play && !_ambChordGateOK(_E, arp, at, null, notes)) play = false;   // chord-mask: silent advance (cursor keeps walking)
       const _chordIdx = _arpProg ? _ambProgStepAt(_E, at, notes) : 0;
       if (_arpProg) _ambProgStepOverride = _chordIdx;
       try {
@@ -6137,6 +6324,7 @@
                 // Re-voice THIS hit from the chord active at ITS scheduled time
                 // (same per-onset rule as every other prog layer). No rnd used.
                 const _pv = _ambProgStepOverride;
+                if (!_ambChordGateOK(E, arp, hitAt, cfg, notes)) continue;
                 _ambProgStepOverride = _ambProgStepAt(E, hitAt, notes);
                 const iv2 = _ambScaleIntervals(notes);
                 const N2 = Math.max(1, iv2.length);
@@ -6799,7 +6987,7 @@
     // Rhythm-preset library (world/rock/African/clave) — reuses the SAME presets
     // the grid "Generate Sequence" dialog offers (_EUC_PRESETS in 09), grouped
     // by their `grp` tag into <optgroup>s. Option value = index into _EUC_PRESETS.
-    const _AMB_EUC_GRP_LBL = { 1: 'World', 2: 'Rock / R&B', 3: 'African', 4: 'Clave / Bell' };
+    const _AMB_EUC_GRP_LBL = { 1: 'World', 2: 'Rock / R&B', 3: 'African', 4: 'Clave / Bell', 5: 'Vapor' };
     function _ambEuclidPresetOptions() {
       const list = (typeof _EUC_PRESETS !== 'undefined' && Array.isArray(_EUC_PRESETS)) ? _EUC_PRESETS : [];
       const byGrp = {};
@@ -7835,6 +8023,7 @@
     // a mod-chain rebuild between ticks can't strand a phrase on a dead node.
     function _ambEmitSeqEvent(ctx, ev, atAbs, st) {
       const seq = ctx.seq;
+      if (!_ambChordGateOK(_E, seq, atAbs, null, _ambNotesOf(seq))) return;   // chord-mask
       // B4: remap the captured pitches per the seq's Harmony mode (Fixed = untouched).
       // ev.degs (when the realized event kept the seed pitches) → degree-true Diatonic.
       let freqs = _ambSeqHarmonizeFreqs(ev.freqs, ctx.unit, seq, atAbs, ev.degs);
@@ -15267,6 +15456,13 @@
           _ambSl('Depth', 'ambient-' + layer + '-fx-tg-depth', 0, 100, 100, 'dip → full cut') +
           _ambSl('Edge', 'ambient-' + layer + '-fx-tg-edge', 0, 80, 6, 'sharp → soft') +
           '<div class="ambient-ctrl ambient-slice-row"><label>Pattern</label><div class="ambient-slice-grid ambient-tg-grid" id="ambient-' + layer + '-fx-tg-grid"></div></div></div>' +
+        // Warble — tape wow/flutter MACRO over the VCO mod: one slider programs
+        // depth + a slow 'smooth' random shape (both engines — the mod system
+        // already drives core strips). 0 turns the VCO mod back off ONLY if
+        // warble set it (hand-tuned VCO settings are never clobbered).
+        '<div class="ambient-ctrl"><label title="Tape wow/flutter — a slow random pitch drift (drives the VCO mod below)">Warble</label>' +
+          '<input type="range" class="ambient-range amb-warble" data-wkey="' + layer + '" min="0" max="100" value="0">' +
+          '<span class="ambient-hint">off → dying cassette</span></div>' +
         _ambModTarget(layer, 'vco', 'VCO · pitch', 'vibrato', 20) +
         _ambModTarget(layer, 'vcf', 'VCF · cutoff', 'sweep', 15) + '</details>';
     // Trance-gate step cells (one toggle button per step; `on` class = passes).
@@ -15442,9 +15638,82 @@
         row.querySelectorAll('.ambient-seg-opt').forEach(b => b.classList.toggle('active', b.getAttribute('data-val') === String(val)));
       });
     }
+    // ---- Chord matrix (per-layer chord sequencer UI) ----------------------
+    function _ambChordMatrixRows(cfg) {
+      const rows = [];
+      ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k] && cfg[k].present !== false) rows.push({ key: k, L: cfg[k], label: k.charAt(0).toUpperCase() + k.slice(1) }); });
+      (cfg.extras || []).forEach(x => { if (x && x.type != null && x.id != null) rows.push({ key: x.type + ':' + x.id, L: x, label: (typeof x.name === 'string' && x.name) ? x.name : (x.type + ' ' + x.id) }); });
+      return rows;
+    }
+    function _ambRenderChordMatrix(E) {
+      const el = _ambGet(E, 'ambient-progmatrix'); if (!el) return;
+      const cfg = E.getCfg();
+      const on = !!(cfg && cfg.prog && cfg.prog.on && Array.isArray(cfg.prog.chords) && cfg.prog.chords.length);
+      el.style.display = on ? '' : 'none';
+      if (!on) { el.innerHTML = ''; el._sig = ''; return; }
+      const chords = cfg.prog.chords, N = chords.length;
+      const rows = _ambChordMatrixRows(cfg);
+      // cheap re-render guard (masks + shape + labels)
+      const sig = N + '|' + rows.map(r => r.key + ':' + JSON.stringify(r.L.chordMask || 0)).join(',');
+      if (el._sig === sig) return;
+      el._sig = sig;
+      const chName = (ch) => { try { return (typeof CHROMATIC !== 'undefined' && CHROMATIC[((ch.root % 12) + 12) % 12]) || '?'; } catch (e) { return '?'; } };
+      let h = '<div class="ambient-pm-title">Chord matrix — which chords each layer plays<span class="ambient-hint"> tap: 100→60→30→0% · Part = play a sub-window of every chord</span></div>';
+      h += '<div class="ambient-pm-head"><span class="ambient-pm-lbl"></span>' + chords.map((c2, i) => '<span class="ambient-pm-ch">' + (i + 1) + '·' + chName(c2) + '</span>').join('') + '<span class="ambient-pm-part">Part</span></div>';
+      rows.forEach(r => {
+        const steps = (r.L.chordMask && Array.isArray(r.L.chordMask.steps)) ? r.L.chordMask.steps : null;
+        const part = (r.L.chordMask && r.L.chordMask.part) || null;
+        h += '<div class="ambient-pm-row" data-lkey="' + r.key + '"><span class="ambient-pm-lbl" title="' + r.label + '">' + r.label + '</span>' +
+          chords.map((c2, i) => {
+            const v = steps ? (Number.isFinite(steps[i % steps.length]) ? steps[i % steps.length] : 100) : 100;
+            return '<button type="button" class="ambient-pm-cell" data-ci="' + i + '" data-v="' + v + '" title="' + r.label + ' on chord ' + (i + 1) + ': ' + v + '%">' + (v === 100 ? '' : (v === 0 ? '·' : v)) + '</button>';
+          }).join('') +
+          '<span class="ambient-pm-part">' +
+            '<select class="ambient-select ambient-pm-size" title="How much of each chord this layer plays">' +
+              [[100, 'Full'], [75, '¾'], [50, '½'], [25, '¼']].map(o => '<option value="' + o[0] + '"' + ((part ? part.size : 100) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+            '</select>' +
+            '<select class="ambient-select ambient-pm-place"' + ((part ? part.size : 100) >= 100 ? ' disabled' : '') + ' title="Where in the chord the window sits — Random re-rolls per chord">' +
+              [['start', 'Start'], ['center', 'Mid'], ['end', 'End'], ['random', 'Rnd']].map(o => '<option value="' + o[0] + '"' + ((part ? part.place : 'start') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') +
+            '</select>' +
+          '</span></div>';
+      });
+      el.innerHTML = h;
+      if (!el._wired) {
+        el._wired = true;
+        el.addEventListener('click', (ev) => {
+          const cell = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-cell'); if (!cell) return;
+          _E = E; const cfg2 = E.getCfg(); if (!cfg2 || !cfg2.prog) return;
+          const row = cell.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
+          const N2 = cfg2.prog.chords.length;
+          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          if (!Array.isArray(m.steps) || m.steps.length !== N2) { const old2 = Array.isArray(m.steps) ? m.steps : null; m.steps = Array.from({ length: N2 }, (_, i2) => old2 ? (Number.isFinite(old2[i2 % old2.length]) ? old2[i2 % old2.length] : 100) : 100); }
+          const ci = cell.dataset.ci | 0, v = m.steps[ci];
+          m.steps[ci] = (v >= 100) ? 60 : (v >= 60 ? 30 : (v >= 30 ? 0 : 100));
+          el._sig = ''; _ambRenderChordMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+        el.addEventListener('change', (ev) => {
+          const sel = ev.target && ev.target.closest && ev.target.closest('.ambient-pm-size, .ambient-pm-place'); if (!sel) return;
+          _E = E; const row = sel.closest('.ambient-pm-row'); const L = _ambLayerByKey(E, row.dataset.lkey); if (!L) return;
+          const m = (L.chordMask && typeof L.chordMask === 'object') ? L.chordMask : (L.chordMask = {});
+          const sz = row.querySelector('.ambient-pm-size'), pl = row.querySelector('.ambient-pm-place');
+          const size = sz ? (sz.value | 0) : 100;
+          m.part = (size < 100) ? { size: size, place: (pl && pl.value) || 'start' } : null;
+          if (!m.part) delete m.part;
+          el._sig = ''; _ambRenderChordMatrix(E);
+          if (typeof persistWorkspace === 'function') persistWorkspace();
+        });
+      }
+    }
     function _ambSyncFxVis(E) {
       const host = E && document.getElementById(E.hostId); if (!host) return;
       try { _ambSyncProgVis(E); } catch (e) {}
+      try { _ambRenderChordMatrix(E); } catch (e) {}
+      // Warble sliders reflect their layer's macro value across re-renders.
+      try { host.querySelectorAll('.amb-warble').forEach(wb => {
+        const L = _ambLayerByKey(E, (wb.dataset.wkey || '').replace(/-(\d+)$/, ':$1'));
+        if (L && document.activeElement !== wb) wb.value = String(L._warble | 0);
+      }); } catch (e) {}
       try { _ambSyncSegs(E); } catch (e) {}
       host.querySelectorAll('details.ambient-fxmod').forEach(det => {
         const card = det.closest('.ambient-layer');
@@ -20085,6 +20354,11 @@
             '</span>') +
           '<span class="ambient-hint" id="ambient-key-hint">off</span>' +
         '</div>' +
+        // CHORD MATRIX (chord sequencer): with an Area progression on, a layers ×
+        // chords grid — tap a cell to cycle that layer's probability of playing
+        // during that chord (100→60→30→0); per-row Part = a sub-window of every
+        // chord (with a stochastic placement). Rendered by _ambRenderChordMatrix.
+        '<div class="ambient-progmatrix" id="ambient-progmatrix" style="display:none"></div>' +
         // Global ramps (BPM etc.) — area-level automation lives here in Configure;
         // per-layer ramps moved into each layer's card (see _ambLayerRampsHtml).
         _ambLayerRampsHtml('global') +
@@ -20612,6 +20886,28 @@
       };
       // Lazy-populate the grouped scale catalog on first open (pointerdown fires
       // before the native dropdown builds, so the options are ready in time).
+      // Warble macro — delegated (survives re-renders, covers every layer type).
+      host.addEventListener('input', (e) => {
+        const wb = e.target && e.target.closest && e.target.closest('.amb-warble');
+        if (!wb) return;
+        _E = E;
+        // data-wkey is the MOD-ui layer stem ('bed' / 'run-3' / 'seq-2') — convert
+        // to the canonical layer key ('bed' / 'run:3' / 'seq:2').
+        const stem = wb.dataset.wkey || '';
+        const kk = stem.replace(/-(\d+)$/, ':$1');
+        const L = _ambLayerByKey(E, kk); if (!L) return;
+        const v = Math.max(0, Math.min(100, wb.value | 0));
+        if (!L.mod || typeof L.mod !== 'object') L.mod = _ambDefaultMod();
+        if (v > 0) {
+          L.mod.vco = { depth: Math.max(1, Math.round(v * 0.35)), rate: 18 + Math.round(v * 0.14), shape: 'smooth' };
+          L._warbleSet = true; L._warble = v;
+        } else if (L._warbleSet) {
+          L.mod.vco = { depth: 0, rate: 20, shape: 'sine' };
+          delete L._warbleSet; delete L._warble;
+        }
+        if (E.timer) { try { _ambSyncMods(); } catch (e2) {} }
+        if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e2) {} }
+      });
       host.addEventListener('input', (e) => {
         const yw = e.target && e.target.closest && e.target.closest('.amb-keyov-yweight');
         if (!yw) return;

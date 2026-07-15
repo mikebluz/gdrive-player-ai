@@ -1468,6 +1468,69 @@
         lfos: [{ on: true, shape: 'smooth', rateHz: 0.25 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
         modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 22 }],
       });
+      // ---- Mall Bank (2026-07-15) — vaporwave palette: tape wow baked in as
+      // slow smooth-shape pitch LFOs, DX-ish FM keys, dark detuned pads.
+      mk('f-lagoonvhs', 'Lagoon VHS', 'triangle', {
+        attack: 500, decay: 600, sustain: 80, release: 2400,
+        filter: { on: true, type: 'lowpass', cutoff: 1600, q: 0.8 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 1.6 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'pitch', amount: 10 }],   // tape wow
+      });
+      mk('f-mallfountain', 'Mall Fountain', 'fm', {
+        attack: 6, decay: 700, sustain: 35, release: 1900,
+        osc: { harmonicity: 1.99, modIndex: 5 },
+        filter: { on: true, type: 'lowpass', cutoff: 3800, q: 0.7 },
+        lfos: [{ on: true, shape: 'sine', rateHz: 5.2 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'amp', amount: 12 }],   // e-piano tremble
+      });
+      mk('f-palmstatic', 'Palm Static', 'sawtooth', {
+        attack: 700, decay: 500, sustain: 80, release: 2600,
+        osc: { unison: 4, spread: 55 },
+        filter: { on: true, type: 'lowpass', cutoff: 850, q: 1.2 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 0.4 }, { on: true, shape: 'smooth', rateHz: 2.1 }],
+        modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 20 }, { src: 'lfo2', dest: 'pitch', amount: 6 }],
+      });
+      mk('f-chromedolphin', 'Chrome Dolphin', 'fm', {
+        attack: 3, decay: 700, sustain: 10, release: 1600,
+        osc: { harmonicity: 3.51, modIndex: 11 },
+        pitchEnv: { on: true, amount: 7, attack: 3, decay: 90 },   // the chirp
+        filter: { on: true, type: 'lowpass', cutoff: 6000, q: 0.7 },
+      });
+      mk('f-sunsetgrid', 'Sunset Grid', 'sawtooth', {
+        attack: 1200, decay: 800, sustain: 85, release: 3000,
+        osc: { unison: 6, spread: 45 },
+        filter: { on: true, type: 'lowpass', cutoff: 1200, q: 1 },
+        filterEnv: { on: true, amount: 28, attack: 1600, decay: 2200, sustain: 40, release: 1800 },
+      });
+      mk('f-dialtone', 'Dial Tone Dream', 'duo', {
+        attack: 300, decay: 400, sustain: 70, release: 1500,
+        osc: { harmonicity: 1.498 },
+        filter: { on: true, type: 'lowpass', cutoff: 1900, q: 2 },
+        lfos: [{ on: true, shape: 'sine', rateHz: 0.9 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'pitch', amount: 5 }],
+      });
+      mk('f-marbleatrium', 'Marble Atrium', 'sine', {
+        attack: 60, decay: 900, sustain: 40, release: 3200,
+        osc: { ring: 30, ringRatio: 3.99 },
+        filter: { on: true, type: 'lowpass', cutoff: 4200, q: 0.8 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 1.1 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'pitch', amount: 7 }],
+      });
+      mk('f-escalator', 'Escalator', 'triangle', {
+        attack: 150, decay: 350, sustain: 65, release: 1400,
+        osc: { sub: 55, subShape: 'sine' },
+        filter: { on: true, type: 'lowpass', cutoff: 1300, q: 1 },
+        lfos: [{ on: true, shape: 'sine', rateHz: 3.8 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'amp', amount: 20 }],
+      });
+      // Tape Hiss — noise-based ambience bed (probe: keep only if the noise
+      // base survives the factory voice path).
+      mk('f-tapehiss', 'Tape Hiss', 'noise:white', {
+        attack: 900, decay: 400, sustain: 100, release: 2400, volume: 45,
+        filter: { on: true, type: 'lowpass', cutoff: 5200, q: 0.5 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 0.3 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'amp', amount: 15 }],
+      });
       mk('f-wiregarden', 'Wire Garden', 'sawtooth', {
         attack: 4, decay: 380, sustain: 15, release: 700,
         osc: { ring: 18, ringRatio: 5.19 },

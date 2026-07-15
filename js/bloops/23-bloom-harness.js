@@ -127,6 +127,27 @@
           // Prog rework 1b — a bass on a 3-chord progression (I–IV–V in C), 1 bar/chord.
           // Locks the new bar-aligned, PER-ONSET chord resolution (chord follows the
           // bars within the multi-bar bass loop). Record this baseline AFTER 1b lands.
+          // CHORD MASK pins (2026-07-15): the per-layer chord sequencer — a bass
+          // under I-IV-V playing (a) only chord 0 (steps [100,0,0]) and (b) only
+          // the END half of every chord (part 50/end). Gate = _ambChordGateOK.
+          { name: 'chordmask-steps', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('bass', 1);
+              L.notes = { type: 'prog', name: 'I-IV-V', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
+              ] };
+              L.chordMask = { steps: [100, 0, 0] };
+              c.extras = [L]; c.barsPerChord = 1;
+          }) },
+          { name: 'chordmask-part', cfg: mk((c) => {
+              c.bed.on = false;
+              const L = _ambDefaultLayer('bass', 1);
+              L.notes = { type: 'prog', name: 'I-IV-V', chords: [
+                { root: 0, intervals: [0, 4, 7] }, { root: 5, intervals: [0, 4, 7] }, { root: 7, intervals: [0, 4, 7] },
+              ] };
+              L.chordMask = { part: { size: 50, place: 'end' } };
+              c.extras = [L]; c.barsPerChord = 1;
+          }) },
           { name: 'prog-bass', cfg: mk((c) => {
               c.bed.on = false;
               const L = _ambDefaultLayer('bass', 1);
@@ -354,7 +375,9 @@
         'prog-varbars':    { hash: '5b83b2e3', count: 32 },
         'keyov-varbars':   { hash: '5b83b2e3', count: 32 },
         'arp-series-legacy': { hash: '33952b9c', count: 52 },
-        'yoke-bass':       { hash: 'f18415bc', count: 44 },   // 2026-07-15: YOKE — a bass whose KEY frame is the bed's sounding notes per onset (keyOv mode 'yoke'); boundary notes harmonize the PREVIOUS chord (pick-time frame — 'play what you hear')   // 2026-07-15 pre-migration pin: per-entry scales + mixed passes/dir — the series→degrees derivation must keep this byte-identical   // v4: DELIBERATELY identical to prog-varbars — a layer prog's per-chord bars now drive the same lens walk as the global's (the asymmetry fix)
+        'yoke-bass':       { hash: 'f18415bc', count: 44 },
+        'chordmask-steps': { hash: '7a4c9c6a', count: 12 },   // 2026-07-15: chord sequencer — bass plays ONLY chord 0 of I-IV-V (verified: zero off-chord notes under the engine clock)
+        'chordmask-part':  { hash: 'fdef4148', count: 19 },   // 2026-07-15: partial window — END half of every chord only (verified: zero first-half notes)   // 2026-07-15: YOKE — a bass whose KEY frame is the bed's sounding notes per onset (keyOv mode 'yoke'); boundary notes harmonize the PREVIOUS chord (pick-time frame — 'play what you hear')   // 2026-07-15 pre-migration pin: per-entry scales + mixed passes/dir — the series→degrees derivation must keep this byte-identical   // v4: DELIBERATELY identical to prog-varbars — a layer prog's per-chord bars now drive the same lens walk as the global's (the asymmetry fix)
         'seq-diatonic':    { hash: 'e31a6dbb', count: 38 },
         'seq-chordlock':   { hash: '5d9f97e6', count: 38 },   // 2026-07-14: chord-DEGREE comping (re-anchor to each chord root + scale-borrowed tensions) replaced the Hz nearest-snap, AND the config detached its key (the original c90d8daf pin followed the live workspace scale = session-dependent). Verified: all output diatonic, captured C-E motif re-anchors to F-A over IV.
       };

@@ -285,6 +285,20 @@ carries per-step `len`). So it's *not* a Texture patch — it lands when the ste
 is built. Until then, Texture keeps its ms Length; **Hold stays a Bed/Motif feature** (the
 genuine one-event-per-Unit layers, where Hold ≡ length ≡ re-fire).
 
+*§5 deep half landed (2026-07-15):* `_ambEmitDescriptor` — the single dispatch
+seam — now keys on the **GENERATOR** (`_ambGeneratorOf`) instead of the type
+name; `type` survives only as the euclid family's store residue (bassPhase vs
+runPhase). Derived generators reproduce the old switch exactly (harness 26/26);
+an explicit `L.generator` override now re-realizes a layer at the emit seam —
+custom layers are live at the engine level. (The ⇄ Re-realize header action and
+the Add-menu Sound presets are the UI halves.)
+
+*§5.1 Hold landed (2026-07-15):* the step-grid family (Texture, euclid
+Beat/Bass/Arp) gains **Hold** — step-relative note length (N × the live grid
+slot; 0 = the ms Length control), the shared control the Texture-Hold discussion
+called for. Applied at every step-grid length site incl. ghosts; gated at 0 →
+byte-identical.
+
 ## 6. Coverage (verified on paper)
 
 All 11 types map (§5). Cross-cutting features land: **Unit-Sync/Lock-to, trance-gate,

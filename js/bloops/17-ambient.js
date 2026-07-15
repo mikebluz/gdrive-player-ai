@@ -404,41 +404,80 @@
             delay: { mix: 25, timeMs: 375, feedback: 30, ping: 1, spread: 40, dryKill: 0 } });
           a.extras = [bass, arp];
         } },
-        { name: '🛋 Mallsoft', hint: 'Royal Road @ 4 bars · Fluid warm pad · sparse e-piano · no drums', build: (a) => {
+        { name: '🛋 Mallsoft', hint: 'Royal Road @ 2 bars · breathing pad · e-piano + music-box glints · harmonium swells', build: (a) => {
           a.name = 'Mallsoft';
-          a.reverb = { size: 90, damp: 60, type: 'cavern' };
+          a.reverb = { size: 88, damp: 55, type: 'cavern' };
           a.prog = { on: true, name: 'Royal Road', chords: _ambResolveStandard('_lit', 0) };
-          a.barsPerChord = 4;   // glacial changes — the empty-atrium feel
-          Object.assign(a.bed, { present: true, on: true, tone: 'sample:flwarmpad', level: 70, revSend: 55, register: 4, density: 4, attack: 2500, release: 6000 });
-          Object.assign(a.motif, { present: true, on: true, tone: 'sample:flepiano', level: 48, revSend: 45,
-            restProb: 55, humanize: 30, intervalMs: 2400, keyOv: { mode: 'yoke', src: 'bed' } });
-          a.texture.present = false; a.texture.on = false;
+          a.barsPerChord = 2;
+          // Bed BREATHES: slow VCF sweep + amp swell + a whisper of tape wow.
+          Object.assign(a.bed, { present: true, on: true, tone: 'sample:flwarmpad', level: 70, revSend: 50, register: 4, density: 4, attack: 2200, release: 5000, _warble: 18, _warbleSet: true });
+          a.bed.mod = a.bed.mod || _ambDefaultMod();
+          a.bed.mod.vcf = { depth: 45, rate: 8, shape: 'smooth' };
+          a.bed.mod.vca = { depth: 18, rate: 6, shape: 'sine' };
+          a.bed.mod.vco = { depth: 13, rate: 22, shape: 'smooth' };
+          // E-piano stays melodic and PRESENT (chord-tone gravity, gentle fall),
+          // thinned to chords 1/3 by the matrix so the glints answer on 2/4.
+          Object.assign(a.motif, { present: true, on: true, tone: 'sample:flepiano', level: 54, revSend: 40,
+            restProb: 30, humanize: 25, velVar: 25, gravity: 75, contour: -30, intervalMs: 1500,
+            keyOv: { mode: 'yoke', src: 'bed' }, chordMask: { steps: [100, 55, 100, 55] } });
+          // Music-box GLINTS — the timbral counter-voice, syncopated, evolving,
+          // echoing; strongest where the e-piano thins.
+          Object.assign(a.texture, { present: true, on: true, tone: 'sample:flmusicbox', level: 40, revSend: 55,
+            register: 6, fill: 30, syncop: 55, mutateRate: 50, intervalMs: 700, humanize: 20,
+            chordMask: { steps: [55, 100, 55, 100] },
+            delay: { mix: 35, timeMs: 600, feedback: 45, ping: 1, spread: 55, dryKill: 0 } });
           a.beat.present = false; a.beat.on = false;
           const hiss = _ambDefaultLayer('drone', 1);
-          Object.assign(hiss, { name: 'Tape Hiss', tone: 'user:f-tapehiss', level: 22, revSend: 20, density: 1, register: 3, hold: 8 });
+          Object.assign(hiss, { name: 'Tape Hiss', tone: 'user:f-tapehiss', level: 20, revSend: 20, density: 1, register: 3, hold: 8 });
+          // Harmonium SWELLS in and out (deep slow VCA) and re-voices per chord.
           const harm = _ambDefaultLayer('drone', 2);
-          Object.assign(harm, { name: 'Harmonium', tone: 'sample:harmonium', level: 34, revSend: 40, density: 2, register: 3, hold: 4 });
+          Object.assign(harm, { name: 'Harmonium', tone: 'sample:harmonium', level: 38, revSend: 45, density: 2, register: 3, hold: 2, timeVary: 25, pitchVary: 20 });
+          harm.mod = _ambDefaultMod();
+          harm.mod.vca = { depth: 55, rate: 7, shape: 'sine' };
+          harm.mod.vcf = { depth: 30, rate: 5, shape: 'smooth' };
           a.extras = [hiss, harm];
         } },
-        { name: '🌫 Ambient Dub', hint: 'im9 vamp · sparse delay bass · syncopated echo texture', build: (a) => {
+        { name: '🌫 Ambient Dub', hint: 'im9 vamp · filter-breathing pad · riddim bass · skank kit · melodica', build: (a) => {
           a.name = 'Ambient Dub';
           const rt = (typeof rootIdx === 'number') ? rootIdx : 0;
           const T = (r2) => (((r2 + rt) % 12) + 12) % 12;
           a.reverb = { size: 80, damp: 30, type: 'hall' };
-          a.prog = { on: true, name: 'im9 ↔ IVm9', chords: [
+          a.prog = { on: true, name: 'im9 ↔ IVm9 ↔ VII', chords: [
             { root: T(0), intervals: [0, 3, 7, 10, 2] }, { root: T(5), intervals: [0, 3, 7, 10, 2] },
+            { root: T(0), intervals: [0, 3, 7, 10, 2] }, { root: T(10), intervals: [0, 4, 7, 10] },
           ] };
           a.barsPerChord = 2;
-          Object.assign(a.bed, { present: true, on: true, tone: 'user:f-velvet', level: 58, revSend: 40, register: 3, density: 3 });
-          Object.assign(a.texture, { present: true, on: true, tone: 'user:f-mothwing', level: 42, revSend: 35,
-            fill: 25, syncop: 70, register: 5,
-            delay: { mix: 45, timeMs: 500, feedback: 55, ping: 1, spread: 60, dryKill: 0 } });
-          a.motif.present = false; a.motif.on = false;
-          a.beat.present = false; a.beat.on = false;
+          // The dub pad: DEEP slow filter breathe + tape wow — the movement IS
+          // the genre.
+          Object.assign(a.bed, { present: true, on: true, tone: 'user:f-velvet', level: 58, revSend: 42, register: 3, density: 3, _warble: 22, _warbleSet: true });
+          a.bed.mod = a.bed.mod || _ambDefaultMod();
+          a.bed.mod.vcf = { depth: 60, rate: 10, shape: 'smooth' };
+          a.bed.mod.vco = { depth: 15, rate: 22, shape: 'smooth' };
+          // Echo glints — brighter voice (bell FM), EVOLVING pattern (mutate),
+          // heavy ping delay; sits out the IV chord so the melodica answers.
+          Object.assign(a.texture, { present: true, on: true, tone: 'user:f-chromedolphin', level: 40, revSend: 40,
+            fill: 35, syncop: 70, register: 5, mutateRate: 65, humanize: 20,
+            chordMask: { steps: [100, 40, 100, 100] },
+            delay: { mix: 50, timeMs: 500, feedback: 60, ping: 1, spread: 60, dryKill: 0 } });
+          // Melodica — THE dub voice: sparse, yoked, drenched, answering on the
+          // chords the glints thin out.
+          Object.assign(a.motif, { present: true, on: true, tone: 'sample:harmonica', level: 46, revSend: 55,
+            restProb: 45, humanize: 30, velVar: 20, gravity: 80, intervalMs: 1300, register: 5,
+            keyOv: { mode: 'yoke', src: 'bed' }, chordMask: { steps: [45, 100, 45, 100] },
+            delay: { mix: 40, timeMs: 750, feedback: 50, ping: 1, spread: 40, dryKill: 0 } });
+          // Skank kit: sparse kick, ONE huge delayed rim on 3, offbeat hats.
+          const P = (str) => str.split('').map(ch => ch === 'x' ? 1 : 0);
+          const Z = () => new Array(16).fill(0);
+          Object.assign(a.beat, { present: true, on: true, gen: 'euclid', euclidKit: true, kit: 'tr808',
+            steps: 16, bars: 1, level: 50, lengthMs: 240, revSend: 30, humanize: 15,
+            euclidPages: [{ plays: 1, pat: [P('x.........x.....'), P('........x.......'), P('..x...x...x...x.'), Z(), Z(), Z(), Z(), Z()] }],
+            euclidPageIdx: 0,
+            delay: { mix: 30, timeMs: 375, feedback: 55, ping: 1, spread: 50, dryKill: 0 } });
+          // Riddim bass: fuller repeating figure, gentle walk, long notes.
           const bass = _ambDefaultLayer('bass', 1);
-          Object.assign(bass, { name: 'Dub Bass', tone: 'user:f-undertow', level: 64, revSend: 10,
-            pulses: 3, steps: 8, rotate: 7, bars: 2, lengthMs: 700, register: 2, humanize: 20,
-            delay: { mix: 20, timeMs: 750, feedback: 45, ping: 0, spread: 0, dryKill: 0 } });
+          Object.assign(bass, { name: 'Dub Bass', tone: 'user:f-undertow', level: 66, revSend: 8,
+            pulses: 5, steps: 8, rotate: 0, bars: 2, lengthMs: 900, register: 2, humanize: 20, pitchVar: 15, proximity: 25,
+            delay: { mix: 15, timeMs: 750, feedback: 40, ping: 0, spread: 0, dryKill: 0 } });
           a.extras = [bass];
         } },
       ];
@@ -2061,22 +2100,25 @@
     // appear in cfg.extras, but the router treats null as the old beat fallthrough.
     function _ambEmitDescriptor(L, type) {
       const t = type || (L && L.type);
-      switch (t) {
-        case 'bass':    return { mode: 'window', store: 'bassPhase', emit: _ambEmitStepGrid };
-        case 'run':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitRun };
-        case 'pedal':   return { mode: 'window', store: 'runPhase',  emit: _ambEmitPedal };
-        case 'drone':   return { mode: 'window', store: 'runPhase',  emit: _ambEmitDrone };
-        case 'arp':     return (L && L.euclid)
-          ? { mode: 'window', store: 'runPhase', emit: _ambEmitStepGrid }
-          : { mode: 'window', store: 'arpState', emit: _ambEmitArpWindow,
-              init: (tt) => ({ entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: tt, lastAt: null }) };
-        case 'beat':    return (L && L.gen === 'euclid')
-          ? { mode: 'window', store: 'runPhase', emit: _ambEmitStepGrid }
-          : { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
-        case 'bed':     return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBed };
-        case 'motif':   return { mode: 'step', gm: 16, ms: 0.04, emit: _ambEmitMotif };
-        case 'texture': return { mode: 'window', store: 'runPhase', emit: _ambEmitStepGrid };
-        default:        return null;
+      // Presets-as-doors, DEEP half (doc §5): dispatch keys on the GENERATOR —
+      // the axis-model identity — so an explicit `L.generator` override
+      // re-realizes a layer at the emit seam (custom layers unlocked). Every
+      // DERIVED generator reproduces the old type switch exactly (verified
+      // case-by-case; harness-identical). `t` survives only as the euclid
+      // family's STORE residue: bass anchors in bassPhase, beat/arp-euclid in
+      // runPhase (the Bar-Lock thaw code keys off that split — see gotchas).
+      switch (_ambGeneratorOf(L, t)) {
+        case 'euclid':   return { mode: 'window', store: (t === 'bass') ? 'bassPhase' : 'runPhase', emit: _ambEmitStepGrid };
+        case 'stepgrid': return { mode: 'window', store: 'runPhase', emit: _ambEmitStepGrid };
+        case 'riff':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitRun };
+        case 'pedal':    return { mode: 'window', store: 'runPhase',  emit: _ambEmitPedal };
+        case 'held':     return { mode: 'window', store: 'runPhase',  emit: _ambEmitDrone };
+        case 'series':   return { mode: 'window', store: 'arpState', emit: _ambEmitArpWindow,
+            init: (tt) => ({ entry: 0, note: 0, pos: 0, _loop: 0, idx: 0, startAt: tt, lastAt: null }) };
+        case 'random':   return { mode: 'step', gm: 16, ms: 0.03, emit: _ambEmitBeat };
+        case 'pad':      return { mode: 'step', gm: 8,  ms: 0.05, emit: _ambEmitBed };
+        case 'walk':     return { mode: 'step', gm: 16, ms: 0.04, emit: _ambEmitMotif };
+        default:         return null;   // sequence / sampleChop run bespoke tick loops
       }
     }
     function _laneAmbientCfg() {
@@ -5245,6 +5287,7 @@
         _ambArpSpreadLfo(E, key, _me, (inst.panMode === 'pan') ? 0 : _sp, _barSec);
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
+          const _holdMs = ((inst.holdSteps | 0) > 0) ? Math.max(20, Math.round(slotSec * 1000 * Math.min(16, inst.holdSteps | 0))) : 0;   // Hold: step-relative note length (§5.1 — 0 = the ms Length)
           // Drum-lanes: the PAGE active for this cycle (page-sequence orchestration);
           // the viewed page when looping / single page. Non-kit uses _ambEuclidPat.
           const kitPage = inst.euclidKit ? _ambEuclidActivePage(inst, ctx.c) : null;
@@ -5312,7 +5355,7 @@
                   const bp = _ambApplyAdsr(_ambBeatParams(inst.kit, lenMs, stPan), inst);
                   bp.volume = Math.max(0, Math.round(_ambApplyLevel(bp.volume, inst.level) * velS));
                   if (dmod) bp._detuneMod = dmod;
-                  const baseLen = _ambVaryLen(lenMs, inst.lenVary, rnd) * lenS;
+                  const baseLen = _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd) * lenS;
                   const noteLen = (rat > 1) ? Math.min(baseLen, ratSpace * 1000 * 0.95) : baseLen;
                   try { playNote(f, bp, noteLen, rAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                   ctx.cap++;
@@ -5328,10 +5371,10 @@
                       const _r2 = Math.max(0, _AMB_VDRUM.indexOf(pc));
                       _ambPlaySynthDrum(_E, dest, inst, _r2, gAt, Math.max(0, Math.round(_ambApplyLevel(100, inst.level) * 0.28)), dmod, vpan, stPitch);
                     } else {
-                      const gbp = _ambApplyAdsr(_ambBeatParams(inst.kit, Math.round(lenMs * 0.6), vpan), inst);
+                      const gbp = _ambApplyAdsr(_ambBeatParams(inst.kit, Math.round((_holdMs || lenMs) * 0.6), vpan), inst);
                       gbp.volume = Math.max(0, Math.round(_ambApplyLevel(gbp.volume, inst.level) * 0.28));
                       if (dmod) gbp._detuneMod = dmod;
-                      try { playNote(f, gbp, Math.max(40, Math.round(lenMs * 0.5)), gAt, dest, undefined, _E.laneIdx()); } catch (e) {}
+                      try { playNote(f, gbp, Math.max(40, Math.round((_holdMs || lenMs) * 0.5)), gAt, dest, undefined, _E.laneIdx()); } catch (e) {}
                     }
                     ctx.cap++;
                   } }
@@ -5354,6 +5397,7 @@
         let f; try { f = Tone.Frequency(60 + (inst.samplePitch | 0), 'midi').toFrequency(); } catch (e) { f = 261.63; }
         _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
           const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
+          const _holdMs = ((inst.holdSteps | 0) > 0) ? Math.max(20, Math.round(slotSec * 1000 * Math.min(16, inst.holdSteps | 0))) : 0;   // Hold: step-relative note length (§5.1 — 0 = the ms Length)
           const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // single pattern (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
           for (let bar = 0; bar < bars; bar++) {
             for (let slot = 0; slot < steps; slot++) {
@@ -5371,7 +5415,7 @@
               bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
               if (dmod) bp._detuneMod = dmod;
               _ambKeyTime = at;
-              try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
+              try { playNote(f, bp, _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
               ctx.cap++;
               if (ctx.cap >= 256) break;
             }
@@ -5391,6 +5435,7 @@
       const isProg = (_ambAsNotes(src).type === 'prog');   // per-layer: one chord per phrase cycle
       _ambEmitEuclidCore(E, inst, key, now, horizon, lead, space, cfg, phaseStore, (ctx) => {
         const { bars, steps, pulses, rotate, slotSec, cStart, rnd, tFrom, tTo, dest, dmod, rVar, restP } = ctx;
+          const _holdMs = ((inst.holdSteps | 0) > 0) ? Math.max(20, Math.round(slotSec * 1000 * Math.min(16, inst.holdSteps | 0))) : 0;   // Hold: step-relative note length (§5.1 — 0 = the ms Length)
         const pat = _ambEuclidPat(inst, pulses, steps, rotate, 1, 0, inst.euclidRegen | 0);   // base euclidean seed (override row 0 or generated) — salt MUST match the grid's (WYSIWYG)
         let walkDeg = 0;   // scale-degree offset from the register root; resets to root each cycle
         for (let bar = 0; bar < bars; bar++) {
@@ -5430,16 +5475,16 @@
             bp.volume = _ambAccentVol(_ambApplyLevel(bp.volume, inst.level), inst.accent);
             if (dmod) bp._detuneMod = dmod;
             _ambColourLeadIn(f, bp, at, dest, _E.laneIdx(), src);   // Harmony colours: chromatic approach/enclosure (no-op at default 'landing')
-            try { playNote(f, bp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
+            try { playNote(f, bp, _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd), at, dest, undefined, _E.laneIdx()); } catch (e) {}
             ctx.cap++;
             // Ghosts (Variance): quiet pickup half a slot before, same pitch —
             // gated at 0 (no draw) → byte-identical.
             { const gP = Math.max(0, Math.min(100, inst.ghosts | 0));
               if (gP > 0 && rnd() * 100 < gP * 0.5 && ctx.cap < 256) {
-                const gbp = _ambApplyAdsr(_ambBassParams(Math.round(lenMs * 0.6), _ambLayerPan(inst), inst.tone), inst);
+                const gbp = _ambApplyAdsr(_ambBassParams(Math.round((_holdMs || lenMs) * 0.6), _ambLayerPan(inst), inst.tone), inst);
                 gbp.volume = Math.max(0, Math.round(_ambApplyLevel(Number.isFinite(gbp.volume) ? gbp.volume : 100, inst.level) * 0.30));
                 if (dmod) gbp._detuneMod = dmod;
-                try { playNote(f, gbp, Math.max(40, Math.round(lenMs * 0.5)), at - slotSec * 0.5, dest, undefined, _E.laneIdx()); } catch (e) {}
+                try { playNote(f, gbp, Math.max(40, Math.round((_holdMs || lenMs) * 0.5)), at - slotSec * 0.5, dest, undefined, _E.laneIdx()); } catch (e) {}
                 ctx.cap++;
               } }
             if (ctx.cap >= 256) break;
@@ -5939,6 +5984,7 @@
         : null;
       _ambEmitEuclidCore(E, gridInst, key, now, horizon, lead, space, cfg, 'runPhase', (ctx) => {
         const { steps, slotSec, cStart, rnd, tFrom, tTo } = ctx;
+        const _holdMs = ((inst.holdSteps | 0) > 0) ? Math.max(20, Math.round(slotSec * 1000 * Math.min(16, inst.holdSteps | 0))) : 0;   // Hold: step-relative note length (§5.1 — 0 = the ms Length)
         for (let s = 0; s < steps; s++) {
           if (euPat) { if (!euPat[s]) continue; }             // euclid: deterministic on-steps
           // Syncopate (Variance): tilt the stochastic fill toward OFFBEAT slots
@@ -5961,12 +6007,12 @@
           if (isProg) _ambProgStepOverride = null;
           if (f == null) continue;
           const pan = _ambLayerPan(inst);
-          const tp = _ambApplyAdsr(_ambTexParams(lenMs, pan, inst.tone), inst);
+          const tp = _ambApplyAdsr(_ambTexParams(_holdMs || lenMs, pan, inst.tone), inst);
           if (_ambLastDegTone) tp.type = _ambLastDegTone;
           _ambApplyDegLevel(tp);
           tp.volume = _ambApplyLevel(tp.volume, inst.level);
           if (dmod) tp._detuneMod = dmod;
-          try { playNote(f, tp, _ambVaryLen(lenMs, inst.lenVary, rnd), at, dest, undefined, E.laneIdx()); } catch (e) {}
+          try { playNote(f, tp, _ambVaryLen(_holdMs || lenMs, inst.lenVary, rnd), at, dest, undefined, E.laneIdx()); } catch (e) {}
         }
       });
     }
@@ -17611,13 +17657,13 @@
       texture: { label: 'Texture', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['rhythmseed'], ['pitchseed'], ['st', 'register', 'Register', 3, 7, 'octave'], ['sl', 'fill', 'Fill', 0, 100, 'sparse→busy'], ['sl', 'mutateRate', 'Mutate', 0, 100, 'slow→fast'],
-        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['tm', 'intervalMs', 'Unit (ms)', 80, 2000, 10], ['speed'], ['tm', 'lengthMs', 'Length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'syncop', 'Syncopate', 0, 100, 'straight → offbeat'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'],
         ..._AMB_MIX] },
       beat: { label: 'Beat', ctrls: [
         ..._ambVoiceCtrls([['kit']], 500, 2000, 2000), ['synthkit'],
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['gen'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidkit'], ['sl', 'euclidVoices', 'Voices', 1, 8, 'voices / drum lanes'], ['euclidregen'], ['euclidgrid'],
-        ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing', 'How fast and how long the beat plays. In Random mode, Interval sets the gap between hits; in Program mode the grid follows Sync + Bars. Length is how long each hit rings.'], ['unitsync'], ['tm', 'intervalMs', 'Interval', 80, 2000, 10], ['speed'], ['sl', 'bars', 'Bars', 1, 8, 'bars per loop'], ['tm', 'lengthMs', 'Hit length', 60, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'lenVary', 'Len var', 0, 100, 'around hit length'],
         ..._AMB_MIX] },
       // (Shape layer type removed — the master Shapes section covers radial-wheel
@@ -17627,7 +17673,7 @@
       arp: { label: 'Arp', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['arpseries'], ['arpdir'], ['sl', 'octaves', 'Octaves', 1, 4, 'span'], ['st', 'register', 'Register', 2, 7, 'base oct'], ['arpeuclid'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['sl', 'euclidVoices', 'Voices', 1, 6, 'polyphonic euclid'], ['euclidregen'], ['euclidgrid'], ['sl', 'maxPitches', 'Max pitches', 0, 8, '0=off'], ['sl', 'maxEvents', 'Max events', 0, 32, '0=off'],
-        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['arpres'], ['tm', 'intervalMs', 'Unit (ms)', 40, 2000, 10], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (euclid)'], ['tm', 'lengthMs', 'Length', 40, 2000, 10], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (euclid; 0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'randomness', 'Randomness', 0, 100, 'follow → deviate'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'euclid stochastic'], ['sl', 'rateVar', 'Rate var', 0, 100, 'steady → rushes'], ['sl', 'pitchVary', 'Pitch vary', 0, 100, 'octave drift'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Bass: a euclidean rhythmic phrase locked to the global BPM, `bars` bars
@@ -17635,7 +17681,7 @@
       bass: { label: 'Bass', ctrls: [
         ..._ambVoiceCtrls([['tone']], 2000, 2000, 4000),
         ['grp', 'Key'], ['keyov'], ['grp', 'Seed'], ['seedmode'], ['st', 'register', 'Register', 1, 4, 'octave'], ['sl', 'pulses', 'Pulses', 1, 16, 'euclid hits / bar'], ['sl', 'steps', 'Steps', 2, 32, 'euclid steps / bar'], ['sl', 'rotate', 'Rotate', 0, 31, 'euclid offset'], ['euclidgrid'], ['sl', 'proximity', 'Proximity', 0, 100, 'adjacent → leaps'],
-        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
+        ['grp', 'Timing'], ['unitsync'], ['speed'], ['sl', 'bars', 'Phrase', 1, 8, 'bars (seed length)'], ['tm', 'lengthMs', 'Length', 60, 2000, 20], ['sl', 'holdSteps', 'Hold', 0, 16, 'steps (0 = Length ms)'], ['sl', 'swing', 'Swing', 0, 100, 'straight → shuffle'], ['loop'], ['cond'],
         ['grp', 'Variance'], ['sl', 'humanize', 'Humanize', 0, 100, 'onset jitter'], ['sl', 'velVar', 'Vel var', 0, 100, 'level noise'], ['sl', 'ghosts', 'Ghosts', 0, 100, 'quiet pickup hits'], ['sl', 'rhythmVar', 'Rhythm var', 0, 100, 'stochastic'], ['sl', 'pitchVar', 'Pitch var', 0, 100, 'stochastic'], ['sl', 'lenVary', 'Len var', 0, 100, 'around Length'], ['sl', 'restProb', 'Rests', 0, 100, '%'], ['sl', 'accent', 'Accent', 0, 100, 'flat → dynamic'],
         ..._AMB_MIX] },
       // Riff (internal type 'run'): a fixed RANDOM note phrase, `bars` bars long,
@@ -17675,14 +17721,14 @@
       const base = { id: id | 0, type: type, on: true, present: true, drift: 0, when: 'always', level: 70, panMode: 'spread', space: 0, fine: 0, areaFadeMs: 250, mod: _ambDefaultMod(), ..._ambDefaultFx() };
       if (type === 'bed') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, density: 4, register: 4, spread: 2, intervalMs: 4750, lengthMs: 6650, motion: 30, strum: 0, strumFidelity: 0, chordMode: 'chaos', chordPhraseLen: 4, chordRepeats: 4, lenVary: 0, choke: false, progSubdiv: 1, progFeel: 'even', voiceVariety: 0, ..._AMB_ADSR_DEFAULTS.bed });
       if (type === 'motif') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 5, range: 2, proximity: 35, gravity: 50, contour: 0, stutter: 0, intervalMs: 1200, lengthMs: 1000, restProb: 30, twist: 0, lenVary: 0, phraseVary: 0, ..._AMB_ADSR_DEFAULTS.motif });
-      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
-      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
+      if (type === 'texture') return Object.assign(base, { tone: '', notes: { type: 'scale', scale: '' }, register: 6, fill: 35, syncop: 0, holdSteps: 0, intervalMs: 450, lengthMs: 300, mutateRate: 40, lenVary: 0, ..._AMB_ADSR_DEFAULTS.texture });
+      if (type === 'beat') return Object.assign(base, { kit: 'tr808', gen: 'random', intervalMs: 500, lengthMs: 200, restProb: 25, bars: 1, pulses: 4, steps: 8, rotate: 0, rhythmVar: 0, ghosts: 0, holdSteps: 0, lenVary: 0, ..._AMB_ADSR_DEFAULTS.beat });
       // (Shape layer type removed — see _AMB_LAYER_SCHEMA + _normalizeAmbientCfg.)
       // Arp: a series of scale/chord entries (each with its own pass count) that
       // the engine arpeggiates through. Voice via `tone`, timing via rate/interval.
       if (type === 'arp') return Object.assign(base, {
         tone: '', steps: [{ notes: { type: 'scale', scale: '' }, passes: 1, dir: 'up' }], sel: 0,
-        dir: 'up', randomness: 0, pitchVary: 0, rateVar: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
+        dir: 'up', randomness: 0, pitchVary: 0, rateVar: 0, holdSteps: 0, rate: '', intervalMs: 250, octaves: 2, register: 4,
         lengthMs: 220, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.arp,
       });
       // Bass: low-octave euclidean phrase. Defaults to a 'bass' voice (falls
@@ -17692,7 +17738,7 @@
       if (type === 'bass') return Object.assign(base, {
         tone: 'bass', notes: { type: 'scale', scale: '' }, register: 2,
         bars: 2, pulses: 5, steps: 8, rotate: 0, lengthMs: 260, unitPadMs: 0,
-        rhythmVar: 0, pitchVar: 0, ghosts: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
+        rhythmVar: 0, pitchVar: 0, ghosts: 0, holdSteps: 0, proximity: 40, restProb: 0, accent: 0, ..._AMB_ADSR_DEFAULTS.bass,
       });
       // Run: a fixed random note run that loops. 2-bar loop of 8th notes across
       // 2 octaves by default; Vary starts at 0 so it repeats verbatim until
@@ -20331,6 +20377,8 @@
       set('ambient-motif-contour', cfg.motif.contour | 0);
       set('ambient-motif-stutter', cfg.motif.stutter | 0);
       set('ambient-texture-syncop', cfg.texture.syncop | 0);
+      set('ambient-texture-holdSteps', cfg.texture.holdSteps | 0);
+      set('ambient-beat-holdSteps', cfg.beat.holdSteps | 0);
       set('ambient-texture-velVar', cfg.texture.velVar | 0);
       set('ambient-beat-velVar', cfg.beat.velVar | 0);
       set('ambient-beat-ghosts', cfg.beat.ghosts | 0);
@@ -21728,6 +21776,8 @@
       bind('ambient-motif-contour', 'motif', 'contour');
       bind('ambient-motif-stutter', 'motif', 'stutter');
       bind('ambient-texture-syncop', 'texture', 'syncop');
+      bind('ambient-texture-holdSteps', 'texture', 'holdSteps');
+      bind('ambient-beat-holdSteps', 'beat', 'holdSteps');
       bind('ambient-texture-velVar', 'texture', 'velVar');
       bind('ambient-beat-velVar', 'beat', 'velVar');
       bind('ambient-beat-ghosts', 'beat', 'ghosts');

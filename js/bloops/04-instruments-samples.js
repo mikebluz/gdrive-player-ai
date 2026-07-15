@@ -758,7 +758,29 @@
         ['applause',     'Applause',      'applause',          'fx'],
         ['gunshot',      'Gunshot',       'gunshot',           'fx'],
       ];
-      return TABLE.map(row => mk(row[0], row[1], row[2], row[3]));
+      // FluidR3_GM variants — the SAME GM instruments rendered from a different
+      // soundfont (gleitz hosts both), picked where the timbre differs enough
+      // to be its own voice: softer pads, glassier bells, rounder keys. Only
+      // the ambient-useful handful (the full set would double the tone list).
+      const mkF = (id, label, gmName, tier = 'mid') => {
+        const e = mk(id, label, gmName, tier);
+        e.baseUrl = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/' + gmName + '-mp3/';
+        return e;
+      };
+      const FLUID = [
+        ['flwarmpad',  'Warm Pad (Fl)',   'pad_2_warm'],
+        ['flhalopad',  'Halo Pad (Fl)',   'pad_7_halo'],
+        ['flnewage',   'New Age Pad (Fl)','pad_1_new_age'],
+        ['flchoir',    'Choir Aahs (Fl)', 'choir_aahs'],
+        ['flmusicbox', 'Music Box (Fl)',  'music_box',     'high'],
+        ['flkalimba',  'Kalimba (Fl)',    'kalimba',       'high'],
+        ['fltubular',  'Tubular (Fl)',    'tubular_bells', 'high'],
+        ['flsitar',    'Sitar (Fl)',      'sitar'],
+        ['flepiano',   'E-Piano (Fl)',    'electric_piano_1'],
+        ['flvibes',    'Vibraphone (Fl)', 'vibraphone',    'high'],
+      ];
+      return TABLE.map(row => mk(row[0], row[1], row[2], row[3]))
+        .concat(FLUID.map(row => mkF(row[0], row[1], row[2], row[3])));
     }
 
     // Open-source sample-based instruments. Each loads as a Tone.Sampler
@@ -787,6 +809,14 @@
         label: 'Organ',
         baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/organ/',
         urls: { 'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3', 'C6': 'C6.mp3' },
+      },
+      {
+        // Harmonium (VSCO via tonejs-instruments) — a pumping reed drone GM
+        // doesn't have; a natural Bloom bed/drone voice.
+        id: 'harmonium',
+        label: 'Harmonium',
+        baseUrl: 'https://nbrosowsky.github.io/tonejs-instruments/samples/harmonium/',
+        urls: { 'C2': 'C2.mp3', 'C3': 'C3.mp3', 'A3': 'A3.mp3', 'C4': 'C4.mp3', 'C5': 'C5.mp3' },
       },
       {
         id: 'guitar',
@@ -4269,6 +4299,43 @@
             ['sine', 'sawtooth', 'triangle'].forEach((t, i) => {
               try { playNote(220 + i * 110, { type: t, volume: 0, attack: 1, decay: 12, sustain: 0, release: 12 }, 40, at + i * 0.03); } catch (e) {}
             });
+            // The ACTIVE Bloom config's layer tones (best-effort, capped): first
+            // Play builds THESE voices — pre-building one silent copy of each
+            // pools the right bodies (design rigs JIT, sample buffers preload)
+            // instead of the generic types above.
+            try {
+              const cfgs = [];
+              if (typeof masterAmbient !== 'undefined' && masterAmbient) cfgs.push(masterAmbient);
+              if (typeof lanes !== 'undefined' && Array.isArray(lanes)) lanes.forEach(l => { if (l && l.ambientMode && l.ambient) cfgs.push(l.ambient); });
+              const tones = new Set();
+              cfgs.forEach(c => {
+                ['bed', 'motif', 'texture'].forEach(k => { const L = c && c[k]; if (L && L.on !== false && typeof L.tone === 'string' && L.tone) tones.add(L.tone); });
+                (c && c.extras || []).forEach(x => { if (x && x.on !== false && typeof x.tone === 'string' && x.tone) tones.add(x.tone); });
+              });
+              let i2 = 0;
+              for (const t of tones) { if (i2 >= 4) break; try { playNote(261.63, { type: t, volume: 0, attack: 1, decay: 12, sustain: 0, release: 12 }, 40, at + 0.12 + i2 * 0.05); } catch (e) {} i2++; }
+            } catch (e) {}
+            // Reverb pre-warm: generating the convolution IR is the biggest
+            // single first-Play stall (measured ~30 ms IR + ~13 ms FFT prep on a
+            // fast desktop; several-fold on weaker devices). Generate the IR the
+            // first Play will ask for into the 03 cache NOW, and run a throwaway
+            // Convolver so the convolution engine spins up off the critical path.
+            setTimeout(() => {
+              try {
+                if (typeof _makeReverbIR !== 'function' || typeof _reverbDecaySec !== 'function') return;
+                let size = 80, damp = 50, rty = 'lush';
+                try {
+                  const c0 = (typeof masterAmbient !== 'undefined' && masterAmbient && masterAmbient.reverb) ? masterAmbient.reverb : null;
+                  if (c0) { if (Number.isFinite(c0.size)) size = c0.size | 0; if (Number.isFinite(c0.damp)) damp = c0.damp | 0; if (c0.type) rty = c0.type; }
+                } catch (e) {}
+                const ir = _makeReverbIR(_reverbDecaySec(size), _reverbToneNorm(damp), rty);   // → cached; first Play is a lookup
+                if (ir && typeof Tone !== 'undefined' && Tone.Convolver) {
+                  const cv = new Tone.Convolver({ normalize: true });
+                  cv.buffer = ir;                                   // FFT partition prep, off the critical path
+                  setTimeout(() => { try { cv.dispose(); } catch (e) {} }, 400);
+                }
+              } catch (e) {}
+            }, 250);
           } catch (e) {}
         };
         (Tone.start ? Tone.start() : Promise.resolve()).then(go, go);

@@ -1384,6 +1384,96 @@
         attack: 10, decay: 200, sustain: 65, release: 450,
         osc: { harmonicity: 5, modIndex: 14 },
       });
+      // ---- Character bank (2026-07-15) — evocatively named, musically
+      // distinct recipes across the design vocabulary (unison, sub, ring, FM,
+      // filter env, LFO→cutoff/pitch/amp, pitchEnv). Factory: re-registered
+      // every load, never persisted, deletions self-heal.
+      mk('f-glasscath', 'Glass Cathedral', 'sine', {
+        attack: 120, decay: 600, sustain: 45, release: 2600,
+        osc: { ring: 40, ringRatio: 3.01 },
+        filter: { on: true, type: 'lowpass', cutoff: 3200, q: 1 },
+        filterEnv: { on: true, amount: 30, attack: 400, decay: 1400, sustain: 20, release: 1200 },
+      });
+      mk('f-velvet', 'Velvet Thrum', 'triangle', {
+        attack: 60, decay: 300, sustain: 80, release: 900,
+        osc: { sub: 80, subShape: 'sine' },
+        filter: { on: true, type: 'lowpass', cutoff: 620, q: 1.5 },
+        lfos: [{ on: true, shape: 'sine', rateHz: 0.35 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'amp', amount: 18 }],
+      });
+      mk('f-neonfog', 'Neon Fog', 'sawtooth', {
+        attack: 400, decay: 400, sustain: 75, release: 1800,
+        osc: { unison: 5, spread: 65 },
+        filter: { on: true, type: 'lowpass', cutoff: 700, q: 2 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 0.6 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 35 }],
+      });
+      mk('f-emberchoir', 'Ember Choir', 'duo', {
+        attack: 700, decay: 500, sustain: 85, release: 2200,
+        osc: { harmonicity: 1.005 },
+        filter: { on: true, type: 'lowpass', cutoff: 1400, q: 0.8 },
+        lfos: [{ on: true, shape: 'sine', rateHz: 4.8 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'pitch', amount: 6 }],
+      });
+      mk('f-coldstar', 'Cold Star', 'fm', {
+        attack: 3, decay: 900, sustain: 0, release: 1400,
+        osc: { harmonicity: 7.07, modIndex: 9 },
+        filter: { on: true, type: 'lowpass', cutoff: 5200, q: 0.7 },
+      });
+      mk('f-undertow', 'Undertow', 'square', {
+        attack: 25, decay: 260, sustain: 75, release: 700,
+        osc: { sub: 60, subShape: 'sine' },
+        filter: { on: true, type: 'lowpass', cutoff: 340, q: 6 },
+        filterEnv: { on: true, amount: 42, attack: 260, decay: 900, sustain: 25, release: 600 },
+      });
+      mk('f-lantern', 'Paper Lantern', 'triangle', {
+        attack: 50, decay: 320, sustain: 20, release: 950,
+        lfos: [{ on: true, shape: 'sine', rateHz: 4.2 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'pitch', amount: 8 }],
+      });
+      mk('f-rustorbit', 'Rust Orbit', 'sawtooth', {
+        attack: 90, decay: 350, sustain: 65, release: 1200,
+        osc: { ring: 28, ringRatio: 0.501 },
+        filter: { on: true, type: 'lowpass', cutoff: 1500, q: 5 },
+        lfos: [{ on: true, shape: 'sharp', rateHz: 0.9 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 40 }],
+      });
+      mk('f-mothwing', 'Moth Wing', 'sine', {
+        attack: 8, decay: 140, sustain: 35, release: 500,
+        lfos: [{ on: false, shape: 'sine', rateHz: 5 }, { on: true, shape: 'sine', rateHz: 7 }],
+        modMatrix: [{ src: 'lfo2', dest: 'amp', amount: 45 }],
+      });
+      mk('f-tideglass', 'Tide Glass', 'wavetable', {
+        attack: 350, decay: 500, sustain: 70, release: 2000,
+        wtPosition: 42,
+        filter: { on: true, type: 'lowpass', cutoff: 2200, q: 1.2 },
+        filterEnv: { on: true, amount: 25, attack: 900, decay: 1600, sustain: 30, release: 1400 },
+      });
+      mk('f-brassghost', 'Brass Ghost', 'fm', {
+        attack: 500, decay: 600, sustain: 70, release: 1600,
+        osc: { harmonicity: 2, modIndex: 6 },
+        filter: { on: true, type: 'lowpass', cutoff: 900, q: 1.5 },
+        filterEnv: { on: true, amount: 55, attack: 700, decay: 1200, sustain: 40, release: 900 },
+      });
+      mk('f-hollowreed', 'Hollow Reed', 'square', {
+        attack: 30, decay: 220, sustain: 60, release: 420,
+        osc: { sub: 30, subShape: 'triangle' },
+        filter: { on: true, type: 'lowpass', cutoff: 950, q: 3 },
+        pitchEnv: { on: true, amount: 2, attack: 4, decay: 60 },
+      });
+      mk('f-meadow', 'Night Meadow', 'triangle', {
+        attack: 900, decay: 700, sustain: 85, release: 2800,
+        osc: { unison: 3, spread: 22 },
+        filter: { on: true, type: 'lowpass', cutoff: 1100, q: 0.9 },
+        lfos: [{ on: true, shape: 'smooth', rateHz: 0.25 }, { on: false, shape: 'triangle', rateHz: 0.5 }],
+        modMatrix: [{ src: 'lfo1', dest: 'cutoff', amount: 22 }],
+      });
+      mk('f-wiregarden', 'Wire Garden', 'sawtooth', {
+        attack: 4, decay: 380, sustain: 15, release: 700,
+        osc: { ring: 18, ringRatio: 5.19 },
+        filter: { on: true, type: 'highpass', cutoff: 300, q: 1 },
+        pitchEnv: { on: true, amount: 5, attack: 2, decay: 40 },
+      });
       // ---- Drum synthesis — synthesize your own kit from the synth engine.
       // Kicks/toms: a sine/triangle body + a fast env2 → PITCH drop (the
       // "boom→thud"). Snare/hat/clap: noise through a band/high-pass with a fast

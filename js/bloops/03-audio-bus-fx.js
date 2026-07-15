@@ -797,9 +797,19 @@
     //   (huge, sparse irregular echoes, dark tail) · 'plate' (instant dense,
     //   bright, metallic ring) · 'spring' (band-limited boing + flutter) ·
     //   'gated' (80s hold-then-cut) · 'air' (high-passed shimmery sheen).
+    // IR cache — generating an IR is a synchronous main-thread burst (decay ×
+    // samplerate × 2ch of per-sample filter math) that used to land on the
+    // FIRST Play of a session (the cold-start glitch). Cache by shape key so
+    // the gesture-time pre-warm (04) can generate it BEFORE Play and the real
+    // build is a lookup. One session = one space per shape (the per-engine
+    // _revIRKey reuse already worked that way); a fresh page still rolls a
+    // fresh stochastic IR. Tiny cap — shapes change rarely.
+    const _reverbIRCache = new Map();
     function _makeReverbIR(decaySec, toneNorm, type) {
       const ac = Tone.getContext().rawContext;
       const sr = ac.sampleRate || 44100;
+      const _irKey = sr + '/' + (+decaySec).toFixed(2) + '/' + (+toneNorm).toFixed(2) + '/' + (type || 'lush');
+      { const hit = _reverbIRCache.get(_irKey); if (hit) return hit; }
       const ty = type || 'lush';
       // Per-character shape parameters.
       let decMul = 1, buildSec = 0.008, cutMul = 1, hp = 0, flutterHz = 0, chirp = 0, ring = 0, progDamp = 0, gateHold = 0, taps = null;
@@ -852,6 +862,8 @@
         }
       }
       if (peak > 0) { const g = 0.9 / peak; for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] *= g; } }
+      if (_reverbIRCache.size > 4) { try { _reverbIRCache.delete(_reverbIRCache.keys().next().value); } catch (e) {} }
+      _reverbIRCache.set(_irKey, buf);
       return buf;
     }
     const masterConvolver = new Tone.Convolver({ normalize: true });

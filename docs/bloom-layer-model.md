@@ -278,6 +278,12 @@ unmappable feature → migration can be additive.
     Migration TBD: existing entries with explicit scales/keys need a degree
     conversion (or a legacy compat read), harness-pinned like the v4 fold
     (`prog-arp` as the identity proof).
+  - *Companion decision (same session): AREA KEY LOCK.* Since areas are the
+    modulation timeline, an area needs a 🔒 = snapshot-detach in place: freeze the
+    area's key at its CURRENT effective value (copy the followed workspace key into
+    keyRoot/keyScale, keyFollow=false) so changing the workspace key for a NEW area
+    can't silently re-key established ones. Unlock = re-follow. Pure sugar over the
+    existing detach path (harness-neutral); not yet built.
 - **Phrases**: store pitches as **degrees** (derive from a sequence's saved scale/root);
   existing Seq layers default **Fixed** so playback is byte-identical.
   - *Landed for Seq units (2026-07-14):* each seed event carries `degs: [{d,o,a}]`

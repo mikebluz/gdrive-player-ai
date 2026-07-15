@@ -48,7 +48,28 @@ Layer = INSTRUMENT  ·  KEY  ·  SEED  ·  TIMING  ·  VARIANCE  ·  FX/MIX
 
 ### KEY — the harmonic frame
 - One of: **chromatic** · **key** (root + scale) · **progression** (a moving key — a
-  series of chords/harmonic regions).
+  series of chords/harmonic regions) · **yoke** (another layer's LIVE notes — see below).
+
+*Yoke landed (2026-07-15):* `keyOv {mode:'yoke', src:'<layerKey>'}` — the layer's
+frame is whatever the SOURCE layer is sounding at each onset. `_ambYokeChordAt`
+reads the source's capture buffer (root = lowest sounding note's pc, intervals =
+sounding pcs); resolved per onset via `_ambKeyTime` through the shared resolvers, so
+every generator (walk, degrees, chordlocked phrases, arps) harmonizes for free —
+zero emitter changes. Silent source → the inherited key scale. SEMANTICS: the frame
+is the source's notes AS SCHEDULED AT PICK TIME — near a chord change a follower may
+harmonize the chord still sounding rather than the one about to land ("play what you
+hear"); pinned by `yoke-bass` (~⅔ of onsets strictly in-chord, the rest boundary
+carries). UI: Key group mode "Yoke" + a source-layer picker (self excluded,
+repopulated per open). KNOBS (all default-absent → strict, in-place, full weight —
+`yoke-bass` byte-identical): **Offset** (±12 st — the chord root planes, shape
+intact: a parallel shadow voice) · **Strict/Borrow** (Borrow = chord ∪ the key
+scale: passing/tension tones between chord tones) · **Weight** (0–100: per-onset
+yoke-vs-inherited-key choice, deterministic by onset TIME — a hash, never an RNG
+draw, so both resolvers agree per note and the engine stream is untouched).
+CHORD-LOCK BRIDGE: a chord-locked phrase on a yoked layer now resolves its chord
+from the source's sounding notes (same `{root,intervals}` shape → the borrow +
+Smooth/Preserve/Reset re-voicing machinery works unchanged) — composed parts comp
+a live generative source.
 - **Cascades** workspace → area → layer; **overridable** at any level (override
   cascades down automatically). A layer defaults to its area's frame, which defaults
   to the workspace's.

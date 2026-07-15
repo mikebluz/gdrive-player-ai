@@ -2058,6 +2058,13 @@
         if (ko.mode === 'key' && typeof ko.scale === 'string') {
           return { type: 'scale', scale: ko.scale, rootPc: (((ko.root | 0) % 12) + 12) % 12 };
         }
+        if (ko.mode === 'yoke' && typeof ko.src === 'string' && ko.src) {
+          const y = { type: 'yoke', src: ko.src };
+          if (ko.off) y.off = ko.off | 0;                 // shadow-voice semitone offset
+          if (ko.borrow) y.borrow = true;                 // chord+key-scale pool (vs strict)
+          if (ko.weight != null) y.weight = ko.weight | 0; // yoke-vs-key blend per onset
+          return y;
+        }
       }
       // Relative MODE: re-centre a scale source to a different degree (a mode of
       // its own scale; with Key-transpose, a mode of the key). Same pitch classes,
@@ -2396,8 +2403,72 @@
       const eff = o.intervals.filter(iv => m.indexOf(iv) < 0);
       return eff.length ? eff : o.intervals.slice();
     }
+    // ---- YOKE (generative harmonization) --------------------------------
+    // The SOURCE layer's sounding notes at `atSec` → a chord {root, intervals}
+    // (root = the lowest sounding note's pc — harmonize over the bass). Reads
+    // the capture buffer E.cap[srcKey] ({at, freq, dur(ms)}), which every
+    // layer's emits already flow through ~1.4 s ahead of time. If nothing is
+    // SOUNDING at atSec, falls back to the most recent onset group at/before
+    // it (you harmonize what you last heard); null when the source has played
+    // nothing yet → the caller falls back to the inherited key (graceful).
+    // Yoke WEIGHT: with weight w%, this onset uses the yoked frame; else the
+    // inherited key. Deterministic per onset TIME (a hash, not an RNG draw) so
+    // _ambScaleIntervals and _ambSrcRootPc agree for the same note and the
+    // shared engine stream is never touched. Absent/100 → always yoke.
+    function _ambYokeUse(n, atSec) {
+      const w = (n && n.weight != null) ? Math.max(0, Math.min(100, n.weight | 0)) : 100;
+      if (w >= 100) return true;
+      if (w <= 0) return false;
+      const x = Math.abs(Math.sin((atSec || 0) * 12.9898 + 78.233)) * 43758.5453;
+      return (x - Math.floor(x)) * 100 < w;
+    }
+    function _ambYokeChordAt(E, srcKey, atSec) {
+      const arr = E && E.cap && E.cap[srcKey];
+      if (!arr || !arr.length || !Number.isFinite(atSec)) return null;
+      const A = (typeof masterFreqA === 'number' && masterFreqA > 0) ? masterFreqA : 440;
+      const toM = (f) => Math.round(69 + 12 * Math.log2(f / A));
+      let low = null; const pcs = new Set();
+      let gAt = -Infinity, gLow = null; const gPcs = new Set();   // latest onset-group fallback
+      for (let i = arr.length - 1; i >= 0; i--) {
+        const n = arr[i];
+        if (!(n && n.freq > 0)) continue;
+        if (n.at > atSec + 1e-4) continue;               // scheduled after this onset
+        if (n.at < atSec - 12) break;                    // scan window: last 12 s
+        const m = toM(n.freq), pc = ((m % 12) + 12) % 12;
+        if (atSec < n.at + Math.max(0.05, (n.dur || 0) / 1000)) {   // sounding at atSec
+          pcs.add(pc); if (low == null || m < low.m) low = { m: m, pc: pc };
+        }
+        if (n.at > gAt + 0.03) { gAt = n.at; gPcs.clear(); gLow = null; }   // newer onset group
+        if (Math.abs(n.at - gAt) <= 0.03) { gPcs.add(pc); if (gLow == null || m < gLow.m) gLow = { m: m, pc: pc }; }
+      }
+      const use = pcs.size ? { set: pcs, low: low } : (gPcs.size ? { set: gPcs, low: gLow } : null);
+      if (!use || !use.low) return null;
+      const root = use.low.pc;
+      const intervals = Array.from(use.set).map(pc => (((pc - root) % 12) + 12) % 12).sort((a, b) => a - b);
+      return { root: root, intervals: intervals };
+    }
     function _ambScaleIntervals(src) {
       const n = _ambAsNotes(src);
+      // 'yoke': harmonize with another layer — the chord is whatever the source
+      // layer is SOUNDING at this note's onset (_ambKeyTime, stamped by every
+      // emit before its pitch pick). No source notes yet → the key scale.
+      if (n.type === 'yoke') {
+        const _yat = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime)) ? _ambKeyTime : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+        const kc0 = _ambKeyCfg();
+        const kIv0 = (typeof SCALES !== 'undefined' && SCALES[_ambKeyScaleName(kc0)]) || [0, 2, 4, 5, 7, 9, 11];
+        const ch = _ambYokeUse(n, _yat) ? _ambYokeChordAt(_E, n.src, _yat) : null;
+        if (ch && ch.intervals.length) {
+          if (!n.borrow) return ch.intervals;
+          // BORROW: chord tones ∪ the key scale (as intervals over the yoke
+          // root, offset applied) — passing/tension tones between chord tones.
+          const root2 = ((((ch.root + (n.off | 0)) % 12) + 12) % 12);
+          const kRoot0 = _ambKeyRootPc(kc0);
+          const set = new Set(ch.intervals.map(iv => ((iv % 12) + 12) % 12));
+          kIv0.forEach(iv => set.add(((((kRoot0 + iv - root2) % 12) + 12) % 12)));
+          return Array.from(set).sort((a, b) => a - b);
+        }
+        return kIv0;
+      }
       // 'degs' (arp-series v5): a degree set realized in the CURRENT effective
       // key — intervals = keyIv[d] + accidental + octave carry. Same-key
       // realization reproduces the derived source exactly (harness identity);
@@ -2426,6 +2497,13 @@
       const keyOn = !!(kc && kc.keyOn);
       // 'degs' (arp-series v5): anchored on the key frame itself.
       if (n.type === 'degs') return keyOn ? _ambKeyRootPc(kc) : ((typeof rootIdx === 'number') ? rootIdx : 0);
+      // 'yoke': anchored on the source layer's sounding bass note at this onset.
+      if (n.type === 'yoke') {
+        const _yat = (typeof _ambKeyTime === 'number' && Number.isFinite(_ambKeyTime)) ? _ambKeyTime : ((typeof Tone !== 'undefined' && Tone.now) ? Tone.now() : 0);
+        const ch = _ambYokeUse(n, _yat) ? _ambYokeChordAt(_E, n.src, _yat) : null;
+        if (ch) return ((((ch.root + (n.off | 0)) % 12) + 12) % 12);   // Offset: shadow-voice planing
+        return keyOn ? _ambKeyRootPc(kc) : ((typeof rootIdx === 'number') ? rootIdx : 0);
+      }
       // TRANSPOSE moves every layer wholesale into the key; QUANTIZE leaves roots
       // alone (the snap happens per-note in _ambNoteFreq), so for roots it is
       // identical to keyOff.
@@ -2494,6 +2572,7 @@
         }
       } else if (n.type === 'wrap') { const w = _ambFindWrap(n.id); base = '⊕ ' + (w ? w.name : 'Wrap'); }
       else if (n.type === 'prog') base = '⇶ ' + (n.name || 'Progression');
+      else if (n.type === 'yoke') base = '⇆ Yoke: ' + (n.src || '?');
       else if (n.type === 'degs') {
         // arp-series v5: a degree set in the current key — show 1-based degrees
         // with accidentals; long sets truncate.
@@ -2810,6 +2889,19 @@
         let scale = (typeof ko.scale === 'string' && ko.scale) ? ko.scale : 'major';
         if (typeof SCALES !== 'undefined' && SCALES && !SCALES[scale]) scale = 'major';
         layer.keyOv = { mode: 'key', root: (((ko.root | 0) % 12) + 12) % 12, scale: scale };
+      } else if (ko.mode === 'yoke') {
+        // Yoke: harmonize with another layer's live notes. src = the source
+        // layer's engine key ('bed' / 'arp:3' …); invalid → Inherit.
+        // Knobs (all default-absent → strict full-weight in-place): off = shadow
+        // offset in semitones; borrow = chord+scale pool; weight = yoke-vs-key %.
+        if (typeof ko.src === 'string' && ko.src) {
+          const y = { mode: 'yoke', src: ko.src };
+          if (Number.isFinite(ko.off) && (ko.off | 0)) y.off = Math.max(-12, Math.min(12, ko.off | 0));
+          if (ko.borrow) y.borrow = true;
+          if (ko.weight != null && Number.isFinite(ko.weight) && (ko.weight | 0) < 100) y.weight = Math.max(0, Math.min(100, ko.weight | 0));
+          layer.keyOv = y;
+        }
+        else delete layer.keyOv;
       } else {
         delete layer.keyOv;   // 'inherit' / unknown → no override
       }
@@ -7527,6 +7619,17 @@
       if (mode === 'chordlock') {
         try {
           const src = _ambNotesOf(seq);
+          // Yoked frame: the chord is the SOURCE layer's sounding notes at this
+          // onset — composed phrases comp a live generative source, with the
+          // same borrow/re-voicing machinery as progressions. Offset planes it.
+          if (src && src.type === 'yoke') {
+            const ch2 = _ambYokeUse(src, atSec) ? _ambYokeChordAt(_E, src.src, atSec) : null;
+            if (ch2 && Array.isArray(ch2.intervals) && ch2.intervals.length) {
+              chordRoot = ((((ch2.root + (src.off | 0)) % 12) + 12) % 12);
+              chordIv = ch2.intervals.map(x => x | 0);
+              chordPcs = new Set(ch2.intervals.map(iv => (((chordRoot + (iv | 0)) % 12) + 12) % 12));
+            }
+          }
           if (src && src.type === 'prog') {
             const prevOv = _ambProgStepOverride;
             if (Number.isFinite(atSec)) _ambProgStepOverride = _ambProgStepAt(_E, atSec, src);
@@ -17575,17 +17678,33 @@
       if (k === 'keyov') {
         const kk = (lk === type) ? type : (type + ':' + lk.slice(type.length + 1));
         const ko = (inst && inst.keyOv) || null;
-        const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog')) ? ko.mode : '';
+        const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog' || ko.mode === 'yoke')) ? ko.mode : '';
         const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
         const root = (ko && ko.mode === 'key') ? ((((ko.root | 0) % 12) + 12) % 12) : (((typeof rootIdx === 'number' ? rootIdx : 0) % 12) + 12) % 12;
         const scale = (ko && ko.mode === 'key' && ko.scale) ? ko.scale : 'major';
-        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes' };
+        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
         return '<div class="ambient-ctrl"><label title="' + _ambTitleAttr('Key', 'harmonic frame') + '">Key</label>' +
           '<select class="ambient-select amb-keyov-mode" data-kokey="' + kk + '" title="The layer’s harmonic frame: Inherit = the Area’s key / progression; Key = pin this layer to its own root + scale; Progression = this layer follows its own chord changes">' +
             '<option value=""' + (mode === '' ? ' selected' : '') + '>Inherit</option>' +
             '<option value="key"' + (mode === 'key' ? ' selected' : '') + '>Key</option>' +
             '<option value="prog"' + (mode === 'prog' ? ' selected' : '') + '>Progression</option>' +
+            '<option value="yoke"' + (mode === 'yoke' ? ' selected' : '') + '>Yoke</option>' +
           '</select><span class="ambient-hint amb-keyov-hint" data-kokey="' + kk + '">' + hints[mode] + '</span></div>' +
+          '<div class="ambient-ctrl amb-keyov-yokerow" data-kokey="' + kk + '"' + (mode === 'yoke' ? '' : ' hidden') + '><label>Follow</label>' +
+            '<select class="ambient-select amb-keyov-yoke" data-kokey="' + kk + '" data-cur="' + ((ko && ko.mode === 'yoke' && ko.src) || '') + '" title="The layer this one harmonizes with — its SOUNDING notes at each onset become this layer’s chord frame"><option value="">— pick a layer —</option></select>' +
+            '<span class="ambient-hint">harmonize with its notes</span></div>' +
+          '<div class="ambient-ctrl amb-keyov-yokerow2" data-kokey="' + kk + '"' + (mode === 'yoke' ? '' : ' hidden') + '><label>Shape</label>' +
+            '<span class="ambient-seg-row amb-keyov-ypair">' +
+              '<select class="ambient-select amb-keyov-yoff" data-kokey="' + kk + '" title="Offset — harmonize at a fixed interval (semitones): a parallel shadow voice; 0 = in place">' +
+                (function () { let h2 = ''; for (let o2 = -12; o2 <= 12; o2++) h2 += '<option value="' + o2 + '"' + (o2 === ((ko && ko.off) | 0) ? ' selected' : '') + '>' + (o2 > 0 ? '+' : '') + o2 + ' st</option>'; return h2; })() +
+              '</select>' +
+              '<select class="ambient-select amb-keyov-ystrict" data-kokey="' + kk + '" title="Strict = only the source’s sounding notes; Borrow = + the key scale (passing/tension tones between chord tones)">' +
+                '<option value=""' + (!(ko && ko.borrow) ? ' selected' : '') + '>Strict</option><option value="1"' + ((ko && ko.borrow) ? ' selected' : '') + '>Borrow</option>' +
+              '</select>' +
+            '</span></div>' +
+          '<div class="ambient-ctrl amb-keyov-yokerow3" data-kokey="' + kk + '"' + (mode === 'yoke' ? '' : ' hidden') + '><label>Weight</label>' +
+            '<input type="range" class="ambient-range amb-keyov-yweight" data-kokey="' + kk + '" min="0" max="100" value="' + ((ko && ko.weight != null) ? (ko.weight | 0) : 100) + '">' +
+            '<span class="ambient-hint">key ↔ yoke</span></div>' +
           '<div class="ambient-ctrl amb-keyov-keyrow" data-kokey="' + kk + '"' + (mode === 'key' ? '' : ' hidden') + '><label>Root · Scale</label>' +
             '<span class="ambient-seg-row amb-keyov-pair">' +
               '<select class="ambient-select amb-keyov-root" data-kokey="' + kk + '">' + NOTE.map((n, i) => '<option value="' + i + '"' + (i === root ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>' +
@@ -20420,16 +20539,39 @@
       // states in place, and re-anchor the layer live so the frame change lands
       // on the next unit.
       const _koLayer = (kk) => _ambLayerByKey(E, kk);
+      // Yoke source candidates: every present layer except yourself.
+      const _koYokeCands = (selfKk) => {
+        const cfg = E.getCfg(); if (!cfg) return [];
+        const out = [];
+        ['bed', 'motif', 'texture', 'beat'].forEach(k => { if (cfg[k]) out.push([k, k.charAt(0).toUpperCase() + k.slice(1)]); });
+        (cfg.extras || []).forEach(x2 => { if (x2 && x2.type != null && x2.id != null) out.push([x2.type + ':' + x2.id, (typeof x2.name === 'string' && x2.name) ? x2.name : (x2.type + ' ' + x2.id)]); });
+        return out.filter(o => o[0] !== selfKk);
+      };
       const _koRefresh = (kk) => {
         const L = _koLayer(kk); const ko = (L && L.keyOv) || null;
-        const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog')) ? ko.mode : '';
-        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes' };
+        const mode = (ko && (ko.mode === 'key' || ko.mode === 'prog' || ko.mode === 'yoke')) ? ko.mode : '';
+        const hints = { '': 'follows the Area', key: 'this layer only', prog: 'its own changes', yoke: 'follows that layer’s notes' };
         host.querySelectorAll('.amb-keyov-mode[data-kokey="' + kk + '"]').forEach(s => { if (document.activeElement !== s) s.value = mode; });
         host.querySelectorAll('.amb-keyov-hint[data-kokey="' + kk + '"]').forEach(h => { h.textContent = hints[mode]; });
         host.querySelectorAll('.amb-keyov-keyrow[data-kokey="' + kk + '"]').forEach(r => { r.hidden = (mode !== 'key'); });
         host.querySelectorAll('.amb-keyov-progrow[data-kokey="' + kk + '"]').forEach(r => {
           r.hidden = (mode !== 'prog');
           const nm = r.querySelector('.amb-keyov-pname'); if (nm) nm.textContent = (ko && ko.mode === 'prog' && ko.name) ? ko.name : '';
+        });
+        host.querySelectorAll('.amb-keyov-yokerow[data-kokey="' + kk + '"]').forEach(r => {
+          r.hidden = (mode !== 'yoke');
+          const ys = r.querySelector('.amb-keyov-yoke');
+          if (ys && ko && ko.mode === 'yoke' && document.activeElement !== ys) {
+            ys.dataset.cur = ko.src || '';
+            if (ys.options.length > 1) ys.value = ko.src || '';
+          }
+        });
+        host.querySelectorAll('.amb-keyov-yokerow2[data-kokey="' + kk + '"], .amb-keyov-yokerow3[data-kokey="' + kk + '"]').forEach(r => {
+          r.hidden = (mode !== 'yoke');
+          if (mode !== 'yoke' || !ko) return;
+          const yo = r.querySelector('.amb-keyov-yoff'); if (yo && document.activeElement !== yo) yo.value = String((ko.off | 0) || 0);
+          const yb = r.querySelector('.amb-keyov-ystrict'); if (yb && document.activeElement !== yb) yb.value = ko.borrow ? '1' : '';
+          const yw = r.querySelector('.amb-keyov-yweight'); if (yw && document.activeElement !== yw) yw.value = String((ko.weight != null) ? (ko.weight | 0) : 100);
         });
       };
       const _koApply = (kk) => {
@@ -20439,11 +20581,32 @@
       };
       // Lazy-populate the grouped scale catalog on first open (pointerdown fires
       // before the native dropdown builds, so the options are ready in time).
+      host.addEventListener('input', (e) => {
+        const yw = e.target && e.target.closest && e.target.closest('.amb-keyov-yweight');
+        if (!yw) return;
+        const kk = yw.dataset.kokey; const L = _koLayer(kk); if (!L || !L.keyOv || L.keyOv.mode !== 'yoke') return;
+        _E = E;
+        const v = Math.max(0, Math.min(100, yw.value | 0));
+        if (v < 100) L.keyOv.weight = v; else delete L.keyOv.weight;
+        if (typeof persistWorkspace === 'function') { try { persistWorkspace(); } catch (e2) {} }
+      });
       host.addEventListener('pointerdown', (e) => {
         const sel = e.target && e.target.closest && e.target.closest('.amb-keyov-scale');
-        if (!sel || sel.options.length > 1) return;
-        const cur = sel.dataset.cur || 'major';
-        try { sel.innerHTML = ''; populateGroupedScaleSelect(sel); sel.value = cur; if (sel.value !== cur) sel.value = 'major'; } catch (e2) {}
+        if (sel && sel.options.length <= 1) {
+          const cur = sel.dataset.cur || 'major';
+          try { sel.innerHTML = ''; populateGroupedScaleSelect(sel); sel.value = cur; if (sel.value !== cur) sel.value = 'major'; } catch (e2) {}
+        }
+        // Yoke source select: (re)populate with the CURRENT layer list on every
+        // open — layers come and go, so rebuild instead of populate-once.
+        const ysel = e.target && e.target.closest && e.target.closest('.amb-keyov-yoke');
+        if (ysel) {
+          const kk = ysel.dataset.kokey, cur = ysel.dataset.cur || ysel.value || '';
+          try {
+            ysel.innerHTML = '';
+            _koYokeCands(kk).forEach(c => { const o = document.createElement('option'); o.value = c[0]; o.textContent = c[1]; ysel.appendChild(o); });
+            if (cur) ysel.value = cur;
+          } catch (e2) {}
+        }
       });
       host.addEventListener('change', (e) => {
         const t = e.target;
@@ -20456,6 +20619,14 @@
             const rs = row && row.querySelector('.amb-keyov-root'), ss = row && row.querySelector('.amb-keyov-scale');
             L.keyOv = { mode: 'key', root: rs ? (rs.value | 0) : 0, scale: (ss && ss.value) || 'major' };
             _koApply(kk);
+          } else if (md.value === 'yoke') {
+            const cands = _koYokeCands(kk);
+            if (!cands.length) { md.value = ''; delete L.keyOv; _koApply(kk); return; }   // nothing to follow → Inherit
+            const row = host.querySelector('.amb-keyov-yokerow[data-kokey="' + kk + '"]');
+            const ys = row && row.querySelector('.amb-keyov-yoke');
+            const cur = (ys && ys.value) || (L.keyOv && L.keyOv.mode === 'yoke' && L.keyOv.src) || cands[0][0];
+            L.keyOv = { mode: 'yoke', src: cur };
+            _koApply(kk);
           } else if (md.value === 'prog') {
             // Don't write an empty prog override (normalize would drop it) —
             // the editor's apply writes keyOv; a cancel falls back to reality.
@@ -20465,6 +20636,22 @@
             delete L.keyOv;
             _koApply(kk);
           }
+          return;
+        }
+        const yo2 = t && t.closest && t.closest('.amb-keyov-yoff, .amb-keyov-ystrict');
+        if (yo2) {
+          const kk = yo2.dataset.kokey; const L = _koLayer(kk); if (!L || !L.keyOv || L.keyOv.mode !== 'yoke') return;
+          _E = E;
+          if (yo2.classList.contains('amb-keyov-yoff')) { const v = yo2.value | 0; if (v) L.keyOv.off = Math.max(-12, Math.min(12, v)); else delete L.keyOv.off; }
+          else { if (yo2.value) L.keyOv.borrow = true; else delete L.keyOv.borrow; }
+          _koApply(kk);
+          return;
+        }
+        const yk = t && t.closest && t.closest('.amb-keyov-yoke');
+        if (yk) {
+          const kk = yk.dataset.kokey; const L = _koLayer(kk); if (!L) return;
+          _E = E;
+          if (yk.value) { L.keyOv = { mode: 'yoke', src: yk.value }; yk.dataset.cur = yk.value; _koApply(kk); }
           return;
         }
         const rt = t && t.closest && t.closest('.amb-keyov-root, .amb-keyov-scale');

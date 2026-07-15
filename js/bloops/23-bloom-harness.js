@@ -100,6 +100,15 @@
               c.extras = [L];
           }) },
           { name: 'bass',        cfg: mk(withExtra('bass')) },
+          // YOKE pin (2026-07-15): a bass harmonizing generatively with the Bed —
+          // its KEY frame is whatever the bed is SOUNDING at each onset
+          // (keyOv mode 'yoke' → _ambYokeChordAt over the capture buffer).
+          { name: 'yoke-bass', cfg: mk((c) => {
+              c.bed.on = true;
+              const L = _ambDefaultLayer('bass', 1);
+              L.keyOv = { mode: 'yoke', src: 'bed' };
+              c.extras = [L];
+          }) },
           { name: 'run',         cfg: mk(withExtra('run')) },
           { name: 'pedal',       cfg: mk(withExtra('pedal')) },
           { name: 'drone',       cfg: mk(withExtra('drone')) },
@@ -344,7 +353,8 @@
         'key-modrot-area': { hash: '9eedc324', count: 18 },
         'prog-varbars':    { hash: '5b83b2e3', count: 32 },
         'keyov-varbars':   { hash: '5b83b2e3', count: 32 },
-        'arp-series-legacy': { hash: '33952b9c', count: 52 },   // 2026-07-15 pre-migration pin: per-entry scales + mixed passes/dir — the series→degrees derivation must keep this byte-identical   // v4: DELIBERATELY identical to prog-varbars — a layer prog's per-chord bars now drive the same lens walk as the global's (the asymmetry fix)
+        'arp-series-legacy': { hash: '33952b9c', count: 52 },
+        'yoke-bass':       { hash: 'f18415bc', count: 44 },   // 2026-07-15: YOKE — a bass whose KEY frame is the bed's sounding notes per onset (keyOv mode 'yoke'); boundary notes harmonize the PREVIOUS chord (pick-time frame — 'play what you hear')   // 2026-07-15 pre-migration pin: per-entry scales + mixed passes/dir — the series→degrees derivation must keep this byte-identical   // v4: DELIBERATELY identical to prog-varbars — a layer prog's per-chord bars now drive the same lens walk as the global's (the asymmetry fix)
         'seq-diatonic':    { hash: 'e31a6dbb', count: 38 },
         'seq-chordlock':   { hash: '5d9f97e6', count: 38 },   // 2026-07-14: chord-DEGREE comping (re-anchor to each chord root + scale-borrowed tensions) replaced the Hz nearest-snap, AND the config detached its key (the original c90d8daf pin followed the live workspace scale = session-dependent). Verified: all output diatonic, captured C-E motif re-anchors to F-A over IV.
       };

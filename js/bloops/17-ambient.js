@@ -11534,7 +11534,14 @@
           // (thermal spike, another app) doesn't pin it down forever.
           try {
             const _inGrace = wall < _ambHealthGraceUntil;
-            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25 && !_inGrace) {
+            // CAPTURING = the MediaRecorder/worklet encoder is stealing render
+            // headroom by design — a dipped ctRate during a take is the cost of
+            // recording, and shedding voices would THIN THE TAKE ITSELF (field
+            // log 2026-07-15: budget slashed to 8 with zero active voices while
+            // capturing). Hold the budget for the duration; the encoder's load
+            // ends with the capture.
+            const _capturing = !!(E.capRec);
+            if (typeof _setVoiceBudget === 'function' && raw.state === 'running' && dt > 0.25 && !_inGrace && !_capturing) {
               if (ctRate < 0.97) {
                 _ambHealthGoodN = 0;
                 _ambHealthBadN++;
@@ -12173,21 +12180,46 @@
           && Tone.context && typeof Tone.context.createAudioWorkletNode === 'function') {
         let recNode = null, sink = null;
         try {
-          recNode = Tone.context.createAudioWorkletNode('bloops-recorder', {
+          // NATIVE construction on the raw context — Tone's wrapper
+          // (Tone.context.createAudioWorkletNode) builds via
+          // standardized-audio-context, which can land on a DIFFERENT native
+          // context than the master tap ("cannot connect to an AudioNode
+          // belonging to a different audio context", field 2026-07-15). The
+          // recorder module registers on rawCtx.audioWorklet (03), and the tap
+          // provably lives on `ac` (the MediaRecorder path connects there), so
+          // build the node on `ac` directly.
+          const recCtx = (typeof _bloopsRecorderNative !== 'undefined' && _bloopsRecorderNative) || ac;
+          recNode = new AudioWorkletNode(recCtx, 'bloops-recorder', {
             numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
             channelCount: 2, channelCountMode: 'explicit',
           });
-          sink = ac.createGain(); sink.gain.value = 0;   // node must reach destination to run; keep it silent
+          sink = recCtx.createGain(); sink.gain.value = 0;   // node must reach destination to run; keep it silent
+          sink._dest = recCtx.destination;
         } catch (e) { recNode = null; }
+        // Bridge the (SAC-wrapped) master tap into the NATIVE recorder via a
+        // MediaStream — streams may legally cross contexts, so the recording
+        // chain stays fully native (raw PCM, no lossy encode) while the tap
+        // connect stays on the SAC side (the proven hop).
+        let bridge = null, bridgeSrc = null;
         if (recNode) {
-          const r = { mode: 'worklet', recNode, sink, analyser, tap, sr: ac.sampleRate || 48000, L: [], R: [], frames: 0, silentMs: 0, pollTimer: null, finalizing: false };
+          try {
+            bridge = ac.createMediaStreamDestination();
+            bridgeSrc = ((typeof _bloopsRecorderNative !== 'undefined' && _bloopsRecorderNative) || ac).createMediaStreamSource(bridge.stream);
+          } catch (e) { bridge = null; bridgeSrc = null; }
+        }
+        if (recNode) {
+          const r = { mode: 'worklet', recNode, sink, analyser, tap, bridge, bridgeSrc, sr: ac.sampleRate || 48000, L: [], R: [], frames: 0, silentMs: 0, pollTimer: null, finalizing: false };
           // Guard `r.L`: after Finalize, _ambCaptureFinish posts {stop:true}, builds
           // the buffer and nulls r.L/r.R, then awaits the Save dialog. The worklet's
           // final flush message can land AFTER that (during the dialog) — without the
           // null check it'd `push` on null and throw (the "Save does nothing" bug).
           recNode.port.onmessage = (ev) => { const d = ev.data; if (!d || !d.l || !r.L) return; r.L.push(d.l); r.R.push(d.r); r.frames += d.l.length; };
           let _wired = false;
-          try { Tone.connect(tap, recNode); Tone.connect(recNode, sink); sink.connect(ac.destination); _wired = true; }
+          try {
+            if (bridge && bridgeSrc) { tap.connect(bridge); bridgeSrc.connect(recNode); }
+            else { Tone.connect(tap, recNode); }
+            recNode.connect(sink); sink.connect(sink._dest || ac.destination); _wired = true;
+          }
           catch (e) {
             // Don't abort — dispose the worklet rig and FALL THROUGH to the
             // MediaRecorder path below (a hard alert here left the generator
@@ -12314,7 +12346,8 @@
       try { if (r && r.analyser) r.tap.disconnect(r.analyser); } catch (e) {}
       if (r && r.mode === 'worklet') {
         try { if (r.recNode && r.recNode.port) r.recNode.port.postMessage({ stop: true }); } catch (e) {}
-        try { Tone.disconnect(r.tap, r.recNode); } catch (e) {}
+        try { if (r.bridge) r.tap.disconnect(r.bridge); else Tone.disconnect(r.tap, r.recNode); } catch (e) {}
+        try { if (r.bridgeSrc) r.bridgeSrc.disconnect(); } catch (e) {}
         try { r.recNode.disconnect(); } catch (e) {}
         try { r.sink.disconnect(); } catch (e) {}
         try { if (r.recNode && r.recNode.port) r.recNode.port.onmessage = null; } catch (e) {}  // stop late flush callbacks (already drained into r.L)

@@ -740,9 +740,19 @@
     // _bloopsRecorderReady flips true once the module is registered; capture
     // falls back to MediaRecorder until then / where worklets are unavailable.
     let _bloopsRecorderReady = false;
+    // The TRUE NATIVE context the recorder module registered on. Tone's
+    // rawContext is a standardized-audio-context wrapper; creating the node
+    // through SAC can land on a DIFFERENT native context (SAC polyfills nodes
+    // it didn't register itself), which threw "cannot connect to an AudioNode
+    // belonging to a different audio context" at capture (field 2026-07-15).
+    // Register AND construct on the unwrapped native context instead.
+    let _bloopsRecorderNative = null;
     (function installRecorderWorklet() {
       const rawCtx = (Tone.context && Tone.context.rawContext) ? Tone.context.rawContext : null;
-      if (!rawCtx || !rawCtx.audioWorklet || typeof rawCtx.audioWorklet.addModule !== 'function') return;
+      if (!rawCtx) return;
+      const native = rawCtx._nativeAudioContext || rawCtx._nativeContext || rawCtx;
+      if (!native.audioWorklet || typeof native.audioWorklet.addModule !== 'function') return;
+      _bloopsRecorderNative = native;
       const code = `
         class BloopsRecorder extends AudioWorkletProcessor {
           constructor(){ super(); this.on=true; this.B=4096; this.l=new Float32Array(this.B); this.r=new Float32Array(this.B); this.f=0;
@@ -761,7 +771,7 @@
         registerProcessor('bloops-recorder', BloopsRecorder);`;
       let url;
       try { url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' })); } catch (e) { return; }
-      rawCtx.audioWorklet.addModule(url).then(() => { _bloopsRecorderReady = true; try { URL.revokeObjectURL(url); } catch (e) {} }).catch(() => {});
+      native.audioWorklet.addModule(url).then(() => { _bloopsRecorderReady = true; try { URL.revokeObjectURL(url); } catch (e) {} }).catch(() => {});
     })();
     // Global FX chain — sits post-compressor / pre-limiter so the dynamics
     // settle before reverb/delay tails layer on. wet=0 / distortion=0 are

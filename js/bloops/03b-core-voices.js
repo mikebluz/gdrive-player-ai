@@ -384,6 +384,15 @@
         if (!kf) return false;
         if (type === 'wavetable' && (p.wtPosition != null || p.wavetableMix)) return false; // design wavetable → node engine
         if (_hasDesign(p)) {
+          // RETREAT (2026-07-16): design-carrying voices render NODE-SIDE for
+          // now — the sound designer's node path is the canonical, ear-
+          // calibrated realization (envelope, filter, wow), and a field report
+          // of per-pass dry-body cutoffs on a design pad couldn't be cleared
+          // against the core's newer design port. The node engine can afford
+          // pads again after the 2026-07-16 cost-weight recalibration. Plain
+          // notes keep the core. Re-open by removing this line (DESIGN_OK
+          // below gates the port as before).
+          return false;
           if (!DESIGN_OK[kf.kind]) return false;
           // wtpos mod routes need the wavetable crossfade rig — node engine
           if (Array.isArray(p.modMatrix) && p.modMatrix.some((r) => r && r.dest === 'wtpos' && r.amount)) return false;

@@ -560,6 +560,12 @@
           { on: false, shape: 'triangle', rateHz: 0.5 },
         ],
         env2: { on: false, attack: 5, decay: 200, sustain: 0, release: 300 },
+        // Dedicated PITCH envelope (drum boom→thud): amount in SEMITONES (deep,
+        // ±48), a fast AD bending base+amount → base. NOTE: 20-sound-design.js
+        // keeps a fallback mirror of this object — keep the two in sync (the
+        // editor crashed on `.on` of undefined when pitchEnv existed only in
+        // the mirror: this function wins when both are loaded).
+        pitchEnv: { on: false, amount: 0, attack: 0, decay: 60 },
         // Macros: named constants (0-100) usable as matrix sources.
         macros: [
           { name: 'Macro 1', value: 0 }, { name: 'Macro 2', value: 0 },

@@ -16,7 +16,12 @@ class BlobCache {
             // bump. Clean bytes re-download from Drive on next play, and every current
             // writer keys by the correct id, so it stays clean. Auto-heals every
             // device on first load with this build; no user action needed.
-            const req = indexedDB.open(this._dbName, 2);
+            // v3 (2026-07-16): one more clean wipe — cross-track responses from
+            // the Drive CDN could still poison the store honestly (right key,
+            // wrong bytes; see music-player's _verifyBlob). Size verification
+            // now guards every write AND read, but entries written before it
+            // can't all be caught (equal-size collisions), so start clean.
+            const req = indexedDB.open(this._dbName, 3);
             req.onupgradeneeded = e => {
                 const db = e.target.result;
                 if (db.objectStoreNames.contains(this._storeName)) {

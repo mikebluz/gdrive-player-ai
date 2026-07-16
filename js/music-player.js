@@ -129,20 +129,30 @@ class MusicPlayer {
             if (this.blobCache) {
                 const blob = await this.blobCache.getBlob(track.id);
                 if (blob) {
+                    if (!this._verifyBlob(track, blob, 'idb')) {
+                        this.blobCache.remove(track.id);   // poisoned entry — self-heal
+                    } else {
                     this._prefetchCache.set(track.id, blob);
                     this._diag('prefetch(cache) ' + this._short(track.id) + ' ' + Math.round(blob.size / 1024) + 'KB');
                     document.dispatchEvent(new CustomEvent('prefetchCacheUpdated'));
                     this._probeBlobDuration(blob, track.id);
                     return 'cached';
+                    }
                 }
             }
 
             const token = this.gDrive.accessToken;
             if (!token) return 'skipped';
-            const url = this._driveMediaUrl(track.id);
-            const response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+            let response = await fetch(this._driveMediaUrl(track.id), { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
             if (!response.ok) return 'failed';
-            const blob = await response.blob();
+            let blob = await response.blob();
+            if (!this._verifyBlob(track, blob, 'prefetch')) {
+                // one retry with a fresh nonce — a cross-track CDN response
+                response = await fetch(this._driveMediaUrl(track.id), { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+                if (!response.ok) return 'failed';
+                blob = await response.blob();
+                if (!this._verifyBlob(track, blob, 'prefetch-retry')) return 'failed';
+            }
             this._prefetchCache.set(track.id, blob);
             this._diag('prefetch(fetch) ' + this._short(track.id) + ' ' + Math.round(blob.size / 1024) + 'KB');
             if (this.blobCache) this.blobCache.store(track.id, blob);
@@ -205,7 +215,9 @@ class MusicPlayer {
                 const url = this._driveMediaUrl(track.id);
                 const response = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
                 if (!response.ok) return;
-                await this.blobCache.store(track.id, await response.blob());
+                const fetched = await response.blob();
+                if (!this._verifyBlob(track, fetched, 'persist')) return;   // never store unverified bytes
+                await this.blobCache.store(track.id, fetched);
             }
         } catch {}
     }
@@ -231,6 +243,23 @@ class MusicPlayer {
     _driveMediaUrl(trackId) {
         const nonce = Date.now().toString(36) + Math.floor(Math.random() * 1e9).toString(36);
         return `https://www.googleapis.com/drive/v3/files/${trackId}?alt=media&_cb=${nonce}`;
+    }
+
+    // BYTE-SIZE VERIFICATION — the last line of defense against "right title,
+    // wrong audio". Drive's listing gives every file's exact byte size; if a
+    // blob (from the CDN, the prefetch cache, or IndexedDB) doesn't match the
+    // track's size, it is NOT this track's audio — reject it instead of
+    // playing/caching it. Tracks without a known size pass (can't verify).
+    // Same-size collisions remain theoretically possible; everything else is
+    // caught, and rejected cache entries self-heal (removed + refetched).
+    _verifyBlob(track, blob, where) {
+        if (!track || !blob) return false;
+        const want = Number(track.size);
+        if (!Number.isFinite(want) || want <= 0) return true;   // no size known → can't verify
+        if (blob.size === want) return true;
+        this._diag('✗ ' + where + ' blob size ' + blob.size + ' ≠ ' + want + ' for ' + this._short(track.id) + ' — rejected', true);
+        try { console.warn('[player] rejected wrong-size blob (' + where + ') for', track.name, blob.size, '≠', want); } catch {}
+        return false;
     }
 
     // ---- On-screen diagnostics (mobile has no console) -------------------
@@ -371,7 +400,11 @@ class MusicPlayer {
             // revoked before re-resolving.
             if (!this._blobUrl || this._blobTrackId !== wantId) {
                 if (this._blobUrl) { try { URL.revokeObjectURL(this._blobUrl); } catch {} this._blobUrl = null; }
-                const prefetchedBlob = this._prefetchCache.get(wantId);
+                let prefetchedBlob = this._prefetchCache.get(wantId);
+                if (prefetchedBlob && !this._verifyBlob(this.currentTrack, prefetchedBlob, 'play/prefetch')) {
+                    this._prefetchCache.delete(wantId);   // wrong bytes — drop and fall through to a fresh source
+                    prefetchedBlob = null;
+                }
 
                 if (prefetchedBlob) {
                     // 1. In-memory prefetch — fully synchronous, preserves iOS gesture chain
@@ -388,10 +421,14 @@ class MusicPlayer {
                     // await breaks it (blobCache.getBlob, fetch, refreshToken, etc.).
                     new Audio(SILENT_WAV).play().catch(() => {});
 
-                    const persistedBlob = this.blobCache
+                    let persistedBlob = this.blobCache
                         ? await this.blobCache.getBlob(this.currentTrack.id)
                         : null;
                     if (superseded()) return;   // skipped to another track during the lookup
+                    if (persistedBlob && !this._verifyBlob(this.currentTrack, persistedBlob, 'play/idb')) {
+                        try { this.blobCache.remove(wantId); } catch {}   // poisoned entry — self-heal
+                        persistedBlob = null;                             // fall through to a fresh fetch
+                    }
 
                     if (persistedBlob) {
                         // 2. Persistent blob cache — user-saved tracks, works offline
@@ -433,6 +470,21 @@ class MusicPlayer {
 
                         src = 'fetch';
                         this._blob = await response.blob();
+                        // Byte-size verification: a cross-track CDN response must
+                        // never reach the audio element OR the caches. One retry
+                        // with a fresh nonce, then give up (⏳ resets; next press
+                        // retries) rather than play the wrong song.
+                        if (!this._verifyBlob(this.currentTrack, this._blob, 'play/fetch')) {
+                            const r2 = await fetch(this._driveMediaUrl(wantId), { cache: 'no-store', headers: { Authorization: `Bearer ${this.gDrive.accessToken}` } });
+                            if (superseded()) { this.playPauseBtn.disabled = false; return; }
+                            this._blob = r2.ok ? await r2.blob() : null;
+                            if (!this._blob || !this._verifyBlob(this.currentTrack, this._blob, 'play/fetch-retry')) {
+                                this._blob = null;
+                                this.playPauseBtn.textContent = '▶️';
+                                this.playPauseBtn.disabled = false;
+                                return;
+                            }
+                        }
                         // Last and most important guard: the blob just finished
                         // downloading — if we've skipped past this track, drop it
                         // rather than assigning it over the current track's audio.

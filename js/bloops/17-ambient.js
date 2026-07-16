@@ -11512,10 +11512,15 @@
             if (at >= from && at < horizon) { try {
               // Masks gate NOTES at their onset, whatever produced them —
               // matrix edits are live even on frozen loops (Write default!).
+              // HARD-ONLY for every loop kind: 0-cells kill, deterministic Part
+              // windows apply, but PROBABILITIES never re-roll at replay — they
+              // were REALIZED when the phrase was generated/captured, and
+              // re-rolling per instance double-realizes (p²) on Write loops and
+              // silently drops chords from KEPT phrases (heard as "the pad cuts
+              // out mid-bar and doesn't come back until the rewrite").
               if (lyr) {
-                const _hardG = !!st._write;
-                if (!_ambChordGateOK(E, lyr, at, null, _ambNotesOf(lyr), _hardG)) continue;
-                if (!_ambSectionGateOK(E, lyr, at, null, _hardG)) continue;
+                if (!_ambChordGateOK(E, lyr, at, null, _ambNotesOf(lyr), true)) continue;
+                if (!_ambSectionGateOK(E, lyr, at, null, true)) continue;
               }
               const f2 = _ambLockHarmonizeFreq(lyr, st.keyCtx, e.freq, at);
               let pp = e.params;
@@ -14654,7 +14659,9 @@
           }
           if (cv && !playing) { try { _ambDrawLockedRoll(cv, E, key, now); } catch (e) {} }
         }
-        const npHtml = npSeg(curNames);
+        // Now Playing panel: while playing, a bar-grid row (slot-aligned across
+        // layers); otherwise the compact unit line (lock chips stay in-card).
+        const npHtml = (playing && layerOn) ? _ambNpGridRow(E, key, nm, now, cfg) : npSeg(curNames);
         if (npHtml) { const lay = el.closest('.ambient-layer'); const nmEl = lay && lay.querySelector('.ambient-layer-name'); rows.push({ name: nmEl ? nmEl.textContent : key, html: npHtml }); }
       });
       _ambRenderNowPlaying(E, rows, playing);
@@ -15563,6 +15570,37 @@
       _ambPersistLock(E, key);                          // save the added note
       try { _ambUpdateNotesLive(E); } catch (e) {}
       return notes.length - 1;
+    }
+    // Now Playing GRID row: the layer's notes bucketed into the 16 sixteenth
+    // slots of the CURRENT BAR (the engine's shared bar clock), so every
+    // layer's row shares column geometry — what hits together lines up
+    // vertically, and a whole Seq phrase shows only the notes landing in this
+    // bar instead of flooding the line. Chords join with '·' (cap 3 + '+').
+    function _ambNpGridRow(E, key, nm, now, cfg) {
+      const bpm = (cfg && Number.isFinite(cfg.bpm) && cfg.bpm > 0) ? cfg.bpm : _ambBpm();
+      const barSec = (60 / Math.max(20, bpm)) * 4;
+      const G = Number.isFinite(E._barGridAnchor) ? E._barGridAnchor : ((E._t0 != null) ? E._t0 : 0);
+      const barStart = G + Math.floor((now - G) / barSec) * barSec;
+      const slotSec = barSec / 16;
+      const nowSlot = Math.max(0, Math.min(15, Math.floor((now - barStart) / slotSec)));
+      const buckets = Array.from({ length: 16 }, () => []);
+      const evs = (E.cap && E.cap[key]) || [];
+      for (const e of evs) {
+        if (!(e && e.at >= barStart && e.at < barStart + barSec && e.freq > 0)) continue;
+        const si = Math.max(0, Math.min(15, Math.floor((e.at - barStart) / slotSec)));
+        const n = nm(e.freq); if (!n) continue;
+        if (!buckets[si].some(x => x.n === n)) buckets[si].push({ n: n, f: e.freq });
+      }
+      let h = '<span class="ambient-npg">';
+      for (let i = 0; i < 16; i++) {
+        // Chords stack VERTICALLY, high→low (the roll/chip convention), so a
+        // simultaneous hit reads as one column of pitches.
+        const b = buckets[i].slice().sort((a, b2) => b2.f - a.f);
+        const shown = b.slice(0, 4);
+        const txt = shown.map(x => '<i>' + x.n + '</i>').join('') + (b.length > 4 ? '<i>+' + (b.length - 4) + '</i>' : '');
+        h += '<span class="ambient-npg-cell' + (i % 4 === 0 ? ' q' : '') + (i === nowSlot ? ' cur' : '') + (b.length ? '' : ' empty') + '" title="' + (b.length ? b.map(x => x.n).join(' ') : '') + '">' + txt + '</span>';
+      }
+      return h + '</span>';
     }
     function _ambRenderNowPlaying(E, rows, playing) {
       const wrap = _ambGet(E, 'ambient-nowplaying-list'); if (!wrap) return;

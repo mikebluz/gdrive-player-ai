@@ -314,6 +314,17 @@ kit/sample-voice extras (no harmonic frame). The Bed/Drone Progression sub-block
 (inside Seed) is gated by `_ambSyncProgVis` on the area prog, via the `sub`-token
 wrapper (`data-sub`).
 
+*Now Playing grid (2026-07-16, user report "too many notes / not aligned"):*
+the panel row per layer was the whole CURRENT UNIT (a Seq unit = an entire
+phrase → flooded) with independent per-row lines (nothing aligned). While
+playing it's now a BAR GRID: 16 sixteenth-slot columns of the current bar on
+the engine's shared bar clock (`_ambNpGridRow`, fed from E.cap so replayed
+loops show too) — every layer's row shares column geometry, so simultaneous
+hits stack vertically; chords join with '·' (cap 3 + '+'), beat-quarters get
+stronger column borders, and the playhead column highlights in every row at
+once. Stopped/locked states keep the compact unit line (lock chips stay
+in-card).
+
 *Matrix fixes (2026-07-15, user report "not working right"):* three real
 bugs. (1) **Masks now gate REPLAY too** — Loop defaults to Write, so most
 layers are frozen loops whose replay bypassed the emitters: matrix edits were

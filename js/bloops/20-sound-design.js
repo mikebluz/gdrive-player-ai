@@ -1030,7 +1030,7 @@
       panes.appendChild(fenv);
 
       // --- Pitch envelope (drum boom→thud; deep bend, base + Amount → base) ---
-      if (!P.pitchEnv) P.pitchEnv = _sdDesignDefaults().pitchEnv;
+      if (!P.pitchEnv) P.pitchEnv = _sdDesignDefaults().pitchEnv || { on: false, amount: 0, attack: 0, decay: 60 };   // survive defaults-mirror drift
       const penv = _sdSection('Pitch envelope', { toggle: { on: !!P.pitchEnv.on, onChange: (on) => { P.pitchEnv.on = on; } } });
       penv._row.appendChild(_sdMakeKnob({ label: 'Amount', min: -48, max: 48, value: P.pitchEnv.amount, step: 1, unit: 'st', defaultValue: 0, onChange: (v) => P.pitchEnv.amount = v }));
       penv._row.appendChild(_sdMakeKnob({ label: 'Attack', min: 0, max: 500, value: P.pitchEnv.attack, step: 1, defaultValue: 0, format: ms, onChange: (v) => P.pitchEnv.attack = v }));

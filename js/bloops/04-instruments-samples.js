@@ -1981,8 +1981,17 @@
       let c = 1;
       try {
         if (params) {
-          if (params.filter && params.filter.on) c += 1;
-          if (Array.isArray(params.modMatrix) && params.modMatrix.length) c += 0.5;
+          // Weights re-calibrated (2026-07-16): the old +1 filter / +0.5 matrix
+          // charges dated from per-voice AUDIO-RATE Tone.LFO mod rigs. Sequenced
+          // design voices now run their LFOs/pitchEnv as pre-scheduled
+          // ConstantSource ramps (~free at render time; see 20-sound-design's
+          // dur<=30 branch) and the filter is two biquads. The old weights made
+          // a density-4 design PAD cost ~24 units — the ENTIRE desktop budget —
+          // so the budget stole a sustaining chord on EVERY unit ("dry pad body
+          // fades in then cuts out each bed pass" while the reverb wash rings).
+          // The adaptive watchdog still guards real underruns by measurement.
+          if (params.filter && params.filter.on) c += 0.4;
+          if (Array.isArray(params.modMatrix) && params.modMatrix.length) c += 0.15;
         }
         if (oscD) {
           if (oscD.sub > 0) c += 0.5;
@@ -2012,7 +2021,12 @@
     let _voiceBudgetDyn = (() => {
       try {
         const v = parseInt(localStorage.getItem('bloopsVoiceBudget'), 10);
-        if (Number.isFinite(v)) return Math.max(_VOICE_BUDGET_MIN, Math.min(VOICE_CAP, v));
+        // Optimistic aging: start each session a few units ABOVE what was
+        // learned. A one-time bad measurement (e.g. the old capture-watchdog
+        // bug that slashed to 8 and persisted) otherwise haunts the machine
+        // forever, chopping sustaining pads; if the shed was real, the health
+        // watchdog re-learns it within seconds — if not, full polyphony is back.
+        if (Number.isFinite(v)) return Math.max(_VOICE_BUDGET_MIN, Math.min(VOICE_CAP, v + 6));
       } catch (e) {}
       return VOICE_CAP;
     })();
@@ -2128,7 +2142,26 @@
         clearTimeout(entry.disposeTimer);
         entry.disposeTimer = null;
       }
-      try { safeDisposeSynth(entry.synth); } catch (e) {}
+      // A voice stolen while STILL SUSTAINING (the dense fallback takes the
+      // oldest — i.e. the pad laying the foundation) used to hard-chop in
+      // ~30 ms: the audible "pad cuts out mid-bar". Give sustaining victims a
+      // short musical fade (~350 ms) instead — the budget is freed logically
+      // the moment the voice leaves _activeVoices, so the brief overlap costs
+      // almost nothing; decayed tails keep the fast chop (already near-silent).
+      let _sustaining = false;
+      try {
+        const _nowC = (typeof Tone !== 'undefined' && Tone.context) ? Tone.context.now() : 0;
+        _sustaining = Number.isFinite(entry.relAtCtx) && entry.relAtCtx > _nowC;
+      } catch (e) {}
+      if (_sustaining && entry.synth && entry.synth.volume && typeof entry.synth.volume.rampTo === 'function') {
+        try {
+          entry.synth.volume.rampTo(-80, 0.35);
+          const _syn = entry.synth;
+          setTimeout(() => { try { _syn.dispose(); } catch (e) {} }, 420);
+        } catch (e) { try { safeDisposeSynth(entry.synth); } catch (e2) {} }
+      } else {
+        try { safeDisposeSynth(entry.synth); } catch (e) {}
+      }
       // Wait out safeDisposeSynth's fade (~60ms) before tearing down the
       // effect chain so the rampTo doesn't ring through a dead chain.
       setTimeout(() => {
@@ -2425,7 +2458,22 @@
         if (_up) {
           params = _sdMergeUserPatch(_up, params);   // patch voice + caller-owned per-note fields
         } else {
-          params = Object.assign({}, params, { type: 'sawtooth' }); // patch gone → audible fallback
+          {
+          // Patch gone → audible fallback (a raw saw, so it can't hide) — but
+          // IDENTIFIABLE: a missing patch is almost always a STALE CACHED
+          // BUNDLE (an old sound-design.js from before a factory preset was
+          // added) or a deleted custom patch. Surface which id failed, once.
+          const _missId = params.type;
+          params = Object.assign({}, params, { type: 'sawtooth' });
+          try {
+            window.__sdMissWarned = window.__sdMissWarned || {};
+            if (!window.__sdMissWarned[_missId]) {
+              window.__sdMissWarned[_missId] = 1;
+              console.warn('[bloops] Tone "' + _missId + '" is not in the loaded sound bank — playing a raw-saw fallback. If this tone should exist, the browser is serving a stale cached bundle: reload with ?fresh=1.');
+              if (typeof showToast === 'function') showToast('⚠️ Tone “' + String(_missId).replace(/^user:/, '') + '” missing — playing fallback saw. Stale cache? Reload with ?fresh=1.');
+            }
+          } catch (e) {}
+        }
         }
       }
       // Ensemble voice: hold one sustained voice per member, return a composite
@@ -3167,7 +3215,22 @@
         if (_up) {
           params = _sdMergeUserPatch(_up, params);   // patch voice + caller-owned per-note fields
         } else {
-          params = Object.assign({}, params, { type: 'sawtooth' }); // patch gone → audible fallback
+          {
+          // Patch gone → audible fallback (a raw saw, so it can't hide) — but
+          // IDENTIFIABLE: a missing patch is almost always a STALE CACHED
+          // BUNDLE (an old sound-design.js from before a factory preset was
+          // added) or a deleted custom patch. Surface which id failed, once.
+          const _missId = params.type;
+          params = Object.assign({}, params, { type: 'sawtooth' });
+          try {
+            window.__sdMissWarned = window.__sdMissWarned || {};
+            if (!window.__sdMissWarned[_missId]) {
+              window.__sdMissWarned[_missId] = 1;
+              console.warn('[bloops] Tone "' + _missId + '" is not in the loaded sound bank — playing a raw-saw fallback. If this tone should exist, the browser is serving a stale cached bundle: reload with ?fresh=1.');
+              if (typeof showToast === 'function') showToast('⚠️ Tone “' + String(_missId).replace(/^user:/, '') + '” missing — playing fallback saw. Stale cache? Reload with ?fresh=1.');
+            }
+          } catch (e) {}
+        }
         }
       }
       // Ensemble voices expand into their member tones BEFORE the capture hook,
